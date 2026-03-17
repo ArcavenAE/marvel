@@ -1,13 +1,13 @@
-# Marvel — Multiagent Orchestration System
+# Marvel — Agent Orchestration Control Plane
 
 ## What This Is
 
-Multiagent orchestration and agent fleet control plane for BYOA agents.
-Spawns, coordinates, supervises, and configures agent sessions — including
-content pack management, persona assignment, and configuration resolution.
+A kubernetes-like control plane for AI agent workloads. Written in Go.
+Manages the full lifecycle of BYOA agent sessions: scheduling, configuration,
+process management, health monitoring, storage, networking, and observability.
 
-Comparable to multiclaude/gastown but built on the aae-orc platform principles:
-tmux as session substrate, auth delegation, parallel safety, composability.
+Where kubernetes orchestrates containers across nodes, marvel orchestrates
+agent sessions across tmux panes — local or remote via switchboard.
 
 ## Build / Run / Test
 
@@ -20,83 +20,263 @@ just lint           # golangci-lint run ./...
 just fmt            # gofumpt formatting
 ```
 
+## Resource Model
+
+Marvel's resource model maps kubernetes concepts to agent orchestration.
+Resources are declared in TOML manifests, applied via `marvel apply`.
+
+### Primitives
+
+```
+Kubernetes          Marvel                  What It Is
+──────────          ──────                  ──────────
+
+Namespace           Workspace               Isolation boundary. A project, team,
+                                            or environment. Scopes all resources.
+
+Pod                 Session                 The atomic unit. A tmux pane running
+                                            one BYOA console process. Has a
+                                            lifecycle: pending → running →
+                                            succeeded/failed. Restartable.
+
+Container           Runtime                 The BYOA console binary. aclaude,
+                                            zclaude, dclaude, pennyfarthing,
+                                            bare `claude` CLI, or any agent
+                                            that accepts a prompt on stdin.
+                                            Runtime images are just paths to
+                                            executables + their config.
+
+Deployment          Team                    Desired state: "run N sessions of
+                                            this runtime with this config."
+                                            Handles scaling, rolling updates,
+                                            shift changes. A team of 3 reviewers
+                                            is a Team with replicas: 3.
+
+Service             Endpoint                A stable name for an agent capability.
+                                            "the-reviewer" resolves to whichever
+                                            session currently holds that role.
+                                            Enables director to route by role,
+                                            not by session ID.
+
+CronJob             Schedule                Timed agent tasks. "Run a code review
+                                            agent every 2 hours." "Shift change
+                                            at 06:00 UTC." Creates Sessions on
+                                            the cron schedule.
+
+ConfigMap           Pack                    Content packs (specticle, bmad, etc.)
+                                            mounted into sessions. Packs provide
+                                            commands, templates, themes, workflows.
+                                            4-scope resolution: repo → shared →
+                                            user → system.
+
+Secret              Vault                   Auth delegation references. Marvel
+                                            never stores credentials. Vaults
+                                            point to where auth lives (Claude
+                                            Code OAuth, API keys in keychain,
+                                            Bedrock/Vertex config). Sessions
+                                            inherit vault references at launch.
+
+PVC                 Volume                  Workspace storage for a session.
+                                            Git worktrees, sandboxes, shared
+                                            directories. A volume can be:
+                                            - worktree: git worktree (isolated
+                                              branch, auto-cleaned or kept)
+                                            - sandbox: temp directory (destroyed
+                                              on session teardown)
+                                            - shared: mounted read-write across
+                                              sessions (coordination artifacts)
+                                            - host: bind-mount of a host path
+
+Probe (liveness)    Healthcheck             Is the session alive? Is the process
+                                            running? Is the tmux pane responsive?
+                                            Marvel restarts sessions that fail
+                                            health checks.
+
+Probe (readiness)   Readycheck              Is the session ready to accept work?
+                                            Has the agent loaded its context,
+                                            packs, and persona? Marvel doesn't
+                                            route work until readycheck passes.
+
+Ingress             Gateway                 External access to the agent cluster.
+                                            Three types:
+                                            - switchboard: remote tmux access
+                                              (KVM for agent sessions)
+                                            - director: inter-agent supervisor
+                                              protocol (internal routing)
+                                            - gateway: external API/webhook
+                                              interface (not yet designed)
+
+Node                Host                    A machine running marvel. Local host
+                                            by default. Remote hosts reachable
+                                            via switchboard. Marvel schedules
+                                            sessions to available hosts.
+```
+
+### Resource Manifests (TOML)
+
+```toml
+# example: a team of 3 reviewer agents
+
+[workspace]
+name = "acme-project"
+
+[[team]]
+name = "reviewers"
+replicas = 3
+
+  [team.runtime]
+  image = "aclaude"                # or path: "/usr/local/bin/aclaude"
+  args = ["--persona", "dune/reviewer"]
+
+  [team.readycheck]
+  type = "prompt-response"         # agent responds to a ping
+  interval = "30s"
+  timeout = "10s"
+
+  [team.healthcheck]
+  type = "process-alive"           # tmux pane has a running process
+  interval = "15s"
+
+  [[team.pack]]
+  name = "specticle"
+  scope = "user"
+
+  [[team.volume]]
+  name = "code"
+  type = "worktree"
+  repo = "."
+  branch = "review/{{.session.id}}"  # each reviewer gets its own branch
+
+  [[team.volume]]
+  name = "artifacts"
+  type = "shared"
+  path = ".marvel/artifacts/reviewers/"
+```
+
 ## Architecture
 
 ```
-cmd/marvel/           Entry point
+cmd/marvel/                 Entry point
+
 internal/
-  agent/              Agent lifecycle (spawn, monitor, teardown)
-  session/            tmux session and pane management
-  plan/               Execution plan parsing and validation
-  coordinator/        Fan-out work distribution and result collection
-  pack/               Content pack management
-    registry/         Pack discovery, versioning, dependency resolution
-    router/           Artifact type → filesystem path routing
-    scope/            4-scope resolution chain (repo → shared → user → system)
-    transform/        Format conversion between pack formats
-  config/             Agent configuration resolution
-    resolve/          Merge config chain: defaults → pack → scope → override
-    override/         Per-agent and per-team config deltas
+  api/                      Resource types (Workspace, Session, Team, etc.)
+    types.go                Core type definitions
+    manifest.go             TOML manifest parsing and validation
+
+  scheduler/                Session scheduling and placement
+    scheduler.go            Assign sessions to hosts/panes
+    reconciler.go           Desired state → actual state reconciliation loop
+
+  runtime/                  BYOA console runtime management
+    runtime.go              Runtime interface (start, stop, attach)
+    aclaude.go              aclaude-specific runtime
+    claude.go               Bare claude CLI runtime
+    generic.go              Generic runtime (any CLI that accepts stdin)
+
+  session/                  Session lifecycle
+    manager.go              Create, monitor, restart, teardown sessions
+    health.go               Healthcheck and readycheck execution
+    state.go                Session state machine (pending → running → done)
+
+  tmux/                     tmux substrate
+    session.go              tmux session/pane CRUD
+    attach.go               Attach/detach/send-keys
+    capture.go              Capture pane output for monitoring
+
+  team/                     Team (deployment) controller
+    controller.go           Reconcile desired replicas vs actual
+    scaling.go              Scale up/down, shift changes
+    rolling.go              Rolling updates (new config without downtime)
+
+  pack/                     Content pack management
+    registry.go             Pack discovery, versioning
+    router.go               Artifact type → filesystem routing
+    scope.go                4-scope resolution (repo → shared → user → system)
+    manifest.go             pack.yaml parsing
+
+  volume/                   Workspace storage
+    worktree.go             Git worktree create/cleanup
+    sandbox.go              Temp directory lifecycle
+    shared.go               Shared volume management
+
+  config/                   Configuration resolution
+    resolve.go              Merge chain: defaults → pack → scope → override
+    vault.go                Auth delegation references
+
+  gateway/                  External access
+    switchboard.go          Switchboard integration (remote tmux)
+    director.go             Director integration (inter-agent comms)
+
+  otel/                     Observability
+    collector.go            OTEL span/metric collection from sessions
+    export.go               Forward to self-hosted collector or stdout
+    metrics.go              Marvel-level metrics (sessions, restarts, health)
+
+  protocol/                 Agent communication protocol
+    message.go              Message types (task, result, heartbeat, signal)
+    transport.go            Transport interface
+    fifo.go                 Named pipe transport (local, simple)
+    tmux.go                 tmux send-keys transport (fallback)
+    switchboard.go          Switchboard relay transport (remote)
 ```
 
-### Core Capabilities
+## Process Management
 
-**Orchestration** — start, stop, loop, and scale agent sessions.
+Marvel manages agent processes through the tmux substrate:
 
-**Configuration** — resolve what each agent is loaded with:
-- Content packs (specticle, bmad, pennyfarthing, multiclaude, custom)
-- Personas (which theme and role per agent)
-- Scope chain (system → user → shared → repo, first match wins)
-- Overrides (per-agent or per-team config deltas)
+**Start:** create tmux pane → set environment → exec runtime binary.
+**Stop:** send SIGTERM → wait grace period → SIGKILL → destroy pane.
+**Restart:** stop + start. Preserves the session ID and volume mounts.
+**Health:** periodic healthcheck (process alive) + readycheck (agent responsive).
+**Auto-restart:** if healthcheck fails and restart policy allows, restart the session.
 
-**Distribution** — fan-out work via TOML plans, collect results.
+Restart policies: `always`, `on-failure`, `never`.
 
-**Observation** — fleet-wide visibility into agent state and output.
+## Agent Communication Protocol
 
-### Content Pack Management
+Sessions communicate via a message protocol. Three transports, same messages:
 
-Marvel is the control plane for content packs. A pack is a git repo (or
-directory) containing a `pack.yaml` manifest that declares artifact types.
+| Transport | Use Case | Latency | Reliability |
+|-----------|----------|---------|-------------|
+| Named pipes (FIFO) | Local sessions, same host | Low | High |
+| tmux send-keys | Fallback, any tmux pane | Medium | Medium |
+| Switchboard relay | Remote sessions, cross-host | Higher | High |
 
-```yaml
-# pack.yaml example
-name: specticle
-version: 0.1.0
-artifacts:
-  commands:
-    source: commands/
-    target_type: commands
-    namespace: specticle
-  templates:
-    source: templates/
-    target_type: templates
-    optional: true
-```
+Message types:
+- **task** — work assignment from coordinator to session
+- **result** — work product from session to coordinator
+- **heartbeat** — periodic liveness signal
+- **signal** — control messages (pause, resume, shutdown, reconfigure)
 
-**Artifact routing:** each artifact type maps to a filesystem location per
-consumer. Commands → `.claude/commands/<pack>/`. Templates → `docs/spec/`.
-Themes → `personas/themes/`. Marvel resolves the mapping.
+Director provides higher-level supervisor patterns on top of this protocol.
 
-**4-scope resolution:**
+## Observability
 
-```
-REPO        .packs/ or .claude/commands/   (git-tracked, travels with code)
-    ↓ fallback
-SHARED      /path/to/team-packs/ → symlink (revision-controlled separately)
-    ↓ fallback
-USER        ~/.config/byoa/packs/          (personal, synced across machines)
-    ↓ fallback
-SYSTEM      /usr/local/share/byoa/packs/   (org-mandated, admin-managed)
-```
+Sessions export OTEL telemetry. Marvel collects and routes it.
 
-First match wins. Each scope supports: copy, symlink, or git-submodule modes.
-Packs can be git-tracked or gitignored per project preference.
+**Session-level signals:**
+- Traces: tool executions, API calls, agent reasoning spans
+- Metrics: token usage, tool counts, session duration, error rates
+- Logs: agent output, structured events
 
-**Multi-pack coexistence:** when multiple packs provide the same artifact
-type (e.g., specticle and bmad both provide architecture commands), marvel
-resolves via explicit precedence in the plan or config. No silent merge.
+**Cluster-level signals (marvel itself):**
+- Sessions running/pending/failed per workspace
+- Restart counts, health check failures
+- Pack resolution times, volume mount times
+- Scheduling decisions and queue depth
 
-**Pack operations:**
+Export targets: self-hosted OTEL collector, stdout (dev mode), or disabled.
+Telemetry is always available, never mandatory (per SOUL.md §6).
+
+## Content Pack Management
+
+(Unchanged from previous design — see pack/ in architecture above.)
+
+A pack is a git repo with a `pack.yaml` manifest. Marvel resolves packs
+via the 4-scope chain and routes artifacts to the right locations for
+the target runtime.
+
+Pack operations:
 - `marvel pack install <source> [--scope repo|shared|user|system]`
 - `marvel pack list [--scope ...]`
 - `marvel pack update [--all | <name>]`
@@ -104,56 +284,41 @@ resolves via explicit precedence in the plan or config. No silent merge.
 - `marvel pack link <path> --scope shared --project <path>`
 - `marvel pack resolve` — show resolved config for current scope chain
 
-### Agent Session Configuration
+## CLI
 
-An agent session is not just "spawn aclaude in a tmux pane." It is:
-
-> Spawn aclaude in a tmux pane **with** specticle commands loaded, the
-> dune/architect persona, this project's SRS as context, and these
-> repo-local overrides.
-
-Marvel resolves the full agent configuration before launch:
-
-1. Read the orchestration plan (TOML)
-2. Resolve content packs via the scope chain
-3. Route artifacts to the right locations for the target console
-4. Apply per-agent overrides (persona, model, constraints)
-5. Launch the console with the resolved configuration
-
-This means:
-- **Single agent (no marvel):** aclaude reads its own config chain. Works as today.
-- **Marvel-managed agent:** marvel resolves config + packs, launches aclaude
-  with that configuration. aclaude doesn't need pack management logic.
-- **Shift change / scale-out:** marvel spins new agents with the same resolved
-  config. Consistent fleet.
-
-### Integration Points
-
-- **aclaude / BYOA consoles** — spawns agents in tmux panes via CLI
-- **switchboard** — optional remote access to agent sessions
-- **director** — optional supervisor protocol for inter-agent comms
-- **kos** — optional spec projection to seed agent context
-- **specticle** — content pack providing IEEE-based spec templates and commands
-- **bmad, pennyfarthing, multiclaude** — importable content packs
-
-All integrations are optional. Marvel works standalone with just tmux + a
-BYOA console.
+```sh
+marvel apply <manifest.toml>      # apply desired state
+marvel get sessions                # list sessions
+marvel get teams                   # list teams
+marvel get packs                   # list installed packs
+marvel describe session <id>      # detailed session info
+marvel logs <session-id>           # stream session output
+marvel attach <session-id>         # attach to tmux pane
+marvel exec <session-id> <prompt>  # send a prompt to a running session
+marvel scale <team> --replicas N   # scale a team
+marvel restart <session-id>        # restart a session
+marvel drain <host>                # gracefully move sessions off a host
+marvel top                         # resource usage across cluster
+marvel pack install ...            # pack management (see above)
+```
 
 ## Conventions
 
-- **Config format:** TOML for plan files and pack config; Go flags/env for runtime.
-- **Pack manifest:** `pack.yaml` at pack root. Declares artifacts, types, dependencies.
-- **Auth:** Delegates to the BYOA console (which delegates to Claude Code). No direct credential handling.
+- **Language:** Go. Entire codebase.
+- **Config format:** TOML for manifests, plans, and pack config. Go flags/env for runtime.
+- **Pack manifest:** `pack.yaml` at pack root (YAML for ecosystem compatibility).
+- **Auth:** Delegates to BYOA console → Claude Code. Marvel never stores credentials.
 - **No file deletion:** Never delete user files. Overwrite only with explicit intent.
-- **Parallel-safe:** Each orchestration run gets a UUID. Agent sessions are isolated.
-- **Session substrate:** tmux. Each agent gets its own pane within a marvel-managed session.
+- **Parallel-safe:** Each session gets a UUID. Volumes provide isolation.
+- **Session substrate:** tmux. Panes = sessions. Sessions = agent processes.
 
 ## Design Principles
 
-1. **Agents are processes, not threads** — each agent is a separate tmux pane running a BYOA console
-2. **Plans are data** — orchestration plans are TOML files, not code
-3. **Configuration is resolved, not assumed** — marvel resolves the full scope chain before launch
-4. **Packs are git repos** — versioned, diffable, shareable. No proprietary format.
-5. **Fail observable** — every agent's output is visible in its pane; marvel logs coordination events
-6. **Gradual elaboration** — starts as a simple fan-out spawner, grows pack management as needed
-7. **Console-agnostic** — works with aclaude, zclaude, dclaude, or any CLI that accepts a prompt
+1. **Declarative desired state** — you declare what you want running; marvel reconciles
+2. **Agents are processes** — each agent is a tmux pane running a BYOA console
+3. **Manifests are data** — TOML files, not code. Diffable, reviewable, versionable.
+4. **Configuration is resolved, not assumed** — full scope chain before launch
+5. **Packs are git repos** — versioned, diffable, shareable. No proprietary format.
+6. **Fail observable** — every session's output is visible; marvel logs all state transitions
+7. **Gradual elaboration** — start with `marvel apply` for a single session, grow to fleet management
+8. **Console-agnostic** — works with aclaude, zclaude, dclaude, or any CLI that accepts a prompt
