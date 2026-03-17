@@ -1,0 +1,27 @@
+# Marvel MVP demo manifest — a team of workers and a monitor.
+#
+# Apply with: marvel apply examples/demo.toml
+
+[workspace]
+name = "demo"
+
+[[team]]
+name = "workers"
+replicas = 3
+
+  [team.runtime]
+  image = "bash-loop"
+  command = "bash"
+  args = ["-c", "while true; do echo \"[worker $(hostname):$$] working...\"; sleep 5; done"]
+
+[[team]]
+name = "monitors"
+replicas = 1
+
+  [team.runtime]
+  image = "top"
+  command = "top"
+
+[[endpoint]]
+name = "worker-svc"
+team = "workers"
