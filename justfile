@@ -4,9 +4,14 @@
 default:
     @just --list
 
-# Build the marvel binary
+# Build all binaries (marvel + simulator)
 build:
     go build -o bin/marvel ./cmd/marvel/
+    go build -o bin/simulator ./cmd/simulator/
+
+# Build simulator only
+build-sim:
+    go build -o bin/simulator ./cmd/simulator/
 
 # Run all tests
 test:
@@ -38,10 +43,10 @@ start-bg: build
 stop:
     ./bin/marvel stop || true
 
-# Apply the demo manifest
+# Load the demo manifest
 demo: build
-    @echo "==> Applying demo manifest..."
-    ./bin/marvel apply examples/demo.toml
+    @echo "==> Loading demo manifest..."
+    ./bin/marvel work examples/demo.toml
     @sleep 2
     @echo ""
     @echo "==> Workspaces:"
@@ -70,7 +75,7 @@ status: build
     @echo "==> Sessions:"
     @./bin/marvel get sessions
 
-# Scale a team: just scale demo/workers 5
+# Scale a team: just scale demo/agents 5
 scale team replicas: build
     ./bin/marvel scale {{team}} --replicas {{replicas}}
 

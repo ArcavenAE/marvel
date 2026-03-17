@@ -49,7 +49,10 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 
 	// Create a pane
-	paneID, err := d.NewPane(sessionName, "sleep 300", "test-worker")
+	paneID, err := d.NewPane(sessionName, "sleep 300", "test-agent", map[string]string{
+		"MARVEL_SESSION": "test-agent",
+		"MARVEL_SOCKET":  "/tmp/test.sock",
+	})
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}

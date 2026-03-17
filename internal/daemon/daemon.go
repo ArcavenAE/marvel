@@ -77,6 +77,8 @@ func (d *Daemon) Start(socketPath string) error {
 		return fmt.Errorf("listen %s: %w", socketPath, err)
 	}
 	d.listener = ln
+	d.sessMgr.SocketPath = socketPath
+	d.teamCtrl.SocketPath = socketPath
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
@@ -157,6 +159,10 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleDelete(req.Params)
 	case "scale":
 		return d.handleScale(req.Params)
+	case "heartbeat":
+		return d.handleHeartbeat(req.Params)
+	case "run":
+		return d.handleRun(req.Params)
 	case "stop":
 		return d.handleStop()
 	default:
@@ -331,6 +337,77 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		"status":   "scaled",
 		"team":     p.TeamKey,
 		"replicas": p.Replicas,
+	})
+	return Response{Result: result}
+}
+
+// Heartbeat params
+type heartbeatParams struct {
+	SessionKey     string  `json:"session_key"`
+	ContextPercent float64 `json:"context_percent"`
+}
+
+func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
+	var p heartbeatParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+
+	if err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.ContextPercent); err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	result, _ := json.Marshal(map[string]string{"status": "ok"})
+	return Response{Result: result}
+}
+
+// Run params
+type runParams struct {
+	Workspace      string   `json:"workspace"`
+	Team           string   `json:"team"`
+	RuntimeCommand string   `json:"runtime_command"`
+	RuntimeArgs    []string `json:"runtime_args"`
+	Script         string   `json:"script"`
+}
+
+func (d *Daemon) handleRun(params json.RawMessage) Response {
+	var p runParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+
+	if p.Workspace == "" {
+		p.Workspace = "default"
+	}
+	if p.Team == "" {
+		p.Team = "adhoc"
+	}
+
+	// Ensure workspace exists.
+	ws := &api.Workspace{Name: p.Workspace, CreatedAt: time.Now().UTC()}
+	_ = d.store.CreateWorkspace(ws)
+
+	rt := api.Runtime{
+		Name:    p.RuntimeCommand,
+		Command: p.RuntimeCommand,
+		Args:    p.RuntimeArgs,
+		Script:  p.Script,
+	}
+
+	sess := &api.Session{
+		Name:      fmt.Sprintf("run-%d", time.Now().UTC().UnixMilli()),
+		Workspace: p.Workspace,
+		Team:      p.Team,
+		Runtime:   rt,
+	}
+
+	if err := d.sessMgr.Create(sess); err != nil {
+		return Response{Error: fmt.Sprintf("create session: %v", err)}
+	}
+
+	result, _ := json.Marshal(map[string]string{
+		"status":      "created",
+		"session_key": sess.Key(),
 	})
 	return Response{Result: result}
 }

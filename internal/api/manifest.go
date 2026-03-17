@@ -22,9 +22,10 @@ type ManifestWorkspace struct {
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
-	Name     string         `toml:"name"`
-	Replicas int            `toml:"replicas"`
+	Name     string          `toml:"name"`
+	Replicas int             `toml:"replicas"`
 	Runtime  ManifestRuntime `toml:"runtime"`
+	Role     string          `toml:"role,omitempty"`
 }
 
 // ManifestRuntime is the runtime section within a team.
@@ -32,6 +33,7 @@ type ManifestRuntime struct {
 	Image   string   `toml:"image"`
 	Command string   `toml:"command"`
 	Args    []string `toml:"args,omitempty"`
+	Script  string   `toml:"script,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -87,6 +89,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Name:    mt.Runtime.Image,
 			Command: mt.Runtime.Command,
 			Args:    mt.Runtime.Args,
+			Script:  mt.Runtime.Script,
 		}
 		if rt.Name == "" {
 			rt.Name = mt.Runtime.Command
@@ -97,6 +100,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Workspace: m.Workspace.Name,
 			Replicas:  mt.Replicas,
 			Runtime:   rt,
+			Role:      mt.Role,
 			CreatedAt: now,
 		}
 		// Update replicas if team already exists.
@@ -104,6 +108,7 @@ func (m *Manifest) Apply(store *Store) error {
 		if err == nil {
 			existing.Replicas = mt.Replicas
 			existing.Runtime = rt
+			existing.Role = mt.Role
 		} else {
 			if err := store.CreateTeam(team); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)

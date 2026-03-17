@@ -1,27 +1,32 @@
-# Marvel MVP demo manifest — a team of workers and a monitor.
+# Marvel demo manifest — simulator agents + chaos supervisor.
 #
-# Apply with: marvel apply examples/demo.toml
+# Load with: marvel work examples/demo.toml
+# Requires: bin/simulator built via `just build`
 
 [workspace]
 name = "demo"
 
 [[team]]
-name = "workers"
+name = "agent"
 replicas = 3
+role = "agent"
 
   [team.runtime]
-  image = "bash-loop"
-  command = "bash"
-  args = ["-c", "while true; do echo \"[worker $(hostname):$$] working...\"; sleep 5; done"]
+  image = "simulator"
+  command = "bin/simulator"
+  args = ["--tick", "3000"]
 
 [[team]]
-name = "monitors"
+name = "supervisor"
 replicas = 1
+role = "supervisor"
 
   [team.runtime]
-  image = "top"
-  command = "top"
+  image = "simulator"
+  command = "bin/simulator"
+  args = ["--tick", "5000"]
+  script = "scripts/chaos.lua"
 
 [[endpoint]]
-name = "worker-svc"
-team = "workers"
+name = "agent-svc"
+team = "agent"

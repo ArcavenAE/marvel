@@ -31,9 +31,9 @@ func TestSessionCreateDelete(t *testing.T) {
 	})
 
 	sess := &api.Session{
-		Name:      "worker-0",
+		Name:      "agent-0",
 		Workspace: ws,
-		Team:      "workers",
+		Team:      "agents",
 		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
 	}
 
@@ -49,7 +49,7 @@ func TestSessionCreateDelete(t *testing.T) {
 	}
 
 	// Verify in store
-	got, err := store.GetSession(ws + "/worker-0")
+	got, err := store.GetSession(ws + "/agent-0")
 	if err != nil {
 		t.Fatalf("get from store: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestSessionCreateDelete(t *testing.T) {
 	}
 
 	// Delete
-	if err := mgr.Delete(ws + "/worker-0"); err != nil {
+	if err := mgr.Delete(ws + "/agent-0"); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestCleanupWorkspace(t *testing.T) {
 		sess := &api.Session{
 			Name:      name,
 			Workspace: ws,
-			Team:      "workers",
+			Team:      "agents",
 			Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
 		}
 		if err := mgr.Create(sess); err != nil {

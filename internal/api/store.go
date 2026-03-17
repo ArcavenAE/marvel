@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 // ErrNotFound is returned when a resource is not found in the store.
@@ -207,5 +208,18 @@ func (s *Store) DeleteEndpoint(key string) error {
 		return fmt.Errorf("endpoint %s: %w", key, ErrNotFound)
 	}
 	delete(s.endpoints, key)
+	return nil
+}
+
+// UpdateSessionHeartbeat updates a session's context pressure and heartbeat timestamp.
+func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		return fmt.Errorf("session %s: %w", key, ErrNotFound)
+	}
+	sess.ContextPercent = contextPercent
+	sess.LastHeartbeat = time.Now().UTC()
 	return nil
 }

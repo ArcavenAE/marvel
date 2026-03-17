@@ -28,26 +28,30 @@ type Runtime struct {
 	Name    string   `toml:"name"`
 	Command string   `toml:"command"`
 	Args    []string `toml:"args,omitempty"`
+	Script  string   `toml:"script,omitempty"`
 }
 
 // Session is the atomic unit: a tmux pane running one process (pod equivalent).
 type Session struct {
-	Name      string       `toml:"name"`
-	Workspace string       `toml:"workspace"`
-	Team      string       `toml:"team"`
-	Runtime   Runtime      `toml:"runtime"`
-	State     SessionState `toml:"-"`
-	PaneID    string       `toml:"-"`
-	PID       int          `toml:"-"`
-	CreatedAt time.Time    `toml:"-"`
+	Name           string       `toml:"name"`
+	Workspace      string       `toml:"workspace"`
+	Team           string       `toml:"team"`
+	Runtime        Runtime      `toml:"runtime"`
+	State          SessionState `toml:"-"`
+	PaneID         string       `toml:"-"`
+	PID            int          `toml:"-"`
+	ContextPercent float64      `toml:"-"`
+	LastHeartbeat  time.Time    `toml:"-"`
+	CreatedAt      time.Time    `toml:"-"`
 }
 
 // Team declares desired state: N sessions of a runtime (deployment equivalent).
 type Team struct {
-	Name      string  `toml:"name"`
-	Workspace string  `toml:"workspace"`
-	Replicas  int     `toml:"replicas"`
-	Runtime   Runtime `toml:"runtime"`
+	Name      string    `toml:"name"`
+	Workspace string    `toml:"workspace"`
+	Replicas  int       `toml:"replicas"`
+	Runtime   Runtime   `toml:"runtime"`
+	Role      string    `toml:"role,omitempty"`
 	CreatedAt time.Time
 }
 

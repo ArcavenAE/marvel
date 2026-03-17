@@ -9,7 +9,7 @@ const validManifest = `
 name = "test-project"
 
 [[team]]
-name = "workers"
+name = "agents"
 replicas = 3
 
   [team.runtime]
@@ -25,8 +25,8 @@ replicas = 1
   command = "top"
 
 [[endpoint]]
-name = "worker-svc"
-team = "workers"
+name = "agent-svc"
+team = "agents"
 `
 
 func TestParseManifest(t *testing.T) {
@@ -41,8 +41,8 @@ func TestParseManifest(t *testing.T) {
 	if len(m.Teams) != 2 {
 		t.Fatalf("expected 2 teams, got %d", len(m.Teams))
 	}
-	if m.Teams[0].Name != "workers" {
-		t.Fatalf("expected team workers, got %s", m.Teams[0].Name)
+	if m.Teams[0].Name != "agents" {
+		t.Fatalf("expected team agents, got %s", m.Teams[0].Name)
 	}
 	if m.Teams[0].Replicas != 3 {
 		t.Fatalf("expected 3 replicas, got %d", m.Teams[0].Replicas)
@@ -56,7 +56,7 @@ func TestParseManifestMissingWorkspace(t *testing.T) {
 	t.Parallel()
 	_, err := ParseManifestBytes([]byte(`
 [[team]]
-name = "workers"
+name = "agents"
 replicas = 1
   [team.runtime]
   command = "bash"
@@ -73,13 +73,52 @@ func TestParseManifestBadReplicas(t *testing.T) {
 name = "test"
 
 [[team]]
-name = "workers"
+name = "agents"
 replicas = 0
   [team.runtime]
   command = "bash"
 `))
 	if err == nil {
 		t.Fatal("expected error for zero replicas")
+	}
+}
+
+func TestParseManifestWithRoleAndScript(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(`
+[workspace]
+name = "test"
+
+[[team]]
+name = "agents"
+replicas = 2
+role = "agent"
+
+  [team.runtime]
+  image = "simulator"
+  command = "simulator"
+
+[[team]]
+name = "supervisor"
+replicas = 1
+role = "supervisor"
+
+  [team.runtime]
+  image = "simulator"
+  command = "simulator"
+  script = "scripts/chaos.lua"
+`))
+	if err != nil {
+		t.Fatalf("parse manifest with role/script: %v", err)
+	}
+	if m.Teams[0].Role != "agent" {
+		t.Fatalf("expected role agent, got %s", m.Teams[0].Role)
+	}
+	if m.Teams[1].Role != "supervisor" {
+		t.Fatalf("expected role supervisor, got %s", m.Teams[1].Role)
+	}
+	if m.Teams[1].Runtime.Script != "scripts/chaos.lua" {
+		t.Fatalf("expected script path, got %s", m.Teams[1].Runtime.Script)
 	}
 }
 
@@ -106,12 +145,12 @@ func TestManifestApply(t *testing.T) {
 		t.Fatalf("expected 2 teams, got %d", len(teams))
 	}
 
-	workers, err := store.GetTeam("test-project/workers")
+	agents, err := store.GetTeam("test-project/agents")
 	if err != nil {
-		t.Fatalf("get workers team: %v", err)
+		t.Fatalf("get agents team: %v", err)
 	}
-	if workers.Replicas != 3 {
-		t.Fatalf("expected 3 replicas, got %d", workers.Replicas)
+	if agents.Replicas != 3 {
+		t.Fatalf("expected 3 replicas, got %d", agents.Replicas)
 	}
 
 	// Endpoint created

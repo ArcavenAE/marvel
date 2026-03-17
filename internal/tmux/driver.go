@@ -47,16 +47,20 @@ type PaneInfo struct {
 	Title   string
 }
 
-// NewPane creates a new pane in the given session running the specified command.
-// Returns the pane ID (e.g., "%5").
-func (d *Driver) NewPane(session, command, title string) (string, error) {
+// NewPane creates a new window in the given session running the specified command.
+// Each agent gets its own window to avoid tmux "no space for new pane" errors.
+// envs sets environment variables. Returns the pane ID (e.g., "%5").
+func (d *Driver) NewPane(session, command, title string, envs map[string]string) (string, error) {
 	args := []string{
-		"split-window", "-t", session,
+		"new-window", "-t", session,
 		"-d",
 		"-P", "-F", "#{pane_id}",
 	}
 	if title != "" {
-		args = append(args, "-e", fmt.Sprintf("MARVEL_SESSION=%s", title))
+		args = append(args, "-n", title)
+	}
+	for k, v := range envs {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
 	args = append(args, command)
 
@@ -72,6 +76,10 @@ func (d *Driver) NewPane(session, command, title string) (string, error) {
 		setTitle := exec.Command(d.binary, "select-pane", "-t", paneID, "-T", title)
 		_ = setTitle.Run()
 	}
+
+	// Ensure window closes when command exits (don't leave orphaned shells).
+	setOpt := exec.Command(d.binary, "set-option", "-t", paneID, "remain-on-exit", "off")
+	_ = setOpt.Run()
 
 	return paneID, nil
 }
@@ -97,9 +105,9 @@ func (d *Driver) KillSession(name string) error {
 	return nil
 }
 
-// ListPanes lists all panes in a session with their IDs, PIDs, commands, and titles.
+// ListPanes lists all panes across all windows in a session.
 func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
-	cmd := exec.Command(d.binary, "list-panes", "-t", session,
+	cmd := exec.Command(d.binary, "list-panes", "-t", session, "-s",
 		"-F", "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

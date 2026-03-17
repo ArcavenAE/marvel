@@ -53,9 +53,9 @@ func TestSessionCRUD(t *testing.T) {
 	s := NewStore()
 
 	sess := &Session{
-		Name:      "worker-0",
+		Name:      "agent-0",
 		Workspace: "test-ws",
-		Team:      "workers",
+		Team:      "agents",
 		Runtime:   Runtime{Name: "shell", Command: "bash"},
 		State:     SessionPending,
 		CreatedAt: time.Now().UTC(),
@@ -65,7 +65,7 @@ func TestSessionCRUD(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	got, err := s.GetSession("test-ws/worker-0")
+	got, err := s.GetSession("test-ws/agent-0")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
@@ -74,16 +74,16 @@ func TestSessionCRUD(t *testing.T) {
 	}
 
 	// List by team
-	teamSessions := s.ListSessionsByTeam("test-ws", "workers")
+	teamSessions := s.ListSessionsByTeam("test-ws", "agents")
 	if len(teamSessions) != 1 {
 		t.Fatalf("expected 1 team session, got %d", len(teamSessions))
 	}
 
 	// Delete
-	if err := s.DeleteSession("test-ws/worker-0"); err != nil {
+	if err := s.DeleteSession("test-ws/agent-0"); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}
-	if _, err := s.GetSession("test-ws/worker-0"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetSession("test-ws/agent-0"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete")
 	}
 }
@@ -93,7 +93,7 @@ func TestTeamCRUD(t *testing.T) {
 	s := NewStore()
 
 	team := &Team{
-		Name:      "workers",
+		Name:      "agents",
 		Workspace: "test-ws",
 		Replicas:  3,
 		Runtime:   Runtime{Name: "shell", Command: "bash"},
@@ -104,7 +104,7 @@ func TestTeamCRUD(t *testing.T) {
 		t.Fatalf("create team: %v", err)
 	}
 
-	got, err := s.GetTeam("test-ws/workers")
+	got, err := s.GetTeam("test-ws/agents")
 	if err != nil {
 		t.Fatalf("get team: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestTeamCRUD(t *testing.T) {
 		t.Fatalf("expected 1 team, got %d", len(teams))
 	}
 
-	if err := s.DeleteTeam("test-ws/workers"); err != nil {
+	if err := s.DeleteTeam("test-ws/agents"); err != nil {
 		t.Fatalf("delete team: %v", err)
 	}
 }
@@ -126,21 +126,55 @@ func TestEndpointCRUD(t *testing.T) {
 	t.Parallel()
 	s := NewStore()
 
-	ep := &Endpoint{Name: "worker-svc", Workspace: "test-ws", Team: "workers"}
+	ep := &Endpoint{Name: "agent-svc", Workspace: "test-ws", Team: "agents"}
 
 	if err := s.CreateEndpoint(ep); err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
 
-	got, err := s.GetEndpoint("test-ws/worker-svc")
+	got, err := s.GetEndpoint("test-ws/agent-svc")
 	if err != nil {
 		t.Fatalf("get endpoint: %v", err)
 	}
-	if got.Team != "workers" {
-		t.Fatalf("expected workers team, got %s", got.Team)
+	if got.Team != "agents" {
+		t.Fatalf("expected agents team, got %s", got.Team)
 	}
 
-	if err := s.DeleteEndpoint("test-ws/worker-svc"); err != nil {
+	if err := s.DeleteEndpoint("test-ws/agent-svc"); err != nil {
 		t.Fatalf("delete endpoint: %v", err)
+	}
+}
+
+func TestUpdateSessionHeartbeat(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+
+	sess := &Session{
+		Name:      "agent-0",
+		Workspace: "test-ws",
+		Team:      "agents",
+		Runtime:   Runtime{Name: "simulator", Command: "simulator"},
+		State:     SessionRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := s.UpdateSessionHeartbeat("test-ws/agent-0", 42.5); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+
+	got, _ := s.GetSession("test-ws/agent-0")
+	if got.ContextPercent != 42.5 {
+		t.Fatalf("expected context 42.5%%, got %.1f%%", got.ContextPercent)
+	}
+	if got.LastHeartbeat.IsZero() {
+		t.Fatal("expected non-zero heartbeat timestamp")
+	}
+
+	// Not found case
+	if err := s.UpdateSessionHeartbeat("test-ws/nonexistent", 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

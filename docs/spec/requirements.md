@@ -58,10 +58,44 @@ One `marvel` binary serves as both daemon and CLI. Commands that need
 the daemon connect via Unix socket.
 
 ### NFR-03: Observability
-Stdout logging of state transitions. No OTEL in MVP.
+Stdout logging of state transitions. OTEL stdout metric export available
+via simulator (`--otel-stdout` flag).
 
 ## 5. Out of Scope
 
 Healthchecks, readychecks, schedules, packs, vaults, volumes, gateways,
-multi-host, persistence, auth, OTEL, director integration, switchboard
+multi-host, persistence, auth, director integration, switchboard
 integration.
+
+## 6. Expansion Requirements (Post-MVP)
+
+### FR-07: Context Pressure Monitoring
+Sessions shall track context window usage (`ContextPercent`) and heartbeat
+timestamps. Agents report via `"heartbeat"` RPC. Measurement only — no
+automated actions.
+
+### FR-08: Simulator Runtime
+A separate `simulator` binary simulates agent context pressure. Accepts
+`--name`, `--workspace`, `--team`, `--socket`, `--tick`, `--script`,
+`--otel-stdout` flags. Grows context 1-5% per tick, wraps at 100%.
+
+### FR-09: OTEL Metrics
+Each agent exports `marvel.agent.context_window_percent` gauge via stdout
+OTEL exporter. Attributes: workspace, team, session.
+
+### FR-10: Lua Scripting
+Simulator supports Lua scripts via `--script` flag. Scripts define
+`on_tick(pct, tick)` called each tick. Lua environment exposes `marvel`
+module: `create_agent`, `kill_agent`, `list_agents`, `scale_team`, `log`.
+
+### FR-11: Supervisor Role
+Teams may have a `role` field (`"agent"` | `"supervisor"`). Supervisors
+are convention-based — any process with daemon socket access can call RPCs.
+
+### FR-12: One-Off Sessions
+- `marvel run <command> [args...]` — create ad-hoc session via `"run"` RPC
+- `marvel kill <session-key>` — destroy session (alias for delete session)
+
+### FR-13: Identity Injection
+Team controller appends `--name`, `--workspace`, `--team`, `--socket`,
+`--script` flags to sessions whose team has a `role` or `script` set.

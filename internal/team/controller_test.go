@@ -47,7 +47,7 @@ func TestReconcileScaleUp(t *testing.T) {
 	}
 
 	team := &api.Team{
-		Name:      "workers",
+		Name:      "agents",
 		Workspace: "test-reconcile",
 		Replicas:  3,
 		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
@@ -60,7 +60,7 @@ func TestReconcileScaleUp(t *testing.T) {
 	// Reconcile should create 3 sessions
 	ctrl.ReconcileOnce()
 
-	sessions := store.ListSessionsByTeam("test-reconcile", "workers")
+	sessions := store.ListSessionsByTeam("test-reconcile", "agents")
 	if len(sessions) != 3 {
 		t.Fatalf("expected 3 sessions, got %d", len(sessions))
 	}
@@ -83,7 +83,7 @@ func TestReconcileScaleDown(t *testing.T) {
 	}
 
 	team := &api.Team{
-		Name:      "workers",
+		Name:      "agents",
 		Workspace: "test-scaledown",
 		Replicas:  3,
 		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
@@ -95,7 +95,7 @@ func TestReconcileScaleDown(t *testing.T) {
 
 	// Scale up
 	ctrl.ReconcileOnce()
-	if len(store.ListSessionsByTeam("test-scaledown", "workers")) != 3 {
+	if len(store.ListSessionsByTeam("test-scaledown", "agents")) != 3 {
 		t.Fatal("expected 3 sessions after scale up")
 	}
 
@@ -103,7 +103,7 @@ func TestReconcileScaleDown(t *testing.T) {
 	team.Replicas = 1
 	ctrl.ReconcileOnce()
 
-	sessions := store.ListSessionsByTeam("test-scaledown", "workers")
+	sessions := store.ListSessionsByTeam("test-scaledown", "agents")
 	if len(sessions) != 1 {
 		t.Fatalf("expected 1 session after scale down, got %d", len(sessions))
 	}
@@ -120,7 +120,7 @@ func TestReconcileReplaceDead(t *testing.T) {
 	}
 
 	team := &api.Team{
-		Name:      "workers",
+		Name:      "agents",
 		Workspace: "test-replace",
 		Replicas:  2,
 		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
@@ -132,7 +132,7 @@ func TestReconcileReplaceDead(t *testing.T) {
 
 	// Create initial sessions
 	ctrl.ReconcileOnce()
-	sessions := store.ListSessionsByTeam("test-replace", "workers")
+	sessions := store.ListSessionsByTeam("test-replace", "agents")
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
@@ -142,14 +142,14 @@ func TestReconcileReplaceDead(t *testing.T) {
 		t.Fatalf("delete session: %v", err)
 	}
 
-	if len(store.ListSessionsByTeam("test-replace", "workers")) != 1 {
+	if len(store.ListSessionsByTeam("test-replace", "agents")) != 1 {
 		t.Fatal("expected 1 session after kill")
 	}
 
 	// Reconcile should replace it
 	ctrl.ReconcileOnce()
 
-	sessions = store.ListSessionsByTeam("test-replace", "workers")
+	sessions = store.ListSessionsByTeam("test-replace", "agents")
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions after reconcile, got %d", len(sessions))
 	}

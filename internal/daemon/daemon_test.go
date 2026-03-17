@@ -49,7 +49,7 @@ func TestDaemonLifecycle(t *testing.T) {
 name = "test-daemon"
 
 [[team]]
-name = "workers"
+name = "agents"
 replicas = 2
 
   [team.runtime]
@@ -109,7 +109,7 @@ replicas = 2
 	// Scale down
 	resp, err = SendRequest(sock, Request{
 		Method: "scale",
-		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/workers", "replicas": 1}),
+		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/agents", "replicas": 1}),
 	})
 	if err != nil {
 		t.Fatalf("scale: %v", err)
@@ -133,6 +133,74 @@ replicas = 2
 	}
 	if len(sessions) != 1 {
 		t.Fatalf("expected 1 session after scale, got %d", len(sessions))
+	}
+
+	// Heartbeat — send context pressure for a running session
+	// Get session keys first
+	resp, err = SendRequest(sock, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
+	})
+	if err != nil {
+		t.Fatalf("get sessions for heartbeat: %v", err)
+	}
+	var sessionsForHB []struct {
+		Name      string `json:"Name"`
+		Workspace string `json:"Workspace"`
+	}
+	if err := json.Unmarshal(resp.Result, &sessionsForHB); err != nil {
+		t.Fatalf("unmarshal sessions for heartbeat: %v", err)
+	}
+	if len(sessionsForHB) > 0 {
+		sessionKey := sessionsForHB[0].Workspace + "/" + sessionsForHB[0].Name
+		resp, err = SendRequest(sock, Request{
+			Method: "heartbeat",
+			Params: mustMarshal(t, map[string]any{"session_key": sessionKey, "context_percent": 55.5}),
+		})
+		if err != nil {
+			t.Fatalf("heartbeat: %v", err)
+		}
+		if resp.Error != "" {
+			t.Fatalf("heartbeat error: %s", resp.Error)
+		}
+
+		// Verify via describe
+		resp, err = SendRequest(sock, Request{
+			Method: "describe",
+			Params: mustMarshal(t, map[string]string{"resource_type": "session", "name": sessionKey}),
+		})
+		if err != nil {
+			t.Fatalf("describe session: %v", err)
+		}
+		var described map[string]any
+		json.Unmarshal(resp.Result, &described)
+		if cp, ok := described["ContextPercent"].(float64); !ok || cp != 55.5 {
+			t.Fatalf("expected context_percent 55.5, got %v", described["ContextPercent"])
+		}
+	}
+
+	// Run — create a one-off session
+	resp, err = SendRequest(sock, Request{
+		Method: "run",
+		Params: mustMarshal(t, map[string]any{
+			"workspace":       "test-daemon",
+			"runtime_command": "sleep",
+			"runtime_args":    []string{"300"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("run error: %s", resp.Error)
+	}
+	var runResult map[string]string
+	json.Unmarshal(resp.Result, &runResult)
+	if runResult["status"] != "created" {
+		t.Fatalf("expected status created, got %s", runResult["status"])
+	}
+	if runResult["session_key"] == "" {
+		t.Fatal("expected session_key in run result")
 	}
 
 	// Delete workspace

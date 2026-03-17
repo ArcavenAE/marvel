@@ -13,8 +13,9 @@ import (
 
 // Manager creates and destroys sessions.
 type Manager struct {
-	store  *api.Store
-	driver *tmux.Driver
+	store      *api.Store
+	driver     *tmux.Driver
+	SocketPath string
 }
 
 // NewManager creates a session manager.
@@ -47,7 +48,14 @@ func (m *Manager) Create(sess *api.Session) error {
 		cmd += " " + arg
 	}
 
-	paneID, err := m.driver.NewPane(tmuxSess, cmd, sess.Name)
+	envs := map[string]string{
+		"MARVEL_SESSION": sess.Name,
+	}
+	if m.SocketPath != "" {
+		envs["MARVEL_SOCKET"] = m.SocketPath
+	}
+
+	paneID, err := m.driver.NewPane(tmuxSess, cmd, sess.Name, envs)
 	if err != nil {
 		// Clean up store on failure.
 		_ = m.store.DeleteSession(sess.Key())
