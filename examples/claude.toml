@@ -1,0 +1,32 @@
+# Marvel demo manifest — simulator agents + chaos supervisor.
+#
+# Load with: marvel work examples/demo.toml
+# Requires: bin/simulator built via `just build`
+
+[workspace]
+name = "ccode"
+
+[[team]]
+name = "claude"
+replicas = 2
+role = "coder"
+
+  [team.runtime]
+  image = "simulator"
+  command = "/Users/michael.pursifull/.local/bin/claude"
+  #args = ["--tick", "3000"]
+
+[[team]]
+name = "supervisor"
+replicas = 1
+role = "supervisor"
+
+  [team.runtime]
+  image = "simulator"
+  command = "bin/simulator"
+  args = ["--tick", "5000"]
+  script = "scripts/chaos.lua"
+
+[[endpoint]]
+name = "claude-svc"
+team = "claude"
