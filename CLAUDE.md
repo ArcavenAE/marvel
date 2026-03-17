@@ -312,6 +312,34 @@ marvel pack install ...            # pack management (see above)
 - **Parallel-safe:** Each session gets a UUID. Volumes provide isolation.
 - **Session substrate:** tmux. Panes = sessions. Sessions = agent processes.
 
+## Independence and Coupling
+
+Marvel enhances every other component but requires none of them.
+
+**Marvel requires only:** Go, tmux, and a BYOA console binary (any CLI that
+accepts a prompt on stdin). Everything else is optional integration.
+
+**Integration tiers:**
+
+| Component | Without It | With It |
+|-----------|-----------|---------|
+| aclaude | Marvel uses bare `claude` or any CLI. Process management only. | Deep integration: personas, OTEL, packs, hooks, full metrics. |
+| switchboard | Local-only scheduling. All sessions on one host. | Remote hosts. Distributed fleet. Cross-machine attach. |
+| director | No inter-agent comms. Fan-out/collect only. | Supervisor patterns, agent-to-agent routing, role-based endpoints. |
+| specticle | No spec commands in packs. User loads manually. | IEEE-based spec templates available as a pack. |
+| kos | No knowledge projection. Specs are manual. | Specs projected from knowledge graph into sessions. |
+
+**Marvel is also optional to everything else:**
+- aclaude runs standalone without marvel (single-agent, own config chain)
+- switchboard relays any tmux session, not just marvel-managed ones
+- specticle installs with `just install <target>`, no marvel needed
+- kos operates its own probe/finding cycle independently
+
+**Graceful degradation, not hard dependencies.** Marvel detects what's
+available at startup and adjusts its capabilities. No switchboard binary?
+Local-only mode. No director? No inter-agent routing. No packs installed?
+Sessions launch with console defaults.
+
 ## Design Principles
 
 1. **Declarative desired state** — you declare what you want running; marvel reconciles
@@ -322,3 +350,4 @@ marvel pack install ...            # pack management (see above)
 6. **Fail observable** — every session's output is visible; marvel logs all state transitions
 7. **Gradual elaboration** — start with `marvel apply` for a single session, grow to fleet management
 8. **Console-agnostic** — works with aclaude, zclaude, dclaude, or any CLI that accepts a prompt
+9. **No conscription** — marvel orchestrates, it does not require. Every integration is optional.
