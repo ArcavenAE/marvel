@@ -27,9 +27,12 @@ func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
 }
 
 // ReconcileOnce runs one reconciliation pass for all teams.
+// Reaps dead sessions first so the reconciler sees accurate state.
 func (c *Controller) ReconcileOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	c.sessMgr.ReapDead()
 
 	teams := c.store.ListTeams()
 	for _, t := range teams {

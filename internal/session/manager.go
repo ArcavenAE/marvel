@@ -89,6 +89,26 @@ func (m *Manager) Delete(key string) error {
 	return nil
 }
 
+// ReapDead removes sessions whose tmux pane no longer exists.
+// Returns the keys of reaped sessions.
+func (m *Manager) ReapDead() []string {
+	var reaped []string
+	for _, sess := range m.store.ListSessions() {
+		if sess.PaneID == "" {
+			continue
+		}
+		if !m.driver.HasPane(sess.PaneID) {
+			log.Printf("session %s: pane %s gone, reaping", sess.Key(), sess.PaneID)
+			if err := m.store.DeleteSession(sess.Key()); err != nil {
+				log.Printf("warning: reap session %s: %v", sess.Key(), err)
+				continue
+			}
+			reaped = append(reaped, sess.Key())
+		}
+	}
+	return reaped
+}
+
 // DeleteAllInWorkspace destroys all sessions in a workspace.
 func (m *Manager) DeleteAllInWorkspace(workspace string) {
 	sessions := m.store.ListSessions()

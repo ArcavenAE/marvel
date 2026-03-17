@@ -84,6 +84,12 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string)
 	return paneID, nil
 }
 
+// HasPane checks if a tmux pane still exists.
+func (d *Driver) HasPane(paneID string) bool {
+	cmd := exec.Command(d.binary, "display-message", "-t", paneID, "-p", "")
+	return cmd.Run() == nil
+}
+
 // KillPane destroys a specific pane.
 func (d *Driver) KillPane(paneID string) error {
 	cmd := exec.Command(d.binary, "kill-pane", "-t", paneID)

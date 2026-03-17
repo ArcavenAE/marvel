@@ -99,3 +99,12 @@ are convention-based — any process with daemon socket access can call RPCs.
 ### FR-13: Identity Injection
 Team controller appends `--name`, `--workspace`, `--team`, `--socket`,
 `--script` flags to sessions whose team has a `role` or `script` set.
+
+### FR-14: Session State Accuracy
+The system shall accurately reflect the running state of all sessions.
+When an agent process exits (normally or abnormally), the session must
+be removed from the store so that `get sessions` shows only live
+sessions. The reconciler shall detect dead sessions (tmux pane gone)
+and reap them before counting replicas. Dead sessions must not persist
+as static entries. This is a prerequisite for reliable reconciliation,
+shift triggers, and any future healthcheck or restart policy.
