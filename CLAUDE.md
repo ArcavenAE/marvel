@@ -308,6 +308,10 @@ marvel pack install ...            # pack management (see above)
 - **Config format:** TOML for manifests, plans, and pack config. Go flags/env for runtime.
 - **Pack manifest:** `pack.yaml` at pack root (YAML for ecosystem compatibility).
 - **Auth:** Delegates to BYOA console → Claude Code. Marvel never stores credentials.
+  Auth boundary: one user running their own agents under their own credentials
+  (Max, API key, Bedrock, Vertex) is permitted. Orchestrating agents that route
+  other people's consumer credentials is not — multi-user distribution requires
+  API key auth. See SOUL.md §3.
 - **No file deletion:** Never delete user files. Overwrite only with explicit intent.
 - **Parallel-safe:** Each session gets a UUID. Volumes provide isolation.
 - **Session substrate:** tmux. Panes = sessions. Sessions = agent processes.
