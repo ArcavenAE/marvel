@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/arcaven/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemon"
 	lua "github.com/yuin/gopher-lua"
 )
 

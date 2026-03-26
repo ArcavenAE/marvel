@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/arcaven/marvel/internal/api"
-	"github.com/arcaven/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/session"
 )
 
 // Controller reconciles desired team state with actual running sessions.

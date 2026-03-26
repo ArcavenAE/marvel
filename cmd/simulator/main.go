@@ -16,9 +16,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/arcaven/marvel/internal/daemon"
-	marvelotel "github.com/arcaven/marvel/internal/otel"
-	"github.com/arcaven/marvel/internal/simulator"
+	"github.com/arcavenae/marvel/internal/daemon"
+	marvelotel "github.com/arcavenae/marvel/internal/otel"
+	"github.com/arcavenae/marvel/internal/simulator"
 )
 
 func main() {

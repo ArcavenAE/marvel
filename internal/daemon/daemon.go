@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/arcaven/marvel/internal/api"
-	"github.com/arcaven/marvel/internal/session"
-	"github.com/arcaven/marvel/internal/team"
-	"github.com/arcaven/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/team"
+	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 const (

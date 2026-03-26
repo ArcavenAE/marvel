@@ -1,4 +1,4 @@
-module github.com/arcaven/marvel
+module github.com/arcavenae/marvel
 
 go 1.25.4
 

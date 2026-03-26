@@ -4,8 +4,8 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/arcaven/marvel/internal/api"
-	"github.com/arcaven/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 func skipIfNoTmux(t *testing.T) {

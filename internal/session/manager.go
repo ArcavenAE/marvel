@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/arcaven/marvel/internal/api"
-	"github.com/arcaven/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 // Manager creates and destroys sessions.

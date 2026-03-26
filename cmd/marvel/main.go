@@ -14,8 +14,8 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/arcaven/marvel/internal/api"
-	"github.com/arcaven/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
