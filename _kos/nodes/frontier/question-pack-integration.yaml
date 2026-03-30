@@ -1,0 +1,24 @@
+id: question-pack-integration
+type: question
+confidence: frontier
+title: "Content Pack Integration — resolution, routing, scope chain"
+content: |
+  pack.yaml manifest is sketched in marvel's CLAUDE.md. Packs are git repos
+  with heterogeneous artifacts (commands, templates, themes, workflows).
+  Marvel must resolve packs via the 4-scope chain (repo → shared → user →
+  system) and route artifacts to the right filesystem locations for the
+  target runtime.
+
+  Questions: is YAML the right manifest format (vs TOML for consistency)?
+  How do packs declare dependencies on other packs? How do packs declare
+  minimum marvel version? How does multi-pack conflict resolution work
+  when two packs provide the same artifact type? How does a compiled
+  binary (aclaude) discover packs at runtime?
+edges:
+  - target: aae-orc::question-pack-format
+    type: derives
+    note: "Cross-repo projection from orchestrator F6"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"

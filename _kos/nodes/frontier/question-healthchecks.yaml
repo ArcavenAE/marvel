@@ -1,0 +1,24 @@
+id: question-healthchecks
+type: question
+confidence: frontier
+title: "Healthchecks and Readychecks — implementation beyond process detection"
+content: |
+  The resource model defines two probe types: healthcheck (is the session
+  alive?) and readycheck (is the session ready to accept work?). Types
+  sketched: process-alive (tmux pane has a running process), prompt-response
+  (agent responds to a ping).
+
+  MVP has basic process detection only. Questions: what does prompt-response
+  actually look like — send a prompt via tmux send-keys and parse output?
+  What timeout and retry policy? How does restart policy (always, on-failure,
+  never) interact with health state? What metrics should healthchecks emit
+  for observability? Is context pressure (already monitored in simulator)
+  a health signal or a separate concern?
+edges:
+  - target: aae-orc::question-marvel-beyond-mvp
+    type: derives
+    note: "Cross-repo projection from orchestrator F5"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"

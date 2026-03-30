@@ -1,0 +1,28 @@
+id: grv-standalone-pack-manager
+type: graveyard
+confidence: graveyard
+title: "Standalone Pack Manager"
+content: |
+  Evaluated building pack management as a separate tool outside marvel.
+  Packs are bundles of heterogeneous artifacts (commands, templates, themes,
+  workflows) with scope resolution and artifact routing. A standalone tool
+  would own install, resolve, route, version, and conflict resolution.
+
+  Ruled out because packs are agent configuration. Marvel already manages
+  agent lifecycle — if it manages what agents run, it must manage what
+  agents are configured with. Splitting pack management from agent management
+  creates a coordination problem: two tools that must agree on where packs
+  are, what version is active, and which scope applies. That coordination
+  is exactly what the control plane provides.
+graveyard:
+  approach: "Separate pack management tool, independent of marvel"
+  ruling: "Packs are agent config. Marvel manages agent lifecycle, so pack management is a control plane concern. Splitting creates needless coordination."
+  reopener: "Marvel becomes too large and pack management needs independence, or a non-marvel orchestration path needs pack resolution."
+edges:
+  - target: aae-orc::grv-skillshare-for-packs
+    type: derives
+    note: "Same evaluation that ruled out skillshare also ruled out standalone tool"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"

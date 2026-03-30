@@ -1,0 +1,23 @@
+id: question-multi-host
+type: question
+confidence: frontier
+title: "Multi-Host Scheduling via Switchboard"
+content: |
+  Marvel's resource model includes Host (node equivalent) for multi-host
+  scheduling via switchboard. This is the distributed case — scheduling
+  agent sessions across multiple machines.
+
+  Questions: what's the scheduling algorithm? How does marvel discover
+  remote hosts — manual registration, switchboard enumeration, or
+  auto-discovery? Is switchboard sufficient as the transport, or does
+  marvel need its own discovery mechanism? What happens when a remote
+  host becomes unreachable — drain, reschedule, or wait? How does
+  volume management (worktrees, shared dirs) work across hosts?
+edges:
+  - target: aae-orc::question-multi-host
+    type: derives
+    note: "Cross-repo projection from orchestrator F7"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"

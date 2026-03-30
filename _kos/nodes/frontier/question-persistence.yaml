@@ -1,0 +1,23 @@
+id: question-persistence
+type: question
+confidence: frontier
+title: "Persistence — what state survives restart"
+content: |
+  MVP is entirely in-memory. All state is lost on daemon restart.
+  What needs persistence? Candidates: session state and history,
+  team configuration, manifest history, health check results,
+  pack resolution cache, volume mount records.
+
+  What store? SQLite (simple, embedded, zero-config), flat files
+  (human-readable, git-friendly), or an etcd-like model (consistent
+  with k8s inspiration)? The store choice affects whether marvel
+  can recover sessions after a crash vs. requiring a full reconcile
+  from manifests.
+edges:
+  - target: aae-orc::question-marvel-beyond-mvp
+    type: derives
+    note: "Cross-repo projection from orchestrator F5"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"
