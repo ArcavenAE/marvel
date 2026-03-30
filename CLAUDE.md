@@ -63,7 +63,7 @@ CronJob             Schedule                Timed agent tasks. "Run a code revie
                                             at 06:00 UTC." Creates Sessions on
                                             the cron schedule.
 
-ConfigMap           Pack                    Content packs (specticle, bmad, etc.)
+ConfigMap           Pack                    Content packs (spectacle, bmad, etc.)
                                             mounted into sessions. Packs provide
                                             commands, templates, themes, workflows.
                                             4-scope resolution: repo → shared →
@@ -138,7 +138,7 @@ replicas = 3
   interval = "15s"
 
   [[team.pack]]
-  name = "specticle"
+  name = "spectacle"
   scope = "user"
 
   [[team.volume]]
@@ -330,13 +330,13 @@ accepts a prompt on stdin). Everything else is optional integration.
 | aclaude | Marvel uses bare `claude` or any CLI. Process management only. | Deep integration: personas, OTEL, packs, hooks, full metrics. |
 | switchboard | Local-only scheduling. All sessions on one host. | Remote hosts. Distributed fleet. Cross-machine attach. |
 | director | No inter-agent comms. Fan-out/collect only. | Supervisor patterns, agent-to-agent routing, role-based endpoints. |
-| specticle | No spec commands in packs. User loads manually. | IEEE-based spec templates available as a pack. |
+| spectacle | No spec commands in packs. User loads manually. | IEEE-based spec templates available as a pack. |
 | kos | No knowledge projection. Specs are manual. | Specs projected from knowledge graph into sessions. |
 
 **Marvel is also optional to everything else:**
 - aclaude runs standalone without marvel (single-agent, own config chain)
 - switchboard relays any tmux session, not just marvel-managed ones
-- specticle installs with `just install <target>`, no marvel needed
+- spectacle installs with `just install <target>`, no marvel needed
 - kos operates its own probe/finding cycle independently
 
 **Graceful degradation, not hard dependencies.** Marvel detects what's
