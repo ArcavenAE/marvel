@@ -444,7 +444,7 @@ func fetchSessions() ([]api.Session, error) {
 func renderSessionTable(sessions []api.Session) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tCONTEXT%%\tDESK\tAGENT\n")
+	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tHEALTH\tCTX%%\tDESK\tAGENT\n")
 	for _, s := range sessions {
 		agent := s.Runtime.Name
 		if agent == "" {
@@ -459,8 +459,12 @@ func renderSessionTable(sessions []api.Session) string {
 			desk = desk[1:]
 		}
 		gen := fmt.Sprintf("%d", s.Generation)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, ctx, desk, agent)
+		health := string(s.HealthState)
+		if health == "" {
+			health = "unknown"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, desk, agent)
 	}
 	w.Flush()
 	return buf.String()

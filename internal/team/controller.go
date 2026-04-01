@@ -35,6 +35,7 @@ func (c *Controller) ReconcileOnce() {
 	defer c.mu.Unlock()
 
 	c.sessMgr.ReapDead()
+	c.evaluateHealth()
 
 	teams := c.store.ListTeams()
 	for _, t := range teams {
@@ -86,6 +87,103 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 			}
 		}
 	}
+}
+
+// evaluateHealth checks heartbeat staleness for all sessions and applies
+// restart policies when failure thresholds are exceeded.
+func (c *Controller) evaluateHealth() {
+	now := time.Now().UTC()
+	sessions := c.store.ListSessions()
+
+	// Build a lookup cache: workspace/team → team (avoid repeated store access).
+	teamCache := make(map[string]*api.Team)
+	for _, t := range c.store.ListTeams() {
+		teamCache[t.Key()] = t
+	}
+
+	for _, sess := range sessions {
+		if sess.State != api.SessionRunning {
+			continue
+		}
+
+		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)
+		t, ok := teamCache[teamKey]
+		if !ok {
+			continue
+		}
+
+		var role *api.Role
+		for i := range t.Roles {
+			if t.Roles[i].Name == sess.Role {
+				role = &t.Roles[i]
+				break
+			}
+		}
+		if role == nil || role.HealthCheck == nil {
+			sess.HealthState = api.HealthUnknown
+			continue
+		}
+
+		if role.HealthCheck.Type != api.HealthCheckHeartbeat {
+			// process-alive is handled by ReapDead. If we're here, the pane exists.
+			sess.HealthState = api.HealthHealthy
+			sess.FailureCount = 0
+			continue
+		}
+
+		// Heartbeat staleness check.
+		sess.LastHealthCheck = now
+
+		if sess.LastHeartbeat.IsZero() {
+			// Grace period: allow timeout from creation for first heartbeat.
+			if now.Sub(sess.CreatedAt) < role.HealthCheck.Timeout {
+				sess.HealthState = api.HealthUnknown
+				continue
+			}
+			sess.FailureCount++
+		} else if now.Sub(sess.LastHeartbeat) > role.HealthCheck.Timeout {
+			sess.FailureCount++
+		} else {
+			sess.FailureCount = 0
+			sess.HealthState = api.HealthHealthy
+			continue
+		}
+
+		if sess.FailureCount >= role.HealthCheck.FailureThreshold {
+			sess.HealthState = api.HealthUnhealthy
+			c.applyRestartPolicy(sess, role)
+		} else {
+			sess.HealthState = api.HealthUnhealthy
+		}
+	}
+}
+
+func (c *Controller) applyRestartPolicy(sess *api.Session, role *api.Role) {
+	switch role.RestartPolicy {
+	case api.RestartNever:
+		sess.State = api.SessionFailed
+		log.Printf("health: session %s failed (restart_policy=never, failures=%d)",
+			sess.Key(), sess.FailureCount)
+	case api.RestartOnFailure:
+		if sess.State == api.SessionFailed {
+			c.restartSession(sess)
+		} else {
+			sess.State = api.SessionFailed
+		}
+	default: // RestartAlways
+		c.restartSession(sess)
+	}
+}
+
+func (c *Controller) restartSession(sess *api.Session) {
+	log.Printf("health: restarting session %s (failures=%d, restarts=%d)",
+		sess.Key(), sess.FailureCount, sess.RestartCount)
+	sess.RestartCount++
+	sess.State = api.SessionFailed
+	if err := c.sessMgr.Delete(sess.Key()); err != nil {
+		log.Printf("health: delete session %s for restart: %v", sess.Key(), err)
+	}
+	// Reconciler will recreate because actual < desired.
 }
 
 // InitiateShift starts a shift operation for a team.
@@ -217,13 +315,42 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 		}
 	}
 
-	// All new-gen sessions created — transition to draining.
+	// All new-gen sessions created — check readiness, then transition to draining.
 	newGen = c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
 	if len(newGen) >= desired {
-		log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
-			t.Workspace, t.Name, role.Name, len(newGen), t.Shift.OldGeneration)
-		t.Shift.Phase = api.ShiftDraining
+		if c.allReady(newGen, role) {
+			log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
+				t.Workspace, t.Name, role.Name, len(newGen), t.Shift.OldGeneration)
+			t.Shift.Phase = api.ShiftDraining
+		} else {
+			log.Printf("shift: %s/%s role %s — %d sessions launched, waiting for readiness",
+				t.Workspace, t.Name, role.Name, len(newGen))
+		}
 	}
+}
+
+// allReady returns true if all sessions are ready to take over.
+// For roles without a healthcheck, pane existence (Running state) is sufficient.
+// For heartbeat-based checks, at least one heartbeat must have been received.
+func (c *Controller) allReady(sessions []*api.Session, role *api.Role) bool {
+	if role.HealthCheck == nil {
+		// No healthcheck — running state is sufficient.
+		for _, s := range sessions {
+			if s.State != api.SessionRunning {
+				return false
+			}
+		}
+		return true
+	}
+	for _, s := range sessions {
+		if s.State != api.SessionRunning {
+			return false
+		}
+		if role.HealthCheck.Type == api.HealthCheckHeartbeat && s.LastHeartbeat.IsZero() {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {

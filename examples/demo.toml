@@ -18,6 +18,11 @@ name = "squad"
     command = "bin/simulator"
     args = ["--tick", "3000"]
 
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "30s"
+    failure_threshold = 3
+
   [[team.role]]
   name = "supervisor"
   replicas = 1
@@ -27,6 +32,11 @@ name = "squad"
     command = "bin/simulator"
     args = ["--tick", "5000"]
     script = "scripts/chaos.lua"
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "30s"
+    failure_threshold = 3
 
 [[endpoint]]
 name = "agent-svc"

@@ -17,6 +17,39 @@ const (
 	SessionFailed    SessionState = "failed"
 )
 
+// HealthState represents the health of a session.
+type HealthState string
+
+const (
+	HealthUnknown   HealthState = "unknown"
+	HealthHealthy   HealthState = "healthy"
+	HealthUnhealthy HealthState = "unhealthy"
+)
+
+// RestartPolicy controls what happens when a session becomes unhealthy.
+type RestartPolicy string
+
+const (
+	RestartAlways    RestartPolicy = "always"
+	RestartOnFailure RestartPolicy = "on-failure"
+	RestartNever     RestartPolicy = "never"
+)
+
+// HealthCheckType identifies the kind of health check.
+type HealthCheckType string
+
+const (
+	HealthCheckHeartbeat    HealthCheckType = "heartbeat"
+	HealthCheckProcessAlive HealthCheckType = "process-alive"
+)
+
+// HealthCheck configures health checking for a role's sessions.
+type HealthCheck struct {
+	Type             HealthCheckType
+	Timeout          time.Duration
+	FailureThreshold int
+}
+
 // Workspace is an isolation boundary (namespace equivalent).
 type Workspace struct {
 	Name      string    `toml:"name"`
@@ -44,14 +77,20 @@ type Session struct {
 	PID            int          `toml:"-"`
 	ContextPercent float64      `toml:"-"`
 	LastHeartbeat  time.Time    `toml:"-"`
+	HealthState    HealthState  `toml:"-"`
+	FailureCount   int          `toml:"-"`
+	RestartCount   int          `toml:"-"`
+	LastHealthCheck time.Time   `toml:"-"`
 	CreatedAt      time.Time    `toml:"-"`
 }
 
 // Role declares desired state for one kind of agent within a team.
 type Role struct {
-	Name     string  `toml:"name"`
-	Replicas int     `toml:"replicas"`
-	Runtime  Runtime `toml:"runtime"`
+	Name          string        `toml:"name"`
+	Replicas      int           `toml:"replicas"`
+	Runtime       Runtime       `toml:"runtime"`
+	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
+	HealthCheck   *HealthCheck  `toml:"-"`
 }
 
 // ShiftPhase represents the current phase of a shift operation.

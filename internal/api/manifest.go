@@ -28,9 +28,18 @@ type ManifestTeam struct {
 
 // ManifestRole is a role section within a team.
 type ManifestRole struct {
-	Name     string          `toml:"name"`
-	Replicas int             `toml:"replicas"`
-	Runtime  ManifestRuntime `toml:"runtime"`
+	Name          string               `toml:"name"`
+	Replicas      int                  `toml:"replicas"`
+	Runtime       ManifestRuntime      `toml:"runtime"`
+	RestartPolicy string               `toml:"restart_policy,omitempty"`
+	HealthCheck   *ManifestHealthCheck `toml:"healthcheck,omitempty"`
+}
+
+// ManifestHealthCheck is the healthcheck section within a role.
+type ManifestHealthCheck struct {
+	Type             string `toml:"type"`
+	Timeout          string `toml:"timeout,omitempty"`
+	FailureThreshold int    `toml:"failure_threshold,omitempty"`
 }
 
 // ManifestRuntime is the runtime section within a team.
@@ -109,11 +118,35 @@ func (m *Manifest) Apply(store *Store) error {
 			if rt.Name == "" {
 				rt.Name = rt.Command
 			}
-			roles = append(roles, Role{
-				Name:     mr.Name,
-				Replicas: mr.Replicas,
-				Runtime:  rt,
-			})
+			role := Role{
+				Name:          mr.Name,
+				Replicas:      mr.Replicas,
+				Runtime:       rt,
+				RestartPolicy: RestartAlways,
+			}
+			if mr.RestartPolicy != "" {
+				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)
+			}
+			if mr.HealthCheck != nil {
+				timeout := 30 * time.Second
+				if mr.HealthCheck.Timeout != "" {
+					d, err := time.ParseDuration(mr.HealthCheck.Timeout)
+					if err != nil {
+						return fmt.Errorf("parse healthcheck timeout %q: %w", mr.HealthCheck.Timeout, err)
+					}
+					timeout = d
+				}
+				threshold := 3
+				if mr.HealthCheck.FailureThreshold > 0 {
+					threshold = mr.HealthCheck.FailureThreshold
+				}
+				role.HealthCheck = &HealthCheck{
+					Type:             HealthCheckType(mr.HealthCheck.Type),
+					Timeout:          timeout,
+					FailureThreshold: threshold,
+				}
+			}
+			roles = append(roles, role)
 		}
 
 		team := &Team{

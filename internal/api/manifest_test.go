@@ -2,6 +2,7 @@ package api
 
 import (
 	"testing"
+	"time"
 )
 
 const validManifest = `
@@ -154,6 +155,54 @@ name = "squad"
 	}
 	if m.Teams[0].Roles[1].Replicas != 5 {
 		t.Fatalf("expected 5 replicas, got %d", m.Teams[0].Roles[1].Replicas)
+	}
+}
+
+func TestParseManifestWithHealthcheck(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(`
+[workspace]
+name = "test"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 2
+  restart_policy = "on-failure"
+
+    [team.role.runtime]
+    command = "bash"
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "15s"
+    failure_threshold = 5
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	role := team.Roles[0]
+	if role.RestartPolicy != RestartOnFailure {
+		t.Fatalf("expected on-failure, got %s", role.RestartPolicy)
+	}
+	if role.HealthCheck == nil {
+		t.Fatal("expected healthcheck")
+	}
+	if role.HealthCheck.Type != HealthCheckHeartbeat {
+		t.Fatalf("expected heartbeat, got %s", role.HealthCheck.Type)
+	}
+	if role.HealthCheck.Timeout != 15*time.Second {
+		t.Fatalf("expected 15s timeout, got %v", role.HealthCheck.Timeout)
+	}
+	if role.HealthCheck.FailureThreshold != 5 {
+		t.Fatalf("expected threshold 5, got %d", role.HealthCheck.FailureThreshold)
 	}
 }
 

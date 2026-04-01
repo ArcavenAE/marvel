@@ -357,6 +357,162 @@ func TestShiftSingleRole(t *testing.T) {
 	}
 }
 
+// --- Health tests ---
+
+func TestHealthEvalHeartbeatHealthy(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-health-ok", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 30 * time.Second, FailureThreshold: 3},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sessions := store.ListSessionsByTeamRole("test-health-ok", "squad", "worker")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+
+	// Simulate a fresh heartbeat.
+	sess := sessions[0]
+	sess.LastHeartbeat = time.Now().UTC()
+
+	ctrl.ReconcileOnce()
+
+	// Session should be healthy.
+	sess, _ = store.GetSession(sess.Key())
+	if sess.HealthState != api.HealthHealthy {
+		t.Fatalf("expected healthy, got %s", sess.HealthState)
+	}
+	if sess.FailureCount != 0 {
+		t.Fatalf("expected 0 failures, got %d", sess.FailureCount)
+	}
+}
+
+func TestHealthEvalHeartbeatStale(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-health-stale", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartNever,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 2},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sessions := store.ListSessionsByTeamRole("test-health-stale", "squad", "worker")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+
+	// Set a stale heartbeat (well past timeout).
+	sess := sessions[0]
+	sess.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+
+	// First eval: failure count 1 (below threshold of 2).
+	ctrl.ReconcileOnce()
+	sess, _ = store.GetSession(sess.Key())
+	if sess == nil {
+		t.Fatal("session should still exist (restart_policy=never)")
+	}
+	if sess.FailureCount != 1 {
+		t.Fatalf("expected 1 failure after first eval, got %d", sess.FailureCount)
+	}
+
+	// Second eval: failure count 2 (meets threshold).
+	ctrl.ReconcileOnce()
+	sess, _ = store.GetSession(sess.Key())
+	if sess == nil {
+		t.Fatal("session should still exist (restart_policy=never)")
+	}
+	if sess.State != api.SessionFailed {
+		t.Fatalf("expected failed state with restart_policy=never, got %s", sess.State)
+	}
+}
+
+func TestHealthEvalNoConfig(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-health-noconf", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			// No HealthCheck, no RestartPolicy override
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sessions := store.ListSessionsByTeamRole("test-health-noconf", "squad", "worker")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+
+	// No heartbeat ever sent — should stay unknown, not fail.
+	ctrl.ReconcileOnce()
+	ctrl.ReconcileOnce()
+	ctrl.ReconcileOnce()
+
+	sess, _ := store.GetSession(sessions[0].Key())
+	if sess == nil {
+		t.Fatal("session should still exist (no healthcheck)")
+	}
+	if sess.HealthState != api.HealthUnknown {
+		t.Fatalf("expected unknown health, got %s", sess.HealthState)
+	}
+	if sess.State != api.SessionRunning {
+		t.Fatalf("expected running, got %s", sess.State)
+	}
+}
+
+func TestHealthRestartAlways(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-health-restart", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sessions := store.ListSessionsByTeamRole("test-health-restart", "squad", "worker")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	origCreatedAt := sessions[0].CreatedAt
+
+	// Set stale heartbeat.
+	sessions[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+
+	// Eval + reconcile: unhealthy → delete → reconciler recreates.
+	ctrl.ReconcileOnce()
+
+	sessions = store.ListSessionsByTeamRole("test-health-restart", "squad", "worker")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session after restart, got %d", len(sessions))
+	}
+	// Recreated session has a fresh CreatedAt.
+	if !sessions[0].CreatedAt.After(origCreatedAt) {
+		t.Fatal("expected new session with later CreatedAt after restart")
+	}
+}
+
 func TestShiftSessionNaming(t *testing.T) {
 	skipIfNoTmux(t)
 	store, _, ctrl, cleanup := setup(t)
