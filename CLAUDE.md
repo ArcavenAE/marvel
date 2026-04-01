@@ -289,6 +289,7 @@ marvel get teams                                     # list teams and roles
 marvel get workspaces                                # list workspaces
 marvel describe session <id>                         # detailed session info
 marvel scale <workspace/team> --role <r> --replicas N  # scale a role within a team
+marvel shift <workspace/team> [--role <r>]             # rolling shift (replace sessions with fresh ones)
 marvel run <command> [args...] --role <r>             # run a one-off agent session
 marvel kill <session-key>                            # kill a session
 marvel stop                                          # stop daemon, clean up all resources

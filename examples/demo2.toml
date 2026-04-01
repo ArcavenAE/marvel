@@ -1,4 +1,4 @@
-# Marvel demo manifest — simulator agents + chaos supervisor.
+# Marvel demo — 5 agents + chaos supervisor with healthchecks.
 #
 # Load with: marvel work examples/demo2.toml
 # Requires: bin/simulator built via `just build`
@@ -18,6 +18,11 @@ name = "hulk-squad"
     command = "bin/simulator"
     args = ["--tick", "3000"]
 
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "30s"
+    failure_threshold = 3
+
   [[team.role]]
   name = "supervisor"
   replicas = 1
@@ -27,6 +32,11 @@ name = "hulk-squad"
     command = "bin/simulator"
     args = ["--tick", "5000"]
     script = "scripts/chaos.lua"
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "30s"
+    failure_threshold = 3
 
 [[endpoint]]
 name = "hulk-svc"

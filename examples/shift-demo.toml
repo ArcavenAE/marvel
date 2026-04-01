@@ -1,0 +1,49 @@
+# Marvel example — shift demonstration.
+#
+# Small team designed for demonstrating rolling shifts.
+# Short tick intervals make health state visible quickly.
+#
+# How to demo shifts:
+#   1. just build
+#   2. marvel daemon &
+#   3. marvel work examples/shift-demo.toml
+#   4. marvel get sessions -w          # watch sessions, note GEN column
+#   5. marvel shift shift-demo/squad   # initiate shift
+#   6. Watch: new gen-2 sessions launch, old gen-1 sessions drain
+#   7. marvel stop                     # clean up
+#
+# Or use: just demo-shift
+
+[workspace]
+name = "shift-demo"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 2
+
+    [team.role.runtime]
+    image = "simulator"
+    command = "bin/simulator"
+    args = ["--tick", "1000"]
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "10s"
+    failure_threshold = 3
+
+  [[team.role]]
+  name = "supervisor"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "simulator"
+    command = "bin/simulator"
+    args = ["--tick", "2000"]
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "10s"
+    failure_threshold = 3

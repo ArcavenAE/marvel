@@ -1,5 +1,4 @@
 # Marvel — agent orchestration control plane
-# Probe: marvel-mvp-probe | Confidence: frontier
 
 default:
     @just --list
@@ -82,6 +81,28 @@ scale team role replicas: build
 # Initiate a shift: just shift demo/squad
 shift team: build
     ./bin/marvel shift {{team}}
+
+# Watch sessions (interactive, sortable)
+watch: build
+    ./bin/marvel get sessions -w
+
+# Demo shift lifecycle: load manifest, wait, shift, watch
+demo-shift: build
+    @echo "==> Loading shift-demo manifest..."
+    ./bin/marvel work examples/shift-demo.toml
+    @sleep 3
+    @echo ""
+    @echo "==> Sessions before shift:"
+    ./bin/marvel get sessions
+    @echo ""
+    @echo "==> Initiating shift..."
+    ./bin/marvel shift shift-demo/squad
+    @sleep 5
+    @echo ""
+    @echo "==> Sessions after shift:"
+    ./bin/marvel get sessions
+    @echo ""
+    @echo "Shift complete. Use 'just watch' to monitor or 'just stop' to tear down."
 
 # Clean up everything (kill all marvel tmux sessions)
 clean:
