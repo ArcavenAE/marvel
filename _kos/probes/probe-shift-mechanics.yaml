@@ -1,0 +1,24 @@
+id: probe-shift-mechanics
+title: "Probe: Shift Mechanics — Rolling Session Replacement"
+question: question-shifts
+hypothesis: |
+  Shifts can be implemented as a state machine (launching → draining)
+  driven by the existing reconciliation loop. Generation tracking on
+  Team and Session distinguishes old from new. Rolling drain (one
+  session per tick) provides gradual replacement. Supervisor shifts
+  last to maintain coordination continuity.
+timebox: "1 session"
+success_signal: |
+  - Full shift lifecycle: gen-1 sessions replaced by gen-2
+  - Multi-role shift: workers first, supervisor last
+  - Single-role shift: non-shifting roles untouched
+  - Duplicate shift rejected
+  - Session naming includes generation (g1, g2)
+  - Scale during shift returns error
+  - All existing tests still pass
+status: complete
+probe_medium: code
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"

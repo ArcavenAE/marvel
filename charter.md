@@ -6,7 +6,7 @@ AI agent workloads. Written in Go.
 Follows the kos process. Authoritative graph: `_kos/nodes/`.
 Cross-repo questions belong in the orchestrator's charter.
 
-Last updated: 2026-03-31 (session-009: heterogeneous team model)
+Last updated: 2026-03-31 (session-009: heterogeneous teams + shift mechanics)
 
 ---
 
@@ -42,6 +42,15 @@ specifying a role. Group is a collection of teams (placeholder, future work).
 Evidence: probe-org-model-heterogeneous-teams, finding-001. 18 files changed,
 TestReconcileMultipleRoles validates independent per-role scaling.
 
+### B6: Shift Mechanics
+Shifts are rolling replacements of agent sessions driven by the reconciliation
+loop. State machine: launching (create new-gen) → draining (remove old-gen one
+per tick) → complete. Generation tracking on Team and Session. Roles shift
+sequentially, supervisor last. Manual trigger: `marvel shift <team>`.
+Session naming includes generation: teamname-rolename-gN-idx.
+Evidence: probe-shift-mechanics, finding-002. 11 files changed, 631 insertions.
+TestShiftFullLifecycle, TestShiftMultipleRoles, TestShiftSingleRole validate.
+
 ---
 
 ## Frontier
@@ -69,13 +78,16 @@ Host resource type exists for future multi-host scheduling. How does marvel
 discover remote hosts? Is switchboard sufficient as the transport?
 Cross-ref: orchestrator F7.
 
-### F6: Shift Mechanics
-Rolling replacement of agents within a team. Structurally unblocked by B5
-(heterogeneous roles). Supervisor handoff is the hardest case. Triggers:
-scheduled, context pressure, manual, config changes, detected failures,
-login failures, service updates, memory pressure. Questions: shift lifecycle,
-preflight checks, handover protocol, rolling vs blue-green strategy.
-Cross-ref: orchestrator F9, question-shifts node.
+### F6: Shift Mechanics — RESOLVED → B6
+Resolved by probe-shift-mechanics. Manual shifts work. State machine driven
+by reconciliation loop. Roles shift sequentially, supervisor last.
+See B6 and finding-002.
+
+### F7: Automatic Shift Triggers
+Manual shifts work (B6). Automatic triggers are the next question: scheduled,
+context pressure, failure detection, login failures, service updates, memory
+pressure. Which are team-level vs role-level? How does failure detection work
+with current heartbeat data? See question-shift-triggers node.
 
 ---
 

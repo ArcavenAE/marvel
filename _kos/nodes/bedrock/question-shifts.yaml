@@ -1,0 +1,24 @@
+id: question-shifts
+type: question
+confidence: bedrock
+title: "Shift Mechanics — Rolling Session Replacement"
+content: |
+  Resolved: shifts are a state machine (launching → draining → complete)
+  driven by the reconciliation loop. Generation tracking on Team and
+  Session distinguishes old from new. Rolling drain removes one old-gen
+  session per reconcile tick. Roles shift sequentially, supervisor last.
+
+  Manual trigger implemented (marvel shift <team>). Automatic triggers
+  (scheduled, context pressure, failure detection) are future work.
+
+  See finding-002-shift-mechanics for full evidence.
+edges:
+  - target: question-org-model
+    type: depends
+    note: "Shifts operate on the heterogeneous team model"
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"
+  promoted_at: "2026-03-31"
+  promoted_by: session-009

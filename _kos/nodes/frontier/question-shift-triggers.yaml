@@ -1,0 +1,35 @@
+id: question-shift-triggers
+type: question
+confidence: frontier
+title: "Automatic Shift Triggers"
+content: |
+  Manual shifts work (bedrock). This question asks: what triggers
+  shifts automatically?
+
+  Known triggers from user input:
+  - Scheduled ("shift change every 6 hours")
+  - Context pressure (sessions exceed threshold)
+  - Config changes (agent definitions need re-read)
+  - Detected failures (repeated heartbeat misses, errors)
+  - Login failures with Claude/LLM services
+  - Service updates (Claude Code updates, API changes, new model)
+  - Memory pressure (Claude Code reporting memory balloons)
+  - Unexpected behavior by existing agents
+
+  Questions:
+  - Which triggers should be team-level vs role-level?
+  - How does context pressure aggregate? (any session? average? all?)
+  - What failure detection is feasible with current heartbeat data?
+  - How does marvel detect Claude Code updates or API changes?
+  - Is Schedule resource type the right abstraction for timed shifts?
+edges:
+  - target: question-shifts
+    type: depends
+    note: "Triggers build on the manual shift mechanism"
+  - target: question-healthchecks
+    type: relates
+    note: "Failure detection overlaps with healthcheck design"
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"

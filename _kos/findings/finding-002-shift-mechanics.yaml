@@ -1,0 +1,64 @@
+id: finding-002-shift-mechanics
+title: "Shift mechanics validated — state machine driven by reconciliation loop"
+probe: probe-shift-mechanics
+question: question-shifts
+confidence: bedrock
+content: |
+  The shift state machine works. Key findings:
+
+  1. Reconciliation-driven shifts are clean. The 2-second reconcile loop
+     drives the state machine without special timers or goroutines. Each
+     tick advances the shift: launch new-gen sessions, then drain old-gen
+     one per tick. Simple, observable, testable.
+
+  2. Generation tracking is the right abstraction. Team.Generation increments
+     on shift, Session.Generation is set at creation. ListSessionsByTeamRoleGeneration
+     enables precise scoping. Normal reconciliation uses ListSessionsByTeamRole
+     (all generations) so non-shifting roles aren't disrupted.
+
+  3. Rolling drain (one session per tick) provides gradual replacement.
+     With a 2-second reconcile interval, a team of 5 agents drains in
+     ~10 seconds. This is fast enough for manual shifts, adjustable for
+     scheduled ones.
+
+  4. Supervisor-last ordering works. shiftOrder() sorts roles with
+     "supervisor" at the end. Workers get fresh sessions first, then
+     the supervisor shifts last with new workers already running.
+
+  5. Single-role shifts preserve non-shifting roles. The key insight:
+     reconcileRole uses ListSessionsByTeamRole (all gens) not
+     ListSessionsByTeamRoleGeneration. This means when team generation
+     advances but only one role shifts, other roles' existing sessions
+     aren't touched.
+
+  6. Scale-during-shift guard prevents confusion. The daemon rejects
+     scale requests while a shift is in progress.
+
+  7. Session naming with generation (teamname-rolename-gN-idx) makes
+     shift state visible in tmux, CLI output, and logs. The GEN column
+     in `marvel get sessions` shows shift progress in real time.
+
+  Open questions resolved:
+  - Shift lifecycle: launching → draining → complete (per role, sequential)
+  - Shift as team capability: confirmed — ShiftState lives on Team
+  - Rolling strategy: one old-gen session per reconcile tick
+
+  Open questions remaining:
+  - Automatic triggers (scheduled, context pressure, failure detection)
+  - Supervisor handoff protocol (state transfer between old/new)
+  - Readychecks/preflight beyond "tmux pane running"
+  - Shift timeout/abort mechanism
+  - Memory pressure detection
+
+  Commits: a762e35 (shift implementation)
+evidence:
+  - "TestShiftFullLifecycle: gen-1 replaced by gen-2, shift completes"
+  - "TestShiftMultipleRoles: workers shift first, supervisor last"
+  - "TestShiftSingleRole: supervisor stays gen-1 when only workers shift"
+  - "TestShiftAlreadyInProgress: duplicate shift rejected"
+  - "TestShiftSessionNaming: g1/g2 in session names"
+  - "11 files changed, 631 insertions, 102 deletions"
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"
