@@ -1,0 +1,22 @@
+id: probe-healthchecks
+title: "Probe: Healthchecks — Heartbeat Staleness + Restart Policy"
+question: question-healthchecks
+hypothesis: |
+  Heartbeat staleness detection in the reconciliation loop, combined
+  with restart policies on roles, provides the minimum viable health
+  system. Sessions without healthcheck config are exempt. The health
+  signal taxonomy maps what we know and don't know about richer signals.
+timebox: "1 session"
+success_signal: |
+  - Stale heartbeat → unhealthy after threshold failures
+  - RestartAlways: deleted and recreated
+  - RestartNever: marked failed, not restarted
+  - No-config sessions stay unknown
+  - Shift preflight waits for first heartbeat
+  - All existing tests still pass
+status: complete
+probe_medium: code
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"

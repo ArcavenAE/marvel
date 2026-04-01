@@ -6,7 +6,7 @@ AI agent workloads. Written in Go.
 Follows the kos process. Authoritative graph: `_kos/nodes/`.
 Cross-repo questions belong in the orchestrator's charter.
 
-Last updated: 2026-03-31 (session-009: heterogeneous teams + shift mechanics)
+Last updated: 2026-03-31 (session-009: heterogeneous teams, shifts, healthchecks)
 
 ---
 
@@ -51,6 +51,15 @@ Session naming includes generation: teamname-rolename-gN-idx.
 Evidence: probe-shift-mechanics, finding-002. 11 files changed, 631 insertions.
 TestShiftFullLifecycle, TestShiftMultipleRoles, TestShiftSingleRole validate.
 
+### B7: Healthchecks
+Health evaluation in the reconciliation loop. Heartbeat staleness detection
+with configurable timeout and failure threshold. Restart policies (always,
+on-failure, never) on roles. Opt-in: sessions without healthcheck config
+stay unknown and are never failed. Shift preflight checks first heartbeat.
+Health signal taxonomy maps the full BYOA spectrum (OS, tmux, heartbeat,
+agent SDK) — implementation is deliberately thin, taxonomy is broad.
+Evidence: probe-healthchecks, finding-003. 8 files changed, 545 insertions.
+
 ---
 
 ## Frontier
@@ -69,9 +78,10 @@ pack.yaml manifest sketched. How do packs resolve? How do they route artifacts
 to the right runtime? 4-scope chain (repo → shared → user → system).
 Cross-ref: orchestrator F6.
 
-### F4: Healthchecks and Readychecks
-Designed in resource model (process-alive, prompt-response) but not implemented
-beyond basic process detection.
+### F4: Healthchecks — RESOLVED → B7
+Resolved by probe-healthchecks. Heartbeat staleness + restart policy.
+Opt-in healthcheck config on roles. See B7 and finding-003.
+Prompt-response and richer agent signals are future work.
 
 ### F5: Multi-Host via Switchboard
 Host resource type exists for future multi-host scheduling. How does marvel

@@ -1,0 +1,61 @@
+id: finding-003-healthchecks
+title: "Healthchecks validated — heartbeat staleness + restart policy"
+probe: probe-healthchecks
+question: question-healthchecks
+confidence: bedrock
+content: |
+  The health evaluation pattern works. Key findings:
+
+  1. Reconciliation-loop health evaluation is the right approach. No
+     separate goroutine needed. evaluateHealth runs between ReapDead
+     and team reconciliation, same 2-second cadence. Simple and
+     race-free with the reconciler.
+
+  2. Opt-in healthchecks are correct. Sessions without a healthcheck
+     config stay unknown and are never failed by health evaluation.
+     This means test commands (sleep, bare scripts) work without
+     sending heartbeats. Only agents whose role configures a
+     healthcheck get evaluated.
+
+  3. Restart-as-deletion is elegant. Deleting an unhealthy session
+     causes the reconciler to recreate it because actual < desired.
+     No special restart logic needed — the existing reconcile pattern
+     handles it. RestartCount tracks cumulative restarts.
+
+  4. Shift preflight readiness works. allReady checks that heartbeat-
+     configured sessions have received at least one heartbeat before
+     transitioning from launching to draining. Shifts with no
+     healthcheck configured proceed as before (pane existence).
+
+  5. The health signal taxonomy (kos/ideas/) maps the full spectrum:
+     OS signals, tmux signals, heartbeat, file system, and what
+     aclaude could expose via Agent SDK hooks. The implementation is
+     deliberately thin — heartbeat staleness only. The taxonomy
+     documents what we know, what we don't know, and what we don't
+     know we don't know.
+
+  6. Sidecar health file convention is documented as a starting point,
+     not a design choice. /tmp/marvel-sessions/<session-id>/health.json
+     is the simplest cross-language mechanism. Whether it becomes the
+     real mechanism depends on what we learn running agents under
+     health evaluation.
+
+  Open questions remaining:
+  - What does "healthy" mean for an LLM agent? (process alive ≠ productive)
+  - What richer signals should aclaude expose via hooks/SDK?
+  - How should marvel detect stuck agents (long tool execution, infinite loops)?
+  - Prompt-response healthcheck implementation
+  - Sidecar file vs FIFO vs socket for structured health data
+
+  Commits: 2074f94 (healthcheck implementation)
+evidence:
+  - "TestHealthEvalHeartbeatHealthy: fresh heartbeat → healthy"
+  - "TestHealthEvalHeartbeatStale: stale heartbeat → unhealthy → failed (never)"
+  - "TestHealthEvalNoConfig: no healthcheck → stays unknown"
+  - "TestHealthRestartAlways: unhealthy → delete → reconciler recreates"
+  - "TestParseManifestWithHealthcheck: TOML healthcheck config round-trips"
+  - "8 files changed, 545 insertions"
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"

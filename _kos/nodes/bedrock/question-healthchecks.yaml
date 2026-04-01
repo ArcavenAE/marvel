@@ -1,0 +1,23 @@
+id: question-healthchecks
+type: question
+confidence: bedrock
+title: "Healthchecks — Heartbeat Staleness + Restart Policy"
+content: |
+  Resolved: health evaluation runs in the reconciliation loop.
+  Heartbeat staleness detection with configurable timeout and failure
+  threshold. Restart policies (always, on-failure, never) on roles.
+  Sessions without healthcheck config stay unknown (opt-in).
+  Shift preflight checks first heartbeat received.
+
+  Prompt-response and richer agent signals are future work.
+  See finding-003-healthchecks and _kos/ideas/health-signal-taxonomy.md.
+edges:
+  - target: aae-orc::question-marvel-beyond-mvp
+    type: derives
+    note: "Cross-repo projection from orchestrator F5"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"
+  promoted_at: "2026-03-31"
+  promoted_by: session-009
