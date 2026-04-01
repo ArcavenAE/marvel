@@ -75,9 +75,9 @@ status: build
     @echo "==> Sessions:"
     @./bin/marvel get sessions
 
-# Scale a team: just scale demo/agents 5
-scale team replicas: build
-    ./bin/marvel scale {{team}} --replicas {{replicas}}
+# Scale a team role: just scale demo/squad worker 5
+scale team role replicas: build
+    ./bin/marvel scale {{team}} --role {{role}} --replicas {{replicas}}
 
 # Clean up everything (kill all marvel tmux sessions)
 clean:

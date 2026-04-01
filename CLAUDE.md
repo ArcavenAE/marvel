@@ -23,7 +23,7 @@ just fmt            # gofumpt formatting
 ## Resource Model
 
 Marvel's resource model maps kubernetes concepts to agent orchestration.
-Resources are declared in TOML manifests, applied via `marvel apply`.
+Resources are declared in TOML manifests, loaded via `marvel work`.
 
 ### Primitives
 
@@ -46,11 +46,18 @@ Container           Runtime                 The BYOA console binary. aclaude,
                                             Runtime images are just paths to
                                             executables + their config.
 
-Deployment          Team                    Desired state: "run N sessions of
-                                            this runtime with this config."
-                                            Handles scaling, rolling updates,
-                                            shift changes. A team of 3 reviewers
-                                            is a Team with replicas: 3.
+Deployment          Team                    A cohesive unit of agents with
+                                            heterogeneous roles. Each role has
+                                            its own runtime and replica count.
+                                            A team binds a supervisor to its
+                                            agents. Handles per-role scaling,
+                                            rolling updates, shift changes.
+
+(none)              Role                    One kind of agent within a team.
+                                            Has a name, replica count, and
+                                            runtime. "supervisor" (replicas: 1)
+                                            and "worker" (replicas: 5) are
+                                            roles within the same team.
 
 Service             Endpoint                A stable name for an agent capability.
                                             "the-reviewer" resolves to whichever
@@ -115,42 +122,31 @@ Node                Host                    A machine running marvel. Local host
 ### Resource Manifests (TOML)
 
 ```toml
-# example: a team of 3 reviewer agents
+# example: a review team with supervisor + reviewers
 
 [workspace]
 name = "acme-project"
 
 [[team]]
-name = "reviewers"
-replicas = 3
+name = "review-squad"
 
-  [team.runtime]
-  image = "aclaude"                # or path: "/usr/local/bin/aclaude"
-  args = ["--persona", "dune/reviewer"]
+  [[team.role]]
+  name = "supervisor"
+  replicas = 1
 
-  [team.readycheck]
-  type = "prompt-response"         # agent responds to a ping
-  interval = "30s"
-  timeout = "10s"
+    [team.role.runtime]
+    image = "aclaude"
+    args = ["--persona", "dune/supervisor"]
 
-  [team.healthcheck]
-  type = "process-alive"           # tmux pane has a running process
-  interval = "15s"
+  [[team.role]]
+  name = "reviewer"
+  replicas = 3
 
-  [[team.pack]]
-  name = "spectacle"
-  scope = "user"
+    [team.role.runtime]
+    image = "aclaude"
+    args = ["--persona", "dune/reviewer"]
 
-  [[team.volume]]
-  name = "code"
-  type = "worktree"
-  repo = "."
-  branch = "review/{{.session.id}}"  # each reviewer gets its own branch
-
-  [[team.volume]]
-  name = "artifacts"
-  type = "shared"
-  path = ".marvel/artifacts/reviewers/"
+# future: readychecks, healthchecks, packs, volumes per role
 ```
 
 ## Architecture
@@ -287,19 +283,18 @@ Pack operations:
 ## CLI
 
 ```sh
-marvel apply <manifest.toml>      # apply desired state
-marvel get sessions                # list sessions
-marvel get teams                   # list teams
-marvel get packs                   # list installed packs
-marvel describe session <id>      # detailed session info
-marvel logs <session-id>           # stream session output
-marvel attach <session-id>         # attach to tmux pane
-marvel exec <session-id> <prompt>  # send a prompt to a running session
-marvel scale <team> --replicas N   # scale a team
-marvel restart <session-id>        # restart a session
-marvel drain <host>                # gracefully move sessions off a host
-marvel top                         # resource usage across cluster
-marvel pack install ...            # pack management (see above)
+marvel work <manifest.toml>                          # load manifest, reconcile desired state
+marvel get sessions                                  # list sessions (add -w for watch mode)
+marvel get teams                                     # list teams and roles
+marvel get workspaces                                # list workspaces
+marvel describe session <id>                         # detailed session info
+marvel scale <workspace/team> --role <r> --replicas N  # scale a role within a team
+marvel run <command> [args...] --role <r>             # run a one-off agent session
+marvel kill <session-key>                            # kill a session
+marvel stop                                          # stop daemon, clean up all resources
+marvel daemon                                        # start the daemon (foreground)
+
+# future: logs, attach, exec, drain, top, pack management
 ```
 
 ## Conventions
