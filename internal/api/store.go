@@ -129,6 +129,18 @@ func (s *Store) ListSessionsByTeamRole(workspace, team, role string) []*Session 
 	return result
 }
 
+func (s *Store) ListSessionsByTeamRoleGeneration(workspace, team, role string, generation int64) []*Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*Session
+	for _, sess := range s.sessions {
+		if sess.Workspace == workspace && sess.Team == team && sess.Role == role && sess.Generation == generation {
+			result = append(result, sess)
+		}
+	}
+	return result
+}
+
 func (s *Store) DeleteSession(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

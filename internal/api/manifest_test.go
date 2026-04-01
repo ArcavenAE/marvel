@@ -190,6 +190,9 @@ func TestManifestApply(t *testing.T) {
 	if squad.Roles[0].Replicas != 3 {
 		t.Fatalf("expected 3 replicas for worker, got %d", squad.Roles[0].Replicas)
 	}
+	if squad.Generation != 1 {
+		t.Fatalf("expected generation 1 for new team, got %d", squad.Generation)
+	}
 
 	// Endpoint created
 	eps := store.ListEndpoints()

@@ -1,11 +1,13 @@
 // Package team implements the team controller — a reconciliation loop
-// that maintains desired replica count for each role within each team.
+// that maintains desired replica count for each role within each team,
+// and orchestrates shift operations (rolling session replacement).
 package team
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -41,27 +43,35 @@ func (c *Controller) ReconcileOnce() {
 }
 
 func (c *Controller) reconcileTeam(t *api.Team) {
+	if t.Shift.Phase != api.ShiftNone {
+		c.reconcileShift(t)
+		return
+	}
 	for i := range t.Roles {
 		c.reconcileRole(t, &t.Roles[i])
 	}
 }
 
 func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
+	// Normal reconciliation uses all generations — generation scoping is only
+	// for shift logic (shiftLaunch/shiftDrain). This ensures non-shifting roles
+	// aren't disrupted when only one role shifts and the team generation advances.
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
 	desired := role.Replicas
 	actual := len(current)
 
 	if actual < desired {
 		for i := actual; i < desired; i++ {
-			name := fmt.Sprintf("%s-%s-%d", t.Name, role.Name, c.nextIndex(t, role))
+			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
 			rt := role.Runtime
 			rt.Args = c.injectIdentity(rt.Args, name, t, role, rt.Script)
 			sess := &api.Session{
-				Name:      name,
-				Workspace: t.Workspace,
-				Team:      t.Name,
-				Role:      role.Name,
-				Runtime:   rt,
+				Name:       name,
+				Workspace:  t.Workspace,
+				Team:       t.Name,
+				Role:       role.Name,
+				Generation: t.Generation,
+				Runtime:    rt,
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				log.Printf("reconcile: create session %s: %v", name, err)
@@ -78,10 +88,168 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 	}
 }
 
-// nextIndex finds the next available index for a role's sessions.
-func (c *Controller) nextIndex(t *api.Team, role *api.Role) int {
-	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
-	prefix := fmt.Sprintf("%s-%s-", t.Name, role.Name)
+// InitiateShift starts a shift operation for a team.
+// If role is empty, all roles shift (supervisor last). If role is specified, only that role shifts.
+func (c *Controller) InitiateShift(teamKey, role string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	t, err := c.store.GetTeam(teamKey)
+	if err != nil {
+		return fmt.Errorf("get team %s: %w", teamKey, err)
+	}
+
+	if t.Shift.Phase != api.ShiftNone {
+		return fmt.Errorf("team %s: shift already in progress (phase: %s)", teamKey, t.Shift.Phase)
+	}
+
+	// Build role list in shift order (supervisor last).
+	var roles []string
+	if role != "" {
+		found := false
+		for _, r := range t.Roles {
+			if r.Name == role {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("team %s: role %s not found", teamKey, role)
+		}
+		roles = []string{role}
+	} else {
+		roles = shiftOrder(t.Roles)
+	}
+
+	oldGen := t.Generation
+	t.Generation++
+	t.Shift = api.ShiftState{
+		Phase:         api.ShiftLaunching,
+		OldGeneration: oldGen,
+		RoleIndex:     0,
+		Roles:         roles,
+		StartedAt:     time.Now().UTC(),
+	}
+
+	log.Printf("shift: initiated for %s gen %d→%d roles=%v", teamKey, oldGen, t.Generation, roles)
+	return nil
+}
+
+// shiftOrder returns role names sorted with "supervisor" last.
+func shiftOrder(roles []api.Role) []string {
+	names := make([]string, 0, len(roles))
+	for _, r := range roles {
+		names = append(names, r.Name)
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		if names[i] == "supervisor" {
+			return false
+		}
+		if names[j] == "supervisor" {
+			return true
+		}
+		return false // preserve original order for non-supervisors
+	})
+	return names
+}
+
+func (c *Controller) reconcileShift(t *api.Team) {
+	if t.Shift.RoleIndex >= len(t.Shift.Roles) {
+		// All roles shifted — complete.
+		log.Printf("shift: complete for %s/%s", t.Workspace, t.Name)
+		t.Shift = api.ShiftState{}
+		return
+	}
+
+	shiftingRoleName := t.Shift.Roles[t.Shift.RoleIndex]
+
+	// Reconcile non-shifting roles normally with current generation.
+	for i := range t.Roles {
+		if t.Roles[i].Name != shiftingRoleName {
+			c.reconcileRole(t, &t.Roles[i])
+		}
+	}
+
+	// Find the role being shifted.
+	var role *api.Role
+	for i := range t.Roles {
+		if t.Roles[i].Name == shiftingRoleName {
+			role = &t.Roles[i]
+			break
+		}
+	}
+	if role == nil {
+		log.Printf("shift: role %s not found in team %s, skipping", shiftingRoleName, t.Key())
+		t.Shift.RoleIndex++
+		return
+	}
+
+	switch t.Shift.Phase {
+	case api.ShiftLaunching:
+		c.shiftLaunch(t, role)
+	case api.ShiftDraining:
+		c.shiftDrain(t, role)
+	}
+}
+
+func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
+	newGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
+	desired := role.Replicas
+
+	if len(newGen) < desired {
+		// Create remaining new-gen sessions.
+		for i := len(newGen); i < desired; i++ {
+			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
+			rt := role.Runtime
+			rt.Args = c.injectIdentity(rt.Args, name, t, role, rt.Script)
+			sess := &api.Session{
+				Name:       name,
+				Workspace:  t.Workspace,
+				Team:       t.Name,
+				Role:       role.Name,
+				Generation: t.Generation,
+				Runtime:    rt,
+			}
+			if err := c.sessMgr.Create(sess); err != nil {
+				log.Printf("shift: create session %s: %v", name, err)
+				return
+			}
+		}
+	}
+
+	// All new-gen sessions created — transition to draining.
+	newGen = c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
+	if len(newGen) >= desired {
+		log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
+			t.Workspace, t.Name, role.Name, len(newGen), t.Shift.OldGeneration)
+		t.Shift.Phase = api.ShiftDraining
+	}
+}
+
+func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
+	oldGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Shift.OldGeneration)
+
+	if len(oldGen) == 0 {
+		// All old-gen drained for this role — advance to next role.
+		log.Printf("shift: %s/%s role %s — old gen drained", t.Workspace, t.Name, role.Name)
+		t.Shift.RoleIndex++
+		if t.Shift.RoleIndex < len(t.Shift.Roles) {
+			t.Shift.Phase = api.ShiftLaunching
+		}
+		return
+	}
+
+	// Rolling drain: delete one old-gen session per reconcile tick.
+	sess := oldGen[0]
+	if err := c.sessMgr.Delete(sess.Key()); err != nil {
+		log.Printf("shift: drain session %s: %v", sess.Key(), err)
+	}
+}
+
+// nextIndex finds the next available index for a role's sessions within a generation.
+func (c *Controller) nextIndex(t *api.Team, role *api.Role, generation int64) int {
+	current := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, generation)
+	prefix := fmt.Sprintf("%s-%s-g%d-", t.Name, role.Name, generation)
 	max := -1
 	for _, s := range current {
 		var idx int
@@ -133,4 +301,15 @@ func (c *Controller) Run(ctx context.Context, interval time.Duration) {
 			c.ReconcileOnce()
 		}
 	}
+}
+
+// IsShifting returns true if the team is currently shifting.
+func (c *Controller) IsShifting(teamKey string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t, err := c.store.GetTeam(teamKey)
+	if err != nil {
+		return false
+	}
+	return t.Shift.Phase != api.ShiftNone
 }

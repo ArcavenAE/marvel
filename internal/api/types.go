@@ -37,6 +37,7 @@ type Session struct {
 	Workspace      string       `toml:"workspace"`
 	Team           string       `toml:"team"`
 	Role           string       `toml:"role"`
+	Generation     int64        `toml:"-"`
 	Runtime        Runtime      `toml:"runtime"`
 	State          SessionState `toml:"-"`
 	PaneID         string       `toml:"-"`
@@ -53,12 +54,32 @@ type Role struct {
 	Runtime  Runtime `toml:"runtime"`
 }
 
+// ShiftPhase represents the current phase of a shift operation.
+type ShiftPhase string
+
+const (
+	ShiftNone      ShiftPhase = ""
+	ShiftLaunching ShiftPhase = "launching"
+	ShiftDraining  ShiftPhase = "draining"
+)
+
+// ShiftState tracks an in-progress shift operation on a team.
+type ShiftState struct {
+	Phase         ShiftPhase
+	OldGeneration int64
+	RoleIndex     int      // index into Roles (shift order)
+	Roles         []string // role names in shift order (supervisor last)
+	StartedAt     time.Time
+}
+
 // Team declares desired state: a cohesive unit of agents with heterogeneous roles.
 type Team struct {
-	Name      string    `toml:"name"`
-	Workspace string    `toml:"workspace"`
-	Roles     []Role    `toml:"role"`
-	CreatedAt time.Time
+	Name       string     `toml:"name"`
+	Workspace  string     `toml:"workspace"`
+	Roles      []Role     `toml:"role"`
+	Generation int64      `toml:"-"`
+	Shift      ShiftState `toml:"-"`
+	CreatedAt  time.Time
 }
 
 // Endpoint is a stable name for a session role (service equivalent).

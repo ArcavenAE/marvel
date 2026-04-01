@@ -217,3 +217,34 @@ func TestListSessionsByTeamRole(t *testing.T) {
 		t.Fatalf("expected 3 squad sessions, got %d", len(all))
 	}
 }
+
+func TestListSessionsByTeamRoleGeneration(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+
+	for _, sess := range []*Session{
+		{Name: "s-g1-0", Workspace: "ws", Team: "squad", Role: "worker", Generation: 1, Runtime: Runtime{Command: "bash"}},
+		{Name: "s-g1-1", Workspace: "ws", Team: "squad", Role: "worker", Generation: 1, Runtime: Runtime{Command: "bash"}},
+		{Name: "s-g2-0", Workspace: "ws", Team: "squad", Role: "worker", Generation: 2, Runtime: Runtime{Command: "bash"}},
+	} {
+		if err := s.CreateSession(sess); err != nil {
+			t.Fatalf("create session %s: %v", sess.Name, err)
+		}
+	}
+
+	gen1 := s.ListSessionsByTeamRoleGeneration("ws", "squad", "worker", 1)
+	if len(gen1) != 2 {
+		t.Fatalf("expected 2 gen-1 workers, got %d", len(gen1))
+	}
+
+	gen2 := s.ListSessionsByTeamRoleGeneration("ws", "squad", "worker", 2)
+	if len(gen2) != 1 {
+		t.Fatalf("expected 1 gen-2 worker, got %d", len(gen2))
+	}
+
+	// All generations via role query
+	all := s.ListSessionsByTeamRole("ws", "squad", "worker")
+	if len(all) != 3 {
+		t.Fatalf("expected 3 total workers, got %d", len(all))
+	}
+}

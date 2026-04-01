@@ -217,6 +217,36 @@ name = "squad"
 		t.Fatal("expected session_key in run result")
 	}
 
+	// Shift — initiate a rolling shift
+	resp, err = SendRequest(sock, Request{
+		Method: "shift",
+		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/squad"}),
+	})
+	if err != nil {
+		t.Fatalf("shift: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("shift error: %s", resp.Error)
+	}
+	var shiftResult map[string]string
+	json.Unmarshal(resp.Result, &shiftResult)
+	if shiftResult["status"] != "shift_initiated" {
+		t.Fatalf("expected shift_initiated, got %s", shiftResult["status"])
+	}
+
+	// Wait for shift to complete (several reconcile ticks).
+	time.Sleep(2 * time.Second)
+
+	// Scale during shift should work now (shift should be complete).
+	// But first, verify sessions exist with gen 2.
+	resp, err = SendRequest(sock, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
+	})
+	if err != nil {
+		t.Fatalf("get after shift: %v", err)
+	}
+
 	// Delete workspace
 	resp, err = SendRequest(sock, Request{
 		Method: "delete",

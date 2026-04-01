@@ -37,6 +37,7 @@ func main() {
 	root.AddCommand(scaleCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(killCmd())
+	root.AddCommand(shiftCmd())
 	root.AddCommand(stopCmd())
 
 	if err := root.Execute(); err != nil {
@@ -314,6 +315,39 @@ func killCmd() *cobra.Command {
 	}
 }
 
+func shiftCmd() *cobra.Command {
+	var role string
+	cmd := &cobra.Command{
+		Use:   "shift <workspace/team>",
+		Short: "Initiate a rolling shift for a team",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]any{
+				"team_key": args[0],
+				"role":     role,
+			})
+			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+				Method: "shift",
+				Params: params,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			if role != "" {
+				fmt.Printf("shift initiated for team/%s role/%s\n", args[0], role)
+			} else {
+				fmt.Printf("shift initiated for team/%s (all roles)\n", args[0])
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&role, "role", "", "shift only this role (default: all roles)")
+	return cmd
+}
+
 func stopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
@@ -361,6 +395,8 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 			less = sessions[i].Team < sessions[j].Team
 		case "role":
 			less = sessions[i].Role < sessions[j].Role
+		case "generation":
+			less = sessions[i].Generation < sessions[j].Generation
 		case "workspace":
 			less = sessions[i].Workspace < sessions[j].Workspace
 		case "state":
@@ -408,7 +444,7 @@ func fetchSessions() ([]api.Session, error) {
 func renderSessionTable(sessions []api.Session) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tNAME\tSTATE\tCONTEXT%%\tDESK\tAGENT\n")
+	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tCONTEXT%%\tDESK\tAGENT\n")
 	for _, s := range sessions {
 		agent := s.Runtime.Name
 		if agent == "" {
@@ -422,8 +458,9 @@ func renderSessionTable(sessions []api.Session) string {
 		if strings.HasPrefix(desk, "%") {
 			desk = desk[1:]
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Role, s.Name, s.State, ctx, desk, agent)
+		gen := fmt.Sprintf("%d", s.Generation)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, ctx, desk, agent)
 	}
 	w.Flush()
 	return buf.String()
@@ -449,8 +486,8 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  Sort keys (toggle asc/desc):\n")
 		fmt.Fprintf(&buf, "    w  workspace      t  team          r  role\n")
-		fmt.Fprintf(&buf, "    n  name           s  state         c  context\n")
-		fmt.Fprintf(&buf, "    d  desk           a  agent\n")
+		fmt.Fprintf(&buf, "    g  generation     n  name          s  state\n")
+		fmt.Fprintf(&buf, "    c  context        d  desk          a  agent\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    h  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
@@ -532,6 +569,8 @@ func watchSessionsLoop(interval time.Duration) error {
 				toggleSort(ws, "name", false)
 			case 'r':
 				toggleSort(ws, "role", false)
+			case 'g':
+				toggleSort(ws, "generation", false)
 			case 't':
 				toggleSort(ws, "team", false)
 			case 'w':

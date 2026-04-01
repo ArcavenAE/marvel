@@ -163,6 +163,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleHeartbeat(req.Params)
 	case "run":
 		return d.handleRun(req.Params)
+	case "shift":
+		return d.handleShift(req.Params)
 	case "stop":
 		return d.handleStop()
 	default:
@@ -331,6 +333,10 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
+	if t.Shift.Phase != "" {
+		return Response{Error: fmt.Sprintf("team %s: shift in progress, cannot scale", p.TeamKey)}
+	}
+
 	if p.Role == "" {
 		var names []string
 		for _, r := range t.Roles {
@@ -434,6 +440,32 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]string{
 		"status":      "created",
 		"session_key": sess.Key(),
+	})
+	return Response{Result: result}
+}
+
+// Shift params
+type shiftParams struct {
+	TeamKey string `json:"team_key"`
+	Role    string `json:"role,omitempty"`
+}
+
+func (d *Daemon) handleShift(params json.RawMessage) Response {
+	var p shiftParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+
+	if err := d.teamCtrl.InitiateShift(p.TeamKey, p.Role); err != nil {
+		return Response{Error: fmt.Sprintf("initiate shift: %v", err)}
+	}
+
+	// Trigger immediate reconciliation to start the shift.
+	d.teamCtrl.ReconcileOnce()
+
+	result, _ := json.Marshal(map[string]string{
+		"status": "shift_initiated",
+		"team":   p.TeamKey,
 	})
 	return Response{Result: result}
 }

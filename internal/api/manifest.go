@@ -117,10 +117,11 @@ func (m *Manifest) Apply(store *Store) error {
 		}
 
 		team := &Team{
-			Name:      mt.Name,
-			Workspace: m.Workspace.Name,
-			Roles:     roles,
-			CreatedAt: now,
+			Name:       mt.Name,
+			Workspace:  m.Workspace.Name,
+			Roles:      roles,
+			Generation: 1,
+			CreatedAt:  now,
 		}
 		// Update roles if team already exists.
 		existing, err := store.GetTeam(team.Key())

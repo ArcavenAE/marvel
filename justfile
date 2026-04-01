@@ -79,6 +79,10 @@ status: build
 scale team role replicas: build
     ./bin/marvel scale {{team}} --role {{role}} --replicas {{replicas}}
 
+# Initiate a shift: just shift demo/squad
+shift team: build
+    ./bin/marvel shift {{team}}
+
 # Clean up everything (kill all marvel tmux sessions)
 clean:
     -tmux kill-session -t marvel-demo 2>/dev/null
