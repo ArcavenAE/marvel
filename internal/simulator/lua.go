@@ -14,15 +14,17 @@ type LuaEnv struct {
 	socketPath string
 	workspace  string
 	team       string
+	role       string
 }
 
 // NewLuaEnv creates a Lua environment with the marvel module registered.
-func NewLuaEnv(socketPath, workspace, team string) *LuaEnv {
+func NewLuaEnv(socketPath, workspace, team, role string) *LuaEnv {
 	env := &LuaEnv{
 		state:      lua.NewState(),
 		socketPath: socketPath,
 		workspace:  workspace,
 		team:       team,
+		role:       role,
 	}
 	env.registerModule()
 	return env
@@ -96,6 +98,7 @@ func (e *LuaEnv) luaCreateAgent(L *lua.LState) int {
 	result, err := e.sendRPC("run", map[string]any{
 		"workspace":       e.workspace,
 		"team":            e.team,
+		"role":            "adhoc",
 		"runtime_command": command,
 		"runtime_args":    args,
 	})
@@ -144,8 +147,9 @@ func (e *LuaEnv) luaListAgents(L *lua.LState) int {
 	tbl := L.NewTable()
 	for _, s := range sessions {
 		ws, _ := s["Workspace"].(string)
+		tm, _ := s["Team"].(string)
 		name, _ := s["Name"].(string)
-		if ws != "" && name != "" {
+		if ws == e.workspace && tm == e.team && name != "" {
 			tbl.Append(lua.LString(ws + "/" + name))
 		}
 	}
@@ -153,12 +157,14 @@ func (e *LuaEnv) luaListAgents(L *lua.LState) int {
 	return 1
 }
 
-// marvel.scale_team(team_key, replicas) -> ok, err
+// marvel.scale_team(team_key, role, replicas) -> ok, err
 func (e *LuaEnv) luaScaleTeam(L *lua.LState) int {
 	teamKey := L.CheckString(1)
-	replicas := L.CheckInt(2)
+	role := L.CheckString(2)
+	replicas := L.CheckInt(3)
 	_, err := e.sendRPC("scale", map[string]any{
 		"team_key": teamKey,
+		"role":     role,
 		"replicas": replicas,
 	})
 	if err != nil {

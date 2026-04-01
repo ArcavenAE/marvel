@@ -29,6 +29,7 @@ func main() {
 	tickMs := flag.Int("tick", 3000, "tick interval in milliseconds")
 	workspace := flag.String("workspace", "default", "workspace name")
 	team := flag.String("team", "default", "team name")
+	role := flag.String("role", "", "role name")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,7 +96,7 @@ func main() {
 	// Lua scripting.
 	var luaEnv *simulator.LuaEnv
 	if *scriptPath != "" {
-		luaEnv = simulator.NewLuaEnv(*socket, *workspace, *team)
+		luaEnv = simulator.NewLuaEnv(*socket, *workspace, *team, *role)
 		defer luaEnv.Close()
 
 		if err := luaEnv.LoadScript(*scriptPath); err != nil {
@@ -110,8 +111,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("[agent %s] starting | workspace=%s team=%s tick=%dms\n",
-		*name, *workspace, *team, *tickMs)
+	fmt.Printf("[agent %s] starting | workspace=%s team=%s role=%s tick=%dms\n",
+		*name, *workspace, *team, *role, *tickMs)
 
 	engine.Run(ctx, time.Duration(*tickMs)*time.Millisecond)
 }

@@ -7,26 +7,27 @@
 name = "demo2"
 
 [[team]]
-name = "hulk"
-replicas = 5
-role = "smash"
+name = "hulk-squad"
 
-  [team.runtime]
-  image = "simulator"
-  command = "bin/simulator"
-  args = ["--tick", "3000"]
+  [[team.role]]
+  name = "smash"
+  replicas = 5
 
-[[team]]
-name = "MrGreen"
-replicas = 1
-role = "supervisor"
+    [team.role.runtime]
+    image = "simulator"
+    command = "bin/simulator"
+    args = ["--tick", "3000"]
 
-  [team.runtime]
-  image = "simulator"
-  command = "bin/simulator"
-  args = ["--tick", "5000"]
-  script = "scripts/chaos.lua"
+  [[team.role]]
+  name = "supervisor"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "simulator"
+    command = "bin/simulator"
+    args = ["--tick", "5000"]
+    script = "scripts/chaos.lua"
 
 [[endpoint]]
 name = "hulk-svc"
-team = "hulk"
+team = "hulk-squad"

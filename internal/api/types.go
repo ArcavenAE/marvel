@@ -36,6 +36,7 @@ type Session struct {
 	Name           string       `toml:"name"`
 	Workspace      string       `toml:"workspace"`
 	Team           string       `toml:"team"`
+	Role           string       `toml:"role"`
 	Runtime        Runtime      `toml:"runtime"`
 	State          SessionState `toml:"-"`
 	PaneID         string       `toml:"-"`
@@ -45,13 +46,18 @@ type Session struct {
 	CreatedAt      time.Time    `toml:"-"`
 }
 
-// Team declares desired state: N sessions of a runtime (deployment equivalent).
+// Role declares desired state for one kind of agent within a team.
+type Role struct {
+	Name     string  `toml:"name"`
+	Replicas int     `toml:"replicas"`
+	Runtime  Runtime `toml:"runtime"`
+}
+
+// Team declares desired state: a cohesive unit of agents with heterogeneous roles.
 type Team struct {
 	Name      string    `toml:"name"`
 	Workspace string    `toml:"workspace"`
-	Replicas  int       `toml:"replicas"`
-	Runtime   Runtime   `toml:"runtime"`
-	Role      string    `toml:"role,omitempty"`
+	Roles     []Role    `toml:"role"`
 	CreatedAt time.Time
 }
 

@@ -50,6 +50,7 @@ func (m *Manager) Create(sess *api.Session) error {
 
 	envs := map[string]string{
 		"MARVEL_SESSION": sess.Name,
+		"MARVEL_ROLE":    sess.Role,
 	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath

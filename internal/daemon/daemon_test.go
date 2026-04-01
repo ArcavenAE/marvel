@@ -43,18 +43,21 @@ func TestDaemonLifecycle(t *testing.T) {
 		t.Fatalf("start daemon: %v", err)
 	}
 
-	// Apply a manifest
+	// Apply a manifest with roles
 	manifest := `
 [workspace]
 name = "test-daemon"
 
 [[team]]
-name = "agents"
-replicas = 2
+name = "squad"
 
-  [team.runtime]
-  command = "sleep"
-  args = ["300"]
+  [[team.role]]
+  name = "worker"
+  replicas = 2
+
+    [team.role.runtime]
+    command = "sleep"
+    args = ["300"]
 `
 	resp, err := SendRequest(sock, Request{
 		Method: "apply",
@@ -106,10 +109,10 @@ replicas = 2
 		t.Fatalf("expected 1 team, got %d", len(teams))
 	}
 
-	// Scale down
+	// Scale down with role
 	resp, err = SendRequest(sock, Request{
 		Method: "scale",
-		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/agents", "replicas": 1}),
+		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/squad", "role": "worker", "replicas": 1}),
 	})
 	if err != nil {
 		t.Fatalf("scale: %v", err)
@@ -135,8 +138,19 @@ replicas = 2
 		t.Fatalf("expected 1 session after scale, got %d", len(sessions))
 	}
 
+	// Scale without role should error
+	resp, err = SendRequest(sock, Request{
+		Method: "scale",
+		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/squad", "replicas": 3}),
+	})
+	if err != nil {
+		t.Fatalf("scale without role: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("expected error when scaling without role")
+	}
+
 	// Heartbeat — send context pressure for a running session
-	// Get session keys first
 	resp, err = SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),

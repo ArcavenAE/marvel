@@ -22,10 +22,15 @@ type ManifestWorkspace struct {
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
+	Name  string         `toml:"name"`
+	Roles []ManifestRole `toml:"role"`
+}
+
+// ManifestRole is a role section within a team.
+type ManifestRole struct {
 	Name     string          `toml:"name"`
 	Replicas int             `toml:"replicas"`
 	Runtime  ManifestRuntime `toml:"runtime"`
-	Role     string          `toml:"role,omitempty"`
 }
 
 // ManifestRuntime is the runtime section within a team.
@@ -64,11 +69,19 @@ func ParseManifestBytes(data []byte) (*Manifest, error) {
 		if t.Name == "" {
 			return nil, fmt.Errorf("parse manifest: team[%d].name is required", i)
 		}
-		if t.Replicas < 1 {
-			return nil, fmt.Errorf("parse manifest: team[%d].replicas must be >= 1", i)
+		if len(t.Roles) == 0 {
+			return nil, fmt.Errorf("parse manifest: team[%d] must have at least one role", i)
 		}
-		if t.Runtime.Image == "" && t.Runtime.Command == "" {
-			return nil, fmt.Errorf("parse manifest: team[%d].runtime needs image or command", i)
+		for j, r := range t.Roles {
+			if r.Name == "" {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].name is required", i, j)
+			}
+			if r.Replicas < 1 {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].replicas must be >= 1", i, j)
+			}
+			if r.Runtime.Image == "" && r.Runtime.Command == "" {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime needs image or command", i, j)
+			}
 		}
 	}
 	return &m, nil
@@ -85,30 +98,34 @@ func (m *Manifest) Apply(store *Store) error {
 	}
 
 	for _, mt := range m.Teams {
-		rt := Runtime{
-			Name:    mt.Runtime.Image,
-			Command: mt.Runtime.Command,
-			Args:    mt.Runtime.Args,
-			Script:  mt.Runtime.Script,
-		}
-		if rt.Name == "" {
-			rt.Name = mt.Runtime.Command
+		var roles []Role
+		for _, mr := range mt.Roles {
+			rt := Runtime{
+				Name:    mr.Runtime.Image,
+				Command: mr.Runtime.Command,
+				Args:    mr.Runtime.Args,
+				Script:  mr.Runtime.Script,
+			}
+			if rt.Name == "" {
+				rt.Name = rt.Command
+			}
+			roles = append(roles, Role{
+				Name:     mr.Name,
+				Replicas: mr.Replicas,
+				Runtime:  rt,
+			})
 		}
 
 		team := &Team{
 			Name:      mt.Name,
 			Workspace: m.Workspace.Name,
-			Replicas:  mt.Replicas,
-			Runtime:   rt,
-			Role:      mt.Role,
+			Roles:     roles,
 			CreatedAt: now,
 		}
-		// Update replicas if team already exists.
+		// Update roles if team already exists.
 		existing, err := store.GetTeam(team.Key())
 		if err == nil {
-			existing.Replicas = mt.Replicas
-			existing.Runtime = rt
-			existing.Role = mt.Role
+			existing.Roles = roles
 		} else {
 			if err := store.CreateTeam(team); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)

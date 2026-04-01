@@ -10,7 +10,7 @@ import (
 
 func TestLuaEnvCreation(t *testing.T) {
 	t.Parallel()
-	env := NewLuaEnv("", "test-ws", "test-team")
+	env := NewLuaEnv("", "test-ws", "test-team", "test-role")
 	defer env.Close()
 
 	// Verify marvel module is registered by calling marvel.log
@@ -22,7 +22,7 @@ func TestLuaEnvCreation(t *testing.T) {
 
 func TestCallOnTickNoFunction(t *testing.T) {
 	t.Parallel()
-	env := NewLuaEnv("", "test-ws", "test-team")
+	env := NewLuaEnv("", "test-ws", "test-team", "test-role")
 	defer env.Close()
 
 	// on_tick not defined — should not error
@@ -33,7 +33,7 @@ func TestCallOnTickNoFunction(t *testing.T) {
 
 func TestCallOnTickWithFunction(t *testing.T) {
 	t.Parallel()
-	env := NewLuaEnv("", "test-ws", "test-team")
+	env := NewLuaEnv("", "test-ws", "test-team", "test-role")
 	defer env.Close()
 
 	// Define on_tick that stores values in globals
@@ -66,7 +66,7 @@ func TestCallOnTickWithFunction(t *testing.T) {
 
 func TestLoadScript(t *testing.T) {
 	t.Parallel()
-	env := NewLuaEnv("", "test-ws", "test-team")
+	env := NewLuaEnv("", "test-ws", "test-team", "test-role")
 	defer env.Close()
 
 	// Write a temp script
@@ -97,7 +97,7 @@ func TestLoadScript(t *testing.T) {
 
 func TestLuaRPCWithoutSocket(t *testing.T) {
 	t.Parallel()
-	env := NewLuaEnv("", "test-ws", "test-team")
+	env := NewLuaEnv("", "test-ws", "test-team", "test-role")
 	defer env.Close()
 
 	// create_agent without socket should return nil + error

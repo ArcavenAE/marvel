@@ -34,6 +34,7 @@ func TestSessionCreateDelete(t *testing.T) {
 		Name:      "agent-0",
 		Workspace: ws,
 		Team:      "agents",
+		Role:      "worker",
 		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
 	}
 
@@ -90,6 +91,7 @@ func TestCleanupWorkspace(t *testing.T) {
 			Name:      name,
 			Workspace: ws,
 			Team:      "agents",
+			Role:      "worker",
 			Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
 		}
 		if err := mgr.Create(sess); err != nil {

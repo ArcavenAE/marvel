@@ -1,5 +1,5 @@
 // Package team implements the team controller — a reconciliation loop
-// that maintains desired replica count for each team.
+// that maintains desired replica count for each role within each team.
 package team
 
 import (
@@ -41,19 +41,26 @@ func (c *Controller) ReconcileOnce() {
 }
 
 func (c *Controller) reconcileTeam(t *api.Team) {
-	current := c.store.ListSessionsByTeam(t.Workspace, t.Name)
-	desired := t.Replicas
+	for i := range t.Roles {
+		c.reconcileRole(t, &t.Roles[i])
+	}
+}
+
+func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
+	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
+	desired := role.Replicas
 	actual := len(current)
 
 	if actual < desired {
 		for i := actual; i < desired; i++ {
-			name := fmt.Sprintf("%s-%d", t.Name, c.nextIndex(t))
-			rt := t.Runtime
-			rt.Args = c.injectIdentity(rt.Args, name, t, rt.Script)
+			name := fmt.Sprintf("%s-%s-%d", t.Name, role.Name, c.nextIndex(t, role))
+			rt := role.Runtime
+			rt.Args = c.injectIdentity(rt.Args, name, t, role, rt.Script)
 			sess := &api.Session{
 				Name:      name,
 				Workspace: t.Workspace,
 				Team:      t.Name,
+				Role:      role.Name,
 				Runtime:   rt,
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
@@ -71,14 +78,14 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	}
 }
 
-// nextIndex finds the next available index for a team's sessions.
-func (c *Controller) nextIndex(t *api.Team) int {
-	current := c.store.ListSessionsByTeam(t.Workspace, t.Name)
+// nextIndex finds the next available index for a role's sessions.
+func (c *Controller) nextIndex(t *api.Team, role *api.Role) int {
+	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
+	prefix := fmt.Sprintf("%s-%s-", t.Name, role.Name)
 	max := -1
 	for _, s := range current {
-		// Parse index from name like "workers-3"
 		var idx int
-		if _, err := fmt.Sscanf(s.Name, t.Name+"-%d", &idx); err == nil {
+		if _, err := fmt.Sscanf(s.Name, prefix+"%d", &idx); err == nil {
 			if idx > max {
 				max = idx
 			}
@@ -88,9 +95,8 @@ func (c *Controller) nextIndex(t *api.Team) int {
 }
 
 // injectIdentity appends identity and script flags for runtimes that support them.
-// Runtimes with a script or a team role get identity flags injected.
-func (c *Controller) injectIdentity(args []string, name string, t *api.Team, script string) []string {
-	if t.Role == "" && script == "" {
+func (c *Controller) injectIdentity(args []string, name string, t *api.Team, role *api.Role, script string) []string {
+	if role.Name == "" && script == "" {
 		return args
 	}
 	injected := make([]string, len(args))
@@ -102,6 +108,7 @@ func (c *Controller) injectIdentity(args []string, name string, t *api.Team, scr
 		"--name", name,
 		"--workspace", t.Workspace,
 		"--team", t.Name,
+		"--role", role.Name,
 	)
 	if c.SocketPath != "" {
 		injected = append(injected, "--socket", c.SocketPath)

@@ -220,13 +220,15 @@ func deleteCmd() *cobra.Command {
 
 func scaleCmd() *cobra.Command {
 	var replicas int
+	var role string
 	cmd := &cobra.Command{
 		Use:   "scale <workspace/team>",
-		Short: "Scale a team to N replicas",
+		Short: "Scale a team role to N replicas",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]any{
 				"team_key": args[0],
+				"role":     role,
 				"replicas": replicas,
 			})
 			resp, err := daemon.SendRequest(socketPath, daemon.Request{
@@ -239,16 +241,17 @@ func scaleCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Printf("team/%s scaled to %d replicas\n", args[0], replicas)
+			fmt.Printf("team/%s role/%s scaled to %d replicas\n", args[0], role, replicas)
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&replicas, "replicas", 1, "desired replica count")
+	cmd.Flags().StringVar(&role, "role", "", "role to scale (required)")
 	return cmd
 }
 
 func runCmd() *cobra.Command {
-	var workspace, team, script string
+	var workspace, team, role, script string
 	cmd := &cobra.Command{
 		Use:   "run <command> [args...]",
 		Short: "Run a one-off agent session",
@@ -257,6 +260,7 @@ func runCmd() *cobra.Command {
 			params, _ := json.Marshal(map[string]any{
 				"workspace":       workspace,
 				"team":            team,
+				"role":            role,
 				"runtime_command": args[0],
 				"runtime_args":    args[1:],
 				"script":          script,
@@ -279,6 +283,7 @@ func runCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&workspace, "workspace", "default", "workspace name")
 	cmd.Flags().StringVar(&team, "team", "adhoc", "team name")
+	cmd.Flags().StringVar(&role, "role", "adhoc", "role name")
 	cmd.Flags().StringVar(&script, "script", "", "Lua script path")
 	return cmd
 }
@@ -354,6 +359,8 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 			less = sessions[i].Name < sessions[j].Name
 		case "team":
 			less = sessions[i].Team < sessions[j].Team
+		case "role":
+			less = sessions[i].Role < sessions[j].Role
 		case "workspace":
 			less = sessions[i].Workspace < sessions[j].Workspace
 		case "state":
@@ -401,7 +408,7 @@ func fetchSessions() ([]api.Session, error) {
 func renderSessionTable(sessions []api.Session) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tTEAM\tNAME\tSTATE\tCONTEXT%%\tDESK\tAGENT\n")
+	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tNAME\tSTATE\tCONTEXT%%\tDESK\tAGENT\n")
 	for _, s := range sessions {
 		agent := s.Runtime.Name
 		if agent == "" {
@@ -415,8 +422,8 @@ func renderSessionTable(sessions []api.Session) string {
 		if strings.HasPrefix(desk, "%") {
 			desk = desk[1:]
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Name, s.State, ctx, desk, agent)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Workspace, s.Team, s.Role, s.Name, s.State, ctx, desk, agent)
 	}
 	w.Flush()
 	return buf.String()
@@ -441,9 +448,9 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	if ws.showHelp {
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  Sort keys (toggle asc/desc):\n")
-		fmt.Fprintf(&buf, "    w  workspace      t  team          n  name\n")
-		fmt.Fprintf(&buf, "    s  state          c  context       d  desk\n")
-		fmt.Fprintf(&buf, "    a  agent\n")
+		fmt.Fprintf(&buf, "    w  workspace      t  team          r  role\n")
+		fmt.Fprintf(&buf, "    n  name           s  state         c  context\n")
+		fmt.Fprintf(&buf, "    d  desk           a  agent\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    h  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
@@ -523,6 +530,8 @@ func watchSessionsLoop(interval time.Duration) error {
 				toggleSort(ws, "context", true)
 			case 'n':
 				toggleSort(ws, "name", false)
+			case 'r':
+				toggleSort(ws, "role", false)
 			case 't':
 				toggleSort(ws, "team", false)
 			case 'w':
@@ -568,13 +577,15 @@ func printTeams(data json.RawMessage) error {
 		return err
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tNAME\tREPLICAS\tRUNTIME\n")
+	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tREPLICAS\tRUNTIME\n")
 	for _, t := range teams {
-		rt := t.Runtime.Name
-		if rt == "" {
-			rt = t.Runtime.Command
+		for _, r := range t.Roles {
+			rt := r.Runtime.Name
+			if rt == "" {
+				rt = r.Runtime.Command
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", t.Workspace, t.Name, r.Name, r.Replicas, rt)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", t.Workspace, t.Name, t.Replicas, rt)
 	}
 	return w.Flush()
 }

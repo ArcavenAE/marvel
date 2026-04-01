@@ -316,6 +316,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 // Scale params
 type scaleParams struct {
 	TeamKey  string `json:"team_key"`
+	Role     string `json:"role"`
 	Replicas int    `json:"replicas"`
 }
 
@@ -330,12 +331,32 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
-	t.Replicas = p.Replicas
+	if p.Role == "" {
+		var names []string
+		for _, r := range t.Roles {
+			names = append(names, r.Name)
+		}
+		return Response{Error: fmt.Sprintf("role is required; available roles: %v", names)}
+	}
+
+	found := false
+	for i := range t.Roles {
+		if t.Roles[i].Name == p.Role {
+			t.Roles[i].Replicas = p.Replicas
+			found = true
+			break
+		}
+	}
+	if !found {
+		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+	}
+
 	d.teamCtrl.ReconcileOnce()
 
 	result, _ := json.Marshal(map[string]any{
 		"status":   "scaled",
 		"team":     p.TeamKey,
+		"role":     p.Role,
 		"replicas": p.Replicas,
 	})
 	return Response{Result: result}
@@ -365,6 +386,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 type runParams struct {
 	Workspace      string   `json:"workspace"`
 	Team           string   `json:"team"`
+	Role           string   `json:"role"`
 	RuntimeCommand string   `json:"runtime_command"`
 	RuntimeArgs    []string `json:"runtime_args"`
 	Script         string   `json:"script"`
@@ -382,6 +404,9 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	if p.Team == "" {
 		p.Team = "adhoc"
 	}
+	if p.Role == "" {
+		p.Role = "adhoc"
+	}
 
 	// Ensure workspace exists.
 	ws := &api.Workspace{Name: p.Workspace, CreatedAt: time.Now().UTC()}
@@ -398,6 +423,7 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		Name:      fmt.Sprintf("run-%d", time.Now().UTC().UnixMilli()),
 		Workspace: p.Workspace,
 		Team:      p.Team,
+		Role:      p.Role,
 		Runtime:   rt,
 	}
 

@@ -56,6 +56,7 @@ func TestSessionCRUD(t *testing.T) {
 		Name:      "agent-0",
 		Workspace: "test-ws",
 		Team:      "agents",
+		Role:      "worker",
 		Runtime:   Runtime{Name: "shell", Command: "bash"},
 		State:     SessionPending,
 		CreatedAt: time.Now().UTC(),
@@ -95,8 +96,9 @@ func TestTeamCRUD(t *testing.T) {
 	team := &Team{
 		Name:      "agents",
 		Workspace: "test-ws",
-		Replicas:  3,
-		Runtime:   Runtime{Name: "shell", Command: "bash"},
+		Roles: []Role{
+			{Name: "worker", Replicas: 3, Runtime: Runtime{Name: "shell", Command: "bash"}},
+		},
 		CreatedAt: time.Now().UTC(),
 	}
 
@@ -108,8 +110,11 @@ func TestTeamCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get team: %v", err)
 	}
-	if got.Replicas != 3 {
-		t.Fatalf("expected 3 replicas, got %d", got.Replicas)
+	if len(got.Roles) != 1 {
+		t.Fatalf("expected 1 role, got %d", len(got.Roles))
+	}
+	if got.Roles[0].Replicas != 3 {
+		t.Fatalf("expected 3 replicas, got %d", got.Roles[0].Replicas)
 	}
 
 	teams := s.ListTeams()
@@ -153,6 +158,7 @@ func TestUpdateSessionHeartbeat(t *testing.T) {
 		Name:      "agent-0",
 		Workspace: "test-ws",
 		Team:      "agents",
+		Role:      "worker",
 		Runtime:   Runtime{Name: "simulator", Command: "simulator"},
 		State:     SessionRunning,
 		CreatedAt: time.Now().UTC(),
@@ -176,5 +182,38 @@ func TestUpdateSessionHeartbeat(t *testing.T) {
 	// Not found case
 	if err := s.UpdateSessionHeartbeat("test-ws/nonexistent", 10); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestListSessionsByTeamRole(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+
+	// Create sessions with different roles
+	for _, sess := range []*Session{
+		{Name: "s-worker-0", Workspace: "ws", Team: "squad", Role: "worker", Runtime: Runtime{Command: "bash"}},
+		{Name: "s-worker-1", Workspace: "ws", Team: "squad", Role: "worker", Runtime: Runtime{Command: "bash"}},
+		{Name: "s-supervisor-0", Workspace: "ws", Team: "squad", Role: "supervisor", Runtime: Runtime{Command: "bash"}},
+		{Name: "s-other-0", Workspace: "ws", Team: "other", Role: "worker", Runtime: Runtime{Command: "bash"}},
+	} {
+		if err := s.CreateSession(sess); err != nil {
+			t.Fatalf("create session %s: %v", sess.Name, err)
+		}
+	}
+
+	workers := s.ListSessionsByTeamRole("ws", "squad", "worker")
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 workers, got %d", len(workers))
+	}
+
+	supervisors := s.ListSessionsByTeamRole("ws", "squad", "supervisor")
+	if len(supervisors) != 1 {
+		t.Fatalf("expected 1 supervisor, got %d", len(supervisors))
+	}
+
+	// Team-level list still returns all
+	all := s.ListSessionsByTeam("ws", "squad")
+	if len(all) != 3 {
+		t.Fatalf("expected 3 squad sessions, got %d", len(all))
 	}
 }

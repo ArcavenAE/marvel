@@ -49,8 +49,9 @@ func TestReconcileScaleUp(t *testing.T) {
 	team := &api.Team{
 		Name:      "agents",
 		Workspace: "test-reconcile",
-		Replicas:  3,
-		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		Roles: []api.Role{
+			{Name: "worker", Replicas: 3, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		},
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := store.CreateTeam(team); err != nil {
@@ -60,7 +61,7 @@ func TestReconcileScaleUp(t *testing.T) {
 	// Reconcile should create 3 sessions
 	ctrl.ReconcileOnce()
 
-	sessions := store.ListSessionsByTeam("test-reconcile", "agents")
+	sessions := store.ListSessionsByTeamRole("test-reconcile", "agents", "worker")
 	if len(sessions) != 3 {
 		t.Fatalf("expected 3 sessions, got %d", len(sessions))
 	}
@@ -68,6 +69,9 @@ func TestReconcileScaleUp(t *testing.T) {
 	for _, s := range sessions {
 		if s.State != api.SessionRunning {
 			t.Fatalf("session %s: expected running, got %s", s.Name, s.State)
+		}
+		if s.Role != "worker" {
+			t.Fatalf("session %s: expected role worker, got %s", s.Name, s.Role)
 		}
 	}
 }
@@ -85,8 +89,9 @@ func TestReconcileScaleDown(t *testing.T) {
 	team := &api.Team{
 		Name:      "agents",
 		Workspace: "test-scaledown",
-		Replicas:  3,
-		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		Roles: []api.Role{
+			{Name: "worker", Replicas: 3, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		},
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := store.CreateTeam(team); err != nil {
@@ -95,15 +100,15 @@ func TestReconcileScaleDown(t *testing.T) {
 
 	// Scale up
 	ctrl.ReconcileOnce()
-	if len(store.ListSessionsByTeam("test-scaledown", "agents")) != 3 {
+	if len(store.ListSessionsByTeamRole("test-scaledown", "agents", "worker")) != 3 {
 		t.Fatal("expected 3 sessions after scale up")
 	}
 
 	// Scale down
-	team.Replicas = 1
+	team.Roles[0].Replicas = 1
 	ctrl.ReconcileOnce()
 
-	sessions := store.ListSessionsByTeam("test-scaledown", "agents")
+	sessions := store.ListSessionsByTeamRole("test-scaledown", "agents", "worker")
 	if len(sessions) != 1 {
 		t.Fatalf("expected 1 session after scale down, got %d", len(sessions))
 	}
@@ -122,8 +127,9 @@ func TestReconcileReplaceDead(t *testing.T) {
 	team := &api.Team{
 		Name:      "agents",
 		Workspace: "test-replace",
-		Replicas:  2,
-		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		Roles: []api.Role{
+			{Name: "worker", Replicas: 2, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		},
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := store.CreateTeam(team); err != nil {
@@ -132,7 +138,7 @@ func TestReconcileReplaceDead(t *testing.T) {
 
 	// Create initial sessions
 	ctrl.ReconcileOnce()
-	sessions := store.ListSessionsByTeam("test-replace", "agents")
+	sessions := store.ListSessionsByTeamRole("test-replace", "agents", "worker")
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
@@ -142,15 +148,75 @@ func TestReconcileReplaceDead(t *testing.T) {
 		t.Fatalf("delete session: %v", err)
 	}
 
-	if len(store.ListSessionsByTeam("test-replace", "agents")) != 1 {
+	if len(store.ListSessionsByTeamRole("test-replace", "agents", "worker")) != 1 {
 		t.Fatal("expected 1 session after kill")
 	}
 
 	// Reconcile should replace it
 	ctrl.ReconcileOnce()
 
-	sessions = store.ListSessionsByTeam("test-replace", "agents")
+	sessions = store.ListSessionsByTeamRole("test-replace", "agents", "worker")
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions after reconcile, got %d", len(sessions))
+	}
+}
+
+func TestReconcileMultipleRoles(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	ws := &api.Workspace{Name: "test-multi", CreatedAt: time.Now().UTC()}
+	if err := store.CreateWorkspace(ws); err != nil {
+		t.Fatal(err)
+	}
+
+	team := &api.Team{
+		Name:      "squad",
+		Workspace: "test-multi",
+		Roles: []api.Role{
+			{Name: "supervisor", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+			{Name: "worker", Replicas: 3, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.CreateTeam(team); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl.ReconcileOnce()
+
+	supervisors := store.ListSessionsByTeamRole("test-multi", "squad", "supervisor")
+	if len(supervisors) != 1 {
+		t.Fatalf("expected 1 supervisor, got %d", len(supervisors))
+	}
+	if supervisors[0].Role != "supervisor" {
+		t.Fatalf("expected role supervisor, got %s", supervisors[0].Role)
+	}
+
+	workers := store.ListSessionsByTeamRole("test-multi", "squad", "worker")
+	if len(workers) != 3 {
+		t.Fatalf("expected 3 workers, got %d", len(workers))
+	}
+
+	// Total sessions for the team
+	all := store.ListSessionsByTeam("test-multi", "squad")
+	if len(all) != 4 {
+		t.Fatalf("expected 4 total sessions, got %d", len(all))
+	}
+
+	// Scale workers independently
+	team.Roles[1].Replicas = 1
+	ctrl.ReconcileOnce()
+
+	workers = store.ListSessionsByTeamRole("test-multi", "squad", "worker")
+	if len(workers) != 1 {
+		t.Fatalf("expected 1 worker after scale, got %d", len(workers))
+	}
+
+	// Supervisor unaffected
+	supervisors = store.ListSessionsByTeamRole("test-multi", "squad", "supervisor")
+	if len(supervisors) != 1 {
+		t.Fatalf("expected 1 supervisor still, got %d", len(supervisors))
 	}
 }
