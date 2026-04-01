@@ -6,7 +6,7 @@ AI agent workloads. Written in Go.
 Follows the kos process. Authoritative graph: `_kos/nodes/`.
 Cross-repo questions belong in the orchestrator's charter.
 
-Last updated: 2026-03-30
+Last updated: 2026-03-31 (session-009: heterogeneous team model)
 
 ---
 
@@ -34,16 +34,22 @@ simulator with context pressure monitoring and Lua supervisor scripting. Single-
 in-memory state.
 Evidence: marvel-mvp-probe (aae-orc sprint/rd/), 2 probe cycles complete.
 
+### B5: Heterogeneous Team Model
+Teams contain multiple roles, each with its own runtime and replica count.
+The supervisor-agent binding is the team itself — not a separate group resource.
+Reconciliation is per-role. Session naming: teamname-rolename-N. Scale requires
+specifying a role. Group is a collection of teams (placeholder, future work).
+Evidence: probe-org-model-heterogeneous-teams, finding-001. 18 files changed,
+TestReconcileMultipleRoles validates independent per-role scaling.
+
 ---
 
 ## Frontier
 
-### F1: Organizational Model
-Workspace / Group / Team / Shift hierarchy needs refinement. Current model has
-Workspace and Team. Gaps: what groups a supervisor with its agents? What scopes
-shared resources? What replaces stale sessions? Hypothesis: Group > Team > Session
-hierarchy + Workspace as sandbox.
-Cross-ref: orchestrator F9.
+### F1: Organizational Model — RESOLVED → B5
+Resolved by probe-org-model-heterogeneous-teams. Teams contain heterogeneous
+roles. Supervisor-agent binding is the team. Group is placeholder.
+See B5 and finding-001.
 
 ### F2: Persistence
 MVP is in-memory. What needs persistence? Session state? Team config? Manifest history?
@@ -62,6 +68,14 @@ beyond basic process detection.
 Host resource type exists for future multi-host scheduling. How does marvel
 discover remote hosts? Is switchboard sufficient as the transport?
 Cross-ref: orchestrator F7.
+
+### F6: Shift Mechanics
+Rolling replacement of agents within a team. Structurally unblocked by B5
+(heterogeneous roles). Supervisor handoff is the hardest case. Triggers:
+scheduled, context pressure, manual, config changes, detected failures,
+login failures, service updates, memory pressure. Questions: shift lifecycle,
+preflight checks, handover protocol, rolling vs blue-green strategy.
+Cross-ref: orchestrator F9, question-shifts node.
 
 ---
 

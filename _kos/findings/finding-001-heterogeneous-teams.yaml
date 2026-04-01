@@ -1,0 +1,56 @@
+id: finding-001-heterogeneous-teams
+title: "Heterogeneous team model validated"
+probe: probe-org-model-heterogeneous-teams
+question: question-org-model
+confidence: bedrock
+content: |
+  The heterogeneous team model works. Key findings:
+
+  1. Team-as-binding is correct. A team contains roles (supervisor, worker,
+     reviewer, etc.) each with its own runtime and replica count. The team
+     is the unit where supervisor-agent relationships are expressed — not
+     a separate group resource.
+
+  2. Per-role reconciliation is clean. The team controller iterates roles
+     and reconciles each independently. Scaling one role does not affect
+     others. This was validated with a 4-session test (1 supervisor +
+     3 workers) where scaling workers to 1 left the supervisor untouched.
+
+  3. Session naming teamname-rolename-N is unambiguous and sorts well.
+     The index parser (Sscanf with prefix) handles it correctly.
+
+  4. Scale-requires-role is the right UX. Implicit "scale everything"
+     would be surprising with heterogeneous roles. The daemon returns
+     available role names when role is omitted.
+
+  5. The TOML [[team.role]] nested array syntax parses correctly with
+     BurntSushi/toml v1.6.0. No issues.
+
+  6. Group is confirmed as future work. No evidence yet for when it's
+     needed. The team is sufficient as the operational unit.
+
+  7. Shifts are structurally unblocked. The role-per-team model gives
+     shifts a clear target: replace sessions for a specific role (or
+     all roles) within a team.
+
+  Open questions resolved:
+  - Q1 (group manifest): N/A — group deferred, team is the binding
+  - Q4 (shift as team capability): confirmed, structurally ready
+  - Q6 ("apply" verb): settled as "work" — already in CLI
+
+  Open questions remaining:
+  - Q2 (workspace resources): MCP, secrets, RAG, repos, sandbox, SSH keys
+  - Q3 (cross-workspace comms): policy undefined
+  - Shift implementation: triggers, preflight, handover protocol
+  - Process exit lifecycle: exit code detection, restart policy
+
+  Commits: 6523826 (probe implementation)
+evidence:
+  - "TestReconcileMultipleRoles: 1 supervisor + 3 workers, scale workers independently"
+  - "TestScaleRequiresRole: daemon errors when role omitted"
+  - "TestParseManifestMultipleRoles: TOML nested arrays parse correctly"
+  - "18 files changed, 446 insertions, 198 deletions — full migration"
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"

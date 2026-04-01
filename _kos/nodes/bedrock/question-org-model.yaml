@@ -1,0 +1,24 @@
+id: question-org-model
+type: question
+confidence: bedrock
+title: "Organizational Model — Heterogeneous Teams with Roles"
+content: |
+  Resolved: teams contain heterogeneous roles. The supervisor-agent
+  binding is the team itself. Each role has its own runtime and replica
+  count. Reconciliation is per-role. Session naming: teamname-rolename-N.
+
+  Group is a collection of teams — placeholder, no evidence for when
+  it's needed yet. Workspace provides isolation boundary. Shifts are
+  a team capability (structurally ready, not yet implemented).
+
+  See finding-001-heterogeneous-teams for full evidence.
+edges:
+  - target: aae-orc::question-marvel-org-model
+    type: derives
+    note: "Cross-repo projection from orchestrator F9"
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"
+  promoted_at: "2026-03-31"
+  promoted_by: session-009

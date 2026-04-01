@@ -1,0 +1,21 @@
+id: probe-org-model-heterogeneous-teams
+title: "Probe: Heterogeneous Team Model"
+question: question-org-model
+hypothesis: |
+  A team should contain multiple heterogeneous roles, each with its own
+  runtime and replica count. The supervisor-agent binding is the team
+  itself, not a separate group resource. Shifts are a team capability
+  (future). Group is a collection of teams (future, placeholder).
+timebox: "1 session"
+success_signal: |
+  - Team with 2+ roles reconciles correctly (supervisor + workers)
+  - Each role scales independently
+  - Session naming reflects role (teamname-rolename-N)
+  - All existing tests pass migrated to new format
+  - New multi-role reconciliation test passes
+status: complete
+probe_medium: code
+provenance:
+  created_by: human
+  session: session-009
+  created_at: "2026-03-31"
