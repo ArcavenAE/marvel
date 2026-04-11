@@ -2,6 +2,10 @@
 
 ## What This Is
 
+> Note: the BYOA console formerly known as "aclaude" is now named "forestage".
+> References below have been updated. Historical GitHub issue references
+> (ArcavenAE/aclaude#N) are preserved as-is.
+
 A kubernetes-like control plane for AI agent workloads. Written in Go.
 Manages the full lifecycle of BYOA agent sessions: scheduling, configuration,
 process management, health monitoring, storage, networking, and observability.
@@ -39,7 +43,7 @@ Pod                 Session                 The atomic unit. A tmux pane running
                                             lifecycle: pending → running →
                                             succeeded/failed. Restartable.
 
-Container           Runtime                 The BYOA console binary. aclaude,
+Container           Runtime                 The BYOA console binary. forestage,
                                             zclaude, dclaude, pennyfarthing,
                                             bare `claude` CLI, or any agent
                                             that accepts a prompt on stdin.
@@ -135,7 +139,7 @@ name = "review-squad"
   replicas = 1
 
     [team.role.runtime]
-    image = "aclaude"
+    image = "forestage"
     args = ["--persona", "dune/supervisor"]
 
   [[team.role]]
@@ -143,7 +147,7 @@ name = "review-squad"
   replicas = 3
 
     [team.role.runtime]
-    image = "aclaude"
+    image = "forestage"
     args = ["--persona", "dune/reviewer"]
 
 # future: readychecks, healthchecks, packs, volumes per role
@@ -165,7 +169,7 @@ internal/
 
   runtime/                  BYOA console runtime management
     runtime.go              Runtime interface (start, stop, attach)
-    aclaude.go              aclaude-specific runtime
+    forestage.go            forestage-specific runtime
     claude.go               Bare claude CLI runtime
     generic.go              Generic runtime (any CLI that accepts stdin)
 
@@ -323,14 +327,14 @@ accepts a prompt on stdin). Everything else is optional integration.
 
 | Component | Without It | With It |
 |-----------|-----------|---------|
-| aclaude | Marvel uses bare `claude` or any CLI. Process management only. | Deep integration: personas, OTEL, packs, hooks, full metrics. |
+| forestage | Marvel uses bare `claude` or any CLI. Process management only. | Deep integration: personas, OTEL, packs, hooks, full metrics. |
 | switchboard | Local-only scheduling. All sessions on one host. | Remote hosts. Distributed fleet. Cross-machine attach. |
 | director | No inter-agent comms. Fan-out/collect only. | Supervisor patterns, agent-to-agent routing, role-based endpoints. |
 | spectacle | No spec commands in packs. User loads manually. | IEEE-based spec templates available as a pack. |
 | kos | No knowledge projection. Specs are manual. | Specs projected from knowledge graph into sessions. |
 
 **Marvel is also optional to everything else:**
-- aclaude runs standalone without marvel (single-agent, own config chain)
+- forestage runs standalone without marvel (single-agent, own config chain)
 - switchboard relays any tmux session, not just marvel-managed ones
 - spectacle installs with `just install <target>`, no marvel needed
 - kos operates its own probe/finding cycle independently
@@ -349,7 +353,7 @@ Sessions launch with console defaults.
 5. **Packs are git repos** — versioned, diffable, shareable. No proprietary format.
 6. **Fail observable** — every session's output is visible; marvel logs all state transitions
 7. **Gradual elaboration** — start with `marvel apply` for a single session, grow to fleet management
-8. **Console-agnostic** — works with aclaude, zclaude, dclaude, or any CLI that accepts a prompt
+8. **Console-agnostic** — works with forestage, zclaude, dclaude, or any CLI that accepts a prompt
 9. **No conscription** — marvel orchestrates, it does not require. Every integration is optional.
 
 ## How to Work Here (kos Process)

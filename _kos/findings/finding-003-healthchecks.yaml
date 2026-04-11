@@ -29,7 +29,7 @@ content: |
 
   5. The health signal taxonomy (kos/ideas/) maps the full spectrum:
      OS signals, tmux signals, heartbeat, file system, and what
-     aclaude could expose via Agent SDK hooks. The implementation is
+     forestage could expose via Agent SDK hooks. The implementation is
      deliberately thin — heartbeat staleness only. The taxonomy
      documents what we know, what we don't know, and what we don't
      know we don't know.
@@ -42,7 +42,7 @@ content: |
 
   Open questions remaining:
   - What does "healthy" mean for an LLM agent? (process alive ≠ productive)
-  - What richer signals should aclaude expose via hooks/SDK?
+  - What richer signals should forestage expose via hooks/SDK?
   - How should marvel detect stuck agents (long tool execution, infinite loops)?
   - Prompt-response healthcheck implementation
   - Sidecar file vs FIFO vs socket for structured health data

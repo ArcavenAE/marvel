@@ -7,7 +7,7 @@ Not all agents are equal. The health system must degrade gracefully:
 ```
 Bare sleep/script  → is the process alive?
 Bare claude CLI    → alive + exit code + maybe capture output
-aclaude            → alive + exit code + hooks + structured health
+forestage          → alive + exit code + hooks + structured health
 Custom agent       → whatever they implement
 ```
 
@@ -37,7 +37,7 @@ Richer checks reward agents that support them.
 - `.claude/` directory (conversation state, settings)
 - Sidecar health file (agent writes, marvel reads)
 
-## What we know aclaude *could* expose
+## What we know forestage *could* expose
 
 ### From Agent SDK / hooks.ts
 - Session state: idle, working, waiting for tool approval
@@ -95,7 +95,7 @@ the final answer.
 
 ### Heartbeat over daemon socket
 Already works. The simulator sends heartbeats with context %. Real agents
-(aclaude) would do the same via the Agent SDK's message stream callbacks.
+(forestage) would do the same via the Agent SDK's message stream callbacks.
 
 ### tmux capture-pane
 Available for any agent. Marvel can capture recent output and pattern-match

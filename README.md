@@ -58,7 +58,7 @@ name = "review-squad"
   replicas = 3
 
     [team.role.runtime]
-    command = "/usr/local/bin/aclaude"
+    command = "/usr/local/bin/forestage"
     args = ["--persona", "dune/reviewer"]
 
     [team.role.healthcheck]
@@ -72,7 +72,7 @@ name = "review-squad"
   restart_policy = "always"
 
     [team.role.runtime]
-    command = "/usr/local/bin/aclaude"
+    command = "/usr/local/bin/forestage"
     args = ["--persona", "dune/supervisor"]
 ```
 
@@ -169,7 +169,7 @@ Written in Go. The daemon manages agent sessions through a tmux substrate:
 ## BYOA
 
 Marvel works with any BYOA console that accepts a prompt on stdin:
-aclaude, zclaude, dclaude, bare `claude` CLI, or custom agents.
+forestage, zclaude, dclaude, bare `claude` CLI, or custom agents.
 The runtime is just a command path + args. Marvel doesn't care what
 the agent is — it manages the process lifecycle.
 

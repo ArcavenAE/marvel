@@ -24,9 +24,9 @@ output — all via tmux. Simple, observable, already works.
 Evidence: MVP functional with tmux driver.
 
 ### B3: Console-Agnostic
-Works with aclaude, zclaude, dclaude, bare claude CLI, or any agent that accepts
+Works with forestage, zclaude, dclaude, bare claude CLI, or any agent that accepts
 a prompt on stdin. Marvel orchestrates; it does not require a specific console.
-Evidence: tested with both aclaude and bare claude CLI.
+Evidence: tested with both forestage and bare claude CLI.
 
 ### B4: MVP Complete
 Resource types, tmux driver, session manager, team reconciler, daemon, CLI,

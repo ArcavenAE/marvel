@@ -13,7 +13,7 @@ content: |
   How do packs declare dependencies on other packs? How do packs declare
   minimum marvel version? How does multi-pack conflict resolution work
   when two packs provide the same artifact type? How does a compiled
-  binary (aclaude) discover packs at runtime?
+  binary (forestage) discover packs at runtime?
 edges:
   - target: aae-orc::question-pack-format
     type: derives
