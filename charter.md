@@ -6,7 +6,7 @@ AI agent workloads. Written in Go.
 Follows the kos process. Authoritative graph: `_kos/nodes/`.
 Cross-repo questions belong in the orchestrator's charter.
 
-Last updated: 2026-03-31 (session-009: heterogeneous teams, shifts, healthchecks)
+Last updated: 2026-04-12 (session-016: charter management probe — content migration from orchestrator)
 
 ---
 
@@ -84,8 +84,13 @@ Opt-in healthcheck config on roles. See B7 and finding-003.
 Prompt-response and richer agent signals are future work.
 
 ### F5: Multi-Host via Switchboard
-Host resource type exists for future multi-host scheduling. How does marvel
-discover remote hosts? Is switchboard sufficient as the transport?
+Host resource type exists for future multi-host scheduling. This is the
+distributed case — the reconciler and scheduler currently assume local-only.
+Questions: what scheduling algorithm places sessions across hosts? How does
+marvel discover remote hosts? Is switchboard sufficient as the transport, or
+does marvel need its own discovery mechanism (e.g., gossip, static config,
+registry service)? How does state sync work when the in-memory state is split
+across hosts?
 Cross-ref: orchestrator F7.
 
 ### F6: Shift Mechanics — RESOLVED → B6
@@ -98,6 +103,16 @@ Manual shifts work (B6). Automatic triggers are the next question: scheduled,
 context pressure, failure detection, login failures, service updates, memory
 pressure. Which are team-level vs role-level? How does failure detection work
 with current heartbeat data? See question-shift-triggers node.
+
+### F8: Gateway — External API/Webhook Interface
+The Gateway resource type has three sub-types: switchboard (remote tmux access),
+director (inter-agent supervisor protocol), and an external API/webhook interface.
+The first two are designed. The external gateway is mentioned in the resource
+model but not designed. Questions: what external access patterns are needed?
+API for triggering orchestrations from outside the marvel cluster? Webhook
+receivers that dispatch work to running agent teams? Or CLI-only access for now,
+deferring external API until there's a concrete use case?
+Cross-ref: orchestrator F2.
 
 ---
 
