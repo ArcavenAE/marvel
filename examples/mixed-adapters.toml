@@ -1,0 +1,67 @@
+# Marvel example — mixed adapters in one workspace.
+#
+# Tests: multiple adapter types coexisting, per-role permission
+# differentiation, adapter resolution from runtime image field,
+# heterogeneous team with different runtimes per role.
+#
+# The supervisor runs bare claude with auto permissions.
+# Workers run forestage with restricted plan permissions.
+# A monitor runs a generic shell for scripted health checks.
+#
+# Each role resolves to a different adapter:
+#   - supervisor → claude adapter (system prompt + permission injection)
+#   - worker → forestage adapter (identity flags + permission injection)
+#   - monitor → generic adapter (env vars only)
+#
+# NOTE: update forestage command path to match your binary location.
+#
+# Setup:
+#   cd ~/work/aae-orc/forestage && cargo build
+#   cd ~/work/aae-orc/marvel
+#   ./marvel daemon &
+#   ./marvel work examples/mixed-adapters.toml
+#
+# Verify (daemon log should show three different adapters):
+#   session mixed/hybrid-supervisor-g1-0 using claude adapter
+#   session mixed/hybrid-worker-g1-0 using forestage adapter
+#   session mixed/hybrid-monitor-g1-0 using generic adapter
+#
+# Test commands:
+#   ./marvel get sessions
+#   ./marvel capture mixed/hybrid-supervisor-g1-0
+#   ./marvel capture mixed/hybrid-worker-g1-0
+#   ./marvel capture mixed/hybrid-monitor-g1-0
+#   ./marvel shift mixed/hybrid
+#   ./marvel stop
+
+[workspace]
+name = "mixed"
+
+[[team]]
+name = "hybrid"
+
+  [[team.role]]
+  name = "supervisor"
+  replicas = 1
+  permissions = "auto"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 2
+  permissions = "plan"
+
+    [team.role.runtime]
+    image = "forestage"
+    command = "/Users/michael.pursifull/work/aae-orc/forestage/target/debug/forestage"
+
+  [[team.role]]
+  name = "monitor"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "shell"
+    command = "sh"

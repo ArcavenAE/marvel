@@ -1,18 +1,29 @@
-# Marvel example — shift demonstration.
+# Marvel example — shift demonstration with heartbeats.
 #
-# Small team designed for demonstrating rolling shifts.
-# Short tick intervals make health state visible quickly.
+# Tests: rolling shift lifecycle, generation tracking, heartbeat-based
+# health checks, supervisor-last shift order, watch mode.
 #
-# How to demo shifts:
-#   1. just build
-#   2. marvel daemon &
-#   3. marvel work examples/shift-demo.toml
-#   4. marvel get sessions -w          # watch sessions, note GEN column
-#   5. marvel shift shift-demo/squad   # initiate shift
-#   6. Watch: new gen-2 sessions launch, old gen-1 sessions drain
-#   7. marvel stop                     # clean up
+# Uses the simulator (not real agents) with short tick intervals so
+# health state and shift progression are visible quickly.
 #
-# Or use: just demo-shift
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/shift-demo.toml
+#
+# Test commands:
+#   ./marvel get sessions -w
+#   ./marvel shift shift-demo/squad
+#
+# What to watch:
+#   - GEN column increments from 1 to 2
+#   - New gen-2 sessions launch first (ShiftLaunching phase)
+#   - Old gen-1 sessions drain one per tick (ShiftDraining phase)
+#   - Workers shift before supervisor (shift order)
+#   - HEALTH column shows healthy once heartbeats arrive
+#
+# Cleanup:
+#   ./marvel stop
 
 [workspace]
 name = "shift-demo"

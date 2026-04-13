@@ -1,7 +1,31 @@
-# Marvel manifest — real Claude Code agents + chaos supervisor.
+# Marvel example — real Claude Code agents + chaos supervisor.
 #
-# Load with: marvel work examples/claude.toml
-# Requires: claude CLI installed, bin/simulator built via `just build`
+# Tests: claude adapter selection, permission injection, system prompt
+# identity injection, Lua supervisor scripting, mixed runtime types.
+#
+# The claude adapter automatically:
+#   - Injects --permission-mode from the role's permissions field
+#   - Injects --append-system-prompt with session identity
+#   - Sets MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
+#
+# The supervisor role uses the simulator with chaos.lua — it's a
+# different runtime (simulator) in the same team as real agents (claude).
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/claude.toml
+#
+# Verify adapter selection (daemon log should show):
+#   session ccode/claude-squad-coder-g1-0 using claude adapter
+#
+# Test commands:
+#   ./marvel get sessions
+#   ./marvel capture ccode/claude-squad-coder-g1-0
+#   ./marvel inject ccode/claude-squad-coder-g1-0 "what is your session name?" -e
+#   ./marvel scale ccode/claude-squad --role coder --replicas 3
+#   ./marvel shift ccode/claude-squad
+#   ./marvel stop
 
 [workspace]
 name = "ccode"
@@ -12,10 +36,11 @@ name = "claude-squad"
   [[team.role]]
   name = "coder"
   replicas = 2
+  permissions = "plan"
 
     [team.role.runtime]
     image = "claude"
-    command = "/Users/michael.pursifull/.local/bin/claude"
+    command = "claude"
 
   [[team.role]]
   name = "supervisor"

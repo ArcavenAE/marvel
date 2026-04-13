@@ -1,0 +1,38 @@
+# Marvel example — generic adapter with arbitrary commands.
+#
+# Tests: generic adapter fallback, any-process-in-a-pane management,
+# capture on non-agent processes, inject into interactive programs.
+#
+# The generic adapter:
+#   - Passes command + args through unchanged (no flag injection)
+#   - Sets MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
+#   - Marvel observes the process via capture-pane (scraping fallback)
+#
+# This proves marvel manages any process — the generic adapter is the
+# BYOA fallback that makes console-agnostic (B3) concrete.
+#
+# Setup:
+#   ./marvel daemon &
+#   ./marvel work examples/generic-agent.toml
+#
+# Test commands:
+#   ./marvel get sessions
+#   ./marvel capture util/tools-shell-g1-0
+#   ./marvel inject util/tools-shell-g1-0 "echo hello from marvel" -e
+#   ./marvel inject util/tools-shell-g1-0 "env | grep MARVEL" -e
+#   ./marvel capture util/tools-shell-g1-0
+#   ./marvel stop
+
+[workspace]
+name = "util"
+
+[[team]]
+name = "tools"
+
+  [[team.role]]
+  name = "shell"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "shell"
+    command = "sh"
