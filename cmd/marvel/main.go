@@ -146,9 +146,9 @@ type optionalString struct {
 }
 
 func newOptionalString(p *string) *optionalString { return &optionalString{val: p} }
-func (o *optionalString) String() string           { return *o.val }
-func (o *optionalString) Set(s string) error        { *o.val = s; return nil }
-func (o *optionalString) Type() string              { return "seconds" }
+func (o *optionalString) String() string          { return *o.val }
+func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
+func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})

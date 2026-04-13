@@ -66,22 +66,22 @@ type Runtime struct {
 
 // Session is the atomic unit: a tmux pane running one process (pod equivalent).
 type Session struct {
-	Name           string       `toml:"name"`
-	Workspace      string       `toml:"workspace"`
-	Team           string       `toml:"team"`
-	Role           string       `toml:"role"`
-	Generation     int64        `toml:"-"`
-	Runtime        Runtime      `toml:"runtime"`
-	State          SessionState `toml:"-"`
-	PaneID         string       `toml:"-"`
-	PID            int          `toml:"-"`
-	ContextPercent float64      `toml:"-"`
-	LastHeartbeat  time.Time    `toml:"-"`
-	HealthState    HealthState  `toml:"-"`
-	FailureCount   int          `toml:"-"`
-	RestartCount   int          `toml:"-"`
-	LastHealthCheck time.Time   `toml:"-"`
-	CreatedAt      time.Time    `toml:"-"`
+	Name            string       `toml:"name"`
+	Workspace       string       `toml:"workspace"`
+	Team            string       `toml:"team"`
+	Role            string       `toml:"role"`
+	Generation      int64        `toml:"-"`
+	Runtime         Runtime      `toml:"runtime"`
+	State           SessionState `toml:"-"`
+	PaneID          string       `toml:"-"`
+	PID             int          `toml:"-"`
+	ContextPercent  float64      `toml:"-"`
+	LastHeartbeat   time.Time    `toml:"-"`
+	HealthState     HealthState  `toml:"-"`
+	FailureCount    int          `toml:"-"`
+	RestartCount    int          `toml:"-"`
+	LastHealthCheck time.Time    `toml:"-"`
+	CreatedAt       time.Time    `toml:"-"`
 }
 
 // Role declares desired state for one kind of agent within a team.
@@ -136,7 +136,7 @@ type Host struct {
 }
 
 // Key returns the namespaced key for a resource.
-func (w *Workspace) Key() string  { return w.Name }
-func (s *Session) Key() string    { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
-func (t *Team) Key() string       { return fmt.Sprintf("%s/%s", t.Workspace, t.Name) }
-func (e *Endpoint) Key() string   { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }
+func (w *Workspace) Key() string { return w.Name }
+func (s *Session) Key() string   { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
+func (t *Team) Key() string      { return fmt.Sprintf("%s/%s", t.Workspace, t.Name) }
+func (e *Endpoint) Key() string  { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }

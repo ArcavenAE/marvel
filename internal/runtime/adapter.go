@@ -102,7 +102,7 @@ func buildCommand(binary string, args []string) string {
 }
 
 // shellQuote wraps an argument in single quotes if it contains spaces or
-// shell metacharacters. Empty strings become ''.
+// shell metacharacters. Empty strings become ”.
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
