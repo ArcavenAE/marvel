@@ -90,6 +90,7 @@ type Role struct {
 	Replicas      int           `toml:"replicas"`
 	Runtime       Runtime       `toml:"runtime"`
 	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
+	Permissions   string        `toml:"permissions,omitempty"`
 	HealthCheck   *HealthCheck  `toml:"-"`
 }
 

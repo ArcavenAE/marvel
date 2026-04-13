@@ -1,5 +1,5 @@
 // Package session manages session lifecycle — creating and destroying
-// sessions by coordinating the API store and tmux driver.
+// sessions by coordinating the API store, tmux driver, and runtime adapters.
 package session
 
 import (
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/runtime"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
 
@@ -15,12 +16,13 @@ import (
 type Manager struct {
 	store      *api.Store
 	driver     *tmux.Driver
+	adapters   *runtime.Registry
 	SocketPath string
 }
 
-// NewManager creates a session manager.
+// NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
-	return &Manager{store: store, driver: driver}
+	return &Manager{store: store, driver: driver, adapters: runtime.NewRegistry()}
 }
 
 // tmuxSessionName returns the tmux session name for a workspace.
@@ -43,18 +45,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		return fmt.Errorf("ensure tmux session %s: %w", tmuxSess, err)
 	}
 
-	cmd := sess.Runtime.Command
-	for _, arg := range sess.Runtime.Args {
-		cmd += " " + arg
-	}
-
-	envs := map[string]string{
-		"MARVEL_SESSION": sess.Name,
-		"MARVEL_ROLE":    sess.Role,
-	}
-	if m.SocketPath != "" {
-		envs["MARVEL_SOCKET"] = m.SocketPath
-	}
+	cmd, envs := m.resolveRuntime(sess)
 
 	paneID, err := m.driver.NewPane(tmuxSess, cmd, sess.Name, envs)
 	if err != nil {
@@ -67,6 +58,66 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
 	return nil
+}
+
+// resolveRuntime uses the adapter registry when team/role context is available,
+// falling back to direct command construction for ad-hoc sessions.
+func (m *Manager) resolveRuntime(sess *api.Session) (string, map[string]string) {
+	// Look up team and role for full adapter context.
+	team, teamErr := m.store.GetTeam(fmt.Sprintf("%s/%s", sess.Workspace, sess.Team))
+	if teamErr != nil {
+		// Ad-hoc session or team not found — use direct command.
+		return m.directCommand(sess)
+	}
+
+	var role *api.Role
+	for i := range team.Roles {
+		if team.Roles[i].Name == sess.Role {
+			role = &team.Roles[i]
+			break
+		}
+	}
+	if role == nil {
+		return m.directCommand(sess)
+	}
+
+	ws, wsErr := m.store.GetWorkspace(sess.Workspace)
+	if wsErr != nil {
+		return m.directCommand(sess)
+	}
+
+	adapter := m.adapters.Resolve(sess.Runtime.Name)
+	result, err := adapter.Prepare(&runtime.LaunchContext{
+		Session:    sess,
+		Role:       role,
+		Team:       team,
+		Workspace:  ws,
+		SocketPath: m.SocketPath,
+	})
+	if err != nil {
+		log.Printf("adapter %s prepare failed for %s, falling back: %v", adapter.Name(), sess.Key(), err)
+		return m.directCommand(sess)
+	}
+
+	log.Printf("session %s using %s adapter", sess.Key(), adapter.Name())
+	return result.Command, result.Env
+}
+
+// directCommand builds the command string directly — the pre-adapter path
+// used for ad-hoc sessions or when the adapter can't resolve.
+func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
+	cmd := sess.Runtime.Command
+	for _, arg := range sess.Runtime.Args {
+		cmd += " " + arg
+	}
+	envs := map[string]string{
+		"MARVEL_SESSION": sess.Name,
+		"MARVEL_ROLE":    sess.Role,
+	}
+	if m.SocketPath != "" {
+		envs["MARVEL_SOCKET"] = m.SocketPath
+	}
+	return cmd, envs
 }
 
 // Delete destroys a session: kills the tmux pane and removes from the store.

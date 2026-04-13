@@ -32,6 +32,7 @@ type ManifestRole struct {
 	Replicas      int                  `toml:"replicas"`
 	Runtime       ManifestRuntime      `toml:"runtime"`
 	RestartPolicy string               `toml:"restart_policy,omitempty"`
+	Permissions   string               `toml:"permissions,omitempty"`
 	HealthCheck   *ManifestHealthCheck `toml:"healthcheck,omitempty"`
 }
 
@@ -123,6 +124,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Replicas:      mr.Replicas,
 				Runtime:       rt,
 				RestartPolicy: RestartAlways,
+				Permissions:   mr.Permissions,
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)

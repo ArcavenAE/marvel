@@ -64,15 +64,13 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 	if actual < desired {
 		for i := actual; i < desired; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
-			rt := role.Runtime
-			rt.Args = c.injectIdentity(rt.Args, name, t, role, rt.Script)
 			sess := &api.Session{
 				Name:       name,
 				Workspace:  t.Workspace,
 				Team:       t.Name,
 				Role:       role.Name,
 				Generation: t.Generation,
-				Runtime:    rt,
+				Runtime:    role.Runtime,
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				log.Printf("reconcile: create session %s: %v", name, err)
@@ -298,15 +296,13 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 		// Create remaining new-gen sessions.
 		for i := len(newGen); i < desired; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
-			rt := role.Runtime
-			rt.Args = c.injectIdentity(rt.Args, name, t, role, rt.Script)
 			sess := &api.Session{
 				Name:       name,
 				Workspace:  t.Workspace,
 				Team:       t.Name,
 				Role:       role.Name,
 				Generation: t.Generation,
-				Runtime:    rt,
+				Runtime:    role.Runtime,
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				log.Printf("shift: create session %s: %v", name, err)
@@ -387,28 +383,6 @@ func (c *Controller) nextIndex(t *api.Team, role *api.Role, generation int64) in
 		}
 	}
 	return max + 1
-}
-
-// injectIdentity appends identity and script flags for runtimes that support them.
-func (c *Controller) injectIdentity(args []string, name string, t *api.Team, role *api.Role, script string) []string {
-	if role.Name == "" && script == "" {
-		return args
-	}
-	injected := make([]string, len(args))
-	copy(injected, args)
-	if script != "" {
-		injected = append(injected, "--script", script)
-	}
-	injected = append(injected,
-		"--name", name,
-		"--workspace", t.Workspace,
-		"--team", t.Name,
-		"--role", role.Name,
-	)
-	if c.SocketPath != "" {
-		injected = append(injected, "--socket", c.SocketPath)
-	}
-	return injected
 }
 
 // Run starts the reconciliation loop, reconciling every interval.
