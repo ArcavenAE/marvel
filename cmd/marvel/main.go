@@ -22,6 +22,10 @@ import (
 var socketPath = daemon.DefaultSocket
 
 func main() {
+	// Strip shell-style comments from args so inline notes work:
+	//   ./marvel shift test/squad  # replace all workers
+	os.Args = stripComments(os.Args)
+
 	root := &cobra.Command{
 		Use:   "marvel",
 		Short: "Agent orchestration control plane",
@@ -444,9 +448,10 @@ func stopCmd() *cobra.Command {
 // --- Watch mode ---
 
 type watchSort struct {
-	column   string
-	desc     bool
-	showHelp bool
+	column       string
+	desc         bool
+	showHelp     bool
+	lastSessions []api.Session
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -583,10 +588,16 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 
 	sessions, err := fetchSessions()
 	if err != nil {
-		fmt.Fprintf(&buf, "error: %v\n", err)
+		fmt.Fprintf(&buf, "⚠ daemon disconnected — waiting for reconnect\n\n")
+		if len(ws.lastSessions) > 0 {
+			fmt.Fprintf(&buf, "last known state:\n")
+			sortSessions(ws.lastSessions, ws)
+			buf.WriteString(renderSessionTable(ws.lastSessions))
+		}
 		return buf.String()
 	}
 
+	ws.lastSessions = sessions
 	sortSessions(sessions, ws)
 	buf.WriteString(renderSessionTable(sessions))
 	return buf.String()
@@ -736,4 +747,19 @@ func printEndpoints(data json.RawMessage) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\n", e.Workspace, e.Name, e.Team)
 	}
 	return w.Flush()
+}
+
+// stripComments removes shell-style comments from CLI arguments.
+// Everything from a bare "#" argument onward is dropped, so that
+// inline notes work: ./marvel shift test/squad  # replace all workers
+func stripComments(args []string) []string {
+	for i, arg := range args {
+		if i == 0 {
+			continue // skip the binary name
+		}
+		if arg == "#" || strings.HasPrefix(arg, "#") {
+			return args[:i]
+		}
+	}
+	return args
 }
