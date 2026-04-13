@@ -175,7 +175,7 @@ func fetchReleases() ([]githubRelease, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch releases: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
@@ -275,7 +275,7 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	// Check write access.
 	testPath := filepath.Join(dir, ".marvel-update-test")
 	if err := os.WriteFile(testPath, []byte("test"), 0o644); err != nil {
-		return fmt.Errorf("cannot write to %s: %w\n\nTry running with sudo.", dir, err)
+		return fmt.Errorf("cannot write to %s (try running with sudo): %w", dir, err)
 	}
 	_ = os.Remove(testPath)
 
@@ -289,7 +289,7 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)

@@ -109,7 +109,7 @@ func (e *LuaEnv) luaCreateAgent(L *lua.LState) int {
 	}
 
 	var parsed map[string]string
-	json.Unmarshal([]byte(result), &parsed)
+	_ = json.Unmarshal([]byte(result), &parsed)
 	L.Push(lua.LString(parsed["session_key"]))
 	return 1
 }
@@ -142,7 +142,7 @@ func (e *LuaEnv) luaListAgents(L *lua.LState) int {
 	}
 
 	var sessions []map[string]any
-	json.Unmarshal([]byte(result), &sessions)
+	_ = json.Unmarshal([]byte(result), &sessions)
 
 	tbl := L.NewTable()
 	for _, s := range sessions {

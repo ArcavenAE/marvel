@@ -159,7 +159,7 @@ func (d *Daemon) Stop() {
 	addr := ""
 	if d.listener != nil {
 		addr = d.listener.Addr().String()
-		d.listener.Close()
+		_ = d.listener.Close()
 	}
 	d.wg.Wait()
 
@@ -178,7 +178,7 @@ func (d *Daemon) Stop() {
 }
 
 func (d *Daemon) handleConn(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	var req Request
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
@@ -187,7 +187,7 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	}
 
 	resp := d.dispatch(req)
-	json.NewEncoder(conn).Encode(resp)
+	_ = json.NewEncoder(conn).Encode(resp)
 }
 
 func (d *Daemon) dispatch(req Request) Response {
@@ -605,7 +605,7 @@ func (d *Daemon) handleStop() Response {
 
 func writeError(conn net.Conn, msg string) {
 	resp := Response{Error: msg}
-	json.NewEncoder(conn).Encode(resp)
+	_ = json.NewEncoder(conn).Encode(resp)
 }
 
 // SendRequest sends a request to the daemon and returns the response.
@@ -622,7 +622,7 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return nil, fmt.Errorf("send request: %w", err)

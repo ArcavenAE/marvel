@@ -109,7 +109,7 @@ func workCmd() *cobra.Command {
 			}
 
 			var result map[string]string
-			json.Unmarshal(resp.Result, &result)
+			_ = json.Unmarshal(resp.Result, &result)
 			fmt.Printf("workspace/%s ready\n", result["workspace"])
 			return nil
 		},
@@ -201,7 +201,7 @@ func describeCmd() *cobra.Command {
 
 			// Pretty print JSON.
 			var v any
-			json.Unmarshal(resp.Result, &v)
+			_ = json.Unmarshal(resp.Result, &v)
 			out, _ := json.MarshalIndent(v, "", "  ")
 			fmt.Println(string(out))
 			return nil
@@ -293,7 +293,7 @@ func runCmd() *cobra.Command {
 				return fmt.Errorf("%s", resp.Error)
 			}
 			var result map[string]string
-			json.Unmarshal(resp.Result, &result)
+			_ = json.Unmarshal(resp.Result, &result)
 			fmt.Printf("session/%s created\n", result["session_key"])
 			return nil
 		},
@@ -561,7 +561,7 @@ func fetchSessions() ([]api.Session, error) {
 func renderSessionTable(sessions []api.Session) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tHEALTH\tCTX%%\tDESK\tAGENT\n")
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tHEALTH\tCTX%%\tDESK\tAGENT\n")
 	for _, s := range sessions {
 		agent := s.Runtime.Name
 		if agent == "" {
@@ -571,30 +571,17 @@ func renderSessionTable(sessions []api.Session) string {
 		if s.ContextPercent > 0 || !s.LastHeartbeat.IsZero() {
 			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
 		}
-		desk := s.PaneID
-		if strings.HasPrefix(desk, "%") {
-			desk = desk[1:]
-		}
+		desk := strings.TrimPrefix(s.PaneID, "%")
 		gen := fmt.Sprintf("%d", s.Generation)
 		health := string(s.HealthState)
 		if health == "" {
 			health = "unknown"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, desk, agent)
 	}
-	w.Flush()
+	_ = w.Flush()
 	return buf.String()
-}
-
-func sortIndicator(ws *watchSort, col string) string {
-	if ws.column == col {
-		if ws.desc {
-			return " v"
-		}
-		return " ^"
-	}
-	return ""
 }
 
 func renderWatch(ws *watchSort, interval time.Duration) string {
@@ -650,7 +637,7 @@ func watchSessionsLoop(interval time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("enable raw mode: %w", err)
 	}
-	defer term.Restore(fd, oldState)
+	defer func() { _ = term.Restore(fd, oldState) }()
 
 	// Read keys in a goroutine.
 	keys := make(chan byte, 1)
@@ -743,14 +730,14 @@ func printTeams(data json.RawMessage) error {
 		return err
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tREPLICAS\tRUNTIME\n")
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tREPLICAS\tRUNTIME\n")
 	for _, t := range teams {
 		for _, r := range t.Roles {
 			rt := r.Runtime.Name
 			if rt == "" {
 				rt = r.Runtime.Command
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", t.Workspace, t.Name, r.Name, r.Replicas, rt)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", t.Workspace, t.Name, r.Name, r.Replicas, rt)
 		}
 	}
 	return w.Flush()
@@ -762,13 +749,13 @@ func printWorkspaces(data json.RawMessage) error {
 		return err
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "NAME\tAGE\n")
+	_, _ = fmt.Fprintf(w, "NAME\tAGE\n")
 	for _, ws := range workspaces {
 		age := "unknown"
 		if !ws.CreatedAt.IsZero() {
 			age = strings.TrimSuffix(fmt.Sprintf("%v", ws.CreatedAt.Format("2006-01-02 15:04")), " ")
 		}
-		fmt.Fprintf(w, "%s\t%s\n", ws.Name, age)
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", ws.Name, age)
 	}
 	return w.Flush()
 }
@@ -779,9 +766,9 @@ func printEndpoints(data json.RawMessage) error {
 		return err
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "WORKSPACE\tNAME\tTEAM\n")
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tNAME\tTEAM\n")
 	for _, e := range endpoints {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", e.Workspace, e.Name, e.Team)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", e.Workspace, e.Name, e.Team)
 	}
 	return w.Flush()
 }

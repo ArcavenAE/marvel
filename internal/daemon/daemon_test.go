@@ -36,7 +36,7 @@ func TestDaemonLifecycle(t *testing.T) {
 	sock := filepath.Join(os.TempDir(), "marvel-test.sock")
 	t.Cleanup(func() {
 		d.Stop()
-		os.Remove(sock)
+		_ = os.Remove(sock)
 	})
 
 	if err := d.Start(sock); err != nil {
@@ -187,7 +187,7 @@ name = "squad"
 			t.Fatalf("describe session: %v", err)
 		}
 		var described map[string]any
-		json.Unmarshal(resp.Result, &described)
+		_ = json.Unmarshal(resp.Result, &described)
 		if cp, ok := described["ContextPercent"].(float64); !ok || cp != 55.5 {
 			t.Fatalf("expected context_percent 55.5, got %v", described["ContextPercent"])
 		}
@@ -209,7 +209,7 @@ name = "squad"
 		t.Fatalf("run error: %s", resp.Error)
 	}
 	var runResult map[string]string
-	json.Unmarshal(resp.Result, &runResult)
+	_ = json.Unmarshal(resp.Result, &runResult)
 	if runResult["status"] != "created" {
 		t.Fatalf("expected status created, got %s", runResult["status"])
 	}
@@ -229,7 +229,7 @@ name = "squad"
 		t.Fatalf("shift error: %s", resp.Error)
 	}
 	var shiftResult map[string]string
-	json.Unmarshal(resp.Result, &shiftResult)
+	_ = json.Unmarshal(resp.Result, &shiftResult)
 	if shiftResult["status"] != "shift_initiated" {
 		t.Fatalf("expected shift_initiated, got %s", shiftResult["status"])
 	}
@@ -239,7 +239,7 @@ name = "squad"
 
 	// Scale during shift should work now (shift should be complete).
 	// But first, verify sessions exist with gen 2.
-	resp, err = SendRequest(sock, Request{
+	_, err = SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
