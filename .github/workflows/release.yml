@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    name: GoReleaser
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  sign-release:
+    name: Sign Release Binaries
+    needs: goreleaser
+    if: vars.SIGNING_ENABLED == 'true'
+    runs-on: macos-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Get tag version
+        id: tag
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ github.ref_name }}" --pattern "*.tar.gz"
+          for f in *.tar.gz; do
+            tar xzf "$f"
+          done
+
+      - name: Import certificates
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_CERTIFICATE_P12: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_P12 }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+        run: |
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > cert.p12
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm cert.p12
+
+          if [ -n "${APPLE_INSTALLER_CERTIFICATE_P12:-}" ]; then
+            echo "$APPLE_INSTALLER_CERTIFICATE_P12" | base64 --decode > installer-cert.p12
+            security import installer-cert.p12 -k build.keychain -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" -T /usr/bin/pkgbuild -T /usr/bin/productbuild
+            rm installer-cert.p12
+          fi
+
+          curl -sfo /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security add-certificates -k build.keychain /tmp/DeveloperIDG2CA.cer
+          rm /tmp/DeveloperIDG2CA.cer
+
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+
+      - name: Sign, package, and notarize
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          chmod +x scripts/*.sh
+
+          # Find and sign darwin binaries from extracted archives.
+          for dir in marvel_*_darwin_*/; do
+            [ -d "$dir" ] || continue
+            binary="${dir}marvel"
+            [ -f "$binary" ] || continue
+
+            arch=$(echo "$dir" | grep -o 'arm64\|amd64')
+
+            # Sign binary
+            codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" \
+              --identifier "com.arcavenae.marvel" --timestamp "$binary"
+
+            # App bundle
+            ./scripts/create-app.sh "$binary" "$VERSION" "artifacts-${arch}"
+            codesign --force --deep --options runtime --sign "$APPLE_SIGNING_IDENTITY" \
+              --identifier "com.arcavenae.marvel" --timestamp "artifacts-${arch}/Marvel.app"
+
+            # DMG
+            ./scripts/create-dmg.sh "artifacts-${arch}/Marvel.app" "$VERSION" "marvel-${arch}.dmg"
+
+            # PKG
+            ./scripts/create-pkg.sh "$binary" "$VERSION" "$APPLE_INSTALLER_IDENTITY" "marvel-${arch}.pkg"
+
+            # Upload signed binary as standalone asset
+            cp "$binary" "marvel-darwin-${arch}"
+          done
+
+          # Notarize
+          for artifact in marvel-*.pkg marvel-*.dmg; do
+            [ -f "$artifact" ] || continue
+            xcrun notarytool submit "$artifact" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "$artifact"
+          done
+
+      - name: Upload signed artifacts to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ASSETS=()
+          for f in marvel-darwin-* marvel-*.dmg marvel-*.pkg; do
+            [ -f "$f" ] && ASSETS+=("$f")
+          done
+
+          if [ ${#ASSETS[@]} -gt 0 ]; then
+            gh release upload "${{ github.ref_name }}" "${ASSETS[@]}" --clobber
+          fi
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain build.keychain || true

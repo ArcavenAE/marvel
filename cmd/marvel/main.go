@@ -16,7 +16,14 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/upgrade"
 	"github.com/spf13/cobra"
+)
+
+// Set by -ldflags at build time.
+var (
+	version = "dev"
+	channel = "dev"
 )
 
 var socketPath = daemon.DefaultSocket
@@ -45,6 +52,8 @@ func main() {
 	root.AddCommand(shiftCmd())
 	root.AddCommand(injectCmd())
 	root.AddCommand(captureCmd())
+	root.AddCommand(versionCmd())
+	root.AddCommand(upgradeCmd())
 	root.AddCommand(stopCmd())
 
 	if err := root.Execute(); err != nil {
@@ -425,6 +434,33 @@ func captureCmd() *cobra.Command {
 	cmd.PreRun = func(cmd *cobra.Command, args []string) {
 		hasRange = cmd.Flags().Changed("start") || cmd.Flags().Changed("end")
 	}
+	return cmd
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print marvel version and channel",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("marvel %s (%s)\n", version, channel)
+		},
+	}
+}
+
+func upgradeCmd() *cobra.Command {
+	var targetVersion string
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade marvel to the latest version",
+		Long: `Upgrade marvel to the latest version.
+
+If installed via Homebrew, delegates to brew upgrade.
+Otherwise downloads the latest release from GitHub.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return upgrade.Run(channel, targetVersion)
+		},
+	}
+	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")
 	return cmd
 }
 

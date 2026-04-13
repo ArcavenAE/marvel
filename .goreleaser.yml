@@ -1,0 +1,99 @@
+version: 2
+
+project_name: marvel
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+
+builds:
+  - id: marvel
+    main: ./cmd/marvel
+    binary: marvel
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.channel=stable
+    ignore:
+      - goos: linux
+        goarch: arm64
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))?\!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\(.+\))?\!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: arcavenae
+    name: marvel
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  header: |
+    ## marvel v{{.Version}}
+
+    Agent orchestration control plane.
+  footer: |
+    **Full Changelog**: https://github.com/arcavenae/marvel/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ### Installation
+
+    ```bash
+    brew install ArcavenAE/tap/marvel
+    ```
+
+brews:
+  - repository:
+      owner: ArcavenAE
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore(formula): update marvel to {{ .Tag }}"
+    directory: Formula
+    homepage: "https://github.com/arcavenae/marvel"
+    description: "Agent orchestration control plane"
+    license: "MIT"
+    install: |
+      bin.install "marvel"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/marvel version 2>&1")

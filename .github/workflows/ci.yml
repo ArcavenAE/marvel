@@ -1,0 +1,378 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Install gofumpt
+        run: go install mvdan.cc/gofumpt@v0.7.0
+
+      - name: Check formatting (gofumpt)
+        run: |
+          UNFORMATTED=$(gofumpt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "::error::Files need formatting with gofumpt:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.10.1
+
+      - name: Run tests with race detector
+        run: go test ./... -v -count=1 -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Display coverage summary
+        run: go tool cover -func=coverage.out
+
+      - name: Validate build
+        run: go build -o /dev/null ./cmd/marvel
+
+  build-binaries:
+    name: Build Binaries
+    needs: quality-gate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Generate version
+        id: version
+        run: |
+          VERSION="0.1.0-alpha.$(date -u +%Y%m%d).$(date -u +%H%M%S).${GITHUB_SHA::7}"
+          TAG="alpha-$(date -u +%Y%m%d)-$(date -u +%H%M%S)-${GITHUB_SHA::7}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build alpha binaries
+        run: |
+          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.channel=alpha"
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o marvel-darwin-arm64 ./cmd/marvel
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-darwin-amd64 ./cmd/marvel
+          GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-linux-amd64 ./cmd/marvel
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: marvel-*
+          retention-days: 14
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+  sign-and-notarize:
+    name: Sign & Notarize
+    needs: build-binaries
+    if: github.event_name == 'push' && vars.SIGNING_ENABLED == 'true'
+    environment: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+
+      - name: Import certificates
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_CERTIFICATE_P12: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_P12 }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+        run: |
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > cert.p12
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm cert.p12
+
+          if [ -n "${APPLE_INSTALLER_CERTIFICATE_P12:-}" ]; then
+            echo "$APPLE_INSTALLER_CERTIFICATE_P12" | base64 --decode > installer-cert.p12
+            security import installer-cert.p12 -k build.keychain -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" -T /usr/bin/pkgbuild -T /usr/bin/productbuild
+            rm installer-cert.p12
+          fi
+
+          curl -sfo /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security add-certificates -k build.keychain /tmp/DeveloperIDG2CA.cer
+          rm /tmp/DeveloperIDG2CA.cer
+
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+
+      - name: Sign darwin binaries
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          for binary in marvel-darwin-arm64 marvel-darwin-amd64; do
+            chmod +x "$binary"
+            codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" \
+              --identifier "com.arcavenae.marvel" --timestamp "$binary"
+            codesign --verify --deep --strict "$binary"
+            echo "Signed and verified: $binary"
+          done
+
+      - name: Create app bundles
+        env:
+          VERSION: ${{ needs.build-binaries.outputs.version }}
+        run: |
+          chmod +x scripts/*.sh
+          for arch in arm64 amd64; do
+            ./scripts/create-app.sh "marvel-darwin-${arch}" "$VERSION" "artifacts-${arch}"
+          done
+
+      - name: Sign app bundles
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          for arch in arm64 amd64; do
+            codesign --force --deep --options runtime --sign "$APPLE_SIGNING_IDENTITY" \
+              --identifier "com.arcavenae.marvel" --timestamp "artifacts-${arch}/Marvel.app"
+            codesign --verify --deep --strict "artifacts-${arch}/Marvel.app"
+          done
+
+      - name: Create DMG images
+        env:
+          VERSION: ${{ needs.build-binaries.outputs.version }}
+        run: |
+          for arch in arm64 amd64; do
+            ./scripts/create-dmg.sh "artifacts-${arch}/Marvel.app" "$VERSION" "marvel-${arch}.dmg"
+          done
+
+      - name: Create PKG installers
+        env:
+          VERSION: ${{ needs.build-binaries.outputs.version }}
+          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
+        run: |
+          for arch in arm64 amd64; do
+            ./scripts/create-pkg.sh "marvel-darwin-${arch}" "$VERSION" \
+              "$APPLE_INSTALLER_IDENTITY" "marvel-${arch}.pkg"
+          done
+
+      - name: Notarize artifacts
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for artifact in marvel-*.pkg marvel-*.dmg; do
+            [ -f "$artifact" ] || continue
+            echo "Notarizing $artifact..."
+            xcrun notarytool submit "$artifact" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "$artifact"
+            echo "Notarized: $artifact"
+          done
+
+      - name: Upload signed binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-binaries
+          path: |
+            marvel-darwin-arm64
+            marvel-darwin-amd64
+          retention-days: 14
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers
+          path: |
+            marvel-*.dmg
+            marvel-*.pkg
+          retention-days: 14
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain build.keychain || true
+
+  release:
+    name: Create Release
+    needs: [build-binaries, sign-and-notarize]
+    if: github.event_name == 'push' && !cancelled() && needs.build-binaries.result == 'success'
+    permissions:
+      contents: write
+    environment: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download signed binaries
+        if: needs.sign-and-notarize.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-binaries
+
+      - name: Download installers
+        if: needs.sign-and-notarize.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: installers
+
+      - name: Download unsigned binaries (fallback)
+        if: needs.sign-and-notarize.result != 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+
+      - name: Download linux binary from unsigned artifacts
+        if: needs.sign-and-notarize.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: unsigned-binaries
+
+      - name: Copy linux binary
+        if: needs.sign-and-notarize.result == 'success'
+        run: |
+          cp unsigned-binaries/marvel-linux-amd64 .
+          rm -rf unsigned-binaries
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-binaries.outputs.tag }}
+          VERSION: ${{ needs.build-binaries.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          SIGNED: ${{ needs.sign-and-notarize.result == 'success' && 'Yes (Apple Developer ID)' || 'No (unsigned)' }}
+        run: |
+          BODY="Automated alpha release from push to main.
+
+          **Version:** ${VERSION}
+          **Commit:** ${COMMIT}
+          **Signed:** ${SIGNED}
+
+          **Binaries:**
+          - \`marvel-darwin-arm64\` — macOS Apple Silicon
+          - \`marvel-darwin-amd64\` — macOS Intel
+          - \`marvel-linux-amd64\` — Linux x86_64
+
+          **Install:** \`brew install ArcavenAE/tap/marvel\`
+          **Upgrade:** \`marvel upgrade\`"
+
+          ASSETS=()
+          for f in marvel-*; do
+            [ -f "$f" ] && ASSETS+=("$f")
+          done
+
+          gh release create "$TAG" \
+            --title "Alpha ${TAG}" \
+            --notes "$BODY" \
+            --prerelease \
+            "${ASSETS[@]}"
+
+      - name: Update Homebrew formula
+        if: vars.ALPHA_TAP_ENABLED == 'true'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ needs.build-binaries.outputs.version }}"
+          TAG="${{ needs.build-binaries.outputs.tag }}"
+          BASE_URL="https://github.com/ArcavenAE/marvel/releases/download/${TAG}"
+
+          SHA_ARM64=$(sha256sum marvel-darwin-arm64 | cut -d' ' -f1)
+          SHA_AMD64=$(sha256sum marvel-darwin-amd64 | cut -d' ' -f1)
+          SHA_LINUX=$(sha256sum marvel-linux-amd64 | cut -d' ' -f1)
+
+          cat > marvel.rb <<FORMULA
+          class Marvel < Formula
+            desc "Agent orchestration control plane"
+            homepage "https://github.com/ArcavenAE/marvel"
+            version "${VERSION}"
+            license "MIT"
+
+            if OS.mac? && Hardware::CPU.arm?
+              url "${BASE_URL}/marvel-darwin-arm64"
+              sha256 "${SHA_ARM64}"
+            elsif OS.mac?
+              url "${BASE_URL}/marvel-darwin-amd64"
+              sha256 "${SHA_AMD64}"
+            elsif OS.linux?
+              url "${BASE_URL}/marvel-linux-amd64"
+              sha256 "${SHA_LINUX}"
+            end
+
+            def install
+              if OS.mac? && Hardware::CPU.arm?
+                bin.install "marvel-darwin-arm64" => "marvel"
+              elsif OS.mac?
+                bin.install "marvel-darwin-amd64" => "marvel"
+              elsif OS.linux?
+                bin.install "marvel-linux-amd64" => "marvel"
+              end
+            end
+
+            test do
+              assert_match "marvel", shell_output("#{bin}/marvel version 2>&1")
+            end
+          end
+          FORMULA
+
+          sed -i 's/^          //' marvel.rb
+          ruby -c marvel.rb
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/ArcavenAE/homebrew-tap.git" tap-repo
+          mkdir -p tap-repo/Formula
+          cp marvel.rb tap-repo/Formula/marvel.rb
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/marvel.rb
+          if git diff --cached --quiet; then
+            echo "Formula unchanged, skipping push"
+          else
+            git commit -m "chore(formula): update marvel to ${TAG}"
+            git push origin main
+          fi
+
+      - name: Clean up old alpha releases
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 200 \
+            | grep 'alpha-' \
+            | tail -n +31 \
+            | awk '{print $1}' \
+            | xargs -I{} gh release delete {} --yes --cleanup-tag
