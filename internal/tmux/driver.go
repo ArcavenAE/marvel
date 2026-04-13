@@ -111,6 +111,55 @@ func (d *Driver) KillSession(name string) error {
 	return nil
 }
 
+// SendKeys sends keystrokes to a tmux pane. If literal is true, each key is
+// sent literally (tmux send-keys -l) — no interpretation of special key names.
+// If enter is true, an Enter keystroke is appended after the text.
+func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
+	args := []string{"send-keys", "-t", paneID}
+	if literal {
+		args = append(args, "-l")
+	}
+	args = append(args, text)
+
+	cmd := exec.Command(d.binary, args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
+	}
+
+	if enter {
+		enterCmd := exec.Command(d.binary, "send-keys", "-t", paneID, "Enter")
+		if out, err := enterCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("send-keys Enter %s: %s: %w", paneID, string(out), err)
+		}
+	}
+	return nil
+}
+
+// CapturePane captures the visible content of a tmux pane and returns it as a
+// string. Captures the entire visible area including trailing whitespace lines.
+func (d *Driver) CapturePane(paneID string) (string, error) {
+	cmd := exec.Command(d.binary, "capture-pane", "-t", paneID, "-p")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %s: %w", paneID, string(out), err)
+	}
+	return string(out), nil
+}
+
+// CapturePaneRange captures pane content with explicit start and end line
+// numbers. Negative values reference the scrollback buffer (e.g., -100 for
+// 100 lines of history). This allows capturing scrollback beyond the visible area.
+func (d *Driver) CapturePaneRange(paneID string, start, end int) (string, error) {
+	cmd := exec.Command(d.binary, "capture-pane", "-t", paneID, "-p",
+		"-S", fmt.Sprintf("%d", start),
+		"-E", fmt.Sprintf("%d", end))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s [%d:%d]: %s: %w", paneID, start, end, string(out), err)
+	}
+	return string(out), nil
+}
+
 // ListPanes lists all panes across all windows in a session.
 func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 	cmd := exec.Command(d.binary, "list-panes", "-t", session, "-s",

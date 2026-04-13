@@ -38,6 +38,8 @@ func main() {
 	root.AddCommand(runCmd())
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
+	root.AddCommand(injectCmd())
+	root.AddCommand(captureCmd())
 	root.AddCommand(stopCmd())
 
 	if err := root.Execute(); err != nil {
@@ -345,6 +347,79 @@ func shiftCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "", "shift only this role (default: all roles)")
+	return cmd
+}
+
+func injectCmd() *cobra.Command {
+	var literal, enter bool
+	cmd := &cobra.Command{
+		Use:   "inject <session-key> <text>",
+		Short: "Send keystrokes to a session's pane (executive privilege)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]any{
+				"session_key": args[0],
+				"text":        args[1],
+				"literal":     literal,
+				"enter":       enter,
+			})
+			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+				Method: "inject",
+				Params: params,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			fmt.Printf("injected %d bytes into %s\n", len(args[1]), args[0])
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&literal, "literal", "l", true, "send keys literally (no special key interpretation)")
+	cmd.Flags().BoolVarP(&enter, "enter", "e", false, "append Enter keystroke after text")
+	return cmd
+}
+
+func captureCmd() *cobra.Command {
+	var start, end int
+	var hasRange bool
+	cmd := &cobra.Command{
+		Use:   "capture <session-key>",
+		Short: "Capture a session's pane content",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p := map[string]any{"session_key": args[0]}
+			if hasRange {
+				p["start"] = start
+				p["end"] = end
+			}
+			params, _ := json.Marshal(p)
+			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+				Method: "capture",
+				Params: params,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+
+			var result map[string]string
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				return fmt.Errorf("parse result: %w", err)
+			}
+			fmt.Print(result["content"])
+			return nil
+		},
+	}
+	cmd.Flags().IntVarP(&start, "start", "S", 0, "start line (negative for scrollback)")
+	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line")
+	cmd.PreRun = func(cmd *cobra.Command, args []string) {
+		hasRange = cmd.Flags().Changed("start") || cmd.Flags().Changed("end")
+	}
 	return cmd
 }
 

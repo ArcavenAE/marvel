@@ -114,6 +114,43 @@ receivers that dispatch work to running agent teams? Or CLI-only access for now,
 deferring external API until there's a concrete use case?
 Cross-ref: orchestrator F2.
 
+### F9: Runtime Adapter Framework
+`internal/runtime/` is empty. This is the integration keystone — marvel can't
+launch real BYOA workloads without runtime adapters. Three needed: forestage
+(deep: persona, heartbeat, cooperative stream), bare-claude (medium: env vars,
+capture-pane fallback), generic-stdin (minimal: any CLI, capture-pane only).
+Each adapter constructs the execution environment (settings.local.json, env vars,
+volumes) and exposes capabilities (spawn, kill, inject, capture).
+Blocks: forestage+marvel integration, permission model, everything downstream.
+Depends on: aae-orc-vpq (tmux driver decision).
+kos node: question-runtime-adapter.
+
+### F10: Permission Model — Environment Construction + Internal Capabilities
+Two complementary layers: (1) environment construction — marvel writes
+settings.local.json with the role's CC permission mode, controls filesystem
+mounts, sandbox boundaries; (2) internal capabilities — role-based RPC
+authorization on daemon methods. Workers get heartbeat+query. Supervisors get
+inject+scale+shift+capture. Both declared in team manifest, enforced by marvel.
+Replaces per-machine hooks (DCG), per-user settings, daemon-level checks.
+Depends on: F9 (runtime adapter, which constructs the environment).
+kos node: question-permission-model.
+
+### F11: Stream Attachment Strategy
+How does marvel observe agent output? Four strategies with different tradeoffs:
+PTY-owned (conflicts with tmux substrate — likely ruled out), pipe-pane to FIFO
+(pragmatic), cooperative socket from forestage (highest structure, marvel-aware
+only), periodic capture-pane scrape (lowest fidelity, universal BYOA fallback).
+Runtime adapter selects strategy based on runtime capabilities. Needs a probe.
+kos node: question-stream-attachment.
+
+### F12: Agent Communication — Broker-First Reframe
+Original framing (three transports + four message types) is transports without
+a broker. Reframed: topics and subscriptions with auth, transports as
+implementation detail. Broker candidates: embedded NATS JetStream, RabbitMQ,
+SQLite-backed custom. Tension with gradual elaboration: zero agents communicating
+today. Adopt the mental model now, defer implementation until concrete need.
+kos node: question-agent-protocol (updated session-017).
+
 ---
 
 ## Graveyard

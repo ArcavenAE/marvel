@@ -165,6 +165,10 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleRun(req.Params)
 	case "shift":
 		return d.handleShift(req.Params)
+	case "inject":
+		return d.handleInject(req.Params)
+	case "capture":
+		return d.handleCapture(req.Params)
 	case "stop":
 		return d.handleStop()
 	default:
@@ -466,6 +470,82 @@ func (d *Daemon) handleShift(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]string{
 		"status": "shift_initiated",
 		"team":   p.TeamKey,
+	})
+	return Response{Result: result}
+}
+
+// Inject params — send keystrokes to a session's pane (executive privilege).
+type injectParams struct {
+	SessionKey string `json:"session_key"`
+	Text       string `json:"text"`
+	Literal    bool   `json:"literal"`
+	Enter      bool   `json:"enter"`
+}
+
+func (d *Daemon) handleInject(params json.RawMessage) Response {
+	var p injectParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+
+	sess, err := d.store.GetSession(p.SessionKey)
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	if sess.PaneID == "" {
+		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
+	}
+
+	if err := d.driver.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
+		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
+	}
+
+	log.Printf("inject: %s <- %d bytes (literal=%v, enter=%v)", p.SessionKey, len(p.Text), p.Literal, p.Enter)
+
+	result, _ := json.Marshal(map[string]string{
+		"status":  "injected",
+		"session": p.SessionKey,
+	})
+	return Response{Result: result}
+}
+
+// Capture params — read a session's pane content.
+type captureParams struct {
+	SessionKey string `json:"session_key"`
+	Start      *int   `json:"start,omitempty"`
+	End        *int   `json:"end,omitempty"`
+}
+
+func (d *Daemon) handleCapture(params json.RawMessage) Response {
+	var p captureParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+
+	sess, err := d.store.GetSession(p.SessionKey)
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	if sess.PaneID == "" {
+		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
+	}
+
+	var content string
+	if p.Start != nil && p.End != nil {
+		content, err = d.driver.CapturePaneRange(sess.PaneID, *p.Start, *p.End)
+	} else {
+		content, err = d.driver.CapturePane(sess.PaneID)
+	}
+	if err != nil {
+		return Response{Error: fmt.Sprintf("capture %s: %v", p.SessionKey, err)}
+	}
+
+	result, _ := json.Marshal(map[string]string{
+		"status":  "captured",
+		"session": p.SessionKey,
+		"content": content,
 	})
 	return Response{Result: result}
 }
