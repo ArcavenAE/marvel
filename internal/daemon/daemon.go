@@ -1,5 +1,6 @@
 // Package daemon provides the marvel daemon — a long-running process
-// that manages sessions via tmux and serves CLI requests over Unix or TCP sockets.
+// that manages sessions via tmux and serves CLI requests over Unix sockets,
+// SSH tunnels, or (for advanced use) bare TCP sockets.
 package daemon
 
 import (
@@ -8,10 +9,15 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/session"
@@ -26,13 +32,18 @@ const (
 	ReconcileInterval = 2 * time.Second
 )
 
-// socketNetwork returns "tcp" if the address looks like host:port,
-// otherwise "unix".
-func socketNetwork(addr string) string {
+// listenNetwork returns "tcp" if the address looks like host:port,
+// otherwise "unix". Used by the daemon listener side only.
+func listenNetwork(addr string) string {
 	if strings.Contains(addr, ":") {
 		return "tcp"
 	}
 	return "unix"
+}
+
+// isSSH returns true if the address is an ssh:// URL.
+func isSSH(addr string) bool {
+	return strings.HasPrefix(addr, "ssh://")
 }
 
 // Request is a JSON-RPC-like request from the CLI.
@@ -81,7 +92,7 @@ func New() (*Daemon, error) {
 // The address format determines the network: "host:port" for TCP, a file path
 // for Unix. Examples: "/tmp/marvel.sock", "0.0.0.0:9090", ":9090".
 func (d *Daemon) Start(socketPath string) error {
-	network := socketNetwork(socketPath)
+	network := listenNetwork(socketPath)
 
 	if network == "unix" {
 		// Remove stale Unix socket.
@@ -126,6 +137,16 @@ func (d *Daemon) Start(socketPath string) error {
 	}()
 
 	log.Printf("marvel daemon listening on %s (%s)", socketPath, network)
+
+	// Print remote connection string for SSH access.
+	if network == "unix" {
+		if hostname, err := os.Hostname(); err == nil {
+			user := os.Getenv("USER")
+			if user != "" {
+				log.Printf("remote access: --socket ssh://%s@%s%s", user, hostname, socketPath)
+			}
+		}
+	}
 	return nil
 }
 
@@ -150,7 +171,7 @@ func (d *Daemon) Stop() {
 	}
 
 	// Only remove socket file for Unix sockets.
-	if addr != "" && socketNetwork(addr) == "unix" {
+	if addr != "" && listenNetwork(addr) == "unix" {
 		_ = os.Remove(addr)
 	}
 	log.Println("marvel daemon stopped")
@@ -588,13 +609,18 @@ func writeError(conn net.Conn, msg string) {
 }
 
 // SendRequest sends a request to the daemon and returns the response.
-// The address format determines the connection type: "host:port" for TCP,
-// a file path for Unix socket.
+//
+// Address formats:
+//
+//	/tmp/marvel.sock                          → Unix socket (default)
+//	ssh://user@host/tmp/marvel.sock           → SSH tunnel to Unix socket
+//	ssh://user@host:22/tmp/marvel.sock        → SSH tunnel with explicit SSH port
+//	ssh://host:9090                           → SSH tunnel to TCP port on remote
+//	tcp://host:9090 or host:9090              → bare TCP (advanced use)
 func SendRequest(socketPath string, req Request) (*Response, error) {
-	network := socketNetwork(socketPath)
-	conn, err := net.Dial(network, socketPath)
+	conn, err := dialDaemon(socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", socketPath, network, err)
+		return nil, err
 	}
 	defer conn.Close()
 
@@ -607,4 +633,149 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	return &resp, nil
+}
+
+// dialDaemon connects to the daemon, routing through SSH if the address
+// is an ssh:// URL.
+func dialDaemon(addr string) (net.Conn, error) {
+	if isSSH(addr) {
+		return dialSSH(addr)
+	}
+
+	// Strip tcp:// prefix for explicit bare-TCP use.
+	if strings.HasPrefix(addr, "tcp://") {
+		addr = strings.TrimPrefix(addr, "tcp://")
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			return nil, fmt.Errorf("connect to daemon at %s (tcp): %w", addr, err)
+		}
+		return conn, nil
+	}
+
+	network := listenNetwork(addr)
+	conn, err := net.Dial(network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", addr, network, err)
+	}
+	return conn, nil
+}
+
+// dialSSH parses an ssh:// URL and dials the daemon's socket through an
+// SSH tunnel. Auth uses the SSH agent (SSH_AUTH_SOCK) with fallback to
+// common key files (~/.ssh/id_ed25519, ~/.ssh/id_rsa).
+//
+// URL formats:
+//
+//	ssh://user@host/path/to/socket        → SSH to host:22, dial Unix socket
+//	ssh://user@host:2222/path/to/socket   → SSH to host:2222, dial Unix socket
+//	ssh://user@host:9090                  → SSH to host:22, dial TCP localhost:9090
+//	ssh://host/path/to/socket             → SSH as current user
+func dialSSH(addr string) (net.Conn, error) {
+	u, err := url.Parse(addr)
+	if err != nil {
+		return nil, fmt.Errorf("parse ssh address %q: %w", addr, err)
+	}
+
+	user := u.User.Username()
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+
+	sshHost := u.Hostname()
+	sshPort := u.Port()
+
+	// Determine what to dial on the remote side.
+	remotePath := u.Path
+	var remoteNetwork, remoteAddr string
+
+	if remotePath != "" && remotePath != "/" {
+		// Path present → Unix socket on the remote.
+		// Any port in the URL is the SSH port.
+		remoteNetwork = "unix"
+		remoteAddr = remotePath
+		if sshPort == "" {
+			sshPort = "22"
+		}
+	} else {
+		// No path → the port is the daemon's TCP port on the remote.
+		// SSH connects to port 22, then dials localhost:<port> on the remote.
+		remoteNetwork = "tcp"
+		if sshPort == "" {
+			return nil, fmt.Errorf("ssh address %q: need a port (for remote TCP) or a path (for remote Unix socket)", addr)
+		}
+		remoteAddr = "localhost:" + sshPort
+		sshPort = "22"
+	}
+
+	authMethods := sshAuthMethods()
+	if len(authMethods) == 0 {
+		return nil, fmt.Errorf("no SSH auth available (set SSH_AUTH_SOCK or add keys to ~/.ssh/)")
+	}
+
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(sshHost, sshPort), config)
+	if err != nil {
+		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, sshHost, sshPort, err)
+	}
+
+	conn, err := sshConn.Dial(remoteNetwork, remoteAddr)
+	if err != nil {
+		_ = sshConn.Close()
+		return nil, fmt.Errorf("ssh tunnel %s %s via %s: %w", remoteNetwork, remoteAddr, sshHost, err)
+	}
+
+	return &sshWrappedConn{Conn: conn, sshClient: sshConn}, nil
+}
+
+// sshWrappedConn wraps an SSH-tunneled connection so that closing it
+// also closes the underlying SSH client.
+type sshWrappedConn struct {
+	net.Conn
+	sshClient *ssh.Client
+}
+
+func (c *sshWrappedConn) Close() error {
+	err := c.Conn.Close()
+	_ = c.sshClient.Close()
+	return err
+}
+
+// sshAuthMethods returns available SSH authentication methods.
+// Prefers the SSH agent, falls back to common key files.
+func sshAuthMethods() []ssh.AuthMethod {
+	var methods []ssh.AuthMethod
+
+	// SSH agent (most common for developers).
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		conn, err := net.Dial("unix", sock)
+		if err == nil {
+			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+		}
+	}
+
+	// Key file fallback.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return methods
+	}
+
+	for _, name := range []string{"id_ed25519", "id_rsa"} {
+		key, err := os.ReadFile(filepath.Join(home, ".ssh", name))
+		if err != nil {
+			continue
+		}
+		signer, err := ssh.ParsePrivateKey(key)
+		if err != nil {
+			continue
+		}
+		methods = append(methods, ssh.PublicKeys(signer))
+	}
+
+	return methods
 }

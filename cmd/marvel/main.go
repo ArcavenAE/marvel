@@ -31,7 +31,8 @@ func main() {
 		Short: "Agent orchestration control plane",
 	}
 
-	root.PersistentFlags().StringVar(&socketPath, "socket", socketPath, "daemon socket path")
+	root.PersistentFlags().StringVar(&socketPath, "socket", socketPath,
+		"daemon address: Unix path, ssh://user@host/path, or tcp://host:port")
 
 	root.AddCommand(daemonCmd())
 	root.AddCommand(workCmd())
