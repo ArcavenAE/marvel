@@ -54,6 +54,7 @@ func main() {
 	root.AddCommand(captureCmd())
 	root.AddCommand(versionCmd())
 	root.AddCommand(upgradeCmd())
+	root.AddCommand(keysCmd())
 	root.AddCommand(stopCmd())
 
 	if err := root.Execute(); err != nil {
@@ -62,9 +63,17 @@ func main() {
 }
 
 func daemonCmd() *cobra.Command {
-	return &cobra.Command{
+	var sshAddr string
+	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the marvel daemon",
+		Long: `Start the marvel daemon. Listens on a Unix socket for local access.
+Use --ssh to also start the embedded SSH server for remote access.
+
+Examples:
+  marvel daemon                     # Unix socket only
+  marvel daemon --ssh :9022         # Unix socket + SSH on port 9022
+  marvel daemon --ssh 0.0.0.0:9022  # SSH on all interfaces`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := daemon.New()
 			if err != nil {
@@ -72,6 +81,12 @@ func daemonCmd() *cobra.Command {
 			}
 			if err := d.Start(socketPath); err != nil {
 				return err
+			}
+
+			if sshAddr != "" {
+				if err := d.StartSSH(sshAddr); err != nil {
+					return err
+				}
 			}
 
 			// Wait for signal.
@@ -83,6 +98,8 @@ func daemonCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sshAddr, "ssh", "", "start embedded SSH server on this address (e.g., :9022)")
+	return cmd
 }
 
 func workCmd() *cobra.Command {
@@ -461,6 +478,74 @@ Otherwise downloads the latest release from GitHub.`,
 		},
 	}
 	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")
+	return cmd
+}
+
+func keysCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "keys",
+		Short: "Manage SSH authorized keys for the marvel daemon",
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "add <public-key-file>",
+		Short: "Authorize a client's SSH public key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				return fmt.Errorf("read key file: %w", err)
+			}
+			comment := args[0]
+			return daemon.AddAuthorizedKey(data, comment)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List authorized SSH keys",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			keys, err := daemon.ListAuthorizedKeys()
+			if err != nil {
+				return err
+			}
+			if len(keys) == 0 {
+				fmt.Println("No authorized keys. Add one with: marvel keys add <pubkey-file>")
+				return nil
+			}
+			for _, k := range keys {
+				comment := k.Comment
+				if comment == "" {
+					comment = "(no comment)"
+				}
+				fmt.Printf("%s  %s  %s\n", k.Fingerprint, k.Type, comment)
+			}
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "remove <fingerprint>",
+		Short: "Remove an authorized SSH key by fingerprint",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return daemon.RemoveAuthorizedKey(args[0])
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "host-fingerprint",
+		Short: "Print the daemon's SSH host key fingerprint",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fp, err := daemon.HostKeyFingerprint()
+			if err != nil {
+				return err
+			}
+			fmt.Println(fp)
+			return nil
+		},
+	})
+
 	return cmd
 }
 

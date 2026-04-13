@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/url"
@@ -60,13 +61,14 @@ type Response struct {
 
 // Daemon is the marvel daemon.
 type Daemon struct {
-	store    *api.Store
-	sessMgr  *session.Manager
-	teamCtrl *team.Controller
-	driver   *tmux.Driver
-	listener net.Listener
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	store     *api.Store
+	sessMgr   *session.Manager
+	teamCtrl  *team.Controller
+	driver    *tmux.Driver
+	listener  net.Listener
+	sshServer *SSHServer
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 // New creates a new daemon.
@@ -137,23 +139,29 @@ func (d *Daemon) Start(socketPath string) error {
 	}()
 
 	log.Printf("marvel daemon listening on %s (%s)", socketPath, network)
-
-	// Print remote connection string for SSH access.
-	if network == "unix" {
-		if hostname, err := os.Hostname(); err == nil {
-			user := os.Getenv("USER")
-			if user != "" {
-				log.Printf("remote access: --socket ssh://%s@%s%s", user, hostname, socketPath)
-			}
-		}
-	}
 	return nil
+}
+
+// StartSSH starts the embedded SSH server alongside the Unix/TCP listener.
+// The daemon generates a host key on first run and authenticates clients
+// against ~/.marvel/authorized_keys.
+func (d *Daemon) StartSSH(addr string) error {
+	srv, err := newSSHServer(d)
+	if err != nil {
+		return fmt.Errorf("init ssh server: %w", err)
+	}
+	d.sshServer = srv
+	return srv.Start(addr)
 }
 
 // Stop shuts down the daemon, cleaning up all resources.
 func (d *Daemon) Stop() {
 	if d.cancel != nil {
 		d.cancel()
+	}
+
+	if d.sshServer != nil {
+		d.sshServer.Stop()
 	}
 
 	addr := ""
@@ -179,15 +187,23 @@ func (d *Daemon) Stop() {
 
 func (d *Daemon) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
+	d.handleRWC(conn)
+}
+
+// handleRWC processes a single JSON-RPC request/response on any
+// io.ReadWriteCloser — used by both Unix socket and SSH channels.
+func (d *Daemon) handleRWC(rwc io.ReadWriteCloser) {
+	defer func() { _ = rwc.Close() }()
 
 	var req Request
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-		writeError(conn, fmt.Sprintf("decode request: %v", err))
+	if err := json.NewDecoder(rwc).Decode(&req); err != nil {
+		resp := Response{Error: fmt.Sprintf("decode request: %v", err)}
+		_ = json.NewEncoder(rwc).Encode(resp)
 		return
 	}
 
 	resp := d.dispatch(req)
-	_ = json.NewEncoder(conn).Encode(resp)
+	_ = json.NewEncoder(rwc).Encode(resp)
 }
 
 func (d *Daemon) dispatch(req Request) Response {
@@ -603,11 +619,6 @@ func (d *Daemon) handleStop() Response {
 	return Response{Result: result}
 }
 
-func writeError(conn net.Conn, msg string) {
-	resp := Response{Error: msg}
-	_ = json.NewEncoder(conn).Encode(resp)
-}
-
 // SendRequest sends a request to the daemon and returns the response.
 //
 // Address formats:
@@ -684,57 +695,124 @@ func dialSSH(addr string) (net.Conn, error) {
 	sshHost := u.Hostname()
 	sshPort := u.Port()
 
-	// Determine what to dial on the remote side.
+	// Determine connection mode.
 	remotePath := u.Path
-	var remoteNetwork, remoteAddr string
 
 	if remotePath != "" && remotePath != "/" {
-		// Path present → Unix socket on the remote.
-		// Any port in the URL is the SSH port.
-		remoteNetwork = "unix"
-		remoteAddr = remotePath
+		// Mode 1: path present → tunnel through sshd to remote Unix socket.
+		// Any port in the URL is the SSH port (default 22).
 		if sshPort == "" {
 			sshPort = "22"
 		}
-	} else {
-		// No path → the port is the daemon's TCP port on the remote.
-		// SSH connects to port 22, then dials localhost:<port> on the remote.
-		remoteNetwork = "tcp"
-		if sshPort == "" {
-			return nil, fmt.Errorf("ssh address %q: need a port (for remote TCP) or a path (for remote Unix socket)", addr)
-		}
-		remoteAddr = "localhost:" + sshPort
-		sshPort = "22"
+		return dialSSHTunnel(user, sshHost, sshPort, "unix", remotePath)
 	}
 
-	authMethods := sshAuthMethods()
-	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no SSH auth available (set SSH_AUTH_SOCK or add keys to ~/.ssh/)")
+	// Mode 2: no path → connect directly to daemon's embedded SSH server.
+	// The port in the URL is the daemon's SSH server port.
+	if sshPort == "" {
+		return nil, fmt.Errorf("ssh address %q: need a port for the daemon's SSH server", addr)
 	}
+	return dialSSHDirect(user, sshHost, sshPort)
+}
 
-	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
-	}
+// dialSSHTunnel connects through a remote sshd to a Unix or TCP socket (mode 1).
+func dialSSHTunnel(user, host, sshPort, network, addr string) (net.Conn, error) {
+	config := sshClientConfig(user)
 
-	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(sshHost, sshPort), config)
+	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(host, sshPort), config)
 	if err != nil {
-		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, sshHost, sshPort, err)
+		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, sshPort, err)
 	}
 
-	conn, err := sshConn.Dial(remoteNetwork, remoteAddr)
+	conn, err := sshConn.Dial(network, addr)
 	if err != nil {
 		_ = sshConn.Close()
-		return nil, fmt.Errorf("ssh tunnel %s %s via %s: %w", remoteNetwork, remoteAddr, sshHost, err)
+		return nil, fmt.Errorf("ssh tunnel %s %s via %s: %w", network, addr, host, err)
 	}
 
 	return &sshWrappedConn{Conn: conn, sshClient: sshConn}, nil
 }
 
+// dialSSHDirect connects to the daemon's embedded SSH server (mode 2).
+// Opens a session channel for JSON-RPC instead of tunneling to a socket.
+func dialSSHDirect(user, host, port string) (net.Conn, error) {
+	config := sshClientConfig(user)
+
+	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(host, port), config)
+	if err != nil {
+		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err)
+	}
+
+	session, err := sshConn.NewSession()
+	if err != nil {
+		_ = sshConn.Close()
+		return nil, fmt.Errorf("ssh open session on %s: %w", host, err)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = sshConn.Close()
+		return nil, fmt.Errorf("ssh stdin pipe: %w", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = sshConn.Close()
+		return nil, fmt.Errorf("ssh stdout pipe: %w", err)
+	}
+
+	// Start shell so the channel stays open for bidirectional I/O.
+	if err := session.Shell(); err != nil {
+		_ = sshConn.Close()
+		return nil, fmt.Errorf("ssh start shell: %w", err)
+	}
+
+	return &sshSessionConn{
+		Reader:    stdout,
+		Writer:    stdin,
+		session:   session,
+		sshClient: sshConn,
+	}, nil
+}
+
+func sshClientConfig(user string) *ssh.ClientConfig {
+	authMethods := sshAuthMethods()
+	return &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: known_hosts verification
+		Timeout:         10 * time.Second,
+	}
+}
+
+// sshSessionConn wraps an SSH session's stdin/stdout as a net.Conn-like
+// io.ReadWriteCloser for mode 2 (direct daemon SSH).
+type sshSessionConn struct {
+	io.Reader
+	io.Writer
+	session   *ssh.Session
+	sshClient *ssh.Client
+}
+
+func (c *sshSessionConn) Close() error {
+	_ = c.session.Close()
+	return c.sshClient.Close()
+}
+
+// Implement net.Conn interface stubs for compatibility.
+func (c *sshSessionConn) LocalAddr() net.Addr                { return dummyAddr{} }
+func (c *sshSessionConn) RemoteAddr() net.Addr               { return dummyAddr{} }
+func (c *sshSessionConn) SetDeadline(t time.Time) error      { return nil }
+func (c *sshSessionConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *sshSessionConn) SetWriteDeadline(t time.Time) error { return nil }
+
+type dummyAddr struct{}
+
+func (dummyAddr) Network() string { return "ssh" }
+func (dummyAddr) String() string  { return "ssh" }
+
 // sshWrappedConn wraps an SSH-tunneled connection so that closing it
-// also closes the underlying SSH client.
+// also closes the underlying SSH client (mode 1).
 type sshWrappedConn struct {
 	net.Conn
 	sshClient *ssh.Client
