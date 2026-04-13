@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/upgrade"
 	"github.com/spf13/cobra"
@@ -26,7 +27,28 @@ var (
 	channel = "dev"
 )
 
-var socketPath = daemon.DefaultSocket
+var (
+	clusterName string // --cluster flag
+	socketPath  string // --socket flag (fallback)
+)
+
+// resolveSocket returns the daemon address to connect to.
+// Priority: --socket (explicit) > --cluster (named) > config current_cluster > local default.
+func resolveSocket() string {
+	if socketPath != "" {
+		return socketPath
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return config.DefaultSocket
+	}
+	addr, err := cfg.ResolveCluster(clusterName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		return config.DefaultSocket
+	}
+	return addr
+}
 
 func main() {
 	// Strip shell-style comments from args so inline notes work:
@@ -38,8 +60,10 @@ func main() {
 		Short: "Agent orchestration control plane",
 	}
 
-	root.PersistentFlags().StringVar(&socketPath, "socket", socketPath,
-		"daemon address: Unix path, ssh://user@host/path, or tcp://host:port")
+	root.PersistentFlags().StringVar(&clusterName, "cluster", "",
+		"named cluster from ~/.marvel/config.yaml")
+	root.PersistentFlags().StringVar(&socketPath, "socket", "",
+		"explicit daemon address (overrides --cluster)")
 
 	root.AddCommand(daemonCmd())
 	root.AddCommand(workCmd())
@@ -55,6 +79,7 @@ func main() {
 	root.AddCommand(versionCmd())
 	root.AddCommand(upgradeCmd())
 	root.AddCommand(keysCmd())
+	root.AddCommand(configCmd())
 	root.AddCommand(stopCmd())
 
 	if err := root.Execute(); err != nil {
@@ -63,28 +88,35 @@ func main() {
 }
 
 func daemonCmd() *cobra.Command {
-	var sshAddr string
+	var mrvlAddr string
+	var listenSocket string
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the marvel daemon",
 		Long: `Start the marvel daemon. Listens on a Unix socket for local access.
-Use --ssh to also start the embedded SSH server for remote access.
+Use --mrvl to also start the mrvl:// listener for remote access.
 
 Examples:
-  marvel daemon                     # Unix socket only
-  marvel daemon --ssh :9022         # Unix socket + SSH on port 9022
-  marvel daemon --ssh 0.0.0.0:9022  # SSH on all interfaces`,
+  marvel daemon                          # Unix socket only
+  marvel daemon --mrvl                   # + mrvl:// on port 6785
+  marvel daemon --mrvl :7000             # + mrvl:// on custom port
+  marvel daemon --socket /var/marvel.sock # custom socket path`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sock := listenSocket
+			if sock == "" {
+				sock = config.DefaultSocket
+			}
+
 			d, err := daemon.New()
 			if err != nil {
 				return err
 			}
-			if err := d.Start(socketPath); err != nil {
+			if err := d.Start(sock); err != nil {
 				return err
 			}
 
-			if sshAddr != "" {
-				if err := d.StartSSH(sshAddr); err != nil {
+			if cmd.Flags().Changed("mrvl") {
+				if err := d.StartMRVL(mrvlAddr); err != nil {
 					return err
 				}
 			}
@@ -98,7 +130,10 @@ Examples:
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sshAddr, "ssh", "", "start embedded SSH server on this address (e.g., :9022)")
+	cmd.Flags().StringVar(&mrvlAddr, "mrvl", ":"+config.DefaultMRVLPort,
+		"start mrvl:// listener for remote access (default port 6785)")
+	cmd.Flags().StringVar(&listenSocket, "socket", "",
+		"Unix socket path (default /tmp/marvel.sock)")
 	return cmd
 }
 
@@ -114,7 +149,7 @@ func workCmd() *cobra.Command {
 			}
 
 			params, _ := json.Marshal(map[string]any{"manifest_data": data})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "apply",
 				Params: params,
 			})
@@ -169,7 +204,7 @@ func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
-	resp, err := daemon.SendRequest(socketPath, daemon.Request{
+	resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 		Method: "get",
 		Params: params,
 	})
@@ -205,7 +240,7 @@ func describeCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "describe",
 				Params: params,
 			})
@@ -236,7 +271,7 @@ func deleteCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "delete",
 				Params: params,
 			})
@@ -265,7 +300,7 @@ func scaleCmd() *cobra.Command {
 				"role":     role,
 				"replicas": replicas,
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "scale",
 				Params: params,
 			})
@@ -299,7 +334,7 @@ func runCmd() *cobra.Command {
 				"runtime_args":    args[1:],
 				"script":          script,
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "run",
 				Params: params,
 			})
@@ -332,7 +367,7 @@ func killCmd() *cobra.Command {
 				"resource_type": "session",
 				"name":          args[0],
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "delete",
 				Params: params,
 			})
@@ -359,7 +394,7 @@ func shiftCmd() *cobra.Command {
 				"team_key": args[0],
 				"role":     role,
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "shift",
 				Params: params,
 			})
@@ -394,7 +429,7 @@ func injectCmd() *cobra.Command {
 				"literal":     literal,
 				"enter":       enter,
 			})
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "inject",
 				Params: params,
 			})
@@ -427,7 +462,7 @@ func captureCmd() *cobra.Command {
 				p["end"] = end
 			}
 			params, _ := json.Marshal(p)
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 				Method: "capture",
 				Params: params,
 			})
@@ -478,6 +513,117 @@ Otherwise downloads the latest release from GitHub.`,
 		},
 	}
 	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")
+	return cmd
+}
+
+func configCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Manage marvel cluster configuration",
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List configured clusters",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			for _, cl := range cfg.Clusters {
+				marker := "  "
+				if cl.Name == cfg.CurrentCluster {
+					marker = "* "
+				}
+				addr := cl.Socket
+				if cl.Server != "" {
+					addr = cl.Server
+				}
+				fmt.Printf("%s%-15s %s\n", marker, cl.Name, addr)
+			}
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "add-cluster <name> <address>",
+		Short: "Add or update a cluster",
+		Long: `Add a named cluster to ~/.marvel/config.yaml.
+
+Examples:
+  marvel config add-cluster kinu mrvl://kinu
+  marvel config add-cluster staging mrvl://deploy@staging.example.com:7000
+  marvel config add-cluster dev /tmp/marvel-dev.sock`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			cfg.AddCluster(args[0], args[1])
+			if err := config.Save(cfg); err != nil {
+				return err
+			}
+			fmt.Printf("Cluster %q configured: %s\n", args[0], args[1])
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "remove-cluster <name>",
+		Short: "Remove a cluster",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if err := cfg.RemoveCluster(args[0]); err != nil {
+				return err
+			}
+			return config.Save(cfg)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "use-cluster <name>",
+		Short: "Set the current cluster",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			// Verify it exists.
+			if _, err := cfg.ResolveCluster(args[0]); err != nil {
+				return err
+			}
+			cfg.CurrentCluster = args[0]
+			if err := config.Save(cfg); err != nil {
+				return err
+			}
+			fmt.Printf("Switched to cluster %q\n", args[0])
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "current",
+		Short: "Show the current cluster",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			addr, err := cfg.ResolveCluster("")
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s (%s)\n", cfg.CurrentCluster, addr)
+			return nil
+		},
+	})
+
 	return cmd
 }
 
@@ -554,7 +700,7 @@ func stopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the marvel daemon and clean up all resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := daemon.SendRequest(socketPath, daemon.Request{Method: "stop"})
+			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{Method: "stop"})
 			if err != nil {
 				return err
 			}
@@ -626,7 +772,7 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 
 func fetchSessions() ([]api.Session, error) {
 	params, _ := json.Marshal(map[string]string{"resource_type": "sessions"})
-	resp, err := daemon.SendRequest(socketPath, daemon.Request{
+	resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
 		Method: "get",
 		Params: params,
 	})

@@ -81,9 +81,9 @@ func (s *SSHServer) Start(addr string) error {
 	go s.acceptLoop()
 
 	hostname, _ := os.Hostname()
-	log.Printf("marvel SSH server listening on %s", addr)
+	log.Printf("mrvl:// listener on %s", addr)
 	if hostname != "" {
-		log.Printf("remote access: --socket ssh://%s:%s", hostname, addrPort(addr))
+		log.Printf("remote access: --cluster <name>  (config: mrvl://%s:%s)", hostname, addrPort(addr))
 	}
 
 	return nil

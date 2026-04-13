@@ -29,6 +29,8 @@ import (
 const (
 	// DefaultSocket is the default Unix socket path.
 	DefaultSocket = "/tmp/marvel.sock"
+	// DefaultMRVLPort is the default port for the mrvl:// protocol.
+	DefaultMRVLPort = "6785"
 	// ReconcileInterval is how often the team controller reconciles.
 	ReconcileInterval = 2 * time.Second
 )
@@ -40,6 +42,11 @@ func listenNetwork(addr string) string {
 		return "tcp"
 	}
 	return "unix"
+}
+
+// isMRVL returns true if the address is a mrvl:// URL.
+func isMRVL(addr string) bool {
+	return strings.HasPrefix(addr, "mrvl://")
 }
 
 // isSSH returns true if the address is an ssh:// URL.
@@ -142,10 +149,17 @@ func (d *Daemon) Start(socketPath string) error {
 	return nil
 }
 
-// StartSSH starts the embedded SSH server alongside the Unix/TCP listener.
-// The daemon generates a host key on first run and authenticates clients
-// against ~/.marvel/authorized_keys.
-func (d *Daemon) StartSSH(addr string) error {
+// StartMRVL starts the mrvl:// listener (embedded SSH server) alongside
+// the Unix/TCP listener. The daemon generates a host key on first run
+// and authenticates clients against ~/.marvel/authorized_keys.
+// If addr has no port, defaults to 6785.
+func (d *Daemon) StartMRVL(addr string) error {
+	if addr == "" {
+		addr = ":" + DefaultMRVLPort
+	}
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":" + DefaultMRVLPort
+	}
 	srv, err := newSSHServer(d)
 	if err != nil {
 		return fmt.Errorf("init ssh server: %w", err)
@@ -623,11 +637,11 @@ func (d *Daemon) handleStop() Response {
 //
 // Address formats:
 //
-//	/tmp/marvel.sock                          → Unix socket (default)
-//	ssh://user@host/tmp/marvel.sock           → SSH tunnel to Unix socket
-//	ssh://user@host:22/tmp/marvel.sock        → SSH tunnel with explicit SSH port
-//	ssh://host:9090                           → SSH tunnel to TCP port on remote
-//	tcp://host:9090 or host:9090              → bare TCP (advanced use)
+//	/tmp/marvel.sock                          → Unix socket (default, local)
+//	mrvl://host                               → daemon SSH server on port 6785
+//	mrvl://user@host:port                     → daemon SSH server on custom port
+//	ssh://user@host/tmp/marvel.sock           → tunnel through sshd to Unix socket
+//	tcp://host:port                           → bare TCP (advanced use)
 func SendRequest(socketPath string, req Request) (*Response, error) {
 	conn, err := dialDaemon(socketPath)
 	if err != nil {
@@ -646,9 +660,18 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 	return &resp, nil
 }
 
-// dialDaemon connects to the daemon, routing through SSH if the address
-// is an ssh:// URL.
+// dialDaemon connects to the daemon. Routes based on address scheme:
+//
+//	mrvl://host            → embedded SSH server on port 6785
+//	mrvl://host:port       → embedded SSH server on custom port
+//	ssh://host/path        → tunnel through sshd to Unix socket
+//	ssh://host:port        → embedded SSH server (same as mrvl://)
+//	tcp://host:port        → bare TCP (advanced)
+//	/path/to/socket        → Unix socket (local)
 func dialDaemon(addr string) (net.Conn, error) {
+	if isMRVL(addr) {
+		return dialMRVL(addr)
+	}
 	if isSSH(addr) {
 		return dialSSH(addr)
 	}
@@ -669,6 +692,28 @@ func dialDaemon(addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", addr, network, err)
 	}
 	return conn, nil
+}
+
+// dialMRVL connects to a daemon's embedded SSH server via the mrvl:// protocol.
+// Default port is 6785 if not specified.
+func dialMRVL(addr string) (net.Conn, error) {
+	u, err := url.Parse(addr)
+	if err != nil {
+		return nil, fmt.Errorf("parse mrvl address %q: %w", addr, err)
+	}
+
+	user := u.User.Username()
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		port = DefaultMRVLPort
+	}
+
+	return dialSSHDirect(user, host, port)
 }
 
 // dialSSH parses an ssh:// URL and dials the daemon's socket through an
