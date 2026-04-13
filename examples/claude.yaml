@@ -1,0 +1,50 @@
+# Marvel example — real Claude Code agents + chaos supervisor.
+#
+# Tests: claude adapter selection, permission injection, system prompt
+# identity injection, Lua supervisor scripting, mixed runtime types.
+#
+# The claude adapter automatically:
+#   - Injects --permission-mode from the role's permissions field
+#   - Injects --append-system-prompt with session identity
+#   - Sets MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
+#
+# The supervisor role uses the simulator with chaos.lua — it's a
+# different runtime (simulator) in the same team as real agents (claude).
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/claude.yaml
+#
+# Test commands:
+#   ./marvel get sessions
+#   ./marvel capture ccode/claude-squad-coder-g1-0
+#   ./marvel inject ccode/claude-squad-coder-g1-0 "what is your session name?" -e
+#   ./marvel scale ccode/claude-squad --role coder --replicas 3
+#   ./marvel shift ccode/claude-squad
+#   ./marvel stop
+
+workspace:
+  name: ccode
+
+teams:
+  - name: claude-squad
+    roles:
+      - name: coder
+        replicas: 2
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+
+      - name: supervisor
+        replicas: 1
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "5000"]
+          script: scripts/chaos.lua
+
+endpoints:
+  - name: claude-svc
+    team: claude-squad

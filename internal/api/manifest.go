@@ -3,75 +3,112 @@ package api
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 )
 
-// Manifest represents a TOML manifest declaring desired state.
+// Manifest represents a manifest declaring desired state.
+// Supports both YAML (default) and TOML formats.
 type Manifest struct {
-	Workspace ManifestWorkspace `toml:"workspace"`
-	Teams     []ManifestTeam    `toml:"team"`
-	Endpoints []ManifestEndpoint `toml:"endpoint"`
+	Workspace ManifestWorkspace  `toml:"workspace" yaml:"workspace"`
+	Teams     []ManifestTeam     `toml:"team"      yaml:"teams"`
+	Endpoints []ManifestEndpoint `toml:"endpoint"   yaml:"endpoints"`
 }
 
 // ManifestWorkspace is the workspace section of a manifest.
 type ManifestWorkspace struct {
-	Name string `toml:"name"`
+	Name string `toml:"name" yaml:"name"`
 }
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
-	Name  string         `toml:"name"`
-	Roles []ManifestRole `toml:"role"`
+	Name  string         `toml:"name" yaml:"name"`
+	Roles []ManifestRole `toml:"role"  yaml:"roles"`
 }
 
 // ManifestRole is a role section within a team.
 type ManifestRole struct {
-	Name          string               `toml:"name"`
-	Replicas      int                  `toml:"replicas"`
-	Runtime       ManifestRuntime      `toml:"runtime"`
-	RestartPolicy string               `toml:"restart_policy,omitempty"`
-	Permissions   string               `toml:"permissions,omitempty"`
-	HealthCheck   *ManifestHealthCheck `toml:"healthcheck,omitempty"`
+	Name          string               `toml:"name"                    yaml:"name"`
+	Replicas      int                  `toml:"replicas"                yaml:"replicas"`
+	Runtime       ManifestRuntime      `toml:"runtime"                 yaml:"runtime"`
+	RestartPolicy string               `toml:"restart_policy,omitempty" yaml:"restart_policy,omitempty"`
+	Permissions   string               `toml:"permissions,omitempty"    yaml:"permissions,omitempty"`
+	HealthCheck   *ManifestHealthCheck `toml:"healthcheck,omitempty"    yaml:"healthcheck,omitempty"`
 }
 
 // ManifestHealthCheck is the healthcheck section within a role.
 type ManifestHealthCheck struct {
-	Type             string `toml:"type"`
-	Timeout          string `toml:"timeout,omitempty"`
-	FailureThreshold int    `toml:"failure_threshold,omitempty"`
+	Type             string `toml:"type"                         yaml:"type"`
+	Timeout          string `toml:"timeout,omitempty"             yaml:"timeout,omitempty"`
+	FailureThreshold int    `toml:"failure_threshold,omitempty"   yaml:"failure_threshold,omitempty"`
 }
 
-// ManifestRuntime is the runtime section within a team.
+// ManifestRuntime is the runtime section within a role.
 type ManifestRuntime struct {
-	Image   string   `toml:"image"`
-	Command string   `toml:"command"`
-	Args    []string `toml:"args,omitempty"`
-	Script  string   `toml:"script,omitempty"`
+	Image   string   `toml:"image"          yaml:"image"`
+	Command string   `toml:"command"        yaml:"command"`
+	Args    []string `toml:"args,omitempty"  yaml:"args,omitempty"`
+	Script  string   `toml:"script,omitempty" yaml:"script,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
 type ManifestEndpoint struct {
-	Name string `toml:"name"`
-	Team string `toml:"team"`
+	Name string `toml:"name" yaml:"name"`
+	Team string `toml:"team" yaml:"team"`
 }
 
-// ParseManifest reads and parses a TOML manifest file.
+// ParseManifest reads and parses a manifest file. The format is detected
+// from the file extension: .yaml/.yml for YAML, .toml for TOML.
+// YAML is the default for ambiguous extensions.
 func ParseManifest(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest %s: %w", path, err)
 	}
-	return ParseManifestBytes(data)
+
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".toml":
+		return parseManifestTOML(data)
+	default:
+		return parseManifestYAML(data)
+	}
 }
 
-// ParseManifestBytes parses TOML manifest content.
+// ParseManifestBytes parses manifest content. Tries YAML first (default),
+// falls back to TOML if YAML parsing fails.
 func ParseManifestBytes(data []byte) (*Manifest, error) {
+	// Try YAML first — it's the default format.
+	m, err := parseManifestYAML(data)
+	if err == nil {
+		return m, nil
+	}
+
+	// Fall back to TOML.
+	return parseManifestTOML(data)
+}
+
+func parseManifestYAML(data []byte) (*Manifest, error) {
+	var m Manifest
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse yaml manifest: %w", err)
+	}
+	return validateManifest(&m)
+}
+
+func parseManifestTOML(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := toml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parse manifest: %w", err)
+		return nil, fmt.Errorf("parse toml manifest: %w", err)
 	}
+	return validateManifest(&m)
+}
+
+func validateManifest(m *Manifest) (*Manifest, error) {
 	if m.Workspace.Name == "" {
 		return nil, fmt.Errorf("parse manifest: workspace.name is required")
 	}
@@ -94,7 +131,7 @@ func ParseManifestBytes(data []byte) (*Manifest, error) {
 			}
 		}
 	}
-	return &m, nil
+	return m, nil
 }
 
 // Apply converts a manifest into store resources and creates them.

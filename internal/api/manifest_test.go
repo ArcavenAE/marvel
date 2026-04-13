@@ -206,6 +206,164 @@ name = "squad"
 	}
 }
 
+// --- YAML format tests ---
+
+const validYAMLManifest = `
+workspace:
+  name: test-project
+
+teams:
+  - name: squad
+    roles:
+      - name: worker
+        replicas: 3
+        runtime:
+          command: bash
+          args: ["-c", "while true; do sleep 1; done"]
+      - name: monitor
+        replicas: 1
+        runtime:
+          image: top
+          command: top
+
+endpoints:
+  - name: agent-svc
+    team: squad
+`
+
+func TestParseYAMLManifest(t *testing.T) {
+	t.Parallel()
+	m, err := parseManifestYAML([]byte(validYAMLManifest))
+	if err != nil {
+		t.Fatalf("parse valid yaml manifest: %v", err)
+	}
+	if m.Workspace.Name != "test-project" {
+		t.Fatalf("expected workspace test-project, got %s", m.Workspace.Name)
+	}
+	if len(m.Teams) != 1 {
+		t.Fatalf("expected 1 team, got %d", len(m.Teams))
+	}
+	if m.Teams[0].Name != "squad" {
+		t.Fatalf("expected team squad, got %s", m.Teams[0].Name)
+	}
+	if len(m.Teams[0].Roles) != 2 {
+		t.Fatalf("expected 2 roles, got %d", len(m.Teams[0].Roles))
+	}
+	if m.Teams[0].Roles[0].Name != "worker" {
+		t.Fatalf("expected role worker, got %s", m.Teams[0].Roles[0].Name)
+	}
+	if m.Teams[0].Roles[0].Replicas != 3 {
+		t.Fatalf("expected 3 replicas, got %d", m.Teams[0].Roles[0].Replicas)
+	}
+	if len(m.Endpoints) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(m.Endpoints))
+	}
+}
+
+func TestParseYAMLManifestWithHealthcheck(t *testing.T) {
+	t.Parallel()
+	m, err := parseManifestYAML([]byte(`
+workspace:
+  name: test
+
+teams:
+  - name: squad
+    roles:
+      - name: worker
+        replicas: 2
+        restart_policy: on-failure
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+        healthcheck:
+          type: heartbeat
+          timeout: "15s"
+          failure_threshold: 5
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	role := team.Roles[0]
+	if role.RestartPolicy != RestartOnFailure {
+		t.Fatalf("expected on-failure, got %s", role.RestartPolicy)
+	}
+	if role.Permissions != "plan" {
+		t.Fatalf("expected plan permissions, got %s", role.Permissions)
+	}
+	if role.HealthCheck == nil {
+		t.Fatal("expected healthcheck")
+	}
+	if role.HealthCheck.Timeout != 15*time.Second {
+		t.Fatalf("expected 15s timeout, got %v", role.HealthCheck.Timeout)
+	}
+}
+
+func TestParseYAMLManifestMultipleRoles(t *testing.T) {
+	t.Parallel()
+	m, err := parseManifestYAML([]byte(`
+workspace:
+  name: test
+
+teams:
+  - name: squad
+    roles:
+      - name: supervisor
+        replicas: 1
+        permissions: auto
+        runtime:
+          image: forestage
+          command: forestage
+          args: ["--persona", "dune/supervisor"]
+
+      - name: worker
+        replicas: 3
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(m.Teams[0].Roles) != 2 {
+		t.Fatalf("expected 2 roles, got %d", len(m.Teams[0].Roles))
+	}
+	if m.Teams[0].Roles[0].Permissions != "auto" {
+		t.Fatalf("expected auto permissions, got %s", m.Teams[0].Roles[0].Permissions)
+	}
+	if m.Teams[0].Roles[0].Runtime.Args[0] != "--persona" {
+		t.Fatalf("expected --persona arg, got %s", m.Teams[0].Roles[0].Runtime.Args[0])
+	}
+}
+
+func TestParseManifestBytesAutoDetect(t *testing.T) {
+	t.Parallel()
+
+	// YAML input should parse successfully
+	yamlM, err := ParseManifestBytes([]byte(validYAMLManifest))
+	if err != nil {
+		t.Fatalf("ParseManifestBytes with YAML: %v", err)
+	}
+	if yamlM.Workspace.Name != "test-project" {
+		t.Fatalf("YAML: expected test-project, got %s", yamlM.Workspace.Name)
+	}
+
+	// TOML input should also parse successfully (fallback)
+	tomlM, err := ParseManifestBytes([]byte(validManifest))
+	if err != nil {
+		t.Fatalf("ParseManifestBytes with TOML: %v", err)
+	}
+	if tomlM.Workspace.Name != "test-project" {
+		t.Fatalf("TOML: expected test-project, got %s", tomlM.Workspace.Name)
+	}
+}
+
 func TestManifestApply(t *testing.T) {
 	t.Parallel()
 	m, err := ParseManifestBytes([]byte(validManifest))
