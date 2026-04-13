@@ -6,7 +6,7 @@ AI agent workloads. Written in Go.
 Follows the kos process. Authoritative graph: `_kos/nodes/`.
 Cross-repo questions belong in the orchestrator's charter.
 
-Last updated: 2026-04-12 (session-016: charter management probe — content migration from orchestrator)
+Last updated: 2026-04-13 (session-017: runtime adapters, mrvl://, release pipeline, B8-B12)
 
 ---
 
@@ -60,9 +60,51 @@ Health signal taxonomy maps the full BYOA spectrum (OS, tmux, heartbeat,
 agent SDK) — implementation is deliberately thin, taxonomy is broad.
 Evidence: probe-healthchecks, finding-003. 8 files changed, 545 insertions.
 
+### B8: Runtime Adapter Framework
+Three adapters in internal/runtime/: forestage (deep integration — identity
+flags, permission mode, script, socket), claude (medium — permission mode,
+system prompt with identity), generic (minimal — env vars only, any CLI).
+Session manager resolves adapter from Runtime.Name via registry, falls back
+to generic. Role gains Permissions field for environment-as-permission.
+Evidence: session-017. 9 tests, 606 lines. Closes F9.
+
+### B9: YAML Manifest Support
+Manifests accept both YAML (default) and TOML. Format detected by file
+extension. YAML uses natural plural keys (teams, roles, endpoints). Both
+produce the same Manifest struct. 4 new tests.
+Evidence: session-017.
+
+### B10: mrvl:// Protocol and Embedded SSH Server
+The daemon runs its own SSH server for remote access via the mrvl:// protocol
+(default port 6785, MRVL on phone keypad). Generates ed25519 host key on first
+run, authenticates clients against ~/.marvel/authorized_keys. No dependency on
+system sshd. Key management: marvel keys add/list/remove. Two SSH modes:
+mrvl://host (direct to daemon, primary) and ssh://host/path (tunnel through
+sshd, fallback).
+Evidence: session-017.
+
+### B11: Cluster Configuration
+Kubeconfig-style cluster config in ~/.marvel/config.yaml. Named clusters with
+socket or server address. CLI resolves: --socket > --cluster > current_cluster
+> local default. Commands: marvel config add-cluster/use-cluster/list/current.
+Evidence: session-017.
+
+### B12: Release Pipeline
+Full CI/release pipeline: quality gate (gofumpt, vet, golangci-lint, tests
+with race detector), cross-platform builds (darwin arm64/amd64, linux amd64),
+Apple code signing + notarization (app bundles, DMG, PKG), Homebrew tap
+(ArcavenAE/tap/marvel), self-update command (marvel upgrade with Homebrew
+detection). Alpha releases on push to main, stable releases on v* tags via
+GoReleaser.
+Evidence: session-017. CI green, first signed alpha published.
+
 ---
 
 ## Frontier
+
+### F9: Runtime Adapter Framework — RESOLVED → B8
+Resolved. Three adapters implemented, session manager wired, Permissions
+field on Role. See B8.
 
 ### F1: Organizational Model — RESOLVED → B5
 Resolved by probe-org-model-heterogeneous-teams. Teams contain heterogeneous
