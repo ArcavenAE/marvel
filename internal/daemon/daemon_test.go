@@ -259,3 +259,57 @@ name = "squad"
 		t.Fatalf("delete error: %s", resp.Error)
 	}
 }
+
+func TestSocketNetwork(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		addr     string
+		expected string
+	}{
+		{"/tmp/marvel.sock", "unix"},
+		{"0.0.0.0:9090", "tcp"},
+		{":9090", "tcp"},
+		{"localhost:9090", "tcp"},
+		{"192.168.1.5:9090", "tcp"},
+		{"/var/run/marvel.sock", "unix"},
+	}
+	for _, tt := range tests {
+		got := socketNetwork(tt.addr)
+		if got != tt.expected {
+			t.Errorf("socketNetwork(%q) = %q, want %q", tt.addr, got, tt.expected)
+		}
+	}
+}
+
+func TestDaemonTCP(t *testing.T) {
+	skipIfNoTmux(t)
+
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+
+	addr := "127.0.0.1:0" // OS picks a free port
+	t.Cleanup(func() {
+		d.Stop()
+	})
+
+	if err := d.Start(addr); err != nil {
+		t.Fatalf("start daemon on TCP: %v", err)
+	}
+
+	// Get the actual address the OS assigned.
+	actualAddr := d.listener.Addr().String()
+
+	// Send a request over TCP.
+	resp, err := SendRequest(actualAddr, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
+	})
+	if err != nil {
+		t.Fatalf("TCP request: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("TCP response error: %s", resp.Error)
+	}
+}

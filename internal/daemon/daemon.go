@@ -1,5 +1,5 @@
 // Package daemon provides the marvel daemon — a long-running process
-// that manages sessions via tmux and serves CLI requests over a Unix socket.
+// that manages sessions via tmux and serves CLI requests over Unix or TCP sockets.
 package daemon
 
 import (
@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,15 @@ const (
 	// ReconcileInterval is how often the team controller reconciles.
 	ReconcileInterval = 2 * time.Second
 )
+
+// socketNetwork returns "tcp" if the address looks like host:port,
+// otherwise "unix".
+func socketNetwork(addr string) string {
+	if strings.Contains(addr, ":") {
+		return "tcp"
+	}
+	return "unix"
+}
 
 // Request is a JSON-RPC-like request from the CLI.
 type Request struct {
@@ -67,14 +77,20 @@ func New() (*Daemon, error) {
 	}, nil
 }
 
-// Start starts the daemon: listens on Unix socket and starts reconciliation.
+// Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
+// The address format determines the network: "host:port" for TCP, a file path
+// for Unix. Examples: "/tmp/marvel.sock", "0.0.0.0:9090", ":9090".
 func (d *Daemon) Start(socketPath string) error {
-	// Remove stale socket.
-	_ = os.Remove(socketPath)
+	network := socketNetwork(socketPath)
 
-	ln, err := net.Listen("unix", socketPath)
+	if network == "unix" {
+		// Remove stale Unix socket.
+		_ = os.Remove(socketPath)
+	}
+
+	ln, err := net.Listen(network, socketPath)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", socketPath, err)
+		return fmt.Errorf("listen %s (%s): %w", socketPath, network, err)
 	}
 	d.listener = ln
 	d.sessMgr.SocketPath = socketPath
@@ -109,7 +125,7 @@ func (d *Daemon) Start(socketPath string) error {
 		}
 	}()
 
-	log.Printf("marvel daemon listening on %s", socketPath)
+	log.Printf("marvel daemon listening on %s (%s)", socketPath, network)
 	return nil
 }
 
@@ -118,7 +134,10 @@ func (d *Daemon) Stop() {
 	if d.cancel != nil {
 		d.cancel()
 	}
+
+	addr := ""
 	if d.listener != nil {
+		addr = d.listener.Addr().String()
 		d.listener.Close()
 	}
 	d.wg.Wait()
@@ -130,7 +149,10 @@ func (d *Daemon) Stop() {
 		}
 	}
 
-	_ = os.Remove(DefaultSocket)
+	// Only remove socket file for Unix sockets.
+	if addr != "" && socketNetwork(addr) == "unix" {
+		_ = os.Remove(addr)
+	}
 	log.Println("marvel daemon stopped")
 }
 
@@ -566,10 +588,13 @@ func writeError(conn net.Conn, msg string) {
 }
 
 // SendRequest sends a request to the daemon and returns the response.
+// The address format determines the connection type: "host:port" for TCP,
+// a file path for Unix socket.
 func SendRequest(socketPath string, req Request) (*Response, error) {
-	conn, err := net.Dial("unix", socketPath)
+	network := socketNetwork(socketPath)
+	conn, err := net.Dial(network, socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("connect to daemon at %s: %w", socketPath, err)
+		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", socketPath, network, err)
 	}
 	defer conn.Close()
 
