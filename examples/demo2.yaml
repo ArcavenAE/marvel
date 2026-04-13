@@ -1,0 +1,44 @@
+# Marvel demo — 5 agents + chaos supervisor with healthchecks.
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/demo2.yaml
+#
+# Test commands:
+#   ./marvel get sessions -w
+#   ./marvel shift demo2/hulk-squad
+#   ./marvel stop
+
+workspace:
+  name: demo2
+
+teams:
+  - name: hulk-squad
+    roles:
+      - name: smash
+        replicas: 5
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "3000"]
+        healthcheck:
+          type: heartbeat
+          timeout: "30s"
+          failure_threshold: 3
+
+      - name: supervisor
+        replicas: 1
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "5000"]
+          script: scripts/chaos.lua
+        healthcheck:
+          type: heartbeat
+          timeout: "30s"
+          failure_threshold: 3
+
+endpoints:
+  - name: hulk-svc
+    team: hulk-squad

@@ -1,0 +1,44 @@
+# Marvel demo manifest — simulator agents + chaos supervisor.
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/demo.yaml
+#
+# Test commands:
+#   ./marvel get sessions -w
+#   ./marvel shift demo/squad
+#   ./marvel stop
+
+workspace:
+  name: demo
+
+teams:
+  - name: squad
+    roles:
+      - name: agent
+        replicas: 3
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "3000"]
+        healthcheck:
+          type: heartbeat
+          timeout: "30s"
+          failure_threshold: 3
+
+      - name: supervisor
+        replicas: 1
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "5000"]
+          script: scripts/chaos.lua
+        healthcheck:
+          type: heartbeat
+          timeout: "30s"
+          failure_threshold: 3
+
+endpoints:
+  - name: agent-svc
+    team: squad

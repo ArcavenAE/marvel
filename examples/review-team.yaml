@@ -1,0 +1,60 @@
+# Marvel example — multi-role review team.
+#
+# Demonstrates heterogeneous roles: supervisor, architect, reviewers.
+# Each role has its own runtime config, replica count, and restart policy.
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/review-team.yaml
+#
+# Test commands:
+#   ./marvel get sessions -w
+#   ./marvel scale review/code-review --role reviewer --replicas 5
+#   ./marvel shift review/code-review
+#   ./marvel stop
+
+workspace:
+  name: review
+
+teams:
+  - name: code-review
+    roles:
+      - name: reviewer
+        replicas: 3
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "2000"]
+        healthcheck:
+          type: heartbeat
+          timeout: "15s"
+          failure_threshold: 3
+
+      - name: architect
+        replicas: 1
+        restart_policy: on-failure
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "4000"]
+        healthcheck:
+          type: heartbeat
+          timeout: "30s"
+          failure_threshold: 5
+
+      - name: supervisor
+        replicas: 1
+        runtime:
+          image: simulator
+          command: bin/simulator
+          args: ["--tick", "5000"]
+          script: scripts/scaler.lua
+        healthcheck:
+          type: heartbeat
+          timeout: "30s"
+          failure_threshold: 3
+
+endpoints:
+  - name: review-svc
+    team: code-review
