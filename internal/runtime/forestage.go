@@ -7,16 +7,18 @@ import "fmt"
 // context for team awareness.
 //
 // forestage accepts these top-level flags:
-//   --role              role override (persona role within theme)
-//   --name              agent session name (marvel identity)
-//   --workspace         marvel workspace
-//   --team              marvel team
-//   --socket            marvel daemon socket path
-//   --permission-mode   Claude Code permission mode
-//   --script            lua script path (future: native lua)
+//
+//	--role              role override (persona role within theme)
+//	--name              agent session name (marvel identity)
+//	--workspace         marvel workspace
+//	--team              marvel team
+//	--socket            marvel daemon socket path
+//	--permission-mode   Claude Code permission mode
+//	--script            lua script path (future: native lua)
 //
 // Claude-specific flags go after "--" as passthrough:
-//   --append-system-prompt   identity context for the agent
+//
+//	--append-system-prompt   identity context for the agent
 type Forestage struct{}
 
 func (f *Forestage) Name() string { return "forestage" }
