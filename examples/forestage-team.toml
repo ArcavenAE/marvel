@@ -1,16 +1,14 @@
 # Marvel example — forestage agents via the forestage adapter.
 #
-# Tests: forestage adapter selection, identity flag injection (--name,
-# --workspace, --team, --role, --socket), permission injection, persona
-# args passthrough, supervisor vs worker role differentiation.
+# The forestage adapter injects:
+#   - --name, --workspace, --team, --role, --socket (forestage flags)
+#   - --permission-mode (forestage passes through to claude)
+#   - --script if specified in runtime config
+#   - -- --append-system-prompt "..." (claude passthrough for identity)
+#   - MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
 #
-# The forestage adapter automatically:
-#   - Injects --name, --workspace, --team, --role, --socket flags
-#   - Injects --permission-mode from the role's permissions field
-#   - Injects --script if specified in the runtime config
-#   - Sets MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
-#
-# NOTE: update the command path to match your forestage binary location.
+# Theme and model are user choices — put them in runtime.args.
+# Agents run in claude mode (no TUI) since marvel manages the tmux panes.
 #
 # Setup:
 #   cd ~/work/aae-orc/forestage && cargo build
@@ -18,14 +16,10 @@
 #   ./marvel daemon &
 #   ./marvel work examples/forestage-team.toml
 #
-# Verify adapter selection (daemon log should show):
-#   session dev/squad-worker-g1-0 using forestage adapter
-#
 # Test commands:
 #   ./marvel get sessions
 #   ./marvel capture dev/squad-worker-g1-0
 #   ./marvel capture dev/squad-supervisor-g1-0
-#   ./marvel inject dev/squad-supervisor-g1-0 "/help" -e
 #   ./marvel shift dev/squad --role worker
 #   ./marvel scale dev/squad --role worker --replicas 3
 #   ./marvel stop
@@ -43,7 +37,8 @@ name = "squad"
 
     [team.role.runtime]
     image = "forestage"
-    command = "/Users/michael.pursifull/work/aae-orc/forestage/target/debug/forestage"
+    command = "forestage"
+    args = ["--theme", "dune", "--mode", "claude"]
 
   [[team.role]]
   name = "worker"
@@ -52,4 +47,5 @@ name = "squad"
 
     [team.role.runtime]
     image = "forestage"
-    command = "/Users/michael.pursifull/work/aae-orc/forestage/target/debug/forestage"
+    command = "forestage"
+    args = ["--theme", "dune", "--mode", "claude"]

@@ -79,7 +79,7 @@ func TestForestagePrepare(t *testing.T) {
 		t.Errorf("command should start with binary, got: %s", result.Command)
 	}
 
-	// Should inject identity flags
+	// Should inject identity flags — forestage accepts these natively
 	if !strings.Contains(result.Command, "--name squad-worker-g1-0") {
 		t.Errorf("command should contain --name, got: %s", result.Command)
 	}
@@ -96,9 +96,14 @@ func TestForestagePrepare(t *testing.T) {
 		t.Errorf("command should contain --socket, got: %s", result.Command)
 	}
 
-	// Should inject permission mode
+	// Permission mode is a forestage flag (forestage passes it to claude)
 	if !strings.Contains(result.Command, "--permission-mode plan") {
 		t.Errorf("command should contain --permission-mode, got: %s", result.Command)
+	}
+
+	// Identity system prompt goes after "--" as claude passthrough
+	if !strings.Contains(result.Command, "-- --append-system-prompt") {
+		t.Errorf("command should pass --append-system-prompt after --, got: %s", result.Command)
 	}
 
 	// Should preserve original args
@@ -253,5 +258,10 @@ func TestForestagePrepareNoPermissions(t *testing.T) {
 
 	if strings.Contains(result.Command, "--permission-mode") {
 		t.Errorf("command should not contain --permission-mode when unset, got: %s", result.Command)
+	}
+
+	// Should still have identity system prompt
+	if !strings.Contains(result.Command, "--append-system-prompt") {
+		t.Errorf("command should still inject identity prompt, got: %s", result.Command)
 	}
 }

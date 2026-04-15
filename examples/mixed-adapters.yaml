@@ -1,15 +1,9 @@
 # Marvel example — mixed adapters in one workspace.
 #
-# Tests: multiple adapter types coexisting, per-role permission
-# differentiation, adapter resolution from runtime image field,
-# heterogeneous team with different runtimes per role.
-#
 # Each role resolves to a different adapter:
 #   - supervisor → claude adapter (system prompt + permission injection)
 #   - worker → forestage adapter (identity flags + permission injection)
 #   - monitor → generic adapter (env vars only)
-#
-# NOTE: update forestage command path to match your binary location.
 #
 # Setup:
 #   cd ~/work/aae-orc/forestage && cargo build
@@ -48,7 +42,8 @@ teams:
         permissions: plan
         runtime:
           image: forestage
-          command: /Users/michael.pursifull/work/aae-orc/forestage/target/debug/forestage
+          command: forestage
+          args: ["--theme", "dune", "--mode", "claude"]
 
       - name: monitor
         replicas: 1
