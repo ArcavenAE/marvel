@@ -31,12 +31,15 @@ type ManifestTeam struct {
 }
 
 // ManifestRole is a role section within a team.
+// Name is the job function. Persona and Identity are the costume and lens.
 type ManifestRole struct {
 	Name          string               `toml:"name"                    yaml:"name"`
 	Replicas      int                  `toml:"replicas"                yaml:"replicas"`
 	Runtime       ManifestRuntime      `toml:"runtime"                 yaml:"runtime"`
 	RestartPolicy string               `toml:"restart_policy,omitempty" yaml:"restart_policy,omitempty"`
 	Permissions   string               `toml:"permissions,omitempty"    yaml:"permissions,omitempty"`
+	Persona       string               `toml:"persona,omitempty"        yaml:"persona,omitempty"`
+	Identity      string               `toml:"identity,omitempty"       yaml:"identity,omitempty"`
 	HealthCheck   *ManifestHealthCheck `toml:"healthcheck,omitempty"    yaml:"healthcheck,omitempty"`
 }
 
@@ -162,6 +165,8 @@ func (m *Manifest) Apply(store *Store) error {
 				Runtime:       rt,
 				RestartPolicy: RestartAlways,
 				Permissions:   mr.Permissions,
+				Persona:       mr.Persona,
+				Identity:      mr.Identity,
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)

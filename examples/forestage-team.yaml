@@ -1,47 +1,58 @@
-# Marvel example — forestage agents via the forestage adapter.
+# Marvel example — forestage agents with five-primitive taxonomy.
+#
+# Per finding-019, agent identity has five independent primitives:
+#   - persona: character slug from theme roster (--persona)
+#   - theme: the roster (in runtime.args as --theme)
+#   - identity: professional lens (--identity)
+#   - role: job assignment on the team (role.name → --role)
+#   - process: what the team does (implicit in team purpose)
 #
 # The forestage adapter injects:
-#   - --name, --workspace, --team, --role, --socket (forestage flags)
+#   - --persona, --identity (from role config)
+#   - --role (from role.name — job function, NOT character lookup)
+#   - --name, --workspace, --team, --socket (marvel identity)
 #   - --permission-mode (forestage passes through to claude)
-#   - --script if specified in runtime config
-#   - -- --append-system-prompt "..." (claude passthrough for identity)
+#   - -- --append-system-prompt "..." (claude passthrough for team context)
 #   - MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
-#
-# Theme and model are user choices — put them in runtime.args.
-# Agents run in claude mode (no TUI) since marvel manages the tmux panes.
 #
 # Setup:
 #   cd ~/work/aae-orc/forestage && cargo build
 #   cd ~/work/aae-orc/marvel
 #   ./marvel daemon &
 #   ./marvel work examples/forestage-team.yaml
-#
-# Test commands:
-#   ./marvel get sessions
-#   ./marvel capture dev/squad-worker-g1-0
-#   ./marvel capture dev/squad-supervisor-g1-0
-#   ./marvel shift dev/squad --role worker
-#   ./marvel scale dev/squad --role worker --replicas 3
-#   ./marvel stop
 
 workspace:
   name: dev
 
 teams:
-  - name: squad
+  - name: research-squad
     roles:
       - name: supervisor
         replicas: 1
         permissions: auto
+        persona: camina-drummer
+        identity: "research director"
         runtime:
           image: forestage
           command: forestage
-          args: ["--theme", "dune", "--mode", "claude"]
+          args: ["--theme", "the-expanse", "--mode", "claude"]
 
-      - name: worker
+      - name: probe-runner
         replicas: 2
         permissions: plan
+        persona: naomi-nagata
+        identity: "systems researcher"
         runtime:
           image: forestage
           command: forestage
-          args: ["--theme", "dune", "--mode", "claude"]
+          args: ["--theme", "the-expanse", "--mode", "claude"]
+
+      - name: reviewer
+        replicas: 1
+        permissions: plan
+        persona: chrisjen-avasarala
+        identity: "knowledge architect"
+        runtime:
+          image: forestage
+          command: forestage
+          args: ["--theme", "the-expanse", "--mode", "claude"]

@@ -85,12 +85,16 @@ type Session struct {
 }
 
 // Role declares desired state for one kind of agent within a team.
+// Name is the job function (reviewer, supervisor, probe-runner).
+// Persona and Identity are the costume and lens per finding-019.
 type Role struct {
 	Name          string        `toml:"name"`
 	Replicas      int           `toml:"replicas"`
 	Runtime       Runtime       `toml:"runtime"`
 	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
 	Permissions   string        `toml:"permissions,omitempty"`
+	Persona       string        `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
+	Identity      string        `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
 	HealthCheck   *HealthCheck  `toml:"-"`
 }
 

@@ -6,9 +6,11 @@ import "fmt"
 // deep integration: identity injection, permission mode, and system prompt
 // context for team awareness.
 //
-// forestage accepts these top-level flags:
+// forestage accepts these top-level flags (per finding-019 taxonomy):
 //
-//	--role              role override (persona role within theme)
+//	--persona           character slug from theme roster (e.g. "naomi-nagata")
+//	--identity          professional lens (e.g. "homicide detective")
+//	--role              job assignment(s) on this team (e.g. "reviewer,troubleshooter")
 //	--name              agent session name (marvel identity)
 //	--workspace         marvel workspace
 //	--team              marvel team
@@ -18,7 +20,7 @@ import "fmt"
 //
 // Claude-specific flags go after "--" as passthrough:
 //
-//	--append-system-prompt   identity context for the agent
+//	--append-system-prompt   team context for the agent
 type Forestage struct{}
 
 func (f *Forestage) Name() string { return "forestage" }
@@ -32,12 +34,24 @@ func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	args := make([]string, len(ctx.Session.Runtime.Args))
 	copy(args, ctx.Session.Runtime.Args)
 
+	// Inject persona (character slug) if specified in the role.
+	if ctx.Role.Persona != "" {
+		args = append(args, "--persona", ctx.Role.Persona)
+	}
+
+	// Inject identity (professional lens) if specified in the role.
+	if ctx.Role.Identity != "" {
+		args = append(args, "--identity", ctx.Role.Identity)
+	}
+
+	// Inject role as job assignment — this is the team function, not a character lookup.
+	args = append(args, "--role", ctx.Role.Name)
+
 	// Inject marvel identity flags — forestage accepts these natively.
 	args = append(args,
 		"--name", ctx.Session.Name,
 		"--workspace", ctx.Workspace.Name,
 		"--team", ctx.Team.Name,
-		"--role", ctx.Role.Name,
 	)
 	if ctx.SocketPath != "" {
 		args = append(args, "--socket", ctx.SocketPath)
@@ -53,12 +67,12 @@ func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--script", ctx.Session.Runtime.Script)
 	}
 
-	// Claude passthrough: identity context as system prompt.
-	identity := fmt.Sprintf(
+	// Claude passthrough: team context as system prompt.
+	teamContext := fmt.Sprintf(
 		"You are %s (role: %s, team: %s, workspace: %s).",
 		ctx.Session.Name, ctx.Role.Name, ctx.Team.Name, ctx.Workspace.Name,
 	)
-	args = append(args, "--", "--append-system-prompt", identity)
+	args = append(args, "--", "--append-system-prompt", teamContext)
 
 	env := baseEnv(ctx)
 
