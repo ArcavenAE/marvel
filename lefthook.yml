@@ -1,0 +1,31 @@
+# lefthook git hooks for marvel.
+#
+# Install once per clone:
+#     lefthook install
+#
+# Pre-commit: fast feedback. Full CI mirror is `just lint` + `just test`.
+# Pre-push: race-detector test suite (catches concurrency regressions).
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.go"
+      run: gofumpt -l {staged_files} | grep . && exit 1 || true
+      stage_fixed: true
+
+    vet:
+      glob: "*.go"
+      run: go vet ./...
+
+    lint:
+      glob: "*.go"
+      run: golangci-lint run ./...
+
+pre-push:
+  commands:
+    test-race:
+      # Always run the race suite on push. No glob → no file-scoped
+      # skipping; doc/yaml-only pushes still exercise the tests because
+      # nothing except `go test` catches a flaky test regression.
+      run: go test ./... -race -count=1
