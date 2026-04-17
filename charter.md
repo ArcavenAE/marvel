@@ -78,10 +78,26 @@ Evidence: session-017.
 The daemon runs its own SSH server for remote access via the mrvl:// protocol
 (default port 6785, MRVL on phone keypad). Generates ed25519 host key on first
 run, authenticates clients against ~/.marvel/authorized_keys. No dependency on
-system sshd. Key management: marvel keys add/list/remove. Two SSH modes:
-mrvl://host (direct to daemon, primary) and ssh://host/path (tunnel through
-sshd, fallback).
-Evidence: session-017.
+system sshd. Two SSH modes: mrvl://host (direct to daemon, primary) and
+ssh://host/path (tunnel through sshd, fallback).
+
+Dedicated client keys (session-025): `marvel keys generate` creates
+`~/.marvel/keys/client_ed25519` with OpenSSH-style permissions (0600/0644,
+refuses to use keys with weaker modes). Cluster config gains an `identity`
+field; `marvel config add-cluster mrvl://host` auto-attaches the default
+client key. `--identity` CLI flag overrides per invocation.
+
+Host key TOFU (session-025): client records daemon host keys in
+`~/.marvel/known_hosts`. First-connect behavior is mode-driven — prompt
+on TTY, refuse off-TTY with pointer to `marvel keys trust`, silent record
+under `TrustUnknownHost`. Mismatches are always refused with both
+fingerprints in the error.
+
+Key management commands (session-025): `keys generate|show|list|doctor`
+(client-side), `keys authorize|authorized|revoke|host-fingerprint|trust`
+(daemon-side + interactive). `doctor [--fix]` audits every file under
+~/.marvel/ against OpenSSH-style expected modes.
+Evidence: session-017, session-025, finding-021.
 
 ### B11: Cluster Configuration
 Kubeconfig-style cluster config in ~/.marvel/config.yaml. Named clusters with
@@ -91,12 +107,48 @@ Evidence: session-017.
 
 ### B12: Release Pipeline
 Full CI/release pipeline: quality gate (gofumpt, vet, golangci-lint, tests
-with race detector), cross-platform builds (darwin arm64/amd64, linux amd64),
-Apple code signing + notarization (app bundles, DMG, PKG), Homebrew tap
-(ArcavenAE/tap/marvel), self-update command (marvel upgrade with Homebrew
-detection). Alpha releases on push to main, stable releases on v* tags via
-GoReleaser.
-Evidence: session-017. CI green, first signed alpha published.
+with race detector), cross-platform builds (darwin arm64/amd64, linux
+amd64/arm64), Apple code signing + notarization (app bundles, DMG, PKG),
+Homebrew tap (ArcavenAE/tap/marvel) with arch-matrix branches, self-update
+(marvel upgrade with Homebrew detection and runtime.GOARCH asset resolution).
+Alpha releases on push to main, stable releases on v* tags via GoReleaser.
+
+Tier-1 guardrails (session-025): pinned `.golangci.yml` (errcheck, govet,
+ineffassign, staticcheck, unused, misspell, unconvert, unparam + gofumpt
+formatter), lefthook pre-commit (fmt/vet/lint) + pre-push (go test -race),
+`.claude/rules/` (bash, git-commits, go, kos-commits) via `_index.md`
+include, `.editorconfig`, and security workflows ported from forestage:
+codeql.yml, dependency-review.yml, scorecards.yml, release-verify.yml.
+SHA-pinned actions, step-security harden-runner.
+Evidence: session-017. linux/arm64 since 2026-04-17 (session-025,
+aae-orc-803). Verified by driving desk Pi remotely from kinu.
+
+### B13: ~/.marvel/ Data Directory with OpenSSH-Style Permission Enforcement
+Canonical on-disk layout rooted at `~/.marvel/` (0700): `config.yaml` (0600),
+`authorized_keys` (0600), `ssh_host_ed25519_key` (0600/0644), `known_hosts`
+(0644), `keys/` (0700) with `client_ed25519` (0600/0644), `log/` (0700) with
+`daemon.log` (0600), `run/` (0700) with `daemon.pid` (0644). The `internal/
+paths` package owns the layout; `EnsureHome`/`EnsureKeysDir`/`EnsureLogDir`/
+`EnsureRunDir` create dirs at 0700; `Audit`/`Repair` enforce modes;
+`VerifyPrivateKeyMode` refuses to load a private key with weaker perms.
+
+Daemon CLI (session-025): `--log-file PATH` tees stderr to a file (only
+when stderr is not a TTY, to avoid double-writes under `nohup ... 2>&1`);
+`--pidfile PATH` writes pid on start with sshd-style "refuse if live"
+semantics, removes on clean stop. Both default to the canonical paths
+above; empty string disables.
+Evidence: session-025. aae-orc-ax8, aae-orc-9d6 closed.
+
+### B14: In-Memory Log Ring and `marvel daemon logs` RPC
+The daemon captures every `log.Printf` line into a bounded in-memory ring
+(`internal/logbuf`, DefaultLogBufferLines=10000). A new `logs` RPC returns
+the tail of the ring as JSON; `marvel daemon logs [-n N]` (CLI) fetches it,
+local or over mrvl://. No SSH-to-daemon-host needed to debug a failed
+schedule. Ring survives as long as the daemon process does; memory stays
+bounded regardless of input rate.
+Evidence: session-025. aae-orc-388 closed. Follow mode (-f), session-scoped
+logs (`marvel logs <session>`), and structured events (`marvel events`)
+are separate follow-ups (aae-orc-k0t).
 
 ---
 
