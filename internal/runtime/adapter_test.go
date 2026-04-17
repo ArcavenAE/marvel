@@ -24,6 +24,8 @@ func testContext() *LaunchContext {
 			Name:        "worker",
 			Replicas:    3,
 			Permissions: "plan",
+			Persona:     "naomi-nagata",
+			Identity:    "systems researcher",
 			Runtime: api.Runtime{
 				Name:    "forestage",
 				Command: "/usr/local/bin/forestage",
@@ -79,7 +81,18 @@ func TestForestagePrepare(t *testing.T) {
 		t.Errorf("command should start with binary, got: %s", result.Command)
 	}
 
-	// Should inject identity flags — forestage accepts these natively
+	// Should inject persona and identity (finding-019 taxonomy)
+	if !strings.Contains(result.Command, "--persona naomi-nagata") {
+		t.Errorf("command should contain --persona, got: %s", result.Command)
+	}
+	if !strings.Contains(result.Command, "--identity") || !strings.Contains(result.Command, "systems researcher") {
+		t.Errorf("command should contain --identity with value, got: %s", result.Command)
+	}
+	// Role is now job assignment, not character lookup
+	if !strings.Contains(result.Command, "--role worker") {
+		t.Errorf("command should contain --role, got: %s", result.Command)
+	}
+	// Marvel identity flags
 	if !strings.Contains(result.Command, "--name squad-worker-g1-0") {
 		t.Errorf("command should contain --name, got: %s", result.Command)
 	}
@@ -88,9 +101,6 @@ func TestForestagePrepare(t *testing.T) {
 	}
 	if !strings.Contains(result.Command, "--team squad") {
 		t.Errorf("command should contain --team, got: %s", result.Command)
-	}
-	if !strings.Contains(result.Command, "--role worker") {
-		t.Errorf("command should contain --role, got: %s", result.Command)
 	}
 	if !strings.Contains(result.Command, "--socket /tmp/marvel.sock") {
 		t.Errorf("command should contain --socket, got: %s", result.Command)

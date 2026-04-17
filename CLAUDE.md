@@ -1,5 +1,7 @@
 # Marvel — Agent Orchestration Control Plane
 
+@.claude/rules/_index.md
+
 ## What This Is
 
 > Note: the BYOA console formerly known as "aclaude" is now named "forestage".

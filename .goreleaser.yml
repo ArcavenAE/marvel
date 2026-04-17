@@ -23,9 +23,6 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.channel=stable
-    ignore:
-      - goos: linux
-        goarch: arm64
 
 archives:
   - id: default

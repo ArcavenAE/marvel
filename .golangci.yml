@@ -1,0 +1,38 @@
+# golangci-lint config for marvel.
+#
+# Pinned so `just lint` locally matches CI exactly. See CI version in
+# .github/workflows/ci.yml (currently v2.10.1).
+#
+# Philosophy: small, sharp set. Every linter here must be justified —
+# noise drives people to disable rather than fix. Extend only when we
+# catch a real bug the enabled set missed.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck       # unchecked error returns
+    - govet          # suspicious constructs (printf verb mismatch, lock copy, ...)
+    - ineffassign    # assignments whose value is never used
+    - staticcheck    # stdlib-level bug detection (SA*), deprecation (SA1019)
+    - unused         # unused consts/vars/funcs
+    # Hygiene
+    - misspell       # common English misspellings in identifiers/comments
+    - unconvert      # redundant type conversions
+    - unparam        # unused function parameters
+
+  settings:
+    staticcheck:
+      # ST1005: error strings should not end with punctuation or newlines.
+      # We enforce this — keeps `fmt.Errorf("...: %w", err)` uniform.
+      checks: ["all"]
+
+formatters:
+  enable:
+    - gofumpt        # stricter gofmt; CI also checks this separately

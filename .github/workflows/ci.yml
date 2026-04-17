@@ -86,11 +86,14 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build alpha binaries
+        env:
+          CGO_ENABLED: "0"
         run: |
           LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.channel=alpha"
           GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o marvel-darwin-arm64 ./cmd/marvel
           GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-darwin-amd64 ./cmd/marvel
-          GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-linux-amd64 ./cmd/marvel
+          GOOS=linux  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-linux-amd64  ./cmd/marvel
+          GOOS=linux  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o marvel-linux-arm64  ./cmd/marvel
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -283,10 +286,11 @@ jobs:
           name: binaries
           path: unsigned-binaries
 
-      - name: Copy linux binary
+      - name: Copy linux binaries
         if: needs.sign-and-notarize.result == 'success'
         run: |
           cp unsigned-binaries/marvel-linux-amd64 .
+          cp unsigned-binaries/marvel-linux-arm64 .
           rm -rf unsigned-binaries
 
       - name: Create GitHub Release
@@ -307,6 +311,7 @@ jobs:
           - \`marvel-darwin-arm64\` — macOS Apple Silicon
           - \`marvel-darwin-amd64\` — macOS Intel
           - \`marvel-linux-amd64\` — Linux x86_64
+          - \`marvel-linux-arm64\` — Linux aarch64 (Raspberry Pi 3/4/5 64-bit, AWS Graviton, ...)
 
           **Install:** \`brew install ArcavenAE/tap/marvel\`
           **Upgrade:** \`marvel upgrade\`"
@@ -331,9 +336,10 @@ jobs:
           TAG="${{ needs.build-binaries.outputs.tag }}"
           BASE_URL="https://github.com/ArcavenAE/marvel/releases/download/${TAG}"
 
-          SHA_ARM64=$(sha256sum marvel-darwin-arm64 | cut -d' ' -f1)
-          SHA_AMD64=$(sha256sum marvel-darwin-amd64 | cut -d' ' -f1)
-          SHA_LINUX=$(sha256sum marvel-linux-amd64 | cut -d' ' -f1)
+          SHA_MAC_ARM64=$(sha256sum marvel-darwin-arm64 | cut -d' ' -f1)
+          SHA_MAC_AMD64=$(sha256sum marvel-darwin-amd64 | cut -d' ' -f1)
+          SHA_LINUX_AMD64=$(sha256sum marvel-linux-amd64 | cut -d' ' -f1)
+          SHA_LINUX_ARM64=$(sha256sum marvel-linux-arm64 | cut -d' ' -f1)
 
           cat > marvel.rb <<FORMULA
           class Marvel < Formula
@@ -344,13 +350,16 @@ jobs:
 
             if OS.mac? && Hardware::CPU.arm?
               url "${BASE_URL}/marvel-darwin-arm64"
-              sha256 "${SHA_ARM64}"
+              sha256 "${SHA_MAC_ARM64}"
             elsif OS.mac?
               url "${BASE_URL}/marvel-darwin-amd64"
-              sha256 "${SHA_AMD64}"
+              sha256 "${SHA_MAC_AMD64}"
+            elsif OS.linux? && Hardware::CPU.arm?
+              url "${BASE_URL}/marvel-linux-arm64"
+              sha256 "${SHA_LINUX_ARM64}"
             elsif OS.linux?
               url "${BASE_URL}/marvel-linux-amd64"
-              sha256 "${SHA_LINUX}"
+              sha256 "${SHA_LINUX_AMD64}"
             end
 
             def install
@@ -358,6 +367,8 @@ jobs:
                 bin.install "marvel-darwin-arm64" => "marvel"
               elsif OS.mac?
                 bin.install "marvel-darwin-amd64" => "marvel"
+              elsif OS.linux? && Hardware::CPU.arm?
+                bin.install "marvel-linux-arm64" => "marvel"
               elsif OS.linux?
                 bin.install "marvel-linux-amd64" => "marvel"
               end
