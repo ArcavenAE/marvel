@@ -258,6 +258,41 @@ name = "squad"
 	if resp.Error != "" {
 		t.Fatalf("delete error: %s", resp.Error)
 	}
+
+	// Verify cascade: teams and sessions from the deleted workspace must be
+	// gone so the reconciler doesn't respawn sessions against orphan teams.
+	// See ArcavenAE/marvel#15.
+	time.Sleep(500 * time.Millisecond)
+
+	resp, err = SendRequest(sock, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "teams"}),
+	})
+	if err != nil {
+		t.Fatalf("get teams after delete workspace: %v", err)
+	}
+	var teamsAfter []json.RawMessage
+	if err := json.Unmarshal(resp.Result, &teamsAfter); err != nil {
+		t.Fatalf("unmarshal teams after delete: %v", err)
+	}
+	if len(teamsAfter) != 0 {
+		t.Fatalf("expected 0 teams after delete workspace, got %d", len(teamsAfter))
+	}
+
+	resp, err = SendRequest(sock, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
+	})
+	if err != nil {
+		t.Fatalf("get sessions after delete workspace: %v", err)
+	}
+	var sessionsAfter []json.RawMessage
+	if err := json.Unmarshal(resp.Result, &sessionsAfter); err != nil {
+		t.Fatalf("unmarshal sessions after delete: %v", err)
+	}
+	if len(sessionsAfter) != 0 {
+		t.Fatalf("expected 0 sessions after delete workspace, got %d", len(sessionsAfter))
+	}
 }
 
 func TestListenNetwork(t *testing.T) {

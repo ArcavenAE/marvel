@@ -509,6 +509,19 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 		if getErr != nil {
 			return Response{Error: getErr.Error()}
 		}
+		// Cascade: delete teams in this workspace (and their sessions) so the
+		// reconciler doesn't respawn sessions against orphaned team records.
+		for _, t := range d.store.ListTeams() {
+			if t.Workspace != ws.Name {
+				continue
+			}
+			for _, s := range d.store.ListSessionsByTeam(t.Workspace, t.Name) {
+				_ = d.sessMgr.Delete(s.Key())
+			}
+			if delErr := d.store.DeleteTeam(t.Key()); delErr != nil {
+				log.Printf("delete workspace %s: delete team %s: %v", ws.Name, t.Key(), delErr)
+			}
+		}
 		_ = d.sessMgr.CleanupWorkspace(ws.Name)
 		err = d.store.DeleteWorkspace(p.Name)
 	default:
