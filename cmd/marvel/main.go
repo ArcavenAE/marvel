@@ -156,28 +156,37 @@ Examples:
 				return err
 			}
 
-			// Tee Go's log output into: stderr + the in-memory ring +
-			// optional log file. The order matters: SetOutput is called
-			// BEFORE any daemon.Start log line, so the ring captures
-			// the startup banner too.
-			writers := []io.Writer{os.Stderr, d.LogBuffer()}
+			// Tee Go's log output into: stderr (only when interactive)
+			// + the in-memory ring + optional log file.
+			//
+			// Including stderr unconditionally caused duplicates under
+			// the common nohup pattern: `nohup marvel daemon --log-file
+			// X >X 2>&1` — stderr gets redirected to the same file
+			// that the MultiWriter is already writing to, so each line
+			// landed twice (reported as ArcavenAE/marvel#12 by Skippy).
+			// Now: tee stderr only when it is a terminal, so background
+			// daemons write exactly once to the log file and interactive
+			// runs still see their own output in the console.
+			writers := []io.Writer{d.LogBuffer()}
+			if term.IsTerminal(int(os.Stderr.Fd())) {
+				writers = append(writers, os.Stderr)
+			}
 			var logCloser io.Closer
 			if logFilePath != "" {
-				closer, err := setupLogFile(logFilePath)
+				closer, err := openLogFile(logFilePath)
 				if err != nil {
 					return err
 				}
 				logCloser = closer
 				defer func() { _ = logCloser.Close() }()
-				// setupLogFile also reassigns log output; but we're
-				// about to overwrite it with the full multi-writer,
-				// so just append the file to the writer list.
 				if f, ok := closer.(io.Writer); ok {
 					writers = append(writers, f)
 				}
-				log.Printf("daemon log file: %s", logFilePath)
 			}
 			log.SetOutput(io.MultiWriter(writers...))
+			if logFilePath != "" {
+				log.Printf("daemon log file: %s", logFilePath)
+			}
 
 			if err := d.Start(sock); err != nil {
 				return err
@@ -261,10 +270,12 @@ Examples:
 	return cmd
 }
 
-// setupLogFile opens (appending) a log file and redirects the standard
-// log package to write to both stderr and the file. Returns an io.Closer
-// that closes the underlying file; stderr remains attached either way.
-func setupLogFile(path string) (io.Closer, error) {
+// openLogFile opens (appending) a log file at the given path. The
+// caller is responsible for wiring it into log.SetOutput — this
+// function only handles directory creation and permission enforcement
+// so the log-file setup stays composable with the ring buffer / stderr
+// tee decision in daemonCmd's RunE.
+func openLogFile(path string) (io.Closer, error) {
 	layout, _ := paths.Default()
 	if path == layout.DaemonLog() {
 		if err := layout.EnsureLogDir(); err != nil {
@@ -281,7 +292,6 @@ func setupLogFile(path string) (io.Closer, error) {
 	}
 	// Enforce the mode in case the file pre-existed with different perms.
 	_ = os.Chmod(path, paths.ModeAuthorized)
-	log.SetOutput(io.MultiWriter(os.Stderr, f))
 	return f, nil
 }
 
