@@ -24,6 +24,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/knownhosts"
+	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
@@ -70,6 +71,11 @@ type Response struct {
 	Error  string          `json:"error,omitempty"`
 }
 
+// DefaultLogBufferLines is the default ring-buffer depth for the
+// daemon's in-memory log tail. About 10k lines ≈ 1–2 MB at typical
+// daemon verbosity.
+const DefaultLogBufferLines = 10000
+
 // Daemon is the marvel daemon.
 type Daemon struct {
 	store     *api.Store
@@ -84,6 +90,9 @@ type Daemon struct {
 	// Path of the pid file to create on Start and remove on Stop.
 	// Empty = no pid file.
 	pidFile string
+
+	// In-memory ring of the most recent log lines. Always non-nil.
+	logs *logbuf.Buffer
 }
 
 // Options configures optional daemon behavior. Zero value disables
@@ -93,6 +102,10 @@ type Options struct {
 	// Start and removed on Stop. If the file already exists and
 	// points at a live process, Start refuses with an error.
 	PidFile string
+	// LogBuffer, when non-nil, is the in-memory log ring the daemon
+	// tees its log stream through. When nil, New allocates one at
+	// DefaultLogBufferLines. Tests may pre-allocate to inspect.
+	LogBuffer *logbuf.Buffer
 }
 
 // New creates a new daemon with default options.
@@ -111,14 +124,25 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	sessMgr := session.NewManager(store, driver)
 	teamCtrl := team.NewController(store, sessMgr)
 
+	buf := opts.LogBuffer
+	if buf == nil {
+		buf = logbuf.New(DefaultLogBufferLines)
+	}
+
 	return &Daemon{
 		store:    store,
 		sessMgr:  sessMgr,
 		teamCtrl: teamCtrl,
 		driver:   driver,
 		pidFile:  opts.PidFile,
+		logs:     buf,
 	}, nil
 }
+
+// LogBuffer returns the daemon's in-memory log ring. Callers can
+// hook it into log.SetOutput to tee stderr into the buffer; the
+// daemon process does this in cmd/marvel.
+func (d *Daemon) LogBuffer() *logbuf.Buffer { return d.logs }
 
 // Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
 // The address format determines the network: "host:port" for TCP, a file path
@@ -322,9 +346,38 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleCapture(req.Params)
 	case "stop":
 		return d.handleStop()
+	case "logs":
+		return d.handleLogs(req.Params)
 	default:
 		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
+}
+
+// Logs params — tail of the daemon's in-memory log ring.
+type logsParams struct {
+	N int `json:"n"` // number of lines; 0 or negative = unbounded (whole buffer)
+}
+
+type logsResult struct {
+	Lines []string `json:"lines"`
+}
+
+func (d *Daemon) handleLogs(params json.RawMessage) Response {
+	var p logsParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
+	if p.N <= 0 {
+		p.N = d.logs.Cap()
+	}
+	lines := d.logs.Tail(p.N)
+	data, err := json.Marshal(logsResult{Lines: lines})
+	if err != nil {
+		return Response{Error: fmt.Sprintf("marshal logs: %v", err)}
+	}
+	return Response{Result: data}
 }
 
 // Apply params

@@ -149,7 +149,18 @@ Examples:
 				sock = config.DefaultSocket
 			}
 
-			// Tee stderr to the log file when one is configured.
+			d, err := daemon.NewWithOptions(daemon.Options{
+				PidFile: pidFilePath,
+			})
+			if err != nil {
+				return err
+			}
+
+			// Tee Go's log output into: stderr + the in-memory ring +
+			// optional log file. The order matters: SetOutput is called
+			// BEFORE any daemon.Start log line, so the ring captures
+			// the startup banner too.
+			writers := []io.Writer{os.Stderr, d.LogBuffer()}
 			var logCloser io.Closer
 			if logFilePath != "" {
 				closer, err := setupLogFile(logFilePath)
@@ -158,15 +169,16 @@ Examples:
 				}
 				logCloser = closer
 				defer func() { _ = logCloser.Close() }()
+				// setupLogFile also reassigns log output; but we're
+				// about to overwrite it with the full multi-writer,
+				// so just append the file to the writer list.
+				if f, ok := closer.(io.Writer); ok {
+					writers = append(writers, f)
+				}
 				log.Printf("daemon log file: %s", logFilePath)
 			}
+			log.SetOutput(io.MultiWriter(writers...))
 
-			d, err := daemon.NewWithOptions(daemon.Options{
-				PidFile: pidFilePath,
-			})
-			if err != nil {
-				return err
-			}
 			if err := d.Start(sock); err != nil {
 				return err
 			}
@@ -201,6 +213,51 @@ Examples:
 		"tee daemon stderr to this file (empty string disables)")
 	cmd.Flags().StringVar(&pidFilePath, "pidfile", defaultPid,
 		"write pid to this file on start, remove on stop (empty string disables)")
+
+	cmd.AddCommand(daemonLogsCmd())
+	return cmd
+}
+
+// daemonLogsCmd — fetch the daemon's recent log lines over mrvl://.
+// Runs against any cluster; no SSH to the daemon host required.
+func daemonLogsCmd() *cobra.Command {
+	var n int
+	cmd := &cobra.Command{
+		Use:   "logs",
+		Short: "Print the daemon's recent log lines (over mrvl:// if --cluster is set)",
+		Long: `Fetch the daemon's in-memory log ring and print the most recent N lines.
+
+The ring is populated by every 'log.Printf' the daemon emits — RPC
+dispatch, session creation, health-check decisions, shifts, auth
+events. Lines survive as long as the daemon process does; the ring
+is bounded so memory stays flat.
+
+Examples:
+  marvel daemon logs                      # local daemon, last 100 lines
+  marvel daemon logs -n 500               # last 500 lines
+  marvel --cluster desk daemon logs       # remote daemon via mrvl://`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]int{"n": n})
+			resp, err := send(daemon.Request{Method: "logs", Params: params})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var result struct {
+				Lines []string `json:"lines"`
+			}
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				return fmt.Errorf("parse logs: %w", err)
+			}
+			for _, line := range result.Lines {
+				fmt.Println(line)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVarP(&n, "lines", "n", 100, "number of recent lines to return (0 = all buffered)")
 	return cmd
 }
 
