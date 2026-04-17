@@ -7,7 +7,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/gopher-lua v1.1.2
 	go.opentelemetry.io/otel v1.43.0
-	go.opentelemetry.io/otel/exporters/stdout/stdoutmetric v1.42.0
+	go.opentelemetry.io/otel/exporters/stdout/stdoutmetric v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0
 	go.opentelemetry.io/otel/sdk/metric v1.43.0
 	golang.org/x/crypto v0.50.0
