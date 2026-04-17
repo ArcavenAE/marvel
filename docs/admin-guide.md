@@ -77,42 +77,47 @@ marvel stop
 The mrvl:// listener authenticates clients using SSH public keys stored
 in `~/.marvel/authorized_keys` (OpenSSH format, same as `~/.ssh/authorized_keys`).
 
+For the full client + daemon key workflow — including generating
+dedicated marvel keys, permission conventions, the `~/.marvel/` layout,
+and `marvel keys doctor` — see the [keys guide](keys.md).
+
+### Typical workflow
+
+1. **Client:** `marvel keys generate` creates `~/.marvel/keys/client_ed25519`
+2. **Client:** `marvel keys show | pbcopy` copies the public key
+3. **Admin:** `marvel keys authorize /path/to/client.pub` on the daemon machine
+4. **Client:** `marvel config add-cluster prod mrvl://host` (auto-attaches the default identity)
+5. **Client:** `marvel --cluster prod get sessions`
+
 ### Authorizing a client
 
 On the daemon machine:
 
 ```bash
-# Add a client's public key
-marvel keys add /path/to/client_id_ed25519.pub
-
-# Or pipe it
-cat ~/.ssh/id_ed25519.pub | marvel keys add /dev/stdin
+marvel keys authorize /path/to/client.pub
+# or, if you received the pubkey as text:
+echo 'ssh-ed25519 AAAA... alice@laptop' | marvel keys authorize /dev/stdin
 ```
 
-**Typical workflow:**
+`authorize` is aliased as `add` for compatibility with earlier releases.
 
-1. The client generates an SSH key pair (or already has one in `~/.ssh/`)
-2. The client sends their public key to the admin
-3. The admin runs `marvel keys add` on the daemon machine
-4. The client adds the cluster: `marvel config add-cluster prod mrvl://host`
-5. The client connects: `marvel get sessions --cluster prod`
-
-### Listing authorized keys
+### Listing authorized clients
 
 ```bash
-marvel keys list
+marvel keys authorized
 ```
 
 Output:
 ```
-SHA256:abc123...  ssh-ed25519  michael@laptop
-SHA256:def456...  ssh-ed25519  deploy@ci
+FINGERPRINT                                         TYPE         COMMENT
+SHA256:abc...                                       ssh-ed25519  michael@laptop
+SHA256:def...                                       ssh-ed25519  deploy@ci
 ```
 
 ### Revoking a client
 
 ```bash
-marvel keys remove SHA256:abc123...
+marvel keys revoke SHA256:abc...
 ```
 
 The client can no longer connect via mrvl://. Local Unix socket access
@@ -124,10 +129,10 @@ is unaffected (it has no authentication).
 marvel keys host-fingerprint
 ```
 
-Clients can use this to verify they're connecting to the right daemon
-(defense against man-in-the-middle). Currently marvel uses
-trust-on-first-use (TOFU) — the first connection is trusted, future
-connections verify the key hasn't changed.
+Share the fingerprint with clients so they can verify they're connecting
+to the right daemon. Host key verification via `~/.marvel/known_hosts`
+is planned (see beads `aae-orc-itf`); today the client accepts any host
+key.
 
 ## Cluster configuration
 
@@ -211,11 +216,14 @@ You develop on a laptop but run agents on a workstation with more resources.
 **On the workstation:**
 ```bash
 marvel daemon --mrvl
-marvel keys add ~/.ssh/id_ed25519.pub  # authorize yourself
+# authorize yourself — copy laptop's ~/.marvel/keys/client_ed25519.pub here
+marvel keys authorize /tmp/laptop.pub
 ```
 
 **On the laptop:**
 ```bash
+marvel keys generate                                  # once
+marvel keys show | ssh workstation 'cat > /tmp/laptop.pub'
 marvel config add-cluster workstation mrvl://workstation.local
 marvel config use-cluster workstation
 marvel work manifests/big-team.yaml
@@ -233,9 +241,9 @@ Multiple people connect to a shared daemon on a team server.
 ```bash
 marvel daemon --mrvl
 # Authorize each team member
-marvel keys add alice_id_ed25519.pub
-marvel keys add bob_id_ed25519.pub
-marvel keys add carol_id_ed25519.pub
+marvel keys authorize alice.pub
+marvel keys authorize bob.pub
+marvel keys authorize carol.pub
 ```
 
 **Each team member:**
@@ -258,7 +266,7 @@ A CI job runs agents for automated code review or testing.
 - name: Start marvel
   run: |
     marvel daemon --mrvl &
-    marvel keys add ${{ secrets.CI_SSH_PUBKEY }}
+    echo "${{ secrets.CI_SSH_PUBKEY }}" | marvel keys authorize /dev/stdin
     marvel work manifests/review-team.yaml
     sleep 300  # let agents work
     marvel stop
@@ -344,16 +352,25 @@ and reconnects automatically when the daemon restarts.
 Your SSH public key isn't authorized on the daemon. Ask the admin to run:
 
 ```bash
-marvel keys add your_id_ed25519.pub
+marvel keys authorize your.pub
 ```
 
 ### "no SSH auth available"
 
-Your SSH agent isn't running or has no keys loaded.
+No marvel client key, no ssh-agent, no usable `~/.ssh/` key.
 
 ```bash
-eval $(ssh-agent)
-ssh-add ~/.ssh/id_ed25519
+marvel keys generate                 # create a marvel client key
+# or
+eval $(ssh-agent) && ssh-add ~/.ssh/id_ed25519
+```
+
+### "permissions ... are too open"
+
+A private key is group- or world-readable. Fix with:
+
+```bash
+marvel keys doctor --fix
 ```
 
 ### Sessions keep restarting

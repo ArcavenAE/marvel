@@ -6,6 +6,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
@@ -633,7 +635,19 @@ func (d *Daemon) handleStop() Response {
 	return Response{Result: result}
 }
 
-// SendRequest sends a request to the daemon and returns the response.
+// DialOptions controls how the client connects to a marvel daemon.
+type DialOptions struct {
+	// Identity is an optional private key file used for SSH auth. When
+	// set, it takes precedence over SSH_AUTH_SOCK and default key files.
+	Identity string
+	// KnownHosts is an optional path to a known_hosts file for host key
+	// verification. When empty, host keys are not verified (TOFU is
+	// deferred to a later change).
+	KnownHosts string
+}
+
+// SendRequest sends a request to the daemon and returns the response,
+// using default auth (SSH_AUTH_SOCK or ~/.ssh/*).
 //
 // Address formats:
 //
@@ -643,7 +657,14 @@ func (d *Daemon) handleStop() Response {
 //	ssh://user@host/tmp/marvel.sock           → tunnel through sshd to Unix socket
 //	tcp://host:port                           → bare TCP (advanced use)
 func SendRequest(socketPath string, req Request) (*Response, error) {
-	conn, err := dialDaemon(socketPath)
+	return SendRequestWith(socketPath, req, DialOptions{})
+}
+
+// SendRequestWith sends a request using the supplied dial options. Use
+// this when the caller has a per-cluster identity key or known_hosts
+// file it wants to thread through.
+func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Response, error) {
+	conn, err := dialDaemonWith(socketPath, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -660,7 +681,7 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 	return &resp, nil
 }
 
-// dialDaemon connects to the daemon. Routes based on address scheme:
+// dialDaemonWith connects to the daemon. Routes based on address scheme:
 //
 //	mrvl://host            → embedded SSH server on port 6785
 //	mrvl://host:port       → embedded SSH server on custom port
@@ -668,12 +689,12 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 //	ssh://host:port        → embedded SSH server (same as mrvl://)
 //	tcp://host:port        → bare TCP (advanced)
 //	/path/to/socket        → Unix socket (local)
-func dialDaemon(addr string) (net.Conn, error) {
+func dialDaemonWith(addr string, opts DialOptions) (net.Conn, error) {
 	if isMRVL(addr) {
-		return dialMRVL(addr)
+		return dialMRVL(addr, opts)
 	}
 	if isSSH(addr) {
-		return dialSSH(addr)
+		return dialSSH(addr, opts)
 	}
 
 	// Strip tcp:// prefix for explicit bare-TCP use.
@@ -696,7 +717,7 @@ func dialDaemon(addr string) (net.Conn, error) {
 
 // dialMRVL connects to a daemon's embedded SSH server via the mrvl:// protocol.
 // Default port is 6785 if not specified.
-func dialMRVL(addr string) (net.Conn, error) {
+func dialMRVL(addr string, opts DialOptions) (net.Conn, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
 		return nil, fmt.Errorf("parse mrvl address %q: %w", addr, err)
@@ -713,12 +734,12 @@ func dialMRVL(addr string) (net.Conn, error) {
 		port = DefaultMRVLPort
 	}
 
-	return dialSSHDirect(user, host, port)
+	return dialSSHDirect(user, host, port, opts)
 }
 
 // dialSSH parses an ssh:// URL and dials the daemon's socket through an
-// SSH tunnel. Auth uses the SSH agent (SSH_AUTH_SOCK) with fallback to
-// common key files (~/.ssh/id_ed25519, ~/.ssh/id_rsa).
+// SSH tunnel. Auth prefers opts.Identity, then SSH_AUTH_SOCK, then common
+// key files (~/.ssh/id_ed25519, ~/.ssh/id_rsa).
 //
 // URL formats:
 //
@@ -726,7 +747,7 @@ func dialMRVL(addr string) (net.Conn, error) {
 //	ssh://user@host:2222/path/to/socket   → SSH to host:2222, dial Unix socket
 //	ssh://user@host:9090                  → SSH to host:22, dial TCP localhost:9090
 //	ssh://host/path/to/socket             → SSH as current user
-func dialSSH(addr string) (net.Conn, error) {
+func dialSSH(addr string, opts DialOptions) (net.Conn, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
 		return nil, fmt.Errorf("parse ssh address %q: %w", addr, err)
@@ -749,7 +770,7 @@ func dialSSH(addr string) (net.Conn, error) {
 		if sshPort == "" {
 			sshPort = "22"
 		}
-		return dialSSHTunnel(user, sshHost, sshPort, "unix", remotePath)
+		return dialSSHTunnel(user, sshHost, sshPort, "unix", remotePath, opts)
 	}
 
 	// Mode 2: no path → connect directly to daemon's embedded SSH server.
@@ -757,12 +778,15 @@ func dialSSH(addr string) (net.Conn, error) {
 	if sshPort == "" {
 		return nil, fmt.Errorf("ssh address %q: need a port for the daemon's SSH server", addr)
 	}
-	return dialSSHDirect(user, sshHost, sshPort)
+	return dialSSHDirect(user, sshHost, sshPort, opts)
 }
 
 // dialSSHTunnel connects through a remote sshd to a Unix or TCP socket (mode 1).
-func dialSSHTunnel(user, host, sshPort, network, addr string) (net.Conn, error) {
-	config := sshClientConfig(user)
+func dialSSHTunnel(user, host, sshPort, network, addr string, opts DialOptions) (net.Conn, error) {
+	config, err := sshClientConfig(user, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(host, sshPort), config)
 	if err != nil {
@@ -780,8 +804,11 @@ func dialSSHTunnel(user, host, sshPort, network, addr string) (net.Conn, error) 
 
 // dialSSHDirect connects to the daemon's embedded SSH server (mode 2).
 // Opens a session channel for JSON-RPC instead of tunneling to a socket.
-func dialSSHDirect(user, host, port string) (net.Conn, error) {
-	config := sshClientConfig(user)
+func dialSSHDirect(user, host, port string, opts DialOptions) (net.Conn, error) {
+	config, err := sshClientConfig(user, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(host, port), config)
 	if err != nil {
@@ -820,14 +847,20 @@ func dialSSHDirect(user, host, port string) (net.Conn, error) {
 	}, nil
 }
 
-func sshClientConfig(user string) *ssh.ClientConfig {
-	authMethods := sshAuthMethods()
+func sshClientConfig(user string, opts DialOptions) (*ssh.ClientConfig, error) {
+	methods, err := sshAuthMethodsFor(opts.Identity)
+	if err != nil {
+		return nil, err
+	}
+	if len(methods) == 0 {
+		return nil, errors.New("no SSH auth available: generate a key with 'marvel keys generate' or start ssh-agent")
+	}
 	return &ssh.ClientConfig{
 		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: known_hosts verification
+		Auth:            methods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TOFU deferred; see aae-orc-itf
 		Timeout:         10 * time.Second,
-	}
+	}, nil
 }
 
 // sshSessionConn wraps an SSH session's stdin/stdout as a net.Conn-like
@@ -869,10 +902,40 @@ func (c *sshWrappedConn) Close() error {
 	return err
 }
 
-// sshAuthMethods returns available SSH authentication methods.
-// Prefers the SSH agent, falls back to common key files.
-func sshAuthMethods() []ssh.AuthMethod {
+// sshAuthMethodsFor returns SSH auth methods for a cluster.
+//
+// Precedence:
+//  1. identity file from the cluster config (if set)
+//  2. default marvel client key (~/.marvel/keys/client_ed25519) when present
+//  3. SSH_AUTH_SOCK (developer agent)
+//  4. ~/.ssh/id_ed25519, ~/.ssh/id_rsa
+//
+// If identity is set but unreadable or has weak permissions, that is a
+// hard error — callers expect the cluster's configured key to be used.
+func sshAuthMethodsFor(identity string) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
+
+	if identity != "" {
+		signer, err := loadKeyFile(identity, true)
+		if err != nil {
+			return nil, fmt.Errorf("cluster identity %s: %w", identity, err)
+		}
+		methods = append(methods, ssh.PublicKeys(signer))
+		return methods, nil
+	}
+
+	// Implicit default: marvel's own client key if it exists.
+	if layout, err := paths.Default(); err == nil {
+		defaultKey := layout.DefaultClientKey()
+		if _, statErr := os.Stat(defaultKey); statErr == nil {
+			signer, err := loadKeyFile(defaultKey, true)
+			if err == nil {
+				methods = append(methods, ssh.PublicKeys(signer))
+			} else {
+				log.Printf("warning: %s unusable: %v", defaultKey, err)
+			}
+		}
+	}
 
 	// SSH agent (most common for developers).
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
@@ -882,23 +945,33 @@ func sshAuthMethods() []ssh.AuthMethod {
 		}
 	}
 
-	// Key file fallback.
+	// Standard ~/.ssh/ fallback.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return methods
+		return methods, nil
 	}
-
 	for _, name := range []string{"id_ed25519", "id_rsa"} {
-		key, err := os.ReadFile(filepath.Join(home, ".ssh", name))
-		if err != nil {
-			continue
-		}
-		signer, err := ssh.ParsePrivateKey(key)
+		p := filepath.Join(home, ".ssh", name)
+		signer, err := loadKeyFile(p, false)
 		if err != nil {
 			continue
 		}
 		methods = append(methods, ssh.PublicKeys(signer))
 	}
+	return methods, nil
+}
 
-	return methods
+// loadKeyFile reads and parses a private key. When strictPerms is true,
+// refuses to load keys with group- or world-accessible permissions.
+func loadKeyFile(path string, strictPerms bool) (ssh.Signer, error) {
+	if strictPerms {
+		if err := paths.VerifyPrivateKeyMode(path); err != nil {
+			return nil, err
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return ssh.ParsePrivateKey(data)
 }

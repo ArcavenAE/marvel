@@ -17,6 +17,8 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/keys"
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/upgrade"
 	"github.com/spf13/cobra"
 )
@@ -28,26 +30,49 @@ var (
 )
 
 var (
-	clusterName string // --cluster flag
-	socketPath  string // --socket flag (fallback)
+	clusterName  string // --cluster flag
+	socketPath   string // --socket flag (fallback)
+	identityPath string // --identity flag (per-invocation override)
 )
 
-// resolveSocket returns the daemon address to connect to.
-// Priority: --socket (explicit) > --cluster (named) > config current_cluster > local default.
-func resolveSocket() string {
+// resolveDaemon returns both the address and the dial options for the
+// selected cluster. --identity overrides the cluster-level identity.
+func resolveDaemon() (string, daemon.DialOptions) {
 	if socketPath != "" {
-		return socketPath
+		return socketPath, daemon.DialOptions{Identity: identityPath}
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return config.DefaultSocket
+		return config.DefaultSocket, daemon.DialOptions{Identity: identityPath}
 	}
-	addr, err := cfg.ResolveCluster(clusterName)
+	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		return config.DefaultSocket
+		return config.DefaultSocket, daemon.DialOptions{Identity: identityPath}
 	}
-	return addr
+	if cl == nil {
+		return config.DefaultSocket, daemon.DialOptions{Identity: identityPath}
+	}
+	addr := cl.Socket
+	if cl.Server != "" {
+		addr = cl.Server
+	}
+	if addr == "" {
+		addr = config.DefaultSocket
+	}
+	id := identityPath
+	if id == "" {
+		id = cl.Identity
+	}
+	return addr, daemon.DialOptions{Identity: id}
+}
+
+// send runs a JSON-RPC request against the currently selected daemon,
+// threading through per-cluster dial options. All subcommands should
+// use this instead of daemon.SendRequest directly.
+func send(req daemon.Request) (*daemon.Response, error) {
+	addr, opts := resolveDaemon()
+	return daemon.SendRequestWith(addr, req, opts)
 }
 
 func main() {
@@ -64,6 +89,8 @@ func main() {
 		"named cluster from ~/.marvel/config.yaml")
 	root.PersistentFlags().StringVar(&socketPath, "socket", "",
 		"explicit daemon address (overrides --cluster)")
+	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
+		"private key file for SSH auth (overrides cluster identity)")
 
 	root.AddCommand(daemonCmd())
 	root.AddCommand(workCmd())
@@ -97,10 +124,10 @@ func daemonCmd() *cobra.Command {
 Use --mrvl to also start the mrvl:// listener for remote access.
 
 Examples:
-  marvel daemon                          # Unix socket only
-  marvel daemon --mrvl                   # + mrvl:// on port 6785
-  marvel daemon --mrvl :7000             # + mrvl:// on custom port
-  marvel daemon --socket /var/marvel.sock # custom socket path`,
+  marvel daemon                              # Unix socket only
+  marvel daemon --mrvl                       # + mrvl:// on port 6785
+  marvel daemon --mrvl=:7000                 # + mrvl:// on custom port
+  marvel daemon --socket /var/marvel.sock    # custom socket path`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sock := listenSocket
 			if sock == "" {
@@ -130,8 +157,12 @@ Examples:
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&mrvlAddr, "mrvl", ":"+config.DefaultMRVLPort,
-		"start mrvl:// listener for remote access (default port 6785)")
+	// --mrvl is optional-valued: bare --mrvl enables on the default port,
+	// --mrvl=:7000 enables on a custom port. NoOptDefVal prevents cobra
+	// from eating the next token when the flag is supplied without =.
+	f := cmd.Flags().VarPF(newOptionalString(&mrvlAddr), "mrvl", "",
+		"start mrvl:// listener (use --mrvl=:<port> for a custom port)")
+	f.NoOptDefVal = ":" + config.DefaultMRVLPort
 	cmd.Flags().StringVar(&listenSocket, "socket", "",
 		"Unix socket path (default /tmp/marvel.sock)")
 	return cmd
@@ -149,7 +180,7 @@ func workCmd() *cobra.Command {
 			}
 
 			params, _ := json.Marshal(map[string]any{"manifest_data": data})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "apply",
 				Params: params,
 			})
@@ -204,7 +235,7 @@ func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
-	resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+	resp, err := send(daemon.Request{
 		Method: "get",
 		Params: params,
 	})
@@ -240,7 +271,7 @@ func describeCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "describe",
 				Params: params,
 			})
@@ -271,7 +302,7 @@ func deleteCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "delete",
 				Params: params,
 			})
@@ -300,7 +331,7 @@ func scaleCmd() *cobra.Command {
 				"role":     role,
 				"replicas": replicas,
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "scale",
 				Params: params,
 			})
@@ -334,7 +365,7 @@ func runCmd() *cobra.Command {
 				"runtime_args":    args[1:],
 				"script":          script,
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "run",
 				Params: params,
 			})
@@ -367,7 +398,7 @@ func killCmd() *cobra.Command {
 				"resource_type": "session",
 				"name":          args[0],
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "delete",
 				Params: params,
 			})
@@ -394,7 +425,7 @@ func shiftCmd() *cobra.Command {
 				"team_key": args[0],
 				"role":     role,
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "shift",
 				Params: params,
 			})
@@ -429,7 +460,7 @@ func injectCmd() *cobra.Command {
 				"literal":     literal,
 				"enter":       enter,
 			})
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "inject",
 				Params: params,
 			})
@@ -462,7 +493,7 @@ func captureCmd() *cobra.Command {
 				p["end"] = end
 			}
 			params, _ := json.Marshal(p)
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+			resp, err := send(daemon.Request{
 				Method: "capture",
 				Params: params,
 			})
@@ -530,6 +561,8 @@ func configCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "   \tNAME\tADDRESS\tIDENTITY")
 			for _, cl := range cfg.Clusters {
 				marker := "  "
 				if cl.Name == cfg.CurrentCluster {
@@ -539,35 +572,62 @@ func configCmd() *cobra.Command {
 				if cl.Server != "" {
 					addr = cl.Server
 				}
-				fmt.Printf("%s%-15s %s\n", marker, cl.Name, addr)
+				identity := cl.Identity
+				if identity == "" {
+					identity = "-"
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", marker, cl.Name, addr, identity)
 			}
-			return nil
+			return w.Flush()
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	var addIdentity string
+	var addIdentityDefault bool
+	addCluster := &cobra.Command{
 		Use:   "add-cluster <name> <address>",
 		Short: "Add or update a cluster",
 		Long: `Add a named cluster to ~/.marvel/config.yaml.
 
 Examples:
   marvel config add-cluster kinu mrvl://kinu
-  marvel config add-cluster staging mrvl://deploy@staging.example.com:7000
-  marvel config add-cluster dev /tmp/marvel-dev.sock`,
+  marvel config add-cluster staging mrvl://deploy@staging.example.com:7000 --identity ~/.marvel/keys/staging_ed25519
+  marvel config add-cluster dev /tmp/marvel-dev.sock
+
+For remote (mrvl:// or ssh://) clusters without an --identity flag,
+marvel defaults to ~/.marvel/keys/client_ed25519 when that key exists.
+Use --no-default-identity to opt out and fall back to SSH_AUTH_SOCK
+or ~/.ssh/ keys.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			cfg.AddCluster(args[0], args[1])
+			identity := addIdentity
+			if identity == "" && !addIdentityDefault && (strings.HasPrefix(args[1], "mrvl://") || strings.HasPrefix(args[1], "ssh://")) {
+				layout, err := paths.Default()
+				if err == nil {
+					if _, statErr := os.Stat(layout.DefaultClientKey()); statErr == nil {
+						identity = layout.DefaultClientKey()
+					}
+				}
+			}
+			cfg.AddCluster(args[0], args[1], identity)
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("Cluster %q configured: %s\n", args[0], args[1])
+			if identity != "" {
+				fmt.Printf("Cluster %q configured: %s (identity: %s)\n", args[0], args[1], identity)
+			} else {
+				fmt.Printf("Cluster %q configured: %s\n", args[0], args[1])
+			}
 			return nil
 		},
-	})
+	}
+	addCluster.Flags().StringVar(&addIdentity, "identity", "", "private key file to use for SSH auth on this cluster")
+	addCluster.Flags().BoolVar(&addIdentityDefault, "no-default-identity", false, "do not auto-attach ~/.marvel/keys/client_ed25519")
+	cmd.AddCommand(addCluster)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "remove-cluster <name>",
@@ -630,13 +690,162 @@ Examples:
 func keysCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keys",
-		Short: "Manage SSH authorized keys for the marvel daemon",
+		Short: "Manage SSH keys for marvel clients and the daemon",
+		Long: `Manage marvel SSH key material.
+
+Client-side (on your machine, for connecting to a daemon):
+  marvel keys generate          # create ~/.marvel/keys/client_ed25519
+  marvel keys show              # print your public key (to send to the admin)
+  marvel keys list              # list keys under ~/.marvel/keys/
+  marvel keys doctor            # audit and fix ~/.marvel/ permissions
+
+Daemon-side (on the machine running marvel daemon):
+  marvel keys authorize <file>  # add a client's pubkey to authorized_keys
+  marvel keys authorized        # list authorized clients
+  marvel keys revoke <fp>       # remove a client by fingerprint
+  marvel keys host-fingerprint  # print this daemon's host key fingerprint`,
 	}
 
+	// Client-side: keys generate
+	var genName, genType, genComment string
+	var genForce bool
+	generate := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate a new client keypair under ~/.marvel/keys/",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			layout, err := paths.Default()
+			if err != nil {
+				return err
+			}
+			ck, err := keys.GenerateClient(layout, keys.GenerateOptions{
+				Name:    genName,
+				Type:    keys.KeyType(genType),
+				Comment: genComment,
+				Force:   genForce,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Generated %s keypair\n", ck.Type)
+			fmt.Printf("  private: %s\n", ck.PrivatePath)
+			fmt.Printf("  public:  %s\n", ck.PublicPath)
+			fmt.Printf("  fingerprint: %s\n", ck.Fingerprint)
+			fmt.Printf("  comment: %s\n", ck.Comment)
+			fmt.Println()
+			fmt.Println("Share your public key with the daemon admin:")
+			fmt.Printf("  marvel keys show%s | pbcopy\n", nameArg(ck.Name))
+			fmt.Println("Then on the daemon machine:")
+			fmt.Printf("  marvel keys authorize <your-pubkey.pub>\n")
+			return nil
+		},
+	}
+	generate.Flags().StringVar(&genName, "name", paths.DefaultClientKeyName, "key name (filename under ~/.marvel/keys/)")
+	generate.Flags().StringVar(&genType, "type", string(keys.KeyTypeEd25519), "key type (ed25519)")
+	generate.Flags().StringVar(&genComment, "comment", "", "embedded comment (default: user@host)")
+	generate.Flags().BoolVar(&genForce, "force", false, "overwrite an existing key")
+	cmd.AddCommand(generate)
+
+	// Client-side: keys show
+	var showName string
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Print a client public key (to share with the daemon admin)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			layout, err := paths.Default()
+			if err != nil {
+				return err
+			}
+			ck, err := keys.LoadClient(layout, showName)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(ck.PublicPath)
+			if err != nil {
+				return err
+			}
+			fmt.Print(string(data))
+			return nil
+		},
+	}
+	show.Flags().StringVar(&showName, "name", paths.DefaultClientKeyName, "key name")
+	cmd.AddCommand(show)
+
+	// Client-side: keys list
 	cmd.AddCommand(&cobra.Command{
-		Use:   "add <public-key-file>",
-		Short: "Authorize a client's SSH public key",
-		Args:  cobra.ExactArgs(1),
+		Use:   "list",
+		Short: "List client keypairs under ~/.marvel/keys/",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			layout, err := paths.Default()
+			if err != nil {
+				return err
+			}
+			clients, err := keys.ListClient(layout)
+			if err != nil {
+				return err
+			}
+			if len(clients) == 0 {
+				fmt.Println("No client keys. Create one with: marvel keys generate")
+				return nil
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "NAME\tTYPE\tFINGERPRINT\tCOMMENT")
+			for _, k := range clients {
+				comment := k.Comment
+				if comment == "" {
+					comment = "(no comment)"
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", k.Name, k.Type, k.Fingerprint, comment)
+			}
+			return w.Flush()
+		},
+	})
+
+	// Client-side: keys doctor
+	var fix bool
+	doctor := &cobra.Command{
+		Use:   "doctor",
+		Short: "Audit (and optionally fix) permissions under ~/.marvel/",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			layout, err := paths.Default()
+			if err != nil {
+				return err
+			}
+			issues, err := layout.Audit()
+			if err != nil {
+				return err
+			}
+			if len(issues) == 0 {
+				fmt.Printf("OK — %s\n", layout.Home)
+				return nil
+			}
+			fmt.Printf("Found %d permission issue(s) in %s:\n", len(issues), layout.Home)
+			for _, i := range issues {
+				fmt.Printf("  %s: mode %o, want %o (%s)\n", i.Path, i.Got, i.Want, i.Reason)
+			}
+			if !fix {
+				fmt.Println("\nRun 'marvel keys doctor --fix' to repair.")
+				return fmt.Errorf("permission issues found")
+			}
+			remaining := layout.Repair(issues)
+			if len(remaining) > 0 {
+				for _, i := range remaining {
+					fmt.Printf("  FAILED: %s\n", i.Error())
+				}
+				return fmt.Errorf("%d issue(s) could not be repaired", len(remaining))
+			}
+			fmt.Println("Repaired.")
+			return nil
+		},
+	}
+	doctor.Flags().BoolVar(&fix, "fix", false, "repair permissions to their expected modes")
+	cmd.AddCommand(doctor)
+
+	// Daemon-side: keys authorize (formerly: add)
+	authorize := &cobra.Command{
+		Use:     "authorize <public-key-file>",
+		Aliases: []string{"add"},
+		Short:   "Authorize a client's public key on this daemon",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile(args[0])
 			if err != nil {
@@ -645,35 +854,42 @@ func keysCmd() *cobra.Command {
 			comment := args[0]
 			return daemon.AddAuthorizedKey(data, comment)
 		},
-	})
+	}
+	cmd.AddCommand(authorize)
 
+	// Daemon-side: keys authorized (formerly: list)
 	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "List authorized SSH keys",
+		Use:     "authorized",
+		Aliases: []string{"list-authorized"},
+		Short:   "List clients authorized on this daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			keys, err := daemon.ListAuthorizedKeys()
+			authed, err := daemon.ListAuthorizedKeys()
 			if err != nil {
 				return err
 			}
-			if len(keys) == 0 {
-				fmt.Println("No authorized keys. Add one with: marvel keys add <pubkey-file>")
+			if len(authed) == 0 {
+				fmt.Println("No authorized keys. Add one with: marvel keys authorize <pubkey-file>")
 				return nil
 			}
-			for _, k := range keys {
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "FINGERPRINT\tTYPE\tCOMMENT")
+			for _, k := range authed {
 				comment := k.Comment
 				if comment == "" {
 					comment = "(no comment)"
 				}
-				fmt.Printf("%s  %s  %s\n", k.Fingerprint, k.Type, comment)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", k.Fingerprint, k.Type, comment)
 			}
-			return nil
+			return w.Flush()
 		},
 	})
 
+	// Daemon-side: keys revoke (formerly: remove)
 	cmd.AddCommand(&cobra.Command{
-		Use:   "remove <fingerprint>",
-		Short: "Remove an authorized SSH key by fingerprint",
-		Args:  cobra.ExactArgs(1),
+		Use:     "revoke <fingerprint>",
+		Aliases: []string{"remove"},
+		Short:   "Revoke a client by fingerprint",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return daemon.RemoveAuthorizedKey(args[0])
 		},
@@ -681,7 +897,7 @@ func keysCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "host-fingerprint",
-		Short: "Print the daemon's SSH host key fingerprint",
+		Short: "Print this daemon's SSH host key fingerprint",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fp, err := daemon.HostKeyFingerprint()
 			if err != nil {
@@ -695,12 +911,21 @@ func keysCmd() *cobra.Command {
 	return cmd
 }
 
+// nameArg returns " --name <name>" for the default help string when the
+// key is non-default, and "" otherwise.
+func nameArg(name string) string {
+	if name == "" || name == paths.DefaultClientKeyName {
+		return ""
+	}
+	return " --name " + name
+}
+
 func stopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the marvel daemon and clean up all resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{Method: "stop"})
+			resp, err := send(daemon.Request{Method: "stop"})
 			if err != nil {
 				return err
 			}
@@ -772,7 +997,7 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 
 func fetchSessions() ([]api.Session, error) {
 	params, _ := json.Marshal(map[string]string{"resource_type": "sessions"})
-	resp, err := daemon.SendRequest(resolveSocket(), daemon.Request{
+	resp, err := send(daemon.Request{
 		Method: "get",
 		Params: params,
 	})

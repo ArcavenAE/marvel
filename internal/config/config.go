@@ -27,9 +27,10 @@ type Config struct {
 
 // Cluster defines how to connect to a marvel daemon.
 type Cluster struct {
-	Name   string `yaml:"name"`
-	Socket string `yaml:"socket,omitempty"` // Unix socket path (local)
-	Server string `yaml:"server,omitempty"` // mrvl://user@host[:port] (remote)
+	Name     string `yaml:"name"`
+	Socket   string `yaml:"socket,omitempty"`   // Unix socket path (local)
+	Server   string `yaml:"server,omitempty"`   // mrvl://user@host[:port] (remote)
+	Identity string `yaml:"identity,omitempty"` // client private key for this cluster
 }
 
 // configPath returns ~/.marvel/config.yaml.
@@ -97,30 +98,43 @@ func defaultConfig() *Config {
 // ResolveCluster returns the connection address for a cluster name.
 // If name is empty, uses current_cluster.
 func (c *Config) ResolveCluster(name string) (string, error) {
+	cl, err := c.GetCluster(name)
+	if err != nil {
+		return "", err
+	}
+	if cl == nil {
+		return DefaultSocket, nil
+	}
+	if cl.Server != "" {
+		return cl.Server, nil
+	}
+	if cl.Socket != "" {
+		return cl.Socket, nil
+	}
+	return DefaultSocket, nil
+}
+
+// GetCluster returns the Cluster struct for a given name, or for the
+// current cluster when name is empty. Returns (nil, nil) when there is
+// no configured cluster at all (fresh install).
+func (c *Config) GetCluster(name string) (*Cluster, error) {
 	if name == "" {
 		name = c.CurrentCluster
 	}
 	if name == "" {
-		return DefaultSocket, nil
+		return nil, nil
 	}
-
-	for _, cl := range c.Clusters {
-		if cl.Name == name {
-			if cl.Server != "" {
-				return cl.Server, nil
-			}
-			if cl.Socket != "" {
-				return cl.Socket, nil
-			}
-			return DefaultSocket, nil
+	for i := range c.Clusters {
+		if c.Clusters[i].Name == name {
+			return &c.Clusters[i], nil
 		}
 	}
-
-	return "", fmt.Errorf("unknown cluster %q (run 'marvel config list' to see available clusters)", name)
+	return nil, fmt.Errorf("unknown cluster %q (run 'marvel config list' to see available clusters)", name)
 }
 
-// AddCluster adds or updates a cluster in the config.
-func (c *Config) AddCluster(name, addr string) {
+// AddCluster adds or updates a cluster in the config. identity is
+// optional and is preserved or updated when provided.
+func (c *Config) AddCluster(name, addr, identity string) {
 	for i, cl := range c.Clusters {
 		if cl.Name == name {
 			if isMRVL(addr) || isSSH(addr) {
@@ -130,11 +144,14 @@ func (c *Config) AddCluster(name, addr string) {
 				c.Clusters[i].Socket = addr
 				c.Clusters[i].Server = ""
 			}
+			if identity != "" {
+				c.Clusters[i].Identity = identity
+			}
 			return
 		}
 	}
 
-	cl := Cluster{Name: name}
+	cl := Cluster{Name: name, Identity: identity}
 	if isMRVL(addr) || isSSH(addr) {
 		cl.Server = addr
 	} else {

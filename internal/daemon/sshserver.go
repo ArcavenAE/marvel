@@ -2,17 +2,16 @@ package daemon
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/pem"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/arcavenae/marvel/internal/keys"
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 // keysEqual compares two SSH public keys by their marshaled bytes.
@@ -27,43 +26,28 @@ type SSHServer struct {
 	config   *ssh.ServerConfig
 	listener net.Listener
 	daemon   *Daemon
-	dataDir  string
-}
-
-// marvelDir returns ~/.marvel/, creating it if needed.
-func marvelDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
-	}
-	dir := filepath.Join(home, ".marvel")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("cannot create %s: %w", dir, err)
-	}
-	return dir, nil
+	layout   paths.Layout
 }
 
 // newSSHServer creates an SSH server with the daemon's host key and
 // authorized keys.
 func newSSHServer(d *Daemon) (*SSHServer, error) {
-	dataDir, err := marvelDir()
+	layout, err := paths.Default()
 	if err != nil {
 		return nil, err
 	}
-
-	s := &SSHServer{
-		daemon:  d,
-		dataDir: dataDir,
+	if err := layout.EnsureHome(); err != nil {
+		return nil, err
 	}
 
-	hostKey, err := s.loadOrGenerateHostKey()
+	s := &SSHServer{daemon: d, layout: layout}
+
+	hostKey, err := keys.LoadOrGenerateHostKey(layout)
 	if err != nil {
 		return nil, fmt.Errorf("host key: %w", err)
 	}
 
-	config := &ssh.ServerConfig{
-		PublicKeyCallback: s.authorizeKey,
-	}
+	config := &ssh.ServerConfig{PublicKeyCallback: s.authorizeKey}
 	config.AddHostKey(hostKey)
 
 	s.config = config
@@ -157,7 +141,7 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 
 // authorizeKey checks if the client's public key is in authorized_keys.
 func (s *SSHServer) authorizeKey(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-	authorizedKeys, err := s.loadAuthorizedKeys()
+	authorizedKeys, err := loadAuthorizedKeys(s.layout)
 	if err != nil {
 		return nil, fmt.Errorf("load authorized keys: %w", err)
 	}
@@ -177,8 +161,8 @@ func (s *SSHServer) authorizeKey(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh
 }
 
 // loadAuthorizedKeys reads ~/.marvel/authorized_keys (OpenSSH format).
-func (s *SSHServer) loadAuthorizedKeys() ([]ssh.PublicKey, error) {
-	path := filepath.Join(s.dataDir, "authorized_keys")
+func loadAuthorizedKeys(layout paths.Layout) ([]ssh.PublicKey, error) {
+	path := layout.AuthorizedKeys()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -187,67 +171,17 @@ func (s *SSHServer) loadAuthorizedKeys() ([]ssh.PublicKey, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	var keys []ssh.PublicKey
+	var result []ssh.PublicKey
 	rest := data
 	for len(rest) > 0 {
 		key, _, _, r, err := ssh.ParseAuthorizedKey(rest)
 		if err != nil {
 			break
 		}
-		keys = append(keys, key)
+		result = append(result, key)
 		rest = r
 	}
-	return keys, nil
-}
-
-// loadOrGenerateHostKey loads the host key from ~/.marvel/ssh_host_ed25519_key,
-// generating a new one if it doesn't exist.
-func (s *SSHServer) loadOrGenerateHostKey() (ssh.Signer, error) {
-	keyPath := filepath.Join(s.dataDir, "ssh_host_ed25519_key")
-
-	data, err := os.ReadFile(keyPath)
-	if err == nil {
-		signer, err := ssh.ParsePrivateKey(data)
-		if err != nil {
-			return nil, fmt.Errorf("parse host key %s: %w", keyPath, err)
-		}
-		return signer, nil
-	}
-
-	if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read host key %s: %w", keyPath, err)
-	}
-
-	// Generate new ed25519 host key.
-	log.Printf("generating SSH host key: %s", keyPath)
-	_, privKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generate host key: %w", err)
-	}
-
-	pemBlock, err := ssh.MarshalPrivateKey(privKey, "")
-	if err != nil {
-		return nil, fmt.Errorf("marshal host key: %w", err)
-	}
-
-	pemData := pem.EncodeToMemory(pemBlock)
-	if err := os.WriteFile(keyPath, pemData, 0o600); err != nil {
-		return nil, fmt.Errorf("write host key %s: %w", keyPath, err)
-	}
-
-	// Also write the public key for easy distribution.
-	signer, err := ssh.ParsePrivateKey(pemData)
-	if err != nil {
-		return nil, fmt.Errorf("parse generated host key: %w", err)
-	}
-
-	pubPath := keyPath + ".pub"
-	pubData := ssh.MarshalAuthorizedKey(signer.PublicKey())
-	if err := os.WriteFile(pubPath, pubData, 0o644); err != nil {
-		log.Printf("warning: could not write public key %s: %v", pubPath, err)
-	}
-
-	return signer, nil
+	return result, nil
 }
 
 // addrPort extracts the port from a host:port address.
@@ -261,20 +195,21 @@ func addrPort(addr string) string {
 
 // AddAuthorizedKey appends a public key to ~/.marvel/authorized_keys.
 func AddAuthorizedKey(pubKeyData []byte, comment string) error {
-	dataDir, err := marvelDir()
+	layout, err := paths.Default()
 	if err != nil {
 		return err
 	}
+	if err := layout.EnsureHome(); err != nil {
+		return err
+	}
 
-	// Validate it's a real public key.
 	key, _, _, _, err := ssh.ParseAuthorizedKey(pubKeyData)
 	if err != nil {
 		return fmt.Errorf("invalid public key: %w", err)
 	}
 
-	path := filepath.Join(dataDir, "authorized_keys")
+	path := layout.AuthorizedKeys()
 
-	// Check for duplicates.
 	existing, _ := os.ReadFile(path)
 	if len(existing) > 0 {
 		rest := existing
@@ -292,16 +227,17 @@ func AddAuthorizedKey(pubKeyData []byte, comment string) error {
 
 	line := strings.TrimSpace(string(pubKeyData))
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.ModeAuthorized)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
-	_, err = fmt.Fprintf(f, "%s\n", line)
-	if err != nil {
+	if _, err := fmt.Fprintf(f, "%s\n", line); err != nil {
 		return fmt.Errorf("write key: %w", err)
 	}
+	// Enforce mode in case the file existed with different perms.
+	_ = os.Chmod(path, paths.ModeAuthorized)
 
 	log.Printf("authorized key added: %s (%s)", ssh.FingerprintSHA256(key), comment)
 	return nil
@@ -309,12 +245,12 @@ func AddAuthorizedKey(pubKeyData []byte, comment string) error {
 
 // ListAuthorizedKeys returns the fingerprints and comments of authorized keys.
 func ListAuthorizedKeys() ([]KeyInfo, error) {
-	dataDir, err := marvelDir()
+	layout, err := paths.Default()
 	if err != nil {
 		return nil, err
 	}
 
-	path := filepath.Join(dataDir, "authorized_keys")
+	path := layout.AuthorizedKeys()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -323,31 +259,31 @@ func ListAuthorizedKeys() ([]KeyInfo, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	var keys []KeyInfo
+	var result []KeyInfo
 	rest := data
 	for len(rest) > 0 {
 		key, comment, _, r, err := ssh.ParseAuthorizedKey(rest)
 		if err != nil {
 			break
 		}
-		keys = append(keys, KeyInfo{
+		result = append(result, KeyInfo{
 			Fingerprint: ssh.FingerprintSHA256(key),
 			Type:        key.Type(),
 			Comment:     comment,
 		})
 		rest = r
 	}
-	return keys, nil
+	return result, nil
 }
 
 // RemoveAuthorizedKey removes a key by fingerprint from authorized_keys.
 func RemoveAuthorizedKey(fingerprint string) error {
-	dataDir, err := marvelDir()
+	layout, err := paths.Default()
 	if err != nil {
 		return err
 	}
 
-	path := filepath.Join(dataDir, "authorized_keys")
+	path := layout.AuthorizedKeys()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
@@ -377,7 +313,11 @@ func RemoveAuthorizedKey(fingerprint string) error {
 		return fmt.Errorf("no key with fingerprint %s", fingerprint)
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
+	if err := os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), paths.ModeAuthorized); err != nil {
+		return err
+	}
+	_ = os.Chmod(path, paths.ModeAuthorized)
+	return nil
 }
 
 // KeyInfo holds information about an authorized key.
@@ -389,15 +329,14 @@ type KeyInfo struct {
 
 // HostKeyFingerprint returns the daemon's host key fingerprint for display.
 func HostKeyFingerprint() (string, error) {
-	dataDir, err := marvelDir()
+	layout, err := paths.Default()
 	if err != nil {
 		return "", err
 	}
 
-	pubPath := filepath.Join(dataDir, "ssh_host_ed25519_key.pub")
-	data, err := os.ReadFile(pubPath)
+	data, err := os.ReadFile(layout.HostKeyPub())
 	if err != nil {
-		return "", fmt.Errorf("no host key found (run marvel daemon --ssh first): %w", err)
+		return "", fmt.Errorf("no host key found (run marvel daemon --mrvl first): %w", err)
 	}
 
 	key, _, _, _, err := ssh.ParseAuthorizedKey(data)
