@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -117,6 +120,17 @@ func main() {
 func daemonCmd() *cobra.Command {
 	var mrvlAddr string
 	var listenSocket string
+	var logFilePath string
+	var pidFilePath string
+
+	layout, _ := paths.Default()
+	defaultLog := ""
+	defaultPid := ""
+	if layout.Home != "" {
+		defaultLog = layout.DaemonLog()
+		defaultPid = layout.DaemonPid()
+	}
+
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the marvel daemon",
@@ -127,19 +141,37 @@ Examples:
   marvel daemon                              # Unix socket only
   marvel daemon --mrvl                       # + mrvl:// on port 6785
   marvel daemon --mrvl=:7000                 # + mrvl:// on custom port
-  marvel daemon --socket /var/marvel.sock    # custom socket path`,
+  marvel daemon --socket /var/marvel.sock    # custom socket path
+  marvel daemon --log-file= --pidfile=       # disable log tee and pidfile`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sock := listenSocket
 			if sock == "" {
 				sock = config.DefaultSocket
 			}
 
-			d, err := daemon.New()
+			// Tee stderr to the log file when one is configured.
+			var logCloser io.Closer
+			if logFilePath != "" {
+				closer, err := setupLogFile(logFilePath)
+				if err != nil {
+					return err
+				}
+				logCloser = closer
+				defer func() { _ = logCloser.Close() }()
+				log.Printf("daemon log file: %s", logFilePath)
+			}
+
+			d, err := daemon.NewWithOptions(daemon.Options{
+				PidFile: pidFilePath,
+			})
 			if err != nil {
 				return err
 			}
 			if err := d.Start(sock); err != nil {
 				return err
+			}
+			if pidFilePath != "" {
+				log.Printf("daemon pidfile: %s (pid %d)", pidFilePath, os.Getpid())
 			}
 
 			if cmd.Flags().Changed("mrvl") {
@@ -165,7 +197,35 @@ Examples:
 	f.NoOptDefVal = ":" + config.DefaultMRVLPort
 	cmd.Flags().StringVar(&listenSocket, "socket", "",
 		"Unix socket path (default /tmp/marvel.sock)")
+	cmd.Flags().StringVar(&logFilePath, "log-file", defaultLog,
+		"tee daemon stderr to this file (empty string disables)")
+	cmd.Flags().StringVar(&pidFilePath, "pidfile", defaultPid,
+		"write pid to this file on start, remove on stop (empty string disables)")
 	return cmd
+}
+
+// setupLogFile opens (appending) a log file and redirects the standard
+// log package to write to both stderr and the file. Returns an io.Closer
+// that closes the underlying file; stderr remains attached either way.
+func setupLogFile(path string) (io.Closer, error) {
+	layout, _ := paths.Default()
+	if path == layout.DaemonLog() {
+		if err := layout.EnsureLogDir(); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(path), paths.ModeDir); err != nil {
+			return nil, fmt.Errorf("create log dir: %w", err)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.ModeAuthorized)
+	if err != nil {
+		return nil, fmt.Errorf("open log file %s: %w", path, err)
+	}
+	// Enforce the mode in case the file pre-existed with different perms.
+	_ = os.Chmod(path, paths.ModeAuthorized)
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	return f, nil
 }
 
 func workCmd() *cobra.Command {

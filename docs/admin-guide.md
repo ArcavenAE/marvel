@@ -67,6 +67,26 @@ marvel daemon --mrvl &
 # or with systemd, launchd, etc.
 ```
 
+By default the daemon tees its stderr into `~/.marvel/log/daemon.log`
+and writes its pid to `~/.marvel/run/daemon.pid`. Both are created
+with marvel-standard permissions (log 0600, pid 0644) inside the
+0700 data directory. A second daemon started while the first is
+still running refuses with a clear error.
+
+Tail the log from anywhere on the daemon host:
+
+```bash
+tail -f ~/.marvel/log/daemon.log
+```
+
+Override the paths with `--log-file PATH` or `--pidfile PATH`, or
+disable either with an empty string:
+
+```bash
+marvel daemon --log-file="" --pidfile=""     # pure stderr, no pidfile
+marvel daemon --log-file /var/log/marvel.log # systemd-friendly path
+```
+
 Stop with:
 ```bash
 marvel stop

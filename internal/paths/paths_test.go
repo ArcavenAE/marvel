@@ -21,6 +21,10 @@ func TestLayout(t *testing.T) {
 		{l.ClientKey("foo"), "/root/.marvel/keys/foo"},
 		{l.ClientKeyPub("foo"), "/root/.marvel/keys/foo.pub"},
 		{l.DefaultClientKey(), "/root/.marvel/keys/" + DefaultClientKeyName},
+		{l.LogDir(), "/root/.marvel/log"},
+		{l.RunDir(), "/root/.marvel/run"},
+		{l.DaemonLog(), "/root/.marvel/log/daemon.log"},
+		{l.DaemonPid(), "/root/.marvel/run/daemon.pid"},
 	}
 
 	for _, tc := range tests {
@@ -69,6 +73,39 @@ func TestEnsureKeysDir(t *testing.T) {
 	}
 	if info.Mode().Perm() != ModeDir {
 		t.Errorf("keys dir mode: got %o, want %o", info.Mode().Perm(), ModeDir)
+	}
+}
+
+func TestEnsureLogAndRunDirs(t *testing.T) {
+	dir := t.TempDir()
+	l := WithHome(filepath.Join(dir, ".marvel"))
+
+	if err := l.EnsureLogDir(); err != nil {
+		t.Fatalf("EnsureLogDir: %v", err)
+	}
+	if err := l.EnsureRunDir(); err != nil {
+		t.Fatalf("EnsureRunDir: %v", err)
+	}
+
+	for _, p := range []string{l.LogDir(), l.RunDir()} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if info.Mode().Perm() != ModeDir {
+			t.Errorf("%s mode: got %o, want %o", p, info.Mode().Perm(), ModeDir)
+		}
+	}
+}
+
+func TestRuntimeSocket(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	if got, want := RuntimeSocket(), "/tmp/marvel.sock"; got != want {
+		t.Errorf("no XDG_RUNTIME_DIR: got %q, want %q", got, want)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if got, want := RuntimeSocket(), "/run/user/1000/marvel.sock"; got != want {
+		t.Errorf("with XDG_RUNTIME_DIR: got %q, want %q", got, want)
 	}
 }
 

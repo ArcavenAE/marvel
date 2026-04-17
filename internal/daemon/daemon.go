@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -79,10 +80,28 @@ type Daemon struct {
 	sshServer *SSHServer
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+
+	// Path of the pid file to create on Start and remove on Stop.
+	// Empty = no pid file.
+	pidFile string
 }
 
-// New creates a new daemon.
+// Options configures optional daemon behavior. Zero value disables
+// everything optional (matches legacy behavior).
+type Options struct {
+	// PidFile, when non-empty, is written with the daemon's PID on
+	// Start and removed on Stop. If the file already exists and
+	// points at a live process, Start refuses with an error.
+	PidFile string
+}
+
+// New creates a new daemon with default options.
 func New() (*Daemon, error) {
+	return NewWithOptions(Options{})
+}
+
+// NewWithOptions creates a new daemon with the given options.
+func NewWithOptions(opts Options) (*Daemon, error) {
 	driver, err := tmux.NewDriver()
 	if err != nil {
 		return nil, fmt.Errorf("init tmux driver: %w", err)
@@ -97,6 +116,7 @@ func New() (*Daemon, error) {
 		sessMgr:  sessMgr,
 		teamCtrl: teamCtrl,
 		driver:   driver,
+		pidFile:  opts.PidFile,
 	}, nil
 }
 
@@ -104,6 +124,13 @@ func New() (*Daemon, error) {
 // The address format determines the network: "host:port" for TCP, a file path
 // for Unix. Examples: "/tmp/marvel.sock", "0.0.0.0:9090", ":9090".
 func (d *Daemon) Start(socketPath string) error {
+	// Refuse to start if a pid file already points at a live process.
+	if d.pidFile != "" {
+		if err := checkPidFileFree(d.pidFile); err != nil {
+			return err
+		}
+	}
+
 	network := listenNetwork(socketPath)
 
 	if network == "unix" {
@@ -118,6 +145,13 @@ func (d *Daemon) Start(socketPath string) error {
 	d.listener = ln
 	d.sessMgr.SocketPath = socketPath
 	d.teamCtrl.SocketPath = socketPath
+
+	if d.pidFile != "" {
+		if err := writePidFile(d.pidFile); err != nil {
+			_ = ln.Close()
+			return err
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
@@ -199,7 +233,48 @@ func (d *Daemon) Stop() {
 	if addr != "" && listenNetwork(addr) == "unix" {
 		_ = os.Remove(addr)
 	}
+	if d.pidFile != "" {
+		_ = os.Remove(d.pidFile)
+	}
 	log.Println("marvel daemon stopped")
+}
+
+// writePidFile creates/overwrites pidfile with the current PID.
+func writePidFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), paths.ModeDir); err != nil {
+		return fmt.Errorf("create pidfile dir: %w", err)
+	}
+	data := []byte(fmt.Sprintf("%d\n", os.Getpid()))
+	if err := os.WriteFile(path, data, paths.ModeKnownHosts); err != nil {
+		return fmt.Errorf("write pidfile %s: %w", path, err)
+	}
+	return nil
+}
+
+// checkPidFileFree refuses to start if pidfile names a running process.
+// Stale pidfiles (process no longer exists) are quietly replaced.
+func checkPidFileFree(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read pidfile %s: %w", path, err)
+	}
+	var pid int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil || pid <= 0 {
+		// Corrupt pidfile — treat as stale.
+		return nil
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return nil
+	}
+	// Signal 0 is the "is it alive" check on Unix.
+	if err := proc.Signal(syscall.Signal(0)); err == nil {
+		return fmt.Errorf("pidfile %s names live process %d — another daemon already running", path, pid)
+	}
+	return nil
 }
 
 func (d *Daemon) handleConn(conn net.Conn) {

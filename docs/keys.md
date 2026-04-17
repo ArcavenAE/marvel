@@ -35,9 +35,13 @@ enforces this directory on first use.
 ├── ssh_host_ed25519_key           0600   daemon: host private key
 ├── ssh_host_ed25519_key.pub       0644   daemon: host public key
 ├── known_hosts                    0644   client: trusted server host keys
-└── keys/                          0700   client: private key directory
-    ├── client_ed25519             0600   default client private key
-    └── client_ed25519.pub         0644   default client public key
+├── keys/                          0700   client: private key directory
+│   ├── client_ed25519             0600   default client private key
+│   └── client_ed25519.pub         0644   default client public key
+├── log/                           0700   daemon: log directory
+│   └── daemon.log                 0600   daemon stderr tee (created on 'marvel daemon')
+└── run/                           0700   daemon: runtime-state directory
+    └── daemon.pid                 0644   daemon pid (created on 'marvel daemon')
 ```
 
 marvel refuses to use any private key whose permissions are not `0600`,

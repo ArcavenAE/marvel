@@ -10,6 +10,10 @@
 //	keys/                       client: private keys dir      0700
 //	keys/<name>                 client: private key           0600
 //	keys/<name>.pub             client: public key            0644
+//	log/                        daemon: log files dir         0700
+//	log/daemon.log              daemon: tee'd stderr log      0600
+//	run/                        daemon: runtime state dir     0700
+//	run/daemon.pid              daemon: pid file              0644
 //
 // Modes follow OpenSSH conventions. Private material is 0600 or 0700;
 // public material is 0644. The root directory is 0700.
@@ -82,10 +86,34 @@ func (l Layout) ClientKeyPub(name string) string { return l.ClientKey(name) + ".
 // DefaultClientKey returns the path to the default client private key.
 func (l Layout) DefaultClientKey() string { return l.ClientKey(DefaultClientKeyName) }
 
+// LogDir returns the daemon's log directory.
+func (l Layout) LogDir() string { return filepath.Join(l.Home, "log") }
+
+// RunDir returns the daemon's runtime-state directory (pid file, etc.).
+func (l Layout) RunDir() string { return filepath.Join(l.Home, "run") }
+
+// DaemonLog returns the canonical path for the daemon's stderr-tee log.
+func (l Layout) DaemonLog() string { return filepath.Join(l.LogDir(), "daemon.log") }
+
+// DaemonPid returns the canonical path for the daemon's pid file.
+func (l Layout) DaemonPid() string { return filepath.Join(l.RunDir(), "daemon.pid") }
+
+// RuntimeSocket returns the preferred Unix-socket path for the daemon.
+// Uses $XDG_RUNTIME_DIR/marvel.sock when XDG_RUNTIME_DIR is set (XDG
+// base directory spec), otherwise /tmp/marvel.sock. The caller is
+// responsible for backward compatibility with any pre-existing
+// config.yaml entries that hard-code a socket.
+func RuntimeSocket() string {
+	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
+		return filepath.Join(rt, "marvel.sock")
+	}
+	return "/tmp/marvel.sock"
+}
+
 // EnsureHome creates ~/.marvel/ if it does not exist, with mode 0700.
 // If it exists, verifies (but does not repair) its mode.
 func (l Layout) EnsureHome() error {
-	return ensureDir(l.Home, ModeDir)
+	return ensurePrivateDir(l.Home)
 }
 
 // EnsureKeysDir creates ~/.marvel/keys/ if it does not exist, with mode 0700.
@@ -93,12 +121,29 @@ func (l Layout) EnsureKeysDir() error {
 	if err := l.EnsureHome(); err != nil {
 		return err
 	}
-	return ensureDir(l.KeysDir(), ModeDir)
+	return ensurePrivateDir(l.KeysDir())
 }
 
-// ensureDir creates dir with the given mode if missing. If it exists,
-// returns nil without repairing — callers use Audit/Repair for that.
-func ensureDir(dir string, mode os.FileMode) error {
+// EnsureLogDir creates ~/.marvel/log/ if it does not exist, with mode 0700.
+func (l Layout) EnsureLogDir() error {
+	if err := l.EnsureHome(); err != nil {
+		return err
+	}
+	return ensurePrivateDir(l.LogDir())
+}
+
+// EnsureRunDir creates ~/.marvel/run/ if it does not exist, with mode 0700.
+func (l Layout) EnsureRunDir() error {
+	if err := l.EnsureHome(); err != nil {
+		return err
+	}
+	return ensurePrivateDir(l.RunDir())
+}
+
+// ensurePrivateDir creates dir at ModeDir (0700) if missing. If it
+// exists, returns nil without repairing — callers use Audit/Repair for
+// that. Does not alter existing-directory permissions.
+func ensurePrivateDir(dir string) error {
 	info, err := os.Stat(dir)
 	if err == nil {
 		if !info.IsDir() {
@@ -109,11 +154,11 @@ func ensureDir(dir string, mode os.FileMode) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat %s: %w", dir, err)
 	}
-	if err := os.MkdirAll(dir, mode); err != nil {
+	if err := os.MkdirAll(dir, ModeDir); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	// MkdirAll honours umask; force the mode we want.
-	if err := os.Chmod(dir, mode); err != nil {
+	if err := os.Chmod(dir, ModeDir); err != nil {
 		return fmt.Errorf("chmod %s: %w", dir, err)
 	}
 	return nil
@@ -129,6 +174,8 @@ const (
 	KindAuthorized
 	KindKnownHosts
 	KindConfig
+	KindLog // same mode policy as KindAuthorized (0600)
+	KindPid // same mode policy as KindKnownHosts (0644)
 )
 
 // ExpectedMode returns the canonical mode for a path kind.
@@ -140,9 +187,9 @@ func ExpectedMode(k Kind) os.FileMode {
 		return ModePrivate
 	case KindPublic:
 		return ModePublic
-	case KindAuthorized:
+	case KindAuthorized, KindLog:
 		return ModeAuthorized
-	case KindKnownHosts:
+	case KindKnownHosts, KindPid:
 		return ModeKnownHosts
 	case KindConfig:
 		return ModeConfig
@@ -189,11 +236,11 @@ func CheckMode(path string, kind Kind) (*Issue, error) {
 		if got&0o077 != 0 {
 			return &Issue{Path: path, Kind: kind, Want: want, Got: got, Reason: "group/other access on private directory"}, nil
 		}
-	case KindPrivate, KindConfig, KindAuthorized:
+	case KindPrivate, KindConfig, KindAuthorized, KindLog:
 		if got&0o077 != 0 {
 			return &Issue{Path: path, Kind: kind, Want: want, Got: got, Reason: "group/other access on private file"}, nil
 		}
-	case KindPublic, KindKnownHosts:
+	case KindPublic, KindKnownHosts, KindPid:
 		// Allow 0644; warn only if writable by group/other.
 		if got&0o022 != 0 {
 			return &Issue{Path: path, Kind: kind, Want: want, Got: got, Reason: "group/other writable"}, nil
@@ -212,11 +259,15 @@ func (l Layout) Audit() ([]Issue, error) {
 	}{
 		{l.Home, KindDir},
 		{l.KeysDir(), KindDir},
+		{l.LogDir(), KindDir},
+		{l.RunDir(), KindDir},
 		{l.Config(), KindConfig},
 		{l.AuthorizedKeys(), KindAuthorized},
 		{l.HostKey(), KindPrivate},
 		{l.HostKeyPub(), KindPublic},
 		{l.KnownHosts(), KindKnownHosts},
+		{l.DaemonLog(), KindLog},
+		{l.DaemonPid(), KindPid},
 	}
 
 	var issues []Issue
