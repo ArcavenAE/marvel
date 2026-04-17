@@ -1,8 +1,12 @@
 package tmux
 
 import (
+	"fmt"
 	"os/exec"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func skipIfNoTmux(t *testing.T) {
@@ -276,15 +280,106 @@ func TestCapturePaneRange(t *testing.T) {
 		t.Fatalf("send echo: %v", err)
 	}
 
-	_ = exec.Command("sleep", "0.3").Run()
+	// Poll until content is actually rendered instead of sleep-then-
+	// capture: tmux send-keys returning isn't a guarantee the shell has
+	// executed, and a blanket sleep hides real problems. If the pane
+	// disappears mid-wait (shell exited) surface that as a fatal — the
+	// test's job is to exercise capture on a live pane.
+	var content string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !d.HasPane(paneID) {
+			t.Fatalf("pane %s vanished before capture — investigate shell behavior", paneID)
+		}
+		c, err := d.CapturePaneRange(paneID, 0, 4)
+		if err == nil && strings.Contains(c, "LINE_TEST") {
+			content = c
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if content == "" {
+		_, err := d.CapturePaneRange(paneID, 0, 4)
+		t.Fatalf("capture-pane range did not see LINE_TEST within deadline: lastErr=%v", err)
+	}
+}
 
-	// Capture first 5 lines of visible area
-	content, err := d.CapturePaneRange(paneID, 0, 4)
+// TestDriverConcurrentUse exercises the production pattern: many
+// goroutines sharing one Driver and one tmux server, each owning its
+// own session and performing the full create-inject-capture-teardown
+// motion. Proves the driver (and tmux itself) serializes safely under
+// concurrent use — not a 'tests don't race each other' isolation fix
+// but a 'marvel daemon handles N concurrent RPCs' guarantee.
+//
+// Each goroutine owns its own session; no goroutine touches another's
+// pane IDs. Failures here indicate a real driver-level concurrency
+// bug, not a test flake.
+func TestDriverConcurrentUse(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
 	if err != nil {
-		t.Fatalf("capture-pane range: %v", err)
+		t.Fatalf("new driver: %v", err)
 	}
 
-	if content == "" {
-		t.Fatal("expected non-empty range content")
+	const workers = 8
+	const opsPerWorker = 3
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+
+	for w := 0; w < workers; w++ {
+		w := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sessionName := fmt.Sprintf("marvel-test-concurrent-%d", w)
+			defer func() { _ = d.KillSession(sessionName) }()
+
+			if err := d.NewSession(sessionName); err != nil {
+				errCh <- fmt.Errorf("worker %d new-session: %w", w, err)
+				return
+			}
+
+			for op := 0; op < opsPerWorker; op++ {
+				paneID, err := d.NewPane(sessionName,
+					fmt.Sprintf("sleep %d", 30+op), // long-running so pane stays alive
+					fmt.Sprintf("worker-%d-op-%d", w, op), nil)
+				if err != nil {
+					errCh <- fmt.Errorf("worker %d op %d new-pane: %w", w, op, err)
+					return
+				}
+				if !d.HasPane(paneID) {
+					errCh <- fmt.Errorf("worker %d op %d HasPane(%s)=false right after NewPane", w, op, paneID)
+					return
+				}
+				// Inject something and immediately read it back.
+				marker := fmt.Sprintf("CONCURRENT-%d-%d", w, op)
+				if err := d.SendKeys(paneID, marker, true, false); err != nil {
+					errCh <- fmt.Errorf("worker %d op %d send-keys: %w", w, op, err)
+					return
+				}
+				if _, err := d.CapturePane(paneID); err != nil {
+					errCh <- fmt.Errorf("worker %d op %d capture: %w", w, op, err)
+					return
+				}
+				// Kill our own pane. Production pattern: sessions clean
+				// up their own panes; we do not reach into another
+				// worker's sessions.
+				if err := d.KillPane(paneID); err != nil {
+					errCh <- fmt.Errorf("worker %d op %d kill-pane: %w", w, op, err)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+	var failures []string
+	for err := range errCh {
+		failures = append(failures, err.Error())
+	}
+	if len(failures) > 0 {
+		t.Fatalf("concurrent use produced %d failures:\n  %s", len(failures), strings.Join(failures, "\n  "))
 	}
 }
