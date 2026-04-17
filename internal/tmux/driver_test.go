@@ -126,6 +126,42 @@ func TestListSessions(t *testing.T) {
 	}
 }
 
+func TestHasPane(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	sessionName := "marvel-test-haspane"
+	t.Cleanup(func() {
+		_ = d.KillSession(sessionName)
+	})
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	paneID, err := d.NewPane(sessionName, "sleep 60", "haspane-test", nil)
+	if err != nil {
+		t.Fatalf("new pane: %v", err)
+	}
+
+	if !d.HasPane(paneID) {
+		t.Fatalf("expected HasPane(%s)=true for live pane", paneID)
+	}
+
+	// Regression guard — ArcavenAE/marvel#10. Kill the pane; HasPane
+	// must report false. The old implementation used display-message -p
+	// which returned exit 0 even for dead panes, so ReapDead never
+	// reaped and orphan sessions stayed 'running/unknown' forever.
+	if err := d.KillPane(paneID); err != nil {
+		t.Fatalf("kill pane: %v", err)
+	}
+	if d.HasPane(paneID) {
+		t.Fatalf("HasPane(%s)=true after kill-pane — should be false", paneID)
+	}
+}
+
 func TestSendKeys(t *testing.T) {
 	skipIfNoTmux(t)
 	d, err := NewDriver()

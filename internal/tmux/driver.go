@@ -110,8 +110,14 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string)
 }
 
 // HasPane checks if a tmux pane still exists.
+//
+// display-message -t <paneID> -p <fmt> exits 0 even when the target
+// pane is gone, so it can't be used to test pane liveness. list-panes
+// validates the target against the live pane list and exits 1 for
+// unknown IDs. See ArcavenAE/marvel#10 — before this change ReapDead
+// never saw dead panes and sessions stayed 'running/unknown' forever.
 func (d *Driver) HasPane(paneID string) bool {
-	cmd := exec.Command(d.binary, "display-message", "-t", paneID, "-p", "")
+	cmd := exec.Command(d.binary, "list-panes", "-t", paneID, "-F", "#{pane_id}")
 	return cmd.Run() == nil
 }
 
