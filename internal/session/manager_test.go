@@ -116,3 +116,44 @@ func TestCleanupWorkspace(t *testing.T) {
 		t.Fatal("tmux session should be gone after cleanup")
 	}
 }
+
+func TestCleanupOrphanTmux(t *testing.T) {
+	skipIfNoTmux(t)
+
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	// Use a unique prefix so we do not step on other tmux-using tests
+	// (e.g. TestDaemonLifecycle) that may be running in parallel
+	// packages and use the real marvel- prefix.
+	prefix := "marvel-orphantest-"
+	orphans := []string{prefix + "a", prefix + "b"}
+	outsider := "not-" + prefix + "survivor"
+
+	for _, name := range []string{orphans[0], orphans[1], outsider} {
+		if err := driver.NewSession(name); err != nil {
+			t.Fatalf("new session %s: %v", name, err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, n := range append(orphans, outsider) {
+			_ = driver.KillSession(n)
+		}
+	})
+
+	mgr := NewManager(api.NewStore(), driver)
+	if err := mgr.cleanupOrphanTmuxPrefix(prefix); err != nil {
+		t.Fatalf("cleanup orphan tmux: %v", err)
+	}
+
+	for _, name := range orphans {
+		if driver.HasSession(name) {
+			t.Fatalf("orphan %s should have been killed", name)
+		}
+	}
+	if !driver.HasSession(outsider) {
+		t.Fatalf("non-prefix session %s must not be touched", outsider)
+	}
+}

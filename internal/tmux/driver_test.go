@@ -95,6 +95,37 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestListSessions(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	sessionName := "marvel-test-list-sessions"
+	t.Cleanup(func() {
+		_ = d.KillSession(sessionName)
+	})
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	names, err := d.ListSessions()
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	var found bool
+	for _, n := range names {
+		if n == sessionName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %q in %v", sessionName, names)
+	}
+}
+
 func TestSendKeys(t *testing.T) {
 	skipIfNoTmux(t)
 	d, err := NewDriver()

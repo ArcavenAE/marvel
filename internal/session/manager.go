@@ -5,6 +5,7 @@ package session
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -25,9 +26,47 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	return &Manager{store: store, driver: driver, adapters: runtime.NewRegistry()}
 }
 
+// marvelSessionPrefix is the tmux session name prefix marvel owns.
+// Every tmux session named marvel-* is considered marvel-managed; a
+// fresh daemon reclaims the prefix by killing any leftovers on startup.
+const marvelSessionPrefix = "marvel-"
+
 // tmuxSessionName returns the tmux session name for a workspace.
 func tmuxSessionName(workspace string) string {
-	return "marvel-" + workspace
+	return marvelSessionPrefix + workspace
+}
+
+// CleanupOrphanTmux kills every tmux session whose name starts with the
+// marvel- prefix. Called at daemon startup so a fresh in-memory state
+// doesn't coexist with panes and processes from a previous daemon instance.
+// See ArcavenAE/marvel#13.
+func (m *Manager) CleanupOrphanTmux() error {
+	return m.cleanupOrphanTmuxPrefix(marvelSessionPrefix)
+}
+
+// cleanupOrphanTmuxPrefix is the prefix-parameterized core of
+// CleanupOrphanTmux. Tests use a unique prefix so they don't collide
+// with other tmux-using tests running in parallel packages.
+func (m *Manager) cleanupOrphanTmuxPrefix(prefix string) error {
+	names, err := m.driver.ListSessions()
+	if err != nil {
+		return fmt.Errorf("list tmux sessions: %w", err)
+	}
+	var killed int
+	for _, name := range names {
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if err := m.driver.KillSession(name); err != nil {
+			log.Printf("cleanup orphan tmux %s: %v", name, err)
+			continue
+		}
+		killed++
+	}
+	if killed > 0 {
+		log.Printf("cleanup: killed %d orphan tmux session(s) from previous daemon", killed)
+	}
+	return nil
 }
 
 // Create creates a new session: registers it in the store, ensures the tmux

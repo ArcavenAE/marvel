@@ -177,6 +177,14 @@ func (d *Daemon) Start(socketPath string) error {
 		}
 	}
 
+	// Reclaim the marvel-* tmux namespace before anything else creates
+	// panes: a previous daemon instance may have left sessions (and their
+	// forestage/claude processes) running. Our fresh in-memory state
+	// knows nothing about them. See ArcavenAE/marvel#13.
+	if err := d.sessMgr.CleanupOrphanTmux(); err != nil {
+		log.Printf("cleanup orphan tmux on startup: %v", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
 

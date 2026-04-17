@@ -2,6 +2,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -25,6 +26,30 @@ func NewDriver() (*Driver, error) {
 func (d *Driver) HasSession(name string) bool {
 	cmd := exec.Command(d.binary, "has-session", "-t", name)
 	return cmd.Run() == nil
+}
+
+// ListSessions returns the names of every tmux session on the server.
+// If no tmux server is running, returns an empty slice and no error —
+// that's the same "no sessions" condition as a freshly started daemon.
+func (d *Driver) ListSessions() ([]string, error) {
+	cmd := exec.Command(d.binary, "list-sessions", "-F", "#S")
+	out, err := cmd.Output()
+	if err != nil {
+		// tmux exits non-zero with "no server running" when there is no
+		// tmux server. Treat that as "zero sessions", not an error.
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && strings.Contains(string(ee.Stderr), "no server running") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list-sessions: %w", err)
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	return names, nil
 }
 
 // NewSession creates a new tmux session in detached mode.
