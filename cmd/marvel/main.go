@@ -908,6 +908,56 @@ Daemon-side (on the machine running marvel daemon):
 		},
 	})
 
+	// keys trust — add a cluster's host key to ~/.marvel/known_hosts
+	// without prompting. Intended for non-interactive bootstraps where
+	// the admin has already confirmed the fingerprint out-of-band.
+	trust := &cobra.Command{
+		Use:   "trust [cluster]",
+		Short: "Trust and record a cluster's host key in ~/.marvel/known_hosts",
+		Long: `Connect to the named cluster (or the current one) and add its
+host key to ~/.marvel/known_hosts without prompting.
+
+Use 'marvel keys host-fingerprint' on the daemon machine and compare
+the fingerprint that 'marvel keys trust' prints before relying on
+the connection.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := clusterName
+			if len(args) == 1 {
+				name = args[0]
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			cl, err := cfg.GetCluster(name)
+			if err != nil {
+				return err
+			}
+			if cl == nil || cl.Server == "" {
+				return fmt.Errorf("cluster %q has no mrvl:// address; nothing to trust", name)
+			}
+			addr := cl.Server
+			opts := daemon.DialOptions{Identity: cl.Identity, TrustUnknownHost: true}
+			if identityPath != "" {
+				opts.Identity = identityPath
+			}
+			resp, err := daemon.SendRequestWith(addr, daemon.Request{
+				Method: "get",
+				Params: json.RawMessage(`{"resource_type":"workspaces"}`),
+			}, opts)
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			fmt.Printf("Host key for %s trusted and recorded.\n", addr)
+			return nil
+		},
+	}
+	cmd.AddCommand(trust)
+
 	return cmd
 }
 

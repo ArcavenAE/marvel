@@ -22,6 +22,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/knownhosts"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
@@ -640,10 +641,15 @@ type DialOptions struct {
 	// Identity is an optional private key file used for SSH auth. When
 	// set, it takes precedence over SSH_AUTH_SOCK and default key files.
 	Identity string
-	// KnownHosts is an optional path to a known_hosts file for host key
-	// verification. When empty, host keys are not verified (TOFU is
-	// deferred to a later change).
-	KnownHosts string
+	// TrustUnknownHost, when true, auto-adds any unknown host key to
+	// ~/.marvel/known_hosts without prompting. Used by
+	// `marvel keys trust` — do not set for ordinary RPC calls.
+	TrustUnknownHost bool
+	// StrictHostKey, when true, refuses unknown hosts without prompting.
+	// Intended for non-interactive scripts. When false and the caller
+	// is on a TTY, marvel prompts; when false and off-TTY, marvel
+	// refuses with a pointer to `marvel keys trust`.
+	StrictHostKey bool
 }
 
 // SendRequest sends a request to the daemon and returns the response,
@@ -855,10 +861,21 @@ func sshClientConfig(user string, opts DialOptions) (*ssh.ClientConfig, error) {
 	if len(methods) == 0 {
 		return nil, errors.New("no SSH auth available: generate a key with 'marvel keys generate' or start ssh-agent")
 	}
+
+	layout, err := paths.Default()
+	if err != nil {
+		return nil, err
+	}
+	mode := knownhosts.ModePrompt
+	if opts.TrustUnknownHost {
+		mode = knownhosts.ModeTrust
+	} else if opts.StrictHostKey {
+		mode = knownhosts.ModeStrict
+	}
 	return &ssh.ClientConfig{
 		User:            user,
 		Auth:            methods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TOFU deferred; see aae-orc-itf
+		HostKeyCallback: knownhosts.Callback(layout, mode, nil, nil),
 		Timeout:         10 * time.Second,
 	}, nil
 }

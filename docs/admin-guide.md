@@ -130,9 +130,10 @@ marvel keys host-fingerprint
 ```
 
 Share the fingerprint with clients so they can verify they're connecting
-to the right daemon. Host key verification via `~/.marvel/known_hosts`
-is planned (see beads `aae-orc-itf`); today the client accepts any host
-key.
+to the right daemon. Clients record trusted daemon keys in
+`~/.marvel/known_hosts`; first connection prompts interactively or is
+bootstrapped with `marvel keys trust <cluster>`. Host key changes are
+detected and refused — see the [keys guide](keys.md) for details.
 
 ## Cluster configuration
 

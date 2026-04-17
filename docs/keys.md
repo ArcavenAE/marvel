@@ -119,6 +119,26 @@ marvel keys host-fingerprint
 # SHA256:HNSMOpL4gl1n0/lPpWs9bqMbkmm+Yu6rVRHbd6z8GvY
 ```
 
+### Host key verification on the client
+
+Clients record trusted daemon host keys in `~/.marvel/known_hosts`
+(OpenSSH format). On first connection to a new daemon:
+
+- **Interactive (TTY):** marvel prompts with the fingerprint and asks
+  whether to trust it.
+- **Non-interactive (CI, pipelines):** marvel refuses and tells you to
+  run `marvel keys trust <cluster>`.
+
+```bash
+marvel keys trust prod                   # record the current host key
+```
+
+If the daemon's host key ever changes (genuine reinstall, or a MITM
+attempt) connections will refuse with a clear error showing both the
+offered and expected fingerprints. Investigate the reason before
+accepting — to override, remove the offending line from
+`~/.marvel/known_hosts` and reconnect.
+
 ### Authorizing clients
 
 ```bash
