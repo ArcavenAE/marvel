@@ -114,13 +114,80 @@ func (c *Controller) ReconcileOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.sessMgr.ReapDead()
+	// The reap path converges with the health path on the crash-loop
+	// bookkeeping: a clean exit that vacates the pane is just as much a
+	// crash as a stale heartbeat, and must bump RoleHealth counters +
+	// extend the backoff window. Without this, `marvel inject ... "exit"`
+	// respawned instantly forever (ArcavenAE/marvel#11). We defer the
+	// spawn decision to reconcileRole, which already honors BackoffUntil
+	// and (now) MaxRestarts saturation.
+	for _, r := range c.sessMgr.ReapDead() {
+		c.noteReapedCrash(r)
+	}
 	c.evaluateHealth()
 
 	teams := c.store.ListTeams()
 	for _, t := range teams {
 		c.reconcileTeam(t)
 	}
+}
+
+// noteReapedCrash attributes a reaped session to its role and records a
+// crash in the role's health. If the team or role has vanished (e.g.,
+// workspace delete cascade in progress), the crash is untracked — the
+// reconciler won't try to recreate those sessions anyway.
+func (c *Controller) noteReapedCrash(r session.ReapedSession) {
+	t, err := c.store.GetTeam(r.Workspace + "/" + r.Team)
+	if err != nil {
+		return
+	}
+	var role *api.Role
+	for i := range t.Roles {
+		if t.Roles[i].Name == r.Role {
+			role = &t.Roles[i]
+			break
+		}
+	}
+	if role == nil {
+		return
+	}
+	roleKey := r.Workspace + "/" + r.Team + "/" + r.Role
+	if c.noteCrashAndBackoff(r.Workspace, r.Team, r.Role, role.MaxRestarts) {
+		rh := c.roleHealth[roleKey]
+		log.Printf("reap: session %s crashed (role %s restart #%d, next backoff=%s)",
+			r.Key, roleKey, rh.RestartCount, time.Until(rh.BackoffUntil))
+	} else {
+		log.Printf("reap: session %s crashed but role %s already at max_restarts=%d",
+			r.Key, roleKey, role.MaxRestarts)
+	}
+}
+
+// saturationFreezeUntil is the sentinel BackoffUntil used to freeze a
+// saturated role. Chosen far enough in the future that arithmetic on it
+// cannot overflow or wrap within the lifetime of a daemon process.
+var saturationFreezeUntil = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// noteCrashAndBackoff records a crash on the role: increments the restart
+// counter and extends the backoff window. Returns false (and does not
+// bump RestartCount) once the role has saturated MaxRestarts — in that
+// case it freezes BackoffUntil to the far future so reconcileRole's
+// backoff gate permanently refuses to spawn replacements. Shared by the
+// health path (via restartSession) and the reap path (via
+// noteReapedCrash) so both converge on the same RoleHealth state. See
+// ArcavenAE/marvel#11.
+func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestarts int) bool {
+	roleKey := workspace + "/" + team + "/" + role
+	rh := c.getRoleHealth(roleKey)
+	if maxRestarts > 0 && rh.RestartCount >= maxRestarts {
+		rh.BackoffUntil = saturationFreezeUntil
+		return false
+	}
+	now := c.nowUTC()
+	rh.RestartCount++
+	rh.LastRestartAt = now
+	nextBackoff := computeBackoff(rh.RestartCount + 1)
+	rh.BackoffUntil = now.Add(nextBackoff)
+	return true
 }
 
 func (c *Controller) reconcileTeam(t *api.Team) {
@@ -146,7 +213,11 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 		// a recent restart, hold off on spawning replacements until the
 		// backoff window elapses. Without this the reconciler would
 		// immediately recreate a session we just deleted and defeat
-		// the whole backoff. See ArcavenAE/marvel#11.
+		// the whole backoff. Reap-path saturation (MaxRestarts) is
+		// also honored here: noteCrashAndBackoff freezes BackoffUntil
+		// to the far future on saturation, so this same gate refuses
+		// respawns once a role has exhausted its budget. See
+		// ArcavenAE/marvel#11.
 		roleKey := t.Workspace + "/" + t.Name + "/" + role.Name
 		if rh, ok := c.roleHealth[roleKey]; ok && c.nowUTC().Before(rh.BackoffUntil) {
 			return
@@ -280,8 +351,21 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 	rh := c.getRoleHealth(roleKey)
 	now := c.nowUTC()
 
-	// Permanent failure: max restarts reached.
-	if role.MaxRestarts > 0 && rh.RestartCount >= role.MaxRestarts {
+	// Inside the backoff window: mark visible, keep the pane alive,
+	// let the reconciler hold steady — do not create replacements
+	// during backoff, and do not re-kill the session we're waiting on.
+	// Checked before saturation so we don't clobber a CrashLoopBackOff
+	// marker with Failed on the tick that hits MaxRestarts.
+	if now.Before(rh.BackoffUntil) {
+		sess.State = api.SessionCrashLoopBackOff
+		return
+	}
+
+	// Saturation check: noteCrashAndBackoff refuses to record a crash
+	// once MaxRestarts is hit, so we treat a false return as permanent
+	// failure and keep the session in the store. reconcileRole's
+	// MaxRestarts gate then refuses to spawn a replacement.
+	if !c.noteCrashAndBackoff(t.Workspace, t.Name, role.Name, role.MaxRestarts) {
 		if sess.State != api.SessionFailed {
 			log.Printf("health: session %s: role %s hit max_restarts=%d, not restarting",
 				sess.Key(), roleKey, role.MaxRestarts)
@@ -290,28 +374,16 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 		return
 	}
 
-	// Inside the backoff window: mark visible, keep the pane alive,
-	// let the reconciler hold steady — do not create replacements
-	// during backoff, and do not re-kill the session we're waiting on.
-	if now.Before(rh.BackoffUntil) {
-		sess.State = api.SessionCrashLoopBackOff
-		return
-	}
-
-	// Backoff elapsed (or first-ever restart) — proceed.
-	rh.RestartCount++
-	rh.LastRestartAt = now
-	nextBackoff := computeBackoff(rh.RestartCount + 1)
-	rh.BackoffUntil = now.Add(nextBackoff)
-
 	log.Printf("health: restarting session %s (role %s restart #%d, next backoff=%s)",
-		sess.Key(), roleKey, rh.RestartCount, nextBackoff)
+		sess.Key(), roleKey, rh.RestartCount, time.Until(rh.BackoffUntil))
 	sess.RestartCount++
 	sess.State = api.SessionFailed
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {
 		log.Printf("health: delete session %s for restart: %v", sess.Key(), err)
 	}
-	// Reconciler will recreate because actual < desired.
+	// Reconciler sees actual<desired on its next pass but holds off on
+	// recreating until BackoffUntil elapses (set by noteCrashAndBackoff
+	// above).
 }
 
 // InitiateShift starts a shift operation for a team.

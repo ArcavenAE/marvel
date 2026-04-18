@@ -1,6 +1,7 @@
 package team
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -679,6 +680,156 @@ func TestHealthRestartMaxReached(t *testing.T) {
 	}
 }
 
+// TestReapPathBumpsRestartCount verifies that when a session's pane
+// vanishes (clean exit / manual kill) the reap path records the crash
+// against the role's RoleHealth — previously this path bypassed the
+// restart bookkeeping entirely, producing the zero-spacing respawn loop
+// Skippy reported as ArcavenAE/marvel#11.
+func TestReapPathBumpsRestartCount(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-reap-bump", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			// No HealthCheck: isolates the reap path from the
+			// heartbeat-staleness path in evaluateHealth.
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sess := store.ListSessionsByTeamRole("test-reap-bump", "squad", "worker")[0]
+
+	// Simulate a clean exit / manual pane kill.
+	killPaneAndWait(t, sess.PaneID)
+
+	ctrl.ReconcileOnce() // reap + bookkeeping + backoff gate
+
+	rh, ok := ctrl.RoleHealthSnapshot("test-reap-bump", "squad", "worker")
+	if !ok {
+		t.Fatal("expected RoleHealth snapshot after reap")
+	}
+	if rh.RestartCount != 1 {
+		t.Fatalf("expected RestartCount=1 after reap, got %d", rh.RestartCount)
+	}
+	if !rh.BackoffUntil.After(clock.Now()) {
+		t.Fatalf("expected BackoffUntil after now, got %s (now=%s)", rh.BackoffUntil, clock.Now())
+	}
+	// The reconciler must NOT have immediately respawned during backoff.
+	got := store.ListSessionsByTeamRole("test-reap-bump", "squad", "worker")
+	if len(got) != 0 {
+		t.Fatalf("expected 0 sessions during reap backoff, got %d", len(got))
+	}
+}
+
+// TestReapPathRespawnsAfterBackoff: after the reap-triggered backoff
+// window elapses, the reconciler respawns the replica.
+func TestReapPathRespawnsAfterBackoff(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-reap-respawn", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sess := store.ListSessionsByTeamRole("test-reap-respawn", "squad", "worker")[0]
+	origCreatedAt := sess.CreatedAt
+
+	killPaneAndWait(t, sess.PaneID)
+	ctrl.ReconcileOnce() // reap + bookkeeping
+
+	// Advance past the initial backoff window (60s for restart #1).
+	clock.Advance(90 * time.Second)
+	ctrl.ReconcileOnce()
+
+	got := store.ListSessionsByTeamRole("test-reap-respawn", "squad", "worker")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 session after backoff elapsed, got %d", len(got))
+	}
+	if !got[0].CreatedAt.After(origCreatedAt) {
+		t.Fatal("expected new session with later CreatedAt after reap-triggered restart")
+	}
+}
+
+// TestReapPathSaturatesMaxRestarts: a role whose only crash path is
+// reap-via-clean-exit still honors MaxRestarts. Once the budget is
+// exhausted, the reconciler stops respawning replacements (BackoffUntil
+// is frozen to the far future by noteCrashAndBackoff on saturation).
+func TestReapPathSaturatesMaxRestarts(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-reap-maxrst", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			MaxRestarts: 2,
+		},
+	})
+
+	// Two reap-and-respawn cycles consume the budget.
+	for i := 0; i < 2; i++ {
+		ctrl.ReconcileOnce()
+		got := store.ListSessionsByTeamRole("test-reap-maxrst", "squad", "worker")
+		if len(got) == 0 {
+			t.Fatalf("iteration %d: expected a running session", i)
+		}
+		sess := got[0]
+		killPaneAndWait(t, sess.PaneID)
+		ctrl.ReconcileOnce() // reap + bump counter
+		clock.Advance(10 * time.Minute)
+	}
+
+	rh, _ := ctrl.RoleHealthSnapshot("test-reap-maxrst", "squad", "worker")
+	if rh.RestartCount != 2 {
+		t.Fatalf("expected RestartCount=2 after two reap cycles, got %d", rh.RestartCount)
+	}
+
+	// Third cycle: respawn, kill, reap — counter must NOT bump past 2,
+	// and the reconciler must refuse to spawn a fourth replacement.
+	ctrl.ReconcileOnce()
+	got := store.ListSessionsByTeamRole("test-reap-maxrst", "squad", "worker")
+	if len(got) == 0 {
+		t.Fatal("expected a running session before saturation check")
+	}
+	sess := got[0]
+	killPaneAndWait(t, sess.PaneID)
+	ctrl.ReconcileOnce() // reap; saturation freezes BackoffUntil
+
+	rh, _ = ctrl.RoleHealthSnapshot("test-reap-maxrst", "squad", "worker")
+	if rh.RestartCount != 2 {
+		t.Fatalf("RestartCount must stay at MaxRestarts=2 after saturation, got %d", rh.RestartCount)
+	}
+	if rh.BackoffUntil != saturationFreezeUntil {
+		t.Fatalf("expected BackoffUntil frozen at saturation sentinel, got %s", rh.BackoffUntil)
+	}
+
+	// No matter how far we advance the clock, no respawn.
+	clock.Advance(24 * time.Hour)
+	ctrl.ReconcileOnce()
+	got = store.ListSessionsByTeamRole("test-reap-maxrst", "squad", "worker")
+	if len(got) != 0 {
+		t.Fatalf("expected no session after saturation, got %d", len(got))
+	}
+}
+
 // TestComputeBackoff locks in the exponential curve shape so future
 // tweaks are intentional and reviewable.
 func TestComputeBackoff(t *testing.T) {
@@ -711,6 +862,35 @@ type testClock struct {
 func newTestClock(start time.Time) *testClock { return &testClock{t: start} }
 func (c *testClock) Now() time.Time           { return c.t }
 func (c *testClock) Advance(d time.Duration)  { c.t = c.t.Add(d) }
+
+// killPaneAndWait shells out to tmux to kill a pane out-of-band (as an
+// external process would) and waits until tmux confirms the pane is gone
+// so ReapDead can observe the loss on the next reconcile tick. Mirrors
+// the Skippy repro from ArcavenAE/marvel#11: `marvel inject ... "exit"`
+// — a clean exit that vacates the pane without going through the health
+// path. Uses the same MARVEL_TMUX_SOCKET as the driver so tests stay
+// scoped to their per-package tmux server.
+func killPaneAndWait(t *testing.T, paneID string) {
+	t.Helper()
+	tmuxCmd := func(args ...string) *exec.Cmd {
+		if socket := os.Getenv("MARVEL_TMUX_SOCKET"); socket != "" {
+			return exec.Command("tmux", append([]string{"-L", socket}, args...)...)
+		}
+		return exec.Command("tmux", args...)
+	}
+	if err := tmuxCmd("kill-pane", "-t", paneID).Run(); err != nil {
+		t.Fatalf("tmux kill-pane %s: %v", paneID, err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err := tmuxCmd("list-panes", "-a", "-F", "#{pane_id}").CombinedOutput()
+		if err != nil || !strings.Contains(string(out), paneID) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("tmux still reports pane %s alive after kill-pane", paneID)
+}
 
 func TestShiftSessionNaming(t *testing.T) {
 	skipIfNoTmux(t)

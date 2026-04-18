@@ -210,8 +210,11 @@ func TestReapDead(t *testing.T) {
 	}
 
 	reaped := mgr.ReapDead()
-	if len(reaped) != 1 || reaped[0] != dying.Key() {
+	if len(reaped) != 1 || reaped[0].Key != dying.Key() {
 		t.Fatalf("expected ReapDead to return [%s], got %v", dying.Key(), reaped)
+	}
+	if got := reaped[0]; got.Workspace != ws || got.Team != "agents" || got.Role != "worker" {
+		t.Fatalf("reaped session identity wrong: %+v", got)
 	}
 	if _, err := store.GetSession(dying.Key()); err == nil {
 		t.Fatal("expected dying session to be removed from store")

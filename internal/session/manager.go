@@ -186,10 +186,23 @@ func (m *Manager) Delete(key string) error {
 	return nil
 }
 
-// ReapDead removes sessions whose tmux pane no longer exists.
-// Returns the keys of reaped sessions.
-func (m *Manager) ReapDead() []string {
-	var reaped []string
+// ReapedSession captures the identity of a session whose pane vanished
+// and that ReapDead removed from the store. Carries the role coordinates
+// so the team controller can attribute the crash to the right role for
+// restart bookkeeping — the reap path is one of two converging points
+// into the crash-loop backoff logic (the other is the health path). See
+// ArcavenAE/marvel#11.
+type ReapedSession struct {
+	Key       string
+	Workspace string
+	Team      string
+	Role      string
+}
+
+// ReapDead removes sessions whose tmux pane no longer exists and returns
+// enough identity information for the caller to do per-role bookkeeping.
+func (m *Manager) ReapDead() []ReapedSession {
+	var reaped []ReapedSession
 	for _, sess := range m.store.ListSessions() {
 		if sess.PaneID == "" {
 			continue
@@ -200,7 +213,12 @@ func (m *Manager) ReapDead() []string {
 				log.Printf("warning: reap session %s: %v", sess.Key(), err)
 				continue
 			}
-			reaped = append(reaped, sess.Key())
+			reaped = append(reaped, ReapedSession{
+				Key:       sess.Key(),
+				Workspace: sess.Workspace,
+				Team:      sess.Team,
+				Role:      sess.Role,
+			})
 		}
 	}
 	return reaped
