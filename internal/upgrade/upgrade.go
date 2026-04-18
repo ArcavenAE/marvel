@@ -97,10 +97,15 @@ func isOwnedByPackageManager(path string) bool {
 }
 
 func upgradeViaHomebrew(channel string) error {
+	// Note: marvel currently ships a single homebrew formula (`marvel`)
+	// covering both alpha and stable builds — goreleaser publishes
+	// alpha-tagged bottles to the same formula. The ArcavenAE/tap
+	// does not have a `marvel-a` formula. If/when alpha gets split
+	// into its own tap formula (the pattern used by forestage-a,
+	// threedoors-a, jr-a), route the alpha channel back here.
+	// The `channel` parameter is retained for that future fork.
+	_ = channel
 	formula := "ArcavenAE/tap/marvel"
-	if channel == "alpha" {
-		formula = "ArcavenAE/tap/marvel-a"
-	}
 
 	fmt.Printf("Installed via Homebrew. Running: brew upgrade %s\n", formula)
 
