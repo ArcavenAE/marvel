@@ -512,6 +512,52 @@ func TestHandleLogsDefaultN(t *testing.T) {
 	}
 }
 
+// TestHandleApplyRuntimePreflight: manifest with a missing runtime
+// binary must be rejected at apply time, not silently accepted to
+// become a silent pane-dies-immediately restart loop later.
+// See ArcavenAE/marvel#9.
+func TestHandleApplyRuntimePreflight(t *testing.T) {
+	_, sock, teardown := startTestDaemon(t, "test-apply-preflight")
+	t.Cleanup(teardown)
+
+	manifest := `
+workspace:
+  name: preflight-bad
+teams:
+  - name: squad
+    roles:
+      - name: worker
+        replicas: 1
+        runtime:
+          command: no-such-binary-marvel-preflight-9xyz
+`
+	resp, err := SendRequest(sock, Request{
+		Method: "apply",
+		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("expected error from apply with missing runtime binary")
+	}
+	if !strings.Contains(resp.Error, "pre-flight") {
+		t.Fatalf("expected pre-flight in error, got: %s", resp.Error)
+	}
+
+	// The rejected manifest must not have created any store state.
+	resp, err = SendRequest(sock, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "workspaces"}),
+	})
+	if err != nil {
+		t.Fatalf("get workspaces: %v", err)
+	}
+	if strings.Contains(string(resp.Result), "preflight-bad") {
+		t.Fatalf("preflight-bad workspace should not exist: %s", string(resp.Result))
+	}
+}
+
 func TestListenNetwork(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

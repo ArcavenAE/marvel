@@ -65,11 +65,20 @@ func (d *Driver) HasSession(name string) bool {
 func (d *Driver) ListSessions() ([]string, error) {
 	out, err := d.cmd("list-sessions", "-F", "#S").Output()
 	if err != nil {
-		// tmux exits non-zero with "no server running" when there is no
-		// tmux server. Treat that as "zero sessions", not an error.
+		// Treat "there is no live tmux server" as zero sessions, not
+		// an error. tmux reports this two different ways depending on
+		// whether a server was ever started at this socket:
+		//   - "no server running on <path>" (server existed, then exited)
+		//   - "error connecting to <path> (No such file or directory)"
+		//     (server never started — socket file absent)
+		// Both mean the same thing to us.
 		var ee *exec.ExitError
-		if errors.As(err, &ee) && strings.Contains(string(ee.Stderr), "no server running") {
-			return nil, nil
+		if errors.As(err, &ee) {
+			stderr := string(ee.Stderr)
+			if strings.Contains(stderr, "no server running") ||
+				strings.Contains(stderr, "No such file or directory") {
+				return nil, nil
+			}
 		}
 		return nil, fmt.Errorf("list-sessions: %w", err)
 	}

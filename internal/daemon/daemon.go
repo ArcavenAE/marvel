@@ -404,6 +404,14 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("parse manifest: %v", err)}
 	}
 
+	// Pre-flight: refuse to apply if any role's runtime command/script
+	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
+	// binary produced no diagnostic, just a silent pane that exited
+	// immediately and entered the restart loop.
+	if err := m.ValidateRuntimes(); err != nil {
+		return Response{Error: err.Error()}
+	}
+
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}

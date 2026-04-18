@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -410,5 +411,95 @@ func TestManifestApply(t *testing.T) {
 	// Idempotent re-apply
 	if err := m.Apply(store); err != nil {
 		t.Fatalf("re-apply: %v", err)
+	}
+}
+
+func TestValidateRuntimesOK(t *testing.T) {
+	t.Parallel()
+	// Any two binaries guaranteed on POSIX test hosts.
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "ok"},
+		Teams: []ManifestTeam{{
+			Name: "squad",
+			Roles: []ManifestRole{
+				{Name: "a", Replicas: 1, Runtime: ManifestRuntime{Command: "sh"}},
+				{Name: "b", Replicas: 1, Runtime: ManifestRuntime{Command: "/bin/sh"}},
+			},
+		}},
+	}
+	if err := m.ValidateRuntimes(); err != nil {
+		t.Fatalf("expected OK, got %v", err)
+	}
+}
+
+func TestValidateRuntimesMissing(t *testing.T) {
+	t.Parallel()
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "missing"},
+		Teams: []ManifestTeam{{
+			Name: "squad",
+			Roles: []ManifestRole{
+				{Name: "a", Replicas: 1, Runtime: ManifestRuntime{Command: "sh"}},
+				{Name: "b", Replicas: 1, Runtime: ManifestRuntime{Command: "no-such-binary-marvel-9xyz"}},
+				{Name: "c", Replicas: 1, Runtime: ManifestRuntime{Command: "/nope/not/here"}},
+				// Relative path, also missing.
+				{Name: "d", Replicas: 1, Runtime: ManifestRuntime{Command: "bin/nothing-here"}},
+			},
+		}},
+	}
+	err := m.ValidateRuntimes()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	// Every missing role should be named in the error so operators see
+	// them all at once rather than one round-trip per problem.
+	for _, want := range []string{"role[1=b]", "role[2=c]", "role[3=d]", "runtime pre-flight failed on 3 role(s)"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expected error to contain %q, got:\n%s", want, msg)
+		}
+	}
+	// Role a (present) must not appear.
+	if strings.Contains(msg, "role[0=a]") {
+		t.Errorf("role[0=a] has a valid command; should not be reported:\n%s", msg)
+	}
+}
+
+func TestValidateRuntimesScriptMissing(t *testing.T) {
+	t.Parallel()
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "script-missing"},
+		Teams: []ManifestTeam{{
+			Name: "squad",
+			Roles: []ManifestRole{
+				{
+					Name: "a", Replicas: 1,
+					Runtime: ManifestRuntime{Command: "sh", Script: "scripts/does-not-exist.lua"},
+				},
+			},
+		}},
+	}
+	err := m.ValidateRuntimes()
+	if err == nil {
+		t.Fatal("expected error on missing script, got nil")
+	}
+	if !strings.Contains(err.Error(), "script") {
+		t.Errorf("expected error to mention script, got: %v", err)
+	}
+}
+
+func TestValidateRuntimesEmptyCommand(t *testing.T) {
+	t.Parallel()
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "empty"},
+		Teams: []ManifestTeam{{
+			Name: "squad",
+			Roles: []ManifestRole{
+				{Name: "a", Replicas: 1, Runtime: ManifestRuntime{Command: ""}},
+			},
+		}},
+	}
+	if err := m.ValidateRuntimes(); err == nil {
+		t.Fatal("expected error on empty command")
 	}
 }

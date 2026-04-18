@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -135,6 +137,71 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 		}
 	}
 	return m, nil
+}
+
+// ValidateRuntimes checks that each role's runtime command (and script,
+// if set) actually resolves on the daemon's host before the manifest
+// is applied. Returns an aggregated error listing every missing binary
+// so the operator sees all problems at once — not just the first.
+//
+// Resolution rules match exec.Command semantics:
+//   - Absolute path ("/usr/local/bin/forestage"): os.Stat must succeed.
+//   - Path with separator ("bin/simulator", "./scripts/x"): resolved
+//     relative to the daemon CWD via os.Stat.
+//   - Plain name ("sleep", "forestage"): exec.LookPath searches $PATH.
+//   - Empty command: flagged; the manifest parser already catches this
+//     but we defend here so misuse of the public API surfaces clearly.
+//
+// Scripts are checked as absolute/relative paths (never PATH-resolved)
+// because scripts are typically repo-relative files, not executables.
+//
+// See ArcavenAE/marvel#9 / aae-orc-rjm — the pre-fix behavior was to
+// silently create panes whose processes exited immediately, hiding the
+// real error behind a downstream "can't find pane" warning.
+func (m *Manifest) ValidateRuntimes() error {
+	var missing []string
+	for ti, t := range m.Teams {
+		for ri, r := range t.Roles {
+			ctx := fmt.Sprintf("team[%d=%s].role[%d=%s]", ti, t.Name, ri, r.Name)
+			if err := validateCommand(r.Runtime.Command); err != nil {
+				missing = append(missing, fmt.Sprintf("  %s: command %q: %v", ctx, r.Runtime.Command, err))
+			}
+			if r.Runtime.Script != "" {
+				if err := validateScript(r.Runtime.Script); err != nil {
+					missing = append(missing, fmt.Sprintf("  %s: script %q: %v", ctx, r.Runtime.Script, err))
+				}
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
+	}
+	return nil
+}
+
+func validateCommand(cmd string) error {
+	if cmd == "" {
+		return errors.New("empty")
+	}
+	// Path — either absolute or contains a separator — must exist on disk.
+	if filepath.IsAbs(cmd) || strings.ContainsRune(cmd, filepath.Separator) {
+		if _, err := os.Stat(cmd); err != nil {
+			return fmt.Errorf("not found: %w", err)
+		}
+		return nil
+	}
+	// Plain name — must resolve on $PATH.
+	if _, err := exec.LookPath(cmd); err != nil {
+		return fmt.Errorf("not on PATH: %w", err)
+	}
+	return nil
+}
+
+func validateScript(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("not found: %w", err)
+	}
+	return nil
 }
 
 // Apply converts a manifest into store resources and creates them.

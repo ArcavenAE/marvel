@@ -86,6 +86,12 @@ func (m *Manager) Create(sess *api.Session) error {
 
 	cmd, envs := m.resolveRuntime(sess)
 
+	// Log the exact command line we're about to exec so post-hoc
+	// debugging has the argv — operators otherwise had to guess what
+	// tmux new-window was actually running when a pane died quickly.
+	// See ArcavenAE/marvel#9.
+	log.Printf("session %s exec: %s", sess.Key(), cmd)
+
 	paneID, err := m.driver.NewPane(tmuxSess, cmd, sess.Name, envs)
 	if err != nil {
 		// Clean up store on failure.
