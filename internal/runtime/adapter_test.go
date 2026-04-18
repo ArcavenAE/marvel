@@ -275,3 +275,35 @@ func TestForestagePrepareNoPermissions(t *testing.T) {
 		t.Errorf("command should still inject identity prompt, got: %s", result.Command)
 	}
 }
+
+func TestForestagePrepareDangerousPermissions(t *testing.T) {
+	t.Parallel()
+	f := &Forestage{}
+	ctx := testContext()
+	ctx.Role.DangerousPermissions = true
+
+	result, err := f.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	if !strings.Contains(result.Command, "--dangerously-skip-permissions") {
+		t.Errorf("command should contain --dangerously-skip-permissions when Role.DangerousPermissions=true, got: %s", result.Command)
+	}
+}
+
+func TestForestagePrepareDangerousPermissionsDefaultOff(t *testing.T) {
+	t.Parallel()
+	f := &Forestage{}
+	ctx := testContext()
+	// Role.DangerousPermissions not set — default false
+
+	result, err := f.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	if strings.Contains(result.Command, "--dangerously-skip-permissions") {
+		t.Errorf("command must NOT contain --dangerously-skip-permissions when Role.DangerousPermissions is false (default), got: %s", result.Command)
+	}
+}

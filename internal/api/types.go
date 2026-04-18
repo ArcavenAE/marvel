@@ -93,9 +93,17 @@ type Role struct {
 	Runtime       Runtime       `toml:"runtime"`
 	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
 	Permissions   string        `toml:"permissions,omitempty"`
-	Persona       string        `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
-	Identity      string        `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
-	HealthCheck   *HealthCheck  `toml:"-"`
+	// DangerousPermissions, when true, causes adapters that support it to
+	// append --dangerously-skip-permissions (or equivalent) to the spawned
+	// agent. Intended for autonomous marvel-managed teams where no
+	// interactive approver exists. Per orc finding-023, the permission UI
+	// is a cooperative contract; real enforcement belongs to curtain.
+	// Combined with a curtain profile, this is the default sensible shape
+	// for autonomous fleet agents.
+	DangerousPermissions bool         `toml:"dangerous_permissions,omitempty"`
+	Persona              string       `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
+	Identity             string       `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
+	HealthCheck          *HealthCheck `toml:"-"`
 }
 
 // ShiftPhase represents the current phase of a shift operation.
