@@ -62,6 +62,15 @@ func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--permission-mode", ctx.Role.Permissions)
 	}
 
+	// Inject dangerous-skip when the role opts in. Forestage accepts this
+	// natively (ArcavenAE/forestage@4c4e28a) and passes it through as
+	// --dangerously-skip-permissions to the claude subprocess. Intended
+	// for autonomous marvel-managed agents where no interactive approver
+	// exists — see orc finding-023 for the contract-vs-fence framing.
+	if ctx.Role.DangerousPermissions {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+
 	// Inject script if specified in the role's runtime config.
 	if ctx.Session.Runtime.Script != "" {
 		args = append(args, "--script", ctx.Session.Runtime.Script)
