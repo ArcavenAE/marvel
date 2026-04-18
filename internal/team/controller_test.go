@@ -720,10 +720,19 @@ func TestReapPathBumpsRestartCount(t *testing.T) {
 	if !rh.BackoffUntil.After(clock.Now()) {
 		t.Fatalf("expected BackoffUntil after now, got %s (now=%s)", rh.BackoffUntil, clock.Now())
 	}
-	// The reconciler must NOT have immediately respawned during backoff.
+	// The reap path keeps the session in the store as a Crashed
+	// marker so operators see the transient via `marvel get sessions`,
+	// but the reconciler must NOT have respawned a live replacement
+	// during backoff.
 	got := store.ListSessionsByTeamRole("test-reap-bump", "squad", "worker")
-	if len(got) != 0 {
-		t.Fatalf("expected 0 sessions during reap backoff, got %d", len(got))
+	if len(got) != 1 {
+		t.Fatalf("expected 1 Crashed marker during reap backoff, got %d", len(got))
+	}
+	if got[0].State != api.SessionCrashed {
+		t.Fatalf("expected Crashed state, got %s", got[0].State)
+	}
+	if got[0].PaneID != "" {
+		t.Fatalf("expected empty PaneID on crashed marker, got %q", got[0].PaneID)
 	}
 }
 
@@ -757,7 +766,10 @@ func TestReapPathRespawnsAfterBackoff(t *testing.T) {
 
 	got := store.ListSessionsByTeamRole("test-reap-respawn", "squad", "worker")
 	if len(got) != 1 {
-		t.Fatalf("expected 1 session after backoff elapsed, got %d", len(got))
+		t.Fatalf("expected 1 session after backoff elapsed (crashed marker cleared at respawn), got %d", len(got))
+	}
+	if got[0].State != api.SessionRunning {
+		t.Fatalf("expected respawn to be Running (crashed marker should be cleared), got %s", got[0].State)
 	}
 	if !got[0].CreatedAt.After(origCreatedAt) {
 		t.Fatal("expected new session with later CreatedAt after reap-triggered restart")
@@ -821,12 +833,24 @@ func TestReapPathSaturatesMaxRestarts(t *testing.T) {
 		t.Fatalf("expected BackoffUntil frozen at saturation sentinel, got %s", rh.BackoffUntil)
 	}
 
-	// No matter how far we advance the clock, no respawn.
+	// No matter how far we advance the clock, no live replacement
+	// spawns — saturation leaves at most one Crashed marker behind
+	// (the capping in ReapDead / ClearCrashedForRole keeps ghosts
+	// bounded).
 	clock.Advance(24 * time.Hour)
 	ctrl.ReconcileOnce()
 	got = store.ListSessionsByTeamRole("test-reap-maxrst", "squad", "worker")
-	if len(got) != 0 {
-		t.Fatalf("expected no session after saturation, got %d", len(got))
+	alive := 0
+	for _, s := range got {
+		if s.State.CountsAsAlive() {
+			alive++
+		}
+	}
+	if alive != 0 {
+		t.Fatalf("expected 0 alive sessions after saturation, got %d (all=%d)", alive, len(got))
+	}
+	if len(got) > 1 {
+		t.Fatalf("expected at most 1 Crashed marker after saturation, got %d", len(got))
 	}
 }
 

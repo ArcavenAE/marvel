@@ -206,7 +206,12 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 	// aren't disrupted when only one role shifts and the team generation advances.
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
 	desired := role.Replicas
-	actual := len(current)
+	actual := 0
+	for _, sess := range current {
+		if sess.State.CountsAsAlive() {
+			actual++
+		}
+	}
 
 	if actual < desired {
 		// Respect crash-loop backoff. If the role is cooling down from
@@ -222,6 +227,12 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 		if rh, ok := c.roleHealth[roleKey]; ok && c.nowUTC().Before(rh.BackoffUntil) {
 			return
 		}
+		// Crash markers from the reap path have done their observability
+		// job by now (operators saw them during the backoff window). The
+		// fresh session is the new truth — clear stale Crashed markers
+		// for this role so nextIndex computes against live sessions only
+		// and `marvel get sessions` doesn't carry the ghost forward.
+		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, role.Name)
 		for i := actual; i < desired; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
 			sess := &api.Session{
