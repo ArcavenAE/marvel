@@ -54,6 +54,18 @@ jobs:
       - name: Display coverage summary
         run: go tool cover -func=coverage.out
 
+      - name: Enforce coverage floor
+        # Ratchet this up over time. Must not decrease.
+        env:
+          COVERAGE_FLOOR: "38.0"
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%",""); print $3}')
+          echo "total coverage: ${total}% (floor: ${COVERAGE_FLOOR}%)"
+          awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN{exit !(t+0 >= f+0)}' || {
+            echo "::error::coverage ${total}% fell below floor ${COVERAGE_FLOOR}%" >&2
+            exit 1
+          }
+
       - name: Validate build
         run: go build -o /dev/null ./cmd/marvel
 

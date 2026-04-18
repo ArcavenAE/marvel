@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"encoding/json"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -292,6 +295,220 @@ name = "squad"
 	}
 	if len(sessionsAfter) != 0 {
 		t.Fatalf("expected 0 sessions after delete workspace, got %d", len(sessionsAfter))
+	}
+}
+
+// startTestDaemon brings up a daemon on a per-test Unix socket with one
+// running session (sleep 300 in a generic adapter) and returns the
+// session key, socket, and a teardown func. The session's tmux pane is
+// alive, so inject/capture/ReapDead have something to hit.
+//
+// The daemon's log ring is wired as one of the log.SetOutput writers so
+// tests exercising 'logs' RPC see real startup log lines. Production
+// does this in cmd/marvel/main.go; tests do it here.
+func startTestDaemon(t *testing.T, workspace string) (sessionKey, sock string, teardown func()) {
+	t.Helper()
+	skipIfNoTmux(t)
+
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+
+	// Restore the default log output when the test ends so we don't
+	// leak the ring-buffer sink into sibling tests.
+	prevLogFlags := log.Flags()
+	log.SetOutput(io.MultiWriter(d.LogBuffer(), os.Stderr))
+	origRestore := func() {
+		log.SetOutput(os.Stderr)
+		log.SetFlags(prevLogFlags)
+	}
+
+	sock = filepath.Join(os.TempDir(), "marvel-test-"+workspace+".sock")
+	if err := d.Start(sock); err != nil {
+		origRestore()
+		t.Fatalf("start daemon: %v", err)
+	}
+	teardown = func() {
+		d.Stop()
+		_ = os.Remove(sock)
+		origRestore()
+	}
+
+	manifest := `
+[workspace]
+name = "` + workspace + `"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "sleep"
+    args = ["300"]
+`
+	resp, err := SendRequest(sock, Request{
+		Method: "apply",
+		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
+	})
+	if err != nil || resp.Error != "" {
+		teardown()
+		t.Fatalf("apply: err=%v resp.Error=%q", err, resp.Error)
+	}
+	// Wait for reconciliation to create the session + pane.
+	time.Sleep(600 * time.Millisecond)
+
+	resp, err = SendRequest(sock, Request{
+		Method: "get",
+		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
+	})
+	if err != nil || resp.Error != "" {
+		teardown()
+		t.Fatalf("get sessions: err=%v resp.Error=%q", err, resp.Error)
+	}
+	var sessions []struct {
+		Name      string
+		Workspace string
+		PaneID    string
+	}
+	if err := json.Unmarshal(resp.Result, &sessions); err != nil {
+		teardown()
+		t.Fatalf("unmarshal sessions: %v", err)
+	}
+	if len(sessions) == 0 {
+		teardown()
+		t.Fatal("expected at least one session after apply")
+	}
+	sessionKey = sessions[0].Workspace + "/" + sessions[0].Name
+	return sessionKey, sock, teardown
+}
+
+func TestHandleInjectCapture(t *testing.T) {
+	sessionKey, sock, teardown := startTestDaemon(t, "test-inject")
+	t.Cleanup(teardown)
+
+	// Inject text into the session's pane. The sleep process ignores
+	// stdin so the text sits in the tty buffer — capture-pane will
+	// still render it as input characters on the pane.
+	marker := "XXXX-INJECT-MARKER-" + t.Name()
+	resp, err := SendRequest(sock, Request{
+		Method: "inject",
+		Params: mustMarshal(t, map[string]any{
+			"session_key": sessionKey,
+			"text":        marker,
+			"literal":     true,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("inject error: %s", resp.Error)
+	}
+	var injectResult map[string]string
+	_ = json.Unmarshal(resp.Result, &injectResult)
+	if injectResult["status"] != "injected" {
+		t.Fatalf("expected status injected, got %s", injectResult["status"])
+	}
+
+	// tmux send-keys + capture is eventually-consistent; give it a beat.
+	time.Sleep(200 * time.Millisecond)
+
+	resp, err = SendRequest(sock, Request{
+		Method: "capture",
+		Params: mustMarshal(t, map[string]any{"session_key": sessionKey}),
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("capture error: %s", resp.Error)
+	}
+	var captureResult map[string]string
+	_ = json.Unmarshal(resp.Result, &captureResult)
+	if captureResult["status"] != "captured" {
+		t.Fatalf("expected status captured, got %s", captureResult["status"])
+	}
+	if !strings.Contains(captureResult["content"], marker) {
+		t.Fatalf("expected captured content to contain %q, got: %q", marker, captureResult["content"])
+	}
+}
+
+func TestHandleInjectUnknownSession(t *testing.T) {
+	_, sock, teardown := startTestDaemon(t, "test-inject-err")
+	t.Cleanup(teardown)
+
+	resp, err := SendRequest(sock, Request{
+		Method: "inject",
+		Params: mustMarshal(t, map[string]any{
+			"session_key": "does-not-exist/nobody-0",
+			"text":        "hello",
+		}),
+	})
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("expected error injecting into unknown session")
+	}
+}
+
+func TestHandleLogs(t *testing.T) {
+	_, sock, teardown := startTestDaemon(t, "test-logs")
+	t.Cleanup(teardown)
+
+	resp, err := SendRequest(sock, Request{
+		Method: "logs",
+		Params: mustMarshal(t, map[string]any{"n": 100}),
+	})
+	if err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("logs error: %s", resp.Error)
+	}
+	var result logsResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal logs: %v", err)
+	}
+	if len(result.Lines) == 0 {
+		t.Fatal("expected at least one log line from daemon startup")
+	}
+	// The daemon prints 'marvel daemon listening on ...' on Start —
+	// the ring buffer should have it.
+	var sawListening bool
+	for _, line := range result.Lines {
+		if strings.Contains(line, "marvel daemon listening on") {
+			sawListening = true
+			break
+		}
+	}
+	if !sawListening {
+		t.Fatalf("expected listening log line; got %d lines, first: %q", len(result.Lines), result.Lines[0])
+	}
+}
+
+func TestHandleLogsDefaultN(t *testing.T) {
+	_, sock, teardown := startTestDaemon(t, "test-logs-default")
+	t.Cleanup(teardown)
+
+	// No params — should default to the full ring.
+	resp, err := SendRequest(sock, Request{Method: "logs"})
+	if err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("logs error: %s", resp.Error)
+	}
+	var result logsResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal logs: %v", err)
+	}
+	if len(result.Lines) == 0 {
+		t.Fatal("expected at least one log line with no params")
 	}
 }
 
