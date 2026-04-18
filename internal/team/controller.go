@@ -21,11 +21,91 @@ type Controller struct {
 	sessMgr    *session.Manager
 	SocketPath string
 	mu         sync.Mutex
+
+	// roleHealth tracks per-role crash-loop state: restart count and
+	// next-allowed-restart deadline. Keyed by workspace/team/role so
+	// state survives session delete+recreate across restarts — the
+	// pre-fix implementation reset the counter on every rebuild, which
+	// made the backoff and max-restart caps impossible to enforce.
+	// See ArcavenAE/marvel#11.
+	roleHealth map[string]*RoleHealth
+
+	// now is an injection point for tests; nil means time.Now().UTC().
+	now func() time.Time
 }
+
+// RoleHealth is the per-role crash-loop tracking state.
+type RoleHealth struct {
+	RestartCount  int
+	LastRestartAt time.Time
+	// BackoffUntil is the wall-clock after which the next restart is
+	// allowed. Sessions whose role is inside the backoff window are
+	// marked SessionCrashLoopBackOff and left alive (not deleted) so
+	// operators see the condition and the reconciler doesn't respawn.
+	BackoffUntil time.Time
+}
+
+// Restart backoff configuration. Exponential with a 5-minute cap — the
+// defaults Skippy suggested in ArcavenAE/marvel#11.
+const (
+	restartBackoffInitial = 30 * time.Second
+	restartBackoffMax     = 5 * time.Minute
+)
 
 // NewController creates a team controller.
 func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
-	return &Controller{store: store, sessMgr: sessMgr}
+	return &Controller{
+		store:      store,
+		sessMgr:    sessMgr,
+		roleHealth: make(map[string]*RoleHealth),
+	}
+}
+
+// computeBackoff returns the exponential backoff duration for the nth
+// restart (1-indexed): 30s, 60s, 2m, 4m, 5m, 5m, ...
+func computeBackoff(n int) time.Duration {
+	if n <= 1 {
+		return restartBackoffInitial
+	}
+	d := restartBackoffInitial << (n - 1)
+	if d <= 0 || d > restartBackoffMax { // guards against overflow too
+		return restartBackoffMax
+	}
+	return d
+}
+
+func (c *Controller) nowUTC() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now().UTC()
+}
+
+func (c *Controller) getRoleHealth(key string) *RoleHealth {
+	rh, ok := c.roleHealth[key]
+	if !ok {
+		rh = &RoleHealth{}
+		c.roleHealth[key] = rh
+	}
+	return rh
+}
+
+// RoleHealthSnapshot returns the current restart state for a role,
+// useful for tests and for `marvel describe team` observability.
+// Returns (nil, false) if the role has no recorded crash-loop history.
+func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHealth, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := workspace + "/" + team + "/" + role
+	rh, ok := c.roleHealth[key]
+	if !ok {
+		return nil, false
+	}
+	return &RoleHealth{
+		RestartCount:  rh.RestartCount,
+		LastRestartAt: rh.LastRestartAt,
+		BackoffUntil:  rh.BackoffUntil,
+	}, true
 }
 
 // ReconcileOnce runs one reconciliation pass for all teams.
@@ -62,6 +142,15 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 	actual := len(current)
 
 	if actual < desired {
+		// Respect crash-loop backoff. If the role is cooling down from
+		// a recent restart, hold off on spawning replacements until the
+		// backoff window elapses. Without this the reconciler would
+		// immediately recreate a session we just deleted and defeat
+		// the whole backoff. See ArcavenAE/marvel#11.
+		roleKey := t.Workspace + "/" + t.Name + "/" + role.Name
+		if rh, ok := c.roleHealth[roleKey]; ok && c.nowUTC().Before(rh.BackoffUntil) {
+			return
+		}
 		for i := actual; i < desired; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
 			sess := &api.Session{
@@ -149,14 +238,14 @@ func (c *Controller) evaluateHealth() {
 
 		if sess.FailureCount >= role.HealthCheck.FailureThreshold {
 			sess.HealthState = api.HealthUnhealthy
-			c.applyRestartPolicy(sess, role)
+			c.applyRestartPolicy(sess, t, role)
 		} else {
 			sess.HealthState = api.HealthUnhealthy
 		}
 	}
 }
 
-func (c *Controller) applyRestartPolicy(sess *api.Session, role *api.Role) {
+func (c *Controller) applyRestartPolicy(sess *api.Session, t *api.Team, role *api.Role) {
 	switch role.RestartPolicy {
 	case api.RestartNever:
 		sess.State = api.SessionFailed
@@ -164,18 +253,59 @@ func (c *Controller) applyRestartPolicy(sess *api.Session, role *api.Role) {
 			sess.Key(), sess.FailureCount)
 	case api.RestartOnFailure:
 		if sess.State == api.SessionFailed {
-			c.restartSession(sess)
+			c.restartSession(sess, t, role)
 		} else {
 			sess.State = api.SessionFailed
 		}
 	default: // RestartAlways
-		c.restartSession(sess)
+		c.restartSession(sess, t, role)
 	}
 }
 
-func (c *Controller) restartSession(sess *api.Session) {
-	log.Printf("health: restarting session %s (failures=%d, restarts=%d)",
-		sess.Key(), sess.FailureCount, sess.RestartCount)
+// restartSession decides whether to restart an unhealthy session now,
+// hold it in crash-loop backoff, or mark it permanently failed. State
+// is tracked on the Controller's roleHealth map (keyed by workspace/
+// team/role) so the restart count and backoff window survive the
+// Delete+Recreate round-trip that a restart implies.
+//
+// Policy summary:
+//   - First restart is immediate (k8s-style).
+//   - Subsequent restarts wait the exponential backoff window.
+//   - If role.MaxRestarts > 0 and we've hit it, the session moves to
+//     SessionFailed and stays there.
+//
+// Ref: ArcavenAE/marvel#11, aae-orc-xhk.
+func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Role) {
+	roleKey := t.Workspace + "/" + t.Name + "/" + role.Name
+	rh := c.getRoleHealth(roleKey)
+	now := c.nowUTC()
+
+	// Permanent failure: max restarts reached.
+	if role.MaxRestarts > 0 && rh.RestartCount >= role.MaxRestarts {
+		if sess.State != api.SessionFailed {
+			log.Printf("health: session %s: role %s hit max_restarts=%d, not restarting",
+				sess.Key(), roleKey, role.MaxRestarts)
+		}
+		sess.State = api.SessionFailed
+		return
+	}
+
+	// Inside the backoff window: mark visible, keep the pane alive,
+	// let the reconciler hold steady — do not create replacements
+	// during backoff, and do not re-kill the session we're waiting on.
+	if now.Before(rh.BackoffUntil) {
+		sess.State = api.SessionCrashLoopBackOff
+		return
+	}
+
+	// Backoff elapsed (or first-ever restart) — proceed.
+	rh.RestartCount++
+	rh.LastRestartAt = now
+	nextBackoff := computeBackoff(rh.RestartCount + 1)
+	rh.BackoffUntil = now.Add(nextBackoff)
+
+	log.Printf("health: restarting session %s (role %s restart #%d, next backoff=%s)",
+		sess.Key(), roleKey, rh.RestartCount, nextBackoff)
 	sess.RestartCount++
 	sess.State = api.SessionFailed
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {

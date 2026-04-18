@@ -15,6 +15,13 @@ const (
 	SessionRunning   SessionState = "running"
 	SessionSucceeded SessionState = "succeeded"
 	SessionFailed    SessionState = "failed"
+	// SessionCrashLoopBackOff is the state the reconciler assigns to a
+	// role whose replicas keep failing faster than they start, while
+	// backoff is in effect. Borrowed from Kubernetes' vocabulary.
+	// The session stays in this state until backoff elapses and
+	// another restart is attempted, or MaxRestarts is reached and the
+	// state transitions to Failed.
+	SessionCrashLoopBackOff SessionState = "crashloop-backoff"
 )
 
 // HealthState represents the health of a session.
@@ -104,6 +111,11 @@ type Role struct {
 	Persona              string       `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
 	Identity             string       `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
 	HealthCheck          *HealthCheck `toml:"-"`
+	// MaxRestarts caps the number of restarts for any single replica
+	// slot in this role before the reconciler gives up and leaves the
+	// session in SessionFailed. Zero means unlimited; negative values
+	// are clamped to zero. See ArcavenAE/marvel#11.
+	MaxRestarts int `toml:"max_restarts,omitempty"`
 }
 
 // ShiftPhase represents the current phase of a shift operation.

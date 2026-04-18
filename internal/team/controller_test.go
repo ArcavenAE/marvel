@@ -481,6 +481,11 @@ func TestHealthRestartAlways(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 
+	// Clock injection: lets us fast-forward past the crash-loop backoff
+	// window so we can observe recreation in a single test run.
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
 	createTeamFixture(t, store, "test-health-restart", "squad", []api.Role{
 		{
 			Name: "worker", Replicas: 1,
@@ -500,18 +505,212 @@ func TestHealthRestartAlways(t *testing.T) {
 	// Set stale heartbeat.
 	sessions[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
 
-	// Eval + reconcile: unhealthy → delete → reconciler recreates.
+	// Tick 1: unhealthy → first restart is immediate (count goes 0→1),
+	// session is deleted, but reconciler holds off on recreating because
+	// the role is now in backoff.
+	ctrl.ReconcileOnce()
+	if got := store.ListSessionsByTeamRole("test-health-restart", "squad", "worker"); len(got) != 0 {
+		t.Fatalf("expected 0 sessions immediately after first restart (backoff active), got %d", len(got))
+	}
+	rh, ok := ctrl.RoleHealthSnapshot("test-health-restart", "squad", "worker")
+	if !ok || rh.RestartCount != 1 {
+		t.Fatalf("expected RestartCount=1 after first restart, got %+v (ok=%v)", rh, ok)
+	}
+
+	// Fast-forward past the backoff window. The reconciler should now
+	// see actual < desired and respawn a replacement.
+	clock.Advance(2 * time.Minute)
 	ctrl.ReconcileOnce()
 
 	sessions = store.ListSessionsByTeamRole("test-health-restart", "squad", "worker")
 	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session after restart, got %d", len(sessions))
+		t.Fatalf("expected 1 session after backoff elapsed, got %d", len(sessions))
 	}
-	// Recreated session has a fresh CreatedAt.
 	if !sessions[0].CreatedAt.After(origCreatedAt) {
 		t.Fatal("expected new session with later CreatedAt after restart")
 	}
 }
+
+// TestHealthRestartBackoffHoldsReplacement: after the first restart
+// the reconciler must NOT respawn a replacement for the dead replica
+// until the backoff window elapses.
+func TestHealthRestartBackoffHoldsReplacement(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-health-hold", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	store.ListSessionsByTeamRole("test-health-hold", "squad", "worker")[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	ctrl.ReconcileOnce() // first restart triggered + session deleted
+
+	// Several reconciler ticks while still inside backoff: actual=0,
+	// desired=1, but no respawn because the role is cooling down.
+	for i := 0; i < 5; i++ {
+		clock.Advance(5 * time.Second)
+		ctrl.ReconcileOnce()
+		got := store.ListSessionsByTeamRole("test-health-hold", "squad", "worker")
+		if len(got) != 0 {
+			t.Fatalf("tick %d: backoff violated — found %d sessions", i, len(got))
+		}
+	}
+
+	// Backoff elapses, respawn happens.
+	clock.Advance(90 * time.Second) // definitely past 60s initial backoff
+	ctrl.ReconcileOnce()
+	got := store.ListSessionsByTeamRole("test-health-hold", "squad", "worker")
+	if len(got) != 1 {
+		t.Fatalf("expected respawn once backoff elapsed, got %d sessions", len(got))
+	}
+}
+
+// TestHealthRestartBackoffSiblingMarked: when one replica triggers the
+// backoff and a sibling in the same role then fails, the sibling is
+// marked SessionCrashLoopBackOff and kept alive — it does NOT get a
+// second restart inside the same cooling window.
+func TestHealthRestartBackoffSiblingMarked(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-health-sibling", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 2,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce() // both workers created
+	workers := store.ListSessionsByTeamRole("test-health-sibling", "squad", "worker")
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 workers, got %d", len(workers))
+	}
+
+	// Fail worker-0 → triggers first restart for the role.
+	workers[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	ctrl.ReconcileOnce()
+
+	// Now fail worker-1 while still inside the backoff window.
+	// (Only one session survives; find it fresh from the store.)
+	workers = store.ListSessionsByTeamRole("test-health-sibling", "squad", "worker")
+	if len(workers) != 1 {
+		t.Fatalf("expected 1 surviving worker during backoff, got %d", len(workers))
+	}
+	workers[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	ctrl.ReconcileOnce()
+
+	// Sibling must be alive, marked CrashLoopBackOff, and the role
+	// restart counter must NOT have ticked past 1.
+	workers = store.ListSessionsByTeamRole("test-health-sibling", "squad", "worker")
+	if len(workers) != 1 {
+		t.Fatalf("sibling should still exist during backoff, got %d", len(workers))
+	}
+	if workers[0].State != api.SessionCrashLoopBackOff {
+		t.Fatalf("sibling expected SessionCrashLoopBackOff, got %q", workers[0].State)
+	}
+	rh, _ := ctrl.RoleHealthSnapshot("test-health-sibling", "squad", "worker")
+	if rh.RestartCount != 1 {
+		t.Fatalf("RestartCount must stay at 1 during backoff, got %d", rh.RestartCount)
+	}
+}
+
+// TestHealthRestartMaxReached: once the role passes MaxRestarts the
+// session is marked Failed permanently and not respawned.
+func TestHealthRestartMaxReached(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-health-maxrst", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			MaxRestarts:   2,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	// Loop: reconcile, stale the current session, advance clock, reconcile.
+	// After 2 successful restarts, a third failure must not be restarted.
+	for i := 0; i < 3; i++ {
+		ctrl.ReconcileOnce() // creates or recreates session
+		got := store.ListSessionsByTeamRole("test-health-maxrst", "squad", "worker")
+		if len(got) == 0 {
+			t.Fatalf("iteration %d: expected a running session", i)
+		}
+		got[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		ctrl.ReconcileOnce() // fail + (maybe) restart
+		clock.Advance(10 * time.Minute)
+	}
+
+	rh, _ := ctrl.RoleHealthSnapshot("test-health-maxrst", "squad", "worker")
+	if rh.RestartCount != 2 {
+		t.Fatalf("expected RestartCount capped at MaxRestarts=2, got %d", rh.RestartCount)
+	}
+	// After the third failure, the session should be in Failed (not
+	// recreated, not CrashLoopBackOff).
+	ctrl.ReconcileOnce()
+	got := store.ListSessionsByTeamRole("test-health-maxrst", "squad", "worker")
+	if len(got) != 1 {
+		t.Fatalf("expected failed session still in store, got %d", len(got))
+	}
+	if got[0].State != api.SessionFailed {
+		t.Fatalf("expected state=failed after MaxRestarts exceeded, got %q", got[0].State)
+	}
+}
+
+// TestComputeBackoff locks in the exponential curve shape so future
+// tweaks are intentional and reviewable.
+func TestComputeBackoff(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		n    int
+		want time.Duration
+	}{
+		{0, 30 * time.Second},
+		{1, 30 * time.Second},
+		{2, 60 * time.Second},
+		{3, 120 * time.Second},
+		{4, 240 * time.Second},
+		{5, 5 * time.Minute}, // capped
+		{20, 5 * time.Minute},
+	}
+	for _, tc := range cases {
+		if got := computeBackoff(tc.n); got != tc.want {
+			t.Errorf("computeBackoff(%d) = %s, want %s", tc.n, got, tc.want)
+		}
+	}
+}
+
+// testClock is a simple monotonically-advancing clock used in place of
+// time.Now for deterministic crash-loop tests.
+type testClock struct {
+	t time.Time
+}
+
+func newTestClock(start time.Time) *testClock { return &testClock{t: start} }
+func (c *testClock) Now() time.Time           { return c.t }
+func (c *testClock) Advance(d time.Duration)  { c.t = c.t.Add(d) }
 
 func TestShiftSessionNaming(t *testing.T) {
 	skipIfNoTmux(t)
