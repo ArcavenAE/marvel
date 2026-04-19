@@ -22,7 +22,30 @@ const (
 	// another restart is attempted, or MaxRestarts is reached and the
 	// state transitions to Failed.
 	SessionCrashLoopBackOff SessionState = "crashloop-backoff"
+	// SessionCrashed is the transition state set by ReapDead when the
+	// underlying tmux pane vanished (clean exit, manual kill, runtime
+	// binary crashed). The session is kept in the store — with PaneID
+	// cleared — so operators see the event via `marvel get sessions`
+	// during the backoff window. The reconciler does not count Crashed
+	// sessions toward replica totals, and clears any stale Crashed
+	// sessions for a role at the moment it spawns a replacement. See
+	// ArcavenAE/marvel#10, aae-orc-8ci.
+	SessionCrashed SessionState = "crashed"
 )
+
+// CountsAsAlive reports whether a session in this state should count
+// toward a role's replica total. Pending and Running are obviously alive;
+// CrashLoopBackOff sessions still have a live pane (the reconciler is
+// deliberately not restarting them), so they are counted too. Succeeded,
+// Failed, and Crashed sessions are terminal markers kept for visibility
+// and do NOT count.
+func (s SessionState) CountsAsAlive() bool {
+	switch s {
+	case SessionPending, SessionRunning, SessionCrashLoopBackOff:
+		return true
+	}
+	return false
+}
 
 // HealthState represents the health of a session.
 type HealthState string

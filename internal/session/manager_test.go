@@ -210,13 +210,93 @@ func TestReapDead(t *testing.T) {
 	}
 
 	reaped := mgr.ReapDead()
-	if len(reaped) != 1 || reaped[0] != dying.Key() {
+	if len(reaped) != 1 || reaped[0].Key != dying.Key() {
 		t.Fatalf("expected ReapDead to return [%s], got %v", dying.Key(), reaped)
 	}
-	if _, err := store.GetSession(dying.Key()); err == nil {
-		t.Fatal("expected dying session to be removed from store")
+	if got := reaped[0]; got.Workspace != ws || got.Team != "agents" || got.Role != "worker" {
+		t.Fatalf("reaped session identity wrong: %+v", got)
+	}
+	// Session is kept in the store as a Crashed marker so operators see
+	// the event via `marvel get sessions`. ReapDead no longer deletes.
+	got, err := store.GetSession(dying.Key())
+	if err != nil {
+		t.Fatalf("expected dying session to stay in store as Crashed marker: %v", err)
+	}
+	if got.State != api.SessionCrashed {
+		t.Fatalf("expected state=%s, got %s", api.SessionCrashed, got.State)
+	}
+	if got.PaneID != "" {
+		t.Fatalf("expected PaneID cleared on crash, got %q", got.PaneID)
 	}
 	if _, err := store.GetSession(ws + "/live-0"); err != nil {
 		t.Fatalf("expected live-0 to survive ReapDead: %v", err)
+	}
+}
+
+// TestReapDeadCapsCrashedMarkers verifies the store keeps at most one
+// Crashed session per role — a saturated role's many crashes must not
+// accumulate ghosts. See ArcavenAE/marvel#10, aae-orc-8ci.
+func TestReapDeadCapsCrashedMarkers(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-reap-cap"
+	t.Cleanup(func() {
+		_ = mgr.CleanupWorkspace(ws)
+	})
+
+	// Seed a pre-existing Crashed marker for the same role.
+	stale := &api.Session{
+		Name:      "agents-worker-g1-0",
+		Workspace: ws,
+		Team:      "agents",
+		Role:      "worker",
+		State:     api.SessionCrashed,
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := store.CreateSession(stale); err != nil {
+		t.Fatalf("seed stale crashed: %v", err)
+	}
+
+	// Live session whose pane we'll kill out-of-band.
+	fresh := &api.Session{
+		Name:      "agents-worker-g1-1",
+		Workspace: ws,
+		Team:      "agents",
+		Role:      "worker",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(fresh); err != nil {
+		t.Fatalf("create fresh: %v", err)
+	}
+	if err := driver.KillPane(fresh.PaneID); err != nil {
+		t.Fatalf("kill pane %s: %v", fresh.PaneID, err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for driver.HasPane(fresh.PaneID) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	reaped := mgr.ReapDead()
+	if len(reaped) != 1 || reaped[0].Key != fresh.Key() {
+		t.Fatalf("expected ReapDead to return only %s, got %v", fresh.Key(), reaped)
+	}
+
+	// Stale marker must be gone; fresh now Crashed.
+	if _, err := store.GetSession(stale.Key()); err == nil {
+		t.Fatal("expected stale crashed marker to be cleared")
+	}
+	got, err := store.GetSession(fresh.Key())
+	if err != nil {
+		t.Fatalf("fresh crashed marker missing: %v", err)
+	}
+	if got.State != api.SessionCrashed {
+		t.Fatalf("fresh state=%s, want %s", got.State, api.SessionCrashed)
 	}
 }

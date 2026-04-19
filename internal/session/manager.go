@@ -186,24 +186,95 @@ func (m *Manager) Delete(key string) error {
 	return nil
 }
 
-// ReapDead removes sessions whose tmux pane no longer exists.
-// Returns the keys of reaped sessions.
-func (m *Manager) ReapDead() []string {
-	var reaped []string
-	for _, sess := range m.store.ListSessions() {
+// ReapedSession captures the identity of a session whose pane vanished
+// and that ReapDead removed from the store. Carries the role coordinates
+// so the team controller can attribute the crash to the right role for
+// restart bookkeeping — the reap path is one of two converging points
+// into the crash-loop backoff logic (the other is the health path). See
+// ArcavenAE/marvel#11.
+type ReapedSession struct {
+	Key       string
+	Workspace string
+	Team      string
+	Role      string
+}
+
+// ReapDead marks sessions whose tmux pane no longer exists as Crashed
+// (keeping them in the store with PaneID cleared so operators see the
+// transient via `marvel get sessions`) and returns enough identity
+// information for the caller to do per-role bookkeeping.
+//
+// Previously this method deleted reaped sessions immediately. The
+// resulting window — session gone from store, replacement not yet
+// spawned because of backoff — left operators with no visible signal
+// that a crash had occurred. See ArcavenAE/marvel#10, aae-orc-8ci.
+//
+// To keep the store bounded, each call first clears any existing
+// Crashed sessions for a role before marking the newly-reaped session
+// Crashed — so at most one Crashed marker exists per role at a time.
+// The team controller's reconcileRole additionally clears Crashed
+// markers for a role at the moment it spawns a replacement.
+func (m *Manager) ReapDead() []ReapedSession {
+	var reaped []ReapedSession
+	sessions := m.store.ListSessions()
+	for _, sess := range sessions {
 		if sess.PaneID == "" {
+			// Already reaped (Crashed) or never had a pane. Skip.
 			continue
 		}
 		if !m.driver.HasPane(sess.PaneID) {
-			log.Printf("session %s: pane %s gone, reaping", sess.Key(), sess.PaneID)
-			if err := m.store.DeleteSession(sess.Key()); err != nil {
-				log.Printf("warning: reap session %s: %v", sess.Key(), err)
-				continue
-			}
-			reaped = append(reaped, sess.Key())
+			log.Printf("session %s: pane %s gone, marking crashed", sess.Key(), sess.PaneID)
+			m.clearStaleCrashed(sessions, sess.Workspace, sess.Team, sess.Role, sess.Key())
+			sess.State = api.SessionCrashed
+			sess.PaneID = ""
+			reaped = append(reaped, ReapedSession{
+				Key:       sess.Key(),
+				Workspace: sess.Workspace,
+				Team:      sess.Team,
+				Role:      sess.Role,
+			})
 		}
 	}
 	return reaped
+}
+
+// clearStaleCrashed removes any Crashed session for the given role,
+// excluding the session about to be marked Crashed. Caps the store at
+// one Crashed marker per role so the reap path can't accumulate ghosts
+// across a saturated role's many crashes.
+func (m *Manager) clearStaleCrashed(snapshot []*api.Session, workspace, team, role, exceptKey string) {
+	for _, other := range snapshot {
+		if other.State != api.SessionCrashed {
+			continue
+		}
+		if other.Workspace != workspace || other.Team != team || other.Role != role {
+			continue
+		}
+		if other.Key() == exceptKey {
+			continue
+		}
+		if err := m.store.DeleteSession(other.Key()); err != nil {
+			log.Printf("warning: delete stale crashed %s: %v", other.Key(), err)
+		}
+	}
+}
+
+// ClearCrashedForRole deletes all Crashed marker sessions for a
+// (workspace, team, role). Called by the team controller the moment it
+// spawns a replacement — the crash marker has served its observability
+// purpose and the fresh session is the new truth.
+func (m *Manager) ClearCrashedForRole(workspace, team, role string) {
+	for _, sess := range m.store.ListSessions() {
+		if sess.State != api.SessionCrashed {
+			continue
+		}
+		if sess.Workspace != workspace || sess.Team != team || sess.Role != role {
+			continue
+		}
+		if err := m.store.DeleteSession(sess.Key()); err != nil {
+			log.Printf("warning: clear crashed %s: %v", sess.Key(), err)
+		}
+	}
 }
 
 // DeleteAllInWorkspace destroys all sessions in a workspace.
