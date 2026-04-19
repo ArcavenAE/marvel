@@ -414,6 +414,147 @@ func TestManifestApply(t *testing.T) {
 	}
 }
 
+// TestParseYAMLManifestDroppedFields is the regression test for
+// ArcavenAE/marvel#28 (max_restarts) and #43 (dangerous_permissions).
+// Both fields existed on api.Role and were honored by the team
+// controller and forestage adapter respectively — but ManifestRole
+// didn't declare them, so yaml.v3 silently dropped them during parse,
+// and Apply() never copied them onto Role. Effect: the cap was
+// permanently disabled and --dangerously-skip-permissions never made
+// it to the adapter.
+func TestParseYAMLManifestDroppedFields(t *testing.T) {
+	t.Parallel()
+	m, err := parseManifestYAML([]byte(`
+workspace:
+  name: test
+
+teams:
+  - name: squad
+    roles:
+      - name: worker
+        replicas: 1
+        max_restarts: 3
+        dangerous_permissions: true
+        runtime:
+          image: forestage
+          command: forestage
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	role := m.Teams[0].Roles[0]
+	if role.MaxRestarts != 3 {
+		t.Errorf("MaxRestarts on ManifestRole: got %d, want 3", role.MaxRestarts)
+	}
+	if !role.DangerousPermissions {
+		t.Errorf("DangerousPermissions on ManifestRole: got false, want true")
+	}
+
+	// Full round-trip to api.Role via Apply must carry both fields.
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, err := store.GetTeam("test/squad")
+	if err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	if team.Roles[0].MaxRestarts != 3 {
+		t.Errorf("MaxRestarts on api.Role after Apply: got %d, want 3", team.Roles[0].MaxRestarts)
+	}
+	if !team.Roles[0].DangerousPermissions {
+		t.Errorf("DangerousPermissions on api.Role after Apply: got false, want true")
+	}
+}
+
+// TestParseTOMLManifestDroppedFields is the TOML-side twin of
+// TestParseYAMLManifestDroppedFields. TOML was already honoring the
+// toml struct tags on api.Role directly (Role is used in some code
+// paths without going through ManifestRole), but the manifest parse
+// path is the same — ManifestRole was missing the fields, so TOML
+// manifests silently dropped them too.
+func TestParseTOMLManifestDroppedFields(t *testing.T) {
+	t.Parallel()
+	m, err := parseManifestTOML([]byte(`
+[workspace]
+name = "test"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+  max_restarts = 3
+  dangerous_permissions = true
+
+    [team.role.runtime]
+    image = "forestage"
+    command = "forestage"
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	role := m.Teams[0].Roles[0]
+	if role.MaxRestarts != 3 {
+		t.Errorf("MaxRestarts on ManifestRole: got %d, want 3", role.MaxRestarts)
+	}
+	if !role.DangerousPermissions {
+		t.Errorf("DangerousPermissions on ManifestRole: got false, want true")
+	}
+
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, err := store.GetTeam("test/squad")
+	if err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	if team.Roles[0].MaxRestarts != 3 {
+		t.Errorf("MaxRestarts on api.Role after Apply: got %d, want 3", team.Roles[0].MaxRestarts)
+	}
+	if !team.Roles[0].DangerousPermissions {
+		t.Errorf("DangerousPermissions on api.Role after Apply: got false, want true")
+	}
+}
+
+// TestParseManifestDroppedFieldsDefaults verifies that omitting both
+// fields produces zero values (MaxRestarts=0 meaning unlimited,
+// DangerousPermissions=false meaning the adapter does not append the
+// flag). Guards against accidental non-zero defaults that would break
+// the documented contract.
+func TestParseManifestDroppedFieldsDefaults(t *testing.T) {
+	t.Parallel()
+	m, err := parseManifestYAML([]byte(`
+workspace:
+  name: test
+
+teams:
+  - name: squad
+    roles:
+      - name: worker
+        replicas: 1
+        runtime:
+          command: sleep
+          args: ["300"]
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	if team.Roles[0].MaxRestarts != 0 {
+		t.Errorf("MaxRestarts default: got %d, want 0", team.Roles[0].MaxRestarts)
+	}
+	if team.Roles[0].DangerousPermissions {
+		t.Errorf("DangerousPermissions default: got true, want false")
+	}
+}
+
 func TestValidateRuntimesOK(t *testing.T) {
 	t.Parallel()
 	// Any two binaries guaranteed on POSIX test hosts.
