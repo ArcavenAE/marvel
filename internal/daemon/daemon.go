@@ -577,6 +577,9 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 			_ = d.sessMgr.Delete(s.Key())
 		}
 		err = d.store.DeleteTeam(p.Name)
+		// Clear accumulated crash-loop state for this team's roles so a
+		// subsequent re-apply starts fresh. See ArcavenAE/marvel#29.
+		d.teamCtrl.ClearRoleHealthForTeam(t.Workspace, t.Name)
 	case "workspace":
 		ws, getErr := d.store.GetWorkspace(p.Name)
 		if getErr != nil {
@@ -597,6 +600,9 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 		}
 		_ = d.sessMgr.CleanupWorkspace(ws.Name)
 		err = d.store.DeleteWorkspace(p.Name)
+		// Clear accumulated crash-loop state for every role under every
+		// team in this workspace. See ArcavenAE/marvel#29.
+		d.teamCtrl.ClearRoleHealthForWorkspace(ws.Name)
 	default:
 		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}

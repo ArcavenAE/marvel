@@ -914,6 +914,101 @@ func TestReapPathSaturatesMaxRestarts(t *testing.T) {
 
 // TestComputeBackoff locks in the exponential curve shape so future
 // tweaks are intentional and reviewable.
+// TestClearRoleHealthForTeam verifies that the cascade-delete helper
+// removes only the entries under (workspace, team), leaves siblings
+// untouched, and handles the prefix edge case where one team name is
+// a prefix of another (e.g., "b" vs "bb"). See ArcavenAE/marvel#29.
+func TestClearRoleHealthForTeam(t *testing.T) {
+	t.Parallel()
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+
+	// Populate state for: ws1/teamA/{w,r}, ws1/teamAA/w, ws1/teamB/w, ws2/teamA/w
+	keys := []string{
+		"ws1/teamA/worker",
+		"ws1/teamA/reviewer",
+		"ws1/teamAA/worker",
+		"ws1/teamB/worker",
+		"ws2/teamA/worker",
+	}
+	for _, k := range keys {
+		ctrl.roleHealth[k] = &RoleHealth{RestartCount: 3}
+	}
+
+	ctrl.ClearRoleHealthForTeam("ws1", "teamA")
+
+	want := map[string]bool{
+		"ws1/teamAA/worker": true, // must survive — name has teamA as prefix but isn't teamA
+		"ws1/teamB/worker":  true,
+		"ws2/teamA/worker":  true,
+	}
+	for k, rh := range ctrl.roleHealth {
+		if !want[k] {
+			t.Errorf("ws1/teamA cleared but %q still present (count=%d)", k, rh.RestartCount)
+		}
+		delete(want, k)
+	}
+	for k := range want {
+		t.Errorf("expected %q to survive, but it was deleted", k)
+	}
+}
+
+// TestClearRoleHealthForWorkspace verifies workspace-level cascade
+// clears every team's roles under that workspace, and that another
+// workspace whose name shares a prefix (e.g., "ws1" vs "ws1-alt") is
+// not affected. See ArcavenAE/marvel#29.
+func TestClearRoleHealthForWorkspace(t *testing.T) {
+	t.Parallel()
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+
+	keys := []string{
+		"ws1/teamA/worker",
+		"ws1/teamA/reviewer",
+		"ws1/teamB/worker",
+		"ws1-alt/teamA/worker", // must survive
+		"ws2/teamA/worker",     // must survive
+	}
+	for _, k := range keys {
+		ctrl.roleHealth[k] = &RoleHealth{RestartCount: 5}
+	}
+
+	ctrl.ClearRoleHealthForWorkspace("ws1")
+
+	want := map[string]bool{
+		"ws1-alt/teamA/worker": true,
+		"ws2/teamA/worker":     true,
+	}
+	for k, rh := range ctrl.roleHealth {
+		if !want[k] {
+			t.Errorf("ws1 cleared but %q still present (count=%d)", k, rh.RestartCount)
+		}
+		delete(want, k)
+	}
+	for k := range want {
+		t.Errorf("expected %q to survive, but it was deleted", k)
+	}
+}
+
+// TestClearRoleHealthForTeamEmpty verifies the no-op case: clearing
+// a workspace/team that was never recorded leaves the map unchanged
+// and does not panic on an empty map.
+func TestClearRoleHealthForTeamEmpty(t *testing.T) {
+	t.Parallel()
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+
+	ctrl.ClearRoleHealthForTeam("never", "recorded")
+	if len(ctrl.roleHealth) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(ctrl.roleHealth))
+	}
+
+	ctrl.ClearRoleHealthForWorkspace("never")
+	if len(ctrl.roleHealth) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(ctrl.roleHealth))
+	}
+}
+
 func TestComputeBackoff(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

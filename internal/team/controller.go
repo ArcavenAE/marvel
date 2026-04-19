@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +110,41 @@ func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHeal
 		LastRestartAt: rh.LastRestartAt,
 		BackoffUntil:  rh.BackoffUntil,
 	}, true
+}
+
+// ClearRoleHealthForTeam deletes crash-loop state for every role under
+// the given (workspace, team). Called from the cascade delete path in
+// daemon.handleDelete so that a subsequent re-apply of the same manifest
+// starts with a fresh RestartCount and BackoffUntil — without this,
+// accumulated state survives workspace/team delete (the map is keyed
+// by name, which the operator is free to reuse) and the reconciler
+// refuses spawns until the prior generation's backoff window elapses.
+// If the prior generation hit MaxRestarts saturation, BackoffUntil
+// would be frozen far in the future and the role would never recover.
+// See ArcavenAE/marvel#29.
+func (c *Controller) ClearRoleHealthForTeam(workspace, team string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prefix := workspace + "/" + team + "/"
+	for k := range c.roleHealth {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.roleHealth, k)
+		}
+	}
+}
+
+// ClearRoleHealthForWorkspace deletes crash-loop state for every role
+// under every team in the given workspace. Called from the workspace-
+// delete cascade. See ClearRoleHealthForTeam for the rationale.
+func (c *Controller) ClearRoleHealthForWorkspace(workspace string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prefix := workspace + "/"
+	for k := range c.roleHealth {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.roleHealth, k)
+		}
+	}
 }
 
 // ReconcileOnce runs one reconciliation pass for all teams.
