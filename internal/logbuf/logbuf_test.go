@@ -89,10 +89,109 @@ func TestConcurrentWrites(t *testing.T) {
 }
 
 func TestWrite_LargeSinglePayload(t *testing.T) {
+	// Dedup collapses 100 identical "x" lines into 1 stored line plus
+	// an active run counter. Cap is irrelevant here — the win of dedup
+	// is precisely that an unbounded run consumes a single ring slot.
 	b := New(3)
 	big := strings.Repeat("x\n", 100)
 	_, _ = b.Write([]byte(big))
-	if got := b.Len(); got != 3 {
-		t.Errorf("ring cap violated: got %d, want 3", got)
+	if got := b.Len(); got != 1 {
+		t.Errorf("expected dedup to collapse 100 identical lines to 1 stored line, got %d", got)
+	}
+	tail := b.Tail(10)
+	if len(tail) != 2 || tail[0] != "x" || tail[1] != "last message repeated 99 times so far" {
+		t.Errorf("tail = %v, want [x, last message repeated 99 times so far]", tail)
+	}
+}
+
+// TestDedup_RunBrokenBySummary: when a different line arrives, the
+// prior run's summary is emitted before the new line. Cisco-style
+// "last message repeated N times" — N is the count of repeats after
+// the first occurrence.
+func TestDedup_RunBrokenBySummary(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte("A\nA\nA\nB\n"))
+	got := b.Tail(10)
+	want := []string{"A", "last message repeated 2 times", "B"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestDedup_NonAdjacentNotDeduped: previous-line-only matching means
+// A B A B doesn't collapse — each adjacent pair differs. Documented
+// design choice (see _kos/ideas/log-rrd-deduplication.md).
+func TestDedup_NonAdjacentNotDeduped(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte("A\nB\nA\nB\n"))
+	got := b.Tail(10)
+	want := []string{"A", "B", "A", "B"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestDedup_TailSynthesizesActiveSummary: when an operator queries
+// in the middle of an active run, Tail appends a "... so far"
+// summary so the run is visible without waiting for a different line.
+func TestDedup_TailSynthesizesActiveSummary(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte("A\nA\nA\nA\n"))
+	got := b.Tail(10)
+	want := []string{"A", "last message repeated 3 times so far"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// Tail must NOT mutate stored state — the synthesized line is
+	// query-time only.
+	if b.Len() != 1 {
+		t.Errorf("Tail should not store synthesized summary; Len = %d, want 1", b.Len())
+	}
+}
+
+// TestDedup_FlushEmitsSummary: Flush is the periodic cut for very
+// long runs. After Flush, the summary is in the ring and the run is
+// cleared so the next identical write starts a fresh run.
+func TestDedup_FlushEmitsSummary(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte("A\nA\nA\n"))
+	b.Flush()
+	got := b.Tail(10)
+	want := []string{"A", "last message repeated 2 times"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("after Flush: got %v, want %v", got, want)
+	}
+	// Subsequent identical write starts a fresh run, not continuing
+	// the cleared one.
+	_, _ = b.Write([]byte("A\n"))
+	got = b.Tail(10)
+	want = []string{"A", "last message repeated 2 times", "A"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("after Flush + new A: got %v, want %v", got, want)
+	}
+}
+
+// TestDedup_FlushIdempotent: a second Flush with no intervening
+// Write must not append a second summary.
+func TestDedup_FlushIdempotent(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte("A\nA\n"))
+	b.Flush()
+	before := b.Len()
+	b.Flush()
+	if b.Len() != before {
+		t.Errorf("Flush not idempotent: %d -> %d", before, b.Len())
+	}
+}
+
+// TestDedup_SingleOccurrenceNoSummary: a one-shot line followed by
+// a different one must NOT emit a "repeated 0 times" summary.
+func TestDedup_SingleOccurrenceNoSummary(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte("A\nB\n"))
+	got := b.Tail(10)
+	want := []string{"A", "B"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
