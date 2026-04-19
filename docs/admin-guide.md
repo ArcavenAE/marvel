@@ -345,7 +345,7 @@ session dev/squad-worker-g1-0 using forestage adapter    # adapter selection
 session dev/squad-worker-g1-0 running in pane %5         # session created
 health: session ... failed (restart_policy=always)       # health failure
 shift: initiated for dev/squad gen 1→2                   # shift started
-ssh: client connected: michael (SHA256:abc...)           # remote connection
+ssh: client connected: michael@10.0.0.42 (SHA256:abc...) # remote connection
 inject: dev/squad-worker-g1-0 <- 42 bytes                # executive injection
 ```
 

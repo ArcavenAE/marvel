@@ -106,7 +106,11 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 	if sshConn.Permissions != nil {
 		fp = sshConn.Permissions.Extensions["pubkey-fp"]
 	}
-	log.Printf("ssh: client connected: %s (%s)", sshConn.User(), fp)
+	host := conn.RemoteAddr().String()
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	log.Printf("ssh: client connected: %s@%s (%s)", sshConn.User(), host, fp)
 
 	// Discard global requests (keepalive, etc.)
 	go ssh.DiscardRequests(reqs)
