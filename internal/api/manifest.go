@@ -267,10 +267,15 @@ func (m *Manifest) Apply(store *Store) error {
 			Generation: 1,
 			CreatedAt:  now,
 		}
-		// Update roles if team already exists.
-		existing, err := store.GetTeam(team.Key())
-		if err == nil {
-			existing.Roles = roles
+		// Update roles if team already exists; route through the store
+		// lock so the mutation doesn't race concurrent readers.
+		if _, err := store.GetTeam(team.Key()); err == nil {
+			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
+				live.Roles = roles
+				return nil
+			}); err != nil {
+				return fmt.Errorf("apply team %s: %w", mt.Name, err)
+			}
 		} else {
 			if err := store.CreateTeam(team); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)

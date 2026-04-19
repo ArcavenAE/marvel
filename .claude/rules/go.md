@@ -92,6 +92,55 @@ time.Now().UTC()   // yes
 time.Now()         // no
 ```
 
+**12. Never return internal pointers from a locked accessor**
+
+If a type owns state behind a mutex, its `Get*`/`List*` methods return
+value copies (deep enough — clone nested slices/maps/pointers). Mutation
+goes through methods on that owning type; those methods take the lock
+and mutate in place. A returned `*T` into concurrently-mutated state is
+a bug — the lock protects the map, not the values.
+
+```go
+// WRONG — caller holds a pointer into the store's live object,
+// mutates it after the lock is dropped, other callers see torn writes
+func (s *Store) ListSessions() []*Session {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    out := make([]*Session, 0, len(s.sessions))
+    for _, sess := range s.sessions {
+        out = append(out, sess)   // leaks internal pointer
+    }
+    return out
+}
+
+// RIGHT — snapshots fully decoupled from internal state
+func (s *Store) ListSessions() []Session {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    out := make([]Session, 0, len(s.sessions))
+    for _, sess := range s.sessions {
+        out = append(out, cloneSession(sess))
+    }
+    return out
+}
+
+// RIGHT — mutation goes through the owner under the lock
+func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    sess, ok := s.sessions[key]
+    if !ok {
+        return fmt.Errorf("session %s: %w", key, ErrNotFound)
+    }
+    return fn(sess)
+}
+```
+
+The Kubernetes lister/informer pattern is the canonical example: cached
+reads give immutable snapshots, writes go through the API. `go test -race`
+is the backstop; the type signature is the fence. See orc
+finding-032-store-sync-contract-leak.
+
 ## Error handling
 
 - Every exported function that can fail returns `error` last

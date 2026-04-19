@@ -38,7 +38,7 @@ func setup(t *testing.T) (*api.Store, *session.Manager, *Controller, func()) {
 	return store, sessMgr, ctrl, cleanup
 }
 
-func createTeamFixture(t *testing.T, store *api.Store, wsName, teamName string, roles []api.Role) *api.Team {
+func createTeamFixture(t *testing.T, store *api.Store, wsName, teamName string, roles []api.Role) {
 	t.Helper()
 	ws := &api.Workspace{Name: wsName, CreatedAt: time.Now().UTC()}
 	if err := store.CreateWorkspace(ws); err != nil {
@@ -54,7 +54,6 @@ func createTeamFixture(t *testing.T, store *api.Store, wsName, teamName string, 
 	if err := store.CreateTeam(team); err != nil {
 		t.Fatal(err)
 	}
-	return team
 }
 
 func TestReconcileScaleUp(t *testing.T) {
@@ -94,7 +93,7 @@ func TestReconcileScaleDown(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 
-	team := createTeamFixture(t, store, "test-scaledown", "agents", []api.Role{
+	createTeamFixture(t, store, "test-scaledown", "agents", []api.Role{
 		{Name: "worker", Replicas: 3, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 	})
 
@@ -103,7 +102,12 @@ func TestReconcileScaleDown(t *testing.T) {
 		t.Fatal("expected 3 sessions after scale up")
 	}
 
-	team.Roles[0].Replicas = 1
+	if err := store.UpdateTeam("test-scaledown/agents", func(live *api.Team) error {
+		live.Roles[0].Replicas = 1
+		return nil
+	}); err != nil {
+		t.Fatalf("scale down: %v", err)
+	}
 	ctrl.ReconcileOnce()
 
 	sessions := store.ListSessionsByTeamRole("test-scaledown", "agents", "worker")
@@ -144,7 +148,7 @@ func TestReconcileMultipleRoles(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 
-	team := createTeamFixture(t, store, "test-multi", "squad", []api.Role{
+	createTeamFixture(t, store, "test-multi", "squad", []api.Role{
 		{Name: "supervisor", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 		{Name: "worker", Replicas: 3, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 	})
@@ -166,7 +170,12 @@ func TestReconcileMultipleRoles(t *testing.T) {
 		t.Fatalf("expected 4 total sessions, got %d", len(all))
 	}
 
-	team.Roles[1].Replicas = 1
+	if err := store.UpdateTeam("test-multi/squad", func(live *api.Team) error {
+		live.Roles[1].Replicas = 1
+		return nil
+	}); err != nil {
+		t.Fatalf("scale down worker: %v", err)
+	}
 	ctrl.ReconcileOnce()
 
 	workers = store.ListSessionsByTeamRole("test-multi", "squad", "worker")
@@ -187,9 +196,10 @@ func TestShiftFullLifecycle(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 
-	team := createTeamFixture(t, store, "test-shift", "squad", []api.Role{
+	createTeamFixture(t, store, "test-shift", "squad", []api.Role{
 		{Name: "worker", Replicas: 2, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 	})
+	teamKey := "test-shift/squad"
 
 	// Initial reconcile creates gen-1 sessions.
 	ctrl.ReconcileOnce()
@@ -199,10 +209,11 @@ func TestShiftFullLifecycle(t *testing.T) {
 	}
 
 	// Initiate shift.
-	if err := ctrl.InitiateShift("test-shift/squad", ""); err != nil {
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
 		t.Fatalf("initiate shift: %v", err)
 	}
 
+	team, _ := store.GetTeam(teamKey)
 	if team.Generation != 2 {
 		t.Fatalf("expected generation 2, got %d", team.Generation)
 	}
@@ -213,10 +224,12 @@ func TestShiftFullLifecycle(t *testing.T) {
 	// Run reconcile ticks until shift completes.
 	for i := 0; i < 20; i++ {
 		ctrl.ReconcileOnce()
+		team, _ = store.GetTeam(teamKey)
 		if team.Shift.Phase == api.ShiftNone {
 			break
 		}
 	}
+	team, _ = store.GetTeam(teamKey)
 	if team.Shift.Phase != api.ShiftNone {
 		t.Fatalf("shift didn't complete after 20 ticks, phase: %s", team.Shift.Phase)
 	}
@@ -250,18 +263,20 @@ func TestShiftMultipleRoles(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 
-	team := createTeamFixture(t, store, "test-shift-multi", "squad", []api.Role{
+	createTeamFixture(t, store, "test-shift-multi", "squad", []api.Role{
 		{Name: "supervisor", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 		{Name: "worker", Replicas: 2, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 	})
+	teamKey := "test-shift-multi/squad"
 
 	ctrl.ReconcileOnce()
 
 	// Initiate shift — supervisor should shift last.
-	if err := ctrl.InitiateShift("test-shift-multi/squad", ""); err != nil {
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
 		t.Fatalf("initiate shift: %v", err)
 	}
 
+	team, _ := store.GetTeam(teamKey)
 	if team.Shift.Roles[0] != "worker" {
 		t.Fatalf("expected worker to shift first, got %s", team.Shift.Roles[0])
 	}
@@ -272,11 +287,13 @@ func TestShiftMultipleRoles(t *testing.T) {
 	// Run reconcile ticks until shift completes.
 	for i := 0; i < 20; i++ {
 		ctrl.ReconcileOnce()
+		team, _ = store.GetTeam(teamKey)
 		if team.Shift.Phase == api.ShiftNone {
 			break
 		}
 	}
 
+	team, _ = store.GetTeam(teamKey)
 	if team.Shift.Phase != api.ShiftNone {
 		t.Fatalf("shift didn't complete after 20 ticks, phase: %s", team.Shift.Phase)
 	}
@@ -317,18 +334,20 @@ func TestShiftSingleRole(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 
-	team := createTeamFixture(t, store, "test-shift-single", "squad", []api.Role{
+	createTeamFixture(t, store, "test-shift-single", "squad", []api.Role{
 		{Name: "supervisor", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 		{Name: "worker", Replicas: 2, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
 	})
+	teamKey := "test-shift-single/squad"
 
 	ctrl.ReconcileOnce()
 
 	// Shift only workers.
-	if err := ctrl.InitiateShift("test-shift-single/squad", "worker"); err != nil {
+	if err := ctrl.InitiateShift(teamKey, "worker"); err != nil {
 		t.Fatalf("initiate shift: %v", err)
 	}
 
+	team, _ := store.GetTeam(teamKey)
 	if len(team.Shift.Roles) != 1 {
 		t.Fatalf("expected 1 role in shift, got %d", len(team.Shift.Roles))
 	}
@@ -336,11 +355,13 @@ func TestShiftSingleRole(t *testing.T) {
 	// Run ticks until complete.
 	for i := 0; i < 20; i++ {
 		ctrl.ReconcileOnce()
+		team, _ = store.GetTeam(teamKey)
 		if team.Shift.Phase == api.ShiftNone {
 			break
 		}
 	}
 
+	team, _ = store.GetTeam(teamKey)
 	if team.Shift.Phase != api.ShiftNone {
 		t.Fatalf("shift didn't complete")
 	}
@@ -380,9 +401,15 @@ func TestHealthEvalHeartbeatHealthy(t *testing.T) {
 		t.Fatalf("expected 1 session, got %d", len(sessions))
 	}
 
-	// Simulate a fresh heartbeat.
+	// Simulate a fresh heartbeat (commit through the store so the
+	// controller sees the updated value on the next tick).
 	sess := sessions[0]
-	sess.LastHeartbeat = time.Now().UTC()
+	if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC()
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
 
 	ctrl.ReconcileOnce()
 
@@ -418,13 +445,18 @@ func TestHealthEvalHeartbeatStale(t *testing.T) {
 
 	// Set a stale heartbeat (well past timeout).
 	sess := sessions[0]
-	sess.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
 
 	// First eval: failure count 1 (below threshold of 2).
 	ctrl.ReconcileOnce()
-	sess, _ = store.GetSession(sess.Key())
-	if sess == nil {
-		t.Fatal("session should still exist (restart_policy=never)")
+	sess, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("session should still exist (restart_policy=never): %v", err)
 	}
 	if sess.FailureCount != 1 {
 		t.Fatalf("expected 1 failure after first eval, got %d", sess.FailureCount)
@@ -432,9 +464,9 @@ func TestHealthEvalHeartbeatStale(t *testing.T) {
 
 	// Second eval: failure count 2 (meets threshold).
 	ctrl.ReconcileOnce()
-	sess, _ = store.GetSession(sess.Key())
-	if sess == nil {
-		t.Fatal("session should still exist (restart_policy=never)")
+	sess, err = store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("session should still exist (restart_policy=never): %v", err)
 	}
 	if sess.State != api.SessionFailed {
 		t.Fatalf("expected failed state with restart_policy=never, got %s", sess.State)
@@ -465,8 +497,8 @@ func TestHealthEvalNoConfig(t *testing.T) {
 	ctrl.ReconcileOnce()
 	ctrl.ReconcileOnce()
 
-	sess, _ := store.GetSession(sessions[0].Key())
-	if sess == nil {
+	sess, err := store.GetSession(sessions[0].Key())
+	if err != nil {
 		t.Fatal("session should still exist (no healthcheck)")
 	}
 	if sess.HealthState != api.HealthUnknown {
@@ -504,7 +536,12 @@ func TestHealthRestartAlways(t *testing.T) {
 	origCreatedAt := sessions[0].CreatedAt
 
 	// Set stale heartbeat.
-	sessions[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	if err := store.UpdateSession(sessions[0].Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
 
 	// Tick 1: unhealthy → first restart is immediate (count goes 0→1),
 	// session is deleted, but reconciler holds off on recreating because
@@ -553,7 +590,13 @@ func TestHealthRestartBackoffHoldsReplacement(t *testing.T) {
 	})
 
 	ctrl.ReconcileOnce()
-	store.ListSessionsByTeamRole("test-health-hold", "squad", "worker")[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	staleKey := store.ListSessionsByTeamRole("test-health-hold", "squad", "worker")[0].Key()
+	if err := store.UpdateSession(staleKey, func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
 	ctrl.ReconcileOnce() // first restart triggered + session deleted
 
 	// Several reconciler ticks while still inside backoff: actual=0,
@@ -604,7 +647,12 @@ func TestHealthRestartBackoffSiblingMarked(t *testing.T) {
 	}
 
 	// Fail worker-0 → triggers first restart for the role.
-	workers[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	if err := store.UpdateSession(workers[0].Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
 	ctrl.ReconcileOnce()
 
 	// Now fail worker-1 while still inside the backoff window.
@@ -613,7 +661,12 @@ func TestHealthRestartBackoffSiblingMarked(t *testing.T) {
 	if len(workers) != 1 {
 		t.Fatalf("expected 1 surviving worker during backoff, got %d", len(workers))
 	}
-	workers[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+	if err := store.UpdateSession(workers[0].Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
 	ctrl.ReconcileOnce()
 
 	// Sibling must be alive, marked CrashLoopBackOff, and the role
@@ -659,7 +712,12 @@ func TestHealthRestartMaxReached(t *testing.T) {
 		if len(got) == 0 {
 			t.Fatalf("iteration %d: expected a running session", i)
 		}
-		got[0].LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		if err := store.UpdateSession(got[0].Key(), func(live *api.Session) error {
+			live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+			return nil
+		}); err != nil {
+			t.Fatalf("iteration %d: update heartbeat: %v", i, err)
+		}
 		ctrl.ReconcileOnce() // fail + (maybe) restart
 		clock.Advance(10 * time.Minute)
 	}

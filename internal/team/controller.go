@@ -130,8 +130,8 @@ func (c *Controller) ReconcileOnce() {
 	c.evaluateHealth()
 
 	teams := c.store.ListTeams()
-	for _, t := range teams {
-		c.reconcileTeam(t)
+	for i := range teams {
+		c.reconcileTeam(&teams[i])
 	}
 }
 
@@ -263,12 +263,18 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 
 // evaluateHealth checks heartbeat staleness for all sessions and applies
 // restart policies when failure thresholds are exceeded.
+//
+// Per orc finding-032, all mutation to session health state is routed
+// through the Store via UpdateSession. The closure body holds the write
+// lock, so the mutation is atomic relative to daemon reads and other
+// writers. The outer loop works off value snapshots — safe to iterate
+// while the closure mutates the live copy.
 func (c *Controller) evaluateHealth() {
 	now := time.Now().UTC()
 	sessions := c.store.ListSessions()
 
-	// Build a lookup cache: workspace/team → team (avoid repeated store access).
-	teamCache := make(map[string]*api.Team)
+	// Build a lookup cache: workspace/team → team (value snapshot).
+	teamCache := make(map[string]api.Team)
 	for _, t := range c.store.ListTeams() {
 		teamCache[t.Key()] = t
 	}
@@ -291,52 +297,78 @@ func (c *Controller) evaluateHealth() {
 				break
 			}
 		}
-		if role == nil || role.HealthCheck == nil {
-			sess.HealthState = api.HealthUnknown
-			continue
-		}
 
-		if role.HealthCheck.Type != api.HealthCheckHeartbeat {
-			// process-alive is handled by ReapDead. If we're here, the pane exists.
-			sess.HealthState = api.HealthHealthy
-			sess.FailureCount = 0
-			continue
-		}
+		var (
+			transitionedToUnhealthy bool
+			shouldApplyRestart      bool
+		)
+		var updated api.Session
 
-		// Heartbeat staleness check.
-		sess.LastHealthCheck = now
-
-		if sess.LastHeartbeat.IsZero() {
-			// Grace period: allow timeout from creation for first heartbeat.
-			if now.Sub(sess.CreatedAt) < role.HealthCheck.Timeout {
-				sess.HealthState = api.HealthUnknown
-				continue
+		err := c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			if role == nil || role.HealthCheck == nil {
+				live.HealthState = api.HealthUnknown
+				updated = *live
+				return nil
 			}
-			sess.FailureCount++
-		} else if now.Sub(sess.LastHeartbeat) > role.HealthCheck.Timeout {
-			sess.FailureCount++
-		} else {
-			sess.FailureCount = 0
-			sess.HealthState = api.HealthHealthy
+			if role.HealthCheck.Type != api.HealthCheckHeartbeat {
+				// process-alive is handled by ReapDead. Pane exists → healthy.
+				live.HealthState = api.HealthHealthy
+				live.FailureCount = 0
+				updated = *live
+				return nil
+			}
+
+			// Heartbeat staleness check.
+			live.LastHealthCheck = now
+
+			if live.LastHeartbeat.IsZero() {
+				// Grace period: allow timeout from creation for first heartbeat.
+				if now.Sub(live.CreatedAt) < role.HealthCheck.Timeout {
+					live.HealthState = api.HealthUnknown
+					updated = *live
+					return nil
+				}
+				live.FailureCount++
+			} else if now.Sub(live.LastHeartbeat) > role.HealthCheck.Timeout {
+				live.FailureCount++
+			} else {
+				live.FailureCount = 0
+				live.HealthState = api.HealthHealthy
+				updated = *live
+				return nil
+			}
+
+			if live.FailureCount >= role.HealthCheck.FailureThreshold {
+				if live.HealthState != api.HealthUnhealthy {
+					transitionedToUnhealthy = true
+				}
+				live.HealthState = api.HealthUnhealthy
+				shouldApplyRestart = true
+			} else {
+				live.HealthState = api.HealthUnhealthy
+			}
+			updated = *live
+			return nil
+		})
+		if err != nil {
+			// Session disappeared between snapshot and update — fine,
+			// another tick will handle whatever's next.
 			continue
 		}
 
-		if sess.FailureCount >= role.HealthCheck.FailureThreshold {
-			if sess.HealthState != api.HealthUnhealthy {
-				events.Emit(c.Events, events.Event{
-					Kind:      events.KindHealthCheckFailed,
-					Severity:  events.SeverityWarning,
-					Workspace: sess.Workspace,
-					Team:      sess.Team,
-					Role:      sess.Role,
-					Session:   sess.Key(),
-					Message:   fmt.Sprintf("heartbeat stale %d/%d failures", sess.FailureCount, role.HealthCheck.FailureThreshold),
-				})
-			}
-			sess.HealthState = api.HealthUnhealthy
-			c.applyRestartPolicy(sess, t, role)
-		} else {
-			sess.HealthState = api.HealthUnhealthy
+		if transitionedToUnhealthy {
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindHealthCheckFailed,
+				Severity:  events.SeverityWarning,
+				Workspace: updated.Workspace,
+				Team:      updated.Team,
+				Role:      updated.Role,
+				Session:   updated.Key(),
+				Message:   fmt.Sprintf("heartbeat stale %d/%d failures", updated.FailureCount, role.HealthCheck.FailureThreshold),
+			})
+		}
+		if shouldApplyRestart {
+			c.applyRestartPolicy(&updated, &t, role)
 		}
 	}
 }
@@ -344,6 +376,10 @@ func (c *Controller) evaluateHealth() {
 func (c *Controller) applyRestartPolicy(sess *api.Session, t *api.Team, role *api.Role) {
 	switch role.RestartPolicy {
 	case api.RestartNever:
+		_ = c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			live.State = api.SessionFailed
+			return nil
+		})
 		sess.State = api.SessionFailed
 		log.Printf("health: session %s failed (restart_policy=never, failures=%d)",
 			sess.Key(), sess.FailureCount)
@@ -351,6 +387,10 @@ func (c *Controller) applyRestartPolicy(sess *api.Session, t *api.Team, role *ap
 		if sess.State == api.SessionFailed {
 			c.restartSession(sess, t, role)
 		} else {
+			_ = c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+				live.State = api.SessionFailed
+				return nil
+			})
 			sess.State = api.SessionFailed
 		}
 	default: // RestartAlways
@@ -393,6 +433,10 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 				Message:   fmt.Sprintf("cooling down, backoff until %s", rh.BackoffUntil.Format(time.RFC3339)),
 			})
 		}
+		_ = c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			live.State = api.SessionCrashLoopBackOff
+			return nil
+		})
 		sess.State = api.SessionCrashLoopBackOff
 		return
 	}
@@ -415,6 +459,10 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 				Message:   fmt.Sprintf("max_restarts=%d reached", role.MaxRestarts),
 			})
 		}
+		_ = c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			live.State = api.SessionFailed
+			return nil
+		})
 		sess.State = api.SessionFailed
 		return
 	}
@@ -429,6 +477,11 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 		Role:      role.Name,
 		Session:   sess.Key(),
 		Message:   fmt.Sprintf("restart #%d, next backoff %s", rh.RestartCount, time.Until(rh.BackoffUntil)),
+	})
+	_ = c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.RestartCount++
+		live.State = api.SessionFailed
+		return nil
 	})
 	sess.RestartCount++
 	sess.State = api.SessionFailed
@@ -474,21 +527,32 @@ func (c *Controller) InitiateShift(teamKey, role string) error {
 	}
 
 	oldGen := t.Generation
-	t.Generation++
-	t.Shift = api.ShiftState{
-		Phase:         api.ShiftLaunching,
-		OldGeneration: oldGen,
-		RoleIndex:     0,
-		Roles:         roles,
-		StartedAt:     time.Now().UTC(),
+	newGen := oldGen + 1
+	if err := c.store.UpdateTeam(teamKey, func(live *api.Team) error {
+		// Re-check inside the lock — another caller could have started
+		// a shift between our snapshot and this mutation.
+		if live.Shift.Phase != api.ShiftNone {
+			return fmt.Errorf("team %s: shift already in progress (phase: %s)", teamKey, live.Shift.Phase)
+		}
+		live.Generation = newGen
+		live.Shift = api.ShiftState{
+			Phase:         api.ShiftLaunching,
+			OldGeneration: oldGen,
+			RoleIndex:     0,
+			Roles:         roles,
+			StartedAt:     time.Now().UTC(),
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	log.Printf("shift: initiated for %s gen %d→%d roles=%v", teamKey, oldGen, t.Generation, roles)
+	log.Printf("shift: initiated for %s gen %d→%d roles=%v", teamKey, oldGen, newGen, roles)
 	events.Emit(c.Events, events.Event{
 		Kind:      events.KindShiftStarted,
 		Workspace: t.Workspace,
 		Team:      t.Name,
-		Message:   fmt.Sprintf("gen %d→%d roles=%v", oldGen, t.Generation, roles),
+		Message:   fmt.Sprintf("gen %d→%d roles=%v", oldGen, newGen, roles),
 	})
 	return nil
 }
@@ -521,6 +585,10 @@ func (c *Controller) reconcileShift(t *api.Team) {
 			Team:      t.Name,
 			Message:   fmt.Sprintf("gen %d active", t.Generation),
 		})
+		_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+			live.Shift = api.ShiftState{}
+			return nil
+		})
 		t.Shift = api.ShiftState{}
 		return
 	}
@@ -544,6 +612,10 @@ func (c *Controller) reconcileShift(t *api.Team) {
 	}
 	if role == nil {
 		log.Printf("shift: role %s not found in team %s, skipping", shiftingRoleName, t.Key())
+		_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+			live.Shift.RoleIndex++
+			return nil
+		})
 		t.Shift.RoleIndex++
 		return
 	}
@@ -585,6 +657,10 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 		if c.allReady(newGen, role) {
 			log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
 				t.Workspace, t.Name, role.Name, len(newGen), t.Shift.OldGeneration)
+			_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+				live.Shift.Phase = api.ShiftDraining
+				return nil
+			})
 			t.Shift.Phase = api.ShiftDraining
 		} else {
 			log.Printf("shift: %s/%s role %s — %d sessions launched, waiting for readiness",
@@ -596,7 +672,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 // allReady returns true if all sessions are ready to take over.
 // For roles without a healthcheck, pane existence (Running state) is sufficient.
 // For heartbeat-based checks, at least one heartbeat must have been received.
-func (c *Controller) allReady(sessions []*api.Session, role *api.Role) bool {
+func (c *Controller) allReady(sessions []api.Session, role *api.Role) bool {
 	if role.HealthCheck == nil {
 		// No healthcheck — running state is sufficient.
 		for _, s := range sessions {
@@ -623,6 +699,13 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 	if len(oldGen) == 0 {
 		// All old-gen drained for this role — advance to next role.
 		log.Printf("shift: %s/%s role %s — old gen drained", t.Workspace, t.Name, role.Name)
+		_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+			live.Shift.RoleIndex++
+			if live.Shift.RoleIndex < len(live.Shift.Roles) {
+				live.Shift.Phase = api.ShiftLaunching
+			}
+			return nil
+		})
 		t.Shift.RoleIndex++
 		if t.Shift.RoleIndex < len(t.Shift.Roles) {
 			t.Shift.Phase = api.ShiftLaunching
