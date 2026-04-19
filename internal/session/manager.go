@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/runtime"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
@@ -19,6 +20,11 @@ type Manager struct {
 	driver     *tmux.Driver
 	adapters   *runtime.Registry
 	SocketPath string
+	// Events receives structured state-transition events. Nil is safe
+	// (all emission sites use events.Emit which no-ops on nil) so tests
+	// and callers that don't care about the event stream don't need to
+	// wire a ring.
+	Events events.Emitter
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
@@ -102,6 +108,14 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.PaneID = paneID
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
+	events.Emit(m.Events, events.Event{
+		Kind:      events.KindSessionCreated,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Key(),
+		Message:   fmt.Sprintf("pane %s", paneID),
+	})
 	return nil
 }
 
@@ -183,6 +197,14 @@ func (m *Manager) Delete(key string) error {
 	}
 
 	log.Printf("session %s deleted", key)
+	events.Emit(m.Events, events.Event{
+		Kind:      events.KindSessionDeleted,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Key(),
+		Message:   "session deleted",
+	})
 	return nil
 }
 
@@ -224,6 +246,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 		}
 		if !m.driver.HasPane(sess.PaneID) {
 			log.Printf("session %s: pane %s gone, marking crashed", sess.Key(), sess.PaneID)
+			lostPane := sess.PaneID
 			m.clearStaleCrashed(sessions, sess.Workspace, sess.Team, sess.Role, sess.Key())
 			sess.State = api.SessionCrashed
 			sess.PaneID = ""
@@ -232,6 +255,15 @@ func (m *Manager) ReapDead() []ReapedSession {
 				Workspace: sess.Workspace,
 				Team:      sess.Team,
 				Role:      sess.Role,
+			})
+			events.Emit(m.Events, events.Event{
+				Kind:      events.KindSessionCrashed,
+				Severity:  events.SeverityWarning,
+				Workspace: sess.Workspace,
+				Team:      sess.Team,
+				Role:      sess.Role,
+				Session:   sess.Key(),
+				Message:   fmt.Sprintf("pane %s gone", lostPane),
 			})
 		}
 	}

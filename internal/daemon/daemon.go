@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/paths"
@@ -93,6 +94,10 @@ type Daemon struct {
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
+
+	// In-memory ring of structured state-transition events.
+	// Always non-nil.
+	events *events.Ring
 }
 
 // Options configures optional daemon behavior. Zero value disables
@@ -106,6 +111,10 @@ type Options struct {
 	// tees its log stream through. When nil, New allocates one at
 	// DefaultLogBufferLines. Tests may pre-allocate to inspect.
 	LogBuffer *logbuf.Buffer
+	// Events, when non-nil, is the structured event ring. When nil,
+	// New allocates one at events.DefaultCapacity. Tests may pre-
+	// allocate to inspect emitted events.
+	Events *events.Ring
 }
 
 // New creates a new daemon with default options.
@@ -129,6 +138,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		buf = logbuf.New(DefaultLogBufferLines)
 	}
 
+	evRing := opts.Events
+	if evRing == nil {
+		evRing = events.NewRing(events.DefaultCapacity)
+	}
+	sessMgr.Events = evRing
+	teamCtrl.Events = evRing
+
 	return &Daemon{
 		store:    store,
 		sessMgr:  sessMgr,
@@ -136,6 +152,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		driver:   driver,
 		pidFile:  opts.PidFile,
 		logs:     buf,
+		events:   evRing,
 	}, nil
 }
 
@@ -356,6 +373,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleStop()
 	case "logs":
 		return d.handleLogs(req.Params)
+	case "events":
+		return d.handleEvents(req.Params)
 	default:
 		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -384,6 +403,44 @@ func (d *Daemon) handleLogs(params json.RawMessage) Response {
 	data, err := json.Marshal(logsResult{Lines: lines})
 	if err != nil {
 		return Response{Error: fmt.Sprintf("marshal logs: %v", err)}
+	}
+	return Response{Result: data}
+}
+
+// Events params — filtered tail of the daemon's structured event ring.
+type eventsParams struct {
+	N           int    `json:"n"` // number of events; <=0 returns the whole ring
+	Workspace   string `json:"workspace,omitempty"`
+	Team        string `json:"team,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Session     string `json:"session,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	MinSeverity string `json:"min_severity,omitempty"` // "" or "warning"
+}
+
+type eventsResult struct {
+	Events []events.Event `json:"events"`
+}
+
+func (d *Daemon) handleEvents(params json.RawMessage) Response {
+	var p eventsParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
+	f := events.Filter{
+		Workspace:   p.Workspace,
+		Team:        p.Team,
+		Role:        p.Role,
+		Session:     p.Session,
+		Kind:        events.Kind(p.Kind),
+		MinSeverity: events.Severity(p.MinSeverity),
+	}
+	snap := d.events.Snapshot(f, p.N)
+	data, err := json.Marshal(eventsResult{Events: snap})
+	if err != nil {
+		return Response{Error: fmt.Sprintf("marshal events: %v", err)}
 	}
 	return Response{Result: data}
 }

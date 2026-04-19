@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
 )
 
@@ -20,7 +21,9 @@ type Controller struct {
 	store      *api.Store
 	sessMgr    *session.Manager
 	SocketPath string
-	mu         sync.Mutex
+	// Events receives structured state-transition events. Nil is safe.
+	Events events.Emitter
+	mu     sync.Mutex
 
 	// roleHealth tracks per-role crash-loop state: restart count and
 	// next-allowed-restart deadline. Keyed by workspace/team/role so
@@ -319,6 +322,17 @@ func (c *Controller) evaluateHealth() {
 		}
 
 		if sess.FailureCount >= role.HealthCheck.FailureThreshold {
+			if sess.HealthState != api.HealthUnhealthy {
+				events.Emit(c.Events, events.Event{
+					Kind:      events.KindHealthCheckFailed,
+					Severity:  events.SeverityWarning,
+					Workspace: sess.Workspace,
+					Team:      sess.Team,
+					Role:      sess.Role,
+					Session:   sess.Key(),
+					Message:   fmt.Sprintf("heartbeat stale %d/%d failures", sess.FailureCount, role.HealthCheck.FailureThreshold),
+				})
+			}
 			sess.HealthState = api.HealthUnhealthy
 			c.applyRestartPolicy(sess, t, role)
 		} else {
@@ -368,6 +382,17 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 	// Checked before saturation so we don't clobber a CrashLoopBackOff
 	// marker with Failed on the tick that hits MaxRestarts.
 	if now.Before(rh.BackoffUntil) {
+		if sess.State != api.SessionCrashLoopBackOff {
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindCrashLoopBackoff,
+				Severity:  events.SeverityWarning,
+				Workspace: t.Workspace,
+				Team:      t.Name,
+				Role:      role.Name,
+				Session:   sess.Key(),
+				Message:   fmt.Sprintf("cooling down, backoff until %s", rh.BackoffUntil.Format(time.RFC3339)),
+			})
+		}
 		sess.State = api.SessionCrashLoopBackOff
 		return
 	}
@@ -380,6 +405,15 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 		if sess.State != api.SessionFailed {
 			log.Printf("health: session %s: role %s hit max_restarts=%d, not restarting",
 				sess.Key(), roleKey, role.MaxRestarts)
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindRoleSaturated,
+				Severity:  events.SeverityWarning,
+				Workspace: t.Workspace,
+				Team:      t.Name,
+				Role:      role.Name,
+				Session:   sess.Key(),
+				Message:   fmt.Sprintf("max_restarts=%d reached", role.MaxRestarts),
+			})
 		}
 		sess.State = api.SessionFailed
 		return
@@ -387,6 +421,15 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 
 	log.Printf("health: restarting session %s (role %s restart #%d, next backoff=%s)",
 		sess.Key(), roleKey, rh.RestartCount, time.Until(rh.BackoffUntil))
+	events.Emit(c.Events, events.Event{
+		Kind:      events.KindSessionRestarted,
+		Severity:  events.SeverityWarning,
+		Workspace: t.Workspace,
+		Team:      t.Name,
+		Role:      role.Name,
+		Session:   sess.Key(),
+		Message:   fmt.Sprintf("restart #%d, next backoff %s", rh.RestartCount, time.Until(rh.BackoffUntil)),
+	})
 	sess.RestartCount++
 	sess.State = api.SessionFailed
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {
@@ -441,6 +484,12 @@ func (c *Controller) InitiateShift(teamKey, role string) error {
 	}
 
 	log.Printf("shift: initiated for %s gen %d→%d roles=%v", teamKey, oldGen, t.Generation, roles)
+	events.Emit(c.Events, events.Event{
+		Kind:      events.KindShiftStarted,
+		Workspace: t.Workspace,
+		Team:      t.Name,
+		Message:   fmt.Sprintf("gen %d→%d roles=%v", oldGen, t.Generation, roles),
+	})
 	return nil
 }
 
@@ -466,6 +515,12 @@ func (c *Controller) reconcileShift(t *api.Team) {
 	if t.Shift.RoleIndex >= len(t.Shift.Roles) {
 		// All roles shifted — complete.
 		log.Printf("shift: complete for %s/%s", t.Workspace, t.Name)
+		events.Emit(c.Events, events.Event{
+			Kind:      events.KindShiftCompleted,
+			Workspace: t.Workspace,
+			Team:      t.Name,
+			Message:   fmt.Sprintf("gen %d active", t.Generation),
+		})
 		t.Shift = api.ShiftState{}
 		return
 	}
