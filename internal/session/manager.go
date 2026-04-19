@@ -105,6 +105,17 @@ func (m *Manager) Create(sess *api.Session) error {
 		return fmt.Errorf("create pane for %s: %w", sess.Key(), err)
 	}
 
+	// Commit PaneID + State=Running to the live session under the store
+	// lock. Also update the caller's *api.Session so returning pointers
+	// stay consistent for any downstream emission/logging that references
+	// fields on sess. Per orc finding-032, the Store is the sync boundary.
+	if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.PaneID = paneID
+		live.State = api.SessionRunning
+		return nil
+	}); err != nil {
+		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
+	}
 	sess.PaneID = paneID
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
@@ -122,7 +133,10 @@ func (m *Manager) Create(sess *api.Session) error {
 // resolveRuntime uses the adapter registry when team/role context is available,
 // falling back to direct command construction for ad-hoc sessions.
 func (m *Manager) resolveRuntime(sess *api.Session) (string, map[string]string) {
-	// Look up team and role for full adapter context.
+	// Look up team and role for full adapter context. Store returns
+	// snapshots — taking addresses of these locals is safe because the
+	// adapter is read-only and the LaunchContext doesn't outlive this
+	// function.
 	team, teamErr := m.store.GetTeam(fmt.Sprintf("%s/%s", sess.Workspace, sess.Team))
 	if teamErr != nil {
 		// Ad-hoc session or team not found — use direct command.
@@ -149,8 +163,8 @@ func (m *Manager) resolveRuntime(sess *api.Session) (string, map[string]string) 
 	result, err := adapter.Prepare(&runtime.LaunchContext{
 		Session:    sess,
 		Role:       role,
-		Team:       team,
-		Workspace:  ws,
+		Team:       &team,
+		Workspace:  &ws,
 		SocketPath: m.SocketPath,
 	})
 	if err != nil {
@@ -248,8 +262,14 @@ func (m *Manager) ReapDead() []ReapedSession {
 			log.Printf("session %s: pane %s gone, marking crashed", sess.Key(), sess.PaneID)
 			lostPane := sess.PaneID
 			m.clearStaleCrashed(sessions, sess.Workspace, sess.Team, sess.Role, sess.Key())
-			sess.State = api.SessionCrashed
-			sess.PaneID = ""
+			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+				live.State = api.SessionCrashed
+				live.PaneID = ""
+				return nil
+			}); err != nil {
+				log.Printf("warning: mark crashed %s: %v", sess.Key(), err)
+				continue
+			}
 			reaped = append(reaped, ReapedSession{
 				Key:       sess.Key(),
 				Workspace: sess.Workspace,
@@ -274,7 +294,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 // excluding the session about to be marked Crashed. Caps the store at
 // one Crashed marker per role so the reap path can't accumulate ghosts
 // across a saturated role's many crashes.
-func (m *Manager) clearStaleCrashed(snapshot []*api.Session, workspace, team, role, exceptKey string) {
+func (m *Manager) clearStaleCrashed(snapshot []api.Session, workspace, team, role, exceptKey string) {
 	for _, other := range snapshot {
 		if other.State != api.SessionCrashed {
 			continue

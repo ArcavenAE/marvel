@@ -639,13 +639,22 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("role is required; available roles: %v", names)}
 	}
 
-	found := false
-	for i := range t.Roles {
-		if t.Roles[i].Name == p.Role {
-			t.Roles[i].Replicas = p.Replicas
-			found = true
-			break
+	// Commit the replica change to the live team under the store lock.
+	// Pre-fix, this mutated a pointer returned by GetTeam — which used
+	// to alias store state. Now GetTeam returns a snapshot, so scaling
+	// must go through UpdateTeam. See orc finding-032.
+	var found bool
+	if err := d.store.UpdateTeam(p.TeamKey, func(live *api.Team) error {
+		for i := range live.Roles {
+			if live.Roles[i].Name == p.Role {
+				live.Roles[i].Replicas = p.Replicas
+				found = true
+				return nil
+			}
 		}
+		return nil
+	}); err != nil {
+		return Response{Error: err.Error()}
 	}
 	if !found {
 		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
