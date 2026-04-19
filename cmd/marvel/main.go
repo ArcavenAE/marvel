@@ -22,6 +22,7 @@ import (
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/rlog"
 	"github.com/arcavenae/marvel/internal/upgrade"
 	"github.com/spf13/cobra"
 )
@@ -122,6 +123,9 @@ func daemonCmd() *cobra.Command {
 	var listenSocket string
 	var logFilePath string
 	var pidFilePath string
+	var logMaxSizeMiB int
+	var logMaxFiles int
+	var logMaxTotalMiB int
 
 	layout, _ := paths.Default()
 	defaultLog := ""
@@ -173,14 +177,14 @@ Examples:
 			}
 			var logCloser io.Closer
 			if logFilePath != "" {
-				closer, err := openLogFile(logFilePath)
+				closer, err := openRotatingLog(logFilePath, logMaxSizeMiB, logMaxFiles, logMaxTotalMiB)
 				if err != nil {
 					return err
 				}
 				logCloser = closer
 				defer func() { _ = logCloser.Close() }()
-				if f, ok := closer.(io.Writer); ok {
-					writers = append(writers, f)
+				if w, ok := closer.(io.Writer); ok {
+					writers = append(writers, w)
 				}
 			}
 			log.SetOutput(io.MultiWriter(writers...))
@@ -222,6 +226,15 @@ Examples:
 		"tee daemon stderr to this file (empty string disables)")
 	cmd.Flags().StringVar(&pidFilePath, "pidfile", defaultPid,
 		"write pid to this file on start, remove on stop (empty string disables)")
+	// Log rotation / retention — bounds disk usage for --log-file.
+	// Motivated by desk Pi headroom (aae-orc-k0t, Skippy session-025/026).
+	// Zero for any of these disables the corresponding limit.
+	cmd.Flags().IntVar(&logMaxSizeMiB, "log-max-size", 10,
+		"rotate --log-file when it exceeds this size in MiB (0 disables rotation)")
+	cmd.Flags().IntVar(&logMaxFiles, "log-max-files", 5,
+		"keep at most N gzipped archives of --log-file (0 keeps all)")
+	cmd.Flags().IntVar(&logMaxTotalMiB, "log-max-total", 0,
+		"cap total disk usage across --log-file and archives in MiB (0 disables)")
 
 	cmd.AddCommand(daemonLogsCmd())
 	return cmd
@@ -270,12 +283,15 @@ Examples:
 	return cmd
 }
 
-// openLogFile opens (appending) a log file at the given path. The
-// caller is responsible for wiring it into log.SetOutput — this
-// function only handles directory creation and permission enforcement
-// so the log-file setup stays composable with the ring buffer / stderr
-// tee decision in daemonCmd's RunE.
-func openLogFile(path string) (io.Closer, error) {
+// openRotatingLog opens the daemon's on-disk log file with the rlog
+// rotating writer. The three size/count ceilings are all opt-out (zero
+// means "no limit") so existing `marvel daemon --log-file X` invocations
+// keep the default raspi-friendly caps: 10 MiB per file, 5 archives.
+//
+// The caller is responsible for wiring the returned WriteCloser into
+// log.SetOutput — this helper only handles directory creation,
+// permission enforcement, and Options construction.
+func openRotatingLog(path string, maxSizeMiB, maxFiles, maxTotalMiB int) (io.Closer, error) {
 	layout, _ := paths.Default()
 	if path == layout.DaemonLog() {
 		if err := layout.EnsureLogDir(); err != nil {
@@ -286,13 +302,16 @@ func openLogFile(path string) (io.Closer, error) {
 			return nil, fmt.Errorf("create log dir: %w", err)
 		}
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.ModeAuthorized)
+	w, err := rlog.Open(path, rlog.Options{
+		MaxFileBytes:  int64(maxSizeMiB) * 1024 * 1024,
+		MaxFiles:      maxFiles,
+		MaxTotalBytes: int64(maxTotalMiB) * 1024 * 1024,
+		Mode:          paths.ModeAuthorized,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("open log file %s: %w", path, err)
+		return nil, fmt.Errorf("open rotating log %s: %w", path, err)
 	}
-	// Enforce the mode in case the file pre-existed with different perms.
-	_ = os.Chmod(path, paths.ModeAuthorized)
-	return f, nil
+	return w, nil
 }
 
 func workCmd() *cobra.Command {
