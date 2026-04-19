@@ -20,6 +20,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/rlog"
@@ -112,6 +113,7 @@ func main() {
 	root.AddCommand(keysCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(stopCmd())
+	root.AddCommand(eventsCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -280,6 +282,98 @@ Examples:
 		},
 	}
 	cmd.Flags().IntVarP(&n, "lines", "n", 100, "number of recent lines to return (0 = all buffered)")
+	return cmd
+}
+
+// eventsCmd prints the daemon's structured event ring — the
+// marvel-native equivalent of `kubectl get events`. Complements
+// `marvel daemon logs` (raw stderr stream) with queryable,
+// severity-tagged history scoped to workspaces, teams, roles, and
+// sessions.
+func eventsCmd() *cobra.Command {
+	var n int
+	var workspace, team, role, session, kind string
+	var warningsOnly bool
+	cmd := &cobra.Command{
+		Use:   "events",
+		Short: "List recent session/team state-transition events",
+		Long: `Fetch the daemon's structured event ring and print matching events.
+
+Events are emitted from session.Manager (session created, deleted,
+crashed) and team.Controller (restart, crashloop-backoff, saturation,
+shift started/completed, health failed). Each event has a timestamp,
+kind, severity (info or warning), and session coordinates.
+
+Examples:
+  marvel events                              # last 100 events
+  marvel events -n 500                       # last 500 events
+  marvel events --workspace demo             # filter by workspace
+  marvel events --session util/shell-g1-0    # filter by session key
+  marvel events --kind session.crashed       # only crashes
+  marvel events --warnings                   # only warning-severity events
+  marvel --cluster desk events               # remote daemon via mrvl://`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := map[string]any{"n": n}
+			if workspace != "" {
+				params["workspace"] = workspace
+			}
+			if team != "" {
+				params["team"] = team
+			}
+			if role != "" {
+				params["role"] = role
+			}
+			if session != "" {
+				params["session"] = session
+			}
+			if kind != "" {
+				params["kind"] = kind
+			}
+			if warningsOnly {
+				params["min_severity"] = "warning"
+			}
+			raw, _ := json.Marshal(params)
+			resp, err := send(daemon.Request{Method: "events", Params: raw})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var result struct {
+				Events []events.Event `json:"events"`
+			}
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				return fmt.Errorf("parse events: %w", err)
+			}
+			if len(result.Events) == 0 {
+				fmt.Println("no events")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(tw, "TIME\tSEV\tKIND\tSESSION\tMESSAGE")
+			for _, ev := range result.Events {
+				sev := string(ev.Severity)
+				if sev == "" {
+					sev = "info"
+				}
+				sessRef := ev.Session
+				if sessRef == "" && ev.Team != "" {
+					sessRef = ev.Workspace + "/" + ev.Team
+				}
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+					ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, ev.Message)
+			}
+			return tw.Flush()
+		},
+	}
+	cmd.Flags().IntVarP(&n, "lines", "n", 100, "number of events to return (0 = all buffered)")
+	cmd.Flags().StringVar(&workspace, "workspace", "", "filter by workspace")
+	cmd.Flags().StringVar(&team, "team", "", "filter by team")
+	cmd.Flags().StringVar(&role, "role", "", "filter by role")
+	cmd.Flags().StringVar(&session, "session", "", "filter by session key (workspace/name)")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed)")
+	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "show only warning-severity events")
 	return cmd
 }
 
