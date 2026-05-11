@@ -44,7 +44,7 @@ jobs:
         run: go vet ./...
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        uses: step-security/golangci-lint-action@1797facf9ea427614d729a4e9cab0fae1a7852d9 # v9.2.0
         with:
           version: v2.10.1
 
