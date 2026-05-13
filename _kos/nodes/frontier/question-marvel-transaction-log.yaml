@@ -1,0 +1,100 @@
+id: question-marvel-transaction-log
+type: question
+confidence: frontier
+title: "Transaction log — durable record of intent for restart survival"
+content: |
+  Marvel today has no durable record of intent (manifest desired-state,
+  shift generation, role health counters, heartbeat history). On daemon
+  restart the only surviving state is what tmux happens to carry (panes
+  + their PIDs + pane titles). The clean-slate strategy `Manager.CleanupOrphanTmux`
+  (session/manager.go:49, called from daemon.go:201) actively destroys
+  every `marvel-*` tmux session on startup because reconstructing intent
+  from observed pane state is impossible without a record of what
+  marvel meant to be running.
+
+  Contract C12 in finding-048 is the central fragility this question
+  addresses: the daemon-restart strategy is "kill, not adopt" — by
+  design, in response to the absence of a durable record. The user's
+  named Mr-Right-Now pain (self-update without trauma to running
+  agents — FM3 in finding-048) is architecturally impossible until
+  this question gets an answer.
+
+  Question shape:
+
+  - What state needs to be durable to allow reconcile-to-intent on
+    restart? At minimum: workspace+team+role+session manifest (what
+    marvel intended), session→pane bindings (what marvel actually
+    created), shift generation tracking (what shift state was active),
+    role health counters (so backoff state survives restart). Outside
+    minimum: heartbeat history (probably ephemeral), capture-pane
+    scrollback (definitely ephemeral).
+
+  - What's the store shape? Three candidates per the kubernetes reading
+    guide (session-050, .reference/enhancements/keps/sig-api-machinery/
+    1904-efficient-watch-resumption/):
+    1. **Transaction log with version vector** (kubernetes apiserver
+       pattern over etcd). Every state change appended with a
+       monotonic version. Restart replays from a known checkpoint,
+       reconciles against tmux observed state.
+    2. **Snapshot + delta** (simpler). Periodic full snapshot, append
+       deltas between. Less elegant on resume but simpler to implement.
+    3. **Flat file per resource** (filesystem as DB). One YAML per
+       team/role/session. Diffable in git. Slower on write, easier to
+       inspect.
+
+  - Where does it live? `~/.marvel/state/` (consistent with B13 layout)?
+    Embedded in process memory with WAL on disk? An external store
+    (sqlite, bbolt)?
+
+  - How does reconcile-to-intent change? `Manager.CleanupOrphanTmux`
+    flips from "kill all" to "adopt those that match recorded intent,
+    kill those that don't." `Manager.ReapDead` continues unchanged
+    (pane gone = crashed, regardless of intent). A new pass:
+    "AdoptPanes" — for each recorded session with a known PaneID,
+    verify the pane still exists and the title still matches; if so,
+    rebind. If not, mark crashed and let reconciler respawn.
+
+  - What's the version-token analog? Kubernetes resourceVersion is a
+    monotonic per-object version that survives apiserver restart.
+    Marvel could do this per workspace, per team, or per session.
+    Granularity affects watch-resumption ergonomics for any future
+    cooperative agents that watch their own state.
+
+  - Multi-host implications: a transaction log on one host doesn't
+    automatically replicate. F5 (multi-host) reopens as "how does the
+    transaction log replicate across hosts" — etcd raft is the
+    kubernetes answer; the shim architecture doc sketches it but
+    defers. This question scopes to single-host; multi-host is a
+    follow-on.
+
+  Likely answer (hypothesis from finding-048): Option 1 (transaction
+  log) with bbolt as the store, version-per-resource granularity,
+  WAL semantics. Reasoning: bbolt is pure Go + zero CGo (consistent
+  with marvel's deps); the WAL pattern is the smallest expansion of
+  marvel's existing in-memory store; aligns with the shim architecture
+  doc's local-state design (`_kos/ideas/marvel-shim-architecture.md`
+  "Local state (bbolt)") so future shim work, if it happens, doesn't
+  collide.
+
+  Needs a probe: a 1–2-day spike that adds a bbolt transaction log
+  behind the existing api.Store, exercises the WAL pattern, and
+  switches CleanupOrphanTmux from kill-all to adopt-or-kill based on
+  recorded intent. The probe's success criterion is: kill -9 the
+  daemon, restart, observe that running panes are adopted (not killed)
+  if they match recorded sessions.
+
+edges:
+  - target: question-persistence
+    type: refines
+    note: "F2 — broad 'what state survives' question; this is the specific shape"
+  - target: question-runtime-adapter
+    type: relates
+    note: "Adapter env-construction is part of recorded intent (manifest); restart-time the adapter doesn't re-run, only the spawn does"
+  - target: aae-orc::question-stream-attachment
+    type: relates
+    note: "Stream attachment binding (per-runtime) is part of recorded intent — knowing which stream strategy was used for which session"
+provenance:
+  created_by: agent
+  session: session-050
+  created_at: "2026-05-13"
+  via_finding: finding-048-marvel-tmux-contracts

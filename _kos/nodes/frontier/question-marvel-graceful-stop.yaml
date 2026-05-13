@@ -1,0 +1,96 @@
+id: question-marvel-graceful-stop
+type: question
+confidence: frontier
+title: "Graceful daemon-stop — drain sequence, not destroy"
+content: |
+  `marvel stop` today is functionally identical to `kill -9` from an
+  agent's perspective: `Manager.Delete` calls `Driver.KillPane` (which
+  is SIGHUP-immediate via tmux), `CleanupWorkspace` calls `KillSession`
+  (same). No grace period, no preStop hook equivalent, no priority-based
+  drain order. Failure mode FM2 in finding-048 — known-broken for the
+  "hand off" use case.
+
+  Distinct from `question-marvel-transaction-log`: even with a perfect
+  durable record of intent, the *sequence* of shutdown is a separate
+  design surface. The transaction log answers "what survives the
+  daemon's death." Graceful stop answers "what does the daemon do
+  *before* it dies."
+
+  Kubernetes prior art (session-050 reading guide):
+
+  - **KEP-2000** (graceful-node-shutdown): kubelet integrates with
+    systemd via dbus inhibitor lock. On `PrepareForShutdown` signal:
+    (a) announce non-readiness (no new pods scheduled here); (b) phase
+    1: SIGTERM to non-critical pods with respect for `preStop` hook
+    and `terminationGracePeriodSeconds`; (c) phase 2: SIGTERM to
+    critical pods with remaining grace; (d) SIGKILL on grace expiry.
+
+  - **KEP-2712** (pod-priority-based-graceful-shutdown): the order in
+    (b)/(c) is by pod priority class, not hardcoded identity. Allows
+    fine-grained control beyond "critical/non-critical."
+
+  Marvel translation (preserving the kubernetes shape):
+
+  - Marvel receives SIGTERM (operator `marvel stop`, systemd stop,
+    OS shutdown via launchd-style signal).
+  - Marvel marks each team as "draining" — reconciler stops scheduling
+    new sessions for it.
+  - Marvel sorts roles by a priority field on Role (new field needed,
+    or use existing `MaxRestarts` inversely? — design question).
+  - For each role in priority order:
+    a. Send each session in the role a graceful-shutdown signal. For
+       forestage, this is via the cooperative socket (MARVEL_SOCKET).
+       For claude/generic, this is SIGTERM via send-keys, or via
+       `kill -TERM <pid>` (tmux exposes pid via list-panes #{pane_pid}).
+    b. Wait up to N seconds (per-role `graceful_period_seconds`,
+       new field, default e.g. 10s) for the session to exit cleanly
+       (HasPane returns false).
+    c. If grace expires, SIGKILL via kill-pane.
+  - When all roles drained, marvel exits.
+
+  Open sub-questions:
+
+  - **Priority semantics:** what does marvel's priority order MEAN
+    for agent teams? Supervisor-last is the obvious case from existing
+    shift mechanics (charter B6 — "Roles shift sequentially, supervisor
+    last"). Is graceful-stop the same order? Or inverted?
+  - **preStop hook equivalent for forestage:** is the cooperative
+    socket sufficient? Should marvel define a wire-level "drain"
+    message in director's protocol (orc F1) before this lands?
+  - **terminationGracePeriodSeconds default:** what's the right value?
+    Kubernetes default is 30s. For interactive agents that may be
+    writing to disk, longer? For ephemeral one-shot agents, shorter?
+  - **Hard-stop variant:** retain `marvel stop --immediate` for the
+    "I really mean it" case. (Avoids the failure mode where graceful
+    stop hangs because an agent ignores the drain signal.)
+  - **Self-update + graceful stop:** is self-update a graceful-stop
+    plus `syscall.Exec` plus reconcile-on-startup-from-intent? Or
+    does self-update bypass graceful drain (agents are NOT torn down;
+    only the daemon is exec'd in place)? Each has different
+    requirements. Recommend: self-update should preserve agents
+    (zero drain), graceful stop should drain them. Different verbs,
+    different sequences.
+  - **What if the daemon SIGKILLs during graceful stop?** Same as FM1
+    — the transaction log (other frontier question) is the safety
+    net.
+
+  Needs a probe: design the graceful-stop sequence on paper first
+  (small markdown spec referencing KEPs 2000 + 2712), then a Go
+  integration test that asserts the sequence happens in the right
+  order. Implementation can follow once the design has been reviewed.
+
+edges:
+  - target: question-marvel-transaction-log
+    type: relates
+    note: "Transaction log answers 'what survives'; this answers 'what does the daemon do before dying'"
+  - target: question-shift-triggers
+    type: relates
+    note: "F7 — shift mechanics share some sequence shape (priority, sequential per role)"
+  - target: aae-orc::question-director-design
+    type: relates
+    note: "preStop hook for forestage may need a director-protocol message; cooperative-socket vs new message"
+provenance:
+  created_by: agent
+  session: session-050
+  created_at: "2026-05-13"
+  via_finding: finding-048-marvel-tmux-contracts
