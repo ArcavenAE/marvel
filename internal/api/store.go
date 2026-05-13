@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 // ErrNotFound is returned when a resource is not found in the store.
@@ -24,6 +26,12 @@ type Store struct {
 	sessions   map[string]*Session
 	teams      map[string]*Team
 	endpoints  map[string]*Endpoint
+
+	// bolt is the optional L2 persistence backend. Nil means in-memory
+	// only (default for tests + the legacy daemon path). Populated by
+	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
+	bolt     *bolt.DB
+	boltPath string
 }
 
 // NewStore creates an empty in-memory store.
@@ -85,7 +93,9 @@ func cloneTeam(t *Team) Team {
 // Workspace operations
 
 // CreateWorkspace clones the input into the store. The caller's pointer
-// is not aliased with store state.
+// is not aliased with store state. When bolt is open, persistence is
+// written before the in-memory map is updated — if the disk write fails,
+// in-memory state is unchanged.
 func (s *Store) CreateWorkspace(w *Workspace) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,6 +103,9 @@ func (s *Store) CreateWorkspace(w *Workspace) error {
 		return fmt.Errorf("workspace %s: %w", w.Key(), ErrAlreadyExists)
 	}
 	c := *w
+	if err := s.persistPut(bucketWorkspaces, c.Key(), c); err != nil {
+		return err
+	}
 	s.workspaces[w.Key()] = &c
 	return nil
 }
@@ -125,6 +138,9 @@ func (s *Store) DeleteWorkspace(name string) error {
 	if _, ok := s.workspaces[name]; !ok {
 		return fmt.Errorf("workspace %s: %w", name, ErrNotFound)
 	}
+	if err := s.persistDelete(bucketWorkspaces, name); err != nil {
+		return err
+	}
 	delete(s.workspaces, name)
 	return nil
 }
@@ -141,6 +157,9 @@ func (s *Store) CreateSession(sess *Session) error {
 		return fmt.Errorf("session %s: %w", sess.Key(), ErrAlreadyExists)
 	}
 	c := cloneSession(sess)
+	if err := s.persistPut(bucketSessions, c.Key(), c); err != nil {
+		return err
+	}
 	s.sessions[sess.Key()] = &c
 	return nil
 }
@@ -213,6 +232,9 @@ func (s *Store) DeleteSession(key string) error {
 	if _, ok := s.sessions[key]; !ok {
 		return fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
+	if err := s.persistDelete(bucketSessions, key); err != nil {
+		return err
+	}
 	delete(s.sessions, key)
 	return nil
 }
@@ -222,6 +244,12 @@ func (s *Store) DeleteSession(key string) error {
 // stash it. Returning an error from fn aborts the update (no state is
 // rolled back; the caller is responsible for not making partial writes
 // that don't make sense together).
+//
+// When bolt is open, persistence happens after fn returns successfully.
+// If persist fails the in-memory state is already updated — the post-fn
+// pre-persist window is a known spike limitation (see orc question-
+// marvel-transaction-log). The reconciler's next successful update
+// will re-converge state.
 func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -229,7 +257,10 @@ func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
 	if !ok {
 		return fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
-	return fn(sess)
+	if err := fn(sess); err != nil {
+		return err
+	}
+	return s.persistPut(bucketSessions, sess.Key(), sess)
 }
 
 // Team operations
@@ -243,6 +274,9 @@ func (s *Store) CreateTeam(t *Team) error {
 		return fmt.Errorf("team %s: %w", t.Key(), ErrAlreadyExists)
 	}
 	c := cloneTeam(t)
+	if err := s.persistPut(bucketTeams, c.Key(), c); err != nil {
+		return err
+	}
 	s.teams[t.Key()] = &c
 	return nil
 }
@@ -275,12 +309,16 @@ func (s *Store) DeleteTeam(key string) error {
 	if _, ok := s.teams[key]; !ok {
 		return fmt.Errorf("team %s: %w", key, ErrNotFound)
 	}
+	if err := s.persistDelete(bucketTeams, key); err != nil {
+		return err
+	}
 	delete(s.teams, key)
 	return nil
 }
 
 // UpdateTeam applies fn to the live team under the write lock. Same
-// pointer-lifetime rules as UpdateSession.
+// pointer-lifetime rules as UpdateSession. Persist semantics match
+// UpdateSession — see that comment for the post-fn pre-persist window.
 func (s *Store) UpdateTeam(key string, fn func(*Team) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -288,7 +326,10 @@ func (s *Store) UpdateTeam(key string, fn func(*Team) error) error {
 	if !ok {
 		return fmt.Errorf("team %s: %w", key, ErrNotFound)
 	}
-	return fn(t)
+	if err := fn(t); err != nil {
+		return err
+	}
+	return s.persistPut(bucketTeams, t.Key(), t)
 }
 
 // Endpoint operations
@@ -301,6 +342,9 @@ func (s *Store) CreateEndpoint(e *Endpoint) error {
 		return fmt.Errorf("endpoint %s: %w", e.Key(), ErrAlreadyExists)
 	}
 	c := *e
+	if err := s.persistPut(bucketEndpoints, c.Key(), c); err != nil {
+		return err
+	}
 	s.endpoints[e.Key()] = &c
 	return nil
 }
@@ -333,6 +377,9 @@ func (s *Store) DeleteEndpoint(key string) error {
 	if _, ok := s.endpoints[key]; !ok {
 		return fmt.Errorf("endpoint %s: %w", key, ErrNotFound)
 	}
+	if err := s.persistDelete(bucketEndpoints, key); err != nil {
+		return err
+	}
 	delete(s.endpoints, key)
 	return nil
 }
@@ -340,6 +387,15 @@ func (s *Store) DeleteEndpoint(key string) error {
 // UpdateSessionHeartbeat updates a session's context pressure and
 // heartbeat timestamp. Kept as a convenience helper; equivalent to
 // UpdateSession with the corresponding closure.
+//
+// Note: heartbeat fields are classified ephemeral in finding-050's
+// data-model walk — they're persisted alongside the rest of the
+// session record on each heartbeat, but treated as may-be-stale on
+// rehydrate. The next heartbeat after restart refreshes them. The
+// frequency of heartbeat writes (one per heartbeat per session) is the
+// dominant write rate for marvel's bbolt usage; if it surfaces as a
+// performance issue, batch by waiting N heartbeats before persisting
+// (or move heartbeat state into a separate in-memory-only path).
 func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -349,5 +405,5 @@ func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error
 	}
 	sess.ContextPercent = contextPercent
 	sess.LastHeartbeat = time.Now().UTC()
-	return nil
+	return s.persistPut(bucketSessions, sess.Key(), sess)
 }
