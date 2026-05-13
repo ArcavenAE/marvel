@@ -128,13 +128,16 @@ func daemonCmd() *cobra.Command {
 	var logMaxSizeMiB int
 	var logMaxFiles int
 	var logMaxTotalMiB int
+	var stateBoltPath string
 
 	layout, _ := paths.Default()
 	defaultLog := ""
 	defaultPid := ""
+	defaultBolt := ""
 	if layout.Home != "" {
 		defaultLog = layout.DaemonLog()
 		defaultPid = layout.DaemonPid()
+		defaultBolt = layout.DaemonBolt()
 	}
 
 	cmd := &cobra.Command{
@@ -148,15 +151,25 @@ Examples:
   marvel daemon --mrvl                       # + mrvl:// on port 6785
   marvel daemon --mrvl=:7000                 # + mrvl:// on custom port
   marvel daemon --socket /var/marvel.sock    # custom socket path
-  marvel daemon --log-file= --pidfile=       # disable log tee and pidfile`,
+  marvel daemon --log-file= --pidfile=       # disable log tee and pidfile
+  marvel daemon --state-bolt=                # disable L2 persistence (in-memory only; daemon restart kills agents)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sock := listenSocket
 			if sock == "" {
 				sock = config.DefaultSocket
 			}
 
+			// Ensure ~/.marvel/state/ exists before OpenBolt would try
+			// to write to it. bbolt requires the parent directory.
+			if stateBoltPath != "" && layout.Home != "" {
+				if err := layout.EnsureStateDir(); err != nil {
+					return err
+				}
+			}
+
 			d, err := daemon.NewWithOptions(daemon.Options{
-				PidFile: pidFilePath,
+				PidFile:   pidFilePath,
+				StateBolt: stateBoltPath,
 			})
 			if err != nil {
 				return err
@@ -228,6 +241,8 @@ Examples:
 		"tee daemon stderr to this file (empty string disables)")
 	cmd.Flags().StringVar(&pidFilePath, "pidfile", defaultPid,
 		"write pid to this file on start, remove on stop (empty string disables)")
+	cmd.Flags().StringVar(&stateBoltPath, "state-bolt", defaultBolt,
+		"bbolt L2 file for durable state (empty string disables persistence; daemon restart loses state and kills running agents per pre-L2 contract C12)")
 	// Log rotation / retention — bounds disk usage for --log-file.
 	// Motivated by desk Pi headroom (aae-orc-k0t, Skippy session-025/026).
 	// Zero for any of these disables the corresponding limit.

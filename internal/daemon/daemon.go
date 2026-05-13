@@ -115,6 +115,14 @@ type Options struct {
 	// New allocates one at events.DefaultCapacity. Tests may pre-
 	// allocate to inspect emitted events.
 	Events *events.Ring
+	// StateBolt, when non-empty, is the path to the bbolt L2 file the
+	// daemon uses for durable state. NewWithOptions calls Store.OpenBolt
+	// at this path, rehydrating any existing records into memory. Empty
+	// disables persistence (in-memory only) — daemon restart loses
+	// state and AdoptOrKill degenerates to kill-all. The CLI defaults
+	// this to layout.DaemonBolt() (~/.marvel/state/marvel.bolt).
+	// See orc finding-050 / aae-orc-k4e4.
+	StateBolt string
 }
 
 // New creates a new daemon with default options.
@@ -130,6 +138,12 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	store := api.NewStore()
+	if opts.StateBolt != "" {
+		if oerr := store.OpenBolt(opts.StateBolt); oerr != nil {
+			return nil, fmt.Errorf("open state bolt at %s: %w", opts.StateBolt, oerr)
+		}
+		log.Printf("daemon state file: %s (resource_version=%d)", opts.StateBolt, store.ResourceVersion())
+	}
 	sessMgr := session.NewManager(store, driver)
 	teamCtrl := team.NewController(store, sessMgr)
 
@@ -194,12 +208,14 @@ func (d *Daemon) Start(socketPath string) error {
 		}
 	}
 
-	// Reclaim the marvel-* tmux namespace before anything else creates
-	// panes: a previous daemon instance may have left sessions (and their
-	// forestage/claude processes) running. Our fresh in-memory state
-	// knows nothing about them. See ArcavenAE/marvel#13.
-	if err := d.sessMgr.CleanupOrphanTmux(); err != nil {
-		log.Printf("cleanup orphan tmux on startup: %v", err)
+	// Reconcile marvel-* tmux state against recorded intent. With L2
+	// (bbolt) in use, panes that match the rehydrated intent are
+	// adopted (kept alive). Without L2 the store is empty and this
+	// degenerates to kill-all — the pre-Session-2 behavior of
+	// ArcavenAE/marvel#13's CleanupOrphanTmux fix. See orc finding-050
+	// (Session 2 of aae-orc-k4e4) for the architectural pivot.
+	if _, _, err := d.sessMgr.AdoptOrKill(); err != nil {
+		log.Printf("AdoptOrKill on startup: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -276,6 +292,13 @@ func (d *Daemon) Stop() {
 		if err := d.sessMgr.CleanupWorkspace(ws.Name); err != nil {
 			log.Printf("cleanup workspace %s: %v", ws.Name, err)
 		}
+	}
+
+	// Close the L2 bolt store (no-op if not opened). The workspace
+	// cleanup above already deleted every workspace + session from
+	// the bolt file; this just flushes and releases the file handle.
+	if err := d.store.CloseBolt(); err != nil {
+		log.Printf("close bolt: %v", err)
 	}
 
 	// Only remove socket file for Unix sockets.

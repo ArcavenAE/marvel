@@ -92,6 +92,13 @@ func (l Layout) LogDir() string { return filepath.Join(l.Home, "log") }
 // RunDir returns the daemon's runtime-state directory (pid file, etc.).
 func (l Layout) RunDir() string { return filepath.Join(l.Home, "run") }
 
+// StateDir returns the daemon's durable-state directory. Hosts the
+// bbolt-backed L2 WAL added in aae-orc-k4e4 (orc finding-050).
+func (l Layout) StateDir() string { return filepath.Join(l.Home, "state") }
+
+// DaemonBolt returns the canonical path for the daemon's bbolt L2 file.
+func (l Layout) DaemonBolt() string { return filepath.Join(l.StateDir(), "marvel.bolt") }
+
 // DaemonLog returns the canonical path for the daemon's stderr-tee log.
 func (l Layout) DaemonLog() string { return filepath.Join(l.LogDir(), "daemon.log") }
 
@@ -138,6 +145,14 @@ func (l Layout) EnsureRunDir() error {
 		return err
 	}
 	return ensurePrivateDir(l.RunDir())
+}
+
+// EnsureStateDir creates ~/.marvel/state/ if it does not exist, with mode 0700.
+func (l Layout) EnsureStateDir() error {
+	if err := l.EnsureHome(); err != nil {
+		return err
+	}
+	return ensurePrivateDir(l.StateDir())
 }
 
 // ensurePrivateDir creates dir at ModeDir (0700) if missing. If it

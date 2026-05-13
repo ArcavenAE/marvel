@@ -42,37 +42,100 @@ func tmuxSessionName(workspace string) string {
 	return marvelSessionPrefix + workspace
 }
 
-// CleanupOrphanTmux kills every tmux session whose name starts with the
-// marvel- prefix. Called at daemon startup so a fresh in-memory state
-// doesn't coexist with panes and processes from a previous daemon instance.
-// See ArcavenAE/marvel#13.
-func (m *Manager) CleanupOrphanTmux() error {
-	return m.cleanupOrphanTmuxPrefix(marvelSessionPrefix)
+// AdoptOrKill reconciles marvel-* tmux state against the recorded
+// intent in the store. Called at daemon startup. For each marvel-*
+// tmux session:
+//
+//   - If the workspace is NOT in the store, the whole tmux session is
+//     killed (the pre-L2 clean-slate behavior for unrecorded workspaces).
+//   - If the workspace IS in the store, panes are examined individually:
+//     panes whose PaneID matches a recorded session are adopted (left
+//     alive, no change to the recorded session). Panes that don't match
+//     are killed.
+//
+// When the store has no records (in-memory-only mode, no OpenBolt
+// call), no workspaces are recorded, so AdoptOrKill degenerates to
+// kill-all — preserving the pre-L2 contract C12 behavior for the
+// no-persistence path. This is the safety net: marvel still works
+// without bolt, with the same restart semantics it had before
+// Session 2 of aae-orc-k4e4 landed.
+//
+// The architectural pivot from finding-048 lands here: with L2 in
+// use, recorded intent survives daemon restart and AdoptOrKill
+// reconciles to it instead of destroying it.
+//
+// Returns counts of adopted and killed entities (sessions or panes)
+// for observability. Logs at info on activity, errors per-entity
+// without aborting the pass.
+//
+// See orc finding-050 (this session) and aae-orc-72u (the empirical
+// orphan-pane bug that motivated the original kill-all behavior).
+func (m *Manager) AdoptOrKill() (adopted, killed int, err error) {
+	return m.adoptOrKillPrefix(marvelSessionPrefix)
 }
 
-// cleanupOrphanTmuxPrefix is the prefix-parameterized core of
-// CleanupOrphanTmux. Tests use a unique prefix so they don't collide
-// with other tmux-using tests running in parallel packages.
-func (m *Manager) cleanupOrphanTmuxPrefix(prefix string) error {
+// adoptOrKillPrefix is the prefix-parameterized core of AdoptOrKill.
+// Tests use a unique prefix so they don't collide with other tmux-using
+// tests running in parallel packages.
+func (m *Manager) adoptOrKillPrefix(prefix string) (adopted, killed int, err error) {
 	names, err := m.driver.ListSessions()
 	if err != nil {
-		return fmt.Errorf("list tmux sessions: %w", err)
+		return 0, 0, fmt.Errorf("list tmux sessions: %w", err)
 	}
-	var killed int
+
+	// Index recorded sessions by PaneID for O(1) lookup. Sessions whose
+	// PaneID is empty (Pending, Crashed, or Failed) cannot be adopted
+	// — there's nothing to match against — so they're skipped here.
+	recordedByPane := make(map[string]string)
+	for _, sess := range m.store.ListSessions() {
+		if sess.PaneID != "" {
+			recordedByPane[sess.PaneID] = sess.Key()
+		}
+	}
+
 	for _, name := range names {
 		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		if err := m.driver.KillSession(name); err != nil {
-			log.Printf("cleanup orphan tmux %s: %v", name, err)
+		workspace := strings.TrimPrefix(name, prefix)
+
+		// Workspace not recorded → kill the whole tmux session.
+		// Matches pre-L2 behavior for sessions marvel doesn't claim.
+		if _, gerr := m.store.GetWorkspace(workspace); gerr != nil {
+			if kerr := m.driver.KillSession(name); kerr != nil {
+				log.Printf("AdoptOrKill: kill unrecorded session %s: %v", name, kerr)
+				continue
+			}
+			killed++
+			log.Printf("AdoptOrKill: killed unrecorded workspace tmux session %s", name)
 			continue
 		}
-		killed++
+
+		// Workspace recorded → check each pane against recorded intent.
+		panes, lerr := m.driver.ListPanes(name)
+		if lerr != nil {
+			log.Printf("AdoptOrKill: list panes %s: %v", name, lerr)
+			continue
+		}
+		for _, p := range panes {
+			if sessKey, ok := recordedByPane[p.ID]; ok {
+				adopted++
+				log.Printf("AdoptOrKill: adopted pane %s (session %s)", p.ID, sessKey)
+			} else {
+				if kerr := m.driver.KillPane(p.ID); kerr != nil {
+					log.Printf("AdoptOrKill: kill unrecorded pane %s: %v", p.ID, kerr)
+					continue
+				}
+				killed++
+				log.Printf("AdoptOrKill: killed unrecorded pane %s in workspace %s", p.ID, workspace)
+			}
+		}
 	}
-	if killed > 0 {
-		log.Printf("cleanup: killed %d orphan tmux session(s) from previous daemon", killed)
+
+	if adopted > 0 || killed > 0 {
+		log.Printf("AdoptOrKill: %d adopted, %d killed", adopted, killed)
 	}
-	return nil
+	return adopted, killed, nil
 }
 
 // Create creates a new session: registers it in the store, ensures the tmux

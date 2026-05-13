@@ -118,7 +118,7 @@ func TestCleanupWorkspace(t *testing.T) {
 	}
 }
 
-func TestCleanupOrphanTmux(t *testing.T) {
+func TestAdoptOrKill_PrefixOnly(t *testing.T) {
 	skipIfNoTmux(t)
 
 	driver, err := tmux.NewDriver()
@@ -144,14 +144,17 @@ func TestCleanupOrphanTmux(t *testing.T) {
 		}
 	})
 
+	// Empty store + AdoptOrKill = kill-all under the prefix (the
+	// degenerate-mode safety net from finding-050 / aae-orc-k4e4
+	// Session 2). Outsider sessions are untouched.
 	mgr := NewManager(api.NewStore(), driver)
-	if err := mgr.cleanupOrphanTmuxPrefix(prefix); err != nil {
-		t.Fatalf("cleanup orphan tmux: %v", err)
+	if _, _, err := mgr.adoptOrKillPrefix(prefix); err != nil {
+		t.Fatalf("adoptOrKillPrefix: %v", err)
 	}
 
 	for _, name := range orphans {
 		if driver.HasSession(name) {
-			t.Fatalf("orphan %s should have been killed", name)
+			t.Fatalf("prefixed session %s should have been killed (no recorded workspace)", name)
 		}
 	}
 	if !driver.HasSession(outsider) {
