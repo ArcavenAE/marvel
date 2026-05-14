@@ -1,0 +1,46 @@
+id: elem-mrvl-protocol-ssh
+type: element
+confidence: bedrock
+title: "mrvl:// protocol and embedded SSH server — daemon's own SSH, no system sshd dependency"
+content: |
+  The daemon runs its own SSH server for remote access via the
+  `mrvl://` protocol. Default port 6785 (`MRVL` on phone keypad).
+  Generates an ed25519 host key on first run, authenticates clients
+  against `~/.marvel/authorized_keys`. No dependency on system sshd.
+
+  **Two SSH modes:**
+  - `mrvl://host` — direct to daemon, primary
+  - `ssh://host/path` — tunnel through sshd, fallback
+
+  **Dedicated client keys (session-025):** `marvel keys generate`
+  creates `~/.marvel/keys/client_ed25519` with OpenSSH-style permissions
+  (0600/0644 — refuses to use keys with weaker modes). Cluster config
+  gains an `identity` field; `marvel config add-cluster mrvl://host`
+  auto-attaches the default client key. `--identity` CLI flag
+  overrides per invocation.
+
+  **Host key TOFU (session-025):** client records daemon host keys in
+  `~/.marvel/known_hosts`. First-connect behavior is mode-driven —
+  prompt on TTY, refuse off-TTY with pointer to `marvel keys trust`,
+  silent record under `TrustUnknownHost`. Mismatches always refused
+  with both fingerprints in the error.
+
+  **Key management commands (session-025):**
+  - Client-side: `keys generate|show|list|doctor`
+  - Daemon-side + interactive: `keys authorize|authorized|revoke|host-fingerprint|trust`
+  - `doctor [--fix]` audits every file under `~/.marvel/` against
+    OpenSSH-style expected modes
+
+  Evidence: session-017, session-025, finding-021.
+edges:
+  - target: elem-cluster-configuration
+    type: related
+  - target: elem-data-directory-permissions
+    type: depends-on
+provenance:
+  created_by: human
+  session: session-017
+  created_at: "2026-04-13"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md B10 prose

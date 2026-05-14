@@ -1,0 +1,45 @@
+id: elem-data-directory-permissions
+type: element
+confidence: bedrock
+title: "~/.marvel/ data directory with OpenSSH-style permission enforcement"
+content: |
+  Canonical on-disk layout rooted at `~/.marvel/` (0700):
+
+  | Path | Mode | What |
+  |---|---|---|
+  | `config.yaml` | 0600 | Cluster config (see `elem-cluster-configuration`) |
+  | `authorized_keys` | 0600 | SSH-server authorized client keys |
+  | `ssh_host_ed25519_key` | 0600/0644 | Daemon's SSH host key |
+  | `known_hosts` | 0644 | Client TOFU records |
+  | `keys/` | 0700 | Client key dir |
+  | `keys/client_ed25519` | 0600/0644 | Default client key |
+  | `log/` | 0700 | Log dir |
+  | `log/daemon.log` | 0600 | Daemon log |
+  | `run/` | 0700 | Runtime dir |
+  | `run/daemon.pid` | 0644 | Pid file |
+
+  The `internal/paths` package owns the layout. `EnsureHome` /
+  `EnsureKeysDir` / `EnsureLogDir` / `EnsureRunDir` create dirs at
+  0700. `Audit` / `Repair` enforce modes. `VerifyPrivateKeyMode`
+  refuses to load a private key with weaker perms.
+
+  **Daemon CLI (session-025):**
+  - `--log-file PATH` tees stderr to a file (only when stderr is not
+    a TTY, to avoid double-writes under `nohup ... 2>&1`)
+  - `--pidfile PATH` writes pid on start with sshd-style "refuse if
+    live" semantics, removes on clean stop
+  - Both default to the canonical paths above; empty string disables
+
+  Evidence: session-025. `aae-orc-ax8`, `aae-orc-9d6` closed.
+edges:
+  - target: elem-mrvl-protocol-ssh
+    type: supports
+  - target: elem-cluster-configuration
+    type: supports
+provenance:
+  created_by: human
+  session: session-025
+  created_at: "2026-04-17"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md B13 prose

@@ -1,0 +1,34 @@
+id: elem-tmux-session-substrate
+type: element
+confidence: bedrock
+title: "tmux as session substrate — agents are processes in tmux panes"
+content: |
+  Agents are processes in tmux panes. Start, stop, restart, health
+  check, capture output — all via tmux. Simple, observable, already
+  works on every Unix system the platform targets.
+
+  This is settled by use (MVP functional with tmux driver) but is
+  under active reconsideration via `aae-orc-kxce` ("T3b: marvel
+  substrate-of-tmux frontier question — lift B2 from substrate to
+  frontier"). The reconsideration question: is tmux the *right*
+  substrate, or just the *first* substrate? Alternative substrates
+  worth probing include containerd/podman pods, kubectl exec,
+  systemd-nspawn, plain process supervision without tmux.
+
+  Until the reconsideration question is probed and resolved, B2
+  remains bedrock — it's load-bearing for the current implementation
+  and changing it touches every adapter.
+
+  Evidence: MVP functional with tmux driver across sessions 008-026.
+edges:
+  - target: aae-orc::elem-tmux-cmc
+    type: related
+  - target: aae-orc::val-composability
+    type: implements
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md B2 prose

@@ -1,0 +1,32 @@
+id: elem-in-memory-log-ring
+type: element
+confidence: bedrock
+title: "in-memory log ring + `marvel daemon logs` RPC — no SSH-to-host needed for debug"
+content: |
+  The daemon captures every `log.Printf` line into a bounded
+  in-memory ring (`internal/logbuf`, `DefaultLogBufferLines=10000`).
+
+  A new `logs` RPC returns the tail of the ring as JSON; `marvel
+  daemon logs [-n N]` (CLI) fetches it, local or over `mrvl://`. No
+  SSH-to-daemon-host needed to debug a failed schedule.
+
+  Ring survives as long as the daemon process does; memory stays
+  bounded regardless of input rate.
+
+  **Open follow-ups (`aae-orc-k0t`):**
+  - Follow mode (`-f`)
+  - Session-scoped logs (`marvel logs <session>`)
+  - Structured events (`marvel events`)
+  - Known dedup bug from Go's log-timestamp prefix (`aae-orc-407l`)
+
+  Evidence: session-025. `aae-orc-388` closed.
+edges:
+  - target: elem-mrvl-protocol-ssh
+    type: implements
+provenance:
+  created_by: human
+  session: session-025
+  created_at: "2026-04-17"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md B14 prose

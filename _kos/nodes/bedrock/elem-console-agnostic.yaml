@@ -1,0 +1,29 @@
+id: elem-console-agnostic
+type: element
+confidence: bedrock
+title: "console-agnostic — works with forestage, claude, zclaude, dclaude, or any stdin-accepting CLI"
+content: |
+  Marvel orchestrates; it does not require a specific console. Works
+  with forestage, zclaude, dclaude, bare `claude` CLI, or any agent
+  that accepts a prompt on stdin. The runtime adapter framework
+  (`question-runtime-adapter-framework`) provides depth where the
+  console permits deep integration, and a `generic` adapter where it
+  doesn't.
+
+  This is the BYOA platform principle (`aae-orc::elem-byoa-platform`)
+  rendered at the control-plane layer. The user picks the console;
+  marvel manages whatever they pick.
+
+  Evidence: tested with both forestage and bare claude CLI.
+edges:
+  - target: aae-orc::elem-byoa-platform
+    type: implements
+  - target: aae-orc::val-user-sovereignty
+    type: derives
+provenance:
+  created_by: human
+  session: session-008
+  created_at: "2026-03-30"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md B3 prose

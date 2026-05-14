@@ -1,0 +1,45 @@
+id: question-stream-attachment
+type: question
+confidence: frontier
+title: "Which stream-attachment strategy does each runtime adapter use for observing agent output?"
+tags:
+  - marvel
+  - streaming
+  - observability
+content: |
+  How does marvel observe agent output? Four strategies with
+  different tradeoffs:
+
+  - **PTY-owned** — marvel owns the pty. Conflicts with the tmux
+    substrate (`elem-tmux-session-substrate`). Likely ruled out
+    because the substrate is bedrock.
+  - **pipe-pane to FIFO** — tmux `pipe-pane` to a named pipe.
+    Pragmatic. Works with any tmux session.
+  - **cooperative socket from forestage** — highest structure,
+    marvel-aware-only. Forestage opens a Unix socket marvel can
+    connect to and consume structured NDJSON. Best for the deep
+    forestage adapter.
+  - **periodic `capture-pane` scrape** — lowest fidelity. Polls
+    tmux for pane contents at an interval. Universal BYOA fallback
+    for runtimes that aren't marvel-aware (the `generic` adapter).
+
+  Runtime adapter selects strategy based on runtime capabilities.
+  Forestage = cooperative socket; bare-claude = pipe-pane;
+  generic = capture-pane scrape.
+
+  Needs a probe. Tracked: `aae-orc-3cp` (P2). Performance under
+  load is the open question — capture-pane at 1Hz vs 10Hz vs
+  event-driven; pipe-pane buffering; cooperative socket
+  reconnection.
+edges:
+  - target: elem-runtime-adapter-framework
+    type: derives
+  - target: elem-tmux-session-substrate
+    type: related
+provenance:
+  created_by: human
+  session: session-017
+  created_at: "2026-04-13"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md F11 prose

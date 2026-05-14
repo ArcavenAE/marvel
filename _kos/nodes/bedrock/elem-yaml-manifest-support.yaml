@@ -1,0 +1,31 @@
+id: elem-yaml-manifest-support
+type: element
+confidence: bedrock
+title: "manifest format — both YAML (default) and TOML, detected by extension"
+content: |
+  Manifests accept both YAML (default) and TOML. Format detected by
+  file extension. YAML uses natural plural keys (`teams`, `roles`,
+  `endpoints`). Both produce the same `Manifest` struct after parsing.
+
+  The fleet pattern is TOML (`elem-toml-config-merge-chain` shape).
+  Marvel manifests support both because:
+  - YAML composes naturally with the k8s vocabulary
+    (`elem-k8s-resource-model`) that marvel borrows.
+  - TOML composes with the rest of the fleet's config-management
+    chain (forestage, kos, sideshow, switchboard all read TOML).
+
+  The detection is filename-extension based; no magic-byte sniffing.
+  4 new tests at the parsing layer enforce parity between the two
+  formats.
+
+  Evidence: session-017.
+edges:
+  - target: elem-k8s-resource-model
+    type: implements
+provenance:
+  created_by: human
+  session: session-017
+  created_at: "2026-04-13"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md B9 prose

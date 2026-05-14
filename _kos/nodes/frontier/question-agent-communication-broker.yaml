@@ -1,0 +1,48 @@
+id: question-agent-communication-broker
+type: question
+confidence: frontier
+title: "What's the broker-first agent-communication protocol — topics + subscriptions + auth, transports as detail?"
+tags:
+  - marvel
+  - communication
+  - broker
+  - director
+content: |
+  **Reframed in session-017.** Original framing was three transports
+  (named pipes, tmux send-keys, switchboard relay) plus four message
+  types (task, result, heartbeat, signal) — but that's transports
+  without a broker. Asymmetric coupling pretending to be symmetric.
+
+  **New framing:** topics and subscriptions with auth, transports as
+  implementation detail. Broker candidates:
+  - **Embedded NATS JetStream** — single binary, persistent streams,
+    auth model, well-understood. Probable default.
+  - **RabbitMQ** — external service, more operations cost.
+  - **SQLite-backed custom** — minimal dependency, less battle-tested.
+
+  Tension with `aae-orc::val-gradual-elaboration`: zero agents are
+  communicating today. Adopting the mental model now is cheap; adopting
+  the *implementation* now is premature. Decision: name the model in
+  the charter (this node), defer broker selection + implementation
+  until concrete need.
+
+  Cross-ref: `aae-orc::question-director-design` — director is the
+  consumer of this protocol once agents need to coordinate. Director
+  doesn't yet exist as a git repo.
+
+  Tracked: `aae-orc-bga` (validate marvel agent communication
+  protocol).
+edges:
+  - target: aae-orc::val-gradual-elaboration
+    type: derives
+  - target: elem-mrvl-protocol-ssh
+    type: related
+  - target: aae-orc::elem-marvel-control-plane
+    type: related
+provenance:
+  created_by: human
+  session: session-017
+  created_at: "2026-04-13"
+  extracted_session: session-049
+  extracted_at: "2026-05-13"
+  extracted_from: charter.md F12 prose
