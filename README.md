@@ -7,6 +7,51 @@ process management, health monitoring, and rolling shifts.
 Where kubernetes orchestrates containers across nodes, marvel orchestrates
 agent sessions across tmux panes.
 
+## Install
+
+### Option 1: Homebrew
+
+```bash
+brew install ArcavenAE/tap/marvel
+```
+
+The tap's `marvel` formula currently tracks the latest alpha release. A dedicated stable formula will be added when the first `v*` release ships.
+
+### Option 2: Install with mise
+
+[mise](https://mise.jdx.dev/) is a polyglot version manager. It reads a per-project `mise.toml`, pulls the binary directly from GitHub Releases, and verifies GitHub Artifact Attestations natively — no Homebrew tap required.
+
+**Alpha channel** (prereleases from `main`) — the first stable release is pending, so opt into prereleases per-tool:
+
+```toml
+# mise.toml
+[tools]
+"github:ArcavenAE/marvel" = { version = "latest", prerelease = true }
+```
+
+```bash
+mise install
+marvel version
+```
+
+**Stable** (when a `v*` release ships) — drop the `prerelease = true` flag:
+
+```bash
+mise use github:ArcavenAE/marvel@latest
+```
+
+Marvel's alpha assets are not `-a`-suffixed, so stable and alpha share the same `marvel` shim — mise pins one version at a time per `mise.toml`, and switching channels swaps the underlying binary.
+
+**macOS troubleshooting** — if a quarantine-aware host copies the mise install and Gatekeeper blocks launch, clear the xattr once:
+
+```bash
+xattr -d com.apple.quarantine "$(mise which marvel)"
+```
+
+### Option 3: Download a pre-built binary
+
+Download the latest release from [GitHub Releases](https://github.com/ArcavenAE/marvel/releases). Binaries are available for macOS (arm64, amd64) and Linux (amd64, arm64 — Raspberry Pi 3/4/5 64-bit, AWS Graviton, etc.). macOS binaries are code-signed and Apple-notarized.
+
 ## Quick Start
 
 ```sh

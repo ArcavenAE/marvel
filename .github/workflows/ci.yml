@@ -419,3 +419,43 @@ jobs:
             | tail -n +31 \
             | awk '{print $1}' \
             | xargs -I{} gh release delete {} --yes --cleanup-tag
+
+  attest:
+    name: Attest Release Provenance
+    needs: [build-binaries, sign-and-notarize, release]
+    # Runs after the release job (the last asset mutation on the alpha
+    # channel) so attestations cover the FINAL bytes that ship. Tolerates
+    # a skipped sign-and-notarize (SIGNING_ENABLED != 'true').
+    if: |
+      !cancelled() &&
+      needs.build-binaries.result == 'success' &&
+      needs.release.result == 'success' &&
+      (needs.sign-and-notarize.result == 'success' || needs.sign-and-notarize.result == 'skipped')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          egress-policy: audit
+
+      - name: Download final release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets
+          # Branch-driven pipeline: GITHUB_REF_NAME is the branch, not the
+          # minted alpha tag — use the build job's tag output instead.
+          gh release download "${{ needs.build-binaries.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --dir release-assets
+          echo "Assets to be attested:"
+          ls -la release-assets/
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: 'release-assets/*'
