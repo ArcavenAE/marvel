@@ -14,6 +14,9 @@ content: |
   host becomes unreachable — drain, reschedule, or wait? How does
   volume management (worktrees, shared dirs) work across hosts?
 edges:
+  - target: elem-mvp-complete
+    type: discovered_from
+    note: "left open by the MVP build (was: leaves-open on elem-mvp-complete)"
   - target: aae-orc::question-multi-host
     type: derives
     note: "Cross-repo projection from orchestrator F7"

@@ -36,7 +36,7 @@ content: |
   - What's the audit-trail signal for capability denials?
 edges:
   - target: elem-runtime-adapter-framework
-    type: depends-on
+    type: derives
   - target: aae-orc::elem-component-independence
     type: implements
   - target: aae-orc::val-user-sovereignty

@@ -81,13 +81,13 @@ content: |
 
 edges:
   - target: question-marvel-transaction-log
-    type: relates
+    type: supports
     note: "Transaction log answers 'what survives'; this answers 'what does the daemon do before dying'"
   - target: question-shift-triggers
-    type: relates
+    type: supports
     note: "F7 — shift mechanics share some sequence shape (priority, sequential per role)"
   - target: aae-orc::question-director-design
-    type: relates
+    type: supports
     note: "preStop hook for forestage may need a director-protocol message; cooperative-socket vs new message"
 provenance:
   created_by: agent

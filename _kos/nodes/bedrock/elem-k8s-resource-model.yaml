@@ -28,8 +28,6 @@ content: |
 edges:
   - target: aae-orc::elem-marvel-control-plane
     type: implements
-  - target: elem-yaml-manifest-support
-    type: related
 provenance:
   created_by: human
   session: session-008

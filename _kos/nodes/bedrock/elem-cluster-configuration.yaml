@@ -23,9 +23,10 @@ content: |
   Evidence: session-017.
 edges:
   - target: elem-mrvl-protocol-ssh
-    type: related
+    type: derives
+    note: "kubeconfig-style cluster entries address mrvl:// endpoints; protocol changes dirty this config"
   - target: elem-data-directory-permissions
-    type: depends-on
+    type: derives
 provenance:
   created_by: human
   session: session-017

@@ -24,10 +24,10 @@ content: |
   - Is Schedule resource type the right abstraction for timed shifts?
 edges:
   - target: question-shifts
-    type: depends
+    type: derives
     note: "Triggers build on the manual shift mechanism"
   - target: question-healthchecks
-    type: relates
+    type: supports
     note: "Failure detection overlaps with healthcheck design"
 provenance:
   created_by: human

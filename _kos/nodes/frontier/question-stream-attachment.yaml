@@ -35,7 +35,8 @@ edges:
   - target: elem-runtime-adapter-framework
     type: derives
   - target: elem-tmux-session-substrate
-    type: related
+    type: derives
+    note: "attachment strategies are constrained by the tmux substrate choice"
 provenance:
   created_by: human
   session: session-017

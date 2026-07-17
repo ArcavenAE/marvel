@@ -26,7 +26,7 @@ edges:
   - target: elem-k8s-resource-model
     type: derives
   - target: aae-orc::elem-marvel-control-plane
-    type: related
+    type: derives
 provenance:
   created_by: human
   session: session-014

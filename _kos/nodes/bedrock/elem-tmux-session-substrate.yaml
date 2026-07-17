@@ -22,7 +22,8 @@ content: |
   Evidence: MVP functional with tmux driver across sessions 008-026.
 edges:
   - target: aae-orc::elem-tmux-cmc
-    type: related
+    type: derives
+    note: "substrate realized on tmux; tmux-cmc is the planned control-mode client (roadmap M7 adoption)"
   - target: aae-orc::val-composability
     type: implements
 provenance:

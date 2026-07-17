@@ -14,7 +14,7 @@ content: |
   See finding-002-shift-mechanics for full evidence.
 edges:
   - target: question-org-model
-    type: depends
+    type: derives
     note: "Shifts operate on the heterogeneous team model"
 provenance:
   created_by: human

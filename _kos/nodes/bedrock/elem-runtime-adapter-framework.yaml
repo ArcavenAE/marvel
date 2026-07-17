@@ -26,10 +26,6 @@ content: |
 edges:
   - target: elem-console-agnostic
     type: implements
-  - target: question-permission-model
-    type: leaves-open
-  - target: question-stream-attachment
-    type: leaves-open
 provenance:
   created_by: human
   session: session-017

@@ -85,13 +85,13 @@ content: |
 
 edges:
   - target: question-persistence
-    type: refines
+    type: partially_resolves
     note: "F2 — broad 'what state survives' question; this is the specific shape"
-  - target: question-runtime-adapter
-    type: relates
+  - target: elem-runtime-adapter-framework
+    type: supports
     note: "Adapter env-construction is part of recorded intent (manifest); restart-time the adapter doesn't re-run, only the spawn does"
-  - target: aae-orc::question-stream-attachment
-    type: relates
+  - target: question-stream-attachment
+    type: supports
     note: "Stream attachment binding (per-runtime) is part of recorded intent — knowing which stream strategy was used for which session"
 provenance:
   created_by: agent

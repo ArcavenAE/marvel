@@ -26,10 +26,6 @@ edges:
     type: implements
   - target: elem-tmux-session-substrate
     type: implements
-  - target: question-persistence
-    type: leaves-open
-  - target: question-multi-host
-    type: leaves-open
 provenance:
   created_by: human
   session: session-014

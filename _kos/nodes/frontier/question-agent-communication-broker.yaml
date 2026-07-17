@@ -36,9 +36,10 @@ edges:
   - target: aae-orc::val-gradual-elaboration
     type: derives
   - target: elem-mrvl-protocol-ssh
-    type: related
+    type: derives
+    note: "mrvl:// is the existing client-to-daemon channel the broker question is scoped against"
   - target: aae-orc::elem-marvel-control-plane
-    type: related
+    type: derives
 provenance:
   created_by: human
   session: session-017
