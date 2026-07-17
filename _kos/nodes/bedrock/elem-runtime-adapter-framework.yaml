@@ -22,6 +22,16 @@ content: |
   Resolved former F9 (Runtime Adapter Framework). The session-017
   probe shipped the framework end-to-end; 9 tests, 606 lines.
 
+  Scope exclusions (deliberately NOT addressed by this bedrock): the
+  framework leaves `question-permission-model` (F10) and
+  `question-stream-attachment` (F11) open — adapter env-construction
+  ships without a permission model, and stream observation remains
+  capture-pane. Recorded here as prose because kos schema v0.3 has no
+  scope-exclusion edge type; the original `leaves-open` edges were
+  removed in the schema-conformance fix (marvel 57d058f). If kos
+  gains a negative-space edge type (aae-orc-dboj), restore these as
+  edges.
+
   Evidence: session-017. Closes original F9 charter question.
 edges:
   - target: elem-console-agnostic
