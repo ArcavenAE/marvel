@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Driver manages tmux sessions and panes by shelling out to the tmux binary.
@@ -21,6 +22,16 @@ type Driver struct {
 	// Set via the MARVEL_TMUX_SOCKET env var at NewDriver time. Tests
 	// use this to get per-package isolation from the system-wide tmux.
 	socket string
+
+	// paneMu serializes SendKeys per pane. The daemon runs each inject
+	// RPC in its own goroutine, so two concurrent injects to one pane
+	// could otherwise interleave their tmux invocations (one call's text
+	// landing between another call's text and Enter). Keyed by pane id;
+	// paneMuGuard protects the map. The map grows with pane churn and is
+	// not reaped: pane ids are cheap and the shim-in-pane path (kxce)
+	// retires this whole class, so a reaper would be discarded work.
+	paneMuGuard sync.Mutex
+	paneMu      map[string]*sync.Mutex
 }
 
 // NewDriver creates a tmux driver, verifying tmux is available.
@@ -34,7 +45,29 @@ func NewDriver() (*Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tmux not found: %w", err)
 	}
-	return &Driver{binary: path, socket: os.Getenv("MARVEL_TMUX_SOCKET")}, nil
+	return &Driver{
+		binary: path,
+		socket: os.Getenv("MARVEL_TMUX_SOCKET"),
+		paneMu: make(map[string]*sync.Mutex),
+	}, nil
+}
+
+// lockPane acquires the per-pane inject lock and returns its unlock
+// func. Lazily allocates both the map and a pane's mutex so a Driver
+// built without NewDriver (e.g. a test literal) still serializes.
+func (d *Driver) lockPane(paneID string) func() {
+	d.paneMuGuard.Lock()
+	if d.paneMu == nil {
+		d.paneMu = make(map[string]*sync.Mutex)
+	}
+	mu := d.paneMu[paneID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		d.paneMu[paneID] = mu
+	}
+	d.paneMuGuard.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // cmd builds an exec.Cmd for tmux with the driver's socket prefix
@@ -218,21 +251,35 @@ func (d *Driver) KillServer() error {
 // SendKeys sends keystrokes to a tmux pane. If literal is true, each key is
 // sent literally (tmux send-keys -l) — no interpretation of special key names.
 // If enter is true, an Enter keystroke is appended after the text.
+//
+// Text and Enter go in a single tmux invocation so a concurrent inject to
+// the same pane cannot land its text between this call's text and Enter:
+// a non-literal Enter rides as a trailing key argument, and a literal
+// Enter as a trailing carriage return (what the Enter key sends). The
+// per-pane lock is the backstop for any caller that still issues separate
+// SendKeys calls to one pane.
 func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
+	unlock := d.lockPane(paneID)
+	defer unlock()
+
 	args := []string{"send-keys", "-t", paneID}
 	if literal {
-		args = append(args, "-l")
+		// -l makes tmux send every argument literally, so a "Enter" key
+		// name cannot ride along. A trailing carriage return is what the
+		// Enter key itself sends, and it submits from the same invocation.
+		if enter {
+			text += "\r"
+		}
+		args = append(args, "-l", text)
+	} else {
+		args = append(args, text)
+		if enter {
+			args = append(args, "Enter")
+		}
 	}
-	args = append(args, text)
 
 	if out, err := d.cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
-	}
-
-	if enter {
-		if out, err := d.cmd("send-keys", "-t", paneID, "Enter").CombinedOutput(); err != nil {
-			return fmt.Errorf("send-keys Enter %s: %s: %w", paneID, string(out), err)
-		}
 	}
 	return nil
 }

@@ -209,6 +209,103 @@ func TestSendKeys(t *testing.T) {
 	}
 }
 
+// TestSendKeysConcurrentInjectNoInterleave drives many goroutines
+// injecting distinct markers into ONE pane at once, each as a literal
+// text + Enter. Before the fix, SendKeys issued text and Enter as two
+// separate tmux processes with no per-pane serialization, so a concurrent
+// inject could land its text between another call's text and Enter,
+// merging two markers onto one line. With text+Enter in a single
+// invocation and a per-pane lock, every marker must land on its own line.
+//
+// The pane runs cat, which echoes each completed line, so a marker shows
+// up on its echoed input line and on cat's output line; both must carry
+// exactly one marker.
+func TestSendKeysConcurrentInjectNoInterleave(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	sessionName := "marvel-test-inject-race"
+	t.Cleanup(func() { _ = d.KillSession(sessionName) })
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	paneID, err := d.NewPane(sessionName, "cat", "inject-race", nil)
+	if err != nil {
+		t.Fatalf("new pane: %v", err)
+	}
+
+	const workers = 16
+	markers := make([]string, workers)
+	for i := range markers {
+		markers[i] = fmt.Sprintf("MK%03d", i)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := d.SendKeys(paneID, markers[i], true, true); err != nil {
+				errCh <- fmt.Errorf("inject %s: %w", markers[i], err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent inject failed: %v", err)
+	}
+
+	// Wait until every marker has been echoed back at least once.
+	var content string
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if !d.HasPane(paneID) {
+			t.Fatalf("pane %s vanished before capture", paneID)
+		}
+		c, cerr := d.CapturePaneRange(paneID, -1000, 1000)
+		if cerr == nil && allPresent(c, markers) {
+			content = c
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if content == "" {
+		last, _ := d.CapturePaneRange(paneID, -1000, 1000)
+		t.Fatalf("not all markers appeared within deadline; last capture:\n%s", last)
+	}
+
+	// No captured line may carry more than one marker — that is the
+	// interleave the fix prevents.
+	for _, line := range strings.Split(content, "\n") {
+		if n := countMarkers(line, markers); n > 1 {
+			t.Errorf("line %q carries %d markers, want at most 1 (text/Enter interleaved)", line, n)
+		}
+	}
+}
+
+func allPresent(content string, markers []string) bool {
+	for _, m := range markers {
+		if !strings.Contains(content, m) {
+			return false
+		}
+	}
+	return true
+}
+
+func countMarkers(line string, markers []string) int {
+	n := 0
+	for _, m := range markers {
+		n += strings.Count(line, m)
+	}
+	return n
+}
+
 func TestCapturePane(t *testing.T) {
 	skipIfNoTmux(t)
 	d, err := NewDriver()
