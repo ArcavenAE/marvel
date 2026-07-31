@@ -31,6 +31,30 @@ content: |
   load is the open question — capture-pane at 1Hz vs 10Hz vs
   event-driven; pipe-pane buffering; cooperative socket
   reconnection.
+
+  REOPEN 2026-07-31 (evidence-based, not a preference reversal).
+  Two premises of the strategy list above have been invalidated:
+
+  1. The PTY-owned rule-out was circular. It rested on
+     `elem-tmux-session-substrate` being bedrock; finding-045
+     classifies B2 as a probe CONTROL retroactively collapsed into
+     bedrock, and aae-orc-kxce (promoted 2026-07-31) now carries the
+     substrate decision with PTY-owned and shim-in-pane restored to
+     the candidate set (spike: aae-orc-e35c).
+  2. The cooperative-socket strategy's only named implementation was
+     forestage, and it never existed: forestage contains no heartbeat
+     or marvel-socket code (the CTX% producer has always been the
+     simulator). Forestage is retiring per the 2026-07-31 operator
+     directive (`_kos/ideas/forestage-retirement-harness-first.md`
+     at orc level); harness-first targets are Claude Code, Codex,
+     Gemini CLI, Crush, OpenCode.
+
+  aae-orc-3cp is re-scoped as the decision probe: per-harness
+  telemetry-surface inventory plus byte-path fidelity measurement
+  (FIFO redirect vs shim PTY tee vs capture-pane). The per-runtime
+  binding reframe finding-048 ordered (question named there as
+  question-marvel-stream-attachment-binding, never filed) lands here
+  instead of as a separate node.
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
@@ -44,3 +68,6 @@ provenance:
   extracted_session: session-049
   extracted_at: "2026-05-13"
   extracted_from: charter.md F11 prose
+  updated_by: agent
+  updated_session: marvel-roadmap-triage-2026-07-31
+  updated_at: "2026-07-31"
