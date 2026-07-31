@@ -3,10 +3,14 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -26,11 +30,32 @@ type Manager struct {
 	// and callers that don't care about the event stream don't need to
 	// wire a ring.
 	Events events.Emitter
+	// StreamDir holds the per-session FIFOs marvel reads agent output
+	// from. Defaults to a per-process temp directory; the pipes carry no
+	// content at rest, so there is nothing to preserve across restarts.
+	StreamDir string
+
+	// instances tracks the live Instance per session key. Sessions
+	// adopted from a previous daemon have no entry: their pane predates
+	// this process, so marvel supervises them without observing them.
+	imu       sync.Mutex
+	instances map[string]*runtime.TmuxInstance
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
-	return &Manager{store: store, driver: driver, adapters: runtime.NewRegistry()}
+	return &Manager{
+		store:     store,
+		driver:    driver,
+		adapters:  runtime.NewRegistry(),
+		StreamDir: defaultStreamDir(),
+		instances: make(map[string]*runtime.TmuxInstance),
+	}
+}
+
+// defaultStreamDir keeps one daemon's pipes away from another's.
+func defaultStreamDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("marvel-streams-%d", os.Getpid()))
 }
 
 // marvelSessionPrefix is the tmux session name prefix marvel owns.
@@ -172,20 +197,29 @@ func (m *Manager) Create(sess *api.Session) error {
 		return fmt.Errorf("ensure tmux session %s: %w", tmuxSess, err)
 	}
 
-	cmd, envs := m.resolveRuntime(sess)
+	plan := m.planLaunch(sess)
 
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
 	// tmux new-window was actually running when a pane died quickly.
 	// See ArcavenAE/marvel#9.
-	log.Printf("session %s exec: %s", sess.Key(), cmd)
+	log.Printf("session %s exec: %s", sess.Key(), plan.command)
 
-	paneID, err := m.driver.NewPane(tmuxSess, cmd, sess.Name, envs)
-	if err != nil {
+	inst := runtime.NewTmuxInstance(runtime.TmuxConfig{
+		Panes:       m.driver,
+		TmuxSession: tmuxSess,
+		Title:       sess.Name,
+		Command:     plan.command,
+		Env:         plan.env,
+		Stream:      plan.stream,
+	})
+	if err := inst.Spawn(context.Background()); err != nil {
 		// Clean up store on failure.
 		_ = m.store.DeleteSession(sess.Key())
 		return fmt.Errorf("create pane for %s: %w", sess.Key(), err)
 	}
+	paneID := inst.PaneID()
+	m.attachInstance(sess, inst)
 
 	// A missing pid costs resource metrics for this session, nothing
 	// else, so it is logged and not treated as a failed spawn.
@@ -222,9 +256,21 @@ func (m *Manager) Create(sess *api.Session) error {
 	return nil
 }
 
-// resolveRuntime uses the adapter registry when team/role context is available,
-// falling back to direct command construction for ad-hoc sessions.
-func (m *Manager) resolveRuntime(sess *api.Session) (string, map[string]string) {
+// launchPlan is what one session needs to come up: the shell command,
+// its environment, and (when the adapter wired one) the stream marvel
+// reads its output from.
+type launchPlan struct {
+	command string
+	env     map[string]string
+	stream  *runtime.StreamSource
+}
+
+// planLaunch uses the adapter registry when team/role context is
+// available, falling back to direct command construction for ad-hoc
+// sessions. When the resolved adapter declares it can redirect its
+// harness's structured output, planLaunch creates the sink first and
+// hands the path down; the adapter reports back whether it used it.
+func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this
@@ -232,7 +278,7 @@ func (m *Manager) resolveRuntime(sess *api.Session) (string, map[string]string) 
 	team, teamErr := m.store.GetTeam(fmt.Sprintf("%s/%s", sess.Workspace, sess.Team))
 	if teamErr != nil {
 		// Ad-hoc session or team not found — use direct command.
-		return m.directCommand(sess)
+		return m.directPlan(sess)
 	}
 
 	var role *api.Role
@@ -243,33 +289,172 @@ func (m *Manager) resolveRuntime(sess *api.Session) (string, map[string]string) 
 		}
 	}
 	if role == nil {
-		return m.directCommand(sess)
+		return m.directPlan(sess)
 	}
 
 	ws, wsErr := m.store.GetWorkspace(sess.Workspace)
 	if wsErr != nil {
-		return m.directCommand(sess)
+		return m.directPlan(sess)
 	}
 
 	adapter := m.adapters.Resolve(sess.Runtime.Name)
-	result, err := adapter.Prepare(&runtime.LaunchContext{
+	lctx := &runtime.LaunchContext{
 		Session:    sess,
 		Role:       role,
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
-	})
+	}
+
+	// Ask before building: an adapter that never streams (or one asked
+	// for an interactive launch) should cost no filesystem work.
+	fifo := m.openSink(sess, adapter, lctx)
+	if fifo != nil {
+		lctx.StreamPath = fifo.Path()
+	}
+
+	result, err := adapter.Prepare(lctx)
 	if err != nil {
 		log.Printf("adapter %s prepare failed for %s, falling back: %v", adapter.Name(), sess.Key(), err)
-		return m.directCommand(sess)
+		discardSink(fifo)
+		return m.directPlan(sess)
+	}
+
+	plan := launchPlan{command: result.Command, env: result.Env}
+	switch {
+	case result.Stream != nil && fifo != nil:
+		parser, perr := runtime.NewStreamParser(result.Stream.Format, runtime.StreamParserConfig{
+			AgentID:   sess.Key(),
+			Workspace: sess.Workspace,
+		})
+		if perr != nil {
+			// The adapter named a format marvel cannot read. The session
+			// still runs; it just runs unobserved, which is better than
+			// refusing to launch over a telemetry gap.
+			log.Printf("session %s: %v — launching without stream", sess.Key(), perr)
+			discardSink(fifo)
+			break
+		}
+		plan.stream = &runtime.StreamSource{FIFO: fifo, Parser: parser}
+		log.Printf("session %s streaming %s via %s", sess.Key(), result.Stream.Format, result.Stream.Path)
+	case fifo != nil:
+		// Sink offered, adapter declined it.
+		discardSink(fifo)
 	}
 
 	log.Printf("session %s using %s adapter", sess.Key(), adapter.Name())
-	return result.Command, result.Env
+	return plan
 }
 
-// directCommand builds the command string directly — the pre-adapter path
+// openSink creates the FIFO for a stream-capable adapter, or returns nil.
+// A sink that cannot be created is logged and skipped: an unobservable
+// session is still a working session.
+func (m *Manager) openSink(sess *api.Session, adapter runtime.Adapter, lctx *runtime.LaunchContext) *runtime.FIFO {
+	streamer, ok := adapter.(runtime.StreamCapable)
+	if !ok || m.StreamDir == "" || !streamer.SupportsStream(lctx) {
+		return nil
+	}
+	fifo, err := runtime.NewFIFO(m.StreamDir, sess.Key())
+	if err != nil {
+		log.Printf("session %s: no stream sink: %v", sess.Key(), err)
+		return nil
+	}
+	return fifo
+}
+
+func discardSink(fifo *runtime.FIFO) {
+	if fifo == nil {
+		return
+	}
+	if err := fifo.Remove(); err != nil {
+		log.Printf("warning: %v", err)
+	}
+}
+
+// attachInstance records the instance and drains its event stream into
+// the ring. The goroutine ends when the harness's output ends, so its
+// lifetime is the session's.
+func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) {
+	m.imu.Lock()
+	m.instances[sess.Key()] = inst
+	m.imu.Unlock()
+
+	c := coords{
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Key(),
+	}
+	go func() {
+		for ev := range inst.Events() {
+			events.Emit(m.Events, bridgeEvent(c, ev))
+		}
+	}()
+}
+
+// takeInstance removes and returns the instance for a session key.
+func (m *Manager) takeInstance(key string) *runtime.TmuxInstance {
+	m.imu.Lock()
+	defer m.imu.Unlock()
+	inst := m.instances[key]
+	delete(m.instances, key)
+	return inst
+}
+
+// Instance returns the live instance for a session key, or nil when
+// marvel has none (an adopted pane, or a session created before this
+// daemon started).
+func (m *Manager) Instance(key string) runtime.Instance {
+	m.imu.Lock()
+	defer m.imu.Unlock()
+	inst, ok := m.instances[key]
+	if !ok {
+		return nil
+	}
+	return inst
+}
+
+// instanceTeardownGrace bounds how long session teardown waits on a
+// harness stream that has not noticed it is finished.
+const instanceTeardownGrace = 3 * time.Second
+
+// retireInstance kills the instance for a key if marvel holds one, and
+// reports whether it did. The pane-kill error is logged rather than
+// returned: by the time a session is being retired the pane is often
+// already gone, and that is not a failure of the retirement.
+func (m *Manager) retireInstance(key string) bool {
+	inst := m.takeInstance(key)
+	if inst == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
+	defer cancel()
+	if err := inst.Kill(ctx); err != nil {
+		log.Printf("warning: retire instance %s: %v", key, err)
+	}
+	return true
+}
+
+// detachInstance retires the stream of a session whose pane already
+// vanished. Distinct from retireInstance so the reap path does not log a
+// kill-pane failure for a pane it knows is gone.
+func (m *Manager) detachInstance(key string) {
+	inst := m.takeInstance(key)
+	if inst == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
+	defer cancel()
+	inst.Detach(ctx)
+}
+
+// directPlan builds the command string directly — the pre-adapter path
 // used for ad-hoc sessions or when the adapter can't resolve.
+func (m *Manager) directPlan(sess *api.Session) launchPlan {
+	cmd, env := m.directCommand(sess)
+	return launchPlan{command: cmd, env: env}
+}
+
 func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	cmd := sess.Runtime.Command
 	for _, arg := range sess.Runtime.Args {
@@ -292,7 +477,10 @@ func (m *Manager) Delete(key string) error {
 		return err
 	}
 
-	if sess.PaneID != "" {
+	// Prefer the instance: it kills the pane and retires the stream in
+	// one step. Sessions with no instance (adopted panes) fall back to
+	// the driver.
+	if !m.retireInstance(key) && sess.PaneID != "" {
 		if err := m.driver.KillPane(sess.PaneID); err != nil {
 			log.Printf("warning: kill pane %s: %v", sess.PaneID, err)
 		}
@@ -353,6 +541,10 @@ func (m *Manager) ReapDead() []ReapedSession {
 		if !m.driver.HasPane(sess.PaneID) {
 			log.Printf("session %s: pane %s gone, marking crashed", sess.Key(), sess.PaneID)
 			lostPane := sess.PaneID
+			// The harness is gone; its stream has nothing left to say.
+			// Detaching here keeps a crashed session from leaving a pipe
+			// and a parked reader behind.
+			m.detachInstance(sess.Key())
 			m.clearStaleCrashed(sessions, sess.Workspace, sess.Team, sess.Role, sess.Key())
 			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
 				live.State = api.SessionCrashed

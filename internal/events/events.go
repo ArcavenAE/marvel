@@ -33,6 +33,29 @@ const (
 	KindRoleSaturated     Kind = "role.saturated"
 )
 
+// Agent-stream kinds. These are the runtime adapter vocabulary
+// (internal/runtime/events, twelve kinds) lifted into the ring, one ring
+// kind per adapter kind, prefixed so `marvel events --kind
+// agent.tool.call` reads next to the control-plane kinds above. The
+// prefix also keeps the two namespaces from colliding as either grows.
+//
+// The kinds above report what marvel did to a session; these report what
+// the agent inside it did.
+const (
+	KindAgentSessionStarted      Kind = "agent.session.started"
+	KindAgentSessionEnded        Kind = "agent.session.ended"
+	KindAgentTurnStarted         Kind = "agent.turn.started"
+	KindAgentTurnCompleted       Kind = "agent.turn.completed"
+	KindAgentMessageDelta        Kind = "agent.message.delta"
+	KindAgentMessageCompleted    Kind = "agent.message.completed"
+	KindAgentToolCall            Kind = "agent.tool.call"
+	KindAgentToolResult          Kind = "agent.tool.result"
+	KindAgentPermissionRequested Kind = "agent.permission.requested"
+	KindAgentAuthRequired        Kind = "agent.auth.required"
+	KindAgentHealthHeartbeat     Kind = "agent.health.heartbeat"
+	KindAgentError               Kind = "agent.error"
+)
+
 // Severity mirrors the kubernetes Warning/Normal distinction. Lets
 // operators filter `marvel events --severity warning` for the things
 // that need attention.

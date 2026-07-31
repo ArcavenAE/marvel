@@ -298,7 +298,8 @@ marvel scale <workspace/team> --role <r> --replicas N  # scale a role within a t
 marvel shift <workspace/team> [--role <r>]             # rolling shift (replace sessions with fresh ones)
 marvel run <command> [args...] --role <r>             # run a one-off agent session
 marvel kill <session-key>                            # kill a session
-marvel stop                                          # stop daemon, clean up all resources
+marvel stop                                          # stop daemon, agents keep running (restart adopts them)
+marvel stop --teardown                               # stop daemon, delete sessions, kill panes
 marvel daemon                                        # start the daemon (foreground)
 
 # future: logs, attach, exec, drain, top, pack management

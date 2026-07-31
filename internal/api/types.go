@@ -86,12 +86,33 @@ type Workspace struct {
 	CreatedAt time.Time `toml:"-"`
 }
 
+// RuntimeMode selects how a harness is launched within its pane.
+type RuntimeMode string
+
+const (
+	// RuntimeModeInteractive attaches the harness to the pane's tty. The
+	// zero value, so every manifest written before headless mode existed
+	// keeps its behavior.
+	RuntimeModeInteractive RuntimeMode = ""
+	// RuntimeModeHeadless runs one non-interactive request whose
+	// structured output marvel parses. Adapters that can redirect that
+	// output declare it via runtime.StreamCapable; the session manager
+	// then observes the session instead of only supervising the pane.
+	RuntimeModeHeadless RuntimeMode = "headless"
+)
+
 // Runtime is the program to execute (container image equivalent).
 type Runtime struct {
 	Name    string   `toml:"name"`
 	Command string   `toml:"command"`
 	Args    []string `toml:"args,omitempty"`
 	Script  string   `toml:"script,omitempty"`
+	// Mode is interactive (default) or headless.
+	Mode RuntimeMode `toml:"mode,omitempty"`
+	// Prompt is the request a headless launch carries. Required in
+	// headless mode: a harness given no prompt reads stdin, and stdin in
+	// a detached pane is a tty nobody types into.
+	Prompt string `toml:"prompt,omitempty"`
 }
 
 // Session is the atomic unit: a tmux pane running one process (pod equivalent).

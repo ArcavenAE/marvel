@@ -220,12 +220,15 @@ Examples:
 				}
 			}
 
-			// Wait for signal.
+			// Wait for signal. A signal detaches: agents keep running
+			// and the next start adopts their panes. Tearing them down
+			// is an explicit operator act (`marvel stop --teardown`),
+			// not something a package upgrade or a stray Ctrl-C does.
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 			<-sig
-			fmt.Println("\nshutting down...")
-			d.Stop()
+			fmt.Println("\ndetaching, agents keep running (marvel stop --teardown to end them)")
+			d.Detach()
 			return nil
 		},
 	}
@@ -314,10 +317,17 @@ func eventsCmd() *cobra.Command {
 		Short: "List recent session/team state-transition events",
 		Long: `Fetch the daemon's structured event ring and print matching events.
 
-Events are emitted from session.Manager (session created, deleted,
-crashed) and team.Controller (restart, crashloop-backoff, saturation,
-shift started/completed, health failed). Each event has a timestamp,
-kind, severity (info or warning), and session coordinates.
+Two families share the ring. Control-plane events report what marvel
+did to a session: session.created / deleted / crashed from
+session.Manager, and restart, crashloop-backoff, saturation, shift and
+health events from team.Controller. Agent events (agent.*) report what
+the agent inside a session did: session start and end with cost and
+timing, messages, tool calls and results, permission prompts. Agent
+events only appear for sessions whose runtime marvel can observe (a
+headless stream-json launch today; see examples/claude-headless.toml).
+
+Each event has a timestamp, kind, severity (info or warning), and
+session coordinates.
 
 Examples:
   marvel events                              # last 100 events
@@ -325,6 +335,8 @@ Examples:
   marvel events --workspace demo             # filter by workspace
   marvel events --session util/shell-g1-0    # filter by session key
   marvel events --kind session.crashed       # only crashes
+  marvel events --kind agent.tool.call       # what the agents are doing
+  marvel events --kind agent.session.ended   # per-session cost and timing
   marvel events --warnings                   # only warning-severity events
   marvel --cluster desk events               # remote daemon via mrvl://`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -387,7 +399,7 @@ Examples:
 	cmd.Flags().StringVar(&team, "team", "", "filter by team")
 	cmd.Flags().StringVar(&role, "role", "", "filter by role")
 	cmd.Flags().StringVar(&session, "session", "", "filter by session key (workspace/name)")
-	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed)")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed, agent.tool.call)")
 	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "show only warning-severity events")
 	return cmd
 }
@@ -1226,21 +1238,42 @@ func nameArg(name string) string {
 }
 
 func stopCmd() *cobra.Command {
-	return &cobra.Command{
+	var teardown bool
+	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the marvel daemon and clean up all resources",
+		Short: "Stop the marvel daemon, leaving agents running",
+		Long: `Stop the marvel daemon.
+
+By default this detaches: the daemon checkpoints its state and exits
+while every agent keeps running in its tmux pane. The next
+'marvel daemon' start reads that state back and adopts the live panes,
+so a restart or an upgrade costs no agent context.
+
+Use --teardown when you want the machine clean. Every session is
+deleted and every workspace tmux session killed before the daemon
+exits; nothing is left to adopt.`,
+		Example: `  marvel stop              # detach, agents keep running
+  marvel stop --teardown   # end every agent, then stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "stop"})
+			params, _ := json.Marshal(map[string]bool{"teardown": teardown})
+			resp, err := send(daemon.Request{Method: "stop", Params: params})
 			if err != nil {
 				return err
 			}
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Println("marvel daemon stopping")
+			if teardown {
+				fmt.Println("marvel daemon stopping, agents torn down")
+			} else {
+				fmt.Println("marvel daemon detaching, agents keep running")
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&teardown, "teardown", false,
+		"delete every session and kill its tmux session before stopping")
+	return cmd
 }
 
 // --- Watch mode ---

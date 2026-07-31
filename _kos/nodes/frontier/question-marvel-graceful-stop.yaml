@@ -79,6 +79,32 @@ content: |
   integration test that asserts the sequence happens in the right
   order. Implementation can follow once the design has been reviewed.
 
+  ## Partially answered (aae-orc-1aoe, 2026-07-31)
+
+  One sub-question is closed: self-update vs graceful stop are
+  different verbs, and the recommendation in this node ("self-update
+  should preserve agents, graceful stop should drain them") is now
+  the shipped shape, with the default flipped toward preservation.
+
+  - `Daemon.Detach()` stops the reconciler and listeners, checkpoints
+    L2, releases the bolt file, and touches no pane. SIGINT, SIGTERM,
+    and plain `marvel stop` all take this path, so the next start
+    adopts the live panes via AdoptOrKill.
+  - `Daemon.Stop()` keeps the old destroy-everything behavior behind
+    `marvel stop --teardown`, the hard-stop variant this node asked
+    for.
+  - `Store.Checkpoint()` gained its first caller (both shutdown paths,
+    just before CloseBolt). `Daemon.Checkpoint()` is the named seam
+    for the syscall.Exec self-update in aae-orc-zk5r.
+
+  Still open, and the reason this node stays frontier: the drain
+  sequence itself. Nothing here sends a graceful-shutdown signal to
+  an agent, waits out a grace period, or orders roles by priority.
+  Detach preserves agents instead of draining them, which sidesteps
+  the question rather than answering it. Priority semantics,
+  per-role `graceful_period_seconds`, and the forestage preStop
+  equivalent are untouched.
+
 edges:
   - target: question-marvel-transaction-log
     type: supports

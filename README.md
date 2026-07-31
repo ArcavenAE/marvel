@@ -71,7 +71,7 @@ marvel get sessions -w
 marvel shift demo/squad
 
 # Clean up
-marvel stop
+marvel stop --teardown
 ```
 
 ## Resource Model
@@ -134,7 +134,8 @@ marvel scale <ws/team> --role <r> --replicas N       # scale a role
 marvel shift <ws/team> [--role <r>]                  # rolling shift
 marvel run <cmd> [args...] --role <r>                # one-off session
 marvel kill <session-key>                            # kill a session
-marvel stop                                          # stop daemon
+marvel stop                                          # stop daemon, leave agents running
+marvel stop --teardown                               # stop daemon, end every agent
 ```
 
 ## Shifts
