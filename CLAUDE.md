@@ -17,7 +17,7 @@ agent sessions across tmux panes — local or remote via switchboard.
 
 ## Build / Run / Test
 
-Requires: Go 1.22+, `just`, `tmux`.
+Requires: Go 1.25+, `just`, `tmux`.
 
 ```sh
 just build          # go build ./cmd/...
@@ -157,69 +157,63 @@ name = "review-squad"
 
 ## Architecture
 
+This tree reflects the packages that exist today. Several resource
+types in the model above (Pack, Volume, Gateway, Schedule) are not yet
+implemented as their own packages; they live in the model, not the code.
+
 ```
-cmd/marvel/                 Entry point
+cmd/marvel/                 CLI entry point (cobra commands) + table rendering
 
 internal/
-  api/                      Resource types (Workspace, Session, Team, etc.)
-    types.go                Core type definitions
-    manifest.go             TOML manifest parsing and validation
+  api/                      Resource types + store
+    types.go                Core type definitions (Workspace, Session, Team, ...)
+    manifest.go             Manifest parsing and validation (TOML + YAML)
+    store.go                Resource store interface
+    bolt.go                 BoltDB-backed store (persistence across restarts)
 
-  scheduler/                Session scheduling and placement
-    scheduler.go            Assign sessions to hosts/panes
-    reconciler.go           Desired state → actual state reconciliation loop
+  daemon/                   Daemon process + RPC surface
+    daemon.go               Reconciliation loop, lifecycle, adopt-on-restart
+    sshserver.go            SSH transport for remote clients
+    metrics.go              Daemon-level metrics
 
-  runtime/                  BYOA console runtime management
-    runtime.go              Runtime interface (start, stop, attach)
-    forestage.go            forestage-specific runtime
-    claude.go               Bare claude CLI runtime
-    generic.go              Generic runtime (any CLI that accepts stdin)
+  team/                     Team (deployment) controller
+    controller.go           Reconcile desired replicas vs actual; shifts, health
 
   session/                  Session lifecycle
     manager.go              Create, monitor, restart, teardown sessions
-    health.go               Healthcheck and readycheck execution
-    state.go                Session state machine (pending → running → done)
+    bridge.go               Stream bridge between agent runtime and daemon
+
+  runtime/                  BYOA console runtime adapters (the adapter framework)
+    adapter.go              Runtime adapter interface + Instance layer
+    forestage.go            forestage adapter (deep integration)
+    claude.go               Bare claude CLI adapter
+    generic.go              Generic adapter (any CLI that accepts stdin)
+    instance.go             Running-instance abstraction
+    instance_tmux.go        tmux-backed instance
+    fifo.go                 Named-pipe cooperative stream
+    stream.go               Stream observation
+    claudecode/             Claude Code stream-json parser + event mapping
+    codex/                  Codex adapter notes
+    opencode/               opencode adapter notes
+    events/                 Runtime → director event envelopes
 
   tmux/                     tmux substrate
-    session.go              tmux session/pane CRUD
-    attach.go               Attach/detach/send-keys
-    capture.go              Capture pane output for monitoring
+    driver.go               tmux session/pane CRUD, send-keys, capture-pane
 
-  team/                     Team (deployment) controller
-    controller.go           Reconcile desired replicas vs actual
-    scaling.go              Scale up/down, shift changes
-    rolling.go              Rolling updates (new config without downtime)
+  procstat/                 Per-session process stats (CPU%, RSS) via pid-subtree sampler
+    procstat.go, proc.go, ps.go
+    read_darwin.go, read_linux.go, read_other.go   platform samplers
 
-  pack/                     Content pack management
-    registry.go             Pack discovery, versioning
-    router.go               Artifact type → filesystem routing
-    scope.go                4-scope resolution (repo → shared → user → system)
-    manifest.go             pack.yaml parsing
-
-  volume/                   Workspace storage
-    worktree.go             Git worktree create/cleanup
-    sandbox.go              Temp directory lifecycle
-    shared.go               Shared volume management
-
-  config/                   Configuration resolution
-    resolve.go              Merge chain: defaults → pack → scope → override
-    vault.go                Auth delegation references
-
-  gateway/                  External access
-    switchboard.go          Switchboard integration (remote tmux)
-    director.go             Director integration (inter-agent comms)
-
-  otel/                     Observability
-    collector.go            OTEL span/metric collection from sessions
-    export.go               Forward to self-hosted collector or stdout
-    metrics.go              Marvel-level metrics (sessions, restarts, health)
-
-  protocol/                 Agent communication protocol
-    message.go              Message types (task, result, heartbeat, signal)
-    transport.go            Transport interface
-    fifo.go                 Named pipe transport (local, simple)
-    tmux.go                 tmux send-keys transport (fallback)
-    switchboard.go          Switchboard relay transport (remote)
+  events/                   Structured event ring (control-plane + agent.* events)
+  keys/                     SSH client keypair management (~/.marvel/keys)
+  knownhosts/               Host-key trust (~/.marvel/known_hosts)
+  config/                   Named-cluster config (~/.marvel/config.yaml)
+  paths/                    ~/.marvel/ path resolution
+  logbuf/                   In-memory log buffer
+  rlog/                     Structured request/run logging
+  otel/                     Observability metrics
+  upgrade/                  Self-upgrade (Homebrew / direct binary)
+  simulator/                Context-pressure simulation for testing without real agents
 ```
 
 ## Process Management
@@ -301,9 +295,20 @@ marvel kill <session-key>                            # kill a session
 marvel stop                                          # stop daemon, agents keep running (restart adopts them)
 marvel stop --teardown                               # stop daemon, delete sessions, kill panes
 marvel daemon                                        # start the daemon (foreground)
+marvel events                                        # structured event ring (control-plane + agent.*)
+marvel capture <session-key>                         # capture a session's pane content
+marvel inject <session-key> <keys>                   # send keystrokes to a pane
+marvel config <add-cluster|list|current|use-cluster|remove-cluster>   # named-cluster config
+marvel keys <generate|show|list|trust|authorize|authorized|revoke|doctor>  # SSH client keys
+marvel version                                       # print version and channel
+marvel upgrade                                        # self-upgrade
 
 # future: logs, attach, exec, drain, top, pack management
 ```
+
+The `logs` verb is not yet implemented; `marvel events` covers the agent
+observability surface today (see charter B8 for the runtime adapter
+framework that feeds it).
 
 ## Conventions
 

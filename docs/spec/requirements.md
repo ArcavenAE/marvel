@@ -1,5 +1,21 @@
 # Marvel MVP — Software Requirements (ISO/IEC/IEEE 29148, abbreviated)
 
+> **SUPERSEDED: frozen MVP probe record.** This document describes the
+> original MVP probe and no longer matches the shipped binary. It is kept
+> as the probe record, not as current documentation. For current behavior
+> see [charter.md](../../charter.md), [README.md](../../README.md), and
+> [user-guide.md](../user-guide.md).
+>
+> Stale claims to be aware of:
+> - The CLI verb is `marvel work`, not `marvel apply`.
+> - Manifests are accepted in TOML **and** YAML, not TOML-only.
+> - State is no longer purely in-memory; a BoltDB store persists state
+>   across daemon restarts (`internal/api/bolt.go`), and `stop` detaches
+>   and adopts live panes on restart.
+> - The runtime set is a runtime-adapter framework (forestage, claude,
+>   generic, plus Claude Code stream observation), not the `top`/`shell`
+>   demo runtimes.
+
 Probe: marvel-mvp-probe | Confidence: frontier
 
 ## 1. Purpose

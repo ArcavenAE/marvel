@@ -12,7 +12,8 @@ agent sessions across tmux panes.
 ### Option 1: Homebrew
 
 ```bash
-brew install ArcavenAE/tap/marvel
+brew tap arcavenae/tap                # one-time (Homebrew >= 6.0 needs the tap trusted first)
+brew install arcavenae/tap/marvel
 ```
 
 The tap's `marvel` formula currently tracks the latest alpha release. A dedicated stable formula will be added when the first `v*` release ships.
@@ -124,19 +125,60 @@ name = "review-squad"
 ## CLI
 
 ```sh
+# Daemon and manifests
 marvel daemon                                        # start the daemon
-marvel work <manifest.toml>                          # load manifest
-marvel get sessions                                  # list sessions (-w for watch mode)
+marvel work <manifest.toml|.yaml>                    # load manifest, reconcile desired state
+marvel stop                                          # stop daemon, detach (agents keep running, adopted on restart)
+marvel stop --teardown                               # stop daemon and end every agent
+
+# Inspect
+marvel get sessions                                  # list sessions (-w for watch mode); shows CPU% and RSS per session
 marvel get teams                                     # list teams and roles
 marvel get workspaces                                # list workspaces
+marvel get endpoints                                 # list endpoints
 marvel describe session <key>                        # session details
+marvel events                                        # recent session/team state-transition events (incl. agent.* for observed runtimes)
+
+# Lifecycle
 marvel scale <ws/team> --role <r> --replicas N       # scale a role
 marvel shift <ws/team> [--role <r>]                  # rolling shift
 marvel run <cmd> [args...] --role <r>                # one-off session
-marvel kill <session-key>                            # kill a session
-marvel stop                                          # stop daemon, leave agents running
-marvel stop --teardown                               # stop daemon, end every agent
+marvel kill <session-key>                            # kill a session (alias: delete session)
+marvel delete <resource> <key>                       # delete a session, team, or workspace
+
+# Session interaction
+marvel capture <session-key>                         # capture a session's pane content
+marvel inject <session-key> <keys>                   # send keystrokes to a pane (executive privilege)
+
+# Remote daemons (named clusters)
+marvel config add-cluster <name> ...                 # add or update a cluster
+marvel config list                                   # list configured clusters
+marvel config current                                # show the current cluster
+marvel config use-cluster <name>                     # switch the current cluster
+marvel config remove-cluster <name>                  # remove a cluster
+
+# SSH keys (client auth to a daemon)
+marvel keys generate                                 # generate a client keypair
+marvel keys show                                     # print a client public key to share with a daemon admin
+marvel keys list                                     # list local client keypairs
+marvel keys trust <cluster>                          # record a cluster's host key in known_hosts
+marvel keys authorize <pubkey>                       # authorize a client's key on this daemon
+marvel keys authorized                               # list clients authorized on this daemon
+marvel keys revoke <fingerprint>                     # revoke a client
+marvel keys doctor                                   # audit (and optionally fix) permissions under ~/.marvel/
+
+# Version and self-upgrade
+marvel version                                       # print version and channel
+marvel upgrade                                        # upgrade to the latest release
 ```
+
+`stop` defaults to detach: the daemon checkpoints state and exits while
+agents keep running; the next `marvel daemon` adopts the live panes. Use
+`--teardown` to end every agent and leave the machine clean.
+
+`marvel events` includes `agent.*` events (session start/end with cost and
+timing, tool calls, permission prompts) for runtimes marvel can observe,
+today a headless `stream-json` launch (see `examples/claude-headless.toml`).
 
 ## Shifts
 
@@ -221,6 +263,6 @@ the agent is — it manages the process lifecycle.
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.25+
 - tmux
 - `just` (command runner)

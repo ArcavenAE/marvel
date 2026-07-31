@@ -322,7 +322,7 @@ marvel upgrade
 
 If installed via Homebrew:
 ```
-Installed via Homebrew. Running: brew upgrade ArcavenAE/tap/marvel
+Installed via Homebrew. Running: brew upgrade arcavenae/tap/marvel
 ```
 
 If installed as a direct binary:

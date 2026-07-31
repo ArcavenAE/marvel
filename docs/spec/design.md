@@ -1,5 +1,21 @@
 # Marvel MVP — Software Design (IEEE 1016, abbreviated)
 
+> **SUPERSEDED: frozen MVP probe record.** This document describes the
+> original MVP design and no longer matches the shipped binary. It is kept
+> as the probe record, not as current documentation. For current behavior
+> see [charter.md](../../charter.md), [CLAUDE.md](../../CLAUDE.md), and
+> [user-guide.md](../user-guide.md).
+>
+> Stale claims to be aware of:
+> - The CLI verb is `marvel work`, not `marvel apply`.
+> - There are not just two built-in runtimes (`top`/`shell`). Runtimes are
+>   a runtime-adapter framework: forestage, bare-claude, generic-stdin,
+>   plus Claude Code stream observation (`internal/runtime/`).
+> - The API/store is no longer in-memory only; a BoltDB store persists
+>   state across restarts (`internal/api/bolt.go`).
+> - The daemon exposes an SSH transport for remote clients, not only a
+>   local unix socket.
+
 Probe: marvel-mvp-probe | Confidence: frontier
 
 ## 1. Architecture Overview
