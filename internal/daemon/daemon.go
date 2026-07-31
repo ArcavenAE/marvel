@@ -146,6 +146,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr := session.NewManager(store, driver)
 	teamCtrl := team.NewController(store, sessMgr)
+	// Must follow OpenBolt: the controller reads its crash-loop state
+	// out of the same bolt file. Before this, a role frozen at
+	// MaxRestarts respawned on the first reconcile tick after restart.
+	// See aae-orc-qdew.
+	if rerr := teamCtrl.RehydrateRoleHealth(); rerr != nil {
+		return nil, fmt.Errorf("rehydrate role health: %w", rerr)
+	}
 
 	buf := opts.LogBuffer
 	if buf == nil {
@@ -270,8 +277,36 @@ func (d *Daemon) StartMRVL(addr string) error {
 	return srv.Start(addr)
 }
 
-// Stop shuts down the daemon, cleaning up all resources.
-func (d *Daemon) Stop() {
+// Detach shuts the daemon down and leaves every agent it manages
+// running. The reconciler and listeners stop, durable state is
+// checkpointed and the bolt file released, and no tmux pane is touched,
+// so the next daemon start rehydrates the same recorded intent and
+// AdoptOrKill reclaims the live panes. This is the SIGINT/SIGTERM path
+// and what plain `marvel stop` does.
+//
+// Detaching rather than tearing down is what makes the graceful path as
+// recoverable as an ungraceful one: before this split, Stop deleted
+// every session and killed every pane before closing bolt, so adoption
+// could only ever fire after a kill -9. See aae-orc-1aoe.
+//
+// Detach is also the first half of in-place self-update
+// (aae-orc-zk5r): checkpoint, release the bolt file, then syscall.Exec
+// the replacement binary, which comes back up and adopts. Nothing here
+// assumes the process is about to exit.
+func (d *Daemon) Detach() { d.shutdown(false) }
+
+// Stop shuts the daemon down and destroys what it manages: every
+// workspace's sessions are deleted and its tmux session killed before
+// durable state is closed. This is `marvel stop --teardown`, for the
+// operator who wants the machine clean, and the path tests use.
+func (d *Daemon) Stop() { d.shutdown(true) }
+
+// Checkpoint flushes durable state to disk without stopping anything.
+// The seam for a self-update that execs without a full Detach
+// (aae-orc-zk5r). No-op when persistence is disabled.
+func (d *Daemon) Checkpoint() error { return d.store.Checkpoint() }
+
+func (d *Daemon) shutdown(teardown bool) {
 	if d.cancel != nil {
 		d.cancel()
 	}
@@ -287,16 +322,20 @@ func (d *Daemon) Stop() {
 	}
 	d.wg.Wait()
 
-	// Clean up all workspaces.
-	for _, ws := range d.store.ListWorkspaces() {
-		if err := d.sessMgr.CleanupWorkspace(ws.Name); err != nil {
-			log.Printf("cleanup workspace %s: %v", ws.Name, err)
+	if teardown {
+		for _, ws := range d.store.ListWorkspaces() {
+			if err := d.sessMgr.CleanupWorkspace(ws.Name); err != nil {
+				log.Printf("cleanup workspace %s: %v", ws.Name, err)
+			}
 		}
 	}
 
-	// Close the L2 bolt store (no-op if not opened). The workspace
-	// cleanup above already deleted every workspace + session from
-	// the bolt file; this just flushes and releases the file handle.
+	// Flush before releasing the file handle: on the detach path the
+	// records written here are exactly what the next start adopts from.
+	// Both calls are no-ops when persistence is disabled.
+	if err := d.store.Checkpoint(); err != nil {
+		log.Printf("checkpoint state: %v", err)
+	}
 	if err := d.store.CloseBolt(); err != nil {
 		log.Printf("close bolt: %v", err)
 	}
@@ -308,7 +347,11 @@ func (d *Daemon) Stop() {
 	if d.pidFile != "" {
 		_ = os.Remove(d.pidFile)
 	}
-	log.Println("marvel daemon stopped")
+	if teardown {
+		log.Println("marvel daemon stopped, agents torn down")
+		return
+	}
+	log.Printf("marvel daemon detached, %d session(s) left running", len(d.store.ListSessions()))
 }
 
 // writePidFile creates/overwrites pidfile with the current PID.
@@ -393,7 +436,7 @@ func (d *Daemon) dispatch(req Request) Response {
 	case "capture":
 		return d.handleCapture(req.Params)
 	case "stop":
-		return d.handleStop()
+		return d.handleStop(req.Params)
 	case "logs":
 		return d.handleLogs(req.Params)
 	case "events":
@@ -878,13 +921,48 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	return Response{Result: result}
 }
 
-func (d *Daemon) handleStop() Response {
+// Stop params
+type stopParams struct {
+	// Teardown selects agent destruction over detach: delete every
+	// session and kill every workspace tmux session before exiting.
+	// Default (false) detaches: agents keep running and the next
+	// daemon start adopts them.
+	Teardown bool `json:"teardown,omitempty"`
+}
+
+// stopMode decodes the stop params into the shutdown mode. Absent or
+// empty params mean detach; a client that predates the flag must not
+// get a teardown.
+func stopMode(params json.RawMessage) (teardown bool, mode string, err error) {
+	var p stopParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return false, "", err
+		}
+	}
+	if p.Teardown {
+		return true, "teardown", nil
+	}
+	return false, "detach", nil
+}
+
+func (d *Daemon) handleStop(params json.RawMessage) Response {
+	teardown, mode, err := stopMode(params)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	// Shut down off the request goroutine: the client is still reading
+	// this connection, and the listener closes inside shutdown.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		d.Stop()
+		if teardown {
+			d.Stop()
+		} else {
+			d.Detach()
+		}
 		os.Exit(0)
 	}()
-	result, _ := json.Marshal(map[string]string{"status": "stopping"})
+	result, _ := json.Marshal(map[string]string{"status": "stopping", "mode": mode})
 	return Response{Result: result}
 }
 

@@ -89,8 +89,26 @@ marvel daemon --log-file /var/log/marvel.log # systemd-friendly path
 
 Stop with:
 ```bash
-marvel stop
+marvel stop              # detach: agents keep running
+marvel stop --teardown   # end every agent, then stop
 ```
+
+### Detach vs teardown
+
+`marvel stop`, SIGINT, and SIGTERM all *detach*: the daemon
+checkpoints its state file and exits while every agent keeps running
+in its tmux pane. The next `marvel daemon` reads that state back and
+adopts the live panes, so restarts and upgrades cost no agent context.
+Agents whose panes died while no daemon was running are reaped on the
+first reconcile pass, exactly as if the daemon had never left.
+
+`marvel stop --teardown` is the clean-machine variant: every session
+is deleted and every workspace tmux session killed before the daemon
+exits, leaving nothing to adopt.
+
+Detach relies on the state file. With `--state-bolt=""` there is no
+recorded intent to come back to, so the next start kills every
+`marvel-*` pane it finds.
 
 ## SSH key management
 
@@ -290,7 +308,7 @@ A CI job runs agents for automated code review or testing.
     echo "${{ secrets.CI_SSH_PUBKEY }}" | marvel keys authorize /dev/stdin
     marvel work manifests/review-team.yaml
     sleep 300  # let agents work
-    marvel stop
+    marvel stop --teardown
 ```
 
 **Why:** Ephemeral agent fleets for automated tasks. The daemon starts,

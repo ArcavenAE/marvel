@@ -18,14 +18,14 @@ import (
 //
 // Persisted: Workspaces, Teams (incl. Roles + ShiftState), Sessions
 // (incl. PaneID, State, Generation, Runtime, restart counters, CreatedAt),
-// Endpoints. Volatile session fields (LastHeartbeat, ContextPercent,
-// HealthState, LastHealthCheck, PID) are persisted with the rest of
-// the struct but treated as may-be-stale on rehydrate — the reconciler
-// refreshes them.
+// Endpoints, RoleHealth. Volatile session fields (LastHeartbeat,
+// ContextPercent, HealthState, LastHealthCheck, PID) are persisted with
+// the rest of the struct but treated as may-be-stale on rehydrate; the
+// reconciler refreshes them.
 //
-// Not yet persisted (Session-2 work in aae-orc-k4e4):
-//   - RoleHealth (lives in team.Controller, not Store; needs separate
-//     hooks). Bucket exists for forward compatibility.
+// RoleHealth is the one bucket with no in-memory mirror here: its live
+// copy is team.Controller's roleHealth map, and the Store is only the
+// write-through record. See RoleHealthRecord.
 //
 // See orc question-marvel-transaction-log + finding-048 for the
 // architectural reasoning.
@@ -147,7 +147,10 @@ func (s *Store) CloseBolt() error {
 }
 
 // Checkpoint forces an fsync of pending writes without closing the DB.
-// Called at graceful-shutdown points and before syscall.Exec self-update.
+// Called from daemon shutdown (both the detach and teardown paths, just
+// before CloseBolt) and from Daemon.Checkpoint, the seam a future
+// syscall.Exec self-update uses to flush before handing the process
+// over. Safe to call when bolt was never opened.
 func (s *Store) Checkpoint() error {
 	if s.bolt == nil {
 		return nil
@@ -257,6 +260,73 @@ func (s *Store) persistDelete(bucket []byte, key string) error {
 		}
 		return bumpVersion(tx)
 	})
+}
+
+// RoleHealthRecord is the durable form of a role's crash-loop state:
+// restart count, last restart, and the deadline before which the
+// reconciler refuses to spawn a replacement. Key is workspace/team/role,
+// matching team.Controller's map key.
+//
+// Unlike every other persisted type, RoleHealth has no in-memory mirror
+// inside the Store. The controller's map is the live copy and this
+// bucket is what it writes through to. So the three methods below read
+// and write bbolt directly instead of a Store map, and rehydrate()
+// leaves this bucket alone: the controller pulls it in via
+// RehydrateRoleHealth at daemon start.
+//
+// Without this, a role frozen at MaxRestarts saturation came back from
+// a daemon restart with an empty counter and got a free respawn: the
+// gap bolt.go's package doc used to list as the L2 leftover.
+type RoleHealthRecord struct {
+	Key           string    `json:"key"`
+	RestartCount  int       `json:"restart_count"`
+	LastRestartAt time.Time `json:"last_restart_at"`
+	BackoffUntil  time.Time `json:"backoff_until"`
+}
+
+// PersistRoleHealth writes one role's crash-loop state. No-op when bolt
+// is not open.
+func (s *Store) PersistRoleHealth(rec RoleHealthRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistPut(bucketRoleHealth, rec.Key, rec)
+}
+
+// ListRoleHealth returns every persisted role-health record. Returns nil
+// when bolt is not open, so a caller in in-memory-only mode starts with
+// an empty map, the pre-L2 behavior.
+func (s *Store) ListRoleHealth() ([]RoleHealthRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.bolt == nil {
+		return nil, nil
+	}
+	var out []RoleHealthRecord
+	if err := s.bolt.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketRoleHealth).ForEach(func(k, v []byte) error {
+			var rec RoleHealthRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				return fmt.Errorf("unmarshal role health %s: %w", string(k), err)
+			}
+			if rec.Key == "" {
+				rec.Key = string(k)
+			}
+			out = append(out, rec)
+			return nil
+		})
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteRoleHealth removes one role's crash-loop state. The controller's
+// cascade-clear paths call this so a re-applied manifest doesn't inherit
+// a frozen backoff window from a prior generation of the same role name.
+func (s *Store) DeleteRoleHealth(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistDelete(bucketRoleHealth, key)
 }
 
 // ResourceVersion returns the current monotonic version counter — the

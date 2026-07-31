@@ -32,6 +32,10 @@ type Controller struct {
 	// pre-fix implementation reset the counter on every rebuild, which
 	// made the backoff and max-restart caps impossible to enforce.
 	// See ArcavenAE/marvel#11.
+	//
+	// This map is the live copy; the store's role_health bucket is its
+	// durable mirror, written through on every change and read back by
+	// RehydrateRoleHealth at daemon start. See aae-orc-qdew.
 	roleHealth map[string]*RoleHealth
 
 	// now is an injection point for tests; nil means time.Now().UTC().
@@ -94,6 +98,55 @@ func (c *Controller) getRoleHealth(key string) *RoleHealth {
 	return rh
 }
 
+// RehydrateRoleHealth loads persisted crash-loop state into the
+// controller's map. Called at daemon start after Store.OpenBolt has
+// rehydrated the rest of L2, so a role sitting in a backoff window (or
+// frozen at MaxRestarts saturation) stays held back across a daemon
+// restart instead of getting a free respawn on the first reconcile tick.
+// No-op when persistence is disabled. See aae-orc-qdew.
+func (c *Controller) RehydrateRoleHealth() error {
+	recs, err := c.store.ListRoleHealth()
+	if err != nil {
+		return fmt.Errorf("load role health: %w", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, rec := range recs {
+		c.roleHealth[rec.Key] = &RoleHealth{
+			RestartCount:  rec.RestartCount,
+			LastRestartAt: rec.LastRestartAt,
+			BackoffUntil:  rec.BackoffUntil,
+		}
+	}
+	if len(recs) > 0 {
+		log.Printf("role health: rehydrated %d role(s) from durable state", len(recs))
+	}
+	return nil
+}
+
+// persistRoleHealth mirrors one role's state into the store. A failed
+// write costs the backoff window across the next restart, not
+// correctness now, so it logs rather than propagating. Caller holds
+// c.mu.
+func (c *Controller) persistRoleHealth(key string, rh *RoleHealth) {
+	if err := c.store.PersistRoleHealth(api.RoleHealthRecord{
+		Key:           key,
+		RestartCount:  rh.RestartCount,
+		LastRestartAt: rh.LastRestartAt,
+		BackoffUntil:  rh.BackoffUntil,
+	}); err != nil {
+		log.Printf("persist role health %s: %v", key, err)
+	}
+}
+
+// forgetRoleHealth drops one role's durable state, paired with the
+// in-memory delete in the cascade-clear helpers. Caller holds c.mu.
+func (c *Controller) forgetRoleHealth(key string) {
+	if err := c.store.DeleteRoleHealth(key); err != nil {
+		log.Printf("delete role health %s: %v", key, err)
+	}
+}
+
 // RoleHealthSnapshot returns the current restart state for a role,
 // useful for tests and for `marvel describe team` observability.
 // Returns (nil, false) if the role has no recorded crash-loop history.
@@ -129,6 +182,7 @@ func (c *Controller) ClearRoleHealthForTeam(workspace, team string) {
 	for k := range c.roleHealth {
 		if strings.HasPrefix(k, prefix) {
 			delete(c.roleHealth, k)
+			c.forgetRoleHealth(k)
 		}
 	}
 }
@@ -143,6 +197,7 @@ func (c *Controller) ClearRoleHealthForWorkspace(workspace string) {
 	for k := range c.roleHealth {
 		if strings.HasPrefix(k, prefix) {
 			delete(c.roleHealth, k)
+			c.forgetRoleHealth(k)
 		}
 	}
 }
@@ -219,6 +274,7 @@ func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestar
 	rh := c.getRoleHealth(roleKey)
 	if maxRestarts > 0 && rh.RestartCount >= maxRestarts {
 		rh.BackoffUntil = saturationFreezeUntil
+		c.persistRoleHealth(roleKey, rh)
 		return false
 	}
 	now := c.nowUTC()
@@ -226,6 +282,7 @@ func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestar
 	rh.LastRestartAt = now
 	nextBackoff := computeBackoff(rh.RestartCount + 1)
 	rh.BackoffUntil = now.Add(nextBackoff)
+	c.persistRoleHealth(roleKey, rh)
 	return true
 }
 

@@ -76,6 +76,15 @@ content: |
   "Local state (bbolt)") so future shim work, if it happens, doesn't
   collide.
 
+  Sub-item closed (aae-orc-qdew, 2026-07-31): role health counters are
+  durable. The `role_health` bucket the L2 spike reserved is now written
+  through on every crash-loop state change and read back by
+  `team.Controller.RehydrateRoleHealth` at daemon start, so a backoff
+  window (including the MaxRestarts saturation freeze) survives a
+  restart instead of handing the role a free respawn. It is the one
+  bucket with no in-memory mirror in the Store: the controller's map is
+  the live copy.
+
   Needs a probe: a 1–2-day spike that adds a bbolt transaction log
   behind the existing api.Store, exercises the WAL pattern, and
   switches CleanupOrphanTmux from kill-all to adopt-or-kill based on
