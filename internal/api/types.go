@@ -116,6 +116,10 @@ type Runtime struct {
 }
 
 // Session is the atomic unit: a tmux pane running one process (pod equivalent).
+//
+// PID is tmux's pane_pid: the shell tmux started, not the agent binary
+// it exec'd. Resource readings are therefore a rollup over the pid's
+// subtree, not a read of the pid itself. See internal/procstat.
 type Session struct {
 	Name            string       `toml:"name"`
 	Workspace       string       `toml:"workspace"`
@@ -133,6 +137,26 @@ type Session struct {
 	RestartCount    int          `toml:"-"`
 	LastHealthCheck time.Time    `toml:"-"`
 	CreatedAt       time.Time    `toml:"-"`
+	SessionMetrics  `toml:"-"`
+}
+
+// SessionMetrics is one process-sampler reading for a session, rolled up
+// over the pid subtree.
+//
+// MetricsAt separates "sampled, idle" from "never sampled": a session
+// with no PID, or one running where marvel has no process-table reader,
+// keeps MetricsAt zero and callers render absence instead of a
+// convincing 0.0.
+type SessionMetrics struct {
+	CPUPercent float64
+	RSSBytes   int64
+	// IOReadBytes and IOWriteBytes are cumulative block-layer bytes over
+	// the subtree. IOAvailable is false where the platform exposes no
+	// per-process counter (darwin today).
+	IOReadBytes  int64
+	IOWriteBytes int64
+	IOAvailable  bool
+	MetricsAt    time.Time
 }
 
 // Role declares desired state for one kind of agent within a team.

@@ -248,3 +248,57 @@ func TestListSessionsByTeamRoleGeneration(t *testing.T) {
 		t.Fatalf("expected 3 total workers, got %d", len(all))
 	}
 }
+
+func TestUpdateSessionMetrics(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+
+	sess := &Session{
+		Name:      "agent-0",
+		Workspace: "test-ws",
+		Team:      "agents",
+		Role:      "worker",
+		Runtime:   Runtime{Name: "forestage", Command: "forestage"},
+		State:     SessionRunning,
+		PID:       4242,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	before, _ := s.GetSession("test-ws/agent-0")
+	if !before.MetricsAt.IsZero() {
+		t.Fatal("a session must start with no sampler reading so callers can render absence")
+	}
+
+	s.UpdateSessionMetrics("test-ws/agent-0", SessionMetrics{
+		CPUPercent:   17.5,
+		RSSBytes:     512 << 20,
+		IOReadBytes:  2048,
+		IOWriteBytes: 1024,
+		IOAvailable:  true,
+	})
+
+	got, _ := s.GetSession("test-ws/agent-0")
+	if got.CPUPercent != 17.5 {
+		t.Errorf("CPUPercent = %v, want 17.5", got.CPUPercent)
+	}
+	if got.RSSBytes != 512<<20 {
+		t.Errorf("RSSBytes = %d, want %d", got.RSSBytes, int64(512<<20))
+	}
+	if !got.IOAvailable || got.IOReadBytes != 2048 || got.IOWriteBytes != 1024 {
+		t.Errorf("IO = %+v, want 2048 read / 1024 write, available", got.SessionMetrics)
+	}
+	if got.MetricsAt.IsZero() {
+		t.Error("MetricsAt is zero after a write; the CLI cannot tell measured from unmeasured")
+	}
+	// Fields the sampler does not own must survive the write.
+	if got.PID != 4242 || got.State != SessionRunning {
+		t.Errorf("metrics write disturbed PID/State: %+v", got)
+	}
+
+	// A session deleted between the sampler's snapshot and its write is
+	// not an error worth reporting.
+	s.UpdateSessionMetrics("test-ws/nonexistent", SessionMetrics{CPUPercent: 1})
+}

@@ -407,3 +407,24 @@ func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error
 	sess.LastHeartbeat = time.Now().UTC()
 	return s.persistPut(bucketSessions, sess.Key(), sess)
 }
+
+// UpdateSessionMetrics records one process-sampler reading. m.MetricsAt
+// is set here so every stored reading carries the store's clock.
+//
+// Unlike UpdateSessionHeartbeat this does not persist. A reading is
+// stale the moment the daemon stops, and the sampler refreshes every
+// session within one interval of startup, so a bolt write per session
+// per interval would buy a number nobody can use. Sessions missing from
+// the store are ignored rather than reported: the sampler works from a
+// snapshot and a session can be deleted between the snapshot and the
+// write.
+func (s *Store) UpdateSessionMetrics(key string, m SessionMetrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		return
+	}
+	m.MetricsAt = time.Now().UTC()
+	sess.SessionMetrics = m
+}
