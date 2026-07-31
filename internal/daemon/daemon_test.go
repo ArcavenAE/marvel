@@ -631,3 +631,214 @@ func TestDaemonTCP(t *testing.T) {
 		t.Fatalf("TCP response error: %s", resp.Error)
 	}
 }
+
+// TestDetachThenRestartAdoptsSessions is the recovery contract for
+// aae-orc-1aoe: a graceful stop must leave as much behind as a kill -9
+// does. The daemon detaches, its agent's pane keeps running, and the
+// next daemon start over the same state file adopts that pane instead of
+// spawning a replacement.
+//
+// Before the detach/teardown split, Stop deleted every session and
+// killed every pane before closing bolt, so this scenario could only
+// ever be reached by killing the daemon ungracefully.
+func TestDetachThenRestartAdoptsSessions(t *testing.T) {
+	skipIfNoTmux(t)
+
+	boltPath := filepath.Join(t.TempDir(), "marvel.bolt")
+	ws := "test-detach-adopt"
+	manifest := `
+[workspace]
+name = "` + ws + `"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "sleep"
+    args = ["300"]
+`
+
+	d1, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon #1: %v", err)
+	}
+	sock1 := filepath.Join(os.TempDir(), "marvel-test-detach-1.sock")
+	if err := d1.Start(sock1); err != nil {
+		t.Fatalf("start daemon #1: %v", err)
+	}
+	// Whatever happens below, don't leave the workspace's panes behind
+	// for sibling tests.
+	t.Cleanup(func() {
+		_ = d1.driver.KillSession("marvel-" + ws)
+		_ = os.Remove(sock1)
+	})
+
+	resp, err := SendRequest(sock1, Request{
+		Method: "apply",
+		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("apply: err=%v resp.Error=%q", err, resp.Error)
+	}
+	time.Sleep(600 * time.Millisecond)
+
+	before := d1.store.ListSessionsByTeam(ws, "squad")
+	if len(before) != 1 {
+		t.Fatalf("expected 1 session before detach, got %d", len(before))
+	}
+	sessKey := before[0].Key()
+	paneID := before[0].PaneID
+	if paneID == "" {
+		t.Fatal("expected the session to have a pane before detach")
+	}
+
+	d1.Detach()
+
+	// The pane the agent runs in must be untouched: this is the whole
+	// difference between detach and teardown.
+	if !d1.driver.HasPane(paneID) {
+		t.Fatalf("pane %s was killed by Detach", paneID)
+	}
+
+	d2, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon #2: %v", err)
+	}
+	sock2 := filepath.Join(os.TempDir(), "marvel-test-detach-2.sock")
+	t.Cleanup(func() {
+		d2.Stop()
+		_ = os.Remove(sock2)
+	})
+
+	// Rehydrated intent must name the same pane, or AdoptOrKill has
+	// nothing to match on and kills it.
+	rehydrated, err := d2.store.GetSession(sessKey)
+	if err != nil {
+		t.Fatalf("session %s did not survive detach: %v", sessKey, err)
+	}
+	if rehydrated.PaneID != paneID {
+		t.Fatalf("rehydrated PaneID: want %s, got %s", paneID, rehydrated.PaneID)
+	}
+
+	if err := d2.Start(sock2); err != nil {
+		t.Fatalf("start daemon #2: %v", err)
+	}
+	if !d2.driver.HasPane(paneID) {
+		t.Fatalf("pane %s was killed on restart instead of adopted", paneID)
+	}
+
+	// Give the reconciler a few ticks: the adopted session already
+	// satisfies the role's replica count, so nothing new should spawn.
+	time.Sleep(3 * ReconcileInterval)
+	after := d2.store.ListSessionsByTeam(ws, "squad")
+	if len(after) != 1 {
+		t.Fatalf("expected 1 session after restart, got %d: %+v", len(after), after)
+	}
+	if after[0].PaneID != paneID {
+		t.Fatalf("session was replaced rather than adopted: pane %s -> %s", paneID, after[0].PaneID)
+	}
+	if !d2.driver.HasPane(paneID) {
+		t.Fatalf("pane %s died during reconciliation after adoption", paneID)
+	}
+}
+
+// TestStopTeardownStillDestroys guards the escape hatch: --teardown
+// keeps the old behavior, so an operator who wants the machine clean
+// still gets it and a restart has nothing to adopt.
+func TestStopTeardownStillDestroys(t *testing.T) {
+	skipIfNoTmux(t)
+
+	boltPath := filepath.Join(t.TempDir(), "marvel.bolt")
+	ws := "test-teardown"
+	manifest := `
+[workspace]
+name = "` + ws + `"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "sleep"
+    args = ["300"]
+`
+
+	d, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	sock := filepath.Join(os.TempDir(), "marvel-test-teardown.sock")
+	if err := d.Start(sock); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = d.driver.KillSession("marvel-" + ws)
+		_ = os.Remove(sock)
+	})
+
+	resp, err := SendRequest(sock, Request{
+		Method: "apply",
+		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("apply: err=%v resp.Error=%q", err, resp.Error)
+	}
+	time.Sleep(600 * time.Millisecond)
+
+	sessions := d.store.ListSessionsByTeam(ws, "squad")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	paneID := sessions[0].PaneID
+
+	d.Stop()
+
+	if d.driver.HasPane(paneID) {
+		t.Fatalf("pane %s survived teardown", paneID)
+	}
+	if d.driver.HasSession("marvel-" + ws) {
+		t.Fatal("workspace tmux session survived teardown")
+	}
+	if got := len(d.store.ListSessions()); got != 0 {
+		t.Fatalf("expected 0 sessions after teardown, got %d", got)
+	}
+}
+
+// TestStopModeDefaultsToDetach pins the RPC surface: a client that
+// sends no params, including any built before the flag existed, gets a
+// detach, never a teardown. handleStop itself is not called here; its
+// goroutine exits the process, so the two tests above cover it.
+func TestStopModeDefaultsToDetach(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		params   json.RawMessage
+		teardown bool
+		mode     string
+	}{
+		{"absent", nil, false, "detach"},
+		{"empty object", json.RawMessage(`{}`), false, "detach"},
+		{"explicit false", json.RawMessage(`{"teardown":false}`), false, "detach"},
+		{"explicit true", json.RawMessage(`{"teardown":true}`), true, "teardown"},
+	}
+	for _, tc := range cases {
+		teardown, mode, err := stopMode(tc.params)
+		if err != nil {
+			t.Errorf("%s: stopMode: %v", tc.name, err)
+			continue
+		}
+		if teardown != tc.teardown || mode != tc.mode {
+			t.Errorf("%s: got (%v, %q), want (%v, %q)", tc.name, teardown, mode, tc.teardown, tc.mode)
+		}
+	}
+	if _, _, err := stopMode(json.RawMessage(`{`)); err == nil {
+		t.Error("expected an error on malformed params")
+	}
+}

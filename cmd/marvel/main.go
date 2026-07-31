@@ -220,12 +220,15 @@ Examples:
 				}
 			}
 
-			// Wait for signal.
+			// Wait for signal. A signal detaches: agents keep running
+			// and the next start adopts their panes. Tearing them down
+			// is an explicit operator act (`marvel stop --teardown`),
+			// not something a package upgrade or a stray Ctrl-C does.
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 			<-sig
-			fmt.Println("\nshutting down...")
-			d.Stop()
+			fmt.Println("\ndetaching, agents keep running (marvel stop --teardown to end them)")
+			d.Detach()
 			return nil
 		},
 	}
@@ -1226,21 +1229,42 @@ func nameArg(name string) string {
 }
 
 func stopCmd() *cobra.Command {
-	return &cobra.Command{
+	var teardown bool
+	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the marvel daemon and clean up all resources",
+		Short: "Stop the marvel daemon, leaving agents running",
+		Long: `Stop the marvel daemon.
+
+By default this detaches: the daemon checkpoints its state and exits
+while every agent keeps running in its tmux pane. The next
+'marvel daemon' start reads that state back and adopts the live panes,
+so a restart or an upgrade costs no agent context.
+
+Use --teardown when you want the machine clean. Every session is
+deleted and every workspace tmux session killed before the daemon
+exits; nothing is left to adopt.`,
+		Example: `  marvel stop              # detach, agents keep running
+  marvel stop --teardown   # end every agent, then stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "stop"})
+			params, _ := json.Marshal(map[string]bool{"teardown": teardown})
+			resp, err := send(daemon.Request{Method: "stop", Params: params})
 			if err != nil {
 				return err
 			}
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Println("marvel daemon stopping")
+			if teardown {
+				fmt.Println("marvel daemon stopping, agents torn down")
+			} else {
+				fmt.Println("marvel daemon detaching, agents keep running")
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&teardown, "teardown", false,
+		"delete every session and kill its tmux session before stopping")
+	return cmd
 }
 
 // --- Watch mode ---

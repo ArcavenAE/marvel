@@ -40,6 +40,10 @@ start-bg: build
 
 # Stop the daemon and clean up all tmux sessions
 stop:
+    ./bin/marvel stop --teardown || true
+
+# Stop the daemon but leave agents running; the next `just daemon` adopts them
+detach:
     ./bin/marvel stop || true
 
 # Load the demo manifest

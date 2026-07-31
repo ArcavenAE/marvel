@@ -79,7 +79,8 @@ Tasks:
 - [x] `marvel describe <type> <name>` — detail view
 - [x] `marvel delete <type> <name>` — remove resource
 - [x] `marvel scale <team> --replicas N` — adjust replicas
-- [x] `marvel stop` — shut down daemon and clean up tmux
+- [x] `marvel stop`: shut down daemon, leaving agents running for the next start to adopt
+- [x] `marvel stop --teardown`: shut down daemon and clean up tmux
 
 ## Epic 6: Just Interface
 

@@ -15,8 +15,11 @@ marvel work examples/claude.yaml
 # See what's running
 marvel get sessions
 
-# Stop everything
+# Stop the daemon, leaving agents running (restart adopts them)
 marvel stop
+
+# Or end the agents too
+marvel stop --teardown
 ```
 
 ## Writing manifests
