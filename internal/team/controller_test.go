@@ -3,6 +3,7 @@ package team
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1107,5 +1108,179 @@ func TestShiftSessionNaming(t *testing.T) {
 	}
 	if !strings.Contains(gen2[0].Name, "-g2-") {
 		t.Fatalf("expected g2 in name, got %s", gen2[0].Name)
+	}
+}
+
+// setupWithBolt is setup() against a persistence-backed store, for the
+// tests that assert crash-loop state survives a store reopen. The
+// caller supplies the bolt path so a second call can reopen the same
+// file as a fresh daemon would. See aae-orc-qdew.
+func setupWithBolt(t *testing.T, boltPath string) (*api.Store, *Controller, func()) {
+	t.Helper()
+	store := api.NewStore()
+	if err := store.OpenBolt(boltPath); err != nil {
+		t.Fatalf("OpenBolt %s: %v", boltPath, err)
+	}
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	sessMgr := session.NewManager(store, driver)
+	ctrl := NewController(store, sessMgr)
+	if err := ctrl.RehydrateRoleHealth(); err != nil {
+		t.Fatalf("RehydrateRoleHealth: %v", err)
+	}
+
+	cleanup := func() {
+		for _, ws := range store.ListWorkspaces() {
+			_ = sessMgr.CleanupWorkspace(ws.Name)
+		}
+		_ = store.CloseBolt()
+	}
+	return store, ctrl, cleanup
+}
+
+// TestRoleHealthRoundTripsThroughStore covers the bucket wiring:
+// noteCrashAndBackoff writes through to the store, a fresh controller
+// reads the same values back, and the cascade-clear helpers remove the
+// durable row as well as the in-memory one. No tmux needed: this is
+// the persistence contract, not the reconciler.
+func TestRoleHealthRoundTripsThroughStore(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+
+	store1 := api.NewStore()
+	if err := store1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	ctrl1 := NewController(store1, nil)
+	clock := newTestClock(time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
+	ctrl1.now = clock.Now
+
+	if !ctrl1.noteCrashAndBackoff("ws1", "squad", "worker", 0) {
+		t.Fatal("first crash should be recorded")
+	}
+	if !ctrl1.noteCrashAndBackoff("ws1", "squad", "reviewer", 0) {
+		t.Fatal("sibling role crash should be recorded")
+	}
+	want, ok := ctrl1.RoleHealthSnapshot("ws1", "squad", "worker")
+	if !ok {
+		t.Fatal("expected in-memory role health for worker")
+	}
+	if err := store1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+
+	store2 := api.NewStore()
+	if err := store2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = store2.CloseBolt() })
+	ctrl2 := NewController(store2, nil)
+	if err := ctrl2.RehydrateRoleHealth(); err != nil {
+		t.Fatalf("RehydrateRoleHealth: %v", err)
+	}
+
+	got, ok := ctrl2.RoleHealthSnapshot("ws1", "squad", "worker")
+	if !ok {
+		t.Fatal("worker role health did not survive the reopen")
+	}
+	if got.RestartCount != want.RestartCount {
+		t.Fatalf("RestartCount after reopen: want %d, got %d", want.RestartCount, got.RestartCount)
+	}
+	if !got.BackoffUntil.Equal(want.BackoffUntil) {
+		t.Fatalf("BackoffUntil after reopen: want %s, got %s", want.BackoffUntil, got.BackoffUntil)
+	}
+	if !got.LastRestartAt.Equal(want.LastRestartAt) {
+		t.Fatalf("LastRestartAt after reopen: want %s, got %s", want.LastRestartAt, got.LastRestartAt)
+	}
+	if _, ok := ctrl2.RoleHealthSnapshot("ws1", "squad", "reviewer"); !ok {
+		t.Fatal("reviewer role health did not survive the reopen")
+	}
+
+	// Cascade clear must reach the durable row too, or a re-applied
+	// manifest inherits the prior generation's backoff. See marvel#29.
+	ctrl2.ClearRoleHealthForTeam("ws1", "squad")
+	recs, err := store2.ListRoleHealth()
+	if err != nil {
+		t.Fatalf("ListRoleHealth: %v", err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("expected no durable role-health rows after cascade clear, got %+v", recs)
+	}
+}
+
+// TestSaturatedRoleStaysFrozenAcrossRestart is the behavioral half: a
+// role that exhausted MaxRestarts must still refuse to spawn after the
+// daemon restarts, no matter how far the clock has moved. Before
+// RoleHealth was persisted the fresh controller started with an empty
+// map and handed the saturated role a free respawn. See aae-orc-qdew.
+func TestSaturatedRoleStaysFrozenAcrossRestart(t *testing.T) {
+	skipIfNoTmux(t)
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+
+	store1, ctrl1, cleanup1 := setupWithBolt(t, path)
+	clock := newTestClock(time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC))
+	ctrl1.now = clock.Now
+
+	ws := "test-rh-frozen"
+	createTeamFixture(t, store1, ws, "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			MaxRestarts: 1,
+		},
+	})
+
+	// Burn the single restart, then saturate on the next crash.
+	for i := 0; i < 2; i++ {
+		ctrl1.ReconcileOnce()
+		got := store1.ListSessionsByTeamRole(ws, "squad", "worker")
+		if len(got) == 0 {
+			t.Fatalf("iteration %d: expected a running session", i)
+		}
+		killPaneAndWait(t, got[0].PaneID)
+		ctrl1.ReconcileOnce() // reap + crash bookkeeping
+		clock.Advance(10 * time.Minute)
+	}
+
+	rh, ok := ctrl1.RoleHealthSnapshot(ws, "squad", "worker")
+	if !ok {
+		t.Fatal("expected role health after saturation")
+	}
+	if rh.BackoffUntil != saturationFreezeUntil {
+		t.Fatalf("expected saturation freeze before restart, got BackoffUntil=%s count=%d",
+			rh.BackoffUntil, rh.RestartCount)
+	}
+
+	// Simulate the daemon restart: release the bolt file without
+	// touching panes (what Detach does), then reopen into fresh
+	// in-memory state.
+	cleanup1()
+
+	store2, ctrl2, cleanup2 := setupWithBolt(t, path)
+	t.Cleanup(cleanup2)
+	clock2 := newTestClock(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
+	ctrl2.now = clock2.Now
+
+	rh2, ok := ctrl2.RoleHealthSnapshot(ws, "squad", "worker")
+	if !ok {
+		t.Fatal("saturated role health did not survive the restart")
+	}
+	if rh2.BackoffUntil != saturationFreezeUntil {
+		t.Fatalf("expected saturation freeze after restart, got %s", rh2.BackoffUntil)
+	}
+
+	// A day later the reconciler must still refuse to spawn.
+	clock2.Advance(24 * time.Hour)
+	ctrl2.ReconcileOnce()
+	alive := 0
+	for _, s := range store2.ListSessionsByTeamRole(ws, "squad", "worker") {
+		if s.State.CountsAsAlive() {
+			alive++
+		}
+	}
+	if alive != 0 {
+		t.Fatalf("saturated role respawned after restart: %d alive session(s)", alive)
 	}
 }
