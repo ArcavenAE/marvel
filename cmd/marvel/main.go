@@ -257,7 +257,42 @@ Examples:
 		"cap total disk usage across --log-file and archives in MiB (0 disables)")
 
 	cmd.AddCommand(daemonLogsCmd())
+	cmd.AddCommand(daemonReexecCmd())
 	return cmd
+}
+
+// daemonReexecCmd tells the running daemon to re-exec its own process
+// image in place, adopting the live panes so agents keep running. This
+// is the "self-update via exec" step: it adopts a binary that is already
+// installed on disk. It is distinct from `marvel upgrade` (which fetches
+// and installs a new binary) so the two compose rather than collide;
+// `marvel upgrade --daemon` runs both in sequence.
+func daemonReexecCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reexec",
+		Short: "Re-exec the running daemon in place to adopt a freshly installed binary",
+		Long: `Re-exec the running daemon in place.
+
+The daemon checkpoints its state, releases its state file, and replaces
+its own process image (same PID) with a fresh exec of the marvel binary
+at its current path. Every agent keeps running in its tmux pane; the new
+process re-opens the same state file, re-binds the same socket, and
+adopts those panes.
+
+Use this after installing a new binary out of band. To fetch, install,
+and adopt in one step, use 'marvel upgrade --daemon'.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := send(daemon.Request{Method: "reexec"})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			fmt.Println("marvel daemon re-executing in place; agents keep running")
+			return nil
+		},
+	}
 }
 
 // daemonLogsCmd — fetch the daemon's recent log lines over mrvl://.
@@ -799,18 +834,40 @@ func versionCmd() *cobra.Command {
 
 func upgradeCmd() *cobra.Command {
 	var targetVersion string
+	var reexecDaemon bool
 	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Upgrade marvel to the latest version",
 		Long: `Upgrade marvel to the latest version.
 
 If installed via Homebrew, delegates to brew upgrade.
-Otherwise downloads the latest release from GitHub.`,
+Otherwise downloads the latest release from GitHub.
+
+This replaces the binary on disk. A running daemon keeps executing the
+old image until it restarts. Pass --daemon to tell the running daemon to
+re-exec in place after the install, adopting its live panes so agents
+keep running (see 'marvel daemon reexec').`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return upgrade.Run(channel, targetVersion)
+			if err := upgrade.Run(channel, targetVersion); err != nil {
+				return err
+			}
+			if !reexecDaemon {
+				return nil
+			}
+			resp, err := send(daemon.Request{Method: "reexec"})
+			if err != nil {
+				return fmt.Errorf("binary upgraded, but sending daemon re-exec failed: %w", err)
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("binary upgraded, but daemon re-exec failed: %s", resp.Error)
+			}
+			fmt.Println("running daemon re-executing in place; agents keep running")
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")
+	cmd.Flags().BoolVar(&reexecDaemon, "daemon", false,
+		"after installing, tell the running daemon to re-exec in place so it adopts the new binary without stopping agents")
 	return cmd
 }
 

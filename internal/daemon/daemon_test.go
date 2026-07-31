@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 func skipIfNoTmux(t *testing.T) {
@@ -840,5 +842,282 @@ func TestStopModeDefaultsToDetach(t *testing.T) {
 	}
 	if _, _, err := stopMode(json.RawMessage(`{`)); err == nil {
 		t.Error("expected an error on malformed params")
+	}
+}
+
+// reexecManifest is the one-worker fixture the self-update tests apply,
+// matching the shape startTestDaemon and the detach test use.
+func reexecManifest(ws string) string {
+	return `
+[workspace]
+name = "` + ws + `"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "sleep"
+    args = ["300"]
+`
+}
+
+// TestReexecCheckpointsStateBeforeExec is contract (a): the durable
+// record is flushed and the bolt file released before the exec syscall
+// is attempted, and the agent's pane is left running for the successor.
+// A fake exec stands in for syscall.Exec and inspects the on-disk state
+// at the instant the real exec would fire.
+func TestReexecCheckpointsStateBeforeExec(t *testing.T) {
+	skipIfNoTmux(t)
+
+	boltPath := filepath.Join(t.TempDir(), "marvel.bolt")
+	ws := "test-reexec-checkpoint"
+
+	d, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	sock := filepath.Join(os.TempDir(), "marvel-test-reexec-cp.sock")
+	if err := d.Start(sock); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = d.driver.KillSession("marvel-" + ws)
+		_ = os.Remove(sock)
+	})
+
+	resp, err := SendRequest(sock, Request{
+		Method: "apply",
+		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(reexecManifest(ws))}),
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("apply: err=%v resp.Error=%q", err, resp.Error)
+	}
+	time.Sleep(600 * time.Millisecond)
+
+	before := d.store.ListSessionsByTeam(ws, "squad")
+	if len(before) != 1 {
+		t.Fatalf("expected 1 session before reexec, got %d", len(before))
+	}
+	sessKey := before[0].Key()
+	paneID := before[0].PaneID
+	if paneID == "" {
+		t.Fatal("expected the session to have a pane before reexec")
+	}
+
+	var (
+		execCalled bool
+		gotArgv0   string
+		gotArgv    []string
+	)
+	d.reexec = func(argv0 string, argv []string, _ []string) error {
+		execCalled = true
+		gotArgv0 = argv0
+		gotArgv = argv
+
+		// The bolt file must be released before exec, or the successor's
+		// OpenBolt would block on bbolt's exclusive lock.
+		if bp := d.store.BoltPath(); bp != "" {
+			t.Errorf("bolt still open at exec time: %q", bp)
+		}
+		// The record must be durable before exec: a fresh Store opening
+		// the same file rehydrates the applied session.
+		verify := api.NewStore()
+		if oerr := verify.OpenBolt(boltPath); oerr != nil {
+			t.Errorf("reopen bolt at exec time: %v", oerr)
+			return nil
+		}
+		defer func() { _ = verify.CloseBolt() }()
+		if _, gerr := verify.GetSession(sessKey); gerr != nil {
+			t.Errorf("session %s not durable before exec: %v", sessKey, gerr)
+		}
+		return nil
+	}
+
+	if err := d.Reexec(); err != nil {
+		t.Fatalf("Reexec: %v", err)
+	}
+	if !execCalled {
+		t.Fatal("exec was never attempted")
+	}
+	want, err := selfExecPath()
+	if err != nil {
+		t.Fatalf("selfExecPath: %v", err)
+	}
+	if gotArgv0 != want {
+		t.Errorf("exec argv0: want %q, got %q", want, gotArgv0)
+	}
+	if len(gotArgv) == 0 || gotArgv[0] != os.Args[0] {
+		t.Errorf("exec argv should preserve os.Args, got %v", gotArgv)
+	}
+	// The pane the agent runs in must survive, exactly as it does on Detach.
+	if !d.driver.HasPane(paneID) {
+		t.Fatalf("pane %s was killed by Reexec", paneID)
+	}
+}
+
+// TestReexecLeavesPanesForSuccessorToAdopt is contract (b): after a
+// re-exec, a fresh daemon over the same state file adopts the still-
+// running pane instead of spawning a replacement. This is the #73
+// detach/adopt recovery contract driven by Reexec rather than Detach.
+func TestReexecLeavesPanesForSuccessorToAdopt(t *testing.T) {
+	skipIfNoTmux(t)
+
+	boltPath := filepath.Join(t.TempDir(), "marvel.bolt")
+	ws := "test-reexec-adopt"
+
+	d1, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon #1: %v", err)
+	}
+	sock1 := filepath.Join(os.TempDir(), "marvel-test-reexec-1.sock")
+	if err := d1.Start(sock1); err != nil {
+		t.Fatalf("start daemon #1: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = d1.driver.KillSession("marvel-" + ws)
+		_ = os.Remove(sock1)
+	})
+
+	resp, err := SendRequest(sock1, Request{
+		Method: "apply",
+		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(reexecManifest(ws))}),
+	})
+	if err != nil || resp.Error != "" {
+		t.Fatalf("apply: err=%v resp.Error=%q", err, resp.Error)
+	}
+	time.Sleep(600 * time.Millisecond)
+
+	before := d1.store.ListSessionsByTeam(ws, "squad")
+	if len(before) != 1 {
+		t.Fatalf("expected 1 session before reexec, got %d", len(before))
+	}
+	sessKey := before[0].Key()
+	paneID := before[0].PaneID
+	if paneID == "" {
+		t.Fatal("expected the session to have a pane before reexec")
+	}
+
+	// Stand in for syscall.Exec: the real call never returns, so a nil
+	// return models a successful hand-off. The detach inside Reexec has
+	// already run by the time this fires.
+	d1.reexec = func(_ string, _ []string, _ []string) error { return nil }
+	if err := d1.Reexec(); err != nil {
+		t.Fatalf("Reexec: %v", err)
+	}
+	if !d1.driver.HasPane(paneID) {
+		t.Fatalf("pane %s was killed by Reexec", paneID)
+	}
+
+	d2, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon #2: %v", err)
+	}
+	sock2 := filepath.Join(os.TempDir(), "marvel-test-reexec-2.sock")
+	t.Cleanup(func() {
+		d2.Stop()
+		_ = os.Remove(sock2)
+	})
+
+	rehydrated, err := d2.store.GetSession(sessKey)
+	if err != nil {
+		t.Fatalf("session %s did not survive reexec: %v", sessKey, err)
+	}
+	if rehydrated.PaneID != paneID {
+		t.Fatalf("rehydrated PaneID: want %s, got %s", paneID, rehydrated.PaneID)
+	}
+
+	if err := d2.Start(sock2); err != nil {
+		t.Fatalf("start daemon #2: %v", err)
+	}
+	if !d2.driver.HasPane(paneID) {
+		t.Fatalf("pane %s was killed on restart instead of adopted", paneID)
+	}
+
+	time.Sleep(3 * ReconcileInterval)
+	after := d2.store.ListSessionsByTeam(ws, "squad")
+	if len(after) != 1 {
+		t.Fatalf("expected 1 session after reexec, got %d: %+v", len(after), after)
+	}
+	if after[0].PaneID != paneID {
+		t.Fatalf("session was replaced rather than adopted: pane %s -> %s", paneID, after[0].PaneID)
+	}
+}
+
+// TestDispatchReexecPlumbing is contract (c): the reexec RPC routes to
+// handleReexec, returns the reexec status without erroring, and its
+// background goroutine invokes the exec primitive with the resolved
+// binary path and preserved argv. A fake exec keeps the process alive.
+func TestDispatchReexecPlumbing(t *testing.T) {
+	skipIfNoTmux(t)
+
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	// In-memory only, never Started: Reexec's Detach is a no-op and the
+	// fake exec returns without replacing the process.
+	type execCall struct {
+		argv0 string
+		argv  []string
+	}
+	calls := make(chan execCall, 1)
+	d.reexec = func(argv0 string, argv []string, _ []string) error {
+		calls <- execCall{argv0: argv0, argv: argv}
+		return nil
+	}
+
+	resp := d.dispatch(Request{Method: "reexec"})
+	if resp.Error != "" {
+		t.Fatalf("reexec dispatch error: %s", resp.Error)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal reexec result: %v", err)
+	}
+	if result["status"] != "reexec" {
+		t.Errorf("status: want %q, got %q", "reexec", result["status"])
+	}
+	if result["binary"] == "" {
+		t.Error("expected a resolved binary path in the response")
+	}
+
+	want, err := selfExecPath()
+	if err != nil {
+		t.Fatalf("selfExecPath: %v", err)
+	}
+	select {
+	case got := <-calls:
+		if got.argv0 != want {
+			t.Errorf("exec argv0: want %q, got %q", want, got.argv0)
+		}
+		if len(got.argv) == 0 || got.argv[0] != os.Args[0] {
+			t.Errorf("exec argv should preserve os.Args, got %v", got.argv)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("exec primitive was not invoked by the reexec goroutine")
+	}
+}
+
+func TestCleanExecPath(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "/usr/local/bin/marvel", "/usr/local/bin/marvel"},
+		{"deleted suffix", "/usr/local/bin/marvel (deleted)", "/usr/local/bin/marvel"},
+		{"space in path but not deleted", "/opt/my apps/marvel", "/opt/my apps/marvel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cleanExecPath(tc.in); got != tc.want {
+				t.Errorf("cleanExecPath(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
