@@ -401,3 +401,92 @@ func kinds(evs []events.Event) []events.Kind {
 	}
 	return out
 }
+
+func TestParseResultPromotesMeteringFields(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "hello.ndjson")
+	ended, ok := got[len(got)-1].Data.(events.SessionEndedData)
+	if !ok {
+		t.Fatalf("last event data = %T, want SessionEndedData", got[len(got)-1].Data)
+	}
+	m := ended.Metering
+	if m == nil {
+		t.Fatal("session.ended carries no metering")
+	}
+
+	// Values are read straight off testdata/hello.ndjson.
+	if m.DurationMS != 4816 {
+		t.Errorf("duration_ms = %d, want 4816", m.DurationMS)
+	}
+	if m.APIDurationMS != 6546 {
+		t.Errorf("duration_api_ms = %d, want 6546", m.APIDurationMS)
+	}
+	if m.TTFTMS != 4775 {
+		t.Errorf("ttft_ms = %d, want 4775", m.TTFTMS)
+	}
+	if m.TTFTStreamMS != 4031 {
+		t.Errorf("ttft_stream_ms = %d, want 4031", m.TTFTStreamMS)
+	}
+	if m.NumTurns != 1 {
+		t.Errorf("num_turns = %d, want 1", m.NumTurns)
+	}
+	if m.CacheCreationIn != 22005 {
+		t.Errorf("cache_creation_in = %d, want 22005", m.CacheCreationIn)
+	}
+	if len(m.PermissionDenials) != 0 {
+		t.Errorf("permission_denials = %v, want empty", m.PermissionDenials)
+	}
+
+	// modelUsage is per-model and camelCase on the wire; the fixture
+	// routed across two models in one session.
+	if len(m.ModelUsage) != 2 {
+		t.Fatalf("model_usage has %d entries, want 2: %+v", len(m.ModelUsage), m.ModelUsage)
+	}
+	haiku, ok := m.ModelUsage["claude-haiku-4-5-20251001"]
+	if !ok {
+		t.Fatalf("model_usage missing the haiku entry: %+v", m.ModelUsage)
+	}
+	if haiku.In != 522 || haiku.Out != 13 {
+		t.Errorf("haiku usage = in %d out %d, want 522/13", haiku.In, haiku.Out)
+	}
+	if haiku.Cost == nil || *haiku.Cost != 0.000587 {
+		t.Errorf("haiku cost = %v, want 0.000587", haiku.Cost)
+	}
+}
+
+func TestParseResultWithoutMeteringLeavesItNil(t *testing.T) {
+	t.Parallel()
+	// A harness that reports none of the accounting fields must be
+	// distinguishable from one that reports zeros.
+	line := `{"type":"result","subtype":"success","is_error":false,"session_id":"s","usage":{"input_tokens":1,"output_tokens":1}}`
+	p := NewParser(Config{Clock: fixedClock()})
+	var got []events.Event
+	if err := p.Parse(context.Background(), strings.NewReader(line+"\n"), func(e events.Event) {
+		got = append(got, e)
+	}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	ended, ok := got[0].Data.(events.SessionEndedData)
+	if !ok {
+		t.Fatalf("data = %T, want SessionEndedData", got[0].Data)
+	}
+	if ended.Metering != nil {
+		t.Errorf("metering = %+v, want nil", ended.Metering)
+	}
+}
+
+func TestSessionEndedMeteringOmittedFromJSONWhenAbsent(t *testing.T) {
+	t.Parallel()
+	// Metering is additive under schema_version 1, so an event without
+	// it must serialize exactly as it did before the field existed.
+	b, err := json.Marshal(events.SessionEndedData{ExitCode: 0})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(b, []byte("metering")) {
+		t.Errorf("metering leaked into JSON: %s", b)
+	}
+}

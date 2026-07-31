@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -305,5 +306,124 @@ func TestForestagePrepareDangerousPermissionsDefaultOff(t *testing.T) {
 
 	if strings.Contains(result.Command, "--dangerously-skip-permissions") {
 		t.Errorf("command must NOT contain --dangerously-skip-permissions when Role.DangerousPermissions is false (default), got: %s", result.Command)
+	}
+}
+
+// headlessClaudeContext is the shape the manager builds for a
+// stream-capable launch: a headless claude runtime plus the sink path.
+func headlessClaudeContext(streamPath string) *LaunchContext {
+	ctx := testContext()
+	ctx.Session.Runtime = api.Runtime{
+		Name:    "claude",
+		Command: "claude",
+		Mode:    api.RuntimeModeHeadless,
+		Prompt:  "summarize the diff",
+	}
+	ctx.StreamPath = streamPath
+	return ctx
+}
+
+func TestClaudeSupportsStreamOnlyWhenHeadless(t *testing.T) {
+	t.Parallel()
+	c := &Claude{}
+
+	interactive := testContext()
+	interactive.Session.Runtime.Name = "claude"
+	interactive.Session.Runtime.Command = "claude"
+	if c.SupportsStream(interactive) {
+		t.Error("interactive claude should not claim a stream")
+	}
+	if !c.SupportsStream(headlessClaudeContext("")) {
+		t.Error("headless claude should claim a stream")
+	}
+}
+
+func TestClaudePrepareHeadlessRedirectsToSink(t *testing.T) {
+	t.Parallel()
+	c := &Claude{}
+	result, err := c.Prepare(headlessClaudeContext("/tmp/marvel-streams/acme-agent.ndjson"))
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	for _, want := range []string{
+		"--print", "--output-format stream-json", "--verbose",
+		"> /tmp/marvel-streams/acme-agent.ndjson",
+	} {
+		if !strings.Contains(result.Command, want) {
+			t.Errorf("command missing %q: %s", want, result.Command)
+		}
+	}
+	// The prompt is positional and must be the last thing before the
+	// redirection, or claude reads it as a flag value.
+	if !strings.Contains(result.Command, "'summarize the diff' > ") {
+		t.Errorf("prompt not positioned before the redirect: %s", result.Command)
+	}
+	if result.Stream == nil {
+		t.Fatal("expected a StreamSpec")
+	}
+	if result.Stream.Format != StreamFormatClaudeCodeJSON {
+		t.Errorf("format = %q, want %q", result.Stream.Format, StreamFormatClaudeCodeJSON)
+	}
+}
+
+func TestClaudePrepareHeadlessWithoutSinkStillRuns(t *testing.T) {
+	t.Parallel()
+	c := &Claude{}
+	result, err := c.Prepare(headlessClaudeContext(""))
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if strings.Contains(result.Command, ">") {
+		t.Errorf("no sink offered, so no redirect belongs in: %s", result.Command)
+	}
+	if result.Stream != nil {
+		t.Error("adapter reported a stream it was never given a sink for")
+	}
+}
+
+func TestClaudePrepareHeadlessRequiresPrompt(t *testing.T) {
+	t.Parallel()
+	c := &Claude{}
+	ctx := headlessClaudeContext("/tmp/x.ndjson")
+	ctx.Session.Runtime.Prompt = ""
+	if _, err := c.Prepare(ctx); !errors.Is(err, ErrNoPrompt) {
+		t.Fatalf("error = %v, want ErrNoPrompt", err)
+	}
+}
+
+func TestInteractiveAdaptersReportNoStream(t *testing.T) {
+	t.Parallel()
+	// Every pre-existing adapter must keep launching exactly as before,
+	// sink offered or not.
+	for _, a := range []Adapter{&Forestage{}, &Generic{}, &Claude{}} {
+		ctx := testContext()
+		ctx.StreamPath = "/tmp/should-be-ignored.ndjson"
+		ctx.Session.Runtime.Name = a.Name()
+		ctx.Session.Runtime.Command = "/usr/local/bin/" + a.Name()
+		result, err := a.Prepare(ctx)
+		if err != nil {
+			t.Fatalf("%s Prepare: %v", a.Name(), err)
+		}
+		if result.Stream != nil {
+			t.Errorf("%s reported a stream for an interactive launch", a.Name())
+		}
+		if strings.Contains(result.Command, "should-be-ignored") {
+			t.Errorf("%s redirected an interactive launch: %s", a.Name(), result.Command)
+		}
+	}
+}
+
+func TestNewStreamParserRejectsUnknownFormat(t *testing.T) {
+	t.Parallel()
+	if _, err := NewStreamParser("codex/json", StreamParserConfig{}); err == nil {
+		t.Fatal("expected an error for a format with no parser")
+	}
+	p, err := NewStreamParser(StreamFormatClaudeCodeJSON, StreamParserConfig{AgentID: "a"})
+	if err != nil {
+		t.Fatalf("claude-code parser: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected a parser")
 	}
 }

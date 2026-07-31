@@ -1,20 +1,43 @@
 package runtime
 
+import "github.com/arcavenae/marvel/internal/api"
+
 // Claude is the adapter for the bare Claude Code CLI. Medium integration:
 // permission mode injection via CLI flag, environment-based identity,
 // capture-pane fallback for observability.
+//
+// In headless mode (api.RuntimeModeHeadless) it is also the first
+// stream-capable adapter: the harness runs `--print --output-format
+// stream-json --verbose` and marvel parses the resulting NDJSON.
 type Claude struct{}
 
 func (c *Claude) Name() string { return "claude" }
+
+// SupportsStream reports whether this launch will produce a parseable
+// stream. Only headless launches do: interactive Claude Code renders a
+// TUI to the pane and has no structured output to redirect.
+func (c *Claude) SupportsStream(ctx *LaunchContext) bool {
+	return ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
+}
 
 func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {
 		return nil, ErrNoCommand
 	}
+	headless := ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
+	if headless && ctx.Session.Runtime.Prompt == "" {
+		return nil, ErrNoPrompt
+	}
 
 	args := make([]string, len(ctx.Session.Runtime.Args))
 	copy(args, ctx.Session.Runtime.Args)
+
+	if headless {
+		// --verbose is not optional here: claude refuses stream-json
+		// output under --print without it.
+		args = append(args, "--print", "--output-format", "stream-json", "--verbose")
+	}
 
 	// Inject permission mode — claude CLI accepts this directly.
 	if ctx.Role.Permissions != "" {
@@ -29,12 +52,23 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--append-system-prompt", prompt)
 	}
 
-	env := baseEnv(ctx)
+	// The request goes last, as the positional argument.
+	if headless {
+		args = append(args, ctx.Session.Runtime.Prompt)
+	}
 
-	return &LaunchResult{
+	result := &LaunchResult{
 		Command: buildCommand(binary, args),
-		Env:     env,
-	}, nil
+		Env:     baseEnv(ctx),
+	}
+	if headless && ctx.StreamPath != "" {
+		result.Command = redirectStdout(result.Command, ctx.StreamPath)
+		result.Stream = &StreamSpec{
+			Format: StreamFormatClaudeCodeJSON,
+			Path:   ctx.StreamPath,
+		}
+	}
+	return result, nil
 }
 
 func hasFlag(args []string, flag string) bool {
@@ -48,4 +82,5 @@ func hasFlag(args []string, flag string) bool {
 
 func init() {
 	var _ Adapter = (*Claude)(nil)
+	var _ StreamCapable = (*Claude)(nil)
 }

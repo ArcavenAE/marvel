@@ -317,10 +317,17 @@ func eventsCmd() *cobra.Command {
 		Short: "List recent session/team state-transition events",
 		Long: `Fetch the daemon's structured event ring and print matching events.
 
-Events are emitted from session.Manager (session created, deleted,
-crashed) and team.Controller (restart, crashloop-backoff, saturation,
-shift started/completed, health failed). Each event has a timestamp,
-kind, severity (info or warning), and session coordinates.
+Two families share the ring. Control-plane events report what marvel
+did to a session: session.created / deleted / crashed from
+session.Manager, and restart, crashloop-backoff, saturation, shift and
+health events from team.Controller. Agent events (agent.*) report what
+the agent inside a session did: session start and end with cost and
+timing, messages, tool calls and results, permission prompts. Agent
+events only appear for sessions whose runtime marvel can observe (a
+headless stream-json launch today; see examples/claude-headless.toml).
+
+Each event has a timestamp, kind, severity (info or warning), and
+session coordinates.
 
 Examples:
   marvel events                              # last 100 events
@@ -328,6 +335,8 @@ Examples:
   marvel events --workspace demo             # filter by workspace
   marvel events --session util/shell-g1-0    # filter by session key
   marvel events --kind session.crashed       # only crashes
+  marvel events --kind agent.tool.call       # what the agents are doing
+  marvel events --kind agent.session.ended   # per-session cost and timing
   marvel events --warnings                   # only warning-severity events
   marvel --cluster desk events               # remote daemon via mrvl://`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -390,7 +399,7 @@ Examples:
 	cmd.Flags().StringVar(&team, "team", "", "filter by team")
 	cmd.Flags().StringVar(&role, "role", "", "filter by role")
 	cmd.Flags().StringVar(&session, "session", "", "filter by session key (workspace/name)")
-	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed)")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed, agent.tool.call)")
 	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "show only warning-severity events")
 	return cmd
 }

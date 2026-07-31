@@ -19,6 +19,13 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// StreamPath is a sink the session manager created for this launch —
+	// a FIFO the harness's structured output can be redirected into.
+	// Empty means marvel is not observing this session's stream, either
+	// because the adapter declined SupportsStream or because the manager
+	// has no sink directory. An adapter that finds it empty must produce
+	// a working command anyway.
+	StreamPath string
 }
 
 // LaunchResult is what the adapter returns: the fully resolved command,
@@ -26,6 +33,11 @@ type LaunchContext struct {
 type LaunchResult struct {
 	Command string
 	Env     map[string]string
+	// Stream is set only when the adapter actually wired its harness's
+	// structured output into LaunchContext.StreamPath. Nil means the
+	// session produces no parseable stream and is observed by
+	// capture-pane alone.
+	Stream *StreamSpec
 }
 
 // Adapter knows how to prepare the execution environment for a specific
@@ -143,5 +155,19 @@ func resolveCommand(rt *api.Runtime) string {
 	return rt.Name
 }
 
+// redirectStdout appends a stdout redirection to a command string. Safe
+// because tmux runs a single-argument shell-command through `sh -c`,
+// which is the same property buildCommand's quoting already relies on.
+// stderr deliberately stays in the pane: it is the operator's window
+// into a harness that failed before it produced any structured output.
+func redirectStdout(cmd, path string) string {
+	return cmd + " > " + shellQuote(path)
+}
+
 // ErrNoCommand is returned when a runtime has no command or image specified.
 var ErrNoCommand = fmt.Errorf("runtime has no command or image")
+
+// ErrNoPrompt is returned when a headless launch carries no prompt. A
+// prompt-less headless harness reads stdin and hangs on a pane tty
+// nobody is typing into, so this is a manifest error, not a default.
+var ErrNoPrompt = fmt.Errorf("headless runtime has no prompt")

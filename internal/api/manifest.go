@@ -56,10 +56,12 @@ type ManifestHealthCheck struct {
 
 // ManifestRuntime is the runtime section within a role.
 type ManifestRuntime struct {
-	Image   string   `toml:"image"          yaml:"image"`
-	Command string   `toml:"command"        yaml:"command"`
-	Args    []string `toml:"args,omitempty"  yaml:"args,omitempty"`
-	Script  string   `toml:"script,omitempty" yaml:"script,omitempty"`
+	Image   string      `toml:"image"          yaml:"image"`
+	Command string      `toml:"command"        yaml:"command"`
+	Args    []string    `toml:"args,omitempty"  yaml:"args,omitempty"`
+	Script  string      `toml:"script,omitempty" yaml:"script,omitempty"`
+	Mode    RuntimeMode `toml:"mode,omitempty"  yaml:"mode,omitempty"`
+	Prompt  string      `toml:"prompt,omitempty" yaml:"prompt,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -224,6 +226,8 @@ func (m *Manifest) Apply(store *Store) error {
 				Command: mr.Runtime.Command,
 				Args:    mr.Runtime.Args,
 				Script:  mr.Runtime.Script,
+				Mode:    mr.Runtime.Mode,
+				Prompt:  mr.Runtime.Prompt,
 			}
 			if rt.Name == "" {
 				rt.Name = rt.Command
