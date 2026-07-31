@@ -1,0 +1,43 @@
+# Marvel example — headless Claude Code agents marvel can observe.
+#
+# Tests: runtime mode = headless, stream-json redirection into a marvel
+# FIFO, agent events landing in the daemon event ring.
+#
+# In headless mode the claude adapter runs the harness as
+#   claude --print --output-format stream-json --verbose ... '<prompt>'
+# with stdout redirected into a per-session pipe the daemon reads. Marvel
+# parses the NDJSON and emits agent.* events: session start/end, messages,
+# tool calls and results, plus the metering the harness reports at the end
+# (cost, token counts, duration, api time, ttft, turn count).
+#
+# The interactive roles in examples/claude.yaml still work exactly as
+# before. Mode is per-role, so one team can mix both.
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/claude-headless.yaml
+#
+# Watch the agent do its work:
+#   ./marvel events --kind agent.tool.call
+#   ./marvel events --workspace ccode-headless
+#   ./marvel events --warnings          # permission prompts, errors, bad exits
+#
+# The session ends when the request does — a headless agent is a one-shot,
+# so expect the pane to close and the session to be reaped.
+
+workspace:
+  name: ccode-headless
+
+teams:
+  - name: audit-squad
+    roles:
+      - name: auditor
+        replicas: 1
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+          args: ["--model", "haiku"]
+          mode: headless
+          prompt: List the top-level directories in this repo and stop.
