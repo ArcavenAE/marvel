@@ -103,10 +103,68 @@ type SessionStartedData struct {
 
 // SessionEndedData — harness session terminated. ExitCode 0 = success;
 // non-zero maps to Lift() → INFORM(alert) per §3.4.
+//
+// Metering is an additive v1 field: harnesses that report per-session
+// timing and per-model accounting attach it, everything else leaves it
+// nil. Adding it does not bump SchemaVersion (per-kind `data` payloads
+// grow additively by design).
 type SessionEndedData struct {
-	Reason   string `json:"reason,omitempty"`
-	ExitCode int    `json:"exit_code"`
-	Usage    Usage  `json:"usage,omitzero"`
+	Reason   string    `json:"reason,omitempty"`
+	ExitCode int       `json:"exit_code"`
+	Usage    Usage     `json:"usage,omitzero"`
+	Metering *Metering `json:"metering,omitempty"`
+}
+
+// Metering carries the accounting a harness reports at session end
+// beyond the coarse Usage totals: wall-clock and API timings, turn
+// count, cache accounting, per-model breakdown, and the permission
+// denials accumulated over the session.
+//
+// Every field is optional. A harness that reports none of it should
+// leave SessionEndedData.Metering nil rather than attaching a zero
+// value, so consumers can distinguish "not reported" from "zero".
+type Metering struct {
+	// DurationMS is wall-clock time for the whole session.
+	DurationMS int64 `json:"duration_ms,omitempty"`
+	// APIDurationMS is time spent in provider API calls.
+	APIDurationMS int64 `json:"duration_api_ms,omitempty"`
+	// TTFTMS is time to first token.
+	TTFTMS int64 `json:"ttft_ms,omitempty"`
+	// TTFTStreamMS is time to first streamed token, which a harness may
+	// report separately from TTFTMS when it buffers ahead of the stream.
+	TTFTStreamMS int64 `json:"ttft_stream_ms,omitempty"`
+	// NumTurns counts request/response turns within the session.
+	NumTurns int `json:"num_turns,omitempty"`
+	// CacheReadIn and CacheCreationIn are prompt-cache token counts.
+	// They sit here rather than on Usage because Usage is the shared
+	// turn/session shape and its three fields are spec-fixed.
+	CacheReadIn     int `json:"cache_read_in,omitempty"`
+	CacheCreationIn int `json:"cache_creation_in,omitempty"`
+	// ModelUsage breaks the session down by model id. A session that
+	// routes across models (a small model for routing, a large one for
+	// the answer) reports one entry each.
+	ModelUsage map[string]ModelUsage `json:"model_usage,omitempty"`
+	// PermissionDenials lists tool invocations the harness refused.
+	// Length is the count; entry detail is best-effort.
+	PermissionDenials []PermissionDenial `json:"permission_denials,omitempty"`
+}
+
+// ModelUsage is per-model accounting within one session.
+type ModelUsage struct {
+	In                int      `json:"in,omitempty"`
+	Out               int      `json:"out,omitempty"`
+	CacheReadIn       int      `json:"cache_read_in,omitempty"`
+	CacheCreationIn   int      `json:"cache_creation_in,omitempty"`
+	WebSearchRequests int      `json:"web_search_requests,omitempty"`
+	Cost              *float64 `json:"cost,omitempty"`
+}
+
+// PermissionDenial names one refused tool invocation. Tool is the
+// harness's tool name; CallID correlates with the tool.call event when
+// the harness supplies one.
+type PermissionDenial struct {
+	Tool   string `json:"tool,omitempty"`
+	CallID string `json:"call_id,omitempty"`
 }
 
 // TurnData — usage delta at turn boundaries. May be zero-valued when

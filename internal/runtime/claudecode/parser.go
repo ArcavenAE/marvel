@@ -299,17 +299,87 @@ func boundToolResultContent(raw json.RawMessage) any {
 	return events.TruncateString(string(raw), events.MaxSummaryBytes)
 }
 
-func (p *Parser) handleResult(raw json.RawMessage, emit func(events.Event)) {
-	var body struct {
-		Subtype      string  `json:"subtype"`
-		IsError      bool    `json:"is_error"`
-		StopReason   string  `json:"stop_reason"`
-		TotalCostUSD float64 `json:"total_cost_usd"`
-		Usage        struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
+// resultBody is the subset of the vendor `result` line marvel consumes.
+// Field names on the vendor side are inconsistent (snake_case at the top
+// level, camelCase inside modelUsage); the tags below mirror the wire
+// exactly rather than normalizing.
+type resultBody struct {
+	Subtype      string  `json:"subtype"`
+	IsError      bool    `json:"is_error"`
+	StopReason   string  `json:"stop_reason"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	Usage        struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	} `json:"usage"`
+	DurationMS    int64 `json:"duration_ms"`
+	DurationAPIMS int64 `json:"duration_api_ms"`
+	TTFTMS        int64 `json:"ttft_ms"`
+	TTFTStreamMS  int64 `json:"ttft_stream_ms"`
+	NumTurns      int   `json:"num_turns"`
+	ModelUsage    map[string]struct {
+		InputTokens              int     `json:"inputTokens"`
+		OutputTokens             int     `json:"outputTokens"`
+		CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+		CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+		WebSearchRequests        int     `json:"webSearchRequests"`
+		CostUSD                  float64 `json:"costUSD"`
+	} `json:"modelUsage"`
+	// Entry shape is unverified — every fixture we have carries an empty
+	// array. The length is authoritative; tool_name/tool_use_id are
+	// best-effort and stay empty when the vendor names them otherwise.
+	PermissionDenials []struct {
+		ToolName  string `json:"tool_name"`
+		ToolUseID string `json:"tool_use_id"`
+	} `json:"permission_denials"`
+}
+
+// metering lifts the accounting fields off a result line. Returns nil
+// when the line carries none of them, so consumers can tell "harness
+// did not report" from "harness reported zeros".
+func (b *resultBody) metering() *events.Metering {
+	m := events.Metering{
+		DurationMS:      b.DurationMS,
+		APIDurationMS:   b.DurationAPIMS,
+		TTFTMS:          b.TTFTMS,
+		TTFTStreamMS:    b.TTFTStreamMS,
+		NumTurns:        b.NumTurns,
+		CacheReadIn:     b.Usage.CacheReadInputTokens,
+		CacheCreationIn: b.Usage.CacheCreationInputTokens,
 	}
+	for model, u := range b.ModelUsage {
+		if m.ModelUsage == nil {
+			m.ModelUsage = make(map[string]events.ModelUsage, len(b.ModelUsage))
+		}
+		cost := u.CostUSD
+		m.ModelUsage[model] = events.ModelUsage{
+			In:                u.InputTokens,
+			Out:               u.OutputTokens,
+			CacheReadIn:       u.CacheReadInputTokens,
+			CacheCreationIn:   u.CacheCreationInputTokens,
+			WebSearchRequests: u.WebSearchRequests,
+			Cost:              &cost,
+		}
+	}
+	for _, d := range b.PermissionDenials {
+		m.PermissionDenials = append(m.PermissionDenials, events.PermissionDenial{
+			Tool:   d.ToolName,
+			CallID: d.ToolUseID,
+		})
+	}
+	empty := m.DurationMS == 0 && m.APIDurationMS == 0 && m.TTFTMS == 0 &&
+		m.TTFTStreamMS == 0 && m.NumTurns == 0 && m.CacheReadIn == 0 &&
+		m.CacheCreationIn == 0 && len(m.ModelUsage) == 0 && len(m.PermissionDenials) == 0
+	if empty {
+		return nil
+	}
+	return &m
+}
+
+func (p *Parser) handleResult(raw json.RawMessage, emit func(events.Event)) {
+	var body resultBody
 	if err := json.Unmarshal(raw, &body); err != nil {
 		emit(p.newEvent(events.KindError, events.ErrorData{
 			Kind:    events.ErrKindParse,
@@ -336,6 +406,7 @@ func (p *Parser) handleResult(raw json.RawMessage, emit func(events.Event)) {
 			Out:  body.Usage.OutputTokens,
 			Cost: &cost,
 		},
+		Metering: body.metering(),
 	}
 	emit(p.newEvent(events.KindSessionEnded, data, nil))
 }

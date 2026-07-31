@@ -53,13 +53,25 @@ what claude actually emits with the sketch in
    `SessionStartedData` (useful for downstream capability inspection)
    and drop the rest — they're reachable via raw if needed later.
 
-5. **`result` carries far more fields than the spec calls out.** The
-   spec names reason/exit_code/usage; claude also ships duration_ms,
-   duration_api_ms, ttft_ms, ttft_stream_ms, num_turns, result (final
-   text), modelUsage, permission_denials, terminal_reason. We keep
-   the spec fields (Usage.In/Out/Cost, ExitCode, Reason) and drop
-   the rest. Follow-on: add duration_ms + duration_api_ms to
-   SessionEndedData once a consumer needs them.
+5. **`result` carries far more fields than the spec calls out.**
+   RESOLVED: metering is now the point, so the accounting fields are
+   promoted rather than dropped. `SessionEndedData.Metering` (additive,
+   nil when a harness reports none of it) carries duration_ms,
+   duration_api_ms, ttft_ms, ttft_stream_ms, num_turns, the two
+   prompt-cache token counts off `usage`, the per-model `modelUsage`
+   breakdown, and `permission_denials`. Cache counts live on Metering
+   rather than Usage because Usage's three fields are spec-fixed and
+   shared with turn events.
+
+   Still dropped: `result` (the final assistant text, already carried by
+   the preceding message.completed event), `terminal_reason`,
+   `api_error_status`, `time_to_request_ms`, and the `usage` sub-objects
+   (`server_tool_use`, `cache_creation`, `service_tier`, `iterations`).
+   All remain reachable via `raw`.
+
+   `permission_denials` entry shape is unverified — every fixture we
+   have carries an empty array, so the length is authoritative and
+   tool_name/tool_use_id are best-effort.
 
 6. **No timestamp field on vendor lines.** Claude Code stream-json
    does not carry per-event timestamps. The parser stamps `ts` at
