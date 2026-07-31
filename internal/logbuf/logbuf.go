@@ -36,12 +36,15 @@ type Buffer struct {
 	lines []string
 	max   int
 
-	// Dedup state. When a write records a line identical to lastLine,
-	// the buffer bumps runCount instead of appending. When a different
-	// line arrives (or Flush is called), a summary line is appended
-	// before the new content. lastLine == "" means no run is active.
-	lastLine string
-	runCount int // 1 after initial write, 2+ when active run is accumulating
+	// Dedup state. When a write records a line whose fingerprint matches
+	// lastFingerprint, the buffer bumps runCount instead of appending.
+	// When a different line arrives (or Flush is called), a summary line
+	// is appended before the new content. runCount == 0 means no run is
+	// active. The fingerprint, not the raw line, is compared so a Go log
+	// timestamp prefix (which differs every line) does not defeat dedup —
+	// see fingerprint.
+	lastFingerprint string
+	runCount        int // 1 after initial write, 2+ when active run is accumulating
 }
 
 // New returns a Buffer that retains the most recent max lines.
@@ -84,8 +87,13 @@ func (b *Buffer) Write(p []byte) (int, error) {
 }
 
 // appendLocked records one line, applying dedup. Caller holds b.mu.
+// Dedup compares fingerprints (message body without the Go log timestamp
+// prefix) so a repeated message still collapses even though its prefix
+// changes every line. The full line, prefix included, is what lands in
+// the ring — the operator keeps the timestamp of the first occurrence.
 func (b *Buffer) appendLocked(line string) {
-	if b.runCount > 0 && line == b.lastLine {
+	fp := fingerprint(line)
+	if b.runCount > 0 && fp == b.lastFingerprint {
 		b.runCount++
 		return
 	}
@@ -96,8 +104,68 @@ func (b *Buffer) appendLocked(line string) {
 		b.lines = append(b.lines, summarize(b.runCount))
 	}
 	b.lines = append(b.lines, line)
-	b.lastLine = line
+	b.lastFingerprint = fp
 	b.runCount = 1
+}
+
+// fingerprint returns the comparable body of a log line: the line with a
+// leading Go standard-library log timestamp prefix stripped. The daemon
+// logs with the default flags (log.LstdFlags == Ldate|Ltime), so every
+// line carries a unique "2006/01/02 15:04:05 " prefix; comparing whole
+// lines never collapses a repeat. Fingerprinting the body makes dedup
+// correct regardless of the producer's flags: a line with no recognized
+// prefix fingerprints to itself.
+func fingerprint(line string) string {
+	// Ldate|Ltime renders as "2006/01/02 15:04:05", optionally with a
+	// ".000000" microsecond field (Lmicroseconds), then a single space
+	// before the message.
+	const dateTimeLen = len("2006/01/02 15:04:05")
+	if len(line) < dateTimeLen+1 || !isLogDateTime(line[:dateTimeLen]) {
+		return line
+	}
+	rest := line[dateTimeLen:]
+	if len(rest) > 1 && rest[0] == '.' {
+		i := 1
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		rest = rest[i:]
+	}
+	if len(rest) > 0 && rest[0] == ' ' {
+		return rest[1:]
+	}
+	// Matched the date/time shape but not the trailing separator; the
+	// prefix was not a log timestamp after all.
+	return line
+}
+
+// isLogDateTime reports whether s has the exact shape "2006/01/02 15:04:05".
+func isLogDateTime(s string) bool {
+	if len(s) != len("2006/01/02 15:04:05") {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch i {
+		case 4, 7:
+			if c != '/' {
+				return false
+			}
+		case 10:
+			if c != ' ' {
+				return false
+			}
+		case 13, 16:
+			if c != ':' {
+				return false
+			}
+		default:
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // trimLocked enforces the capacity bound. Caller holds b.mu.
@@ -130,7 +198,7 @@ func (b *Buffer) Flush() {
 		// the next occurrence re-records the line as a new run of 1,
 		// which is the right answer: the summary's "N times" covered
 		// the history up to now, and the clock starts over.
-		b.lastLine = ""
+		b.lastFingerprint = ""
 		b.runCount = 0
 	}
 }

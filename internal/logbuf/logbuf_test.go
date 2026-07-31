@@ -195,3 +195,83 @@ func TestDedup_SingleOccurrenceNoSummary(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+// TestDedup_IgnoresLogTimestampPrefix: the daemon logs with the default
+// Go log flags (Ldate|Ltime), so every line carries a unique timestamp.
+// Before the fingerprint fix, whole-line comparison never matched and the
+// dedup never fired. The same message on consecutive lines must collapse
+// even though its prefix differs, and the first line's timestamp is kept.
+func TestDedup_IgnoresLogTimestampPrefix(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte(
+		"2026/07/31 10:00:00 ssh: client connected\n" +
+			"2026/07/31 10:00:02 ssh: client connected\n" +
+			"2026/07/31 10:00:04 ssh: client connected\n",
+	))
+	got := b.Tail(10)
+	want := []string{
+		"2026/07/31 10:00:00 ssh: client connected",
+		"last message repeated 2 times so far",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if b.Len() != 1 {
+		t.Errorf("expected 3 timestamped repeats to collapse to 1 stored line, got %d", b.Len())
+	}
+}
+
+// TestDedup_MicrosecondPrefix: Lmicroseconds adds a ".000000" field. The
+// message body must still fingerprint identically across lines.
+func TestDedup_MicrosecondPrefix(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte(
+		"2026/07/31 10:00:00.123456 tick\n" +
+			"2026/07/31 10:00:00.789012 tick\n",
+	))
+	got := b.Tail(10)
+	want := []string{"2026/07/31 10:00:00.123456 tick", "last message repeated 1 times so far"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestDedup_DistinctMessagesWithPrefixNotCollapsed: two different bodies
+// under timestamp prefixes must NOT collapse — fingerprint compares the
+// body, and the bodies differ.
+func TestDedup_DistinctMessagesWithPrefixNotCollapsed(t *testing.T) {
+	b := New(100)
+	_, _ = b.Write([]byte(
+		"2026/07/31 10:00:00 alpha\n" +
+			"2026/07/31 10:00:01 beta\n",
+	))
+	got := b.Tail(10)
+	want := []string{"2026/07/31 10:00:00 alpha", "2026/07/31 10:00:01 beta"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestFingerprint(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"ldate_ltime", "2026/07/31 10:00:00 hello world", "hello world"},
+		{"microseconds", "2026/07/31 10:00:00.123456 hello", "hello"},
+		{"no_prefix", "plain message", "plain message"},
+		{"empty_body", "2026/07/31 10:00:00 ", ""},
+		{"date_shape_no_space_sep", "2026/07/31 10:00:00x", "2026/07/31 10:00:00x"},
+		{"too_short", "2026/07/31", "2026/07/31"},
+		{"wrong_separators", "2026-07-31 10:00:00 hello", "2026-07-31 10:00:00 hello"},
+		{"letters_in_date", "20AB/07/31 10:00:00 hello", "20AB/07/31 10:00:00 hello"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fingerprint(tt.in); got != tt.want {
+				t.Errorf("fingerprint(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
