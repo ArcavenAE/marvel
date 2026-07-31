@@ -7,23 +7,41 @@ content: |
   check, capture output — all via tmux. Simple, observable, already
   works on every Unix system the platform targets.
 
-  This is settled by use (MVP functional with tmux driver) but is
-  under active reconsideration via `aae-orc-kxce` ("T3b: marvel
-  substrate-of-tmux frontier question — lift B2 from substrate to
-  frontier"). The reconsideration question: is tmux the *right*
-  substrate, or just the *first* substrate? Alternative substrates
-  worth probing include containerd/podman pods, kubectl exec,
-  systemd-nspawn, plain process supervision without tmux.
+  RESOLVED 2026-07-31 (aae-orc-kxce, operator-ratified; decision brief
+  `_kos/probes/decision-brief-kxce-substrate.md`). The reconsideration
+  ("is tmux the right substrate or just the first?") split into two
+  questions, and measurement answered both:
 
-  Until the reconsideration question is probed and resolved, B2
-  remains bedrock — it's load-bearing for the current implementation
-  and changing it touches every adapter.
+  - **tmux is load-bearing for terminal emulation and the human view,
+    and NOT load-bearing for process lifetime or supervision.**
+    finding-004 signal 4b: a shim-in-pane survives the loss of its tmux
+    pane with the child alive and controllable. finding-004 signal 5h:
+    a PTY is necessary but not sufficient — something must answer
+    DA1-class terminal queries, and that responder is open-ended per
+    harness and version, so anything that drops tmux inherits being a
+    terminal emulator. So candidates that replace tmux and own the PTY
+    directly are rejected.
+  - **Observation does not require owning the PTY.** finding-005: a FIFO
+    carries a harness's own bytes at 100% coverage, zero loss, ANSI
+    intact; the attachment path does not constrain the substrate.
 
-  Evidence: MVP functional with tmux driver across sessions 008-026.
+  Committed direction: tmux stays as the terminal-emulation and
+  human-view layer; a Go shim-in-pane (finding-004 candidate e) is the
+  process-supervision and injectable-tee layer, phased in when a
+  concrete need pulls it (race-free inject, exact per-child PID/metrics,
+  or one-process structured+rendered output). The near-term demo runs
+  on the FIFO attachment path on plain tmux with no shim. In-house
+  terminal multiplexing is graveyarded; a Go control-mode client is
+  reference-only (tmux-cmc is Rust, unusable from Go without breaking
+  the zero-CGo posture).
+
+  Evidence: MVP functional with tmux driver across sessions 008-026;
+  finding-004 (shim-in-pane spike), finding-005 (stream-attachment
+  probe), both 2026-07-31.
 edges:
   - target: aae-orc::elem-tmux-cmc
     type: derives
-    note: "substrate realized on tmux; tmux-cmc is the planned control-mode client (roadmap M7 adoption)"
+    note: "substrate realized on tmux; tmux-cmc is reference-only for any control-mode client marvel writes (Rust crate, unusable from Go without breaking zero-CGo), not a planned dependency unless question-marvel-language-fit resolves toward Rust (kxce, 2026-07-31)"
   - target: aae-orc::val-composability
     type: implements
 provenance:

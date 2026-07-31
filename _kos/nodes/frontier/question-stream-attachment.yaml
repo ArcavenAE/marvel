@@ -63,6 +63,18 @@ content: |
   attachment path does not constrain the substrate. finding-004 (shim-in-pane
   spike, on spike/shim-in-pane) filled the shim-PTY-tee row that finding-005
   left blank. Both are addressed to the substrate decision aae-orc-kxce.
+
+  DIRECTION SETTLED 2026-07-31 (aae-orc-kxce ratified; decision brief
+  `_kos/probes/decision-brief-kxce-substrate.md`). Per-harness attachment
+  bindings: Claude Code / Codex / OpenCode structured stream over FIFO;
+  Crush FIFO text + sqlite for tokens pending a socket probe; Gemini CLI
+  structured stream over FIFO, gated on re-verifying #9009/#13561;
+  unknown/non-cooperative harness capture-pane history scrape with a
+  high-water mark; adopted session pipe-pane. This node stays frontier
+  because the bindings for Codex/OpenCode/Crush are not yet exercised
+  against live model turns and Gemini is graph-only; the DIRECTION is
+  fixed, per-harness VERIFICATION remains. Cursor is out of scope
+  (SpaceX acquisition; not a target harness).
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
