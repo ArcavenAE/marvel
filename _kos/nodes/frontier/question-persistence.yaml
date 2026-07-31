@@ -1,19 +1,36 @@
 id: question-persistence
 type: question
 confidence: frontier
-title: "Persistence — what state survives restart"
+title: "Persistence — pack-resolution cache and volume-mount records"
 content: |
-  MVP is entirely in-memory. All state is lost on daemon restart.
-  What needs persistence? Candidates: session state and history,
-  team configuration, manifest history, health check results,
-  pack resolution cache, volume mount records.
+  Narrowed. The core "what state survives daemon restart" question is
+  answered: the L2 bbolt WAL layer persists workspace/team/role/session
+  intent, session→pane bindings, shift generation, and RoleHealth
+  backoff state, and AdoptOrKill reconciles against it on restart. The
+  store choice (bbolt over SQLite / flat files / etcd), the Persist /
+  Derive / Ephemeral classification, and the recovery-vs-reconcile
+  tradeoff are all settled. See question-marvel-transaction-log (now
+  bedrock) and finding-050.
 
-  What store? SQLite (simple, embedded, zero-config), flat files
-  (human-readable, git-friendly), or an etcd-like model (consistent
-  with k8s inspiration)? The store choice affects whether marvel
-  can recover sessions after a crash vs. requiring a full reconcile
-  from manifests.
+  What genuinely stays open is the state the transaction-log work did
+  not cover because it does not exist yet:
+
+  - **Pack-resolution cache.** Once marvel resolves content packs
+    (question-pack-integration / F6), the resolved-pack set for a team
+    is derived state that could be cached to avoid re-resolving on every
+    restart. Whether it is persisted, re-derived, or treated as ephemeral
+    is undecided and gated on pack integration landing.
+  - **Volume-mount records.** If a role declares workspace volumes or
+    mounts, the binding between a session and its mounted paths is
+    durable state not currently modeled. Undecided and gated on the
+    volume feature existing.
+
+  Both are Derive-or-Persist calls that cannot be made until the
+  features they describe exist. This node holds that remainder.
 edges:
+  - target: question-marvel-transaction-log
+    type: partially_resolves
+    note: "the transaction-log node answered the restart-survival core; this node keeps the pack-cache + volume-mount remainder"
   - target: elem-mvp-complete
     type: discovered_from
     note: "left open by the MVP build (was: leaves-open on elem-mvp-complete)"
@@ -24,3 +41,6 @@ provenance:
   created_by: human
   session: session-008
   created_at: "2026-03-30"
+  narrowed_by: records-lane-r2
+  narrowed_at: "2026-07-31"
+  narrowed_note: "core restart-survival answered by finding-050; remainder is pack-resolution cache + volume mounts"

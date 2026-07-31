@@ -55,6 +55,14 @@ content: |
   binding reframe finding-048 ordered (question named there as
   question-marvel-stream-attachment-binding, never filed) lands here
   instead of as a separate node.
+
+  Evidence: finding-005 (this repo) ran the re-scoped probe — per-harness
+  inventory plus byte-path fidelity (FIFO and pipe-pane both lossless at
+  100%, capture-pane loss follows `visible_rows * poll_hz`), and confirmed
+  none of marvel's target harnesses requires marvel to own the PTY, so the
+  attachment path does not constrain the substrate. finding-004 (shim-in-pane
+  spike, on spike/shim-in-pane) filled the shim-PTY-tee row that finding-005
+  left blank. Both are addressed to the substrate decision aae-orc-kxce.
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
