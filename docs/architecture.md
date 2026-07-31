@@ -144,6 +144,7 @@ internal/
   session/                  Session lifecycle (create, delete, reap)
   team/                     Team controller (reconciler, shifts, health)
   tmux/                     tmux driver (subprocess, capture, send-keys)
+  procstat/                 Per-session CPU/memory rollup over a pid subtree
   otel/                     Observability (OTEL metrics)
   simulator/                Context pressure simulator + Lua scripting
   upgrade/                  Self-update (Homebrew detection, GitHub releases)

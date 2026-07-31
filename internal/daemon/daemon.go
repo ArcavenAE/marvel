@@ -39,6 +39,11 @@ const (
 	DefaultMRVLPort = "6785"
 	// ReconcileInterval is how often the team controller reconciles.
 	ReconcileInterval = 2 * time.Second
+	// MetricsInterval is how often the process sampler rolls up CPU and
+	// memory over each session's pid subtree. Slower than
+	// ReconcileInterval on purpose: a pass reads the whole process table,
+	// and the numbers inform an operator rather than a control decision.
+	MetricsInterval = 5 * time.Second
 )
 
 // listenNetwork returns "tcp" if the address looks like host:port,
@@ -98,6 +103,11 @@ type Daemon struct {
 	// In-memory ring of structured state-transition events.
 	// Always non-nil.
 	events *events.Ring
+
+	// metricsWarn keeps a sampler that cannot read the process table
+	// from writing the same line every interval for the life of the
+	// daemon.
+	metricsWarn sync.Once
 }
 
 // Options configures optional daemon behavior. Zero value disables
@@ -226,6 +236,16 @@ func (d *Daemon) Start(socketPath string) error {
 	go func() {
 		defer d.wg.Done()
 		d.teamCtrl.Run(ctx, ReconcileInterval)
+	}()
+
+	// Start the process sampler. Sibling of the reconcile loop rather
+	// than a step inside it: sampling reads the process table and takes
+	// no part in reconciliation, so it should not be able to slow a
+	// reconcile pass down.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunMetrics(ctx, MetricsInterval)
 	}()
 
 	// Accept connections.

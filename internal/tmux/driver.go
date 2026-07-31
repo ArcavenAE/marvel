@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -153,6 +154,30 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string)
 // never saw dead panes and sessions stayed 'running/unknown' forever.
 func (d *Driver) HasPane(paneID string) bool {
 	return d.cmd("list-panes", "-t", paneID, "-F", "#{pane_id}").Run() == nil
+}
+
+// PanePID returns the pid of the process tmux started in the pane. That
+// process is a shell, not the runtime binary: tmux execs the command
+// line through one. Callers measuring resource use must walk the
+// subtree.
+//
+// list-panes rather than display-message, for the reason in HasPane:
+// display-message exits 0 for a pane that is already gone and prints an
+// empty line, which would be indistinguishable from a live pane whose
+// pid we failed to read.
+func (d *Driver) PanePID(paneID string) (int, error) {
+	out, err := d.cmd("list-panes", "-t", paneID, "-F", "#{pane_pid}").CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("pane-pid %s: %s: %w", paneID, string(out), err)
+	}
+	// A pane id resolves to exactly one pane, but take the first line
+	// defensively so an unexpected multi-line reply cannot fail parsing.
+	first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])
+	pid, cerr := strconv.Atoi(first)
+	if cerr != nil {
+		return 0, fmt.Errorf("pane-pid %s: unparseable %q: %w", paneID, first, cerr)
+	}
+	return pid, nil
 }
 
 // KillPane destroys a specific pane.

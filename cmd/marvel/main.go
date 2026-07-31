@@ -1267,6 +1267,10 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 		switch ws.column {
 		case "context":
 			less = sessions[i].ContextPercent < sessions[j].ContextPercent
+		case "cpu":
+			less = sessions[i].CPUPercent < sessions[j].CPUPercent
+		case "rss":
+			less = sessions[i].RSSBytes < sessions[j].RSSBytes
 		case "name":
 			less = sessions[i].Name < sessions[j].Name
 		case "team":
@@ -1319,18 +1323,50 @@ func fetchSessions() ([]api.Session, error) {
 	return sessions, nil
 }
 
+// formatBytes renders a byte count in the units an operator scanning a
+// column wants: three significant figures at most, no padding.
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	value := float64(n)
+	for _, suffix := range []string{"K", "M", "G", "T"} {
+		value /= unit
+		if value < unit {
+			if value < 10 {
+				return fmt.Sprintf("%.1f%s", value, suffix)
+			}
+			return fmt.Sprintf("%.0f%s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.0fP", value/unit)
+}
+
 func renderSessionTable(sessions []api.Session) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tHEALTH\tCTX%%\tDESK\tAGENT\n")
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tHEALTH\tCTX%%\tCPU%%\tRSS\tDESK\tAGENT\n")
 	for _, s := range sessions {
 		agent := s.Runtime.Name
 		if agent == "" {
 			agent = s.Runtime.Command
 		}
+		// CTX% has exactly one producer, the heartbeat RPC, and no
+		// runtime adapter implements it yet. Without a heartbeat there is
+		// no context reading to show, and "0%" would read as a fresh
+		// session with an empty window.
 		ctx := "-"
-		if s.ContextPercent > 0 || !s.LastHeartbeat.IsZero() {
+		if !s.LastHeartbeat.IsZero() {
 			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
+		}
+		// Likewise for the sampler: a session the sampler has not
+		// reached (no pid, or a platform with no process table reader)
+		// shows absence rather than an idle-looking zero.
+		cpu, rss := "-", "-"
+		if !s.MetricsAt.IsZero() {
+			cpu = fmt.Sprintf("%.1f", s.CPUPercent)
+			rss = formatBytes(s.RSSBytes)
 		}
 		desk := strings.TrimPrefix(s.PaneID, "%")
 		gen := fmt.Sprintf("%d", s.Generation)
@@ -1338,8 +1374,8 @@ func renderSessionTable(sessions []api.Session) string {
 		if health == "" {
 			health = "unknown"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, desk, agent)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, cpu, rss, desk, agent)
 	}
 	_ = w.Flush()
 	return buf.String()
@@ -1357,6 +1393,7 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "    w  workspace      t  team          r  role\n")
 		fmt.Fprintf(&buf, "    g  generation     n  name          s  state\n")
 		fmt.Fprintf(&buf, "    c  context        d  desk          a  agent\n")
+		fmt.Fprintf(&buf, "    p  cpu            m  memory\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    h  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
@@ -1440,6 +1477,10 @@ func watchSessionsLoop(interval time.Duration) error {
 				return nil
 			case 'c':
 				toggleSort(ws, "context", true)
+			case 'p':
+				toggleSort(ws, "cpu", true)
+			case 'm':
+				toggleSort(ws, "rss", true)
 			case 'n':
 				toggleSort(ws, "name", false)
 			case 'r':

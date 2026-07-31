@@ -152,10 +152,28 @@ marvel get sessions
 
 Output:
 ```
-WORKSPACE  TEAM       ROLE    GEN  NAME                   STATE    HEALTH   CTX%  DESK  AGENT
-dev        squad      worker  1    squad-worker-g1-0      running  unknown  -     1     claude
-dev        squad      worker  1    squad-worker-g1-1      running  unknown  -     2     claude
+WORKSPACE  TEAM       ROLE    GEN  NAME                   STATE    HEALTH   CTX%  CPU%   RSS   DESK  AGENT
+dev        squad      worker  1    squad-worker-g1-0      running  unknown  -     99.9   412M  1     claude
+dev        squad      worker  1    squad-worker-g1-1      running  unknown  -     0.4    380M  2     claude
 ```
+
+`CPU%` and `RSS` come from a sampler that runs every 5 seconds and rolls
+up each agent's whole process subtree, not just the process tmux started
+(that one is a shell). CPU% is per core, so a session using two cores
+reads about 200.
+
+A `-` means the value has never been measured, which is not the same as
+zero:
+
+- `CTX%` is `-` until the agent sends a heartbeat. No runtime adapter
+  implements the heartbeat yet, so today only the bundled simulator
+  reports context pressure.
+- `CPU%` and `RSS` are `-` before the first sampler pass, and on
+  platforms where marvel has no process-table reader (anything other
+  than macOS and Linux).
+
+Per-process IO counters are read on Linux only; `marvel describe session`
+reports `IOAvailable: false` elsewhere.
 
 ### Watch mode
 
@@ -163,8 +181,9 @@ dev        squad      worker  1    squad-worker-g1-1      running  unknown  -   
 marvel get sessions -w
 ```
 
-Live-updating dashboard. Sort by pressing keys: `c` (context %), `n` (name),
-`r` (role), `g` (generation), `t` (team). Press `h` for help, `q` to quit.
+Live-updating dashboard. Sort by pressing keys: `c` (context %), `p`
+(CPU), `m` (memory), `n` (name), `r` (role), `g` (generation), `t`
+(team). Press `h` for help, `q` to quit.
 
 **When to use:** Monitoring a running team, watching shifts progress,
 observing health state changes in real time.

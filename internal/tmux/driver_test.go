@@ -383,3 +383,52 @@ func TestDriverConcurrentUse(t *testing.T) {
 		t.Fatalf("concurrent use produced %d failures:\n  %s", len(failures), strings.Join(failures, "\n  "))
 	}
 }
+
+func TestPanePID(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	sessionName := "marvel-test-panepid"
+	t.Cleanup(func() { _ = d.KillSession(sessionName) })
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	paneID, err := d.NewPane(sessionName, "sleep 300", "panepid-test", nil)
+	if err != nil {
+		t.Fatalf("new pane: %v", err)
+	}
+
+	pid, err := d.PanePID(paneID)
+	if err != nil {
+		t.Fatalf("pane pid: %v", err)
+	}
+	if pid <= 0 {
+		t.Fatalf("pane pid = %d, want a positive pid", pid)
+	}
+
+	// The same value ListPanes reports, since both read pane_pid.
+	panes, err := d.ListPanes(sessionName)
+	if err != nil {
+		t.Fatalf("list panes: %v", err)
+	}
+	var listed string
+	for _, p := range panes {
+		if p.ID == paneID {
+			listed = p.PID
+		}
+	}
+	if listed != fmt.Sprintf("%d", pid) {
+		t.Errorf("PanePID reported %d, ListPanes reported %q", pid, listed)
+	}
+
+	if err := d.KillPane(paneID); err != nil {
+		t.Fatalf("kill pane: %v", err)
+	}
+	if _, err := d.PanePID(paneID); err == nil {
+		t.Error("PanePID succeeded for a killed pane, want error")
+	}
+}

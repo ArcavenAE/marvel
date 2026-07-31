@@ -5,6 +5,7 @@ package session
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,6 +121,7 @@ func (m *Manager) adoptOrKillPrefix(prefix string) (adopted, killed int, err err
 		for _, p := range panes {
 			if sessKey, ok := recordedByPane[p.ID]; ok {
 				adopted++
+				m.recordPanePID(sessKey, p.PID)
 				log.Printf("AdoptOrKill: adopted pane %s (session %s)", p.ID, sessKey)
 			} else {
 				if kerr := m.driver.KillPane(p.ID); kerr != nil {
@@ -136,6 +138,23 @@ func (m *Manager) adoptOrKillPrefix(prefix string) (adopted, killed int, err err
 		log.Printf("AdoptOrKill: %d adopted, %d killed", adopted, killed)
 	}
 	return adopted, killed, nil
+}
+
+// recordPanePID commits an adopted pane's pid to the recorded session.
+// ListPanes already carries it; before this it was parsed and dropped,
+// which left Session.PID zero for every session marvel adopted across a
+// daemon restart and the process sampler with nothing to walk.
+func (m *Manager) recordPanePID(sessKey, panePID string) {
+	pid, err := strconv.Atoi(strings.TrimSpace(panePID))
+	if err != nil || pid <= 0 {
+		return
+	}
+	if err := m.store.UpdateSession(sessKey, func(live *api.Session) error {
+		live.PID = pid
+		return nil
+	}); err != nil {
+		log.Printf("AdoptOrKill: record pid %d for %s: %v", pid, sessKey, err)
+	}
 }
 
 // Create creates a new session: registers it in the store, ensures the tmux
@@ -168,18 +187,28 @@ func (m *Manager) Create(sess *api.Session) error {
 		return fmt.Errorf("create pane for %s: %w", sess.Key(), err)
 	}
 
-	// Commit PaneID + State=Running to the live session under the store
-	// lock. Also update the caller's *api.Session so returning pointers
-	// stay consistent for any downstream emission/logging that references
-	// fields on sess. Per orc finding-032, the Store is the sync boundary.
+	// A missing pid costs resource metrics for this session, nothing
+	// else, so it is logged and not treated as a failed spawn.
+	pid, perr := m.driver.PanePID(paneID)
+	if perr != nil {
+		log.Printf("session %s: pane pid unavailable: %v", sess.Key(), perr)
+	}
+
+	// Commit PaneID + PID + State=Running to the live session under the
+	// store lock. Also update the caller's *api.Session so returning
+	// pointers stay consistent for any downstream emission/logging that
+	// references fields on sess. Per orc finding-032, the Store is the
+	// sync boundary.
 	if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
 		live.PaneID = paneID
+		live.PID = pid
 		live.State = api.SessionRunning
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
 	}
 	sess.PaneID = paneID
+	sess.PID = pid
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
 	events.Emit(m.Events, events.Event{
