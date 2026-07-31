@@ -5,7 +5,7 @@
 //
 // Not implemented in this slice — this file exists so the intended
 // shape is visible in the package tree. Design mapping (per
-// docs/design/director-envelope-and-adapter-events.md §3.3):
+// aae-orc/docs/design/director-envelope-and-adapter-events.md §3.3):
 //
 //   - task/turn items          → turn.started / turn.completed
 //   - exec command begin/end   → tool.call / tool.result

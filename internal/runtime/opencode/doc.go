@@ -3,7 +3,7 @@
 //
 // Not implemented in this slice — this file exists so the intended
 // shape is visible in the package tree. Design mapping (per
-// docs/design/director-envelope-and-adapter-events.md §3.3):
+// aae-orc/docs/design/director-envelope-and-adapter-events.md §3.3):
 //
 //   - session lifecycle endpoints  → session.started / session.ended
 //   - SSE message parts            → message.delta / message.completed

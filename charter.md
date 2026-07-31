@@ -208,17 +208,6 @@ receivers that dispatch work to running agent teams? Or CLI-only access for now,
 deferring external API until there's a concrete use case?
 Cross-ref: orchestrator F2.
 
-### F9: Runtime Adapter Framework
-`internal/runtime/` is empty. This is the integration keystone — marvel can't
-launch real BYOA workloads without runtime adapters. Three needed: forestage
-(deep: persona, heartbeat, cooperative stream), bare-claude (medium: env vars,
-capture-pane fallback), generic-stdin (minimal: any CLI, capture-pane only).
-Each adapter constructs the execution environment (settings.local.json, env vars,
-volumes) and exposes capabilities (spawn, kill, inject, capture).
-Blocks: forestage+marvel integration, permission model, everything downstream.
-Depends on: aae-orc-vpq (tmux driver decision).
-kos node: question-runtime-adapter.
-
 ### F10: Permission Model — Environment Construction + Internal Capabilities
 Two complementary layers: (1) environment construction — marvel writes
 settings.local.json with the role's CC permission mode, controls filesystem

@@ -6,7 +6,7 @@
 // ring). Both use the type name Event; callers importing both should alias.
 //
 // The vocabulary and frame are specified in
-// docs/design/director-envelope-and-adapter-events.md §3.
+// aae-orc/docs/design/director-envelope-and-adapter-events.md §3.
 // The pointer-not-payload discipline (64 KiB soft cap on data summaries)
 // is inherited from the co-designed director envelope; large content
 // should be summarized here and referenced by pointer in a lifted envelope.
@@ -60,7 +60,7 @@ const (
 )
 
 // Event is the normalized frame every adapter emits. JSON tags match the
-// spec in docs/design/director-envelope-and-adapter-events.md §3.1
+// spec in aae-orc/docs/design/director-envelope-and-adapter-events.md §3.1
 // verbatim (snake_case). `data` is a typed value per Kind; callers
 // serialize with encoding/json in the usual way.
 type Event struct {

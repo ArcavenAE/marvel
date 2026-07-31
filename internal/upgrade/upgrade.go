@@ -105,7 +105,7 @@ func upgradeViaHomebrew(channel string) error {
 	// threedoors-a, jr-a), route the alpha channel back here.
 	// The `channel` parameter is retained for that future fork.
 	_ = channel
-	formula := "ArcavenAE/tap/marvel"
+	formula := "arcavenae/tap/marvel"
 
 	fmt.Printf("Installed via Homebrew. Running: brew upgrade %s\n", formula)
 

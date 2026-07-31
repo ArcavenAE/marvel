@@ -1,5 +1,19 @@
 # Marvel MVP — Epics, Stories, Tasks
 
+> **SUPERSEDED: frozen MVP probe record.** This document tracks the
+> original MVP epics and stories and no longer matches the shipped binary.
+> It is kept as the probe record, not as current documentation. For current
+> behavior see [charter.md](../../charter.md), [README.md](../../README.md),
+> and [user-guide.md](../user-guide.md).
+>
+> Stale claims to be aware of:
+> - Stories reference `marvel apply`; the shipped verb is `marvel work`.
+> - The runtime set has grown from the `top`/`shell` demo runtimes to a
+>   runtime-adapter framework (forestage, claude, generic, plus Claude Code
+>   stream observation).
+> - State persistence (BoltDB), SSH remote clients, named clusters, keys,
+>   events, capture, and inject all shipped after this MVP scope was frozen.
+
 Probe: marvel-mvp-probe | Confidence: frontier
 
 ## Epic 1: Resource Model

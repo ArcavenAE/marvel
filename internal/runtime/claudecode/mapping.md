@@ -3,7 +3,7 @@
 Verified against real fixtures from claude 2.1.201 on 2026-07-05
 (see `testdata/hello.ndjson` and `testdata/tool_call.ndjson`). Compares
 what claude actually emits with the sketch in
-`docs/design/director-envelope-and-adapter-events.md` §3.3.
+`aae-orc/docs/design/director-envelope-and-adapter-events.md` §3.3.
 
 ## Verified mappings
 
