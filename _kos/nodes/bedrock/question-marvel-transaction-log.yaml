@@ -1,0 +1,96 @@
+id: question-marvel-transaction-log
+type: question
+confidence: bedrock
+title: "Transaction log — durable record of intent for restart survival"
+content: |
+  Resolved: marvel has a durable L2 record of intent, and daemon restart
+  reconciles against it instead of destroying every running agent. The
+  spike hypothesis (bbolt WAL, version-per-resource, adopt-or-kill on
+  restart) shipped and was measured end to end.
+
+  What shipped:
+
+  - **L2 persistence layer (finding-050 Probes 1-3).** Every field on
+    every `internal/api/types.go` struct is classified Persist / Derive /
+    Ephemeral. bbolt (`go.etcd.io/bbolt`, pure Go, no CGo) is instrumented
+    in place on `*api.Store` rather than wrapping it, so existing callers
+    and in-memory tests are unchanged and the cost when bolt is unopened
+    is one nil check. Six buckets (one per resource type plus `meta`),
+    JSON records keyed by each type's `Key()`, a monotonic
+    `resource_version` counter bumped per mutation, and a `schema_version`
+    guard that refuses to load a newer on-disk format. `OpenBolt` runs
+    rehydrate before any reconciler or RPC handler touches the store.
+    Heartbeat fields persist with the Session record and are documented as
+    may-be-stale on rehydrate (the next reconciler pass refreshes them).
+
+  - **AdoptOrKill (finding-050 Probes 4-5).** `Manager.CleanupOrphanTmux`
+    became `Manager.AdoptOrKill`. On restart, for each `marvel-*` tmux
+    session: unrecorded workspace is killed whole; a recorded workspace's
+    panes are matched by PaneID against rehydrated sessions, matches are
+    adopted, non-matches are killed. Degenerate in-memory mode (bolt not
+    opened) has no records, so it kills all `marvel-*` sessions, matching
+    the pre-L2 semantics exactly. The daemon wires this via
+    `--state-bolt`, defaulting to `~/.marvel/state/marvel.bolt` (mode
+    0700, consistent with B13), so new installs get L2 on automatically.
+    Contract C12 from finding-048 ("kill, not adopt") is reversed: a
+    SIGKILLed daemon restarted against the same state file adopts its
+    live panes.
+
+  - **RoleHealth persistence (PR #73).** The `role_health` bucket the L2
+    spike reserved is now written through on every crash-loop state change
+    and read back by `team.Controller.RehydrateRoleHealth` at daemon
+    start, so a backoff window (including MaxRestarts saturation freeze)
+    survives a restart instead of handing the role a free respawn. It is
+    the one bucket with no in-memory mirror in the Store: the controller's
+    map is the live copy.
+
+  - **Checkpoint seam.** `Store.Checkpoint()` exists and is called on
+    both shutdown paths before `CloseBolt` (see PR #73 / the graceful-stop
+    detach work). It is the named seam a `syscall.Exec` self-update would
+    use.
+
+  Store choice and shape are settled: transaction-log-over-bbolt with
+  version-per-resource granularity, WAL semantics, single-host, opt-in via
+  daemon flag with a sensible default. `~/.marvel/state/` is the layout.
+
+  ## Remaining (tracked elsewhere, not bedrock)
+
+  These do not reopen the store decision; they are follow-on work on top
+  of the shipped layer.
+
+  - **Self-update (`syscall.Exec`)** is feasible now (the Checkpoint seam
+    exists) but not implemented. bd aae-orc-zk5r. This is the Mr-Right-Now
+    win condition (self-update without trauma to running agents, FM3 in
+    finding-048).
+  - **Multi-host replication.** A transaction log on one host does not
+    replicate. Single-host is bedrock; cross-host is F5 / question-multi-host
+    follow-on (etcd/raft is the kubernetes answer, sketched in the shim
+    architecture doc and deferred).
+  - **Heartbeat write frequency under load.** One bbolt write per session
+    per heartbeat interval is within capacity for current use but wants a
+    microbenchmark before it is treated as validated at scale; batching
+    is flagged in code as the escape hatch.
+  - **Update post-fn pre-persist window.** UpdateSession / UpdateTeam
+    persist after `fn` returns, so on daemon death the disk lags by at
+    most one mutation. Known spike limitation; the reconciler's next write
+    re-converges. Closing it (clone-then-swap or snapshot-rollback) is
+    deferred until it is a real concern.
+
+edges:
+  - target: question-persistence
+    type: partially_resolves
+    note: "supplies the restart-survival / recorded-intent shape; question-persistence keeps the pack-cache + volume-mount remainder"
+  - target: elem-runtime-adapter-framework
+    type: supports
+    note: "Adapter env-construction is part of recorded intent (manifest); restart-time the adapter doesn't re-run, only the spawn does"
+  - target: question-stream-attachment
+    type: supports
+    note: "Stream attachment binding (per-runtime) is part of recorded intent — knowing which stream strategy was used for which session"
+provenance:
+  created_by: agent
+  session: session-050
+  created_at: "2026-05-13"
+  via_finding: finding-048-marvel-tmux-contracts
+  promoted_at: "2026-07-31"
+  promoted_by: records-lane-r2
+  promotion_evidence: "finding-050 (L2 bbolt WAL + AdoptOrKill, Probes 1-5) + PR #73 (RoleHealth persistence, graceful-stop-as-detach). Marvel commits 489ab83, 85360e9, 241e18a, 7072b78. Ratification is operator merge of the promotion PR per ADR-007."
