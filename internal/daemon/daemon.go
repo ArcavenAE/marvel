@@ -108,6 +108,11 @@ type Daemon struct {
 	// from writing the same line every interval for the life of the
 	// daemon.
 	metricsWarn sync.Once
+
+	// reexec replaces the process image. Defaults to syscall.Exec; tests
+	// override it to assert the pre-exec contract without actually
+	// handing the process over.
+	reexec func(argv0 string, argv []string, envv []string) error
 }
 
 // Options configures optional daemon behavior. Zero value disables
@@ -184,6 +189,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		pidFile:  opts.PidFile,
 		logs:     buf,
 		events:   evRing,
+		reexec:   syscall.Exec,
 	}, nil
 }
 
@@ -326,6 +332,56 @@ func (d *Daemon) Stop() { d.shutdown(true) }
 // (aae-orc-zk5r). No-op when persistence is disabled.
 func (d *Daemon) Checkpoint() error { return d.store.Checkpoint() }
 
+// Reexec replaces the running daemon's process image with a fresh exec
+// of the marvel binary at its current path, argv and environment
+// preserved, without stopping any managed agent. It detaches first
+// (the reconciler and listeners stop, durable state is checkpointed,
+// the bolt file is released, every pane is left running), then execs.
+// The successor process re-opens the same bolt, re-binds the same
+// socket, and adopts the live panes via AdoptOrKill.
+//
+// This is the in-place self-update path (aae-orc-zk5r). It composes with
+// `marvel upgrade`, which fetches and installs the new binary on disk:
+// upgrade replaces the bytes, Reexec adopts them. The two stay distinct
+// verbs so "install a new binary" and "adopt it without dropping agents"
+// never fight over one name.
+//
+// The binary path resolves before the detach, so a resolution failure
+// leaves the daemon serving. On success syscall.Exec does not return.
+// Reexec returns an error only if the exec syscall itself fails, which
+// happens after the detach: the daemon has stopped serving but its
+// agents survive, and a fresh daemon start adopts them.
+func (d *Daemon) Reexec() error {
+	exe, err := selfExecPath()
+	if err != nil {
+		return err
+	}
+	// Detach checkpoints durable state, releases the bolt file, and stops
+	// serving without touching a pane. Its own doc names this as the first
+	// half of self-update.
+	d.Detach()
+	return d.reexec(exe, os.Args, os.Environ())
+}
+
+// selfExecPath resolves the path to the running marvel binary for
+// re-exec. Linux reports /proc/self/exe; after `marvel upgrade` replaces
+// the binary in place the kernel appends " (deleted)" to the old inode's
+// symlink target, so trim it; the replacement lives at the cleaned path.
+func selfExecPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve marvel binary path: %w", err)
+	}
+	return cleanExecPath(exe), nil
+}
+
+// cleanExecPath strips the " (deleted)" suffix the Linux kernel appends
+// to /proc/self/exe once the running binary's inode is replaced. The
+// replacement binary lives at the cleaned path.
+func cleanExecPath(p string) string {
+	return strings.TrimSuffix(p, " (deleted)")
+}
+
 func (d *Daemon) shutdown(teardown bool) {
 	if d.cancel != nil {
 		d.cancel()
@@ -457,6 +513,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleCapture(req.Params)
 	case "stop":
 		return d.handleStop(req.Params)
+	case "reexec":
+		return d.handleReexec()
 	case "logs":
 		return d.handleLogs(req.Params)
 	case "events":
@@ -983,6 +1041,33 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 		os.Exit(0)
 	}()
 	result, _ := json.Marshal(map[string]string{"status": "stopping", "mode": mode})
+	return Response{Result: result}
+}
+
+// handleReexec tells the running daemon to replace its own process image
+// with a fresh exec of the marvel binary, adopting the live panes rather
+// than stopping the agents. The CLI (`marvel daemon reexec`, or
+// `marvel upgrade --daemon` after the binary is installed) calls this;
+// the daemon must exec itself because the CLI cannot exec the daemon's
+// process.
+func (d *Daemon) handleReexec() Response {
+	// Resolve the binary here so an unresolvable path is reported to the
+	// client without detaching; better to keep serving than to stop and
+	// then find nothing to exec.
+	exe, err := selfExecPath()
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+	// Re-exec off the request goroutine so this response reaches the
+	// client before the process image is replaced, mirroring handleStop.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		if rerr := d.Reexec(); rerr != nil {
+			log.Printf("reexec failed after detach: %v; start a fresh daemon to adopt the running panes", rerr)
+			os.Exit(1)
+		}
+	}()
+	result, _ := json.Marshal(map[string]string{"status": "reexec", "binary": exe})
 	return Response{Result: result}
 }
 
