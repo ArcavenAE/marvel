@@ -1,41 +1,108 @@
 id: elem-runtime-adapter-framework
 type: element
 confidence: bedrock
-title: "runtime adapter framework — three adapters with graded integration depth"
+title: "runtime adapter framework: six adapters behind one event vocabulary"
 content: |
-  Three adapters in `internal/runtime/`, each implementing a different
-  integration depth against the BYOA console:
+  Six adapters in `internal/runtime/`, all registered in
+  `NewRegistry` (adapter.go), each carrying a different integration
+  depth against the harness it launches:
 
-  - **forestage** (deep) — identity flags (`--persona`, `--identity`,
-    `--role`), permission mode, script, socket. Full marvel-aware
-    integration. Matches `aae-orc::elem-byoa-platform` + forestage's
-    `elem-marvel-adapter-contract`.
-  - **claude** (medium) — permission mode, system prompt with identity
-    via `--append-system-prompt`.
-  - **generic** (minimal) — env vars only. Works with any CLI that
-    accepts stdin. Capture-pane is the only observability.
+  | Adapter | Depth | Stream | Projection |
+  |---|---|---|---|
+  | **claude** | live target. `--settings` for the projected policy, `--permission-mode` from the role, `--append-system-prompt` with the session identity unless the manifest supplies one; headless adds `--print --output-format stream-json --verbose`. | headless only | yes |
+  | **codex** | live target. Env-var identity only; headless is `codex exec --json --skip-git-repo-check <prompt>` with stdin closed. | headless only | no |
+  | **opencode** | live target. Env-var identity only; headless is `opencode run --format json <message>` with stdin closed. | headless only | no |
+  | **forestage** | deepest surface, frozen as reference: `--persona`, `--identity`, `--role`, `--name`, `--workspace`, `--team`, `--socket`, `--permission-mode`, `--dangerously-skip-permissions`, `--script`, then `--settings` and `--append-system-prompt` after the `--` claude passthrough. Retired as a live target by operator directive 2026-07-31; the adapter stays as the reference implementation of the deep-integration contract. | no | yes |
+  | **simulator** | load-test target. Injects the identity flags the simulator's heartbeat path requires; without them a simulator launched through the generic fallback never heartbeats and restart-loops under `restart_policy = always`. | no | no |
+  | **generic** | minimal, and the registry fallback. Env vars only. Pane content is read on demand via `marvel capture`; `GenericScraper` (capture-pane history scrape with a per-session high-water mark) is written and unit-tested but not yet constructed anywhere in production code. | no | no |
 
-  Session manager resolves adapter from `Runtime.Name` via registry,
-  falls back to `generic`. Role gains `Permissions` field for
-  environment-as-permission (see `question-permission-model`).
+  Stream capability is `SupportsStream`, true only when
+  `Runtime.Mode` is headless: an interactive harness renders a TUI to
+  the pane and has no structured output to redirect. Projection is
+  `ProjectionFor(ctx, dir).Supported`.
+
+  The shared contract behind all six is a **twelve-kind event
+  vocabulary** (session started/ended, turn started/completed, message
+  delta/completed, tool call/result, permission requested, auth
+  required, health heartbeat, error). It lives in two packages under
+  two names, and the distinction matters when reading the code:
+
+  - `internal/runtime/events` (events.go:33-59) declares the twelve
+    unprefixed kinds (`session.started`, `tool.call`, ...) that the
+    per-harness parsers emit. `SchemaVersion` is 1 and the v1
+    vocabulary is closed: an unmapped vendor event becomes
+    `KindError` with `data.kind = "unmapped"` rather than being
+    dropped.
+  - `internal/events` (events.go:59-70) declares the same twelve
+    concepts prefixed as `agent.*` (`agent.session.started`,
+    `agent.tool.call`, ...), which is the form carried in the
+    daemon's event ring next to the control-plane kinds.
+    `internal/session/bridge.go` (`ringKind`) is the lift, one ring
+    kind per adapter kind.
+
+  So each adapter's parser maps its harness's own stream into the
+  unprefixed runtime vocabulary, the bridge lifts that into the ring,
+  and the daemon and the CLI see one vocabulary regardless of
+  harness. `runtime` names the HARNESS, never the agent
+  (`elem-runtime-names-harness`).
+
+  Session manager resolves the adapter from `Runtime.Name` via the
+  registry and falls back to `generic`. The `Adapter` interface has
+  three methods: `Name`, `Prepare`, and `ProjectionFor(ctx, dir)`
+  returning `ProjectionTarget{Supported, Path}`. Role carries
+  `Permissions` (harness permission mode, injected by the claude and
+  forestage adapters), `DangerousPermissions` (orthogonal, appends
+  `--dangerously-skip-permissions`, honored by the forestage adapter
+  only, so it is inert on a claude session today), and `Policy` (the
+  projected settings fragment) alongside the original
+  environment-as-permission work.
 
   Resolved former F9 (Runtime Adapter Framework). The session-017
-  probe shipped the framework end-to-end; 9 tests, 606 lines.
+  probe shipped the framework end-to-end.
 
-  Scope exclusions (deliberately NOT addressed by this bedrock): the
-  framework leaves `question-permission-model` (F10) and
-  `question-stream-attachment` (F11) open — adapter env-construction
-  ships without a permission model, and stream observation remains
-  capture-pane. Recorded here as prose because kos schema v0.3 has no
+  Scope exclusions, as of 2026-08-01: partly discharged, not closed.
+  `question-stream-attachment` (F11) is no longer capture-pane only:
+  headless claude, codex, and opencode redirect structured output to a
+  named pipe that marvel parses (`claudecode/`, `codex/`, `opencode/`
+  parsers; finding-005). Capture-pane survives as the generic
+  fallback's only path, and today only on demand through
+  `marvel capture`: no poll loop constructs `GenericScraper`.
+  `question-permission-model` (F10) gained Policy projection (orc
+  finding-024): a named settings fragment written per session, live
+  re-projected on re-apply, emitting `policy.projected`. What remains
+  open in F10 is the internal-capability layer (role-based RPC
+  authorization) and real containment, which belongs to curtain.
+  Recorded here as prose because kos schema v0.3 has no
   scope-exclusion edge type; the original `leaves-open` edges were
   removed in the schema-conformance fix (marvel 57d058f). If kos
   gains a negative-space edge type (aae-orc-dboj), restore these as
   edges.
 
-  Evidence: session-017. Closes original F9 charter question.
+  Evidence: session-017 for the framework. Test surface now spans
+  `internal/runtime/{adapter,codex_opencode,generic_scraper,projection,
+  simulator,instance_tmux}_test.go` plus the per-parser suites under
+  `claudecode/`, `codex/`, and `opencode/`.
+
+  **2026-08-01 update (append-only; the three-adapter roster above is
+  superseded, not corrected in place).** This node previously read
+  "three adapters with graded integration depth" and enumerated
+  forestage, claude, and generic. Six are registered. The roster is
+  load-bearing for `elem-runtime-names-harness`, which `derives` from
+  this node, and orc `docs/marvel-remap-2026-08.md` section 1 lists
+  "six runtime adapters (claude, codex, opencode, forestage,
+  simulator, generic) behind one 12-kind event vocabulary" as shipped
+  since roadmap rev-2. The evidence line also read "9 tests, 606
+  lines", which the current test surface exceeds by a wide margin.
+  Both were documentation drift, not a change of decision.
 edges:
   - target: elem-console-agnostic
     type: implements
+  - target: question-stream-attachment
+    type: partially_resolves
+    note: "2026-08-01: headless claude/codex/opencode parse a FIFO stream (finding-005); capture-pane remains the generic fallback"
+  - target: question-permission-model
+    type: partially_resolves
+    note: "2026-08-01: Policy projection ships the file-based layer (orc finding-024); the internal-capability layer stays open"
 provenance:
   created_by: human
   session: session-017
@@ -43,3 +110,5 @@ provenance:
   extracted_session: session-049
   extracted_at: "2026-05-13"
   extracted_from: charter.md B8 prose (resolves F9 in same charter)
+  updated_at: "2026-08-01"
+  updated_from: "de-drift against code at main 2be837a (aae-orc-ah75); roster and scope-exclusion refresh"
