@@ -175,6 +175,20 @@ type Role struct {
 	// is a cooperative contract; real enforcement belongs to curtain.
 	// Combined with a curtain profile, this is the default sensible shape
 	// for autonomous fleet agents.
+	//
+	// DangerousPermissions is orthogonal to Permissions and combines with
+	// any permission mode. Permissions maps to Claude Code's
+	// --permission-mode (one of acceptEdits, auto, bypassPermissions,
+	// default, dontAsk, plan) and selects HOW the harness prompts within
+	// its cooperative permission model. DangerousPermissions instead
+	// appends --dangerously-skip-permissions, which removes that model.
+	// An operator picks permissions: bypassPermissions to keep the
+	// harness's permission machinery engaged (still auditable, still
+	// hookable) while auto-allowing within it; they pick
+	// dangerous_permissions: true to skip the machinery outright. The two
+	// are validated independently — permission_mode against the canonical
+	// mode set (see api.canonicalPermissionModes), dangerous_permissions
+	// as a free boolean.
 	DangerousPermissions bool   `toml:"dangerous_permissions,omitempty"`
 	Persona              string `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
 	Identity             string `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")

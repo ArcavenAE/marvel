@@ -3,6 +3,7 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -96,6 +97,35 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if d.HasSession(sessionName) {
 		t.Fatal("session should not exist after kill")
+	}
+}
+
+// TestNewSessionRaisesHistoryLimit guards the finding-005 fix (aae-orc-22sz):
+// marvel-created sessions must not inherit tmux's 2000-line history-limit
+// default, which starved capture-pane scrapes to ~20% coverage. NewSession
+// raises it to DefaultHistoryLimit; the created session must report that.
+func TestNewSessionRaisesHistoryLimit(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	sessionName := "marvel-test-history-limit"
+	t.Cleanup(func() { _ = d.KillSession(sessionName) })
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	got, err := d.ShowOption(sessionName, "history-limit")
+	if err != nil {
+		t.Fatalf("show-options history-limit: %v", err)
+	}
+	if got == "2000" {
+		t.Fatal("session inherited tmux default history-limit 2000; capture-pane scrapes would lose ~80% of scrollback (finding-005)")
+	}
+	if want := strconv.Itoa(DefaultHistoryLimit); got != want {
+		t.Fatalf("history-limit = %q, want %q", got, want)
 	}
 }
 

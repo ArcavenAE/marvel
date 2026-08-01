@@ -644,3 +644,72 @@ func TestValidateRuntimesEmptyCommand(t *testing.T) {
 		t.Fatal("expected error on empty command")
 	}
 }
+
+// TestValidateManifestPermissionModes covers aae-orc-6spa: every canonical
+// --permission-mode value must parse, an out-of-set value must be rejected
+// with the full allowlist in the message, and an empty value must stay
+// valid (meaning "unset — adapter default").
+func TestValidateManifestPermissionModes(t *testing.T) {
+	t.Parallel()
+
+	build := func(perm string) *Manifest {
+		return &Manifest{
+			Workspace: ManifestWorkspace{Name: "perm-test"},
+			Teams: []ManifestTeam{{
+				Name: "squad",
+				Roles: []ManifestRole{{
+					Name:        "worker",
+					Replicas:    1,
+					Permissions: perm,
+					Runtime:     ManifestRuntime{Command: "bash"},
+				}},
+			}},
+		}
+	}
+
+	valid := []string{"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"}
+	for _, mode := range valid {
+		mode := mode
+		t.Run("valid/"+mode, func(t *testing.T) {
+			t.Parallel()
+			if _, err := validateManifest(build(mode)); err != nil {
+				t.Fatalf("mode %q should be valid, got error: %v", mode, err)
+			}
+		})
+	}
+
+	t.Run("empty-is-valid", func(t *testing.T) {
+		t.Parallel()
+		if _, err := validateManifest(build("")); err != nil {
+			t.Fatalf("empty permissions should be valid (unset), got error: %v", err)
+		}
+	})
+
+	t.Run("invalid-rejected-with-allowlist", func(t *testing.T) {
+		t.Parallel()
+		_, err := validateManifest(build("hammertime"))
+		if err == nil {
+			t.Fatal("expected error on invalid permission mode")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "hammertime") {
+			t.Errorf("error should name the bad value, got: %v", err)
+		}
+		for _, mode := range valid {
+			if !strings.Contains(msg, mode) {
+				t.Errorf("error message must list valid mode %q, got: %v", mode, err)
+			}
+		}
+	})
+
+	// dangerous_permissions is orthogonal: it must combine with any mode
+	// and must not turn a valid mode into an error.
+	t.Run("dangerous-permissions-combines-with-mode", func(t *testing.T) {
+		t.Parallel()
+		m := build("plan")
+		m.Teams[0].Roles[0].DangerousPermissions = true
+		if _, err := validateManifest(m); err != nil {
+			t.Fatalf("dangerous_permissions with a valid mode should validate, got: %v", err)
+		}
+	})
+}
