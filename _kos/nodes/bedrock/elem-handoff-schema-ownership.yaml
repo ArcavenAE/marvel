@@ -1,0 +1,30 @@
+id: elem-handoff-schema-ownership
+type: element
+confidence: bedrock
+title: "shift handoff artifact ownership: marvel owns the schema, the departing agent owns the content"
+content: |
+  The shift handoff artifact (agentic resource matrix row 15, durable
+  agent state) has an owner split:
+
+  - **marvel owns the SCHEMA**: what a handoff artifact is; its
+    location, lifecycle, and generation binding.
+  - **the departing agent owns the CONTENT**.
+  - kos/packs may shape templates later.
+
+  Operator-ratified 2026-08-01 (marvel remap governance interview,
+  round 3; orc docs/marvel-remap-2026-08.md section 4).
+edges:
+  - target: question-shifts
+    type: derives
+    note: "grounded in the resolved shift mechanics; the handoff artifact is what a shift passes forward"
+  - target: question-shift-triggers
+    type: supports
+    note: "a schema'd handoff is what automatic shift triggers hand work through"
+  - target: elem-agentic-resource-matrix
+    type: derives
+    note: "row 15 (durable agent state) of the governing frame"
+provenance:
+  created_by: human
+  session: marvel-remap-governance-2026-08-01
+  created_at: "2026-08-01"
+  extracted_from: "orc docs/marvel-remap-2026-08.md section 4, round 3 (handoff-artifact schema ownership)"

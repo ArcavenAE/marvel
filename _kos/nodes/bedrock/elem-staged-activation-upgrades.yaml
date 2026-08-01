@@ -1,0 +1,41 @@
+id: elem-staged-activation-upgrades
+type: element
+confidence: bedrock
+title: "staged-activation upgrades: bootstrap plane fetches and stages, cluster plane activates"
+content: |
+  Marvel upgrades separate fetch from activation across two planes.
+
+  1. **Bootstrap/image plane** (mise/brew now; sideshow later):
+     install first time, pre-stage new versions into a version store.
+     Always safe; never touches the running cluster.
+  2. **Cluster plane** (`marvel update`): cluster-aware; pre-flight
+     checks (deprecation/compat detection, a pluto-like function),
+     activation of a staged version, migration, rollback. The shipped
+     `daemon reexec` (PR #80) is the activation primitive, not the
+     whole story.
+  3. **Version store**: staged versions coexist, flagged
+     active-vs-present (the Nokia/Checkpoint firmware model; which
+     version is staged and which runs are separate facts owned by
+     different planes).
+
+  Reshapes roadmap M3(d) from "self-update exists, shim makes it
+  safe" into this two-plane model; reconciles obsolescence-review
+  RETIRE-5 (distribution belongs to the channel; activation belongs
+  to marvel). Zero-downtime upgrade is the long-term acceptance
+  test. Design study precedes implementation (bd aae-orc-k28s
+  carries it); version-store layout, decidable pre-flight checks,
+  and rollback-with-live-agents semantics are open design questions
+  recorded in the idea file.
+
+  Operator-ratified 2026-08-01 (marvel remap governance interview,
+  round 2; orc docs/marvel-remap-2026-08.md section 4). Near-verbatim
+  capture: orc `_kos/ideas/marvel-staged-activation-upgrades.md`.
+edges:
+  - target: elem-release-pipeline
+    type: derives
+    note: "the release pipeline feeds the bootstrap plane; activation is a separate concern"
+provenance:
+  created_by: human
+  session: marvel-remap-governance-2026-08-01
+  created_at: "2026-08-01"
+  extracted_from: "aae-orc _kos/ideas/marvel-staged-activation-upgrades.md (operator vision, near-verbatim)"
