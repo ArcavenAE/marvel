@@ -1,0 +1,48 @@
+# Marvel demo — Act 1, role removal (the "before" manifest).
+#
+# Two roles, primary and helper, each a `sleep` process in a pane. Apply
+# this, then apply examples/demo-act1-roles-removed.toml (same workspace and
+# team, helper dropped). The reconciler drains the orphaned helper sessions
+# and emits a role.removed event alongside the per-session session.deleted
+# events.
+#
+# Requires: `sleep` on PATH (always present). No model auth needed.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/demo-act1-roles.toml
+#   ./bin/marvel get sessions          # primary + two helpers running
+#
+# Remove the helper role and re-apply:
+#   ./bin/marvel work examples/demo-act1-roles-removed.toml
+#   ./bin/marvel events --kind role.removed
+#   ./bin/marvel events --kind session.deleted
+#   ./bin/marvel get sessions          # helpers drained, primary remains
+#
+# Cleanup:
+#   ./bin/marvel stop --teardown
+
+[workspace]
+name = "crew"
+
+[[team]]
+name = "shift"
+
+  [[team.role]]
+  name = "primary"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "generic"
+    command = "sleep"
+    args = ["3600"]
+
+  [[team.role]]
+  name = "helper"
+  replicas = 2
+
+    [team.role.runtime]
+    image = "generic"
+    command = "sleep"
+    args = ["3600"]
