@@ -1,0 +1,67 @@
+id: question-interactive-context-pressure
+type: question
+confidence: frontier
+title: "Context pressure for interactive/TUI sessions: scrape the rendered indicator, or accept headless-only?"
+tags:
+  - marvel
+  - observability
+  - streaming
+  - harness
+content: |
+  The frkq probe (finding-007) settled how to reconstruct context
+  pressure (CTX%) from a harness's structured stream, but it measured
+  only HEADLESS mode: `claude -p --output-format stream-json`,
+  `codex exec --json`, `opencode run --format json`. Interactive/TUI
+  sessions were never explored, and they are the harder case.
+
+  Why the headless answer does not carry over:
+
+  - Interactive claude/codex/opencode render an ANSI TUI to the pane
+    and emit no structured usage block. The usage-accountant w5su
+    builds (occupancy = input + cache_read + cache_creation over the
+    model's `contextWindow`) has no input in TUI mode; none of those
+    fields are on the wire.
+  - The shim (finding-004, `question-marvel-stream-attachment` shim
+    candidate; bd aae-orc-gtpz) does NOT rescue this. It tees the
+    pane's bytes, but in TUI mode those bytes are the rendered screen,
+    not JSON. Teeing yields a faithful screen copy, not a usage block.
+  - The only apparent path is `capture-pane` scraping of the rendered
+    context indicator (the on-screen "context left / % until
+    auto-compact" readout). That is the capture-pane fidelity tier from
+    finding-005: it works, but it is version-fragile (depends on TUI
+    layout and wording), per-harness (each TUI differs), and yields the
+    harness's NORMALIZED figure (a threshold plus a reserved buffer,
+    per finding-007 SP4) rather than raw occupancy.
+
+  Applies to ALL target harnesses, not just claude. It matters because
+  a long-lived human-in-the-loop supervisor (or the interactive
+  reviewer in the Act 3 demo) is exactly the session where live context
+  pressure is most useful, and it is the session the headless-scoped
+  design cannot meter cleanly.
+
+  Decision to make:
+  - (a) Build per-harness capture-pane scrapers for the rendered
+    indicator. Accept the fragility and the normalized (not raw)
+    figure. Each harness TUI needs its own scrape + a re-check per
+    harness version.
+  - (b) Accept CTX% as a headless-only signal. Document that
+    interactive sessions carry no CTX%, and steer metered fleets to
+    headless mode.
+
+  A hybrid is possible: headless sessions get the exact accountant
+  value (w5su); interactive sessions get a best-effort scraped figure
+  clearly labelled as approximate and harness-normalized.
+
+  Tracked: bd aae-orc-dc1j. Related: aae-orc-w5su (headless CTX%; scope
+  it headless-only so nobody assumes TUI coverage), aae-orc-gtpz
+  (shim), finding-005 (capture-pane tier), finding-007 (the headless
+  probe that left this untouched).
+edges:
+  - target: question-stream-attachment
+    type: derives
+    note: "interactive CTX% is the TUI half of the per-harness binding the headless probe left open"
+provenance:
+  created_by: agent
+  session: marvel-frkq-followup-2026-08-01
+  created_at: "2026-08-01"
+  discovered_from: finding-007-context-pressure-extraction
