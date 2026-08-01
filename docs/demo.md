@@ -158,15 +158,26 @@ this beat.
 ### 1d. Stuck shift: `team.shift-timed-out`
 
 A shift that never reaches readiness is aborted and rolled back with a
-`team.shift-timed-out` event. This is real and covered by the controller tests,
-but the shift timeout defaults to 10 minutes and is not wired to a daemon flag
-or environment variable, so it is not a practical interactive beat. Shifting any
-never-heartbeats role (for example a role in `demo-act1-health`) would trigger
-it after the 10-minute default.
+`team.shift-timed-out` event. The shift timeout defaults to 10 minutes, but the
+daemon now takes a `--shift-timeout` flag (and the `MARVEL_SHIFT_TIMEOUT` env
+var) so you can shorten it and see the beat without a 10-minute wait. Start a
+daemon with a short timeout, apply a team with a never-heartbeats role, and
+shift it: the new generation never becomes ready, so the shift aborts.
 
-TODO(finding): make the shift timeout configurable (flag or env) so this beat
-can run in a demo without a 10-minute wait. Today the only way to shorten it is
-in code (`team.Controller.ShiftTimeout`).
+```sh
+MARVEL_SHIFT_TIMEOUT=15s ./bin/marvel daemon &   # or: --shift-timeout 15s
+./bin/marvel work examples/demo-act1-health.toml  # heartbeat roles that never beat
+sleep 3
+./bin/marvel shift health/ward
+sleep 20
+./bin/marvel events --kind team.shift-timed-out   # "shift stuck in launching past 15s, rolled back to gen 1"
+```
+
+A verified run against a one-role team with a heartbeat healthcheck and
+`MARVEL_SHIFT_TIMEOUT=15s` emitted `team.shift-timed-out` roughly 17 seconds
+after the shift started: `shift stuck in launching past 15s, rolled back to
+gen 1`. The flag wins when set; otherwise the env var is parsed as a Go
+duration; unset leaves the built-in 10-minute default.
 
 ---
 

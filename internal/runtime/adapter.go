@@ -103,6 +103,7 @@ func NewRegistry() *Registry {
 	r.Register(&Claude{})
 	r.Register(&Codex{})
 	r.Register(&OpenCode{})
+	r.Register(&Simulator{})
 	r.Register(&Generic{})
 	return r
 }
