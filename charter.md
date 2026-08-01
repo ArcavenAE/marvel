@@ -1,5 +1,18 @@
 # marvel Charter
 
+> **2026-08-01 pointer.** Read the bedrock nodes before this prose. Four
+> nodes ratified 2026-08-01 (`elem-agentic-resource-matrix`,
+> `elem-runtime-names-harness`, `elem-staged-activation-upgrades`,
+> `elem-handoff-schema-ownership`) plus the refreshed
+> `elem-runtime-adapter-framework` are authoritative; the rulings behind
+> them are recorded in orc `docs/marvel-remap-2026-08.md` and orc
+> `docs/roadmap.md`. Two sections below lag those nodes: **B1** still
+> presents the k8s mapping as the governing frame (the agentic resource
+> matrix is the frame; k8s is a mechanics footnote per the demotion record
+> in `elem-k8s-resource-model`), and **B8** still says three runtime
+> adapters (six are registered). Both are pending a charter re-render, not
+> open decisions.
+
 Agent orchestration control plane — kubernetes-like resource model for
 AI agent workloads. Written in Go.
 
