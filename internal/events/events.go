@@ -30,7 +30,9 @@ const (
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
 	KindShiftCompleted    Kind = "team.shift-completed"
+	KindShiftTimedOut     Kind = "team.shift-timed-out"
 	KindRoleSaturated     Kind = "role.saturated"
+	KindRoleRemoved       Kind = "role.removed"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
