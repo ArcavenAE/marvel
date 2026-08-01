@@ -1,0 +1,19 @@
+# Marvel demo — Act 1, role removal (the "after" manifest).
+#
+# Same workspace and team as examples/demo-act1-roles.yaml with the helper
+# role removed. Applying this over the two-role state drains the orphaned
+# helper sessions and emits role.removed. See that file's header for the
+# full sequence.
+
+workspace:
+  name: crew
+
+teams:
+  - name: shift
+    roles:
+      - name: primary
+        replicas: 1
+        runtime:
+          image: generic
+          command: sleep
+          args: ["3600"]

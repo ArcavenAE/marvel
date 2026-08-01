@@ -1,0 +1,76 @@
+# Marvel demo — Act 1, health-driven terminal cases.
+#
+# Three roles run `sleep`, which keeps a live pane but never sends a
+# heartbeat. Each role has a heartbeat healthcheck, so each goes stale and
+# marvel applies that role's restart policy. This exercises the health path
+# deterministically with no agent, no model, and no auth.
+#
+#   restarter  restart_policy = always            -> health.failed, then
+#                                                     session.restarted (loops)
+#   failstop   restart_policy = never             -> health.failed, then
+#                                                     session.failed (terminal)
+#   capped     restart_policy = always, max=1     -> session.restarted once,
+#                                                     then role.saturated +
+#                                                     session.failed (terminal)
+#
+# Requires: `sleep` on PATH (always present). No model auth needed.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/demo-act1-health.yaml
+#
+# Watch the health path (heartbeat timeout is 6s, threshold 2, so the first
+# action lands ~10s after spawn; capped saturates ~30s later after one
+# backoff window):
+#   ./bin/marvel events --workspace health --warnings
+#   ./bin/marvel events --kind session.restarted
+#   ./bin/marvel events --kind session.failed
+#   ./bin/marvel events --kind role.saturated
+#   ./bin/marvel get sessions
+#
+# Cleanup:
+#   ./bin/marvel stop --teardown
+
+workspace:
+  name: health
+
+teams:
+  - name: ward
+    roles:
+      - name: restarter
+        replicas: 1
+        restart_policy: always
+        runtime:
+          image: generic
+          command: sleep
+          args: ["3600"]
+        healthcheck:
+          type: heartbeat
+          timeout: 6s
+          failure_threshold: 1
+
+      - name: failstop
+        replicas: 1
+        restart_policy: never
+        runtime:
+          image: generic
+          command: sleep
+          args: ["3600"]
+        healthcheck:
+          type: heartbeat
+          timeout: 6s
+          failure_threshold: 1
+
+      - name: capped
+        replicas: 1
+        restart_policy: always
+        max_restarts: 1
+        runtime:
+          image: generic
+          command: sleep
+          args: ["3600"]
+        healthcheck:
+          type: heartbeat
+          timeout: 6s
+          failure_threshold: 1

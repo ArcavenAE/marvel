@@ -1,0 +1,51 @@
+# Marvel demo — Act 1, pane-loss recovery.
+#
+# Two workers, each a `sleep` process in a pane with a process-alive
+# healthcheck (pane exists => healthy). They stay up on their own, so the
+# only thing that removes a session is an operator kill. Kill one and the
+# daemon reaps the dead pane, marks the session crashed, and the reconciler
+# spawns a replacement to restore the desired replica count.
+#
+# `sleep` stands in for any long-running agent process. It is used here
+# instead of bin/simulator because the simulator's heartbeat path needs
+# flags the generic adapter does not inject (see docs/demo.md, Act 1 gap
+# note), which would send a heartbeat role into a health restart loop and
+# muddy the pure pane-loss beat this manifest is about.
+#
+# Requires: `sleep` on PATH (always present). No model auth needed.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/demo-act1-recovery.yaml
+#   ./bin/marvel get sessions          # two running workers, HEALTH healthy
+#
+# Kill a pane and watch recovery:
+#   ./bin/marvel kill recover/line-worker-g1-0
+#   ./bin/marvel events --kind session.crashed     # the loss is detected
+#   ./bin/marvel events --kind session.created     # the replacement spawns
+#   ./bin/marvel get sessions                       # back to two healthy workers
+#
+# The recovery pair is session.crashed then session.created. The
+# session.restarted event belongs to the health-driven path, not pane loss;
+# see examples/demo-act1-health.yaml for that.
+#
+# Cleanup:
+#   ./bin/marvel stop --teardown
+
+workspace:
+  name: recover
+
+teams:
+  - name: line
+    roles:
+      - name: worker
+        replicas: 2
+        runtime:
+          image: generic
+          command: sleep
+          args: ["3600"]
+        healthcheck:
+          type: process-alive
+          timeout: 10s
+          failure_threshold: 3
