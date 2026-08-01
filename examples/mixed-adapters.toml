@@ -1,58 +1,72 @@
-# Marvel example — mixed adapters in one workspace.
+# Marvel example — the harness matrix: three BYOA harnesses, one workspace,
+# one normalized event path.
 #
-# Each role resolves to a different adapter:
-#   - supervisor → claude adapter (system prompt + permission injection)
-#   - worker → forestage adapter (identity flags + permission injection)
-#   - monitor → generic adapter (env vars only)
+# Each role runs a different agent harness headlessly. Marvel redirects each
+# harness's structured output into a FIFO, parses the harness-specific
+# dialect into the shared event vocabulary, and lands every event in the
+# daemon ring tagged with workspace/team/role/session. `marvel events` shows
+# all three harnesses in one stream.
+#
+#   claude   → claude-code stream-json    (internal/runtime/claudecode)
+#   codex    → codex exec --json          (internal/runtime/codex)
+#   opencode → opencode run --format json (internal/runtime/opencode)
 #
 # Setup:
-#   cd ~/work/aae-orc/forestage && cargo build
 #   cd ~/work/aae-orc/marvel
 #   ./marvel daemon &
 #   ./marvel work examples/mixed-adapters.toml
 #
-# Verify (daemon log should show three different adapters):
-#   session mixed/hybrid-supervisor-g1-0 using claude adapter
-#   session mixed/hybrid-worker-g1-0 using forestage adapter
-#   session mixed/hybrid-monitor-g1-0 using generic adapter
+# Verify (daemon log shows three adapters, each streaming its own format):
+#   session mixed/matrix-analyst-g1-0 streaming claude-code/stream-json
+#   session mixed/matrix-builder-g1-0 streaming codex/jsonl
+#   session mixed/matrix-scout-g1-0 streaming opencode/json
 #
-# Test commands:
+# Watch the normalized events from all three:
+#   ./marvel events --workspace mixed
 #   ./marvel get sessions
-#   ./marvel capture mixed/hybrid-supervisor-g1-0
-#   ./marvel capture mixed/hybrid-worker-g1-0
-#   ./marvel capture mixed/hybrid-monitor-g1-0
-#   ./marvel shift mixed/hybrid
 #   ./marvel stop
+#
+# Notes:
+#   - Each role is headless with a prompt; that is what makes the harness
+#     produce a parseable one-shot stream.
+#   - codex takes sandbox/approval flags via runtime.args; opencode takes
+#     --model and --auto via runtime.args. Neither is injected by marvel,
+#     so autonomous tool use is an explicit operator choice.
 
 [workspace]
 name = "mixed"
 
 [[team]]
-name = "hybrid"
+name = "matrix"
 
   [[team.role]]
-  name = "supervisor"
+  name = "analyst"
   replicas = 1
-  permissions = "auto"
+  permissions = "plan"
 
     [team.role.runtime]
     image = "claude"
     command = "claude"
+    mode = "headless"
+    prompt = "Summarize what a marvel adapter does in one sentence."
 
   [[team.role]]
-  name = "worker"
-  replicas = 2
-  permissions = "plan"
-
-    [team.role.runtime]
-    image = "forestage"
-    command = "forestage"
-    args = ["--theme", "dune", "--mode", "claude"]
-
-  [[team.role]]
-  name = "monitor"
+  name = "builder"
   replicas = 1
 
     [team.role.runtime]
-    image = "shell"
-    command = "sh"
+    image = "codex"
+    command = "codex"
+    mode = "headless"
+    prompt = "Reply with the single word: ok"
+
+  [[team.role]]
+  name = "scout"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "opencode"
+    command = "opencode"
+    mode = "headless"
+    args = ["-m", "opencode/deepseek-v4-flash-free"]
+    prompt = "Reply with the single word: ok"

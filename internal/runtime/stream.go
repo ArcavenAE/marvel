@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/runtime/claudecode"
+	"github.com/arcavenae/marvel/internal/runtime/codex"
 	"github.com/arcavenae/marvel/internal/runtime/events"
+	"github.com/arcavenae/marvel/internal/runtime/opencode"
 )
 
 // StreamFormat names the wire format a harness writes to the sink
@@ -21,6 +23,14 @@ type StreamFormat string
 // StreamFormatClaudeCodeJSON is the NDJSON stream Claude Code writes
 // under `--output-format stream-json --verbose`.
 const StreamFormatClaudeCodeJSON StreamFormat = "claude-code/stream-json"
+
+// StreamFormatCodexJSON is the JSONL stream Codex writes under
+// `codex exec --json`.
+const StreamFormatCodexJSON StreamFormat = "codex/jsonl"
+
+// StreamFormatOpenCodeJSON is the line-delimited JSON stream OpenCode
+// writes under `opencode run --format json`.
+const StreamFormatOpenCodeJSON StreamFormat = "opencode/json"
 
 // StreamSpec is an adapter's report that it wired its harness's
 // structured output to Path. The adapter fills this in only when the
@@ -65,6 +75,18 @@ func NewStreamParser(format StreamFormat, cfg StreamParserConfig) (StreamParser,
 	switch format {
 	case StreamFormatClaudeCodeJSON:
 		return claudecode.NewParser(claudecode.Config{
+			AgentID:   cfg.AgentID,
+			Workspace: cfg.Workspace,
+			Clock:     cfg.Clock,
+		}), nil
+	case StreamFormatCodexJSON:
+		return codex.NewParser(codex.Config{
+			AgentID:   cfg.AgentID,
+			Workspace: cfg.Workspace,
+			Clock:     cfg.Clock,
+		}), nil
+	case StreamFormatOpenCodeJSON:
+		return opencode.NewParser(opencode.Config{
 			AgentID:   cfg.AgentID,
 			Workspace: cfg.Workspace,
 			Clock:     cfg.Clock,

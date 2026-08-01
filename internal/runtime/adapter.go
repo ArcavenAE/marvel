@@ -67,6 +67,8 @@ func NewRegistry() *Registry {
 	}
 	r.Register(&Forestage{})
 	r.Register(&Claude{})
+	r.Register(&Codex{})
+	r.Register(&OpenCode{})
 	r.Register(&Generic{})
 	return r
 }
@@ -162,6 +164,16 @@ func resolveCommand(rt *api.Runtime) string {
 // into a harness that failed before it produced any structured output.
 func redirectStdout(cmd, path string) string {
 	return cmd + " > " + shellQuote(path)
+}
+
+// redirectStdin appends a stdin redirection to a command string. A harness
+// launched in a tmux pane inherits the pane's tty as stdin; a harness that
+// reads stdin (codex exec appends piped stdin to its prompt, opencode run
+// likewise) blocks forever on a tty nobody types into. Redirecting from
+// /dev/null closes that mouth. Applied before redirectStdout so the two
+// compose as `cmd < /dev/null > sink`.
+func redirectStdin(cmd, path string) string {
+	return cmd + " < " + shellQuote(path)
 }
 
 // ErrNoCommand is returned when a runtime has no command or image specified.
