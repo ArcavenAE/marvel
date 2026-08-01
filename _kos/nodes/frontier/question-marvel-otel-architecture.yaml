@@ -1,0 +1,134 @@
+id: question-marvel-otel-architecture
+type: question
+confidence: frontier
+title: "How does marvel manage OTEL collection: what does it advertise, host, forward, and subscribe to?"
+tags:
+  - marvel
+  - observability
+  - otel
+  - telemetry
+  - composability
+content: |
+  finding-008 established that three target harnesses emit native OTEL
+  (Claude Code live-verified, Codex, Gemini CLI) and that none of them
+  exports context-window occupancy. That answers what is available. It
+  does not answer what marvel should DO with it, which is a design
+  question with a composability trap on both sides: do too little and
+  marvel cannot use telemetry for its own control decisions; do too
+  much and marvel becomes an observability vendor.
+
+  Operator framing (2026-08-01): marvel should know about OTEL and
+  advertise OTEL services in some way to the workloads (harnesses) it
+  manages, possibly stand up a full or light proxy service, and pipe or
+  direct telemetry to one or more OTEL remotes. Marvel should probably
+  subscribe to PORTIONS of the feed so it can perform its duty
+  efficiently, without handling every interrupt and streamed event. The
+  project should be composable, should work well with other
+  infrastructure, and should avoid being a kitchen-sink application.
+  All of this requires study before implementation.
+
+  Two facts verified 2026-08-01 that constrain the design:
+
+  - `internal/otel` is a 32-line stub: a stdout meter provider and a
+    `marvel.agent.context_window_percent` gauge that nothing populates
+    (it waits on `aae-orc-w5su`). Marvel is an OTEL producer with no
+    ingest path. Nothing is entrenched.
+  - The events ring (`internal/events`) is append-only with NO
+    subscribe or fan-out seam; it is polled by `marvel events`. So
+    "marvel subscribes to portions of the feed" requires a seam that
+    does not exist yet.
+
+  ## Sub-questions
+
+  **A. Topology.** What role does marvel play in the telemetry path?
+  Five candidate shapes: (a) advertiser only, (b) advertiser plus
+  selective subscriber against an operator-provided collector, (c)
+  embedded lightweight receiver in the daemon, (d) marvel supervises a
+  real otelcol sidecar (note marvel already supervises processes; that
+  is the product), (e) marvel ships its own collector distribution.
+  Prior to be confirmed or disconfirmed: (e) is the kitchen-sink trap
+  and should be graveyarded with reasoning; the live contest is (b)
+  versus (d), with (c) as the zero-external-infrastructure fallback
+  that the independence rule (B2) argues for. Study: `aae-orc-fkvv`.
+
+  **B. Subscription scope.** Which signals does the control loop
+  actually need (reconciliation, health and readiness, crash-loop and
+  restart decisions, shift readiness, context pressure), at what rate
+  and aggregation, versus what is merely interesting? Everything
+  outside that allowlist should pass through to operator remotes
+  without marvel materializing it. Study: `aae-orc-24oy`.
+
+  **C. Ring versus parallel.** Does harness OTEL feed the existing
+  events ring (one internal vocabulary, one consumer path) or run as a
+  parallel channel? Two competing internal telemetry paths is the
+  failure mode to avoid. If the ring wins, it needs a subscription seam
+  and a judgement about whether a bounded in-memory ring suits
+  control-loop consumption. Study: `aae-orc-24oy`.
+
+  **D. Non-goals.** What will marvel NOT do: storage, retention, query,
+  dashboards, alerting, rollups, becoming or replacing a vendor
+  backend, shipping a marvel-branded collector. Anything marvel keeps
+  must be defensible as inseparable from orchestration. This is the
+  kitchen-sink test made explicit, and the part most at risk of
+  erosion, because each "could marvel also just..." arrives reasonably
+  and one at a time. Study: `aae-orc-tpda`; ADR: `aae-orc-4eoy`.
+
+  **E. Advertisement.** How does each harness learn the endpoint?
+  Claude Code honors env vars (live-verified); Codex reads user-level
+  config and ignores project config, which may block per-session
+  routing entirely (`aae-orc-rjru` is the load-bearing unknown);
+  Gemini uses flags or settings; opencode and Crush need a documented
+  no-op path. Cross-cutting: advertising a telemetry endpoint to a
+  workload looks like an instance of the service-directory surface the
+  Lens-2 directive asks for (`aae-orc::question-agent-service-directory`),
+  not a separate feature. Getting this wrong grows two mechanisms that
+  do the same thing. Task: `aae-orc-1n6b`.
+
+  **F. Fan-out to remotes.** The operator owns one or more remotes. Who
+  holds that configuration, and is it a manifest resource (the Policy
+  resource from PR #84 is the precedent for projecting config into a
+  supervised workload and re-projecting it live) or daemon
+  configuration? Covered by the sidecar spike `aae-orc-h6ck` and the
+  brief.
+
+  **G. Cardinality and cost.** Per-session attribution rests on
+  high-cardinality attributes (`session.id`, plus marvel's own
+  agent/workspace/team/role). A fleet of short-lived churning sessions
+  is close to the worst case for a metrics pipeline. Does per-session
+  attribution survive at fleet scale, or must it trade down to
+  per-role aggregation? Probe: `aae-orc-dbfc`.
+
+  **H. Degradation and sovereignty.** Per B2 and SOUL section 2, marvel
+  must work with no collector, no remote, and no OTEL-capable harness.
+  Per SOUL sections 1 and 3, the operator owns the remotes and the
+  data, telemetry must not become an exfiltration path, prompt content
+  stays out by default, and marvel routes no credentials. Study:
+  `aae-orc-tpda`.
+
+  ## Resolution path
+
+  Three studies (`fkvv`, `24oy`, `tpda`) and three probes (`5ed6`
+  embedded receiver, `h6ck` supervised sidecar, `dbfc` cardinality)
+  plus the advertisement task (`1n6b`) feed one decision brief
+  (`aae-orc-mqgf`) in the shape that worked for `aae-orc-kxce`. On
+  ratification: harvest to nodes, write the ADR (`4eoy`), and unblock
+  the implementation ticket (`aae-orc-jcle`, re-scoped away from
+  presuming a receiver) with the chosen shape fixed.
+
+  Consumers waiting on this: `aae-orc-w5su` (context pressure can be
+  fed from OTEL instead of, or alongside, the stream) and
+  `aae-orc-dc1j` (native OTEL is the first clean path for
+  interactive/TUI context pressure, since OTEL is emitted regardless of
+  UI mode).
+edges:
+  - target: question-stream-attachment
+    type: derives
+    note: "native telemetry is a third attachment channel beside the FIFO stream and capture-pane"
+  - target: elem-console-agnostic
+    type: derives
+    note: "advertisement and degradation must not require any particular harness"
+provenance:
+  created_by: human
+  session: marvel-otel-architecture-2026-08-01
+  created_at: "2026-08-01"
+  discovered_from: finding-008-harness-native-telemetry
