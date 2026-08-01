@@ -25,9 +25,21 @@ content: |
   Reconciliation loop drives desired → actual state convergence.
 
   Evidence: implemented and working in MVP. ADR: orc decisions/adr-003.
+
+  **Demotion record (2026-08-01, operator-ratified at vision adoption):**
+  the k8s analogy is demoted from governing frame to mechanics footnote.
+  What survives as bedrock is the mechanics: declarative desired state,
+  the reconciliation loop, and resource types. The governing frame is
+  the agentic resource matrix (`elem-agentic-resource-matrix`); the
+  mapping table above remains a mechanics reference, not the pitch and
+  not where design attention starts. Ruling: orc
+  docs/marvel-remap-2026-08.md section 4, round 1.
 edges:
   - target: aae-orc::elem-marvel-control-plane
     type: implements
+  - target: elem-agentic-resource-matrix
+    type: supports
+    note: "demoted 2026-08-01: the k8s mechanics (desired state, reconciliation, resource types) underpin the governing frame without being it"
 provenance:
   created_by: human
   session: session-008

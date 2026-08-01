@@ -32,6 +32,15 @@ content: |
 
   Tracked: `aae-orc-bga` (validate marvel agent communication
   protocol).
+
+  **2026-08-01 ruling (marvel remap governance interview, round 2; orc
+  docs/marvel-remap-2026-08.md section 4):** external NATS,
+  marvel-supervised as a declared workload (the same supervision
+  pattern as the sidecar-collector spike, `aae-orc-h6ck`). Embedded
+  NATS declined; nats-server becomes a runtime dependency via
+  mise/brew, and marvel stays thin. The envelope starts from the orc
+  draft `docs/design/director-envelope-and-adapter-events.md`;
+  schema-first codegen per the language ruling.
 edges:
   - target: aae-orc::val-gradual-elaboration
     type: derives

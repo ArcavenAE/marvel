@@ -1,0 +1,35 @@
+id: elem-agentic-resource-matrix
+type: element
+confidence: bedrock
+title: "agentic resource matrix: the governing frame for marvel's resource model"
+content: |
+  The resources of agentic work are context, spend, cache locality,
+  access, and authority. Compute is one row of a 17-row matrix, not
+  the frame: kubernetes schedules containers by CPU and memory; marvel
+  governs agents by this matrix.
+
+  Enforcement has three loci, in maturity order:
+
+  1. **Environment construction at spawn** (BUILT): adapters construct
+     the process environment; permission-through-environment.
+  2. **Runtime admission/metering** (MISSING): qiay admission control
+     is the first brick.
+  3. **Mid-flight revocation** (MISSING): the M1 authority model is
+     its prerequisite.
+
+  Full capture, including the 17-row matrix itself: orc
+  `_kos/ideas/marvel-agentic-resource-matrix.md`. That idea file stays
+  the prop; this node is the ratification record.
+
+  Operator-ratified 2026-08-01 (marvel remap governance interview,
+  round 1; orc docs/marvel-remap-2026-08.md section 4). Promoted from
+  the orc idea file.
+edges:
+  - target: elem-k8s-resource-model
+    type: supersedes
+    note: "supersedes as governing frame only; the k8s mechanics (desired state, reconciliation, resource types) remain bedrock as a mechanics footnote"
+provenance:
+  created_by: human
+  session: marvel-remap-governance-2026-08-01
+  created_at: "2026-08-01"
+  extracted_from: "aae-orc _kos/ideas/marvel-agentic-resource-matrix.md (promoted at operator ratification)"
