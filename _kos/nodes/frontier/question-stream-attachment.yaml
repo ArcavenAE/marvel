@@ -91,6 +91,35 @@ content: |
   agent-stream token/usage events were observed live during the demo
   (Act 2), which closes part of the "live model turns" verification the
   DIRECTION-SETTLED note left open.
+
+  CONTEXT-PRESSURE PRODUCER HALF RESOLVED 2026-08-01 (finding-007).
+  The probe `probe-context-pressure-extraction` (aae-orc-frkq) ran on
+  kinu against live claude/codex/opencode turns plus marvel's shipped
+  FIFO path. CTX% is reconstructable from each cooperative harness's
+  own structured stream without owning the PTY, so the shim
+  (finding-004, aae-orc-gtpz) is NOT required for context pressure.
+  Per-harness occupancy proxy (SP1): Claude Code = usage.input_tokens +
+  cache_read_input_tokens + cache_creation_input_tokens (input_tokens
+  ALONE understates the context ~3000x when cached, measured), with the
+  limit declared in-stream at modelUsage.<model>.contextWindow (no table
+  needed); Codex = turn.completed.usage.input_tokens (already includes
+  cached as a subset), limit only in the rollout file
+  (model_context_window) so marvel carries a model->limit table keyed on
+  the launch -m arg; OpenCode = step_finish.part.tokens.input (+cache),
+  limit from a table. Codex rate_limits.used_percent is a plan-budget
+  quantity, NOT context occupancy. Seam (SP3): one shared
+  usage-accountant fed by the events ring, owning the model->limit table
+  and downward-step compaction detection, NOT per-adapter parser logic,
+  because occupancy is stateful and the parsers are stateless per-line
+  emitters. Ground truth (SP4): Claude Code's own context % uses the same
+  numerator (the full cached-inclusive prompt) and denominator
+  (contextWindow), so marvel's raw-occupancy proxy agrees by
+  construction; Claude Code's DISPLAYED "% until auto-compact" is
+  normalized to a configurable threshold plus a reserved buffer and reads
+  higher than raw occupancy. Unblocks aae-orc-w5su with the derivation
+  fixed. Still frontier: no live compaction crossing was measured (cost
+  discipline), OpenCode cache-inclusion for a caching model is unverified,
+  and Codex/OpenCode multi-turn accumulation is untested. See finding-007.
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
@@ -105,5 +134,5 @@ provenance:
   extracted_at: "2026-05-13"
   extracted_from: charter.md F11 prose
   updated_by: agent
-  updated_session: marvel-demo-waves-2026-07-31
+  updated_session: marvel-frkq-probe-2026-08-01
   updated_at: "2026-08-01"
