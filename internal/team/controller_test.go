@@ -1505,3 +1505,74 @@ func TestSaturatedRoleStaysFrozenAcrossRestart(t *testing.T) {
 		t.Fatalf("saturated role respawned after restart: %d alive session(s)", alive)
 	}
 }
+
+// TestContextReadingIsNotAHeartbeat is the coupling regression guard for
+// the usage accountant.
+//
+// The accountant writes through Store.UpdateSessionContext, which
+// deliberately does not touch LastHeartbeat. Routing it through
+// UpdateSessionHeartbeat instead would be one convenient line, and it
+// would silently redefine a heartbeat healthcheck from "the agent
+// reported in" to "the harness emitted bytes", marking a hung but still
+// streaming session healthy. This asserts the two stay separate at the
+// level where the coupling lives, not just in the store.
+func TestContextReadingIsNotAHeartbeat(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-ctx-not-heartbeat", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartNever,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sessions := store.ListSessionsByTeamRole("test-ctx-not-heartbeat", "squad", "worker")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	key := sessions[0].Key()
+
+	// The harness is streaming: context readings keep arriving.
+	store.UpdateSessionContext(key, api.SessionContext{
+		ContextTokens: 34136, ContextLimit: 1_000_000, ContextPercent: 3.4136,
+	})
+
+	// A session that streams but never heartbeats is still unhealthy.
+	ctrl.ReconcileOnce()
+	sess, err := store.GetSession(key)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if sess.HealthState != api.HealthUnhealthy {
+		t.Errorf("health = %s after a context reading and no heartbeat, want %s",
+			sess.HealthState, api.HealthUnhealthy)
+	}
+	if sess.ContextTokens != 34136 {
+		t.Errorf("context tokens = %d, want 34136 (the reading itself must survive)", sess.ContextTokens)
+	}
+
+	// And it is still not shift-ready: allReady requires a first heartbeat.
+	role := api.Role{
+		Name:        "worker",
+		HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: time.Hour, FailureThreshold: 3},
+	}
+	if err := store.UpdateSession(key, func(live *api.Session) error {
+		live.State = api.SessionRunning
+		live.HealthState = api.HealthUnknown
+		return nil
+	}); err != nil {
+		t.Fatalf("reset session state: %v", err)
+	}
+	fresh, err := store.GetSession(key)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if ctrl.allReady([]api.Session{fresh}, &role) {
+		t.Error("a session with a context reading but no heartbeat was declared shift-ready")
+	}
+}

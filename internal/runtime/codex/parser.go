@@ -171,6 +171,22 @@ func (p *Parser) handleTurnCompleted(raw json.RawMessage, emit func(events.Event
 			In:  body.Usage.InputTokens,
 			Out: body.Usage.OutputTokens,
 		},
+		Request: &events.RequestUsage{
+			// Subsumptive: input_tokens already contains
+			// cached_input_tokens, so summing double-counts. The cache
+			// classes still ride along because spend and cache-hit
+			// accounting need them.
+			Layout:          events.LayoutSubsumptive,
+			In:              body.Usage.InputTokens,
+			Out:             body.Usage.OutputTokens,
+			CacheReadIn:     body.Usage.CachedInputTokens,
+			CacheCreationIn: body.Usage.CacheWriteInputTokens,
+			ReasoningOut:    body.Usage.ReasoningOutputTokens,
+			// Total stays 0: turn.completed publishes no total_tokens, so
+			// the TotalMismatch invariant is disabled here. Codex also
+			// emits no session.ended, so it is the one harness with
+			// neither guard on its declared layout.
+		},
 	}, nil))
 }
 

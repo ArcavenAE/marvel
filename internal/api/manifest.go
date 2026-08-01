@@ -105,6 +105,8 @@ type ManifestRuntime struct {
 	Script  string      `toml:"script,omitempty" yaml:"script,omitempty"`
 	Mode    RuntimeMode `toml:"mode,omitempty"  yaml:"mode,omitempty"`
 	Prompt  string      `toml:"prompt,omitempty" yaml:"prompt,omitempty"`
+	// ContextWindow overrides the model-to-limit table, in tokens.
+	ContextWindow int `toml:"context_window,omitempty" yaml:"context_window,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -190,6 +192,11 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			if r.Runtime.Image == "" && r.Runtime.Command == "" {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime needs image or command", i, j)
+			}
+			// A negative window would silently produce a negative
+			// denominator and a nonsense percentage; 0 means unset.
+			if r.Runtime.ContextWindow < 0 {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_window must be >= 0", i, j)
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
@@ -309,12 +316,13 @@ func (m *Manifest) Apply(store *Store) error {
 		var roles []Role
 		for _, mr := range mt.Roles {
 			rt := Runtime{
-				Name:    mr.Runtime.Image,
-				Command: mr.Runtime.Command,
-				Args:    mr.Runtime.Args,
-				Script:  mr.Runtime.Script,
-				Mode:    mr.Runtime.Mode,
-				Prompt:  mr.Runtime.Prompt,
+				Name:          mr.Runtime.Image,
+				Command:       mr.Runtime.Command,
+				Args:          mr.Runtime.Args,
+				Script:        mr.Runtime.Script,
+				Mode:          mr.Runtime.Mode,
+				Prompt:        mr.Runtime.Prompt,
+				ContextWindow: mr.Runtime.ContextWindow,
 			}
 			if rt.Name == "" {
 				rt.Name = rt.Command

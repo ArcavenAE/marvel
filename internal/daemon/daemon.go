@@ -30,6 +30,7 @@ import (
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/usage"
 )
 
 const (
@@ -104,6 +105,10 @@ type Daemon struct {
 	// Always non-nil.
 	events *events.Ring
 
+	// Per-session context and token accountant, fed by the adapter
+	// streams through the session manager. Always non-nil.
+	usage *usage.Accountant
+
 	// metricsWarn keeps a sampler that cannot read the process table
 	// from writing the same line every interval for the life of the
 	// daemon.
@@ -145,6 +150,10 @@ type Options struct {
 	// timeout without a 10-minute wait) via the daemon's --shift-timeout
 	// flag or MARVEL_SHIFT_TIMEOUT. See aae-orc-sape / ArcavenAE/marvel#88.
 	ShiftTimeout time.Duration
+	// ContextLimits, when non-nil, replaces the shipped model-to-window
+	// table the usage accountant resolves denominators against. Tests set
+	// it so a fixture's model does not have to be a real shipped entry.
+	ContextLimits usage.Table
 }
 
 // New creates a new daemon with default options.
@@ -191,6 +200,15 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
 
+	// The usage accountant is event-driven, so it needs no goroutine and
+	// no interval of its own. *api.Store satisfies its Sink directly.
+	limits := opts.ContextLimits
+	if limits == nil {
+		limits = usage.DefaultTable()
+	}
+	acct := usage.New(store, usage.NewResolver(limits), usage.WithEvents(evRing))
+	sessMgr.Usage = acct
+
 	return &Daemon{
 		store:    store,
 		sessMgr:  sessMgr,
@@ -199,9 +217,15 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		pidFile:  opts.PidFile,
 		logs:     buf,
 		events:   evRing,
+		usage:    acct,
 		reexec:   syscall.Exec,
 	}, nil
 }
+
+// Usage returns the daemon's context and token accountant. Exported for
+// tests and for the read-side consumers (admission control, shift
+// triggers) that will hold it as a usage.Reader.
+func (d *Daemon) Usage() *usage.Accountant { return d.usage }
 
 // LogBuffer returns the daemon's in-memory log ring. Callers can
 // hook it into log.SetOutput to tee stderr into the buffer; the

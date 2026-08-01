@@ -91,6 +91,114 @@ type Usage struct {
 	Cost *float64 `json:"cost,omitempty"`
 }
 
+// Layout says how a harness's cache token classes relate to In. It rides
+// the payload rather than living in a consumer-side lookup table: the
+// parser knows its own harness, so a declared Layout cannot drift out of
+// sync with the fields beside it, and an unknown harness cannot be
+// silently mis-summed.
+type Layout string
+
+const (
+	// LayoutAdditive means occupancy is In + CacheReadIn + CacheCreationIn.
+	// Claude Code. Measured: In alone understated real context roughly
+	// 3000x on a warm session (finding-007 recorded In 10 against 29903).
+	LayoutAdditive Layout = "additive"
+	// LayoutSubsumptive means occupancy is In alone. Codex, whose
+	// input_tokens already contains cached_input_tokens (measured 13992
+	// with 11008 cached), so summing double-counts.
+	LayoutSubsumptive Layout = "subsumptive"
+)
+
+// RequestUsage is one API request's token accounting as the harness
+// reported it, attached to TurnData when a harness attributes usage per
+// request. A nil pointer means "not attributed", which is distinct from
+// reporting zeros, the same discipline as SessionEndedData.Metering.
+//
+// The token fields are carried as the harness names them and are not
+// pre-interpreted. Do not sum them to get occupancy: call Occupancy(),
+// which applies Layout. The raw classes are retained because they are
+// needed for spend and cache accounting, and because keeping them is
+// what lets a consumer re-derive occupancy if a Layout is later
+// corrected.
+type RequestUsage struct {
+	RequestID       string `json:"request_id,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Layout          Layout `json:"layout,omitempty"`
+	In              int    `json:"in,omitempty"`
+	Out             int    `json:"out,omitempty"`
+	CacheReadIn     int    `json:"cache_read_in,omitempty"`
+	CacheCreationIn int    `json:"cache_creation_in,omitempty"`
+	ReasoningOut    int    `json:"reasoning_out,omitempty"`
+	// Total is the harness's own token total when it publishes one, else
+	// 0. Used only for the TotalMismatch invariant, never as a numerator.
+	Total int `json:"total,omitempty"`
+	// TotalExcludesCache says Total is defined over In + Out +
+	// ReasoningOut alone, so TotalMismatch must leave the cache classes
+	// out of the comparison. OpenCode measures this way (finding-007:
+	// total 29893 against input 29879 + output 2 + reasoning 12), and
+	// without this flag every caching turn there would report a phantom
+	// mismatch equal to the cache classes.
+	TotalExcludesCache bool     `json:"total_excludes_cache,omitempty"`
+	Cost               *float64 `json:"cost,omitempty"`
+	// ContextWindow is the window the harness declared alongside this
+	// request, else 0. Claude declares it only on the terminal result
+	// line, so live requests carry 0.
+	ContextWindow int `json:"context_window,omitempty"`
+	// ParentToolUseID names the tool call this request belongs to, else
+	// "". Non-empty means a subagent turn (Claude's Task tool): its
+	// tokens are real spend against a SEPARATE context window, so a
+	// consumer must keep them out of the parent session's occupancy
+	// level. Claude ships the field on every assistant line, null for
+	// the main agent.
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
+}
+
+// Subagent reports a request made inside a tool call rather than by the
+// session's own agent.
+func (r RequestUsage) Subagent() bool { return r.ParentToolUseID != "" }
+
+// Occupancy is the context-window numerator implied by Layout. This is
+// the only sanctioned way to derive it.
+func (r RequestUsage) Occupancy() int {
+	if r.Layout == LayoutSubsumptive {
+		return r.In
+	}
+	return r.In + r.CacheReadIn + r.CacheCreationIn
+}
+
+// TotalMismatch reports Total minus the sum of the classes the harness's
+// own total is defined over, or 0 when the harness published no Total.
+//
+// It checks the harness's arithmetic against marvel's reading of its
+// fields, so a nonzero result means a usage schema changed under us. It
+// does NOT arbitrate Layout where TotalExcludesCache is set: a total that
+// omits the cache classes is the same number whether In subsumes
+// CacheReadIn or not. AdditiveConfirmed is the one check that speaks to
+// that question.
+func (r RequestUsage) TotalMismatch() int {
+	if r.Total == 0 {
+		return 0
+	}
+	sum := r.In + r.Out + r.ReasoningOut
+	if !r.TotalExcludesCache && r.Layout != LayoutSubsumptive {
+		sum += r.CacheReadIn + r.CacheCreationIn
+	}
+	return r.Total - sum
+}
+
+// AdditiveConfirmed reports a request that PROVES In excludes
+// CacheReadIn: In is smaller than the count served from cache, which is
+// impossible if In already contained it.
+//
+// One-sided on purpose. A true result confirms an additive declaration
+// from live data; a false one proves nothing, because a subsumptive In is
+// always the larger number. It is the only signal marvel has for
+// OpenCode's unverified cache layout, and it fires on the shape a warm
+// caching session actually has (small In against a large cache read).
+func (r RequestUsage) AdditiveConfirmed() bool {
+	return r.Layout == LayoutAdditive && r.CacheReadIn > 0 && r.In < r.CacheReadIn
+}
+
 // SessionStartedData — new harness session (or resumed one). Only the
 // three spec fields are load-bearing; adapters may attach Tools for
 // diagnostic use (bounded by the same summary discipline).
@@ -150,6 +258,11 @@ type Metering struct {
 }
 
 // ModelUsage is per-model accounting within one session.
+//
+// ContextWindow and MaxOutputTokens are the harness's own declaration of
+// the model's limits. They are the authoritative denominator for context
+// occupancy where a harness publishes them (Claude Code does, on the
+// terminal result line); 0 means the harness named none.
 type ModelUsage struct {
 	In                int      `json:"in,omitempty"`
 	Out               int      `json:"out,omitempty"`
@@ -157,6 +270,8 @@ type ModelUsage struct {
 	CacheCreationIn   int      `json:"cache_creation_in,omitempty"`
 	WebSearchRequests int      `json:"web_search_requests,omitempty"`
 	Cost              *float64 `json:"cost,omitempty"`
+	ContextWindow     int      `json:"context_window,omitempty"`
+	MaxOutputTokens   int      `json:"max_output_tokens,omitempty"`
 }
 
 // PermissionDenial names one refused tool invocation. Tool is the
@@ -169,8 +284,14 @@ type PermissionDenial struct {
 
 // TurnData — usage delta at turn boundaries. May be zero-valued when
 // the harness does not attribute usage per turn.
+//
+// Request is an additive v1 field carrying the full per-request token
+// accounting behind that delta, including the cache classes Usage cannot
+// hold (its three fields are spec-fixed and shared with session events).
+// Nil means the harness did not attribute usage to a request.
 type TurnData struct {
-	UsageDelta Usage `json:"usage_delta,omitzero"`
+	UsageDelta Usage         `json:"usage_delta,omitzero"`
+	Request    *RequestUsage `json:"request,omitempty"`
 }
 
 // MessageData — content for message.delta and message.completed. Text

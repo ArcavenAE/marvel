@@ -49,27 +49,101 @@ func column(t *testing.T, table, name string) string {
 	return ""
 }
 
-// CTX% had one producer, the heartbeat RPC, and no runtime adapter
-// implements it. A session that has never sent one has no context
-// reading, and "0%" would read as a fresh window rather than as silence.
-func TestRenderSessionTableNoHeartbeat(t *testing.T) {
+// A session marvel has never measured has no context reading at all, and
+// "0%" would read as a fresh window rather than as silence. That is the
+// interactive launch, the pane adopted from a prior daemon, and the
+// harness with no stream.
+func TestRenderSessionTableNeverMeasured(t *testing.T) {
 	table := renderSessionTable([]api.Session{{
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
 	}})
 	if got := column(t, table, "CTX%"); got != "-" {
-		t.Errorf("CTX%% = %q with no heartbeat, want %q", got, "-")
+		t.Errorf("CTX%% = %q with no reading, want %q", got, "-")
 	}
 }
 
-func TestRenderSessionTableWithHeartbeat(t *testing.T) {
+// A measured session reporting 0% must be distinguishable from an
+// unmeasured one.
+func TestRenderSessionTableMeasuredIdle(t *testing.T) {
 	table := renderSessionTable([]api.Session{{
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
-		ContextPercent: 0, LastHeartbeat: time.Now().UTC(),
+		SessionContext: api.SessionContext{
+			ContextPercent: 0, ContextLimit: 200_000, ContextAt: time.Now().UTC(),
+		},
 	}})
 	if got := column(t, table, "CTX%"); got != "0%" {
-		t.Errorf("CTX%% = %q after a heartbeat reporting 0, want %q", got, "0%")
+		t.Errorf("CTX%% = %q for a measured empty window, want %q", got, "0%")
+	}
+}
+
+func TestRenderSessionTableMeasured(t *testing.T) {
+	table := renderSessionTable([]api.Session{{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		SessionContext: api.SessionContext{
+			ContextTokens: 34136, ContextLimit: 1_000_000, ContextPercent: 3.4136,
+			ContextAt: time.Now().UTC(),
+		},
+	}})
+	if got := column(t, table, "CTX%"); got != "3%" {
+		t.Errorf("CTX%% = %q, want %q", got, "3%")
+	}
+}
+
+// The third state: tokens are real, the window is not. A percentage here
+// would be a fiction against a guessed denominator, so the cell says the
+// reading exists but cannot be scaled. See orc finding-055.
+func TestRenderSessionTableMeasuredWithoutLimit(t *testing.T) {
+	table := renderSessionTable([]api.Session{{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "codex"},
+		SessionContext: api.SessionContext{
+			ContextTokens: 13992, ContextRequests: 1, ContextLimit: 0,
+			ContextAt: time.Now().UTC(),
+		},
+	}})
+	if got := column(t, table, "CTX%"); got != "?" {
+		t.Errorf("CTX%% = %q with tokens but no window, want %q", got, "?")
+	}
+}
+
+// The cooperative heartbeat RPC is still a producer, and it was the only
+// one before the accountant existed, so the simulator must keep lighting
+// the column.
+//
+// Driven through the real store rather than a hand-built struct: the
+// heartbeat path reports a percentage with no token count and no window,
+// a shape no hand-written fixture would think to reproduce, and a
+// renderer keyed on the window alone blanks it. That is exactly how this
+// regressed once.
+func TestRenderSessionTableWithHeartbeat(t *testing.T) {
+	store := api.NewStore()
+	if err := store.CreateWorkspace(&api.Workspace{Name: "ws"}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := store.CreateSession(&api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		Runtime: api.Runtime{Name: "simulator", Command: "simulator"},
+		State:   api.SessionRunning, PaneID: "%3",
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := store.UpdateSessionHeartbeat("ws/agent-0", 55.4); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+
+	sess, err := store.GetSession("ws/agent-0")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if sess.ContextLimit != 0 || sess.ContextTokens != 0 {
+		t.Fatalf("the heartbeat path produced a window or a token count: %+v", sess.SessionContext)
+	}
+	table := renderSessionTable([]api.Session{sess})
+	if got := column(t, table, "CTX%"); got != "55%" {
+		t.Errorf("CTX%% = %q after a heartbeat reporting 55.4, want %q", got, "55%")
 	}
 }
 

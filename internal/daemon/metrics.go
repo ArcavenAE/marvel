@@ -38,6 +38,17 @@ func (d *Daemon) RunMetrics(ctx context.Context, interval time.Duration) {
 // CLI renders absence rather than zero usage.
 func (d *Daemon) SampleMetricsOnce(sampler *procstat.Sampler) {
 	sessions := d.store.ListSessions()
+
+	// The accountant is event-driven and needs no timer of its own, but a
+	// missed Forget would leak per-session state for the daemon's life.
+	// One map intersection on the pass that already has the session list
+	// is cheaper than a second ticker.
+	live := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		live[s.Key()] = true
+	}
+	d.usage.Sweep(live)
+
 	pids := make([]int, 0, len(sessions))
 	for _, s := range sessions {
 		if s.PID > 0 && s.State.CountsAsAlive() {

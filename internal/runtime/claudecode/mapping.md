@@ -36,13 +36,45 @@ what claude actually emits with the sketch in
    the vendor line in `raw`. Follow-on: consider promoting to a
    `message.thinking` first-class kind.
 
-3. **`turn.started` / `turn.completed` are not emitted.** The design
-   sketch says "message boundaries → turn.*", but in `-p` mode the
-   turn envelope is degenerate: one turn per invocation, delimited
-   by the outer system/init and result lines. We emit
-   session.started/ended for that scope and reserve turn.* for the
-   multi-turn interactive case (`--resume` sessions, or future
-   session-server usage).
+3. **`turn.completed` IS emitted; `turn.started` is not.** REVISED. This
+   parser previously emitted neither, on the grounds that the `-p` turn
+   envelope is degenerate (one invocation, delimited by system/init and
+   result). That reasoning does not survive contact with context
+   accounting: every `assistant` line carries a `message.usage` object
+   with the three prompt-token classes for the request that produced it,
+   and that is the only LIVE context-occupancy signal this harness gives.
+   The result line's totals arrive after the session is over.
+
+   So each assistant line's usage now rides a `turn.completed` carrying
+   `TurnData.Request`. The harness itself agrees an API request is a
+   turn: `result.num_turns` is 3 on `testdata/tool_call.ndjson`, against
+   three distinct `message.id` values.
+
+   Emission is deduped on `message.id`, not per line: one API response is
+   split into one vendor line per content block, so the six assistant
+   lines in the tool-call fixture repeat three ids and produce three
+   events. `usage` is decoded as a pointer because `user` and
+   `tool_result` lines carry `"usage": null`; emitting a zero for those
+   would land in the occupancy series and read as a compaction on every
+   tool result.
+
+   `turn.started` still has no source. Rejected alternatives: attaching
+   usage to `MessageData` (usage is not message content, it repeats per
+   block, and a thinking-only line maps to `error{unmapped}`, so the
+   usage would ride an error event); adding a thirteenth event kind.
+
+   **Subagent lines are marked, not merged.** Every assistant line carries
+   a top-level `parent_tool_use_id`, null for the main agent in both
+   fixtures and set to the `Task` tool's id for a subagent turn. A
+   subagent fills its own context window with a much smaller prompt, so
+   folding its usage into the session's occupancy level would drop the
+   reading for the length of the tool call and read as a compaction on the
+   way in and out. The field rides `Request.ParentToolUseID` rather than
+   suppressing the event, because the subagent's tokens are real spend:
+   the accountant bills them and excludes them from occupancy, the same
+   split it already applies to a non-primary model. Not measured here (no
+   captured fixture carries a subagent turn); the null field in both
+   fixtures is what names the case.
 
 4. **`init` carries far more fields than the spec calls out.** The
    spec names model/cwd/resumed; claude also ships tools (a big
@@ -62,6 +94,17 @@ what claude actually emits with the sketch in
    breakdown, and `permission_denials`. Cache counts live on Metering
    rather than Usage because Usage's three fields are spec-fixed and
    shared with turn events.
+
+   `modelUsage` entries also carry `contextWindow` and `maxOutputTokens`,
+   both now surfaced on `events.ModelUsage`. `contextWindow` is the
+   authoritative denominator for context occupancy, and it must be
+   selected by the init model (`system/init.model`), never by ranging the
+   map: a session that routes across models carries one entry per model
+   with different windows (200000 for haiku and 1000000 for
+   claude-fable-5[1m] in both fixtures), and Go map iteration order is
+   randomized. Note that `system/init.model` and the `modelUsage` key
+   carry the `[1m]` suffix while per-request `message.model` does not, so
+   the two names are not interchangeable for a window lookup.
 
    Still dropped: `result` (the final assistant text, already carried by
    the preceding message.completed event), `terminal_reason`,
