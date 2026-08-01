@@ -30,7 +30,9 @@ const (
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
 	KindShiftCompleted    Kind = "team.shift-completed"
+	KindShiftTimedOut     Kind = "team.shift-timed-out"
 	KindRoleSaturated     Kind = "role.saturated"
+	KindRoleRemoved       Kind = "role.removed"
 	// KindPolicyProjected records that marvel wrote (or rewrote) a
 	// session's projected Claude Code settings file — the observable
 	// signal of a policy landing at spawn and of live re-projection after

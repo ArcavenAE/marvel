@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
@@ -1108,6 +1109,226 @@ func TestShiftSessionNaming(t *testing.T) {
 	}
 	if !strings.Contains(gen2[0].Name, "-g2-") {
 		t.Fatalf("expected g2 in name, got %s", gen2[0].Name)
+	}
+}
+
+// --- Recovery-correctness trio (aae-orc-69i2 / qkfl / 96st) ---
+
+// TestOrphanedSessionsDrainedOnRoleRemoval covers aae-orc-69i2: removing
+// a role from a re-applied manifest (which replaces the role set
+// wholesale) must tear down that role's sessions, not leave them running
+// and uncounted forever. Falsification: without reconcileOrphanedSessions,
+// role b's session survives the re-apply and this fails on the drained
+// count.
+func TestOrphanedSessionsDrainedOnRoleRemoval(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+
+	createTeamFixture(t, store, "test-orphan", "squad", []api.Role{
+		{Name: "a", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "b", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	ctrl.ReconcileOnce()
+	if got := len(store.ListSessionsByTeamRole("test-orphan", "squad", "a")); got != 1 {
+		t.Fatalf("expected 1 session for role a, got %d", got)
+	}
+	if got := len(store.ListSessionsByTeamRole("test-orphan", "squad", "b")); got != 1 {
+		t.Fatalf("expected 1 session for role b, got %d", got)
+	}
+	// Give role b some crash-loop state so we can assert it is forgotten
+	// when the role is removed.
+	ctrl.roleHealth["test-orphan/squad/b"] = &RoleHealth{RestartCount: 2}
+
+	// Re-apply with only role a — this is exactly what Manifest.Apply does
+	// (live.Roles = roles).
+	if err := store.UpdateTeam("test-orphan/squad", func(live *api.Team) error {
+		live.Roles = []api.Role{live.Roles[0]}
+		return nil
+	}); err != nil {
+		t.Fatalf("re-apply team: %v", err)
+	}
+
+	ctrl.ReconcileOnce()
+
+	if got := len(store.ListSessionsByTeam("test-orphan", "squad")); got != 1 {
+		t.Fatalf("expected 1 total session after role b removed, got %d", got)
+	}
+	if got := len(store.ListSessionsByTeamRole("test-orphan", "squad", "a")); got != 1 {
+		t.Fatalf("expected role a still running, got %d", got)
+	}
+	if got := len(store.ListSessionsByTeamRole("test-orphan", "squad", "b")); got != 0 {
+		t.Fatalf("expected role b drained, got %d sessions", got)
+	}
+	if _, ok := ctrl.roleHealth["test-orphan/squad/b"]; ok {
+		t.Fatal("expected role b crash-loop state forgotten after removal")
+	}
+	removed := ring.Snapshot(events.Filter{Kind: events.KindRoleRemoved, Role: "b"}, 0)
+	if len(removed) == 0 {
+		t.Fatal("expected a role.removed event for role b")
+	}
+}
+
+// TestShiftTimeoutAbortsStuckLaunch covers aae-orc-qkfl: a shift whose new
+// generation never becomes ready (a heartbeat-checked role that never
+// beats) must hit the timeout and abort, rolling back to the old
+// generation, rather than hang in phase=launching forever. Falsification:
+// without the timeout check in reconcileShift, the shift stays launching
+// after the clock advances and this fails on the phase assertion.
+func TestShiftTimeoutAbortsStuckLaunch(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+	ctrl.ShiftTimeout = 2 * time.Minute
+
+	// A generous heartbeat timeout keeps the sessions in HealthUnknown
+	// (never marked unhealthy) so the ONLY thing blocking shift completion
+	// is allReady's requirement of a first heartbeat — which never arrives.
+	createTeamFixture(t, store, "test-shift-stuck", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 2,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Hour, FailureThreshold: 3},
+		},
+	})
+	teamKey := "test-shift-stuck/squad"
+
+	ctrl.ReconcileOnce()
+	if got := len(store.ListSessionsByTeamRoleGeneration("test-shift-stuck", "squad", "worker", 1)); got != 2 {
+		t.Fatalf("expected 2 gen-1 sessions, got %d", got)
+	}
+
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
+		t.Fatalf("initiate shift: %v", err)
+	}
+
+	// One tick launches gen-2 but cannot complete (no heartbeat).
+	ctrl.ReconcileOnce()
+	team, _ := store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("expected launching before timeout, got %s", team.Shift.Phase)
+	}
+	if got := len(store.ListSessionsByTeamRoleGeneration("test-shift-stuck", "squad", "worker", 2)); got != 2 {
+		t.Fatalf("expected 2 gen-2 sessions launched, got %d", got)
+	}
+
+	// Move past the timeout and reconcile: the shift must abort.
+	clock.Advance(3 * time.Minute)
+	ctrl.ReconcileOnce()
+
+	team, _ = store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftNone {
+		t.Fatalf("expected shift aborted (phase none) after timeout, got %s", team.Shift.Phase)
+	}
+	if got := len(store.ListSessionsByTeamRoleGeneration("test-shift-stuck", "squad", "worker", 2)); got != 0 {
+		t.Fatalf("expected stuck gen-2 torn down on abort, got %d", got)
+	}
+	if got := len(store.ListSessionsByTeamRoleGeneration("test-shift-stuck", "squad", "worker", 1)); got != 2 {
+		t.Fatalf("expected old gen-1 kept on rollback, got %d", got)
+	}
+	if len(ring.Snapshot(events.Filter{Kind: events.KindShiftTimedOut}, 0)) == 0 {
+		t.Fatal("expected a team.shift-timed-out event")
+	}
+}
+
+// TestSessionFailedEventOnRestartNever covers aae-orc-96st: a role with
+// restart_policy=never whose session fails health must emit
+// events.KindSessionFailed. Falsification: without the emit in
+// applyRestartPolicy's RestartNever case, no session.failed event is
+// recorded and this fails.
+func TestSessionFailedEventOnRestartNever(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+
+	createTeamFixture(t, store, "test-failed-never", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartNever,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sess := store.ListSessionsByTeamRole("test-failed-never", "squad", "worker")[0]
+	if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+
+	ctrl.ReconcileOnce()
+
+	got, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("session should still exist (restart_policy=never): %v", err)
+	}
+	if got.State != api.SessionFailed {
+		t.Fatalf("expected failed state, got %s", got.State)
+	}
+	failed := ring.Snapshot(events.Filter{Kind: events.KindSessionFailed, Session: sess.Key()}, 0)
+	if len(failed) == 0 {
+		t.Fatal("expected a session.failed event on restart_policy=never failure")
+	}
+}
+
+// TestSessionFailedEventOnSaturation covers aae-orc-96st: a role that
+// saturates MaxRestarts must emit events.KindSessionFailed in addition to
+// events.KindRoleSaturated. Falsification: without the emit in
+// restartSession's saturation branch, only role.saturated is recorded and
+// the session.failed assertion fails.
+func TestSessionFailedEventOnSaturation(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-failed-sat", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			MaxRestarts:   1,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	// Burn the single restart, then saturate on the next crash.
+	for i := 0; i < 2; i++ {
+		ctrl.ReconcileOnce()
+		got := store.ListSessionsByTeamRole("test-failed-sat", "squad", "worker")
+		if len(got) == 0 {
+			continue
+		}
+		if err := store.UpdateSession(got[0].Key(), func(live *api.Session) error {
+			live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+			return nil
+		}); err != nil {
+			t.Fatalf("iter %d update heartbeat: %v", i, err)
+		}
+		ctrl.ReconcileOnce()
+		clock.Advance(10 * time.Minute)
+	}
+
+	if len(ring.Snapshot(events.Filter{Kind: events.KindRoleSaturated}, 0)) == 0 {
+		t.Fatal("expected a role.saturated event on saturation")
+	}
+	if len(ring.Snapshot(events.Filter{Kind: events.KindSessionFailed}, 0)) == 0 {
+		t.Fatal("expected a session.failed event on saturation")
 	}
 }
 

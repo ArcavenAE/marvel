@@ -38,6 +38,11 @@ type Controller struct {
 	// RehydrateRoleHealth at daemon start. See aae-orc-qdew.
 	roleHealth map[string]*RoleHealth
 
+	// ShiftTimeout bounds how long a single shift may run before the
+	// reconciler declares it stuck and aborts it. Zero uses
+	// defaultShiftTimeout. See aae-orc-qkfl.
+	ShiftTimeout time.Duration
+
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
 }
@@ -58,6 +63,14 @@ type RoleHealth struct {
 const (
 	restartBackoffInitial = 30 * time.Second
 	restartBackoffMax     = 5 * time.Minute
+	// defaultShiftTimeout bounds how long a shift may run before the
+	// reconciler treats it as stuck. A launch whose new generation never
+	// reaches readiness (e.g. a heartbeat-checked role that never beats)
+	// would otherwise hold the team in phase=launching forever, both
+	// generations running and scale refused. Ten minutes is generous for
+	// agent warm-up while still bounded. Override per Controller via
+	// ShiftTimeout. See aae-orc-qkfl.
+	defaultShiftTimeout = 10 * time.Minute
 )
 
 // NewController creates a team controller.
@@ -87,6 +100,13 @@ func (c *Controller) nowUTC() time.Time {
 		return c.now()
 	}
 	return time.Now().UTC()
+}
+
+func (c *Controller) shiftTimeout() time.Duration {
+	if c.ShiftTimeout > 0 {
+		return c.ShiftTimeout
+	}
+	return defaultShiftTimeout
 }
 
 func (c *Controller) getRoleHealth(key string) *RoleHealth {
@@ -287,12 +307,59 @@ func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestar
 }
 
 func (c *Controller) reconcileTeam(t *api.Team) {
+	// Drain sessions whose role no longer exists in the manifest before
+	// anything else. Manifest.Apply replaces live.Roles wholesale, so a
+	// role removed from a re-applied manifest leaves its sessions running:
+	// the loops below iterate only current roles, so orphans are never
+	// counted, scaled down, or deleted and survive restarts via bolt.
+	// See aae-orc-69i2.
+	c.reconcileOrphanedSessions(t)
+
 	if t.Shift.Phase != api.ShiftNone {
 		c.reconcileShift(t)
 		return
 	}
 	for i := range t.Roles {
 		c.reconcileRole(t, &t.Roles[i])
+	}
+}
+
+// reconcileOrphanedSessions deletes every session whose role is absent
+// from the team's current role set, drained one per orphaned role with an
+// operator-visible role.removed event (the per-session deletes also emit
+// the manager's own session.deleted events). Crash-loop health state for a
+// removed role is forgotten so a later re-add starts clean, mirroring the
+// cascade-clear rationale in ClearRoleHealthForTeam. Caller holds c.mu.
+// See aae-orc-69i2.
+func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
+	known := make(map[string]struct{}, len(t.Roles))
+	for i := range t.Roles {
+		known[t.Roles[i].Name] = struct{}{}
+	}
+	drained := make(map[string]int)
+	for _, sess := range c.store.ListSessionsByTeam(t.Workspace, t.Name) {
+		if _, ok := known[sess.Role]; ok {
+			continue
+		}
+		if err := c.sessMgr.Delete(sess.Key()); err != nil {
+			log.Printf("reconcile: delete orphaned session %s (role %s removed): %v", sess.Key(), sess.Role, err)
+			continue
+		}
+		drained[sess.Role]++
+	}
+	for role, n := range drained {
+		roleKey := t.Workspace + "/" + t.Name + "/" + role
+		delete(c.roleHealth, roleKey)
+		c.forgetRoleHealth(roleKey)
+		log.Printf("reconcile: role %s removed from team %s, drained %d session(s)", role, t.Key(), n)
+		events.Emit(c.Events, events.Event{
+			Kind:      events.KindRoleRemoved,
+			Severity:  events.SeverityWarning,
+			Workspace: t.Workspace,
+			Team:      t.Name,
+			Role:      role,
+			Message:   fmt.Sprintf("role removed from manifest, drained %d session(s)", n),
+		})
 	}
 }
 
@@ -476,6 +543,15 @@ func (c *Controller) applyRestartPolicy(sess *api.Session, t *api.Team, role *ap
 		sess.State = api.SessionFailed
 		log.Printf("health: session %s failed (restart_policy=never, failures=%d)",
 			sess.Key(), sess.FailureCount)
+		events.Emit(c.Events, events.Event{
+			Kind:      events.KindSessionFailed,
+			Severity:  events.SeverityWarning,
+			Workspace: t.Workspace,
+			Team:      t.Name,
+			Role:      role.Name,
+			Session:   sess.Key(),
+			Message:   fmt.Sprintf("restart_policy=never, failures=%d", sess.FailureCount),
+		})
 	case api.RestartOnFailure:
 		if sess.State == api.SessionFailed {
 			c.restartSession(sess, t, role)
@@ -550,6 +626,15 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 				Role:      role.Name,
 				Session:   sess.Key(),
 				Message:   fmt.Sprintf("max_restarts=%d reached", role.MaxRestarts),
+			})
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindSessionFailed,
+				Severity:  events.SeverityWarning,
+				Workspace: t.Workspace,
+				Team:      t.Name,
+				Role:      role.Name,
+				Session:   sess.Key(),
+				Message:   fmt.Sprintf("max_restarts=%d reached, not restarting", role.MaxRestarts),
 			})
 		}
 		_ = c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
@@ -633,7 +718,7 @@ func (c *Controller) InitiateShift(teamKey, role string) error {
 			OldGeneration: oldGen,
 			RoleIndex:     0,
 			Roles:         roles,
-			StartedAt:     time.Now().UTC(),
+			StartedAt:     c.nowUTC(),
 		}
 		return nil
 	}); err != nil {
@@ -669,6 +754,17 @@ func shiftOrder(roles []api.Role) []string {
 }
 
 func (c *Controller) reconcileShift(t *api.Team) {
+	// Shift timeout: bound how long a shift may run. A launch whose new
+	// generation never reaches readiness would otherwise keep the team in
+	// phase=launching forever, both generations running and scale refused
+	// (ShiftState.StartedAt was written and read by nothing). On expiry we
+	// abort the shift; see abortStuckShift for the rollback rationale.
+	// See aae-orc-qkfl.
+	if !t.Shift.StartedAt.IsZero() && c.nowUTC().Sub(t.Shift.StartedAt) > c.shiftTimeout() {
+		c.abortStuckShift(t)
+		return
+	}
+
 	if t.Shift.RoleIndex >= len(t.Shift.Roles) {
 		// All roles shifted — complete.
 		log.Printf("shift: complete for %s/%s", t.Workspace, t.Name)
@@ -719,6 +815,46 @@ func (c *Controller) reconcileShift(t *api.Team) {
 	case api.ShiftDraining:
 		c.shiftDrain(t, role)
 	}
+}
+
+// abortStuckShift ends a shift that exceeded the timeout. Rolling the
+// stuck generation back is the safer default than tearing down the
+// working sessions: in the launching phase the new generation is the one
+// that never came ready, so it is deleted and the known-good old
+// generation is kept; in draining the sessions are left in place and
+// normal reconciliation converges the replica counts. Either way the
+// shift state is cleared, which resumes normal reconciliation and
+// unblocks scale (the daemon refuses scale while a shift is in progress).
+// An operator-visible warning names the phase and the generation rolled
+// back to. Caller holds c.mu. See aae-orc-qkfl.
+func (c *Controller) abortStuckShift(t *api.Team) {
+	var role string
+	if t.Shift.RoleIndex < len(t.Shift.Roles) {
+		role = t.Shift.Roles[t.Shift.RoleIndex]
+	}
+	elapsed := c.nowUTC().Sub(t.Shift.StartedAt)
+	log.Printf("shift: %s stuck in %s for %s (role %s), aborting and rolling back to gen %d",
+		t.Key(), t.Shift.Phase, elapsed, role, t.Shift.OldGeneration)
+	events.Emit(c.Events, events.Event{
+		Kind:      events.KindShiftTimedOut,
+		Severity:  events.SeverityWarning,
+		Workspace: t.Workspace,
+		Team:      t.Name,
+		Role:      role,
+		Message:   fmt.Sprintf("shift stuck in %s past %s, rolled back to gen %d", t.Shift.Phase, c.shiftTimeout(), t.Shift.OldGeneration),
+	})
+	if t.Shift.Phase == api.ShiftLaunching && role != "" {
+		for _, sess := range c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role, t.Generation) {
+			if err := c.sessMgr.Delete(sess.Key()); err != nil {
+				log.Printf("shift: abort delete new-gen session %s: %v", sess.Key(), err)
+			}
+		}
+	}
+	_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+		live.Shift = api.ShiftState{}
+		return nil
+	})
+	t.Shift = api.ShiftState{}
 }
 
 func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
