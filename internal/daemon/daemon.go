@@ -617,6 +617,15 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
 
+	// Re-project policies for already-running sessions before reconciling.
+	// A policy edited in this manifest reconciles by rewriting the session's
+	// settings file (finding-024 contract half); Claude Code's file watcher
+	// hot-reloads it with no restart. New sessions spawned by the reconcile
+	// below get their projection at spawn time.
+	if n := d.sessMgr.Reproject(); n > 0 {
+		log.Printf("apply: re-projected policy for %d running session(s)", n)
+	}
+
 	// Trigger immediate reconciliation.
 	d.teamCtrl.ReconcileOnce()
 
@@ -648,6 +657,8 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		result = d.store.ListWorkspaces()
 	case "endpoints", "endpoint":
 		result = d.store.ListEndpoints()
+	case "policies", "policy":
+		result = d.store.ListPolicies()
 	default:
 		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}

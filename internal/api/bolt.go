@@ -35,6 +35,7 @@ var (
 	bucketTeams      = []byte("teams")
 	bucketSessions   = []byte("sessions")
 	bucketEndpoints  = []byte("endpoints")
+	bucketPolicies   = []byte("policies")
 	bucketRoleHealth = []byte("role_health")
 	bucketMeta       = []byte("meta")
 )
@@ -58,6 +59,7 @@ var allBuckets = [][]byte{
 	bucketTeams,
 	bucketSessions,
 	bucketEndpoints,
+	bucketPolicies,
 	bucketRoleHealth,
 	bucketMeta,
 }
@@ -215,6 +217,17 @@ func (s *Store) rehydrate() error {
 				return fmt.Errorf("unmarshal endpoint: %w", err)
 			}
 			s.endpoints[e.Key()] = &e
+			return nil
+		}); err != nil {
+			return err
+		}
+		// Policies
+		if err := tx.Bucket(bucketPolicies).ForEach(func(_, v []byte) error {
+			var p Policy
+			if err := json.Unmarshal(v, &p); err != nil {
+				return fmt.Errorf("unmarshal policy: %w", err)
+			}
+			s.policies[p.Key()] = &p
 			return nil
 		}); err != nil {
 			return err

@@ -25,6 +25,17 @@ type Forestage struct{}
 
 func (f *Forestage) Name() string { return "forestage" }
 
+// ProjectionFor reports where marvel writes forestage's projected settings
+// fragment. forestage forwards claude flags after the "--" passthrough, so
+// the projected file reaches Claude Code via --settings there (injected in
+// Prepare). This runtime supports projection.
+func (f *Forestage) ProjectionFor(ctx *LaunchContext, dir string) ProjectionTarget {
+	return ProjectionTarget{
+		Supported: true,
+		Path:      settingsProjectionPath(dir, ctx.Session.Key()),
+	}
+}
+
 func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {
@@ -48,7 +59,8 @@ func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	args = append(args, "--role", ctx.Role.Name)
 
 	// Inject marvel identity flags — forestage accepts these natively.
-	args = append(args,
+	args = append(
+		args,
 		"--name", ctx.Session.Name,
 		"--workspace", ctx.Workspace.Name,
 		"--team", ctx.Team.Name,
@@ -76,12 +88,19 @@ func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--script", ctx.Session.Runtime.Script)
 	}
 
-	// Claude passthrough: team context as system prompt.
+	// Claude passthrough: projected settings file (when marvel wrote one)
+	// then team context as system prompt. forestage forwards everything
+	// after "--" to its claude subprocess, so --settings lands where Claude
+	// Code's file watcher hot-reloads it on a later re-projection.
 	teamContext := fmt.Sprintf(
 		"You are %s (role: %s, team: %s, workspace: %s).",
 		ctx.Session.Name, ctx.Role.Name, ctx.Team.Name, ctx.Workspace.Name,
 	)
-	args = append(args, "--", "--append-system-prompt", teamContext)
+	args = append(args, "--")
+	if ctx.PolicyProjectionPath != "" {
+		args = append(args, "--settings", ctx.PolicyProjectionPath)
+	}
+	args = append(args, "--append-system-prompt", teamContext)
 
 	env := baseEnv(ctx)
 

@@ -1,0 +1,208 @@
+package session
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/runtime"
+)
+
+const projectionManifest = `
+[workspace]
+name = "acme"
+
+[[policy]]
+name = "reviewer-contract"
+version = "1.0"
+
+  [policy.settings.permissions]
+  allow = ["Read", "Grep"]
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "reviewer"
+  replicas = 1
+  policy = "reviewer-contract"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+`
+
+// projectionManager builds a Manager wired only for projection: a store, a
+// tempdir projection root, an event ring, and no tmux driver. Reproject and
+// the projection helpers never touch the driver, so nil is safe here and
+// keeps the test hermetic (no tmux server required).
+func projectionManager(t *testing.T) (*Manager, *events.Ring) {
+	t.Helper()
+	store := api.NewStore()
+	ring := events.NewRing(64)
+	mgr := &Manager{
+		store:         store,
+		adapters:      runtime.NewRegistry(),
+		ProjectionDir: t.TempDir(),
+		Events:        ring,
+	}
+	return mgr, ring
+}
+
+// seedRunningSession registers a Running session for the given role so
+// Reproject treats it as live. Returns the session key.
+func seedRunningSession(t *testing.T, mgr *Manager, workspace, team, role, name, image string) string {
+	t.Helper()
+	sess := &api.Session{
+		Name:      name,
+		Workspace: workspace,
+		Team:      team,
+		Role:      role,
+		Runtime:   api.Runtime{Name: image, Command: image},
+	}
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := mgr.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionRunning
+		live.PaneID = "%1"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	return sess.Key()
+}
+
+func readProjection(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read projection %s: %v", path, err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal projection: %v", err)
+	}
+	return out
+}
+
+func TestReprojectRewritesOnPolicyChange(t *testing.T) {
+	t.Parallel()
+	mgr, ring := projectionManager(t)
+
+	m, err := api.ParseManifestBytes([]byte(projectionManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	key := seedRunningSession(t, mgr, "acme", "squad", "reviewer", "squad-reviewer-g1-0", "claude")
+
+	// First projection: fresh file, counts as a change.
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("first Reproject changed = %d, want 1", n)
+	}
+	path := filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	got := readProjection(t, path)
+	perms, ok := got["permissions"].(map[string]any)
+	if !ok {
+		t.Fatalf("projection missing permissions block: %v", got)
+	}
+	if allow, ok := perms["allow"].([]any); !ok || len(allow) != 2 {
+		t.Fatalf("permissions.allow = %v, want two entries", perms["allow"])
+	}
+
+	// Re-projecting with no change writes nothing new.
+	if n := mgr.Reproject(); n != 0 {
+		t.Fatalf("no-op Reproject changed = %d, want 0", n)
+	}
+
+	// Edit the policy: a second version tightening the allow list.
+	edited := strings.Replace(projectionManifest,
+		`allow = ["Read", "Grep"]`, `allow = ["Read"]`, 1)
+	m2, err := api.ParseManifestBytes([]byte(edited))
+	if err != nil {
+		t.Fatalf("parse edited: %v", err)
+	}
+	if err := m2.Apply(mgr.store); err != nil {
+		t.Fatalf("apply edited: %v", err)
+	}
+
+	// Re-projection after the edit rewrites the running session's file.
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("post-edit Reproject changed = %d, want 1", n)
+	}
+	got2 := readProjection(t, path)
+	perms2 := got2["permissions"].(map[string]any)
+	if allow, ok := perms2["allow"].([]any); !ok || len(allow) != 1 {
+		t.Fatalf("post-edit permissions.allow = %v, want one entry", perms2["allow"])
+	}
+
+	// Both changes emitted an observable event.
+	evs := ring.Snapshot(events.Filter{Kind: events.KindPolicyProjected, Session: key}, 0)
+	if len(evs) != 2 {
+		t.Fatalf("policy.projected events = %d, want 2", len(evs))
+	}
+	if !strings.Contains(evs[1].Message, "re-projected") {
+		t.Errorf("second event message = %q, want re-projection detail", evs[1].Message)
+	}
+}
+
+func TestReprojectSkipsUnsupportedRuntime(t *testing.T) {
+	t.Parallel()
+	mgr, ring := projectionManager(t)
+
+	// A codex role referencing a policy: codex has no settings surface, so
+	// the policy is advisory — nothing written, nothing counted, but the
+	// session is otherwise valid.
+	manifest := strings.Replace(projectionManifest,
+		`    image = "claude"
+    command = "claude"`,
+		`    image = "codex"
+    command = "codex"`, 1)
+	m, err := api.ParseManifestBytes([]byte(manifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	key := seedRunningSession(t, mgr, "acme", "squad", "reviewer", "squad-reviewer-g1-0", "codex")
+
+	if n := mgr.Reproject(); n != 0 {
+		t.Fatalf("Reproject changed = %d, want 0 for advisory policy", n)
+	}
+	path := filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("advisory policy wrote a file at %s (err=%v)", path, err)
+	}
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindPolicyProjected}, 0)); n != 0 {
+		t.Errorf("advisory policy emitted %d projection events, want 0", n)
+	}
+}
+
+func TestReprojectNoPolicyIsNoOp(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+
+	// Same manifest without the role policy reference.
+	manifest := strings.Replace(projectionManifest,
+		"  policy = \"reviewer-contract\"\n", "", 1)
+	m, err := api.ParseManifestBytes([]byte(manifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	seedRunningSession(t, mgr, "acme", "squad", "reviewer", "squad-reviewer-g1-0", "claude")
+
+	if n := mgr.Reproject(); n != 0 {
+		t.Fatalf("Reproject changed = %d, want 0 with no policy reference", n)
+	}
+}

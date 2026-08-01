@@ -94,6 +94,13 @@ func (s *GenericScraper) Scrape() ([]string, error) {
 
 func (g *Generic) Name() string { return "generic" }
 
+// ProjectionFor reports no projection surface. A generic command has no
+// known settings-fragment mechanism, so a referenced policy is advisory —
+// marvel logs it rather than writing a file the command would not read.
+func (g *Generic) ProjectionFor(_ *LaunchContext, _ string) ProjectionTarget {
+	return ProjectionTarget{Supported: false}
+}
+
 func (g *Generic) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {

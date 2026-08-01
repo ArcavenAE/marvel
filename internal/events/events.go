@@ -33,6 +33,11 @@ const (
 	KindShiftTimedOut     Kind = "team.shift-timed-out"
 	KindRoleSaturated     Kind = "role.saturated"
 	KindRoleRemoved       Kind = "role.removed"
+	// KindPolicyProjected records that marvel wrote (or rewrote) a
+	// session's projected Claude Code settings file — the observable
+	// signal of a policy landing at spawn and of live re-projection after
+	// a manifest change. See finding-024.
+	KindPolicyProjected Kind = "policy.projected"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
