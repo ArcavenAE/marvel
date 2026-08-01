@@ -13,6 +13,11 @@
 >   stream observation).
 > - State persistence (BoltDB), SSH remote clients, named clusters, keys,
 >   events, capture, and inject all shipped after this MVP scope was frozen.
+> - Story 7.1 tracks the heartbeat RPC as the whole of the CTX% column.
+>   Real harness sessions now light it from parsed usage reporting
+>   (`internal/usage`), and `ContextPercent` has moved into a
+>   `SessionContext` group alongside the token count, window, and window
+>   provenance.
 
 Probe: marvel-mvp-probe | Confidence: frontier
 

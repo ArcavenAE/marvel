@@ -19,9 +19,20 @@ import (
 // Persisted: Workspaces, Teams (incl. Roles + ShiftState), Sessions
 // (incl. PaneID, State, Generation, Runtime, restart counters, CreatedAt),
 // Endpoints, RoleHealth. Volatile session fields (LastHeartbeat,
-// ContextPercent, HealthState, LastHealthCheck, PID) are persisted with
-// the rest of the struct but treated as may-be-stale on rehydrate; the
-// reconciler refreshes them.
+// HealthState, LastHealthCheck, PID) are persisted with the rest of the
+// struct but treated as may-be-stale on rehydrate; the reconciler
+// refreshes them.
+//
+// A STREAM-DERIVED SessionContext block is the exception: rehydrate zeroes
+// it, because nothing refreshes it after a restart. The FIFO reader is gone
+// and an adopted pane has no instance entry, so marvel will never produce
+// another reading for a session it inherits. An absent CTX% after a restart
+// is honest; a frozen percentage indistinguishable from a live one is not.
+//
+// A cooperative-heartbeat reading survives, as it did before the accountant
+// existed: the agent that sent it keeps sending, so it is may-be-stale in
+// the same way as the LastHeartbeat beside it, not orphaned. The two are
+// told apart by ContextRequests, which only the accountant writes.
 //
 // RoleHealth is the one bucket with no in-memory mirror here: its live
 // copy is team.Controller's roleHealth map, and the Store is only the
@@ -204,6 +215,14 @@ func (s *Store) rehydrate() error {
 			var sess Session
 			if err := json.Unmarshal(v, &sess); err != nil {
 				return fmt.Errorf("unmarshal session: %w", err)
+			}
+			// Nothing can refresh a STREAM reading for a session this
+			// daemon did not launch, so drop it rather than serve a frozen
+			// percentage. A heartbeat reading (percentage only, no request
+			// count) is refreshed by the agent itself and survives. See the
+			// persistence note at the top of the file.
+			if sess.ContextRequests > 0 {
+				sess.SessionContext = SessionContext{}
 			}
 			s.sessions[sess.Key()] = &sess
 			return nil

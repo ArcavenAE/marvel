@@ -94,7 +94,19 @@ func summarize(ev rtevents.Event) string {
 	case rtevents.SessionEndedData:
 		return oneLine(sessionEndedSummary(d))
 	case rtevents.TurnData:
-		return oneLine(fmt.Sprintf("tokens in=%d out=%d", d.UsageDelta.In, d.UsageDelta.Out))
+		s := fmt.Sprintf("tokens in=%d out=%d", d.UsageDelta.In, d.UsageDelta.Out)
+		// Without the occupancy the line reads as a per-turn delta, which
+		// for a warm Claude session is a misleadingly small in= (the
+		// cached prompt is the bulk of the context and is not in In).
+		if d.Request != nil {
+			s += fmt.Sprintf(" ctx=%d", d.Request.Occupancy())
+			// A subagent turn's ctx is a different window's occupancy, so
+			// unlabelled it reads as the session's level collapsing.
+			if d.Request.Subagent() {
+				s += " (subagent)"
+			}
+		}
+		return oneLine(s)
 	case rtevents.MessageData:
 		if d.Text == "" {
 			return oneLine(d.Role)

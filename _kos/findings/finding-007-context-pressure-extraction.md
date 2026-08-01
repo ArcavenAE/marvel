@@ -226,3 +226,33 @@ for the simulator.
 - **Version-pinned.** Claude 2.1.220, codex 0.146.0, opencode 1.18.5. A harness
   version bump that changes the usage/stream schema changes the read; re-verify
   on upgrade.
+
+## Addendum 2026-08-01 (aae-orc-w5su implementation): the SP1 Claude numerator reads a cumulative total, not a level
+
+SP1 prescribed the Claude numerator from the terminal line:
+`result.usage.input_tokens + cache_read_input_tokens +
+cache_creation_input_tokens`. Measured during the w5su build on the
+repo's own fixture (`internal/runtime/claudecode/testdata/tool_call.ndjson`,
+three distinct `message.id` values, `num_turns: 3`): per-request
+occupancy levels are 33377, 33481, and 34136, while `result.usage`
+reports 11701 / 17162 / 72131, each class the exact column-wise sum
+across the three requests (total 100994). `result.usage` and
+`result.modelUsage` are session-cumulative spend totals, not the final
+request's level.
+
+Consequence: the SP1 numerator reads 10.1% against a 1M window where
+the truth is 3.4%, and the error grows linearly with request count, so
+the longest sessions (the ones a shift trigger exists for) are the most
+wrong. This finding's own four-turn live measurement missed it because
+each turn was a separate `claude -p --resume` invocation, a
+single-request session where sum equals level by coincidence. The
+"Claude's four-turn accumulation is the pattern the others should
+follow" line in the gaps section inherits the same caveat.
+
+Correction, as shipped in the accountant (`internal/usage/doc.go`):
+occupancy is a LEVEL, taken per API request from each assistant
+message's usage (deduplicated on `message.id`), latest-wins. The
+terminal `result` line is a spend total and a reconciliation check,
+never an occupancy source. The in-stream denominator
+(`result.modelUsage.<model>.contextWindow`) remains valid as SP1
+stated.

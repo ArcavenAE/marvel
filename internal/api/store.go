@@ -511,7 +511,44 @@ func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error
 	}
 	sess.ContextPercent = contextPercent
 	sess.LastHeartbeat = time.Now().UTC()
+	// ContextAt is the single "measured" sentinel for the context column,
+	// shared with the usage accountant's path below. A cooperative
+	// heartbeat is a measurement too, so it stamps it.
+	//
+	// A percentage is ALL this path produces: the agent computed it
+	// itself, so there is no token count, no window, and no request count
+	// to record. That shape is what tells the two producers apart
+	// downstream (bolt rehydrate keeps this one, the renderer prints it as
+	// a percentage rather than as an unresolved window).
+	sess.ContextAt = sess.LastHeartbeat
 	return s.persistPut(bucketSessions, sess.Key(), sess)
+}
+
+// UpdateSessionContext records one context-window reading.
+//
+// Like UpdateSessionMetrics and unlike UpdateSessionHeartbeat this does
+// not persist, and a missing session is ignored rather than reported: a
+// reading is meaningless once the harness process is gone, and the
+// accountant works from a live stream that can outlive a delete by one
+// event.
+//
+// It deliberately does NOT touch LastHeartbeat. LastHeartbeat is a
+// liveness contract consumed by the team controller's heartbeat health
+// check and by shift readiness. Stamping it from stream activity would
+// silently redefine "the agent reported in" as "the harness emitted
+// bytes", marking a hung-but-still-streaming session healthy and
+// declaring a shifting generation ready. That may eventually be wanted;
+// it has to be a ruled decision, not a side effect of picking the
+// convenient setter.
+func (s *Store) UpdateSessionContext(key string, c SessionContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		return
+	}
+	c.ContextAt = time.Now().UTC()
+	sess.SessionContext = c
 }
 
 // UpdateSessionMetrics records one process-sampler reading. m.MetricsAt

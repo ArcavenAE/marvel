@@ -38,6 +38,13 @@ const (
 	// signal of a policy landing at spawn and of live re-projection after
 	// a manifest change. See finding-024.
 	KindPolicyProjected Kind = "policy.projected"
+	// KindContextLimitUnresolved records that marvel measured a session's
+	// context tokens but could not resolve the model's context window, so
+	// CTX% stays blank rather than showing a percentage against a guessed
+	// denominator. Fires once per session. This is the operator's answer
+	// to "why is that column empty", and the fix is usually one
+	// runtime.context_window line in the manifest.
+	KindContextLimitUnresolved Kind = "context.limit-unresolved"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary

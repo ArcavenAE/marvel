@@ -324,3 +324,113 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
+
+// A STREAM reading cannot survive a restart: the FIFO reader is gone and
+// an adopted pane has no instance, so marvel will never produce another
+// reading for a session it inherits. Absence is honest; a frozen
+// percentage indistinguishable from a live one is not.
+func TestBoltStore_StreamContextReadingZeroedOnRehydrate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "ws"}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		Runtime: Runtime{Name: "claude", Command: "claude"},
+		State:   SessionRunning, CreatedAt: time.Now().UTC(),
+	}
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	// The accountant's own setter does not persist, so a reading reaches
+	// disk only when something else writes the record. That is the path
+	// this guards.
+	s1.UpdateSessionContext("ws/agent-0", SessionContext{
+		ContextTokens: 34136, ContextLimit: 1_000_000, ContextPercent: 3.4136,
+		ContextRequests: 3, ContextModel: "claude-fable-5[1m]",
+	})
+	if err := s1.UpdateSession("ws/agent-0", func(live *Session) error {
+		live.PaneID = "%7"
+		return nil
+	}); err != nil {
+		t.Fatalf("persist session: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+
+	got, err := s2.GetSession("ws/agent-0")
+	if err != nil {
+		t.Fatalf("get session after rehydrate: %v", err)
+	}
+	if got.ContextPercent != 0 || got.ContextTokens != 0 || got.ContextLimit != 0 {
+		t.Errorf("stream context survived rehydrate: %+v", got.SessionContext)
+	}
+	if !got.ContextAt.IsZero() {
+		t.Error("ContextAt survived rehydrate, so a stale percentage would render as live")
+	}
+	// The rest of the record must still rehydrate.
+	if got.State != SessionRunning || got.Runtime.Name != "claude" || got.PaneID != "%7" {
+		t.Errorf("rehydrate dropped more than the context block: %+v", got)
+	}
+}
+
+// The other half: a cooperative-heartbeat percentage is refreshed by the
+// agent that sent it, so it rehydrates like the LastHeartbeat beside it.
+// It was persisted and restored before the accountant existed, and the
+// simulator is the producer that would otherwise lose its column.
+func TestBoltStore_HeartbeatContextReadingSurvivesRehydrate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "ws"}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := s1.CreateSession(&Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		Runtime: Runtime{Name: "simulator", Command: "simulator"},
+		State:   SessionRunning, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := s1.UpdateSessionHeartbeat("ws/agent-0", 64.0); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+
+	got, err := s2.GetSession("ws/agent-0")
+	if err != nil {
+		t.Fatalf("get session after rehydrate: %v", err)
+	}
+	if got.ContextPercent != 64.0 {
+		t.Errorf("heartbeat percent = %v after rehydrate, want 64", got.ContextPercent)
+	}
+	if got.ContextAt.IsZero() {
+		t.Error("ContextAt dropped, so the restored percentage would render as absence")
+	}
+	if got.LastHeartbeat.IsZero() {
+		t.Error("LastHeartbeat dropped")
+	}
+}

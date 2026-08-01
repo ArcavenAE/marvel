@@ -16,7 +16,9 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/runtime"
+	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 	"github.com/arcavenae/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/usage"
 )
 
 // Manager creates and destroys sessions.
@@ -40,12 +42,17 @@ type Manager struct {
 	// are rewritten at spawn and on re-projection; nothing is preserved
 	// across restarts.
 	ProjectionDir string
+	// Usage receives adapter events for token and context accounting.
+	// Nil is safe, matching Events.
+	Usage UsageObserver
 
 	// instances tracks the live Instance per session key. Sessions
 	// adopted from a previous daemon have no entry: their pane predates
 	// this process, so marvel supervises them without observing them.
+	// drains holds the usage tap for the same keys.
 	imu       sync.Mutex
 	instances map[string]*runtime.TmuxInstance
+	drains    map[string]*usageDrain
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
@@ -57,6 +64,7 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		StreamDir:     defaultStreamDir(),
 		ProjectionDir: defaultProjectionDir(),
 		instances:     make(map[string]*runtime.TmuxInstance),
+		drains:        make(map[string]*usageDrain),
 	}
 }
 
@@ -390,12 +398,76 @@ func discardSink(fifo *runtime.FIFO) {
 	}
 }
 
+// UsageObserver receives adapter events for token and context
+// accounting. Declared here beside its consumer so package session keeps
+// no hard dependency on a concrete accountant, and so tests can drive the
+// tap with a recorder. Nil is safe, matching Events.
+//
+// The event ring cannot serve this purpose: bridgeEvent flattens the
+// typed payload into a one-line string clipped at 160 bytes, so token
+// counts survive only as prose.
+type UsageObserver interface {
+	Bind(c usage.Coords, b usage.Bind)
+	Observe(c usage.Coords, ev rtevents.Event)
+	Forget(agentID string)
+}
+
+// usageDrain is the tap one session's drain goroutine folds through.
+//
+// It exists to order Forget AFTER the last fold. The events channel is
+// buffered 256 deep on purpose, and stream teardown joins the parser
+// goroutine only, so a session deleted mid-stream leaves a tail the drain
+// is still consuming. A Forget issued beside the delete would be followed
+// by folds that recreate the session's state from nothing: the team's
+// retired totals would count it twice, its Partial flag would latch on the
+// requestless replacement, and a live CTX% cell could be re-blanked by a
+// windowless reading.
+type usageDrain struct {
+	done chan struct{}
+
+	// mu serializes a fold against the retiring Forget, so the bounded
+	// wait can time out on a wedged drain without reopening that window.
+	// Held across one Observe only, which its contract bounds to
+	// arithmetic plus one non-persisting store write.
+	mu      sync.Mutex
+	retired bool
+}
+
+func (d *usageDrain) observe(u UsageObserver, c usage.Coords, ev rtevents.Event) {
+	if u == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.retired {
+		return
+	}
+	u.Observe(c, ev)
+}
+
+func (d *usageDrain) retire(u UsageObserver, key string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.retired = true
+	u.Forget(key)
+}
+
 // attachInstance records the instance and drains its event stream into
 // the ring. The goroutine ends when the harness's output ends, so its
 // lifetime is the session's.
+//
+// The accountant is called inline rather than through a tee:
+// TmuxInstance.Events() is a single-sender/single-receiver channel whose
+// reader owns and closes it, and fanning it out would add a second
+// back-pressure path against a chain that back-pressures the harness on
+// purpose. The cost is that Observe sits in that path, which is why its
+// contract bounds it to arithmetic plus one non-persisting store write.
 func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) {
+	drain := &usageDrain{done: make(chan struct{})}
+
 	m.imu.Lock()
 	m.instances[sess.Key()] = inst
+	m.drains[sess.Key()] = drain
 	m.imu.Unlock()
 
 	c := coords{
@@ -404,20 +476,65 @@ func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) 
 		Role:      sess.Role,
 		Session:   sess.Key(),
 	}
+	uc := usage.Coords{
+		AgentID:   sess.Key(),
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+	}
+	// Bind before the drain starts so the denominator is resolved from
+	// launch args on the first fold, not after a round trip.
+	if m.Usage != nil {
+		m.Usage.Bind(uc, usage.Bind{
+			Harness: sess.Runtime.Name,
+			Args:    sess.Runtime.Args,
+			Window:  sess.Runtime.ContextWindow,
+		})
+	}
 	go func() {
+		defer close(drain.done)
 		for ev := range inst.Events() {
+			drain.observe(m.Usage, uc, ev)
 			events.Emit(m.Events, bridgeEvent(c, ev))
 		}
 	}()
 }
 
-// takeInstance removes and returns the instance for a session key.
-func (m *Manager) takeInstance(key string) *runtime.TmuxInstance {
+// takeInstance removes and returns the instance for a session key, with
+// the usage tap the caller must retire once the stream is down.
+func (m *Manager) takeInstance(key string) (*runtime.TmuxInstance, *usageDrain) {
 	m.imu.Lock()
 	defer m.imu.Unlock()
 	inst := m.instances[key]
+	drain := m.drains[key]
 	delete(m.instances, key)
-	return inst
+	delete(m.drains, key)
+	return inst, drain
+}
+
+// usageDrainGrace bounds the wait for a drain goroutine to finish the
+// buffered tail of a stream. The tail is arithmetic over at most one
+// channel buffer, and the reconciler is the caller, so this is a wedge
+// bound rather than a working budget.
+const usageDrainGrace = 2 * time.Second
+
+// forgetUsage retires a session's accounting after its drain goroutine
+// has folded the last buffered event. See usageDrain for why the order
+// matters. A nil drain is an adopted pane, which never had one.
+func (m *Manager) forgetUsage(key string, drain *usageDrain) {
+	if m.Usage == nil {
+		return
+	}
+	if drain == nil {
+		m.Usage.Forget(key)
+		return
+	}
+	select {
+	case <-drain.done:
+	case <-time.After(usageDrainGrace):
+		log.Printf("warning: session %s: usage drain still running after %v, retiring its accounting anyway", key, usageDrainGrace)
+	}
+	drain.retire(m.Usage, key)
 }
 
 // Instance returns the live instance for a session key, or nil when
@@ -442,8 +559,9 @@ const instanceTeardownGrace = 3 * time.Second
 // returned: by the time a session is being retired the pane is often
 // already gone, and that is not a failure of the retirement.
 func (m *Manager) retireInstance(key string) bool {
-	inst := m.takeInstance(key)
+	inst, drain := m.takeInstance(key)
 	if inst == nil {
+		m.forgetUsage(key, drain)
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
@@ -451,6 +569,7 @@ func (m *Manager) retireInstance(key string) bool {
 	if err := inst.Kill(ctx); err != nil {
 		log.Printf("warning: retire instance %s: %v", key, err)
 	}
+	m.forgetUsage(key, drain)
 	return true
 }
 
@@ -458,13 +577,15 @@ func (m *Manager) retireInstance(key string) bool {
 // vanished. Distinct from retireInstance so the reap path does not log a
 // kill-pane failure for a pane it knows is gone.
 func (m *Manager) detachInstance(key string) {
-	inst := m.takeInstance(key)
+	inst, drain := m.takeInstance(key)
 	if inst == nil {
+		m.forgetUsage(key, drain)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
 	defer cancel()
 	inst.Detach(ctx)
+	m.forgetUsage(key, drain)
 }
 
 // directPlan builds the command string directly — the pre-adapter path

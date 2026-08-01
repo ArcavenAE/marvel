@@ -302,3 +302,85 @@ func TestUpdateSessionMetrics(t *testing.T) {
 	// not an error worth reporting.
 	s.UpdateSessionMetrics("test-ws/nonexistent", SessionMetrics{CPUPercent: 1})
 }
+
+func TestUpdateSessionContext(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+
+	sess := &Session{
+		Name:      "agent-0",
+		Workspace: "test-ws",
+		Team:      "agents",
+		Role:      "worker",
+		Runtime:   Runtime{Name: "claude", Command: "claude"},
+		State:     SessionRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	s.UpdateSessionContext("test-ws/agent-0", SessionContext{
+		ContextTokens:      34136,
+		ContextLimit:       1_000_000,
+		ContextPercent:     3.4136,
+		ContextLimitSource: "stream",
+		ContextModel:       "claude-fable-5[1m]",
+		ContextRequests:    3,
+	})
+
+	got, err := s.GetSession("test-ws/agent-0")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.ContextTokens != 34136 || got.ContextLimit != 1_000_000 {
+		t.Errorf("context = %d/%d tokens/limit, want 34136/1000000", got.ContextTokens, got.ContextLimit)
+	}
+	if got.ContextAt.IsZero() {
+		t.Error("ContextAt not stamped; the renderer keys absence on it")
+	}
+	// LastHeartbeat is a liveness contract consumed by the heartbeat health
+	// check and by shift readiness. A context reading is not a heartbeat.
+	if !got.LastHeartbeat.IsZero() {
+		t.Error("a context reading stamped LastHeartbeat, silently redefining liveness as stream activity")
+	}
+
+	// A session deleted between the accountant's snapshot and its write is
+	// ignored, not reported: the reading is meaningless by then.
+	s.UpdateSessionContext("test-ws/nonexistent", SessionContext{ContextTokens: 1})
+}
+
+func TestUpdateSessionHeartbeatStampsContextAt(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	sess := &Session{
+		Name: "agent-0", Workspace: "test-ws", Team: "agents", Role: "worker",
+		Runtime: Runtime{Name: "simulator", Command: "simulator"},
+		State:   SessionRunning, CreatedAt: time.Now().UTC(),
+	}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := s.UpdateSessionHeartbeat("test-ws/agent-0", 42.5); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+	got, _ := s.GetSession("test-ws/agent-0")
+	// The cooperative heartbeat is still a producer, and the renderer keys
+	// on one sentinel, so the simulator must keep lighting the column.
+	if got.ContextAt.IsZero() {
+		t.Error("a heartbeat did not stamp ContextAt, so CTX% would render absent")
+	}
+	if got.LastHeartbeat.IsZero() {
+		t.Error("a heartbeat must still stamp LastHeartbeat")
+	}
+	if got.ContextPercent != 42.5 {
+		t.Errorf("context percent = %v, want 42.5", got.ContextPercent)
+	}
+	// The shape this path produces, pinned because two consumers branch on
+	// it: the renderer prints the percentage rather than an unresolved
+	// window, and bolt rehydrate keeps the reading rather than dropping it.
+	// Both key on ContextRequests, which only the accountant writes.
+	if got.ContextLimit != 0 || got.ContextTokens != 0 || got.ContextRequests != 0 {
+		t.Errorf("a heartbeat invented a window, a token count, or a request count: %+v", got.SessionContext)
+	}
+}

@@ -317,3 +317,76 @@ func parseLines(t *testing.T, stream string) []events.Event {
 	}
 	return got
 }
+
+func TestParseTurnUsagePromotesCacheClasses(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "hello.jsonl")
+
+	turn, ok := got[3].Data.(events.TurnData)
+	if !ok {
+		t.Fatalf("event[3].Data type = %T, want TurnData", got[3].Data)
+	}
+	r := turn.Request
+	if r == nil {
+		t.Fatal("turn.completed carries no Request")
+	}
+	// usage: input_tokens 13992 with cached_input_tokens 11008 inside it.
+	if r.In != 13992 {
+		t.Errorf("request in = %d, want 13992", r.In)
+	}
+	if r.CacheReadIn != 11008 {
+		t.Errorf("request cache_read_in = %d, want 11008", r.CacheReadIn)
+	}
+	if r.Layout != events.LayoutSubsumptive {
+		t.Errorf("layout = %q, want subsumptive", r.Layout)
+	}
+	// The point of the subsumptive layout: cached tokens are already in
+	// In, so occupancy is In alone and never the 25000 a sum would give.
+	if got := r.Occupancy(); got != 13992 {
+		t.Errorf("occupancy = %d, want 13992 (In alone, not In+cache)", got)
+	}
+	// No total_tokens on the wire, so the layout invariant is disabled.
+	if r.Total != 0 {
+		t.Errorf("total = %d, want 0", r.Total)
+	}
+	if r.TotalMismatch() != 0 {
+		t.Errorf("total mismatch = %d, want 0 when no total is published", r.TotalMismatch())
+	}
+	if r.Cost != nil {
+		t.Errorf("cost = %v, want nil (codex reports no cost)", r.Cost)
+	}
+}
+
+// TestParseResumeOccupancyIsALevel exercises the multi-turn occupancy
+// series codex `exec` one-shot cannot produce.
+//
+// SYNTHETIC FIXTURE: resume.jsonl is hand-composed from two real
+// turn.completed payloads. Whether codex's input_tokens is a per-turn
+// level or a running session total is UNVERIFIED against a real capture;
+// `codex exec resume` is the command that settles it. This test pins the
+// level reading the parser and accountant assume.
+func TestParseResumeOccupancyIsALevel(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "resume.jsonl")
+
+	var occ []int
+	for _, ev := range got {
+		if ev.Event != events.KindTurnCompleted {
+			continue
+		}
+		r := ev.Data.(events.TurnData).Request
+		if r == nil {
+			t.Fatal("turn.completed carries no Request")
+		}
+		occ = append(occ, r.Occupancy())
+	}
+	want := []int{13992, 28110}
+	if len(occ) != len(want) {
+		t.Fatalf("got %d turn occupancies, want %d: %v", len(occ), len(want), occ)
+	}
+	for i := range want {
+		if occ[i] != want[i] {
+			t.Errorf("turn[%d] occupancy = %d, want %d", i, occ[i], want[i])
+		}
+	}
+}

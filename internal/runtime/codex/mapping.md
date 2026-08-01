@@ -45,11 +45,31 @@ Compares what codex actually emits with the sketch in
    codex cost is reachable only from the rollout files
    (`~/.codex/sessions/.../rollout-*.jsonl`), not the JSONL event stream.
 
-4. **Cache/reasoning token counts are dropped from the event.** `TurnData`
-   carries only the shared `Usage` shape (In, Out, Cost). `cached_input_tokens`,
-   `cache_write_input_tokens`, and `reasoning_output_tokens` are not
-   surfaced. They remain in `raw` if a consumer needs them; promoting them
-   would parallel claudecode's `Metering` follow-on.
+4. **Cache/reasoning token counts now ride `TurnData.Request`.** RESOLVED.
+   `TurnData.UsageDelta` still carries only the shared `Usage` shape (In,
+   Out, Cost), whose three fields are spec-fixed. The additive
+   `TurnData.Request` field carries the rest: `cached_input_tokens` as
+   CacheReadIn, `cache_write_input_tokens` as CacheCreationIn, and
+   `reasoning_output_tokens` as ReasoningOut.
+
+   `Request.Layout` is `subsumptive` for this harness: `input_tokens`
+   already contains `cached_input_tokens` (measured 13992 with 11008
+   cached), so context occupancy is `input_tokens` alone and summing the
+   cache class would double-count. Consumers must call
+   `RequestUsage.Occupancy()` rather than summing fields.
+
+   `turn.completed` publishes no `total_tokens`, so `Request.Total` stays
+   0 and the `TotalMismatch` arithmetic check is disabled here. Combined
+   with divergence 1 (no `session.ended`, so no end-of-session
+   reconciliation either), codex is the one harness whose declared layout
+   and cumulation have no runtime guard. Both rest on one live turn plus
+   the fixtures; `codex exec resume` is the command that settles the
+   multi-turn cumulation question.
+
+   Not read anywhere: the rollout file's
+   `rate_limits.primary.used_percent` (observed 95.0) is the WEEKLY PLAN
+   budget, not context occupancy. Nothing in the context accountant reads
+   it; recorded here so nobody wires it to CTX%.
 
 5. **`reasoning` items are unmapped.** Codex emits
    `item.completed{type:reasoning}` (the thinking analog). There is no v1

@@ -405,6 +405,7 @@ Examples:
   marvel events --kind session.crashed       # only crashes
   marvel events --kind agent.tool.call       # what the agents are doing
   marvel events --kind agent.session.ended   # per-session cost and timing
+  marvel events --kind context.limit-unresolved  # why a CTX% cell is blank
   marvel events --warnings                   # only warning-severity events
   marvel --cluster desk events               # remote daemon via mrvl://`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1477,12 +1478,32 @@ func renderSessionTable(sessions []api.Session) string {
 		if agent == "" {
 			agent = s.Runtime.Command
 		}
-		// CTX% has exactly one producer, the heartbeat RPC, and no
-		// runtime adapter implements it yet. Without a heartbeat there is
-		// no context reading to show, and "0%" would read as a fresh
-		// session with an empty window.
+		// CTX% has two producers: the cooperative heartbeat RPC (the
+		// simulator) and the usage accountant fed by adapter streams.
+		// Both stamp ContextAt, so that is the single "measured" sentinel.
+		//
+		// Three states, not two. "-" means marvel never measured this
+		// session's context: no stream, so an interactive launch, a pane
+		// adopted from a prior daemon, or a non-stream adapter. "?" means
+		// the tokens are real but the model's window could not be
+		// resolved, so a percentage would be a fiction against a guessed
+		// denominator. `marvel describe session` carries the reason, and
+		// the fix is usually one runtime.context_window line.
+		//
+		// The two producers report different shapes, which is why "?" is
+		// keyed on the request count rather than on the window alone. The
+		// accountant stamps ContextRequests on every reading and may have
+		// no window; a heartbeat reports a percentage the agent computed
+		// itself, with no token count and no window to report. Keying "?"
+		// on ContextLimit alone would blank the simulator's column.
 		ctx := "-"
-		if !s.LastHeartbeat.IsZero() {
+		switch {
+		case s.ContextAt.IsZero():
+		case s.ContextLimit > 0:
+			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
+		case s.ContextRequests > 0:
+			ctx = "?"
+		default:
 			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
 		}
 		// Likewise for the sampler: a session the sampler has not

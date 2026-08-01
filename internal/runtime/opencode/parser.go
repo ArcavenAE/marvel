@@ -108,8 +108,14 @@ type ocToolState struct {
 }
 
 type ocTokens struct {
-	Input  int `json:"input"`
-	Output int `json:"output"`
+	Input     int `json:"input"`
+	Output    int `json:"output"`
+	Reasoning int `json:"reasoning"`
+	Total     int `json:"total"`
+	Cache     struct {
+		Write int `json:"write"`
+		Read  int `json:"read"`
+	} `json:"cache"`
 }
 
 func (p *Parser) handleLine(line []byte, emit func(events.Event)) {
@@ -178,6 +184,25 @@ func (p *Parser) handleStepFinish(raw json.RawMessage, emit func(events.Event)) 
 			In:   part.Tokens.Input,
 			Out:  part.Tokens.Output,
 			Cost: &cost,
+		},
+		Request: &events.RequestUsage{
+			// Additive is an assumption, not a measurement: every fixture
+			// we hold is a non-caching model (cache read and write both
+			// 0), where additive and subsumptive are indistinguishable.
+			// TotalExcludesCache is what keeps the total from being read as
+			// an arbiter of that assumption: opencode's total is defined
+			// over input + output + reasoning, so it is the same number
+			// under either reading. AdditiveConfirmed is the check that
+			// does speak to it, and it needs a caching turn to fire.
+			Layout:             events.LayoutAdditive,
+			In:                 part.Tokens.Input,
+			Out:                part.Tokens.Output,
+			CacheReadIn:        part.Tokens.Cache.Read,
+			CacheCreationIn:    part.Tokens.Cache.Write,
+			ReasoningOut:       part.Tokens.Reasoning,
+			Total:              part.Tokens.Total,
+			TotalExcludesCache: true,
+			Cost:               &cost,
 		},
 	}, nil))
 }

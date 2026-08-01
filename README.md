@@ -252,6 +252,9 @@ Written in Go. The daemon manages agent sessions through a tmux substrate:
 - **Health evaluation**: checks heartbeat staleness, applies restart policies
 - **Shift state machine**: launching → draining → complete, driven by
   the reconciliation loop
+- **Usage accountant**: derives context-window occupancy from each harness's
+  own usage reporting, feeding the CTX% column (see
+  [user-guide](docs/user-guide.md#list-sessions))
 - **Simulator**: context pressure simulation for testing without real agents
 
 ## BYOA

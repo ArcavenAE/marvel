@@ -113,6 +113,12 @@ type Runtime struct {
 	// headless mode: a harness given no prompt reads stdin, and stdin in
 	// a detached pane is a tty nobody types into.
 	Prompt string `toml:"prompt,omitempty"`
+	// ContextWindow overrides the model-to-limit table for this runtime,
+	// in tokens. The escape hatch for a model marvel does not know: a
+	// shipped table tracks the vendor's release cadence, not marvel's. A
+	// window the harness declares itself outranks this, because the
+	// harness's own belief is what enforces compaction.
+	ContextWindow int `toml:"context_window,omitempty"`
 }
 
 // Session is the atomic unit: a tmux pane running one process (pod equivalent).
@@ -130,7 +136,6 @@ type Session struct {
 	State           SessionState `toml:"-"`
 	PaneID          string       `toml:"-"`
 	PID             int          `toml:"-"`
-	ContextPercent  float64      `toml:"-"`
 	LastHeartbeat   time.Time    `toml:"-"`
 	HealthState     HealthState  `toml:"-"`
 	FailureCount    int          `toml:"-"`
@@ -138,6 +143,34 @@ type Session struct {
 	LastHealthCheck time.Time    `toml:"-"`
 	CreatedAt       time.Time    `toml:"-"`
 	SessionMetrics  `toml:"-"`
+	SessionContext  `toml:"-"`
+}
+
+// SessionContext is one context-window reading for a session.
+//
+// ContextAt separates "measured" from "never measured", exactly as
+// SessionMetrics.MetricsAt does. ContextLimit == 0 further separates
+// "tokens measured, window unknown" from both, so callers render three
+// states rather than a convincing percentage against a guessed window.
+// See orc finding-055 for the recorded cost of a wrong denominator.
+//
+// The reading is raw occupancy against the model's window, which is not
+// the figure a harness displays to its own user (see internal/usage).
+type SessionContext struct {
+	ContextPercent float64
+	ContextTokens  int
+	ContextLimit   int
+	// ContextLimitSource names the rung of the resolution ladder that
+	// produced ContextLimit, so a consumer can tell a measured window
+	// from a table guess. Values are usage.LimitSource.
+	ContextLimitSource string
+	ContextModel       string
+	ContextRequests    int
+	ContextCompactions int
+	// ContextPeak is the high-water ContextPercent, valid when
+	// ContextLimit > 0.
+	ContextPeak float64
+	ContextAt   time.Time
 }
 
 // SessionMetrics is one process-sampler reading for a session, rolled up

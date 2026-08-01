@@ -15,6 +15,12 @@
 > - The runtime set is a runtime-adapter framework (forestage, claude,
 >   generic, plus Claude Code stream observation), not the `top`/`shell`
 >   demo runtimes.
+> - FR-07 names the `"heartbeat"` RPC as the only producer of
+>   `ContextPercent`. It is now one of two: marvel also derives occupancy
+>   from harness usage reporting in the headless stream adapters
+>   (`internal/usage`), and the reading carries its own timestamp,
+>   token count, window, and window provenance rather than a bare
+>   percentage.
 
 Probe: marvel-mvp-probe | Confidence: frontier
 

@@ -181,8 +181,8 @@ marvel get sessions
 Output:
 ```
 WORKSPACE  TEAM       ROLE    GEN  NAME                   STATE    HEALTH   CTX%  CPU%   RSS   DESK  AGENT
-dev        squad      worker  1    squad-worker-g1-0      running  unknown  -     99.9   412M  1     claude
-dev        squad      worker  1    squad-worker-g1-1      running  unknown  -     0.4    380M  2     claude
+dev        squad      worker  1    squad-worker-g1-0      running  unknown  3%    99.9   412M  1     claude
+dev        squad      worker  1    squad-worker-g1-1      running  unknown  ?     0.4    380M  2     codex
 ```
 
 `CPU%` and `RSS` come from a sampler that runs every 5 seconds and rolls
@@ -193,12 +193,37 @@ reads about 200.
 A `-` means the value has never been measured, which is not the same as
 zero:
 
-- `CTX%` is `-` until the agent sends a heartbeat. No runtime adapter
-  implements the heartbeat yet, so today only the bundled simulator
-  reports context pressure.
+- `CTX%` is `-` until marvel has a context reading for the session.
+  Two things produce one: the harness's own usage reporting, parsed out
+  of a headless `claude`, `codex`, or `opencode` stream, and the
+  cooperative `heartbeat` RPC that the bundled simulator calls. An
+  interactive pane publishes neither. After a daemon restart, a
+  stream-derived reading goes back to `-`, because nothing can refresh
+  one for a stream marvel is no longer reading; a heartbeat reading
+  survives the restart and is refreshed by the next heartbeat.
 - `CPU%` and `RSS` are `-` before the first sampler pass, and on
   platforms where marvel has no process-table reader (anything other
   than macOS and Linux).
+
+`CTX%` has a third state. A `?` means the token count is real but the
+window to divide it by is not known, so there is no honest percentage to
+print; `marvel describe session` shows the tokens either way. Codex and
+opencode declare no window in their streams, so a model marvel has no
+figure for reads `?` until you give it one:
+
+```toml
+[team.role.runtime]
+image = "codex"
+context_window = 258400
+```
+
+The percentage is raw occupancy: the prompt sent to the model, cache
+reads and cache writes included, over the model's full window. Harnesses
+show a different number in their own status lines, measured against a
+compaction threshold below the window and net of a reserve for the
+response, so marvel reads lower than the harness for the same session.
+Marvel's figure answers "how full is the window", not "how long until
+this session compacts".
 
 Per-process IO counters are read on Linux only; `marvel describe session`
 reports `IOAvailable: false` elsewhere.

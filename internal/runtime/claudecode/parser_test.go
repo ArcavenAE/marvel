@@ -53,9 +53,12 @@ func TestParseHelloFixture(t *testing.T) {
 	got := collectFixture(t, "hello.ndjson")
 
 	// hello fixture: system/init + assistant(text) + result.
-	// Expected: session.started + message.completed + session.ended.
+	// Expected: session.started, then the assistant line's per-request
+	// usage as turn.completed, then message.completed for its text block,
+	// then session.ended.
 	wantKinds := []events.Kind{
 		events.KindSessionStarted,
+		events.KindTurnCompleted,
 		events.KindMessageCompleted,
 		events.KindSessionEnded,
 	}
@@ -87,9 +90,9 @@ func TestParseHelloFixture(t *testing.T) {
 	}
 
 	// message.completed — role must be assistant, text must be non-empty.
-	msg, ok := got[1].Data.(events.MessageData)
+	msg, ok := got[2].Data.(events.MessageData)
 	if !ok {
-		t.Fatalf("event[1].Data type = %T, want MessageData", got[1].Data)
+		t.Fatalf("event[2].Data type = %T, want MessageData", got[2].Data)
 	}
 	if msg.Role != "assistant" {
 		t.Errorf("message.completed role = %q, want assistant", msg.Role)
@@ -100,9 +103,9 @@ func TestParseHelloFixture(t *testing.T) {
 
 	// session.ended — reason should map from stop_reason, exit_code 0,
 	// usage populated.
-	ended, ok := got[2].Data.(events.SessionEndedData)
+	ended, ok := got[3].Data.(events.SessionEndedData)
 	if !ok {
-		t.Fatalf("event[2].Data type = %T, want SessionEndedData", got[2].Data)
+		t.Fatalf("event[3].Data type = %T, want SessionEndedData", got[3].Data)
 	}
 	if ended.Reason == "" {
 		t.Error("session.ended missing reason")
@@ -175,29 +178,33 @@ func TestParseToolCallFixture(t *testing.T) {
 	t.Parallel()
 	got := collectFixture(t, "tool_call.ndjson")
 
-	// tool_call fixture (10 vendor lines):
-	//   1  system/init                    → session.started
-	//   2  assistant [thinking]           → error{unmapped}  (thinking not in v1)
-	//   3  assistant [tool_use]           → tool.call
-	//   4  user      [tool_result]        → tool.result
-	//   5  assistant [thinking]           → error{unmapped}
-	//   6  assistant [text]               → message.completed
-	//   7  assistant [tool_use]           → tool.call
-	//   8  user      [tool_result]        → tool.result
-	//   9  assistant [text]               → message.completed
-	//  10  result                         → session.ended
+	// tool_call fixture (10 vendor lines). Each line carries one content
+	// block, and each assistant line also carries its request's usage,
+	// emitted once per message.id rather than once per line. Three
+	// distinct ids across six assistant lines, hence three turn.completed.
 	//
-	// Total: 10 events (1:1 with vendor lines because each line
-	// carries exactly one content block).
+	//   1  system/init                    → session.started
+	//   2  assistant [thinking] id=SQ     → turn.completed, error{unmapped}
+	//   3  assistant [tool_use] id=SQ     → tool.call            (id repeats)
+	//   4  user      [tool_result]        → tool.result          (usage null)
+	//   5  assistant [thinking] id=Uf     → turn.completed, error{unmapped}
+	//   6  assistant [text]     id=Uf     → message.completed    (id repeats)
+	//   7  assistant [tool_use] id=Uf     → tool.call            (id repeats)
+	//   8  user      [tool_result]        → tool.result          (usage null)
+	//   9  assistant [text]     id=Bn     → turn.completed, message.completed
+	//  10  result                         → session.ended
 	wantKinds := []events.Kind{
 		events.KindSessionStarted,
+		events.KindTurnCompleted,
 		events.KindError,
 		events.KindToolCall,
 		events.KindToolResult,
+		events.KindTurnCompleted,
 		events.KindError,
 		events.KindMessageCompleted,
 		events.KindToolCall,
 		events.KindToolResult,
+		events.KindTurnCompleted,
 		events.KindMessageCompleted,
 		events.KindSessionEnded,
 	}
@@ -488,5 +495,237 @@ func TestSessionEndedMeteringOmittedFromJSONWhenAbsent(t *testing.T) {
 	}
 	if bytes.Contains(b, []byte("metering")) {
 		t.Errorf("metering leaked into JSON: %s", b)
+	}
+}
+
+// TestParseAssistantOccupancyIsALevelNotASum is the regression guard for
+// the load-bearing correction in this slice: context occupancy is a LEVEL
+// taken per API request, latest-wins, never a sum over requests.
+//
+// The result line's usage is a session-cumulative total. On this fixture
+// its occupancy sum is 100994, while real final occupancy is 34136. A
+// numerator built from the result line therefore reads 10.1% against a 1M
+// window where the truth is 3.4%, and the error grows with request count.
+func TestParseAssistantOccupancyIsALevelNotASum(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "tool_call.ndjson")
+
+	var reqs []*events.RequestUsage
+	for i, ev := range got {
+		if ev.Event != events.KindTurnCompleted {
+			continue
+		}
+		d, ok := ev.Data.(events.TurnData)
+		if !ok {
+			t.Fatalf("event[%d].Data = %T, want TurnData", i, ev.Data)
+		}
+		if d.Request == nil {
+			t.Fatalf("event[%d] turn.completed carries no Request", i)
+		}
+		reqs = append(reqs, d.Request)
+	}
+
+	// Six assistant lines, three distinct message ids: the dedupe proof.
+	if len(reqs) != 3 {
+		t.Fatalf("got %d per-request usage events, want 3 (six assistant lines, three ids)", len(reqs))
+	}
+
+	wantOccupancy := []int{33377, 33481, 34136}
+	for i, r := range reqs {
+		if got := r.Occupancy(); got != wantOccupancy[i] {
+			t.Errorf("request[%d] occupancy = %d, want %d", i, got, wantOccupancy[i])
+		}
+		if r.Layout != events.LayoutAdditive {
+			t.Errorf("request[%d] layout = %q, want additive", i, r.Layout)
+		}
+		// message.model omits the [1m] suffix the init model carries.
+		if r.Model != "claude-fable-5" {
+			t.Errorf("request[%d] model = %q, want claude-fable-5", i, r.Model)
+		}
+		if r.RequestID == "" {
+			t.Errorf("request[%d] carries no request id", i)
+		}
+		// Claude publishes no per-request total, so the mismatch
+		// invariant must stay disabled for this harness.
+		if r.Total != 0 {
+			t.Errorf("request[%d] total = %d, want 0", i, r.Total)
+		}
+	}
+
+	// The trap: the result line's classes sum to 100994 across the three
+	// requests. No emitted occupancy may equal it.
+	for i, r := range reqs {
+		if r.Occupancy() == 100994 {
+			t.Errorf("request[%d] occupancy is the result-line sum (100994), not a level", i)
+		}
+	}
+}
+
+// TestParseSingleRequestSessionAgrees documents why the level-vs-sum bug
+// hid for so long: in a single-request session the cumulative total and
+// the final level are the same number, so every one-shot fixture and every
+// single-request live measurement agrees with the wrong formula.
+func TestParseSingleRequestSessionAgrees(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "hello.ndjson")
+
+	var req *events.RequestUsage
+	for _, ev := range got {
+		if ev.Event == events.KindTurnCompleted {
+			req = ev.Data.(events.TurnData).Request
+		}
+	}
+	if req == nil {
+		t.Fatal("no per-request usage in the hello fixture")
+	}
+	// 11368 + 0 cache_read + 22005 cache_creation.
+	if got := req.Occupancy(); got != 33373 {
+		t.Errorf("request occupancy = %d, want 33373", got)
+	}
+
+	ended := got[len(got)-1].Data.(events.SessionEndedData)
+	m := ended.Metering
+	if m == nil {
+		t.Fatal("session.ended carries no metering")
+	}
+	resultSum := ended.Usage.In + m.CacheReadIn + m.CacheCreationIn
+	if resultSum != req.Occupancy() {
+		t.Errorf("single-request session: result sum %d != level %d", resultSum, req.Occupancy())
+	}
+}
+
+// TestParseResultContextWindowSelectsInitModel guards the map-range
+// hazard. Both fixtures route across two models with 5x-different
+// windows; ranging the map would pick the wrong one about half the time.
+func TestParseResultContextWindowSelectsInitModel(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "tool_call.ndjson")
+
+	started, ok := got[0].Data.(events.SessionStartedData)
+	if !ok {
+		t.Fatalf("event[0].Data = %T, want SessionStartedData", got[0].Data)
+	}
+	if started.Model != "claude-fable-5[1m]" {
+		t.Fatalf("init model = %q, want claude-fable-5[1m]", started.Model)
+	}
+
+	m := got[len(got)-1].Data.(events.SessionEndedData).Metering
+	if m == nil {
+		t.Fatal("session.ended carries no metering")
+	}
+	primary, ok := m.ModelUsage[started.Model]
+	if !ok {
+		t.Fatalf("model_usage has no entry for the init model: %+v", m.ModelUsage)
+	}
+	if primary.ContextWindow != 1_000_000 {
+		t.Errorf("init-model context window = %d, want 1000000", primary.ContextWindow)
+	}
+	if primary.MaxOutputTokens != 64_000 {
+		t.Errorf("init-model max output = %d, want 64000", primary.MaxOutputTokens)
+	}
+
+	haiku, ok := m.ModelUsage["claude-haiku-4-5-20251001"]
+	if !ok {
+		t.Fatalf("model_usage has no haiku entry: %+v", m.ModelUsage)
+	}
+	if haiku.ContextWindow != 200_000 {
+		t.Errorf("haiku context window = %d, want 200000", haiku.ContextWindow)
+	}
+	// The point of the test: selecting by anything other than the init
+	// model would resolve 200000 here, which is wrong by 5x.
+	if primary.ContextWindow == haiku.ContextWindow {
+		t.Error("fixture no longer exercises the two-window case")
+	}
+}
+
+// TestParseUserToolResultEmitsNoRequest pins the usage-is-a-pointer
+// guard: user/tool_result lines carry "usage": null, and a zero folded
+// into the level series would read as a compaction on every tool result.
+func TestParseUserToolResultEmitsNoRequest(t *testing.T) {
+	t.Parallel()
+	line := `{"type":"user","session_id":"s1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}],"usage":null}}`
+	p := NewParser(Config{Clock: fixedClock()})
+	var got []events.Event
+	if err := p.Parse(context.Background(), strings.NewReader(line+"\n"), func(e events.Event) {
+		got = append(got, e)
+	}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(got) != 1 || got[0].Event != events.KindToolResult {
+		t.Fatalf("kinds = %v, want [tool.result] only", kinds(got))
+	}
+}
+
+// TestParseThinkingOnlyLineStillCarriesUsage is the test an
+// attach-usage-to-MessageData design would fail: line 2 of the tool_call
+// fixture has one content block, `thinking`, which maps to
+// error{unmapped} and never to message.completed. Its usage must still
+// reach a consumer.
+func TestParseThinkingOnlyLineStillCarriesUsage(t *testing.T) {
+	t.Parallel()
+	got := collectFixture(t, "tool_call.ndjson")
+	if len(got) < 3 {
+		t.Fatalf("got %d events, want at least 3", len(got))
+	}
+	turn, ok := got[1].Data.(events.TurnData)
+	if !ok {
+		t.Fatalf("event[1].Data = %T, want TurnData", got[1].Data)
+	}
+	if turn.Request == nil || turn.Request.Occupancy() != 33377 {
+		t.Errorf("thinking-only line lost its usage: %+v", turn.Request)
+	}
+	if got[2].Event != events.KindError {
+		t.Errorf("event[2].kind = %s, want error{unmapped} for the thinking block", got[2].Event)
+	}
+}
+
+// TestParseSubagentUsageIsMarked: a Task-tool turn accounts against its
+// own context window, so its usage must arrive labelled. Unlabelled, it
+// would overwrite the session's occupancy level with a much smaller
+// number for the length of the tool call. Both shipped fixtures carry
+// "parent_tool_use_id":null on every assistant line, which is the field
+// this reads; the non-null shape below is synthetic.
+func TestParseSubagentUsageIsMarked(t *testing.T) {
+	t.Parallel()
+	stream := `{"type":"assistant","session_id":"s1","parent_tool_use_id":null,"message":{"id":"msg_main","model":"claude-fable-5","role":"assistant","content":[{"type":"text","text":"delegating"}],"usage":{"input_tokens":331,"output_tokens":1,"cache_read_input_tokens":33479,"cache_creation_input_tokens":326}}}
+{"type":"assistant","session_id":"s1","parent_tool_use_id":"toolu_01Sub","message":{"id":"msg_sub","model":"claude-haiku-4-5","role":"assistant","content":[{"type":"text","text":"subagent work"}],"usage":{"input_tokens":900,"output_tokens":40,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0}}}
+`
+	p := NewParser(Config{Clock: fixedClock()})
+	var reqs []*events.RequestUsage
+	if err := p.Parse(context.Background(), strings.NewReader(stream), func(e events.Event) {
+		if e.Event == events.KindTurnCompleted {
+			reqs = append(reqs, e.Data.(events.TurnData).Request)
+		}
+	}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(reqs) != 2 {
+		t.Fatalf("got %d per-request usage events, want 2", len(reqs))
+	}
+	if reqs[0].Subagent() {
+		t.Errorf("main-agent line marked as a subagent: %q", reqs[0].ParentToolUseID)
+	}
+	if !reqs[1].Subagent() {
+		t.Error("subagent line lost its parent_tool_use_id, so its tokens would land in the session's occupancy level")
+	}
+	if reqs[1].ParentToolUseID != "toolu_01Sub" {
+		t.Errorf("parent tool use id = %q, want toolu_01Sub", reqs[1].ParentToolUseID)
+	}
+	// The usage itself is still carried: a subagent's prompt is billed.
+	if reqs[1].Occupancy() != 2100 {
+		t.Errorf("subagent occupancy = %d, want 2100", reqs[1].Occupancy())
+	}
+}
+
+func TestTurnDataRequestOmittedFromJSONWhenAbsent(t *testing.T) {
+	t.Parallel()
+	// Request is additive under schema_version 1, so a turn event without
+	// it must serialize exactly as it did before the field existed.
+	b, err := json.Marshal(events.TurnData{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(b, []byte("request")) {
+		t.Errorf("request leaked into JSON: %s", b)
 	}
 }

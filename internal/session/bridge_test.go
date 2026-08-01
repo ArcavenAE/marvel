@@ -158,3 +158,66 @@ func TestBridgeMessageSummaryIsOneClippedLine(t *testing.T) {
 		t.Errorf("message lost its head: %q", got.Message)
 	}
 }
+
+// A turn summary without the occupancy reads as a per-turn delta, which
+// for a warm Claude session is a misleadingly small in= (the cached prompt
+// is the bulk of the context and is not in In). Measured: in=2 against
+// 33481 tokens of real context.
+func TestBridgeTurnSummaryCarriesOccupancy(t *testing.T) {
+	t.Parallel()
+	got := bridgeEvent(testCoords(), rtevents.Event{
+		Event: rtevents.KindTurnCompleted,
+		Data: rtevents.TurnData{
+			UsageDelta: rtevents.Usage{In: 2, Out: 2},
+			Request: &rtevents.RequestUsage{
+				Layout: rtevents.LayoutAdditive,
+				In:     2, CacheReadIn: 22009, CacheCreationIn: 11470,
+			},
+		},
+	})
+	for _, want := range []string{"in=2", "out=2", "ctx=33481"} {
+		if !strings.Contains(got.Message, want) {
+			t.Errorf("message missing %q: %s", want, got.Message)
+		}
+	}
+	if strings.Contains(got.Message, "subagent") {
+		t.Errorf("main-agent turn labelled as a subagent: %s", got.Message)
+	}
+}
+
+// A subagent turn's ctx is a different window's occupancy. Unlabelled in
+// the ring it reads as the session's own level collapsing mid-run, which
+// is the same misreading the accountant refuses to make.
+func TestBridgeSubagentTurnIsLabelled(t *testing.T) {
+	t.Parallel()
+	got := bridgeEvent(testCoords(), rtevents.Event{
+		Event: rtevents.KindTurnCompleted,
+		Data: rtevents.TurnData{
+			UsageDelta: rtevents.Usage{In: 900, Out: 40},
+			Request: &rtevents.RequestUsage{
+				Layout: rtevents.LayoutAdditive,
+				In:     900, CacheReadIn: 1200,
+				ParentToolUseID: "toolu_01Sub",
+			},
+		},
+	})
+	if !strings.Contains(got.Message, "ctx=2100") {
+		t.Errorf("subagent turn lost its occupancy: %s", got.Message)
+	}
+	if !strings.Contains(got.Message, "(subagent)") {
+		t.Errorf("subagent turn unlabelled: %s", got.Message)
+	}
+}
+
+// A harness that does not attribute usage per request must not gain a
+// misleading ctx=0.
+func TestBridgeTurnSummaryOmitsOccupancyWhenUnattributed(t *testing.T) {
+	t.Parallel()
+	got := bridgeEvent(testCoords(), rtevents.Event{
+		Event: rtevents.KindTurnCompleted,
+		Data:  rtevents.TurnData{UsageDelta: rtevents.Usage{In: 100, Out: 5}},
+	})
+	if strings.Contains(got.Message, "ctx=") {
+		t.Errorf("message invented an occupancy: %s", got.Message)
+	}
+}

@@ -34,6 +34,15 @@ type Parser struct {
 	seq    *events.SeqAssigner
 	sessID string
 	clock  func() time.Time
+	// model is the init model, which is also the key into the result
+	// line's modelUsage map. Per-request message.model omits the [1m]
+	// suffix the init model carries, so the two are not interchangeable
+	// for a window lookup.
+	model string
+	// lastRequestID dedupes the per-request usage emission: one API
+	// response arrives as one vendor line per content block, each
+	// repeating the same message.id and the same usage object.
+	lastRequestID string
 }
 
 // NewParser constructs a parser with an internal SeqAssigner. Provide
@@ -151,6 +160,7 @@ func (p *Parser) handleSystem(subtype string, raw json.RawMessage, emit func(eve
 		}, raw))
 		return
 	}
+	p.model = body.Model
 	emit(p.newEvent(events.KindSessionStarted, events.SessionStartedData{
 		Model:   body.Model,
 		Cwd:     body.Cwd,
@@ -174,12 +184,30 @@ type contentBlock struct {
 	IsError   bool            `json:"is_error,omitempty"`
 }
 
+// messageUsage is the per-request accounting on an assistant line. A
+// pointer in the wrapper below because `user` and `tool_result` lines
+// carry "usage": null.
+type messageUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+}
+
 func (p *Parser) handleMessage(vendorType string, raw json.RawMessage, emit func(events.Event)) {
 	var wrapper struct {
 		Message struct {
+			ID      string         `json:"id"`
+			Model   string         `json:"model"`
 			Role    string         `json:"role"`
 			Content []contentBlock `json:"content"`
+			Usage   *messageUsage  `json:"usage"`
 		} `json:"message"`
+		// ParentToolUseID is top-level, beside `message`, and is null on
+		// every main-agent line in both fixtures. Non-null marks a
+		// subagent turn, whose usage belongs to a different context
+		// window than the session's own.
+		ParentToolUseID string `json:"parent_tool_use_id"`
 	}
 	if err := json.Unmarshal(raw, &wrapper); err != nil {
 		emit(p.newEvent(events.KindError, events.ErrorData{
@@ -196,11 +224,70 @@ func (p *Parser) handleMessage(vendorType string, raw json.RawMessage, emit func
 		role = vendorType
 	}
 
+	p.emitRequestUsage(requestLine{
+		id:              wrapper.Message.ID,
+		model:           wrapper.Message.Model,
+		parentToolUseID: wrapper.ParentToolUseID,
+		usage:           wrapper.Message.Usage,
+	}, emit)
+
 	// One vendor line may carry several blocks (thinking + tool_use,
 	// text + tool_use, etc.). Emit one event per block.
 	for _, blk := range wrapper.Message.Content {
 		p.emitBlock(role, blk, raw, emit)
 	}
+}
+
+// requestLine is the per-request accounting lifted off one vendor line.
+type requestLine struct {
+	id              string
+	model           string
+	parentToolUseID string
+	usage           *messageUsage
+}
+
+// emitRequestUsage lifts the assistant line's prompt accounting into a
+// turn.completed event, which is marvel's only live context-occupancy
+// signal for this harness. Four guards, each load-bearing:
+//
+//   - usage is a pointer, because user/tool_result lines carry null. A
+//     zero emitted for those would land in the occupancy level series
+//     and read as a compaction on every tool result.
+//   - one event per LINE, not per content block: an assistant line whose
+//     only block is `thinking` or `tool_use` still carries usage, and
+//     those blocks do not map to message.completed.
+//   - dedupe on message.id: one API response is split into one vendor
+//     line per block, repeating id and usage. Occupancy is a level so a
+//     missed dedupe would only inflate the request count, but the count
+//     is reported.
+//   - parent_tool_use_id rides the event rather than suppressing it. A
+//     subagent's prompt is real spend but a different window, so the
+//     consumer must be able to tell the two apart; dropping the line
+//     would lose the spend, and folding it in silently would replace the
+//     session's occupancy level with the subagent's for the duration of
+//     the tool call.
+func (p *Parser) emitRequestUsage(line requestLine, emit func(events.Event)) {
+	u := line.usage
+	if u == nil || line.id == "" || line.id == p.lastRequestID {
+		return
+	}
+	p.lastRequestID = line.id
+	emit(p.newEvent(events.KindTurnCompleted, events.TurnData{
+		UsageDelta: events.Usage{In: u.InputTokens, Out: u.OutputTokens},
+		Request: &events.RequestUsage{
+			RequestID:       line.id,
+			Model:           line.model,
+			Layout:          events.LayoutAdditive,
+			In:              u.InputTokens,
+			Out:             u.OutputTokens,
+			CacheReadIn:     u.CacheReadInputTokens,
+			CacheCreationIn: u.CacheCreationInputTokens,
+			ParentToolUseID: line.parentToolUseID,
+			// Total stays 0: Claude publishes no per-request total, so
+			// the TotalMismatch invariant is disabled for this harness
+			// and the exact session-end reconciliation is its guard.
+		},
+	}, nil))
 }
 
 func (p *Parser) emitBlock(role string, blk contentBlock, raw json.RawMessage, emit func(events.Event)) {
@@ -326,6 +413,13 @@ type resultBody struct {
 		CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
 		WebSearchRequests        int     `json:"webSearchRequests"`
 		CostUSD                  float64 `json:"costUSD"`
+		// ContextWindow is the authoritative denominator for context
+		// occupancy. Select the entry by the init model, never by
+		// ranging the map: a session that routes across models carries
+		// several entries with different windows (200000 and 1000000 in
+		// the fixtures) and Go map iteration is randomized.
+		ContextWindow   int `json:"contextWindow"`
+		MaxOutputTokens int `json:"maxOutputTokens"`
 	} `json:"modelUsage"`
 	// Entry shape is unverified — every fixture we have carries an empty
 	// array. The length is authoritative; tool_name/tool_use_id are
@@ -361,6 +455,8 @@ func (b *resultBody) metering() *events.Metering {
 			CacheCreationIn:   u.CacheCreationInputTokens,
 			WebSearchRequests: u.WebSearchRequests,
 			Cost:              &cost,
+			ContextWindow:     u.ContextWindow,
+			MaxOutputTokens:   u.MaxOutputTokens,
 		}
 	}
 	for _, d := range b.PermissionDenials {

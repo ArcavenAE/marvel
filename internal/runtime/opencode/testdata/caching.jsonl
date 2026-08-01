@@ -1,0 +1,2 @@
+{"type":"step_start","sessionID":"ses_cache","part":{"type":"step-start"}}
+{"type":"step_finish","sessionID":"ses_cache","part":{"id":"prt_c","messageID":"msg_c","sessionID":"ses_cache","type":"step-finish","tokens":{"total":57,"input":40,"output":12,"reasoning":5,"cache":{"write":200,"read":29000}},"cost":0.0125}}

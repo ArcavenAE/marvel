@@ -46,6 +46,39 @@ uses underscores (`step_start`); the nested `part.type` uses hyphens
    so opencode cost is in the event but not yet in `marvel events` output
    — a bridge-summary gap, tracked as deferred, not an adapter concern.
 
+   `step_finish.part.tokens` also carries `total`, `reasoning`, and a
+   `cache: {write, read}` sub-object. All three were previously undeclared
+   in `ocTokens` and silently dropped; they now ride
+   `TurnData.Request` (Total, ReasoningOut, CacheCreationIn, CacheReadIn).
+
+   **`Request.Layout` is `additive` on an assumption, not a
+   measurement.** Whether `tokens.input` already subsumes `cache.read` on
+   a caching model is unverified: every fixture we hold is the free
+   `opencode/deepseek-v4-flash-free` model, where `cache.write` and
+   `cache.read` are both 0 and additive and subsumptive are
+   indistinguishable. If the assumption is wrong, occupancy over-counts by
+   whatever `input` already contains; every class is carried raw, so the
+   correction is one `Layout` line and no data is lost.
+
+   **`tokens.total` cannot arbitrate that question, and is not asked to.**
+   Measured (finding-007), opencode's total is `input + output +
+   reasoning`: `{total 29893, input 29879, output 2, reasoning 12}` with
+   `cache` zero. A total defined that way is the same number whether
+   `input` subsumes `cache.read` or not, so comparing it against a sum
+   that includes the cache classes would report a mismatch equal to those
+   classes on every caching turn, under a right assumption as readily as a
+   wrong one. `Request.TotalExcludesCache` therefore holds the comparison
+   to the `input + output + reasoning` triple, where it does earn its
+   keep: a nonzero result means opencode changed what `total` covers.
+
+   The one live signal on the layout itself is
+   `RequestUsage.AdditiveConfirmed()`: `input < cache.read` is impossible
+   if `input` already contained the cached tokens, so a warm caching turn
+   (small `input`, large `cache.read`) confirms the additive reading from
+   real data. It is one-sided. Silence proves nothing, because a
+   subsumptive `input` is always the larger number. One paid caching-model
+   turn settles the question either way.
+
 3. **A tool part carries call and result in one event.** OpenCode's `tool`
    part is a small state machine (`pending` → `running` → `completed`/`error`).
    In `run --format json` the terminal state arrives; the parser emits a
