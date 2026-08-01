@@ -120,6 +120,28 @@ func main() {
 	}
 }
 
+// shiftTimeoutEnv is the environment variable that seeds the daemon's
+// shift timeout when --shift-timeout is not passed. See aae-orc-sape.
+const shiftTimeoutEnv = "MARVEL_SHIFT_TIMEOUT"
+
+// resolveShiftTimeout picks the effective shift timeout for the daemon.
+// The --shift-timeout flag wins when the operator set it; otherwise the
+// MARVEL_SHIFT_TIMEOUT env var is parsed as a Go duration; otherwise zero,
+// which leaves the team controller on its built-in 10-minute default.
+func resolveShiftTimeout(flagVal time.Duration, flagChanged bool, env string) (time.Duration, error) {
+	if flagChanged {
+		return flagVal, nil
+	}
+	if env == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(env)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", shiftTimeoutEnv, env, err)
+	}
+	return d, nil
+}
+
 func daemonCmd() *cobra.Command {
 	var mrvlAddr string
 	var listenSocket string
@@ -129,6 +151,7 @@ func daemonCmd() *cobra.Command {
 	var logMaxFiles int
 	var logMaxTotalMiB int
 	var stateBoltPath string
+	var shiftTimeout time.Duration
 
 	layout, _ := paths.Default()
 	defaultLog := ""
@@ -167,9 +190,17 @@ Examples:
 				}
 			}
 
+			shiftTO, err := resolveShiftTimeout(
+				shiftTimeout, cmd.Flags().Changed("shift-timeout"), os.Getenv(shiftTimeoutEnv),
+			)
+			if err != nil {
+				return err
+			}
+
 			d, err := daemon.NewWithOptions(daemon.Options{
-				PidFile:   pidFilePath,
-				StateBolt: stateBoltPath,
+				PidFile:      pidFilePath,
+				StateBolt:    stateBoltPath,
+				ShiftTimeout: shiftTO,
 			})
 			if err != nil {
 				return err
@@ -246,6 +277,8 @@ Examples:
 		"write pid to this file on start, remove on stop (empty string disables)")
 	cmd.Flags().StringVar(&stateBoltPath, "state-bolt", defaultBolt,
 		"bbolt L2 file for durable state (empty string disables persistence; daemon restart loses state and kills running agents per pre-L2 contract C12)")
+	cmd.Flags().DurationVar(&shiftTimeout, "shift-timeout", 0,
+		"abort and roll back a shift that has not reached readiness within this Go duration (0 uses the built-in 10m default; env "+shiftTimeoutEnv+" is the fallback when this flag is unset)")
 	// Log rotation / retention — bounds disk usage for --log-file.
 	// Motivated by desk Pi headroom (aae-orc-k0t, Skippy session-025/026).
 	// Zero for any of these disables the corresponding limit.

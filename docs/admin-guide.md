@@ -93,6 +93,23 @@ marvel stop              # detach: agents keep running
 marvel stop --teardown   # end every agent, then stop
 ```
 
+### Shift timeout
+
+A rolling shift that never reaches readiness (for example a heartbeat-checked
+role whose new generation never beats) is aborted and rolled back with a
+`team.shift-timed-out` event. The bound defaults to 10 minutes. Tune it with
+`--shift-timeout` (a Go duration) or the `MARVEL_SHIFT_TIMEOUT` environment
+variable:
+
+```bash
+marvel daemon --shift-timeout 2m        # abort a stuck shift after 2 minutes
+MARVEL_SHIFT_TIMEOUT=15s marvel daemon  # same, via the environment
+```
+
+The flag wins when set; otherwise `MARVEL_SHIFT_TIMEOUT` is parsed; unset keeps
+the 10-minute default. A short value is also how you demonstrate the timeout
+without a 10-minute wait (see the Act 1d beat in `docs/demo.md`).
+
 ### Detach vs teardown
 
 `marvel stop`, SIGINT, and SIGTERM all *detach*: the daemon

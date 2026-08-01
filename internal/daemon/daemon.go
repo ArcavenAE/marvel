@@ -138,6 +138,13 @@ type Options struct {
 	// this to layout.DaemonBolt() (~/.marvel/state/marvel.bolt).
 	// See orc finding-050 / aae-orc-k4e4.
 	StateBolt string
+	// ShiftTimeout bounds how long a single shift may run before the team
+	// controller declares it stuck, aborts it, and rolls back with a
+	// team.shift-timed-out event. Zero keeps the controller's built-in
+	// 10-minute default. Exposed so an operator can tune it (and demo the
+	// timeout without a 10-minute wait) via the daemon's --shift-timeout
+	// flag or MARVEL_SHIFT_TIMEOUT. See aae-orc-sape / ArcavenAE/marvel#88.
+	ShiftTimeout time.Duration
 }
 
 // New creates a new daemon with default options.
@@ -161,6 +168,9 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr := session.NewManager(store, driver)
 	teamCtrl := team.NewController(store, sessMgr)
+	// Zero leaves the controller on its built-in default (10 minutes);
+	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.
+	teamCtrl.ShiftTimeout = opts.ShiftTimeout
 	// Must follow OpenBolt: the controller reads its crash-loop state
 	// out of the same bolt file. Before this, a role frozen at
 	// MaxRestarts respawned on the first reconcile tick after restart.
