@@ -29,6 +29,21 @@ content: |
   `aae-orc-ukz` (daemon RPC role-based capability checks),
   `aae-orc-6spa` (manifest permissions modes incl. `auto`).
 
+  LAYER 1 LANDED 2026-08-01 (finding-006). The Policy resource
+  (`aae-orc-k3a`, PR #84) implements environment construction: marvel
+  projects a Claude Code settings fragment per session at spawn and
+  re-projects it live when the manifest changes, with no restart, via
+  `ProjectionFor` on the runtime Adapter interface. `aae-orc-6spa`
+  (PR #85) closed the manifest permission-mode validation half. What
+  remains is the tamper-proofing of the projected file against its own
+  agent (`aae-orc-wbqi`) and the sandbox composition with curtain
+  (`aae-orc-10x`, blocked on curtain).
+
+  LAYER 2 STILL OPEN. Role-based RPC authorization on daemon methods
+  is unbuilt; it is Wave 3 (`aae-orc-bs3x` principal model + per-method
+  authorization, converging `aae-orc-ukz` and the `aae-orc-mr5c`
+  heartbeat-binding bug). The node stays frontier until layer 2 ships.
+
   Open sub-questions:
   - Exact manifest schema for declaring per-role capabilities?
   - How does the layer-1 enforcement compose with curtain's
@@ -48,3 +63,6 @@ provenance:
   extracted_session: session-049
   extracted_at: "2026-05-13"
   extracted_from: charter.md F10 prose
+  updated_by: agent
+  updated_session: marvel-demo-waves-2026-07-31
+  updated_at: "2026-08-01"
