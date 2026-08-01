@@ -78,6 +78,31 @@ The `permissions` field controls what the Claude Code agent can do.
 Marvel injects this as `--permission-mode` at launch time. Workers get
 `plan` (must approve tool calls), the supervisor gets `auto` (autonomous).
 
+**Valid permission modes.** `permissions` must be one of Claude Code's
+`--permission-mode` values, or empty. Marvel rejects anything else at
+`marvel apply` time (a typo like `pln` no longer produces a pane that
+exits immediately). The canonical set:
+
+| Mode | Meaning |
+|------|---------|
+| `acceptEdits` | Auto-accept file edits, prompt for other tools |
+| `auto` | Run autonomously |
+| `bypassPermissions` | Auto-allow within the permission model |
+| `default` | Standard interactive prompting |
+| `dontAsk` | Suppress prompts |
+| `plan` | Plan first, approve before acting |
+
+An empty `permissions` means "unset" — the adapter's own default applies.
+
+**`dangerous_permissions` is separate.** The boolean `dangerous_permissions:
+true` appends `--dangerously-skip-permissions`, which removes the permission
+model entirely rather than choosing a mode within it. It is orthogonal to
+`permissions` and combines with any mode. Pick `permissions: bypassPermissions`
+to keep the harness's permission machinery engaged (still auditable, still
+hookable) while auto-allowing within it; pick `dangerous_permissions: true`
+for autonomous fleet agents where no approver exists and enforcement is
+delegated to a sandbox (curtain).
+
 **When to use:** Multi-agent teams where different roles need different
 trust levels. The supervisor can execute freely; workers ask before acting.
 

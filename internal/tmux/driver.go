@@ -11,6 +11,15 @@ import (
 	"sync"
 )
 
+// DefaultHistoryLimit is the tmux history-limit (scrollback lines) marvel
+// sets on every session it creates. tmux defaults to 2000, and finding-005
+// measured that a capture-pane scrape of a 20000-line burst recovers only
+// ~20% of the output at that default versus 100% at 100000. Sessions and
+// the adopt-path pipe-pane both read scrollback, so the default starves
+// them. Marvel sets this per session (never with the global -g flag) so it
+// does not mutate the user's tmux server config.
+const DefaultHistoryLimit = 100000
+
 // Driver manages tmux sessions and panes by shelling out to the tmux binary.
 type Driver struct {
 	binary string
@@ -133,6 +142,15 @@ func (d *Driver) NewSession(name string) error {
 	if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
 	}
+	// Raise the session's history-limit above tmux's 2000-line default so
+	// capture-pane scrapes and the adopt-path pipe-pane see full scrollback
+	// (finding-005). This is a session-scoped set-option (-t <session>,
+	// never -g), so marvel does not touch the user's global tmux config.
+	// New windows marvel opens here inherit the limit at creation; NewPane
+	// always uses new-window, so every marvel-created agent pane gets it.
+	// Best-effort, matching the driver's other set-option calls: a session
+	// that missed the raise still runs, it just scrapes less scrollback.
+	_ = d.cmd("set-option", "-t", name, "history-limit", strconv.Itoa(DefaultHistoryLimit)).Run()
 	return nil
 }
 
@@ -305,6 +323,17 @@ func (d *Driver) CapturePaneRange(paneID string, start, end int) (string, error)
 		return "", fmt.Errorf("capture-pane %s [%d:%d]: %s: %w", paneID, start, end, string(out), err)
 	}
 	return string(out), nil
+}
+
+// ShowOption returns the value of a session option (tmux show-options -v).
+// Used to verify session-scoped options marvel sets at session creation,
+// such as history-limit.
+func (d *Driver) ShowOption(session, option string) (string, error) {
+	out, err := d.cmd("show-options", "-t", session, "-v", option).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("show-options %s %s: %s: %w", session, option, string(out), err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // ListPanes lists all panes across all windows in a session.

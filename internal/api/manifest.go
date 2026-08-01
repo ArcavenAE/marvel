@@ -6,12 +6,44 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
+
+// canonicalPermissionModes is the set of values Claude Code's
+// --permission-mode flag accepts. ManifestRole.Permissions is passed
+// through verbatim as --permission-mode by the forestage/claude adapters,
+// so a value outside this set silently produces a broken session — the
+// harness rejects the flag and the pane exits immediately. Validation
+// rejects out-of-set values at parse time instead.
+//
+// An empty Permissions string is valid and means "unset — use the adapter
+// default"; only non-empty out-of-set values are errors. dangerous_permissions
+// is an orthogonal boolean (it appends --dangerously-skip-permissions) and is
+// intentionally NOT part of this set: the two combine freely. See aae-orc-6spa.
+var canonicalPermissionModes = map[string]bool{
+	"acceptEdits":       true,
+	"auto":              true,
+	"bypassPermissions": true,
+	"default":           true,
+	"dontAsk":           true,
+	"plan":              true,
+}
+
+// permissionModeList returns the canonical permission modes sorted and
+// comma-joined, for inclusion in validation error messages.
+func permissionModeList() string {
+	modes := make([]string, 0, len(canonicalPermissionModes))
+	for m := range canonicalPermissionModes {
+		modes = append(modes, m)
+	}
+	sort.Strings(modes)
+	return strings.Join(modes, ", ")
+}
 
 // Manifest represents a manifest declaring desired state.
 // Supports both YAML (default) and TOML formats.
@@ -161,6 +193,13 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
+			}
+			// Permissions maps verbatim to --permission-mode; an empty
+			// value means "unset" and is allowed, but a non-empty typo
+			// silently breaks the session, so reject it here. Orthogonal
+			// to dangerous_permissions (see canonicalPermissionModes).
+			if r.Permissions != "" && !canonicalPermissionModes[r.Permissions] {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].permissions %q is not a valid permission mode (valid: %s)", i, j, r.Permissions, permissionModeList())
 			}
 		}
 	}
