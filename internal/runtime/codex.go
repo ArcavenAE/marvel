@@ -31,6 +31,14 @@ func (c *Codex) SupportsStream(ctx *LaunchContext) bool {
 	return ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
 }
 
+// ProjectionFor reports no projection surface. Codex configures itself
+// through its own config file and -c overrides, not a Claude Code
+// settings fragment, so a policy is advisory for this runtime — marvel
+// logs it rather than writing a file codex would not read.
+func (c *Codex) ProjectionFor(_ *LaunchContext, _ string) ProjectionTarget {
+	return ProjectionTarget{Supported: false}
+}
+
 func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {

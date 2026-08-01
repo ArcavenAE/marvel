@@ -175,10 +175,16 @@ type Role struct {
 	// is a cooperative contract; real enforcement belongs to curtain.
 	// Combined with a curtain profile, this is the default sensible shape
 	// for autonomous fleet agents.
-	DangerousPermissions bool         `toml:"dangerous_permissions,omitempty"`
-	Persona              string       `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
-	Identity             string       `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
-	HealthCheck          *HealthCheck `toml:"-"`
+	DangerousPermissions bool   `toml:"dangerous_permissions,omitempty"`
+	Persona              string `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
+	Identity             string `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
+	// Policy names the Policy this role's sessions are projected with —
+	// the contract half of finding-024: a Claude Code settings fragment
+	// marvel writes to a per-session file the harness reads. Empty means
+	// no projection. Resolved within the role's workspace. The sandbox
+	// half (a curtain profile) stays parked with aae-orc-10x.
+	Policy      string       `toml:"policy,omitempty"`
+	HealthCheck *HealthCheck `toml:"-"`
 	// MaxRestarts caps the number of restarts for any single replica
 	// slot in this role before the reconciler gives up and leaves the
 	// session in SessionFailed. Zero means unlimited; negative values
@@ -227,8 +233,34 @@ type Host struct {
 	Status string
 }
 
+// Policy is a named Claude Code settings fragment marvel projects into a
+// per-session file (the ConfigMap equivalent in the finding-024 model).
+// It is the contract half only: Settings is written verbatim as JSON to
+// the file the harness reads (permissions.allow/deny, hooks, and the rest
+// of the Claude Code settings surface). Marvel owns the truth and does not
+// interpret the contents. The sandbox half (a curtain profile) is a
+// separate resource parked with aae-orc-10x; tamper-proofing the projected
+// file is aae-orc-wbqi. Scoped to a workspace and referenced by a Role's
+// Policy field.
+type Policy struct {
+	Name      string `toml:"name"`
+	Workspace string `toml:"-"`
+	// Version is an operator-facing label (e.g. "1.2"). Marvel does not
+	// resolve on it today — it rides along for observability and future
+	// pinning.
+	Version string `toml:"version,omitempty"`
+	// Settings is the Claude Code settings fragment, written verbatim as
+	// JSON. It is map[string]any because marvel is a pass-through for a
+	// third party's schema (Claude Code's), not an owner of it — pinning a
+	// Go struct here would couple marvel's releases to Claude Code's
+	// settings schema for no gain.
+	Settings  map[string]any `toml:"-"`
+	CreatedAt time.Time      `toml:"-"`
+}
+
 // Key returns the namespaced key for a resource.
 func (w *Workspace) Key() string { return w.Name }
 func (s *Session) Key() string   { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
 func (t *Team) Key() string      { return fmt.Sprintf("%s/%s", t.Workspace, t.Name) }
 func (e *Endpoint) Key() string  { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }
+func (p *Policy) Key() string    { return fmt.Sprintf("%s/%s", p.Workspace, p.Name) }

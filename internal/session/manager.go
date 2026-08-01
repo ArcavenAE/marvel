@@ -34,6 +34,12 @@ type Manager struct {
 	// from. Defaults to a per-process temp directory; the pipes carry no
 	// content at rest, so there is nothing to preserve across restarts.
 	StreamDir string
+	// ProjectionDir holds the per-session projected policy settings files
+	// (finding-024's contract half). Defaults to a per-process temp
+	// directory. The files are derived from the store's policies, so they
+	// are rewritten at spawn and on re-projection; nothing is preserved
+	// across restarts.
+	ProjectionDir string
 
 	// instances tracks the live Instance per session key. Sessions
 	// adopted from a previous daemon have no entry: their pane predates
@@ -45,17 +51,24 @@ type Manager struct {
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	return &Manager{
-		store:     store,
-		driver:    driver,
-		adapters:  runtime.NewRegistry(),
-		StreamDir: defaultStreamDir(),
-		instances: make(map[string]*runtime.TmuxInstance),
+		store:         store,
+		driver:        driver,
+		adapters:      runtime.NewRegistry(),
+		StreamDir:     defaultStreamDir(),
+		ProjectionDir: defaultProjectionDir(),
+		instances:     make(map[string]*runtime.TmuxInstance),
 	}
 }
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
 func defaultStreamDir() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("marvel-streams-%d", os.Getpid()))
+}
+
+// defaultProjectionDir keeps one daemon's projected settings files away
+// from another's.
+func defaultProjectionDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("marvel-policies-%d", os.Getpid()))
 }
 
 // marvelSessionPrefix is the tmux session name prefix marvel owns.
@@ -305,6 +318,12 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
 	}
+
+	// Project the role's policy (finding-024 contract half) before Prepare
+	// so the adapter can point the harness at the settings file. Sets
+	// lctx.PolicyProjectionPath when the adapter supports projection and a
+	// policy resolves; a no-op otherwise.
+	m.projectForLaunch(lctx, adapter)
 
 	// Ask before building: an adapter that never streams (or one asked
 	// for an interactive launch) should cost no filesystem work.

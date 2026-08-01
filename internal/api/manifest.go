@@ -19,6 +19,16 @@ type Manifest struct {
 	Workspace ManifestWorkspace  `toml:"workspace" yaml:"workspace"`
 	Teams     []ManifestTeam     `toml:"team"      yaml:"teams"`
 	Endpoints []ManifestEndpoint `toml:"endpoint"   yaml:"endpoints"`
+	Policies  []ManifestPolicy   `toml:"policy"     yaml:"policies"`
+}
+
+// ManifestPolicy is a policy section of a manifest — a named Claude Code
+// settings fragment marvel projects into a per-session file. Settings is
+// carried verbatim; marvel does not interpret it.
+type ManifestPolicy struct {
+	Name     string         `toml:"name"              yaml:"name"`
+	Version  string         `toml:"version,omitempty" yaml:"version,omitempty"`
+	Settings map[string]any `toml:"settings,omitempty" yaml:"settings,omitempty"`
 }
 
 // ManifestWorkspace is the workspace section of a manifest.
@@ -44,6 +54,7 @@ type ManifestRole struct {
 	DangerousPermissions bool                 `toml:"dangerous_permissions,omitempty" yaml:"dangerous_permissions,omitempty"`
 	Persona              string               `toml:"persona,omitempty"             yaml:"persona,omitempty"`
 	Identity             string               `toml:"identity,omitempty"            yaml:"identity,omitempty"`
+	Policy               string               `toml:"policy,omitempty"              yaml:"policy,omitempty"`
 	HealthCheck          *ManifestHealthCheck `toml:"healthcheck,omitempty"         yaml:"healthcheck,omitempty"`
 }
 
@@ -121,6 +132,16 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	if m.Workspace.Name == "" {
 		return nil, fmt.Errorf("parse manifest: workspace.name is required")
 	}
+	policyNames := make(map[string]bool, len(m.Policies))
+	for i, p := range m.Policies {
+		if p.Name == "" {
+			return nil, fmt.Errorf("parse manifest: policy[%d].name is required", i)
+		}
+		if policyNames[p.Name] {
+			return nil, fmt.Errorf("parse manifest: policy[%d].name %q is duplicated", i, p.Name)
+		}
+		policyNames[p.Name] = true
+	}
 	for i, t := range m.Teams {
 		if t.Name == "" {
 			return nil, fmt.Errorf("parse manifest: team[%d].name is required", i)
@@ -137,6 +158,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			if r.Runtime.Image == "" && r.Runtime.Command == "" {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime needs image or command", i, j)
+			}
+			if r.Policy != "" && !policyNames[r.Policy] {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
 			}
 		}
 	}
@@ -218,6 +242,30 @@ func (m *Manifest) Apply(store *Store) error {
 		return fmt.Errorf("apply workspace: %w", err)
 	}
 
+	// Policies first, so a role's policy reference resolves against
+	// already-present state and an edited policy is in the store before
+	// the reconciler re-projects.
+	for _, mp := range m.Policies {
+		policy := &Policy{
+			Name:      mp.Name,
+			Workspace: m.Workspace.Name,
+			Version:   mp.Version,
+			Settings:  mp.Settings,
+			CreatedAt: now,
+		}
+		if _, err := store.GetPolicy(policy.Key()); err == nil {
+			if err := store.UpdatePolicy(policy.Key(), func(live *Policy) error {
+				live.Version = mp.Version
+				live.Settings = mp.Settings
+				return nil
+			}); err != nil {
+				return fmt.Errorf("apply policy %s: %w", mp.Name, err)
+			}
+		} else if err := store.CreatePolicy(policy); err != nil {
+			return fmt.Errorf("apply policy %s: %w", mp.Name, err)
+		}
+	}
+
 	for _, mt := range m.Teams {
 		var roles []Role
 		for _, mr := range mt.Roles {
@@ -242,6 +290,7 @@ func (m *Manifest) Apply(store *Store) error {
 				DangerousPermissions: mr.DangerousPermissions,
 				Persona:              mr.Persona,
 				Identity:             mr.Identity,
+				Policy:               mr.Policy,
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)

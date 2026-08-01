@@ -30,6 +30,14 @@ func (o *OpenCode) SupportsStream(ctx *LaunchContext) bool {
 	return ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
 }
 
+// ProjectionFor reports no projection surface. OpenCode reads its own
+// opencode.json config, not a Claude Code settings fragment, so a policy
+// is advisory for this runtime — marvel logs it rather than writing a
+// file opencode would not read.
+func (o *OpenCode) ProjectionFor(_ *LaunchContext, _ string) ProjectionTarget {
+	return ProjectionTarget{Supported: false}
+}
+
 func (o *OpenCode) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {

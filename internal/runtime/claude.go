@@ -20,6 +20,16 @@ func (c *Claude) SupportsStream(ctx *LaunchContext) bool {
 	return ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
 }
 
+// ProjectionFor reports where marvel writes claude's projected settings
+// fragment. Claude Code reads it via a top-level --settings flag
+// (injected in Prepare), so this runtime supports projection.
+func (c *Claude) ProjectionFor(ctx *LaunchContext, dir string) ProjectionTarget {
+	return ProjectionTarget{
+		Supported: true,
+		Path:      settingsProjectionPath(dir, ctx.Session.Key()),
+	}
+}
+
 func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {
@@ -32,6 +42,13 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 
 	args := make([]string, len(ctx.Session.Runtime.Args))
 	copy(args, ctx.Session.Runtime.Args)
+
+	// Point claude at the projected policy settings file when marvel wrote
+	// one for this launch. Claude Code re-reads it mid-session, so a later
+	// re-projection changes the running agent's contract without a restart.
+	if ctx.PolicyProjectionPath != "" {
+		args = append(args, "--settings", ctx.PolicyProjectionPath)
+	}
 
 	if headless {
 		// --verbose is not optional here: claude refuses stream-json

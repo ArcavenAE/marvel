@@ -1,0 +1,43 @@
+# Marvel example — policy projection, version 2 (the live swap).
+#
+# Same workspace, team, and role as examples/policy-projection.yaml, with
+# the reviewer-contract policy edited: Edit is now allowed and a
+# SessionStart hook is added. Applying this over v1 re-projects the running
+# reviewer session's settings file and emits a policy.projected event — the
+# contract changes with no restart.
+#
+#   ./marvel work examples/policy-projection-v2.yaml
+#   ./marvel events --kind policy.projected
+#   ./marvel get policies            # version now "2"
+
+workspace:
+  name: policy-demo
+
+policies:
+  - name: reviewer-contract
+    version: "2"
+    settings:
+      permissions:
+        allow: ["Read", "Grep", "Glob", "Edit"]
+        deny: ["Bash", "Write"]
+      hooks:
+        SessionStart:
+          - matcher: ""
+            hooks:
+              - type: command
+                command: "echo 'reviewer-contract v2 active'"
+
+teams:
+  - name: review-squad
+    roles:
+      - name: reviewer
+        replicas: 1
+        permissions: plan
+        policy: reviewer-contract
+        runtime:
+          image: claude
+          command: claude
+
+endpoints:
+  - name: review-svc
+    team: review-squad

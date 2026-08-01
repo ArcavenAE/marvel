@@ -505,7 +505,7 @@ func getCmd() *cobra.Command {
 	var watchSec string
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
-		Short: "List resources (sessions, teams, workspaces, endpoints)",
+		Short: "List resources (sessions, teams, workspaces, endpoints, policies)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("watch") {
@@ -557,6 +557,8 @@ func getResources(resourceType string) error {
 		return printWorkspaces(resp.Result)
 	case "endpoints", "endpoint":
 		return printEndpoints(resp.Result)
+	case "policies", "policy":
+		return printPolicies(resp.Result)
 	default:
 		fmt.Println(string(resp.Result))
 	}
@@ -1661,6 +1663,23 @@ func printEndpoints(data json.RawMessage) error {
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tNAME\tTEAM\n")
 	for _, e := range endpoints {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", e.Workspace, e.Name, e.Team)
+	}
+	return w.Flush()
+}
+
+func printPolicies(data json.RawMessage) error {
+	var policies []api.Policy
+	if err := json.Unmarshal(data, &policies); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tNAME\tVERSION\tKEYS\n")
+	for _, p := range policies {
+		version := p.Version
+		if version == "" {
+			version = "-"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Workspace, p.Name, version, len(p.Settings))
 	}
 	return w.Flush()
 }

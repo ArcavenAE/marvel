@@ -1,0 +1,55 @@
+# Marvel example — policy projection (finding-024 contract half).
+#
+# A Policy is a named Claude Code settings fragment marvel writes to a
+# per-session file the harness reads. A Role references it by name; at
+# spawn marvel writes the file and points the harness at it (claude via
+# --settings, forestage via the same flag in its claude passthrough).
+#
+# The demo beat is LIVE re-projection: edit a policy and re-apply, and the
+# running agent's contract changes with no restart, because Claude Code's
+# file watcher re-reads the settings file. examples/policy-projection-v2.toml
+# is the tightened version to swap to.
+#
+# Setup:
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/policy-projection.toml
+#   ./marvel get policies
+#   ./marvel events --kind policy.projected      # projection at spawn
+#
+# Now swap the policy live and watch the re-projection event:
+#   ./marvel work examples/policy-projection-v2.toml
+#   ./marvel events --kind policy.projected      # re-projected, no restart
+#
+# Runtimes with no Claude Code settings surface (codex, opencode, generic)
+# log the policy as advisory and are not projected — nothing is dropped
+# silently.
+
+[workspace]
+name = "policy-demo"
+
+# The reviewer's contract: read-only, no shell. Version 1.
+[[policy]]
+name = "reviewer-contract"
+version = "1"
+
+  [policy.settings.permissions]
+  allow = ["Read", "Grep", "Glob"]
+  deny = ["Bash", "Write", "Edit"]
+
+[[team]]
+name = "review-squad"
+
+  [[team.role]]
+  name = "reviewer"
+  replicas = 1
+  permissions = "plan"
+  policy = "reviewer-contract"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+
+[[endpoint]]
+name = "review-svc"
+team = "review-squad"

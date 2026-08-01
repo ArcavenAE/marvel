@@ -6,6 +6,8 @@ package runtime
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -26,6 +28,29 @@ type LaunchContext struct {
 	// has no sink directory. An adapter that finds it empty must produce
 	// a working command anyway.
 	StreamPath string
+	// PolicyProjectionPath is the file the session manager wrote this
+	// session's projected Claude Code settings fragment to (see
+	// finding-024). It is non-empty only when the role references a policy
+	// AND the adapter reported ProjectionFor().Supported. Prepare appends
+	// the adapter's own read-flag pointing at it (claude: a top-level
+	// --settings; forestage: --settings in the claude passthrough). Empty
+	// means no projection for this launch and Prepare injects nothing.
+	PolicyProjectionPath string
+}
+
+// ProjectionTarget is an adapter's answer to "where does this session's
+// projected policy settings file go, and can this harness read one?".
+// The session manager calls ProjectionFor at spawn and on every live
+// re-projection; it writes Settings JSON to Path only when Supported.
+type ProjectionTarget struct {
+	// Supported reports whether this harness exposes a Claude Code
+	// settings-fragment surface. False for harnesses that have none
+	// (codex, opencode, generic today); marvel then logs the referenced
+	// policy as advisory for that runtime rather than dropping it silently.
+	Supported bool
+	// Path is the file marvel writes the resolved settings fragment to.
+	// Set only when Supported.
+	Path string
 }
 
 // LaunchResult is what the adapter returns: the fully resolved command,
@@ -50,6 +75,15 @@ type Adapter interface {
 	// Prepare constructs the command, args, and environment for launching
 	// a session. The returned command string is passed to tmux new-window.
 	Prepare(ctx *LaunchContext) (*LaunchResult, error)
+
+	// ProjectionFor reports where marvel writes this session's projected
+	// Claude Code settings fragment and whether the harness can read one.
+	// dir is the manager-owned directory projected files live under. The
+	// session manager calls this at spawn (before Prepare) and on every
+	// live re-projection, so the answer must depend only on the runtime
+	// and the launch identity, never on prior Prepare state. A harness
+	// with no settings surface returns Supported=false.
+	ProjectionFor(ctx *LaunchContext, dir string) ProjectionTarget
 }
 
 // Registry maps runtime names to adapters.
@@ -146,6 +180,16 @@ func shellQuote(s string) string {
 	}
 	result += "'"
 	return result
+}
+
+// settingsProjectionPath is the per-session projected settings file for
+// adapters that read a Claude Code settings fragment (claude, forestage).
+// One shape, shared, so the two supporting adapters agree on where the
+// manager writes and re-writes the file. Session keys contain a slash
+// (workspace/name); it is folded to a dash so the key is one path segment.
+func settingsProjectionPath(dir, sessionKey string) string {
+	name := strings.ReplaceAll(sessionKey, "/", "-") + ".settings.json"
+	return filepath.Join(dir, name)
 }
 
 // resolveCommand returns the command to execute. If Runtime.Command is set,

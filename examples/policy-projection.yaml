@@ -1,0 +1,44 @@
+# Marvel example — policy projection (finding-024 contract half).
+#
+# A Policy is a named Claude Code settings fragment marvel writes to a
+# per-session file the harness reads. A Role references it by name; at
+# spawn marvel writes the file and points the harness at it (claude via
+# --settings, forestage via the same flag in its claude passthrough).
+#
+# The demo beat is LIVE re-projection: edit a policy and re-apply, and the
+# running agent's contract changes with no restart. See
+# examples/policy-projection-v2.yaml for the tightened version to swap to.
+#
+#   just build
+#   ./marvel daemon &
+#   ./marvel work examples/policy-projection.yaml
+#   ./marvel get policies
+#   ./marvel events --kind policy.projected
+#   ./marvel work examples/policy-projection-v2.yaml   # live swap
+#   ./marvel events --kind policy.projected            # re-projected, no restart
+
+workspace:
+  name: policy-demo
+
+policies:
+  - name: reviewer-contract
+    version: "1"
+    settings:
+      permissions:
+        allow: ["Read", "Grep", "Glob"]
+        deny: ["Bash", "Write", "Edit"]
+
+teams:
+  - name: review-squad
+    roles:
+      - name: reviewer
+        replicas: 1
+        permissions: plan
+        policy: reviewer-contract
+        runtime:
+          image: claude
+          command: claude
+
+endpoints:
+  - name: review-svc
+    team: review-squad

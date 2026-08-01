@@ -26,6 +26,7 @@ type Store struct {
 	sessions   map[string]*Session
 	teams      map[string]*Team
 	endpoints  map[string]*Endpoint
+	policies   map[string]*Policy
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by
@@ -41,6 +42,7 @@ func NewStore() *Store {
 		sessions:   make(map[string]*Session),
 		teams:      make(map[string]*Team),
 		endpoints:  make(map[string]*Endpoint),
+		policies:   make(map[string]*Policy),
 	}
 }
 
@@ -88,6 +90,42 @@ func cloneTeam(t *Team) Team {
 		out.Shift.Roles = slices.Clone(t.Shift.Roles)
 	}
 	return out
+}
+
+func clonePolicy(p *Policy) Policy {
+	out := *p
+	out.Settings = cloneSettings(p.Settings)
+	return out
+}
+
+// cloneSettings deep-copies a JSON-shaped settings tree so a snapshot is
+// safe to mutate or marshal while the store keeps updating the live one.
+// Settings only ever holds JSON-decoded values (map[string]any, []any,
+// and scalars), so a structural walk is enough; scalars copy by value.
+func cloneSettings(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = cloneSettingsValue(v)
+	}
+	return out
+}
+
+func cloneSettingsValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return cloneSettings(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = cloneSettingsValue(e)
+		}
+		return out
+	default:
+		return t
+	}
 }
 
 // Workspace operations
@@ -382,6 +420,74 @@ func (s *Store) DeleteEndpoint(key string) error {
 	}
 	delete(s.endpoints, key)
 	return nil
+}
+
+// Policy operations
+
+// CreatePolicy clones the input into the store. The caller's pointer is
+// not aliased with store state; Settings is deep-copied.
+func (s *Store) CreatePolicy(p *Policy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.policies[p.Key()]; ok {
+		return fmt.Errorf("policy %s: %w", p.Key(), ErrAlreadyExists)
+	}
+	c := clonePolicy(p)
+	if err := s.persistPut(bucketPolicies, c.Key(), c); err != nil {
+		return err
+	}
+	s.policies[p.Key()] = &c
+	return nil
+}
+
+// GetPolicy returns a snapshot of the named policy.
+func (s *Store) GetPolicy(key string) (Policy, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.policies[key]
+	if !ok {
+		return Policy{}, fmt.Errorf("policy %s: %w", key, ErrNotFound)
+	}
+	return clonePolicy(p), nil
+}
+
+// ListPolicies returns snapshots of all policies.
+func (s *Store) ListPolicies() []Policy {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Policy, 0, len(s.policies))
+	for _, p := range s.policies {
+		result = append(result, clonePolicy(p))
+	}
+	return result
+}
+
+func (s *Store) DeletePolicy(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.policies[key]; !ok {
+		return fmt.Errorf("policy %s: %w", key, ErrNotFound)
+	}
+	if err := s.persistDelete(bucketPolicies, key); err != nil {
+		return err
+	}
+	delete(s.policies, key)
+	return nil
+}
+
+// UpdatePolicy applies fn to the live policy under the write lock. Same
+// pointer-lifetime and persist semantics as UpdateTeam.
+func (s *Store) UpdatePolicy(key string, fn func(*Policy) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.policies[key]
+	if !ok {
+		return fmt.Errorf("policy %s: %w", key, ErrNotFound)
+	}
+	if err := fn(p); err != nil {
+		return err
+	}
+	return s.persistPut(bucketPolicies, p.Key(), p)
 }
 
 // UpdateSessionHeartbeat updates a session's context pressure and
