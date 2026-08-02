@@ -12,6 +12,14 @@ content: |
   (scheduled, context pressure, failure detection) are future work.
 
   See finding-002-shift-mechanics for full evidence.
+
+  2026-08-02 note: the happy path re-verified live (finding-010); the
+  ABORT path has four pre-existing defects (rollback message claims a
+  generation restore the code never performs; mid-shift repairs of
+  non-shifting roles mint the new generation; restart_policy=never
+  bypasses crash accounting and leaks panes; backoff-held roles are
+  invisible). See finding-010-shift-abort-rollback-defects; fixes
+  tracked as bd aae-orc-d0pt (P2) and aae-orc-pyre (P1).
 edges:
   - target: question-org-model
     type: derives
