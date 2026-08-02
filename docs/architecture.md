@@ -169,6 +169,14 @@ The `mrvl://` protocol is the primary remote access mode. The daemon runs
 its own SSH server, generates its own host key, and manages its own
 authorized keys. No dependency on sshd.
 
+The local default is the literal `/tmp/marvel.sock` (`config.DefaultSocket`),
+and it is machine-global: no environment variable moves it, and neither does
+HOME. A starting daemon unlinks whatever is at its socket path without
+checking for a live owner, so a second daemon on that path takes new client
+connections while the first keeps running with no reachable path, and either
+one's shutdown unlinks the path. Run concurrent daemons on a host with one
+`--socket` each, and pass the same value to every client command.
+
 ### Cluster configuration
 
 Named clusters are stored in `~/.marvel/config.yaml`:
@@ -227,13 +235,13 @@ supported mode.
 filterable by workspace, team, role, session, and kind, served to
 `marvel events`. It carries both control-plane kinds (including
 `policy.projected` and `context.limit-unresolved`) and the 12 `agent.*`
-kinds. Those twelve are declared
-twice under two names: the stream parsers emit the unprefixed vocabulary in
-`internal/runtime/events` (`session.started`, `tool.call`, and the rest),
-and `internal/session/bridge.go` lifts each one into its `agent.*` ring
-kind, which is what lets the daemon and the CLI see one vocabulary
-regardless of harness. The ring is bounded, so it is history for the life
-of the daemon process, not durable storage.
+kinds. Those twelve are declared twice under two names: the stream parsers
+emit the unprefixed vocabulary in `internal/runtime/events`
+(`session.started`, `tool.call`, and the rest), and
+`internal/session/bridge.go` lifts each one into its `agent.*` ring kind,
+which is what lets the daemon and the CLI see one vocabulary regardless of
+harness. The ring is bounded, so it is history for the life of the daemon
+process, not durable storage.
 
 ## Manifest formats
 
