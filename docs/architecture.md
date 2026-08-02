@@ -174,8 +174,10 @@ and it is machine-global: no environment variable moves it, and neither does
 HOME. A starting daemon unlinks whatever is at its socket path without
 checking for a live owner, so a second daemon on that path takes new client
 connections while the first keeps running with no reachable path, and either
-one's shutdown unlinks the path. Run concurrent daemons on a host with one
-`--socket` each, and pass the same value to every client command.
+one's shutdown unlinks the path. Give each concurrent daemon on a host its
+own distinct `--socket` path and pass that path to every client command
+aimed at it. Two daemons handed the same explicit path collide exactly as
+they do on the default.
 
 ### Cluster configuration
 
