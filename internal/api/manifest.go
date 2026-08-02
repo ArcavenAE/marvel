@@ -70,8 +70,44 @@ type ManifestWorkspace struct {
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
-	Name  string         `toml:"name" yaml:"name"`
-	Roles []ManifestRole `toml:"role"  yaml:"roles"`
+	Name   string          `toml:"name" yaml:"name"`
+	Budget *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
+	Roles  []ManifestRole  `toml:"role"  yaml:"roles"`
+}
+
+// ManifestBudget is the budget section within a team — the operator's
+// declaration that a metered value may refuse a spawn for this team.
+//
+// A pointer on ManifestTeam so "absent" and "all zeros" stay
+// distinguishable in both formats. The three unimplemented dimensions are
+// declared here and nowhere else: yaml.v3 and BurntSushi/toml both drop
+// undeclared fields silently (the defect the DroppedFields tests exist to
+// catch), so declaring them is what lets validation reject a manifest
+// naming one instead of accepting it as a no-op. They are never copied to
+// api.Budget.
+type ManifestBudget struct {
+	MaxSessions  int            `toml:"max_sessions,omitempty"   yaml:"max_sessions,omitempty"`
+	MaxTokens    int            `toml:"max_tokens,omitempty"     yaml:"max_tokens,omitempty"`
+	OnUnmeasured UnmeasuredMode `toml:"on_unmeasured,omitempty"  yaml:"on_unmeasured,omitempty"`
+
+	MaxCostUSD       float64 `toml:"max_cost_usd,omitempty"            yaml:"max_cost_usd,omitempty"`
+	MaxTeamRSSBytes  int64   `toml:"max_team_rss_bytes,omitempty"      yaml:"max_team_rss_bytes,omitempty"`
+	MaxSessionCtxPct float64 `toml:"max_session_ctx_percent,omitempty" yaml:"max_session_ctx_percent,omitempty"`
+}
+
+// Budget converts a declared block into the runtime ceiling. A nil
+// receiver (no budget block) yields the zero Budget, which declares no
+// gate. Only implemented dimensions cross over; the registered-but-
+// unenforced ones are rejected at parse time and never reach here.
+func (b *ManifestBudget) Budget() Budget {
+	if b == nil {
+		return Budget{}
+	}
+	return Budget{
+		MaxSessions:  b.MaxSessions,
+		MaxTokens:    b.MaxTokens,
+		OnUnmeasured: b.OnUnmeasured,
+	}
 }
 
 // ManifestRole is a role section within a team.
@@ -133,33 +169,73 @@ func ParseManifest(path string) (*Manifest, error) {
 	}
 }
 
-// ParseManifestBytes parses manifest content. Tries YAML first (default),
-// falls back to TOML if YAML parsing fails.
+// ParseManifestBytes parses manifest content whose format is not known
+// from a filename: YAML first (the default), TOML otherwise. This is the
+// path every `marvel work` takes, because the CLI sends bytes.
+//
+// Format is settled BEFORE validation runs, and on the required field
+// rather than on unmarshal success. Validating inside each attempt made
+// every YAML validation failure fall through to the TOML parser, so an
+// operator who declared 40 replicas under a 6-session ceiling was told
+// "toml: line 72: expected '.' or '='" instead of which clause they broke.
+// That masked the declaration clause, the unenforced-dimension rejection,
+// and the on_unmeasured typo check alike, on the only apply path there is.
+//
+// Deciding on Workspace.Name is what keeps TOML working: yaml.Unmarshal
+// tolerates some TOML input and yields a manifest with nothing in it, and
+// a manifest with no workspace name is not a YAML manifest marvel could
+// have applied anyway.
 func ParseManifestBytes(data []byte) (*Manifest, error) {
-	// Try YAML first — it's the default format.
-	m, err := parseManifestYAML(data)
-	if err == nil {
-		return m, nil
+	ym, yerr := unmarshalManifestYAML(data)
+	if yerr == nil && ym.Workspace.Name != "" {
+		return validateManifest(ym)
 	}
-
-	// Fall back to TOML.
-	return parseManifestTOML(data)
+	tm, terr := unmarshalManifestTOML(data)
+	if terr == nil {
+		return validateManifest(tm)
+	}
+	if yerr != nil {
+		// YAML is the documented default, so its error leads; a TOML syntax
+		// complaint about a YAML file names the wrong language. The TOML
+		// error rides along for a genuine TOML file that failed to parse.
+		return nil, fmt.Errorf("%w (also tried TOML: %v)", yerr, terr)
+	}
+	// Parsed as YAML but named no workspace, and TOML refused it: report the
+	// missing required field rather than a syntax error about the other
+	// format.
+	return validateManifest(ym)
 }
 
 func parseManifestYAML(data []byte) (*Manifest, error) {
+	m, err := unmarshalManifestYAML(data)
+	if err != nil {
+		return nil, err
+	}
+	return validateManifest(m)
+}
+
+func parseManifestTOML(data []byte) (*Manifest, error) {
+	m, err := unmarshalManifestTOML(data)
+	if err != nil {
+		return nil, err
+	}
+	return validateManifest(m)
+}
+
+func unmarshalManifestYAML(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse yaml manifest: %w", err)
 	}
-	return validateManifest(&m)
+	return &m, nil
 }
 
-func parseManifestTOML(data []byte) (*Manifest, error) {
+func unmarshalManifestTOML(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := toml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse toml manifest: %w", err)
 	}
-	return validateManifest(&m)
+	return &m, nil
 }
 
 func validateManifest(m *Manifest) (*Manifest, error) {
@@ -209,8 +285,133 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].permissions %q is not a valid permission mode (valid: %s)", i, j, r.Permissions, permissionModeList())
 			}
 		}
+		// After the role loop, so the replica sum is available to the
+		// declaration clause.
+		if err := validateManifestBudget(i, t); err != nil {
+			return nil, err
+		}
 	}
 	return m, nil
+}
+
+// validateManifestBudget applies the dimension registry's rules plus the
+// declaration clause to one team's budget block.
+//
+// The declaration clause (sum of replicas must fit under max_sessions) is
+// the load-bearing one. It makes declared <= limit an invariant of every
+// parsed manifest, which is what makes converging a role toward its
+// declared replicas provably safe: repair can never cross the team cap, so
+// no "is this growth?" predicate exists anywhere in the reconciler and a
+// crashed replica can never be refused its replacement. It also catches
+// the motivating failure (a declared 40-crew fan-out under a 6-session
+// ceiling) before any daemon state is touched.
+func validateManifestBudget(i int, t ManifestTeam) error {
+	b := t.Budget
+	if b == nil {
+		return nil
+	}
+	// A negative ceiling silently inverts the comparison; 0 means unset.
+	// Same rationale as runtime.context_window above.
+	if b.MaxSessions < 0 {
+		return fmt.Errorf("parse manifest: team[%d].budget.max_sessions must be >= 0", i)
+	}
+	if b.MaxTokens < 0 {
+		return fmt.Errorf("parse manifest: team[%d].budget.max_tokens must be >= 0", i)
+	}
+	// Registered-but-unenforced dimensions are rejected rather than
+	// dropped, driven by the registry so a future row needs no new branch.
+	unenforced := []struct {
+		dim Dimension
+		set bool
+	}{
+		{DimMaxCostUSD, b.MaxCostUSD != 0},
+		{DimMaxTeamRSSBytes, b.MaxTeamRSSBytes != 0},
+		{DimMaxSessionCtxPct, b.MaxSessionCtxPct != 0},
+	}
+	for _, u := range unenforced {
+		if !u.set {
+			continue
+		}
+		spec, ok := LookupDimension(u.dim)
+		if !ok {
+			return fmt.Errorf("parse manifest: team[%d].budget.%s is not a known dimension (valid: %s)", i, u.dim, DimensionList())
+		}
+		return fmt.Errorf("parse manifest: team[%d].budget.%s is a known dimension (matrix row %d) but is not enforced in this slice; owner %s", i, u.dim, spec.MatrixRow, spec.Owner)
+	}
+	if b.OnUnmeasured != "" && !canonicalUnmeasuredModes[b.OnUnmeasured] {
+		return fmt.Errorf("parse manifest: team[%d].budget.on_unmeasured %q is not valid (valid: %s)", i, b.OnUnmeasured, unmeasuredModeList())
+	}
+	if b.MaxSessions > 0 {
+		declared := 0
+		for _, r := range t.Roles {
+			declared += r.Replicas
+		}
+		if declared > b.MaxSessions {
+			return fmt.Errorf("parse manifest: team[%d] declares %d replicas across %d role(s) but budget.max_sessions is %d", i, declared, len(t.Roles), b.MaxSessions)
+		}
+	}
+	return nil
+}
+
+// StreamCapableRole reports whether a role's harness can publish the usage
+// stream a token ceiling is measured from.
+//
+// Injected rather than computed here because the answer lives in the
+// adapter registry, and internal/runtime imports this package: mode alone
+// cannot answer it. A generic role declaring mode: headless satisfies every
+// mode check and still can never emit a token, because the generic adapter
+// implements no stream path at all.
+type StreamCapableRole func(ManifestRole) bool
+
+// ValidateBudgets is the host-side pre-flight sibling of ValidateRuntimes:
+// it reports every team where a declared dimension is enforceable against
+// NO role in the team, so a mute gate becomes an apply-time error instead
+// of a silent no-op. Same class of fix as ArcavenAE/marvel#9.
+//
+// Only max_tokens is capability-dependent. Token usage arrives on a harness
+// stream, so a team with no stream-capable headless role can never report a
+// token to count. The threshold is NO role rather than ANY role: a mixed
+// team is allowed, because a partial total and on_unmeasured carry the
+// honesty at runtime. max_sessions is counted from the store and depends on
+// no harness.
+//
+// canStream is required. A nil predicate is a wiring error and is reported
+// as one, because the alternative (falling back to the mode-only check) is
+// the silent hole this function exists to close.
+func (m *Manifest) ValidateBudgets(canStream StreamCapableRole) error {
+	declaresTokens := false
+	for _, t := range m.Teams {
+		if t.Budget != nil && t.Budget.MaxTokens > 0 {
+			declaresTokens = true
+			break
+		}
+	}
+	if !declaresTokens {
+		return nil
+	}
+	if canStream == nil {
+		return errors.New("budget pre-flight: no stream-capability predicate supplied, so budget.max_tokens cannot be checked for a role that could report it")
+	}
+	var mute []string
+	for ti, t := range m.Teams {
+		if t.Budget == nil || t.Budget.MaxTokens <= 0 {
+			continue
+		}
+		reporter := false
+		for _, r := range t.Roles {
+			if canStream(r) {
+				reporter = true
+				break
+			}
+		}
+		if !reporter {
+			mute = append(mute, fmt.Sprintf("  team[%d=%s]: budget.max_tokens is declared but no role runs a stream-capable harness in headless mode, so no role can report token usage; marvel would never enforce this ceiling", ti, t.Name))
+		}
+	}
+	if len(mute) > 0 {
+		return fmt.Errorf("budget pre-flight failed on %d team(s):\n%s", len(mute), strings.Join(mute, "\n"))
+	}
+	return nil
 }
 
 // ValidateRuntimes checks that each role's runtime command (and script,
@@ -364,18 +565,24 @@ func (m *Manifest) Apply(store *Store) error {
 			roles = append(roles, role)
 		}
 
+		budget := mt.Budget.Budget()
 		team := &Team{
 			Name:       mt.Name,
 			Workspace:  m.Workspace.Name,
 			Roles:      roles,
+			Budget:     budget,
 			Generation: 1,
 			CreatedAt:  now,
 		}
 		// Update roles if team already exists; route through the store
-		// lock so the mutation doesn't race concurrent readers.
+		// lock so the mutation doesn't race concurrent readers. The budget
+		// moves with the roles: without that line an edited budget applies
+		// on create and is silently ignored on every re-apply, while an
+		// edited role list takes effect — the worst available split.
 		if _, err := store.GetTeam(team.Key()); err == nil {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
+				live.Budget = budget
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)

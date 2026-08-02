@@ -859,3 +859,138 @@ func TestConcurrentObserveIsSafe(t *testing.T) {
 		t.Errorf("ended sessions = %d, want 8", got.EndedSessions)
 	}
 }
+
+// TestSpendPromptTokensAppliesLayout is the measurement aae-orc-qiay's token
+// budget rests on.
+//
+// The raw class fields accumulate exactly as the feed reported them and
+// Spend records no layout, so no sum of them is both complete and free of
+// double counting: In + CacheReadIn + CacheCreationIn double counts a
+// subsumptive feed, while In + Out alone omits most of an additive feed's
+// input volume. PromptTokens applies Sample.Occupancy per request, so it is
+// the one prompt figure a caller can add up without knowing the harness.
+//
+// Falsification: with the raw classes summed instead, the codex row here
+// reads 63153 against a real 42102, so a declared max_tokens would refuse a
+// codex team at roughly two thirds of its ceiling, silently.
+func TestSpendPromptTokensAppliesLayout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		harness string
+		samples []rtevents.RequestUsage
+		want    int
+	}{
+		{
+			name:    "subsumptive counts In alone",
+			harness: codex.Harness,
+			samples: []rtevents.RequestUsage{
+				{Layout: rtevents.LayoutSubsumptive, In: 13992, CacheReadIn: 6996},
+				{Layout: rtevents.LayoutSubsumptive, In: 28110, CacheReadIn: 14055},
+			},
+			want: 13992 + 28110,
+		},
+		{
+			name:    "additive counts In plus the cache classes",
+			harness: claudecode.Harness,
+			samples: []rtevents.RequestUsage{
+				additive(11368, 16643, 5366),
+				additive(2, 22009, 11470),
+			},
+			want: 11368 + 16643 + 5366 + 2 + 22009 + 11470,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a, _, _ := newTestAccountant(t, Table{})
+			for _, s := range tt.samples {
+				a.Observe(testCoords, turnEvent(tt.harness, s))
+			}
+
+			spend, ok := a.SessionSpend(testCoords.AgentID)
+			if !ok {
+				t.Fatal("no spend recorded")
+			}
+			if spend.PromptTokens != tt.want {
+				t.Errorf("PromptTokens = %d, want %d", spend.PromptTokens, tt.want)
+			}
+
+			// The figure must promote through retirement into the team total,
+			// because a fan-out's spend is mostly in sessions that exited.
+			team := a.TeamSpend(testCoords.Workspace, testCoords.Team)
+			if team.PromptTokens != tt.want {
+				t.Errorf("live TeamSpend PromptTokens = %d, want %d", team.PromptTokens, tt.want)
+			}
+			a.Forget(testCoords.AgentID)
+			retired := a.TeamSpend(testCoords.Workspace, testCoords.Team)
+			if retired.PromptTokens != tt.want {
+				t.Errorf("retired TeamSpend PromptTokens = %d, want %d", retired.PromptTokens, tt.want)
+			}
+		})
+	}
+}
+
+// TestTerminalSampleAddsNoPromptTokens proves the placement is safe.
+// Sample.Occupancy is meaningless on a terminal sample, which carries
+// session totals rather than a level — folding one in is the defect this
+// package exists to prevent. Observe returns to foldTerminalLocked before
+// any spend call, so a terminal sample must move the figure by nothing.
+func TestTerminalSampleAddsNoPromptTokens(t *testing.T) {
+	t.Parallel()
+	a, _, _ := newTestAccountant(t, Table{})
+
+	a.Observe(testCoords, turnEvent(claudecode.Harness, additive(11368, 16643, 5366)))
+	before, _ := a.SessionSpend(testCoords.AgentID)
+
+	cost := 0.42
+	a.Observe(testCoords, endedEvent(
+		rtevents.Usage{In: 11368, Out: 900, Cost: &cost},
+		&rtevents.Metering{CacheReadIn: 16643, CacheCreationIn: 5366},
+	))
+
+	after, _ := a.SessionSpend(testCoords.AgentID)
+	if after.PromptTokens != before.PromptTokens {
+		t.Errorf("a terminal sample moved PromptTokens from %d to %d", before.PromptTokens, after.PromptTokens)
+	}
+	if !after.CostReported {
+		t.Error("test is vacuous: the terminal sample was not folded at all")
+	}
+}
+
+// TestSubagentAndNonPrimarySpendCountsAsPromptTokens: both classes are real
+// money against a DIFFERENT context window, so they stay out of occupancy
+// and stay in spend. A budget that dropped them would undercount a team
+// running Task tools or routing across models.
+func TestSubagentAndNonPrimarySpendCountsAsPromptTokens(t *testing.T) {
+	t.Parallel()
+	a, _, _ := newTestAccountant(t, Table{})
+
+	a.Observe(testCoords, startedEvent("claude-fable-5"))
+	a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutAdditive, Model: "claude-fable-5", In: 1000, CacheReadIn: 200,
+	}))
+	primary, _ := a.SessionSpend(testCoords.AgentID)
+
+	// A subagent turn: parentToolUseID marks it, so it never enters the
+	// occupancy fold.
+	a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutAdditive, Model: "claude-fable-5", ParentToolUseID: "toolu_1",
+		In: 300, CacheReadIn: 50,
+	}))
+	// A non-primary model answering inside the same session.
+	a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutAdditive, Model: "claude-haiku-4-5-20251001", In: 40,
+	}))
+
+	spend, _ := a.SessionSpend(testCoords.AgentID)
+	want := primary.PromptTokens + 300 + 50 + 40
+	if spend.PromptTokens != want {
+		t.Errorf("PromptTokens = %d, want %d (subagent and non-primary spend included)", spend.PromptTokens, want)
+	}
+	occ, _ := a.SessionOccupancy(testCoords.AgentID)
+	if occ.Tokens != 1200 {
+		t.Errorf("occupancy tokens = %d, want 1200 (neither sample entered the level)", occ.Tokens)
+	}
+}

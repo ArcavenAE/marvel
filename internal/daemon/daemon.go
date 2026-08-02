@@ -22,6 +22,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
@@ -209,7 +210,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	acct := usage.New(store, usage.NewResolver(limits), usage.WithEvents(evRing))
 	sessMgr.Usage = acct
 
-	return &Daemon{
+	d := &Daemon{
 		store:    store,
 		sessMgr:  sessMgr,
 		teamCtrl: teamCtrl,
@@ -219,7 +220,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		events:   evRing,
 		usage:    acct,
 		reexec:   syscall.Exec,
-	}, nil
+	}
+	// The controller evaluates count-shaped admission clauses on its own
+	// (store counts, no meter). This seam is what lets InitiateShift also
+	// evaluate a cumulative clause without internal/team importing
+	// internal/usage. See aae-orc-qiay.
+	teamCtrl.Snapshots = d
+	return d, nil
 }
 
 // Usage returns the daemon's context and token accountant. Exported for
@@ -274,6 +281,14 @@ func (d *Daemon) Start(socketPath string) error {
 	if _, _, err := d.sessMgr.AdoptOrKill(); err != nil {
 		log.Printf("AdoptOrKill on startup: %v", err)
 	}
+
+	// Announced from Start, not from the constructor. cmd/marvel installs
+	// log.SetOutput (log ring plus the optional --log-file) only after
+	// NewWithOptions returns, so a line written during construction reaches
+	// bare stderr and neither `marvel daemon logs` nor the log file. This is
+	// the one observability affordance for the in-memory token window, so it
+	// has to land where the docs say it lands.
+	d.logTokenBudgetWindows()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
@@ -647,6 +662,39 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
+	// Pre-flight: refuse a declared dimension no role in the team can ever
+	// report, so a mute gate is an error rather than a silent no-op. The
+	// capability predicate comes from the session manager's adapter
+	// registry: mode alone does not answer it, since a generic role can
+	// declare headless and still have no stream path.
+	if err := m.ValidateBudgets(d.sessMgr.CanStreamRole); err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	// Admission, before Apply commits anything. Refusing the declaration is
+	// the whole design: gating only the spawn would leave a permanently
+	// unsatisfiable desired state, a teams table reporting replicas that
+	// will never exist, and a reconciler re-deciding the same impossible
+	// deficit every tick. See aae-orc-qiay.
+	for _, mt := range m.Teams {
+		b := mt.Budget.Budget()
+		if !b.Declared() {
+			continue
+		}
+		t := api.Team{Name: mt.Name, Workspace: m.Workspace.Name, Budget: b}
+		for _, r := range mt.Roles {
+			t.Roles = append(t.Roles, api.Role{Name: r.Name, Replicas: r.Replicas})
+		}
+		live := api.CountAlive(d.store.ListSessionsByTeam(t.Workspace, t.Name))
+		declared := 0
+		for i := range t.Roles {
+			declared += t.Roles[i].Replicas
+		}
+		if resp := d.admitGrowth(t, "", declared-live, admission.TriggerApply); resp != nil {
+			return *resp
+		}
+	}
+
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
@@ -693,6 +741,8 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		result = d.store.ListEndpoints()
 	case "policies", "policy":
 		result = d.store.ListPolicies()
+	case "budgets", "budget":
+		result = d.budgetRows()
 	default:
 		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}
@@ -834,25 +884,53 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("role is required; available roles: %v", names)}
 	}
 
+	// Role existence is checked BEFORE the budget gate and before the
+	// mutation. It used to be checked after UpdateTeam, which was harmless
+	// while nothing else could refuse; with a budget gate in front of the
+	// mutation, a mistyped role name would otherwise report a budget error
+	// instead of "role not found". The scan reads the snapshot GetTeam
+	// already returned.
+	old := -1
+	for _, r := range t.Roles {
+		if r.Name == p.Role {
+			old = r.Replicas
+			break
+		}
+	}
+	if old < 0 {
+		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+	}
+
+	// A scale-down adds nothing and is never refused: shedding sessions is
+	// how an operator frees headroom.
+	if resp := d.admitGrowth(t, p.Role, p.Replicas-old, admission.TriggerScale); resp != nil {
+		return *resp
+	}
+
+	// Then the declaration clause, which the spawn gate above cannot see:
+	// it compares LIVE sessions, and live can sit below declared (a crashed
+	// replica, a role in backoff). Second rather than first because when
+	// both hold, the spawn gate's message is the more specific one; this
+	// gate exists for the window where only it can refuse. See
+	// admitDeclaration.
+	if resp := d.admitDeclaration(t, p.Role, p.Replicas, old); resp != nil {
+		return *resp
+	}
+
 	// Commit the replica change to the live team under the store lock.
 	// Pre-fix, this mutated a pointer returned by GetTeam — which used
 	// to alias store state. Now GetTeam returns a snapshot, so scaling
 	// must go through UpdateTeam. See orc finding-032.
-	var found bool
 	if err := d.store.UpdateTeam(p.TeamKey, func(live *api.Team) error {
 		for i := range live.Roles {
 			if live.Roles[i].Name == p.Role {
 				live.Roles[i].Replicas = p.Replicas
-				found = true
 				return nil
 			}
 		}
 		return nil
 	}); err != nil {
 		return Response{Error: err.Error()}
-	}
-	if !found {
-		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
 	}
 
 	d.teamCtrl.ReconcileOnce()
@@ -921,6 +999,16 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		Command: p.RuntimeCommand,
 		Args:    p.RuntimeArgs,
 		Script:  p.Script,
+	}
+
+	// An ad-hoc run bypasses the controller entirely, so a controller-only
+	// gate would leave a real hole: --team can name a team that declares a
+	// budget. A run into a team with no Team record (the default
+	// default/adhoc/adhoc) declares no budget and is admitted unchanged.
+	if t, gerr := d.store.GetTeam(p.Workspace + "/" + p.Team); gerr == nil {
+		if resp := d.admitGrowth(t, p.Role, 1, admission.TriggerRun); resp != nil {
+			return *resp
+		}
 	}
 
 	sess := &api.Session{

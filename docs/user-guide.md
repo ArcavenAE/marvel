@@ -170,6 +170,90 @@ adapter (claude, forestage, generic). They coexist in the same team.
 Claude Code, workers run forestage with personas, and a monitor runs
 a shell script for health scraping.
 
+### With a team budget
+
+```yaml
+workspace:
+  name: fanout
+
+teams:
+  - name: crew
+    budget:
+      max_sessions: 6
+      max_tokens: 2000000
+      on_unmeasured: admit   # optional; this is the default
+    roles:
+      - name: crew
+        replicas: 3
+        runtime:
+          image: claude
+          command: claude
+          mode: headless
+          prompt: "review the diff"
+```
+
+A budget is a ceiling marvel will refuse to cross. It is the only thing
+that turns a measured number into a refusal, so **a team with no budget
+block declares no gate** and behaves exactly as it did before budgets
+existed.
+
+Two dimensions are enforced today.
+
+`max_sessions` caps live sessions across the whole team: every role, plus
+ad-hoc `marvel run` sessions attributed to the team. It is counted from
+marvel's own records, so it is exact before a spawn and survives a daemon
+restart. The sum of your declared replicas has to fit under it, and a
+manifest that declares more is refused at parse time; so is a
+`marvel scale` that would push the sum over it.
+
+**A rolling shift is the one exemption.** `marvel shift` starts the new
+generation beside the old and drains the old afterwards, so live sessions
+can reach twice a role's replicas for the length of the rotation, and the
+ceiling does not refuse it: replacing a session is not growth, and refusing
+the overlap would mean a team sitting at its ceiling could never rotate.
+`marvel get budgets` says so in the NOTE column while a shift is running.
+If you are sizing `max_sessions` against a hard external concurrency quota,
+size for that overlap, or avoid shifting a team that sits at its ceiling.
+
+`max_tokens` caps prompt plus output plus reasoning tokens, and it counts
+only the sessions marvel can observe: token usage arrives on a harness
+stream, and only a stream-capable harness in headless mode publishes one
+(claude, codex, opencode today). A team where no role can report is refused
+at apply time rather than accepted with a ceiling nothing can ever report
+against; a `generic` role declaring `mode: headless` does not count, because
+that adapter has no stream to read. **It is a since-accounting-started
+budget** — the meter lives in the daemon's memory, so the window restarts
+with the daemon and with `marvel daemon reexec`. Every figure marvel prints
+for it carries that window.
+
+`on_unmeasured` decides what a declared clause does when the meter cannot
+answer at all, which happens before a headless role's first request lands.
+The default admits and says so with an `admission.unmeasured` event, on the
+grounds that you declared a ceiling on a dimension rather than "refuse when
+unmeasurable". Set it to `refuse` if you want the fail-closed posture.
+
+A refusal is never silent. The command fails with the arithmetic, the event
+ring records it, and `marvel get budgets` shows where the team stands:
+
+```bash
+marvel scale fanout/crew --role crew --replicas 40
+# Error: fanout/crew: refused 37 of 37 spawn(s) for role crew: 3 live + 37
+# requested sessions exceeds max_sessions=6 (trigger=scale). Nothing changed;
+# raise the budget in the manifest or free headroom first
+
+marvel get budgets
+marvel events --kind admission.refused
+```
+
+Scaling down is never refused, and replacing a crashed replica is never
+refused: a budget is a ceiling on what you ask for, not a brake on
+recovery.
+
+**When to use:** Any team an agent or a script can scale, where a runaway
+fan-out would collide on one API quota. See
+`examples/demo-act4-budget.yaml` for a walkthrough that needs no model
+auth.
+
 ## Managing sessions
 
 ### List sessions

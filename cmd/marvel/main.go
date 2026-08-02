@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -406,6 +407,7 @@ Examples:
   marvel events --kind agent.tool.call       # what the agents are doing
   marvel events --kind agent.session.ended   # per-session cost and timing
   marvel events --kind context.limit-unresolved  # why a CTX% cell is blank
+  marvel events --kind admission.refused     # spawns a team budget refused
   marvel events --warnings                   # only warning-severity events
   marvel --cluster desk events               # remote daemon via mrvl://`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -539,7 +541,7 @@ func getCmd() *cobra.Command {
 	var watchSec string
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
-		Short: "List resources (sessions, teams, workspaces, endpoints, policies)",
+		Short: "List resources (sessions, teams, workspaces, endpoints, policies, budgets)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("watch") {
@@ -593,6 +595,8 @@ func getResources(resourceType string) error {
 		return printEndpoints(resp.Result)
 	case "policies", "policy":
 		return printPolicies(resp.Result)
+	case "budgets", "budget":
+		return printBudgets(resp.Result)
 	default:
 		fmt.Println(string(resp.Result))
 	}
@@ -1736,6 +1740,66 @@ func printPolicies(data json.RawMessage) error {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Workspace, p.Name, version, len(p.Settings))
 	}
 	return w.Flush()
+}
+
+// printBudgets renders `marvel get budgets`: one row per declared budget
+// dimension, with what has been observed against it and that dimension's
+// state (ok, at-ceiling, refusing, unmetered). The surface that answers
+// "which dimension tripped and by how much" — the event says a refusal
+// happened, this says where the team stands. at-ceiling and refusing are
+// deliberately separate: a team sized at its ceiling refuses nothing.
+func printBudgets(data json.RawMessage) error {
+	var rows []admission.Row
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Println("no teams declare a budget")
+		return nil
+	}
+	fmt.Print(renderBudgetTable(rows))
+	return nil
+}
+
+// renderBudgetTable is the pure renderer, split out for the same reason
+// renderSessionTable is: the table's absence handling is worth asserting
+// without a daemon.
+func renderBudgetTable(rows []admission.Row) string {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Workspace != rows[j].Workspace {
+			return rows[i].Workspace < rows[j].Workspace
+		}
+		if rows[i].Team != rows[j].Team {
+			return rows[i].Team < rows[j].Team
+		}
+		return rows[i].Dimension < rows[j].Dimension
+	})
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tDIMENSION\tLIMIT\tOBSERVED\tHEADROOM\tSTATE\tWINDOW\tNOTE\n")
+	for _, r := range rows {
+		note := r.Note
+		if note == "" {
+			note = "-"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			r.Workspace, r.Team, r.Dimension, r.Limit, r.Observed, r.Headroom,
+			r.State, formatWindow(r.Window), note)
+	}
+	_ = w.Flush()
+	return buf.String()
+}
+
+// formatWindow renders how long a cumulative figure has been accumulating.
+// A count-shaped dimension has no window and renders a dash, as does a
+// dimension nothing has been measured for yet. The accountant is in-memory,
+// so this span restarts with the daemon; showing it is what keeps a reset
+// visible instead of silent.
+func formatWindow(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return time.Since(t).Round(time.Second).String()
 }
 
 // stripComments removes shell-style comments from CLI arguments.
