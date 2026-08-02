@@ -12,8 +12,11 @@ content: |
 
   1. **Environment construction at spawn** (BUILT): adapters construct
      the process environment; permission-through-environment.
-  2. **Runtime admission/metering** (MISSING): qiay admission control
-     is the first brick.
+  2. **Runtime admission/metering** (FIRST BRICK SHIPPED 2026-08-01):
+     qiay admission control landed in marvel PR #101 (internal/admission;
+     manifest-declared team budgets, gates at the operator verbs with a
+     reconciler backstop, refusals in events). See finding-009. Full
+     metering across the matrix rows remains open.
   3. **Mid-flight revocation** (MISSING): the M1 authority model is
      its prerequisite.
 

@@ -19,7 +19,9 @@ Enforcement has three loci, in maturity order:
 
 1. **Environment construction at spawn** (BUILT). Adapters construct the
    process environment; permission-through-environment.
-2. **Runtime admission and metering** (MISSING).
+2. **Runtime admission and metering** (FIRST BRICK SHIPPED). Manifest-
+   declared team budgets refuse over-budget work at the operator verbs
+   (`internal/admission`, PR #101); full metering remains open.
 3. **Mid-flight revocation** (MISSING). The M1 authority model is its
    prerequisite.
 
