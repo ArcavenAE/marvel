@@ -440,3 +440,62 @@ marvel describe session dev/squad-worker-g1-0
 
 Lower the `failure_threshold` or increase the `timeout` if agents need
 more time to initialize.
+
+### A spawn was refused
+
+Two different conditions hold a role back, and they look alike from the
+outside. Tell them apart first:
+
+```bash
+marvel get budgets                                  # where each ceiling stands
+marvel events --kind admission.refused              # a budget refused it
+marvel events --kind health.crashloop-backoff       # a crash loop is cooling
+marvel describe team fanout/crew                    # the declared budget
+```
+
+A budget refusal names its arithmetic, so the fix is usually visible in the
+message. `marvel get budgets` gives the standing picture:
+
+```
+WORKSPACE  TEAM  DIMENSION     LIMIT    OBSERVED  HEADROOM  STATE       WINDOW  NOTE
+fanout     crew  max_sessions  6        6         0         at-ceiling  -       -
+fanout     crew  max_tokens    2000000  412118    1587882   ok          14m3s   partial: some sessions unobserved, so this is a floor
+```
+
+Read the STATE column carefully, because two of its values look alike and
+mean different things:
+
+| STATE | Meaning |
+|---|---|
+| `ok` | Headroom left. |
+| `at-ceiling` | No headroom for growth, and nothing is being refused. This is the resting state of a healthy team, since declared replicas are allowed to equal the ceiling and replacing a crashed replica is exempt. |
+| `refusing` | A refusal is standing right now: the reconciler is holding a role back, and the NOTE column carries the arithmetic. Cross-check with `marvel describe team` (`Admission.held`) and `marvel events --kind admission.refused`. |
+| `unmetered` | Nothing has been measured for this dimension yet, so the figure is absence rather than zero. |
+
+A session row can also read OBSERVED above LIMIT with a `shift` note. That
+is a rotation in flight: the new generation runs beside the old, and a
+session ceiling exempts the overlap. It resolves itself when draining
+finishes.
+
+Two ways out of a session ceiling: raise `max_sessions` in the manifest and
+re-apply, or free headroom with `marvel scale ... --replicas N-1` (a
+scale-down is never refused). Either takes effect on the next reconcile
+tick, within a couple of seconds. There is no clear command and no resume
+verb, because the condition is recomputed from live state every tick.
+
+A token ceiling has no shedding move: retired spend stays counted, since a
+fan-out's cost is mostly in sessions that already exited. Killing sessions
+does not un-spend tokens. Raise `max_tokens` and re-apply.
+
+Two notes in the table matter for trust. `partial` means some contributing
+session was never observed, so the figure is a floor rather than a small
+number, which is why a refusal against it is still sound while an admission
+carries a caveat. `suspect` means the meter caught a cumulation violation
+and the figure may be inflated, so check `marvel daemon logs` before raising
+a ceiling on its account.
+
+One limit to know: `max_tokens` counts from when accounting started, and the
+meter lives in the daemon's memory. A daemon restart or `marvel daemon
+reexec` resets the window, and the daemon says so in its log at startup for
+every team that declares one. The `WINDOW` column dropping back near zero is
+the visible signal that it happened.

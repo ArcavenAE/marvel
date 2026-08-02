@@ -384,3 +384,45 @@ func TestUpdateSessionHeartbeatStampsContextAt(t *testing.T) {
 		t.Errorf("a heartbeat invented a window, a token count, or a request count: %+v", got.SessionContext)
 	}
 }
+
+// TestCloneTeamCopiesBudget pins the store's snapshot contract for the two
+// fields aae-orc-qiay added. Both are flat value structs, so cloneTeam's
+// `out := *t` already deep-copies them — this test is what will fail loudly
+// if either later grows a slice, map, or pointer and nobody extends the
+// clone. See go.md rule 12 and orc finding-032.
+func TestCloneTeamCopiesBudget(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	if err := s.CreateWorkspace(&Workspace{Name: "fanout", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := s.CreateTeam(&Team{
+		Name:      "crew",
+		Workspace: "fanout",
+		Roles:     []Role{{Name: "crew", Replicas: 3, Runtime: Runtime{Command: "sleep"}}},
+		Budget:    Budget{MaxSessions: 6, MaxTokens: 2_000_000},
+		Admission: AdmissionState{Held: true, Role: "crew", Reason: "refused"},
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+
+	snap, err := s.GetTeam("fanout/crew")
+	if err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	snap.Budget.MaxSessions = 999
+	snap.Budget.OnUnmeasured = UnmeasuredRefuse
+	snap.Admission = AdmissionState{}
+
+	live, err := s.GetTeam("fanout/crew")
+	if err != nil {
+		t.Fatalf("get team again: %v", err)
+	}
+	if live.Budget.MaxSessions != 6 || live.Budget.OnUnmeasured != "" {
+		t.Errorf("mutating a snapshot changed store state: %+v", live.Budget)
+	}
+	if !live.Admission.Held || live.Admission.Role != "crew" {
+		t.Errorf("mutating a snapshot cleared the store's admission state: %+v", live.Admission)
+	}
+}

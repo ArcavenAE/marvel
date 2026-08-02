@@ -259,12 +259,19 @@ type ShiftState struct {
 
 // Team declares desired state: a cohesive unit of agents with heterogeneous roles.
 type Team struct {
-	Name       string     `toml:"name"`
-	Workspace  string     `toml:"workspace"`
-	Roles      []Role     `toml:"role"`
+	Name      string `toml:"name"`
+	Workspace string `toml:"workspace"`
+	Roles     []Role `toml:"role"`
+	// Budget is the team's declared resource ceiling. The zero value
+	// declares no gate, which is every manifest written before this field
+	// existed. See budget.go and aae-orc-qiay.
+	Budget     Budget     `toml:"budget,omitempty"`
 	Generation int64      `toml:"-"`
 	Shift      ShiftState `toml:"-"`
-	CreatedAt  time.Time
+	// Admission is the standing admission condition the reconciler
+	// recomputes each tick. Status, not spec — same treatment as Shift.
+	Admission AdmissionState `toml:"-"`
+	CreatedAt time.Time
 }
 
 // Endpoint is a stable name for a session role (service equivalent).

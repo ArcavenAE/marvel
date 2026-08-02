@@ -485,6 +485,12 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 	st.spend.CacheReadIn += s.CacheReadIn
 	st.spend.CacheCreationIn += s.CacheCreationIn
 	st.spend.ReasoningOut += s.ReasoningOut
+	// Sample.Occupancy applies the feed's Layout, so this is the one prompt
+	// figure that is layout-independent once accumulated. It is defined only
+	// on a non-terminal sample; every call site here sits after fold's
+	// terminal early-return, and foldTerminalLocked adds no tokens of its
+	// own, so nothing is missed and nothing terminal is folded.
+	st.spend.PromptTokens += s.Occupancy()
 	st.spend.Requests++
 	if s.CostUSD != nil {
 		st.spend.CostUSD += *s.CostUSD
@@ -561,6 +567,7 @@ func (a *Accountant) forgetLocked(agentID string) {
 	ts.retired.CacheReadIn += st.spend.CacheReadIn
 	ts.retired.CacheCreationIn += st.spend.CacheCreationIn
 	ts.retired.ReasoningOut += st.spend.ReasoningOut
+	ts.retired.PromptTokens += st.spend.PromptTokens
 	ts.retired.CostUSD += st.spend.CostUSD
 	ts.retired.Requests += st.spend.Requests
 	if st.spend.CostReported {
@@ -678,6 +685,7 @@ func (a *Accountant) TeamSpend(workspace, team string) TeamTotals {
 		out.CacheReadIn += st.spend.CacheReadIn
 		out.CacheCreationIn += st.spend.CacheCreationIn
 		out.ReasoningOut += st.spend.ReasoningOut
+		out.PromptTokens += st.spend.PromptTokens
 		out.CostUSD += st.spend.CostUSD
 		out.Requests += st.spend.Requests
 		if st.spend.CostReported {

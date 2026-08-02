@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 )
 
@@ -208,5 +209,101 @@ func TestSortSessionsByCPUAndRSS(t *testing.T) {
 	sortSessions(sessions, &watchSort{column: "rss", desc: true})
 	if sessions[0].Name != "a" {
 		t.Errorf("rss desc put %q first, want a", sessions[0].Name)
+	}
+}
+
+// budgetRow returns one rendered row keyed by column name, so a test asserts
+// on cells rather than on whitespace. Every cell in this table is non-empty
+// (absence renders as a dash), so splitting on fields is unambiguous.
+func budgetRow(t *testing.T, table, dimension string) map[string]string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
+	header := strings.Fields(lines[0])
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < len(header) || fields[2] != dimension {
+			continue
+		}
+		out := make(map[string]string, len(header))
+		for i, h := range header {
+			if h == "NOTE" {
+				// The note is prose and holds spaces, so it takes the rest.
+				out[h] = strings.Join(fields[i:], " ")
+				break
+			}
+			out[h] = fields[i]
+		}
+		return out
+	}
+	t.Fatalf("no %s row in:\n%s", dimension, table)
+	return nil
+}
+
+// TestRenderBudgetTable covers `marvel get budgets`, the surface that answers
+// which dimension tripped and by how much. Its absence handling matters for
+// the same reason CTX%'s does: a token figure nothing has measured must not
+// render as headroom the operator does not have.
+func TestRenderBudgetTable(t *testing.T) {
+	rows := []admission.Row{
+		{
+			Workspace: "fanout", Team: "crew", Dimension: api.DimMaxTokens,
+			Limit: 2000000, Observed: 412118, Headroom: 1587882,
+			State: admission.RowOK, Window: time.Now().UTC().Add(-14 * time.Minute),
+			Note: "partial: some sessions unobserved, so this is a floor",
+		},
+		{
+			Workspace: "fanout", Team: "crew", Dimension: api.DimMaxSessions,
+			Limit: 6, Observed: 6, Headroom: 0, State: admission.RowAtCeiling,
+		},
+	}
+	table := renderBudgetTable(rows)
+
+	// Sorted by dimension within a team, so max_sessions comes first.
+	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d line(s), want a header and two rows:\n%s", len(lines), table)
+	}
+	if !strings.Contains(lines[1], string(api.DimMaxSessions)) {
+		t.Errorf("first row = %q, want max_sessions (rows sort by dimension)", lines[1])
+	}
+
+	sessions := budgetRow(t, table, string(api.DimMaxSessions))
+	// No headroom is not a refusal: a team whose declared replicas equal its
+	// ceiling sits here permanently and refuses nothing.
+	if sessions["STATE"] != admission.RowAtCeiling {
+		t.Errorf("STATE = %q, want %q with no headroom and nothing refused", sessions["STATE"], admission.RowAtCeiling)
+	}
+	if sessions["HEADROOM"] != "0" {
+		t.Errorf("HEADROOM = %q, want 0", sessions["HEADROOM"])
+	}
+	// A count dimension accumulates over no window, so it must render
+	// absence rather than invent one.
+	if sessions["WINDOW"] != "-" {
+		t.Errorf("WINDOW = %q for a count dimension, want a dash", sessions["WINDOW"])
+	}
+	if sessions["NOTE"] != "-" {
+		t.Errorf("NOTE = %q with nothing to say, want a dash", sessions["NOTE"])
+	}
+
+	tokens := budgetRow(t, table, string(api.DimMaxTokens))
+	if tokens["HEADROOM"] != "1587882" {
+		t.Errorf("HEADROOM = %q, want 1587882", tokens["HEADROOM"])
+	}
+	if tokens["WINDOW"] == "-" {
+		t.Errorf("WINDOW = %q for a cumulative dimension, want the elapsed span", tokens["WINDOW"])
+	}
+	if !strings.Contains(tokens["NOTE"], "partial") {
+		t.Errorf("NOTE = %q, want the partial-total notice", tokens["NOTE"])
+	}
+}
+
+// TestFormatWindow: a dimension that accumulates over no window renders
+// absence, never a zero duration that would read as "just reset".
+func TestFormatWindow(t *testing.T) {
+	if got := formatWindow(time.Time{}); got != "-" {
+		t.Errorf("formatWindow(zero) = %q, want %q", got, "-")
+	}
+	if got := formatWindow(time.Now().UTC().Add(-90 * time.Second)); got == "-" {
+		t.Errorf("formatWindow(90s ago) = %q, want an elapsed duration", got)
 	}
 }

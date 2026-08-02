@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
@@ -38,13 +39,39 @@ type Controller struct {
 	// RehydrateRoleHealth at daemon start. See aae-orc-qdew.
 	roleHealth map[string]*RoleHealth
 
+	// admissionHolds latches the last emitted admission Verdict.Key() per
+	// role so a standing refusal emits one event per transition rather than
+	// one per reconcile tick. Keyed like roleHealth ("workspace/team/role").
+	//
+	// In-memory only, deliberately. RoleHealth persists because a restart
+	// count is history a restart must not erase; an admission hold is
+	// derived from live state and recomputed within one tick of daemon
+	// start, so a durable copy could only outlive its cause. Re-emitting
+	// once after a restart is correct: the operator restarted the daemon and
+	// the condition is still true. See aae-orc-qiay.
+	admissionHolds map[string]string
+
 	// ShiftTimeout bounds how long a single shift may run before the
 	// reconciler declares it stuck and aborts it. Zero uses
 	// defaultShiftTimeout. See aae-orc-qkfl.
 	ShiftTimeout time.Duration
 
+	// Snapshots supplies the measured state a full admission check needs.
+	// Nil is safe and means count-shaped clauses only, which is all the
+	// reconciler ever evaluates anyway (R2 in internal/admission: gating
+	// repair on a monotonic meter would be an outage). It exists for
+	// InitiateShift, whose cumulative clause needs the daemon's meter, and
+	// keeps this package free of any usage import.
+	Snapshots Snapshotter
+
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
+}
+
+// Snapshotter supplies the measured state one admission check evaluates.
+// The daemon implements it over its usage accountant.
+type Snapshotter interface {
+	AdmissionSnapshot(t api.Team) admission.Snapshot
 }
 
 // RoleHealth is the per-role crash-loop tracking state.
@@ -76,9 +103,10 @@ const (
 // NewController creates a team controller.
 func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
 	return &Controller{
-		store:      store,
-		sessMgr:    sessMgr,
-		roleHealth: make(map[string]*RoleHealth),
+		store:          store,
+		sessMgr:        sessMgr,
+		roleHealth:     make(map[string]*RoleHealth),
+		admissionHolds: make(map[string]string),
 	}
 }
 
@@ -205,6 +233,7 @@ func (c *Controller) ClearRoleHealthForTeam(workspace, team string) {
 			c.forgetRoleHealth(k)
 		}
 	}
+	c.dropAdmissionHolds(prefix)
 }
 
 // ClearRoleHealthForWorkspace deletes crash-loop state for every role
@@ -220,6 +249,7 @@ func (c *Controller) ClearRoleHealthForWorkspace(workspace string) {
 			c.forgetRoleHealth(k)
 		}
 	}
+	c.dropAdmissionHolds(prefix)
 }
 
 // ReconcileOnce runs one reconciliation pass for all teams.
@@ -315,6 +345,10 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	// See aae-orc-69i2.
 	c.reconcileOrphanedSessions(t)
 
+	// Drop a recorded admission condition this process never refused, before
+	// any role is reconciled. See reconcileAdmissionState.
+	c.reconcileAdmissionState(t)
+
 	if t.Shift.Phase != api.ShiftNone {
 		c.reconcileShift(t)
 		return
@@ -351,6 +385,7 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 		roleKey := t.Workspace + "/" + t.Name + "/" + role
 		delete(c.roleHealth, roleKey)
 		c.forgetRoleHealth(roleKey)
+		delete(c.admissionHolds, roleKey)
 		log.Printf("reconcile: role %s removed from team %s, drained %d session(s)", role, t.Key(), n)
 		events.Emit(c.Events, events.Event{
 			Kind:      events.KindRoleRemoved,
@@ -376,6 +411,15 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 		}
 	}
 
+	// An admission hold describes a refusal that is still happening. Drop it
+	// as soon as the gate below is not reached at all — the role is
+	// satisfied, the budget was removed from the manifest, or a shift took
+	// over — so `admission.cleared` fires and Team.Admission stops naming a
+	// condition that has passed.
+	if actual >= desired || !t.Budget.Declared() || t.Shift.Phase != api.ShiftNone {
+		c.clearAdmissionHold(t, role.Name)
+	}
+
 	if actual < desired {
 		// Respect crash-loop backoff. If the role is cooling down from
 		// a recent restart, hold off on spawning replacements until the
@@ -389,6 +433,31 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 		roleKey := t.Workspace + "/" + t.Name + "/" + role.Name
 		if rh, ok := c.roleHealth[roleKey]; ok && c.nowUTC().Before(rh.BackoffUntil) {
 			return
+		}
+		// Admission backstop against a team-declared budget (aae-orc-qiay,
+		// resource-matrix enforcement locus 2). The primary refusal point is
+		// the operator's verb, where nothing has been committed yet; this
+		// catches the state a manifest declaration cannot see, chiefly a
+		// declared count that is itself over the ceiling after an
+		// out-of-band write or two racing scale calls.
+		//
+		// Session-count only: the token clause is monotonic within a daemon
+		// lifetime, so gating repair on it would make an over-budget team
+		// permanently unrepairable (R2). Placed AFTER the backoff gate so a
+		// cooling role emits no admission event (backoff is the older,
+		// stronger condition), and BEFORE ClearCrashedForRole because that
+		// call mutates store state: refusing after it would delete this
+		// role's Crashed markers every tick while never spawning.
+		//
+		// Skipped entirely while a shift is in progress, so a launching
+		// generation's transient double count cannot refuse a non-shifting
+		// role's legitimate repair (R5).
+		if t.Budget.Declared() && t.Shift.Phase == api.ShiftNone {
+			granted := c.admit(t, role, desired-actual)
+			if granted <= 0 {
+				return
+			}
+			desired = actual + granted
 		}
 		// Crash markers from the reap path have done their observability
 		// job by now (operators saw them during the backoff window). The
@@ -702,6 +771,23 @@ func (c *Controller) InitiateShift(teamKey, role string) error {
 		roles = []string{role}
 	} else {
 		roles = shiftOrder(t.Roles)
+	}
+
+	// Admission, before any shift state is written. See admitShift for why
+	// the gate is here and not in shiftLaunch.
+	if t.Budget.Declared() {
+		if v := c.admitShift(&t, roles); v.Refused() {
+			reason := v.Reason(admission.TriggerShift)
+			log.Printf("admission: %s shift refused: %s", teamKey, reason)
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindAdmissionRefused,
+				Severity:  events.SeverityWarning,
+				Workspace: t.Workspace,
+				Team:      t.Name,
+				Message:   reason,
+			})
+			return fmt.Errorf("team %s: %s", teamKey, reason)
+		}
 	}
 
 	oldGen := t.Generation

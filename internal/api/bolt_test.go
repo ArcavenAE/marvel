@@ -434,3 +434,83 @@ func TestBoltStore_HeartbeatContextReadingSurvivesRehydrate(t *testing.T) {
 		t.Error("LastHeartbeat dropped")
 	}
 }
+
+// TestBoltStore_BudgetRoundTripsAndOldRecordsStayOpen is the
+// backward-compatibility proof for aae-orc-qiay, and the reason no
+// boltSchemaVersion bump is required.
+//
+// Records are marshalled whole as JSON, so a declared budget round-trips
+// with no bucket or schema work, and a teams record written by a binary that
+// never heard of budgets decodes to the zero Budget. Zero means undeclared,
+// undeclared means no gate: an operator upgrading marvel under a running
+// fleet gets identical behavior until they edit a manifest. A schema bump
+// would instead refuse the existing state file outright, because Rehydrate
+// rejects a lower on-disk version as well as a higher one.
+func TestBoltStore_BudgetRoundTripsAndOldRecordsStayOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "fanout", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := s1.CreateTeam(&Team{
+		Name:      "crew",
+		Workspace: "fanout",
+		Roles:     []Role{{Name: "crew", Replicas: 3, Runtime: Runtime{Name: "sleep", Command: "sleep"}}},
+		Budget:    Budget{MaxSessions: 6, MaxTokens: 2_000_000, OnUnmeasured: UnmeasuredRefuse},
+		// A team with no budget, written alongside, stands in for every
+		// record an older binary wrote: the field is simply absent.
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create budgeted team: %v", err)
+	}
+	if err := s1.CreateTeam(&Team{
+		Name:      "plain",
+		Workspace: "fanout",
+		Roles:     []Role{{Name: "worker", Replicas: 1, Runtime: Runtime{Name: "sleep", Command: "sleep"}}},
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create plain team: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+
+	got, err := s2.GetTeam("fanout/crew")
+	if err != nil {
+		t.Fatalf("get budgeted team after rehydrate: %v", err)
+	}
+	if got.Budget.MaxSessions != 6 || got.Budget.MaxTokens != 2_000_000 {
+		t.Errorf("budget after rehydrate = %+v, want max_sessions 6 and max_tokens 2000000", got.Budget)
+	}
+	if got.Budget.Unmeasured() != UnmeasuredRefuse {
+		t.Errorf("on_unmeasured after rehydrate = %q, want %q", got.Budget.Unmeasured(), UnmeasuredRefuse)
+	}
+
+	plain, err := s2.GetTeam("fanout/plain")
+	if err != nil {
+		t.Fatalf("get plain team after rehydrate: %v", err)
+	}
+	if plain.Budget.Declared() {
+		t.Errorf("a record with no budget rehydrated as a gate: %+v", plain.Budget)
+	}
+}
+
+// TestBoltSchemaVersionUnchangedByBudget states the decision as an
+// assertion: adding a JSON field to a record is read-compatible in both
+// directions, so this slice does not touch the version.
+func TestBoltSchemaVersionUnchangedByBudget(t *testing.T) {
+	t.Parallel()
+	if boltSchemaVersion != 1 {
+		t.Errorf("boltSchemaVersion = %d; adding the Budget field must not bump it, because Rehydrate refuses a lower on-disk version too", boltSchemaVersion)
+	}
+}

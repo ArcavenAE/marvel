@@ -373,6 +373,37 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	return plan
 }
 
+// CanStreamRole reports whether a manifest role would launch a session
+// marvel can read a usage stream from. It asks the same registry, and the
+// same adapter question, that openSink asks at spawn, so the apply-time
+// answer cannot drift from the spawn-time one.
+//
+// The pre-flight caller (a token budget with no role that could report
+// against it) has no session yet, so the LaunchContext carries only the
+// resolved runtime. SupportsStream is documented to depend on the runtime
+// and the role rather than on the sink, which is what makes that legal.
+func (m *Manager) CanStreamRole(r api.ManifestRole) bool {
+	rt := api.Runtime{
+		Name:    r.Runtime.Image,
+		Command: r.Runtime.Command,
+		Args:    r.Runtime.Args,
+		Script:  r.Runtime.Script,
+		Mode:    r.Runtime.Mode,
+		Prompt:  r.Runtime.Prompt,
+	}
+	if rt.Name == "" {
+		rt.Name = rt.Command
+	}
+	streamer, ok := m.adapters.Resolve(rt.Name).(runtime.StreamCapable)
+	if !ok {
+		return false
+	}
+	return streamer.SupportsStream(&runtime.LaunchContext{
+		Session: &api.Session{Runtime: rt},
+		Role:    &api.Role{Name: r.Name, Replicas: r.Replicas, Runtime: rt},
+	})
+}
+
 // openSink creates the FIFO for a stream-capable adapter, or returns nil.
 // A sink that cannot be created is logged and skipped: an unobservable
 // session is still a working session.

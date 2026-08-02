@@ -1,0 +1,87 @@
+# Marvel demo — Act 4, admission against a team-declared budget.
+#
+# Three crew members under a six-session ceiling. The budget block is the
+# operator's declaration that a metered value may refuse a spawn for this
+# team: no budget block means no gate, and marvel behaves exactly as it did
+# before the feature existed.
+#
+# The beat is the fan-out. Ask for forty replicas and the verb fails, the
+# store keeps the number that is still true, and the event ring carries the
+# arithmetic. Nothing is left in a state that can never be satisfied.
+#
+# `sleep` stands in for any long-running agent process. Every beat below is
+# deterministic and needs no model auth, because a session ceiling is counted
+# from the store rather than measured from a harness stream.
+#
+# Requires: `sleep` on PATH (always present).
+#
+# Setup:
+#   just build
+#   ./bin/marvel stop --teardown
+#   rm -f ~/.marvel/state/marvel.bolt
+#   ./bin/marvel daemon &
+#
+# 1. Declared and satisfied. Nothing refused.
+#   ./bin/marvel work examples/demo-act4-budget.toml
+#   ./bin/marvel get sessions                     # three crew, running
+#   ./bin/marvel get budgets                      # limit 6, observed 3, headroom 3, ok
+#   ./bin/marvel events --kind admission.refused  # "no events"
+#
+# 2. The fan-out is refused at the verb.
+#   ./bin/marvel scale fanout/crew --role crew --replicas 40
+#   # Error: fanout/crew: refused 37 of 37 spawn(s) for role crew: 3 live +
+#   # 37 requested sessions exceeds max_sessions=6 (trigger=scale). Nothing
+#   # changed; raise the budget in the manifest or free headroom first
+#   ./bin/marvel get teams                        # REPLICAS still 3
+#   ./bin/marvel get sessions                     # still three; no retry storm
+#   ./bin/marvel events --kind admission.refused  # the arithmetic, once
+#
+# 3. Which dimension, and by how much.
+#   ./bin/marvel get budgets                      # per-dimension limit/observed/headroom
+#   ./bin/marvel describe team fanout/crew        # the declared budget, verbatim
+#
+# 4. The declaration clause, before any daemon state is touched.
+#   # edit this file: replicas = 40, leave max_sessions = 6
+#   ./bin/marvel work examples/demo-act4-budget.toml
+#   # Error: parse manifest: parse manifest: team[0] declares 40 replicas
+#   # across 1 role(s) but budget.max_sessions is 6
+#   # (The prefix is doubled because handleApply re-wraps an error that is
+#   # already qualified. Pre-existing, and every manifest validation rule
+#   # prints it that way.)
+#
+# 5. Recovery is one command.
+#   # edit this file: max_sessions = 40
+#   ./bin/marvel work examples/demo-act4-budget.toml
+#   ./bin/marvel get sessions                     # forty crew
+#
+# 5b (optional, auth-dependent, spends real quota). A token ceiling is
+# measured from harness streams, so it needs a headless role on a real model.
+# Set a low max_tokens on examples/mixed-adapters.toml and watch
+# `marvel get budgets` fill in the OBSERVED and WINDOW columns, then refuse.
+# Note that max_tokens counts from when accounting started: the meter is
+# in-memory, so the window restarts with the daemon.
+#
+# Cleanup:
+#   ./bin/marvel stop --teardown
+
+[workspace]
+name = "fanout"
+
+[[team]]
+name = "crew"
+
+  [team.budget]
+  # Live sessions across the whole team: every role, plus ad-hoc
+  # `marvel run` sessions attributed to the team. A rolling shift is exempt,
+  # so live can read up to twice a role's replicas while the new generation
+  # runs beside the old.
+  max_sessions = 6
+
+  [[team.role]]
+  name = "crew"
+  replicas = 3
+
+    [team.role.runtime]
+    image = "generic"
+    command = "sleep"
+    args = ["3600"]

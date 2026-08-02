@@ -31,7 +31,22 @@ type Spend struct {
 	CacheReadIn     int
 	CacheCreationIn int
 	ReasoningOut    int
-	CostUSD         float64
+	// PromptTokens is the layout-normalized prompt token count: the sum of
+	// each request's own prompt size, In alone under a subsumptive layout
+	// and In + the cache classes under an additive one.
+	//
+	// It is the only prompt figure a caller can add up without knowing each
+	// harness's layout. The raw class fields are accumulated as the feed
+	// reported them and Spend records no layout, so In + CacheReadIn +
+	// CacheCreationIn double counts a subsumptive feed (codex) while In +
+	// Out alone omits most of the input volume of an additive one (claude,
+	// opencode). A budget summing the raw classes would therefore refuse a
+	// codex team at roughly half its declared ceiling, silently.
+	//
+	// Includes subagent and non-primary-model samples, which are real spend
+	// against other context windows even though they never enter occupancy.
+	PromptTokens int
+	CostUSD      float64
 	// CostReported is false when the harness reports no cost at all
 	// (codex publishes none in its exec stream), which is distinct from
 	// reporting zero.

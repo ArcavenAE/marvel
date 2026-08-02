@@ -45,6 +45,21 @@ const (
 	// to "why is that column empty", and the fix is usually one
 	// runtime.context_window line in the manifest.
 	KindContextLimitUnresolved Kind = "context.limit-unresolved"
+	// KindAdmissionRefused records that marvel refused to spawn against a
+	// team-declared budget, with the arithmetic in the Message. Fires at
+	// every refusal point: the operator's verb (apply, scale, run, shift)
+	// and the reconciler backstop. Edge-triggered on the verdict in the
+	// reconciler, one per operator action at a verb. See aae-orc-qiay.
+	KindAdmissionRefused Kind = "admission.refused"
+	// KindAdmissionCleared records that a standing admission refusal stopped
+	// applying, so a role held back by a budget may grow again.
+	KindAdmissionCleared Kind = "admission.cleared"
+	// KindAdmissionUnmeasured records that a declared clause was admitted
+	// against a total the meter could not supply. The operator declared a
+	// ceiling on a dimension, not "refuse when unmeasurable", so the default
+	// admits — audibly, here — and budget.on_unmeasured = "refuse" is how
+	// they ratify the fail-closed posture instead.
+	KindAdmissionUnmeasured Kind = "admission.unmeasured"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
