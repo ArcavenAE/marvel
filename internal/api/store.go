@@ -502,7 +502,7 @@ func (s *Store) UpdatePolicy(key string, fn func(*Policy) error) error {
 // dominant write rate for marvel's bbolt usage; if it surfaces as a
 // performance issue, batch by waiting N heartbeats before persisting
 // (or move heartbeat state into a separate in-memory-only path).
-func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error {
+func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64, model string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[key]
@@ -511,6 +511,12 @@ func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64) error
 	}
 	sess.ContextPercent = contextPercent
 	sess.LastHeartbeat = time.Now().UTC()
+	// A cooperative reporter that knows its model names it (the
+	// statusline feed does); one that doesn't sends "" and any
+	// prior reading stands.
+	if model != "" {
+		sess.ContextModel = model
+	}
 	// ContextAt is the single "measured" sentinel for the context column,
 	// shared with the usage accountant's path below. A cooperative
 	// heartbeat is a measurement too, so it stamps it.

@@ -1466,7 +1466,7 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 			less = sessions[i].Workspace < sessions[j].Workspace
 		case "state":
 			less = string(sessions[i].State) < string(sessions[j].State)
-		case "agent":
+		case "runtime":
 			ai, aj := sessions[i].Runtime.Name, sessions[j].Runtime.Name
 			if ai == "" {
 				ai = sessions[i].Runtime.Command
@@ -1475,6 +1475,17 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 				aj = sessions[j].Runtime.Command
 			}
 			less = ai < aj
+		case "llm":
+			less = sessions[i].ContextModel < sessions[j].ContextModel
+		case "health":
+			hi, hj := string(sessions[i].HealthState), string(sessions[j].HealthState)
+			if hi == "" {
+				hi = "unknown"
+			}
+			if hj == "" {
+				hj = "unknown"
+			}
+			less = hi < hj
 		case "desk":
 			less = sessions[i].PaneID < sessions[j].PaneID
 		default:
@@ -1529,11 +1540,18 @@ func formatBytes(n int64) string {
 func renderSessionTable(sessions []api.Session) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tNAME\tSTATE\tHEALTH\tCTX%%\tCPU%%\tRSS\tDESK\tAGENT\n")
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tAGENT NAME\tSTATE\tHEALTH\tCTX%%\tCPU%%\tRSS\tDESK\tRUNTIME\tLLM\n")
 	for _, s := range sessions {
-		agent := s.Runtime.Name
-		if agent == "" {
-			agent = s.Runtime.Command
+		runtimeName := s.Runtime.Name
+		if runtimeName == "" {
+			runtimeName = s.Runtime.Command
+		}
+		// LLM is the model as the metering producer named it: the
+		// stream accountant's raw model for headless sessions, the
+		// statusline feed's display name for interactive ones.
+		llm := s.ContextModel
+		if llm == "" {
+			llm = "-"
 		}
 		// CTX% has two producers: the cooperative heartbeat RPC (the
 		// simulator) and the usage accountant fed by adapter streams.
@@ -1577,8 +1595,8 @@ func renderSessionTable(sessions []api.Session) string {
 		if health == "" {
 			health = "unknown"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, cpu, rss, desk, agent)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, cpu, rss, desk, runtimeName, llm)
 	}
 	_ = w.Flush()
 	return buf.String()
@@ -1593,12 +1611,13 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	if ws.showHelp {
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  Sort keys (toggle asc/desc):\n")
-		fmt.Fprintf(&buf, "    w  workspace      t  team          r  role\n")
-		fmt.Fprintf(&buf, "    g  generation     n  name          s  state\n")
-		fmt.Fprintf(&buf, "    c  context        d  desk          a  agent\n")
-		fmt.Fprintf(&buf, "    p  cpu            m  memory\n")
+		fmt.Fprintf(&buf, "    w  workspace      t  team          R  role\n")
+		fmt.Fprintf(&buf, "    g  generation     n  agent name    s  state\n")
+		fmt.Fprintf(&buf, "    c  context        d  desk          r  runtime\n")
+		fmt.Fprintf(&buf, "    l  llm            h  health\n")
+		fmt.Fprintf(&buf, "    p  cpu            m  memory (rss)\n")
 		fmt.Fprintf(&buf, "\n")
-		fmt.Fprintf(&buf, "    h  toggle help    q  quit\n")
+		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
 		return buf.String()
 	}
@@ -1609,7 +1628,7 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	} else {
 		sortLabel += " asc"
 	}
-	fmt.Fprintf(&buf, "sort: %s    h:help  q:quit\n\n", sortLabel)
+	fmt.Fprintf(&buf, "sort: %s    ?:help  q:quit\n\n", sortLabel)
 
 	sessions, err := fetchSessions()
 	if err != nil {
@@ -1687,7 +1706,11 @@ func watchSessionsLoop(interval time.Duration) error {
 			case 'n':
 				toggleSort(ws, "name", false)
 			case 'r':
+				toggleSort(ws, "runtime", false)
+			case 'R':
 				toggleSort(ws, "role", false)
+			case 'l':
+				toggleSort(ws, "llm", false)
 			case 'g':
 				toggleSort(ws, "generation", false)
 			case 't':
@@ -1696,11 +1719,11 @@ func watchSessionsLoop(interval time.Duration) error {
 				toggleSort(ws, "workspace", false)
 			case 's':
 				toggleSort(ws, "state", false)
-			case 'a':
-				toggleSort(ws, "agent", false)
 			case 'd':
 				toggleSort(ws, "desk", false)
 			case 'h':
+				toggleSort(ws, "health", false)
+			case '?':
 				ws.showHelp = !ws.showHelp
 			default:
 				continue

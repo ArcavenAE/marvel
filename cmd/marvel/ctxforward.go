@@ -47,12 +47,13 @@ type statuslinePayload struct {
 }
 
 // renderForward parses one statusline payload and returns the status text
-// to print plus the context percentage to forward (send=false when the
-// payload carries no forwardable figure). Pure so it is table-testable.
-func renderForward(raw []byte) (line string, pct float64, send bool) {
+// to print, the context percentage and model name to forward (send=false
+// when the payload carries no forwardable figure). Pure so it is
+// table-testable.
+func renderForward(raw []byte) (line string, pct float64, model string, send bool) {
 	var p statuslinePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "marvel ctx-forward: unreadable payload", 0, false
+		return "marvel ctx-forward: unreadable payload", 0, "", false
 	}
 
 	// Subagent shape: summarize the task rows. No RPC — the daemon has
@@ -70,17 +71,17 @@ func renderForward(raw []byte) (line string, pct float64, send bool) {
 				}
 			}
 		}
-		return fmt.Sprintf("agents %d/%d running · max CTX %.0f%%", running, len(p.Tasks), maxPct), 0, false
+		return fmt.Sprintf("agents %d/%d running · max CTX %.0f%%", running, len(p.Tasks), maxPct), 0, "", false
 	}
 
 	if p.ContextWindow == nil || p.ContextWindow.UsedPercentage == nil {
 		// Session too young to have a measurement. Show something
 		// stable rather than flickering an error.
-		return fmt.Sprintf("%s · CTX –", orUnknown(p.Model.DisplayName)), 0, false
+		return fmt.Sprintf("%s · CTX –", orUnknown(p.Model.DisplayName)), 0, "", false
 	}
 	pct = *p.ContextWindow.UsedPercentage
 	line = fmt.Sprintf("%s · CTX %.0f%% · $%.2f", orUnknown(p.Model.DisplayName), pct, p.Cost.TotalCostUSD)
-	return line, pct, true
+	return line, pct, p.Model.DisplayName, true
 }
 
 func orUnknown(s string) string {
@@ -101,7 +102,7 @@ func newCtxForwardCmd() *cobra.Command {
 				fmt.Println("marvel ctx-forward")
 				return nil
 			}
-			line, pct, send := renderForward(raw)
+			line, pct, model, send := renderForward(raw)
 			fmt.Println(line)
 
 			socket := os.Getenv("MARVEL_SOCKET")
@@ -113,6 +114,7 @@ func newCtxForwardCmd() *cobra.Command {
 			params, _ := json.Marshal(map[string]any{
 				"session_key":     workspace + "/" + session,
 				"context_percent": pct,
+				"model":           model,
 			})
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemon.SendRequest(socket, daemon.Request{
