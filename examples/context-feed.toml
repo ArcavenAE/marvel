@@ -1,0 +1,41 @@
+# Marvel example — cooperative context feed for interactive Claude Code.
+#
+# Interactive (TUI) sessions emit no parseable stream, so the usage
+# accountant cannot meter them and CTX% renders "-". context_feed =
+# "statusline" closes that gap: the projection layer injects Claude
+# Code's statusLine/subagentStatusLine hooks pointing at
+# `marvel ctx-forward`, which forwards the harness's OWN context figure
+# (raw occupancy, with the harness's own window as denominator) to the
+# heartbeat RPC. See marvel finding-011.
+#
+# The injected statusLine carries refreshInterval = 15 so the feed keeps
+# beating while the session idles; without it, statusline updates are
+# event-driven and an idle session would starve a heartbeat healthcheck.
+#
+# Composition rule: if the role's policy defines statusLine or
+# subagentStatusLine itself, the policy wins and marvel adds nothing.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/context-feed.toml
+#
+# Verify (after the first model turn):
+#   ./bin/marvel get sessions        # CTX% populates for the watcher
+#   ./bin/marvel describe session feed/watch-watcher-g1-0
+
+[workspace]
+name = "feed"
+
+[[team]]
+name = "watch"
+
+  [[team.role]]
+  name = "watcher"
+  replicas = 1
+  permissions = "plan"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+    context_feed = "statusline"

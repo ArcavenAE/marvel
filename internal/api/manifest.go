@@ -143,6 +143,9 @@ type ManifestRuntime struct {
 	Prompt  string      `toml:"prompt,omitempty" yaml:"prompt,omitempty"`
 	// ContextWindow overrides the model-to-limit table, in tokens.
 	ContextWindow int `toml:"context_window,omitempty" yaml:"context_window,omitempty"`
+	// ContextFeed opts an interactive session into cooperative context
+	// reporting. Only "statusline" is understood. See api.Runtime.
+	ContextFeed string `toml:"context_feed,omitempty" yaml:"context_feed,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -273,6 +276,11 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// denominator and a nonsense percentage; 0 means unset.
 			if r.Runtime.ContextWindow < 0 {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_window must be >= 0", i, j)
+			}
+			// Like permissions: empty means unset, but a non-empty typo
+			// would silently project nothing, so reject it here.
+			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
@@ -524,6 +532,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Mode:          mr.Runtime.Mode,
 				Prompt:        mr.Runtime.Prompt,
 				ContextWindow: mr.Runtime.ContextWindow,
+				ContextFeed:   mr.Runtime.ContextFeed,
 			}
 			if rt.Name == "" {
 				rt.Name = rt.Command

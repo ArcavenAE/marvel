@@ -58,7 +58,7 @@ Declared in TOML or YAML manifests, applied with `marvel work`.
 |---|---|---|
 | Namespace | **Workspace** | Isolation boundary: a project, team, or environment. Scopes every other resource. |
 | Pod | **Session** | The atomic unit. One tmux pane running one harness process. Lifecycle pending → running → succeeded/failed, plus crashed and crashloop-backoff. Restartable. |
-| Container | **Runtime** | The harness binary, args, and mode, plus `context_window` to override the model-to-window table for CTX%. `runtime` names the HARNESS (claude, codex, opencode), never the agent: `elem-runtime-names-harness`. |
+| Container | **Runtime** | The harness binary, args, and mode, plus `context_window` to override the model-to-window table for CTX%, and `context_feed = "statusline"` to give interactive claude sessions a cooperative CTX% feed via projected statusline hooks + `marvel ctx-forward` (finding-011, `examples/context-feed.toml`). `runtime` names the HARNESS (claude, codex, opencode), never the agent: `elem-runtime-names-harness`. |
 | Deployment | **Team** | Heterogeneous roles, each with its own runtime and replica count. Per-role scaling, shifts. Binds a supervisor to its agents. |
 | (none) | **Role** | One kind of agent within a team: name, replicas, runtime, restart policy, `max_restarts`, `permissions`, `dangerous_permissions`, `policy`, persona, identity. |
 | Service | **Endpoint** | A named record of `{name, workspace, team}` and nothing else. Created from a manifest `[[endpoint]]` section, read with `marvel get endpoints` and `marvel describe endpoint`. No role field, and no code resolves an endpoint to a session, so it is a name in the store rather than a routing target. Role-based routing waits on director (roadmap M2). |
