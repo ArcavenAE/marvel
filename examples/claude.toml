@@ -38,9 +38,15 @@ name = "claude-squad"
   replicas = 2
   permissions = "plan"
 
+    # context_feed gives these interactive (TUI) coders live CTX% in
+    # `marvel get sessions`: the projection layer injects statusline
+    # hooks that forward the harness's own context figure through
+    # `marvel ctx-forward` to the heartbeat RPC (finding-011). Each
+    # coder's pane also shows "model · CTX n% · $cost" at the bottom.
     [team.role.runtime]
     image = "claude"
     command = "claude"
+    context_feed = "statusline"
 
   [[team.role]]
   name = "supervisor"

@@ -141,20 +141,23 @@ demo-act1: build
     @echo "  ./bin/marvel work examples/demo-act1-roles-removed.toml"
     @echo "  ./bin/marvel events --kind role.removed"
 
-# Act 2 — Observe: run the three-harness matrix, print the event-watch commands
+# Act 2 — Observe: run the harness matrix (-p headless + -t TUI), print the event-watch commands
 demo-act2: build
-    @echo "==> Act 2 (Observe). Loading the {claude, codex, opencode} matrix..."
-    @echo "    Needs the three harness binaries and working auth for the agent stream."
+    @echo "==> Act 2 (Observe). Loading the {claude, codex, opencode} matrix + a TUI claude..."
+    @echo "    Role names carry the mode: -p = print/headless, -t = TUI (interactive)."
+    @echo "    Needs the harness binaries and working auth for the agent stream."
     ./bin/marvel work examples/mixed-adapters.toml
     @sleep 4
     @echo ""
-    @echo "==> Sessions (CPU% and RSS populate uniformly; CTX% is '-' for these harnesses):"
+    @echo "==> Sessions (CPU% and RSS populate uniformly; CTX% arrives per producer):"
     ./bin/marvel get sessions
     @echo ""
-    @echo "Watch the normalized agent stream across all three harnesses:"
+    @echo "Watch the normalized agent stream and both CTX% producers:"
     @echo "  ./bin/marvel events --workspace mixed"
     @echo "  ./bin/marvel events --kind agent.turn.completed    # tokens in/out per turn"
     @echo "  ./bin/marvel events --kind agent.session.ended     # per-session cost and duration"
+    @echo "  ./bin/marvel inject mixed/matrix-analyst-t-g1-0 'say only the word ready' -e"
+    @echo "  ./bin/marvel get sessions   # -p rows: stream accountant · -t row: statusline feed"
 
 # Act 3 — Control plane: project a policy, then re-project live with no restart
 demo-act3: build

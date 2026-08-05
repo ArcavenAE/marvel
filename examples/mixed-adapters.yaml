@@ -1,37 +1,27 @@
 # Marvel example — the harness matrix: three BYOA harnesses, one workspace,
-# one normalized event path.
+# one normalized event path, and both CTX% producers side by side.
 #
-# Each role runs a different agent harness headlessly. Marvel redirects each
-# harness's structured output into a FIFO, parses the harness-specific
-# dialect into the shared event vocabulary, and lands every event in the
-# daemon ring tagged with workspace/team/role/session. `marvel events` shows
-# all three harnesses in one stream.
-#
-#   claude   → claude-code stream-json  (internal/runtime/claudecode)
-#   codex    → codex exec --json        (internal/runtime/codex)
-#   opencode → opencode run --format json (internal/runtime/opencode)
+# YAML twin of mixed-adapters.toml — see that file's header for the full
+# walkthrough. Role-name convention: `-p` = print/headless (one-shot
+# prompt, parseable stream, CTX% via the stream-fed usage accountant),
+# `-t` = TUI (interactive, long-lived pane, CTX% via context_feed =
+# "statusline" and `marvel ctx-forward`, finding-011).
 #
 # Setup:
 #   cd ~/work/aae-orc/marvel
-#   ./marvel daemon &
-#   ./marvel work examples/mixed-adapters.yaml
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/mixed-adapters.yaml
 #
-# Verify (daemon log shows three adapters, each streaming its own format):
-#   session mixed/matrix-analyst-g1-0 streaming claude-code/stream-json
-#   session mixed/matrix-builder-g1-0 streaming codex/jsonl
-#   session mixed/matrix-scout-g1-0 streaming opencode/json
+# Verify (daemon log shows three streaming adapters; the -t role does not stream):
+#   session mixed/matrix-analyst-p-g1-0 streaming claude-code/stream-json
+#   session mixed/matrix-builder-p-g1-0 streaming codex/jsonl
+#   session mixed/matrix-scout-p-g1-0 streaming opencode/json
 #
-# Watch the normalized events from all three:
-#   ./marvel events --workspace mixed
-#   ./marvel get sessions
-#   ./marvel stop
-#
-# Notes:
-#   - Each role is headless with a prompt; that is what makes the harness
-#     produce a parseable one-shot stream.
-#   - codex takes sandbox/approval flags via runtime.args; opencode takes
-#     --model and --auto via runtime.args. Neither is injected by marvel,
-#     so autonomous tool use is an explicit operator choice.
+# Watch the normalized events and both CTX% producers:
+#   ./bin/marvel events --workspace mixed
+#   ./bin/marvel inject mixed/matrix-analyst-t-g1-0 "say only the word ready" -e
+#   ./bin/marvel get sessions     # -p rows meter via stream, -t via statusline
+#   ./bin/marvel stop
 
 workspace:
   name: mixed
@@ -39,7 +29,7 @@ workspace:
 teams:
   - name: matrix
     roles:
-      - name: analyst
+      - name: analyst-p
         replicas: 1
         permissions: plan
         runtime:
@@ -48,7 +38,7 @@ teams:
           mode: headless
           prompt: "Summarize what a marvel adapter does in one sentence."
 
-      - name: builder
+      - name: builder-p
         replicas: 1
         runtime:
           image: codex
@@ -56,7 +46,7 @@ teams:
           mode: headless
           prompt: "Reply with the single word: ok"
 
-      - name: scout
+      - name: scout-p
         replicas: 1
         runtime:
           image: opencode
@@ -64,3 +54,12 @@ teams:
           mode: headless
           args: ["-m", "opencode/deepseek-v4-flash-free"]
           prompt: "Reply with the single word: ok"
+
+      - name: analyst-t
+        replicas: 1
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+          args: ["--model", "haiku"]
+          context_feed: statusline

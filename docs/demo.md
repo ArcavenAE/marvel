@@ -198,27 +198,50 @@ duration; unset leaves the built-in 10-minute default.
 
 ## Act 2 — Observe
 
-One team, three different agent harnesses, one event stream. `mixed-adapters`
-runs a `claude`, a `codex`, and an `opencode` role, each headless with a small
-prompt. Marvel redirects each harness's structured output through its adapter,
-normalizes the harness-specific dialect into one event vocabulary, and tags
-every event with workspace, team, role, and session.
+One team, three different agent harnesses, one event stream — and both CTX%
+producers side by side. `mixed-adapters` runs a `claude`, a `codex`, and an
+`opencode` role headless with a small prompt, plus a fourth role: the same
+claude binary run as an interactive TUI.
+
+Role names carry the mode so the table reads at a glance: `-p` =
+print/headless (`analyst-p`, `builder-p`, `scout-p`), `-t` = TUI
+(`analyst-t`). The suffix rides into every session name and event tag.
+
+Marvel redirects each headless harness's structured output through its
+adapter, normalizes the harness-specific dialect into one event vocabulary,
+and tags every event with workspace, team, role, and session.
 
 ```sh
 ./bin/marvel work examples/mixed-adapters.toml
 sleep 4
-./bin/marvel get sessions        # CPU% and RSS populated for all three harnesses
+./bin/marvel get sessions        # CPU% and RSS populated for all four sessions
 ```
 
 `marvel get sessions` samples the process table, so CPU% and RSS are real for
 every session regardless of harness, and need no auth. Watch the normalized
-agent stream from all three:
+agent stream from the three headless roles:
 
 ```sh
 ./bin/marvel events --workspace mixed
 ./bin/marvel events --kind agent.turn.completed   # tokens in/out per turn
 ./bin/marvel events --kind agent.session.ended    # per-session cost, tokens, duration
 ```
+
+The `-t` row is the CTX% beat. A TUI emits no parseable stream, so its
+context figure arrives through the other producer: `context_feed =
+"statusline"` projects statusline hooks that forward the harness's own
+measurement through `marvel ctx-forward` to the heartbeat RPC
+(finding-011). CTX% is `-` until the session takes a turn, so inject one:
+
+```sh
+./bin/marvel inject mixed/matrix-analyst-t-g1-0 "say only the word ready" -e
+sleep 20
+./bin/marvel get sessions   # -p rows meter via stream; the -t row via statusline
+```
+
+The `-t` pane's own bottom line shows the human-facing half of the same
+feed ("Haiku 4.5 · CTX 13% · $0.04"); attach to it via the DESK column to
+drive it by hand.
 
 A verified run produced, across the three harnesses uniformly:
 `agent.session.started`, `agent.turn.started`, `agent.turn.completed` (with
@@ -234,16 +257,18 @@ Deterministic vs auth-dependent:
   harness to authenticate and take a real model turn. Without auth a harness
   exits early and you see `session.crashed` instead of an agent stream.
 
-TODO(finding): the CTX% column shows `-` for these harnesses. Context pressure
-has exactly one producer in marvel today, the heartbeat RPC, and none of the
-claude, codex, or opencode adapters send it. The column exists and is correct
-(it renders absence rather than a misleading 0%), but "context" is not an
-observable signal for these three harnesses yet. The task brief's Act 2
-"cpu/rss/context" is accurate for cpu and rss; context is not populated.
+CTX% producers, current state (supersedes an earlier TODO here that said
+the heartbeat RPC was the only producer): there are three. The stream-fed
+usage accountant meters headless sessions; the statusline feed
+(`context_feed`, finding-011) meters interactive claude via the heartbeat
+RPC; and the heartbeat RPC accepts any cooperative reporter (the
+simulator). Interactive codex/opencode remain unmetered — no statusline
+equivalent has been probed for them yet (aae-orc-7hzb).
 
-Because each role is headless with a one-shot prompt, the harness exits when its
-turn completes, and marvel reaps the vacated pane with `session.crashed`. That
-is expected for a headless one-shot: the work is done, the process is gone.
+Because each `-p` role is headless with a one-shot prompt, the harness exits
+when its turn completes, and marvel reaps the vacated pane with
+`session.crashed`. That is expected for a headless one-shot: the work is
+done, the process is gone. The `-t` role stays running.
 
 Minor: the claude adapter logged one `agent.error` "unmapped: assistant thinking
 block (no v1 event kind)" during the verified run. It is a benign parse gap (a
@@ -295,6 +320,29 @@ session stays up while it waits for input, so it is).
 Roles whose harness has no Claude Code settings surface (codex, opencode,
 generic) log the policy as advisory and are not projected. Nothing is dropped
 silently.
+
+### Act 3 extension — shift onto a new metering contract (PLANNED, not written)
+
+The intended beat: apply a team without `context_feed`, confirm the TUI
+session's CTX% is `-`, add `context_feed = "statusline"` to the manifest,
+re-apply, then `marvel shift` the team — generation 2 spawns with the feed
+and CTX% appears on the fresh sessions.
+
+Why shift and not just re-apply: a session's runtime is frozen at spawn.
+Re-projection reads `context_feed` from the SESSION's runtime copy, so a
+manifest change reaches only sessions created after it — the live
+re-projection that works for policy content does not retrofit the feed onto
+running sessions. Tracked as a known wrinkle (bd: frozen-runtime
+re-projection); this beat is not in the runbook until either the wrinkle is
+fixed or the shift-based sequence is verified end to end.
+
+### Act 5 — Meter (PLANNED, not written)
+
+A dedicated metering act: `context-feed.toml` + injected turns + watching
+CTX% climb across the table, tied into budget admission (`max_tokens`
+clauses refusing over-budget work). Deferred until the per-subagent context
+surface and the OTEL topology decision (aae-orc-mqgf) land, so the act
+demonstrates a settled layer rather than a moving one.
 
 ---
 
