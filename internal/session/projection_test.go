@@ -206,3 +206,145 @@ func TestReprojectNoPolicyIsNoOp(t *testing.T) {
 		t.Fatalf("Reproject changed = %d, want 0 with no policy reference", n)
 	}
 }
+
+const feedOnlyManifest = `
+[workspace]
+name = "acme"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "watcher"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+    context_feed = "statusline"
+`
+
+const feedWithPolicyManifest = `
+[workspace]
+name = "acme"
+
+[[policy]]
+name = "own-statusline"
+version = "1.0"
+
+  [policy.settings.statusLine]
+  type = "command"
+  command = "/usr/local/bin/my-statusline"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "watcher"
+  replicas = 1
+  policy = "own-statusline"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+    context_feed = "statusline"
+`
+
+// seedFeedSession is seedRunningSession with ContextFeed set on the
+// session's runtime, the way reconcileRole copies it from the role.
+func seedFeedSession(t *testing.T, mgr *Manager, workspace, team, role, name string) string {
+	t.Helper()
+	sess := &api.Session{
+		Name:      name,
+		Workspace: workspace,
+		Team:      team,
+		Role:      role,
+		Runtime:   api.Runtime{Name: "claude", Command: "claude", ContextFeed: api.ContextFeedStatusline},
+	}
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := mgr.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionRunning
+		live.PaneID = "%1"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	return sess.Key()
+}
+
+// TestProjectionInjectsStatuslineFeed covers finding-011: a role with
+// context_feed = "statusline" and NO policy still gets a projected
+// settings file carrying the ctx-forward hooks. Falsification: with the
+// old policy-only gate in projectPolicy, no file is written at all.
+func TestProjectionInjectsStatuslineFeed(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+
+	m, err := api.ParseManifestBytes([]byte(feedOnlyManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	key := seedFeedSession(t, mgr, "acme", "squad", "watcher", "squad-watcher-g1-0")
+
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("Reproject changed = %d, want 1", n)
+	}
+	path := filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	got := readProjection(t, path)
+
+	sl, ok := got["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("projection missing statusLine: %v", got)
+	}
+	cmd, _ := sl["command"].(string)
+	if !strings.HasSuffix(cmd, " ctx-forward") {
+		t.Errorf("statusLine.command = %q, want ctx-forward suffix", cmd)
+	}
+	if ri, ok := sl["refreshInterval"].(float64); !ok || ri != 15 {
+		t.Errorf("statusLine.refreshInterval = %v, want 15", sl["refreshInterval"])
+	}
+	sub, ok := got["subagentStatusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("projection missing subagentStatusLine: %v", got)
+	}
+	if cmd, _ := sub["command"].(string); !strings.HasSuffix(cmd, " ctx-forward") {
+		t.Errorf("subagentStatusLine.command = %q, want ctx-forward suffix", cmd)
+	}
+}
+
+// TestProjectionPolicyWinsOverFeed covers the merge contract: a policy
+// that declares its own statusLine keeps it verbatim; the feed only adds
+// keys the policy does not define. Falsification: if injection
+// overwrites, the projected command is marvel's instead of the policy's.
+func TestProjectionPolicyWinsOverFeed(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+
+	m, err := api.ParseManifestBytes([]byte(feedWithPolicyManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	key := seedFeedSession(t, mgr, "acme", "squad", "watcher", "squad-watcher-g1-0")
+
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("Reproject changed = %d, want 1", n)
+	}
+	path := filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	got := readProjection(t, path)
+
+	sl := got["statusLine"].(map[string]any)
+	if cmd, _ := sl["command"].(string); cmd != "/usr/local/bin/my-statusline" {
+		t.Errorf("statusLine.command = %q, want the policy's own command (policy wins)", cmd)
+	}
+	if _, ok := got["subagentStatusLine"]; !ok {
+		t.Error("subagentStatusLine absent: feed should add keys the policy does not define")
+	}
+}

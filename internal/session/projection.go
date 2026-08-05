@@ -111,29 +111,46 @@ func (m *Manager) reprojectContext(sess api.Session) (*runtime.LaunchContext, ru
 // a file was written, and whether the written content differed from what
 // was already on disk.
 //
-// A role with no policy yields wrote=false, no error. An adapter with no
-// settings surface logs the policy as advisory and yields wrote=false. A
-// referenced policy that is not in the store is an error (validation should
-// prevent it, so reaching here means drift worth surfacing).
+// A role with no policy and no context feed yields wrote=false, no error.
+// An adapter with no settings surface logs the policy as advisory and
+// yields wrote=false. A referenced policy that is not in the store is an
+// error (validation should prevent it, so reaching here means drift worth
+// surfacing).
+//
+// Policy content is still written unmodified — marvel never edits a key
+// the policy declares. When the runtime opts into context_feed =
+// "statusline", marvel ADDS its own statusLine/subagentStatusLine keys,
+// and only where the policy does not define them (policy wins). See
+// finding-011.
 func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Adapter) (runtime.ProjectionTarget, bool, bool, error) {
-	if m.ProjectionDir == "" || lctx.Role.Policy == "" {
+	feed := lctx.Session.Runtime.ContextFeed == api.ContextFeedStatusline
+	if m.ProjectionDir == "" || (lctx.Role.Policy == "" && !feed) {
 		return runtime.ProjectionTarget{}, false, false, nil
 	}
 
 	target := adapter.ProjectionFor(lctx, m.ProjectionDir)
 	if !target.Supported {
-		log.Printf("session %s: runtime %q has no settings surface; policy %q is advisory, not projected",
+		log.Printf("session %s: runtime %q has no settings surface; policy %q / context feed are advisory, not projected",
 			lctx.Session.Key(), adapter.Name(), lctx.Role.Policy)
 		return target, false, false, nil
 	}
 
-	key := fmt.Sprintf("%s/%s", lctx.Workspace.Name, lctx.Role.Policy)
-	policy, err := m.store.GetPolicy(key)
-	if err != nil {
-		return target, false, false, fmt.Errorf("resolve policy %s: %w", key, err)
+	settings := map[string]any{}
+	if lctx.Role.Policy != "" {
+		key := fmt.Sprintf("%s/%s", lctx.Workspace.Name, lctx.Role.Policy)
+		policy, err := m.store.GetPolicy(key)
+		if err != nil {
+			return target, false, false, fmt.Errorf("resolve policy %s: %w", key, err)
+		}
+		for k, v := range policy.Settings {
+			settings[k] = v
+		}
+	}
+	if feed {
+		injectStatuslineFeed(settings)
 	}
 
-	changed, err := writeProjectionFile(target.Path, policy.Settings)
+	changed, err := writeProjectionFile(target.Path, settings)
 	if err != nil {
 		return target, false, false, err
 	}
@@ -145,6 +162,36 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 // differs from what was already there, so callers can emit an event only on
 // a real contract change. Files are 0600: a settings fragment can carry an
 // allow/deny list an operator would not want world-readable.
+// injectStatuslineFeed adds the statusLine/subagentStatusLine hooks that
+// forward the harness's own context figures to the heartbeat RPC, keyed to
+// this daemon's binary so the pane needs no PATH assumption. Policy wins:
+// a key the settings document already carries is left untouched.
+//
+// refreshInterval keeps the feed beating while the session idles —
+// statusline updates are event-driven and go quiet between prompts, which
+// would otherwise starve a heartbeat healthcheck watching this session.
+func injectStatuslineFeed(settings map[string]any) {
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("context feed: cannot resolve marvel binary path, feed not injected: %v", err)
+		return
+	}
+	hook := map[string]any{
+		"type":            "command",
+		"command":         exe + " ctx-forward",
+		"refreshInterval": 15,
+	}
+	if _, ok := settings["statusLine"]; !ok {
+		settings["statusLine"] = hook
+	}
+	if _, ok := settings["subagentStatusLine"]; !ok {
+		settings["subagentStatusLine"] = map[string]any{
+			"type":    "command",
+			"command": exe + " ctx-forward",
+		}
+	}
+}
+
 func writeProjectionFile(path string, settings map[string]any) (bool, error) {
 	// A nil settings map projects an empty object rather than the JSON
 	// literal null, so the harness always reads a well-formed settings file.

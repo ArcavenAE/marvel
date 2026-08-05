@@ -119,7 +119,18 @@ type Runtime struct {
 	// window the harness declares itself outranks this, because the
 	// harness's own belief is what enforces compaction.
 	ContextWindow int `toml:"context_window,omitempty"`
+	// ContextFeed opts an interactive session into a cooperative context
+	// pressure feed. The only value today is "statusline": the projection
+	// layer injects statusLine/subagentStatusLine hooks pointing at
+	// `marvel ctx-forward`, which forwards the harness's own context
+	// figures to the heartbeat RPC. Headless sessions do not need this —
+	// their stream already feeds the usage accountant. See finding-011.
+	ContextFeed string `toml:"context_feed,omitempty"`
 }
+
+// ContextFeedStatusline is the only ContextFeed value marvel understands
+// today: statusline-hook forwarding for interactive claude sessions.
+const ContextFeedStatusline = "statusline"
 
 // Session is the atomic unit: a tmux pane running one process (pod equivalent).
 //

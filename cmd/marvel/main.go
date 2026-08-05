@@ -115,6 +115,7 @@ func main() {
 	root.AddCommand(configCmd())
 	root.AddCommand(stopCmd())
 	root.AddCommand(eventsCmd())
+	root.AddCommand(newCtxForwardCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
