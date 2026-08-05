@@ -1,34 +1,49 @@
 # Marvel example — the harness matrix: three BYOA harnesses, one workspace,
-# one normalized event path.
+# one normalized event path, and both CTX% producers side by side.
 #
-# Each role runs a different agent harness headlessly. Marvel redirects each
+# Role-name convention: `-p` = print/headless (claude -p style, one-shot
+# prompt, parseable stream), `-t` = TUI (interactive, long-lived pane).
+# The suffix rides into every session name and event tag, so
+# `matrix-analyst-p-g1-0` vs `matrix-analyst-t-g1-0` reads at a glance in
+# `marvel get sessions` and `marvel events`.
+#
+# The three -p roles stream through their adapters. Marvel redirects each
 # harness's structured output into a FIFO, parses the harness-specific
 # dialect into the shared event vocabulary, and lands every event in the
-# daemon ring tagged with workspace/team/role/session. `marvel events` shows
-# all three harnesses in one stream.
+# daemon ring tagged with workspace/team/role/session. Their CTX% comes
+# from the stream-fed usage accountant.
 #
 #   claude   → claude-code stream-json    (internal/runtime/claudecode)
 #   codex    → codex exec --json          (internal/runtime/codex)
 #   opencode → opencode run --format json (internal/runtime/opencode)
 #
+# The -t role is the same claude binary run interactively. A TUI emits no
+# parseable stream, so its CTX% comes from the OTHER producer: context_feed
+# = "statusline" projects statusLine hooks that forward the harness's own
+# context figure through `marvel ctx-forward` to the heartbeat RPC
+# (finding-011). It needs one injected prompt before CTX% shows a number.
+#
 # Setup:
 #   cd ~/work/aae-orc/marvel
-#   ./marvel daemon &
-#   ./marvel work examples/mixed-adapters.toml
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/mixed-adapters.toml
 #
-# Verify (daemon log shows three adapters, each streaming its own format):
-#   session mixed/matrix-analyst-g1-0 streaming claude-code/stream-json
-#   session mixed/matrix-builder-g1-0 streaming codex/jsonl
-#   session mixed/matrix-scout-g1-0 streaming opencode/json
+# Verify (daemon log shows three streaming adapters; the -t role does not stream):
+#   session mixed/matrix-analyst-p-g1-0 streaming claude-code/stream-json
+#   session mixed/matrix-builder-p-g1-0 streaming codex/jsonl
+#   session mixed/matrix-scout-p-g1-0 streaming opencode/json
 #
-# Watch the normalized events from all three:
-#   ./marvel events --workspace mixed
-#   ./marvel get sessions
-#   ./marvel stop
+# Watch the normalized events and both CTX% producers:
+#   ./bin/marvel events --workspace mixed
+#   ./bin/marvel inject mixed/matrix-analyst-t-g1-0 "say only the word ready" -e
+#   ./bin/marvel get sessions     # -p rows meter via stream, -t via statusline
+#   ./bin/marvel stop
 #
 # Notes:
-#   - Each role is headless with a prompt; that is what makes the harness
-#     produce a parseable one-shot stream.
+#   - Each -p role is headless with a prompt; that is what makes the harness
+#     produce a parseable one-shot stream. It exits when the turn completes.
+#   - The -t role stays alive; attach to its pane (DESK column) to drive it
+#     by hand.
 #   - codex takes sandbox/approval flags via runtime.args; opencode takes
 #     --model and --auto via runtime.args. Neither is injected by marvel,
 #     so autonomous tool use is an explicit operator choice.
@@ -40,7 +55,7 @@ name = "mixed"
 name = "matrix"
 
   [[team.role]]
-  name = "analyst"
+  name = "analyst-p"
   replicas = 1
   permissions = "plan"
 
@@ -51,7 +66,7 @@ name = "matrix"
     prompt = "Summarize what a marvel adapter does in one sentence."
 
   [[team.role]]
-  name = "builder"
+  name = "builder-p"
   replicas = 1
 
     [team.role.runtime]
@@ -61,7 +76,7 @@ name = "matrix"
     prompt = "Reply with the single word: ok"
 
   [[team.role]]
-  name = "scout"
+  name = "scout-p"
   replicas = 1
 
     [team.role.runtime]
@@ -70,3 +85,14 @@ name = "matrix"
     mode = "headless"
     args = ["-m", "opencode/deepseek-v4-flash-free"]
     prompt = "Reply with the single word: ok"
+
+  [[team.role]]
+  name = "analyst-t"
+  replicas = 1
+  permissions = "plan"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+    args = ["--model", "haiku"]
+    context_feed = "statusline"
