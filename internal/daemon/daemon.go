@@ -609,6 +609,9 @@ type eventsParams struct {
 	Session     string `json:"session,omitempty"`
 	Kind        string `json:"kind,omitempty"`
 	MinSeverity string `json:"min_severity,omitempty"` // "" or "warning"
+	// SinceSeq returns only events with Seq strictly greater than this
+	// value — the follow-mode resume cursor. Zero means no cursor.
+	SinceSeq uint64 `json:"since_seq,omitempty"`
 }
 
 type eventsResult struct {
@@ -629,6 +632,7 @@ func (d *Daemon) handleEvents(params json.RawMessage) Response {
 		Session:     p.Session,
 		Kind:        events.Kind(p.Kind),
 		MinSeverity: events.Severity(p.MinSeverity),
+		SinceSeq:    p.SinceSeq,
 	}
 	snap := d.events.Snapshot(f, p.N)
 	data, err := json.Marshal(eventsResult{Events: snap})

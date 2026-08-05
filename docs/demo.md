@@ -35,6 +35,20 @@ rm -f ~/.marvel/state/marvel.bolt   # forget persisted resources
 `marvel events` reads a bounded in-memory ring, so it is empty on a fresh
 daemon and fills as the act runs.
 
+## Watching live
+
+The acts read better watched than replayed. Two tools:
+
+- `marvel events --follow` (`-f`) tails the ring: it prints the current
+  tail, then polls once a second and prints each new event exactly once,
+  in order, using a ring-assigned sequence cursor. All the usual filters
+  compose with it (`--workspace`, `--kind`, `--warnings`).
+- `just demo-watch` builds a four-pane tmux operator console (driver
+  shell, live session table, live event tail, daemon log poll). Attach
+  with `tmux attach -t marvel-watch`, drive the beats from the top-left
+  pane, and watch states flip in real time. The panes poll until a
+  daemon appears, so start it in whichever order you like.
+
 ---
 
 ## Act 1 — Recover

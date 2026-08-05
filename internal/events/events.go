@@ -97,6 +97,12 @@ const (
 
 // Event is one structured state-transition record.
 type Event struct {
+	// Seq is a ring-assigned monotonic sequence number, starting at 1.
+	// It exists so poll-based consumers (`marvel events --follow`) can
+	// resume from the last event they saw instead of deduplicating on
+	// timestamps, which are not unique. Producers never set it; the
+	// ring assigns it under its own lock at Emit time.
+	Seq       uint64    `json:"seq,omitempty"`
 	Timestamp time.Time `json:"ts"`
 	Kind      Kind      `json:"kind"`
 	Severity  Severity  `json:"severity"`
@@ -147,6 +153,7 @@ type Ring struct {
 	buf      []Event
 	head     int // index of the oldest event when len(buf) == capacity
 	full     bool
+	nextSeq  uint64 // next Seq to assign; monotonic for the ring's lifetime
 }
 
 // DefaultCapacity is the ring size used when NewRing is called with
@@ -164,6 +171,7 @@ func NewRing(capacity int) *Ring {
 	return &Ring{
 		capacity: capacity,
 		buf:      make([]Event, 0, capacity),
+		nextSeq:  1,
 	}
 }
 
@@ -178,6 +186,8 @@ func (r *Ring) Emit(ev Event) {
 	if ev.Severity == "" {
 		ev.Severity = SeverityInfo
 	}
+	ev.Seq = r.nextSeq
+	r.nextSeq++
 	if !r.full {
 		r.buf = append(r.buf, ev)
 		if len(r.buf) == r.capacity {
@@ -199,6 +209,10 @@ type Filter struct {
 	Session     string
 	Kind        Kind
 	MinSeverity Severity
+	// SinceSeq, when nonzero, matches only events with Seq strictly
+	// greater than this value — the resume cursor for follow-mode
+	// polling.
+	SinceSeq uint64
 }
 
 // Snapshot returns up to `n` most recent events matching f, oldest-first
@@ -259,6 +273,9 @@ func matches(ev Event, f Filter) bool {
 		return false
 	}
 	if f.MinSeverity == SeverityWarning && ev.Severity != SeverityWarning {
+		return false
+	}
+	if f.SinceSeq > 0 && ev.Seq <= f.SinceSeq {
 		return false
 	}
 	return true
