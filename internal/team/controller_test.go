@@ -1283,6 +1283,103 @@ func TestSessionFailedEventOnRestartNever(t *testing.T) {
 	}
 }
 
+// TestRestartNeverFreezesRole covers aae-orc-pyre / marvel#107: a role
+// with restart_policy=never whose session fails health must go terminal.
+// Falsification: without the freezeRole call in applyRestartPolicy's
+// RestartNever case, SessionFailed drops out of CountsAsAlive and the
+// reconciler spawns a replacement on the next tick — the session count
+// grows past 1 and this fails.
+func TestRestartNeverFreezesRole(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-never-freeze", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartNever,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sess := store.ListSessionsByTeamRole("test-never-freeze", "squad", "worker")[0]
+	if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+
+	// The failing tick, then several repair opportunities.
+	for i := 0; i < 4; i++ {
+		ctrl.ReconcileOnce()
+	}
+
+	got := store.ListSessionsByTeamRole("test-never-freeze", "squad", "worker")
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 session after never failure (role terminal), got %d", len(got))
+	}
+	if got[0].State != api.SessionFailed {
+		t.Fatalf("expected failed state, got %s", got[0].State)
+	}
+	rh, ok := ctrl.RoleHealthSnapshot("test-never-freeze", "squad", "worker")
+	if !ok {
+		t.Fatal("expected RoleHealth snapshot after never failure")
+	}
+	if !rh.BackoffUntil.After(time.Now().UTC().Add(100 * 365 * 24 * time.Hour)) {
+		t.Fatalf("expected far-future freeze, got BackoffUntil=%s", rh.BackoffUntil)
+	}
+}
+
+// TestRestartNeverReapFreezesRole covers the reap-path half of
+// aae-orc-pyre / marvel#107: a vacated pane under restart_policy=never
+// must also go terminal. Falsification: without the RestartNever branch
+// in noteReapedCrash, the crash gets ordinary backoff accounting and the
+// reconciler replaces the session once the window elapses.
+func TestRestartNeverReapFreezesRole(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-never-reap", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartNever,
+			// No HealthCheck: isolates the reap path from the
+			// heartbeat-staleness path in evaluateHealth.
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sess := store.ListSessionsByTeamRole("test-never-reap", "squad", "worker")[0]
+
+	killPaneAndWait(t, sess.PaneID)
+
+	ctrl.ReconcileOnce()            // reap tick
+	clock.Advance(10 * time.Minute) // far past any ordinary backoff window
+	ctrl.ReconcileOnce()            // repair opportunity — must refuse
+
+	got := store.ListSessionsByTeamRole("test-never-reap", "squad", "worker")
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 session after never reap (role terminal), got %d", len(got))
+	}
+	if got[0].State != api.SessionFailed {
+		t.Fatalf("expected failed state after never reap, got %s", got[0].State)
+	}
+	failed := ring.Snapshot(events.Filter{Kind: events.KindSessionFailed, Session: sess.Key()}, 0)
+	if len(failed) == 0 {
+		t.Fatal("expected a session.failed event on the never reap path")
+	}
+}
+
 // TestSessionFailedEventOnSaturation covers aae-orc-96st: a role that
 // saturates MaxRestarts must emit events.KindSessionFailed in addition to
 // events.KindRoleSaturated. Falsification: without the emit in

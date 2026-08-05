@@ -296,6 +296,30 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession) {
 		return
 	}
 	roleKey := r.Workspace + "/" + r.Team + "/" + r.Role
+	if role.RestartPolicy == api.RestartNever {
+		// The health path's never contract applies to the reap path
+		// too: a vacated pane under never goes terminal instead of
+		// being replaced after a backoff window. ReapDead already
+		// emitted session.crashed with the cause; session.failed here
+		// records the verdict.
+		c.freezeRole(r.Workspace, r.Team, r.Role)
+		_ = c.store.UpdateSession(r.Key, func(live *api.Session) error {
+			live.State = api.SessionFailed
+			return nil
+		})
+		log.Printf("reap: session %s crashed (restart_policy=never), role %s frozen",
+			r.Key, roleKey)
+		events.Emit(c.Events, events.Event{
+			Kind:      events.KindSessionFailed,
+			Severity:  events.SeverityWarning,
+			Workspace: r.Workspace,
+			Team:      r.Team,
+			Role:      r.Role,
+			Session:   r.Key,
+			Message:   "restart_policy=never, pane gone; role frozen",
+		})
+		return
+	}
 	if c.noteCrashAndBackoff(r.Workspace, r.Team, r.Role, role.MaxRestarts) {
 		rh := c.roleHealth[roleKey]
 		log.Printf("reap: session %s crashed (role %s restart #%d, next backoff=%s)",
@@ -334,6 +358,21 @@ func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestar
 	rh.BackoffUntil = now.Add(nextBackoff)
 	c.persistRoleHealth(roleKey, rh)
 	return true
+}
+
+// freezeRole permanently blocks replacement spawns for a role by setting
+// its BackoffUntil to the saturation sentinel. This is how
+// restart_policy=never goes terminal: the first failure stops the role,
+// so the reconciler must not repair the replica count with a fresh
+// session every tick. The failed row and its pane stay visible for
+// post-mortem. Recovery is the same as MaxRestarts saturation: delete
+// the team and re-apply (ClearRoleHealthForTeam resets the freeze).
+// See ArcavenAE/marvel#107, aae-orc-pyre.
+func (c *Controller) freezeRole(workspace, team, role string) {
+	roleKey := workspace + "/" + team + "/" + role
+	rh := c.getRoleHealth(roleKey)
+	rh.BackoffUntil = saturationFreezeUntil
+	c.persistRoleHealth(roleKey, rh)
 }
 
 func (c *Controller) reconcileTeam(t *api.Team) {
@@ -610,7 +649,12 @@ func (c *Controller) applyRestartPolicy(sess *api.Session, t *api.Team, role *ap
 			return nil
 		})
 		sess.State = api.SessionFailed
-		log.Printf("health: session %s failed (restart_policy=never, failures=%d)",
+		// never means the role stops. Without the freeze, SessionFailed
+		// drops out of CountsAsAlive and the reconciler replaces the
+		// session every tick, uncapped and with no backoff — one live
+		// pane leaked per cycle (marvel#107, aae-orc-pyre).
+		c.freezeRole(t.Workspace, t.Name, role.Name)
+		log.Printf("health: session %s failed (restart_policy=never, failures=%d), role frozen",
 			sess.Key(), sess.FailureCount)
 		events.Emit(c.Events, events.Event{
 			Kind:      events.KindSessionFailed,

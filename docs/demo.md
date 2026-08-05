@@ -132,8 +132,9 @@ role's restart policy. This exercises the health path with no agent and no auth.
 - `restarter` (restart_policy = always): restarts on every staleness, so it
   loops through `session.restarted` with a growing backoff.
 - `failstop` (restart_policy = never): the stale session is marked failed and
-  never restarted. The reconciler keeps the replica count by launching a fresh
-  replica, so `session.failed` recurs as each replacement in turn goes stale.
+  the role goes terminal. The reconciler freezes replacement spawns, so the
+  failed row and its pane stay visible for post-mortem. Recovery is
+  `marvel delete team` + re-apply, same as a saturated role.
 - `capped` (restart_policy = always, max_restarts = 1): restarts once, then hits
   its cap and emits `role.saturated` plus `session.failed`, and is not respawned.
 
