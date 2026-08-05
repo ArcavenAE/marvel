@@ -22,7 +22,8 @@ func NewStdoutMeterProvider() (*sdkmetric.MeterProvider, error) {
 
 // NewContextGauge creates the marvel.agent.context_window_percent gauge.
 func NewContextGauge(meter metric.Meter) (metric.Float64Gauge, error) {
-	return meter.Float64Gauge("marvel.agent.context_window_percent",
+	return meter.Float64Gauge(
+		"marvel.agent.context_window_percent",
 		metric.WithDescription("Agent context window usage as a percentage"),
 		metric.WithUnit("%"),
 	)

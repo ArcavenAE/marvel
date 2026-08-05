@@ -25,7 +25,8 @@ func TestNewStdoutMeterProvider(t *testing.T) {
 	}
 
 	// Recording should not panic.
-	gauge.Record(context.Background(), 42.5,
+	gauge.Record(
+		context.Background(), 42.5,
 		metric.WithAttributes(
 			attribute.String("workspace", "test"),
 			attribute.String("team", "agents"),
