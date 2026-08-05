@@ -952,6 +952,10 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 type heartbeatParams struct {
 	SessionKey     string  `json:"session_key"`
 	ContextPercent float64 `json:"context_percent"`
+	// Model is the model as the reporter names it, "" when the
+	// reporter does not know (the simulator). The statusline feed
+	// sends the harness's display name.
+	Model string `json:"model,omitempty"`
 }
 
 func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
@@ -960,7 +964,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
-	if err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.ContextPercent); err != nil {
+	if err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.ContextPercent, p.Model); err != nil {
 		return Response{Error: err.Error()}
 	}
 

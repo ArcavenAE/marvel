@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -30,14 +31,26 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+// splitColumns splits a tabwriter-rendered line on runs of two or more
+// spaces, so multi-word headers ("AGENT NAME") stay one column.
+func splitColumns(line string) []string {
+	var out []string
+	for _, f := range regexp.MustCompile(`\s{2,}`).Split(strings.TrimSpace(line), -1) {
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func column(t *testing.T, table, name string) string {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("table has no rows:\n%s", table)
 	}
-	header := strings.Fields(lines[0])
-	row := strings.Fields(lines[1])
+	header := splitColumns(lines[0])
+	row := splitColumns(lines[1])
 	if len(header) != len(row) {
 		t.Fatalf("header has %d columns, row has %d:\n%s", len(header), len(row), table)
 	}
@@ -131,7 +144,7 @@ func TestRenderSessionTableWithHeartbeat(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := store.UpdateSessionHeartbeat("ws/agent-0", 55.4); err != nil {
+	if err := store.UpdateSessionHeartbeat("ws/agent-0", 55.4, ""); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 
