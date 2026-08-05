@@ -128,3 +128,37 @@ func TestRingConcurrentEmit(t *testing.T) {
 		t.Fatal("expected some events after concurrent emit")
 	}
 }
+
+func TestRingAssignsMonotonicSeq(t *testing.T) {
+	r := NewRing(3)
+	for i := 0; i < 5; i++ {
+		r.Emit(Event{Kind: KindSessionCreated, Message: string(rune('a' + i))})
+	}
+	snap := r.Snapshot(Filter{}, 0)
+	// Survivors after wraparound are c,d,e with seqs 3,4,5 — Seq is
+	// assigned per Emit and never reused, so it survives overwrites.
+	want := uint64(3)
+	for _, ev := range snap {
+		if ev.Seq != want {
+			t.Fatalf("Seq=%d, want %d (message %q)", ev.Seq, want, ev.Message)
+		}
+		want++
+	}
+}
+
+func TestRingFilterSinceSeq(t *testing.T) {
+	r := NewRing(10)
+	for i := 0; i < 5; i++ {
+		r.Emit(Event{Kind: KindSessionCreated, Message: string(rune('a' + i))})
+	}
+	snap := r.Snapshot(Filter{SinceSeq: 3}, 0)
+	if len(snap) != 2 {
+		t.Fatalf("Snapshot len=%d, want 2 (strictly greater than cursor)", len(snap))
+	}
+	if snap[0].Seq != 4 || snap[1].Seq != 5 {
+		t.Fatalf("expected seqs 4,5 — got %d,%d", snap[0].Seq, snap[1].Seq)
+	}
+	if got := r.Snapshot(Filter{SinceSeq: 5}, 0); len(got) != 0 {
+		t.Fatalf("cursor at newest should return nothing, got %d", len(got))
+	}
+}

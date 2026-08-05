@@ -183,3 +183,24 @@ demo-all:
     @echo "  just demo-act3    # Control plane"
     @echo ""
     @echo "Between acts: just stop && rm -f ~/.marvel/state/marvel.bolt && just start-bg"
+
+# Operator console for watching a demo live: four panes in one tmux
+# session — driver shell, live session table, live event tail, daemon
+# log poll. Attach from your own terminal: tmux attach -t marvel-watch
+demo-watch: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmux kill-session -t marvel-watch 2>/dev/null || true
+    tmux new-session -d -s marvel-watch -x 220 -y 55
+    P0=$(tmux display -p -t marvel-watch '#{pane_id}')
+    P1=$(tmux split-window -t "$P0" -v -P -F '#{pane_id}')
+    P2=$(tmux split-window -t "$P0" -h -P -F '#{pane_id}')
+    P3=$(tmux split-window -t "$P1" -h -P -F '#{pane_id}')
+    tmux send-keys -t "$P0" 'clear; echo "DRIVER — run demo beats here (runbook: docs/demo.md). Daemon: ./bin/marvel daemon &"' C-m
+    tmux send-keys -t "$P2" 'while :; do ./bin/marvel get sessions -w 1 2>/dev/null; sleep 2; clear; done' C-m
+    tmux send-keys -t "$P1" 'while :; do ./bin/marvel events --follow 2>/dev/null; sleep 2; done' C-m
+    tmux send-keys -t "$P3" 'while :; do clear; ./bin/marvel daemon logs -n 14 2>/dev/null || echo "(daemon not up yet)"; sleep 2; done' C-m
+    tmux select-pane -t "$P0"
+    echo "Operator console ready: tmux attach -t marvel-watch"
+    echo "  top-left  DRIVER          top-right  sessions (live)"
+    echo "  bot-left  events --follow bot-right  daemon logs"

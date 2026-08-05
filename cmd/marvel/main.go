@@ -381,6 +381,7 @@ func eventsCmd() *cobra.Command {
 	var n int
 	var workspace, team, role, session, kind string
 	var warningsOnly bool
+	var follow bool
 	cmd := &cobra.Command{
 		Use:   "events",
 		Short: "List recent session/team state-transition events",
@@ -409,60 +410,110 @@ Examples:
   marvel events --kind context.limit-unresolved  # why a CTX% cell is blank
   marvel events --kind admission.refused     # spawns a team budget refused
   marvel events --warnings                   # only warning-severity events
+  marvel events --follow                     # live tail; poll the ring every second
   marvel --cluster desk events               # remote daemon via mrvl://`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			params := map[string]any{"n": n}
-			if workspace != "" {
-				params["workspace"] = workspace
+			buildParams := func(sinceSeq uint64) json.RawMessage {
+				params := map[string]any{"n": n}
+				if sinceSeq > 0 {
+					// Cursor requests return every new event, not a tail.
+					params["n"] = 0
+					params["since_seq"] = sinceSeq
+				}
+				if workspace != "" {
+					params["workspace"] = workspace
+				}
+				if team != "" {
+					params["team"] = team
+				}
+				if role != "" {
+					params["role"] = role
+				}
+				if session != "" {
+					params["session"] = session
+				}
+				if kind != "" {
+					params["kind"] = kind
+				}
+				if warningsOnly {
+					params["min_severity"] = "warning"
+				}
+				raw, _ := json.Marshal(params)
+				return raw
 			}
-			if team != "" {
-				params["team"] = team
+			fetch := func(sinceSeq uint64) ([]events.Event, error) {
+				resp, err := send(daemon.Request{Method: "events", Params: buildParams(sinceSeq)})
+				if err != nil {
+					return nil, err
+				}
+				if resp.Error != "" {
+					return nil, fmt.Errorf("%s", resp.Error)
+				}
+				var result struct {
+					Events []events.Event `json:"events"`
+				}
+				if err := json.Unmarshal(resp.Result, &result); err != nil {
+					return nil, fmt.Errorf("parse events: %w", err)
+				}
+				return result.Events, nil
 			}
-			if role != "" {
-				params["role"] = role
+			printBatch := func(evs []events.Event, header bool) {
+				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				if header {
+					_, _ = fmt.Fprintln(tw, "TIME\tSEV\tKIND\tSESSION\tMESSAGE")
+				}
+				for _, ev := range evs {
+					sev := string(ev.Severity)
+					if sev == "" {
+						sev = "info"
+					}
+					sessRef := ev.Session
+					if sessRef == "" && ev.Team != "" {
+						sessRef = ev.Workspace + "/" + ev.Team
+					}
+					_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+						ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, ev.Message)
+				}
+				_ = tw.Flush()
 			}
-			if session != "" {
-				params["session"] = session
+			maxSeq := func(evs []events.Event, cur uint64) uint64 {
+				for _, ev := range evs {
+					if ev.Seq > cur {
+						cur = ev.Seq
+					}
+				}
+				return cur
 			}
-			if kind != "" {
-				params["kind"] = kind
-			}
-			if warningsOnly {
-				params["min_severity"] = "warning"
-			}
-			raw, _ := json.Marshal(params)
-			resp, err := send(daemon.Request{Method: "events", Params: raw})
+
+			evs, err := fetch(0)
 			if err != nil {
 				return err
 			}
-			if resp.Error != "" {
-				return fmt.Errorf("%s", resp.Error)
-			}
-			var result struct {
-				Events []events.Event `json:"events"`
-			}
-			if err := json.Unmarshal(resp.Result, &result); err != nil {
-				return fmt.Errorf("parse events: %w", err)
-			}
-			if len(result.Events) == 0 {
+			if len(evs) == 0 && !follow {
 				fmt.Println("no events")
 				return nil
 			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "TIME\tSEV\tKIND\tSESSION\tMESSAGE")
-			for _, ev := range result.Events {
-				sev := string(ev.Severity)
-				if sev == "" {
-					sev = "info"
-				}
-				sessRef := ev.Session
-				if sessRef == "" && ev.Team != "" {
-					sessRef = ev.Workspace + "/" + ev.Team
-				}
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-					ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, ev.Message)
+			printBatch(evs, true)
+			if !follow {
+				return nil
 			}
-			return tw.Flush()
+			// Follow mode: poll the ring with a Seq cursor so each event
+			// prints exactly once, in order, until interrupted. The ring
+			// assigns Seq monotonically, so a cursor survives ring
+			// wraparound (missed events are simply gone, never repeated).
+			cursor := maxSeq(evs, 0)
+			for {
+				time.Sleep(time.Second)
+				batch, err := fetch(cursor)
+				if err != nil {
+					return err
+				}
+				if len(batch) == 0 {
+					continue
+				}
+				printBatch(batch, false)
+				cursor = maxSeq(batch, cursor)
+			}
 		},
 	}
 	cmd.Flags().IntVarP(&n, "lines", "n", 100, "number of events to return (0 = all buffered)")
@@ -472,6 +523,7 @@ Examples:
 	cmd.Flags().StringVar(&session, "session", "", "filter by session key (workspace/name)")
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed, agent.tool.call)")
 	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "show only warning-severity events")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "poll for new events every second until interrupted")
 	return cmd
 }
 
