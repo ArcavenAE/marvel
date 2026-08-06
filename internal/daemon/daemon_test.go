@@ -1121,3 +1121,33 @@ func TestCleanExecPath(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureBounds(t *testing.T) {
+	iptr := func(v int) *int { return &v }
+	tests := []struct {
+		name       string
+		params     captureParams
+		wantStart  int
+		wantEnd    int
+		wantRanged bool
+	}{
+		{"neither bound: visible capture", captureParams{}, 0, 0, false},
+		{"start only: end defaults to bottom of visible, not -E 0", captureParams{Start: iptr(-200)}, -200, captureVisibleEnd, true},
+		{"end only: start defaults to top of visible", captureParams{End: iptr(5)}, 0, 5, true},
+		{"both bounds pass through", captureParams{Start: iptr(-100), End: iptr(10)}, -100, 10, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end, ranged := captureBounds(tt.params)
+			if ranged != tt.wantRanged {
+				t.Fatalf("ranged = %v, want %v", ranged, tt.wantRanged)
+			}
+			if !ranged {
+				return
+			}
+			if start != tt.wantStart || end != tt.wantEnd {
+				t.Fatalf("bounds = (%d, %d), want (%d, %d)", start, end, tt.wantStart, tt.wantEnd)
+			}
+		})
+	}
+}

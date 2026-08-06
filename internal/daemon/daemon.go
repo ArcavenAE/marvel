@@ -1107,6 +1107,31 @@ type captureParams struct {
 	End        *int   `json:"end,omitempty"`
 }
 
+// captureVisibleEnd stands in for an omitted end bound. tmux clamps an
+// over-large -E to the last visible row, which is also tmux's own default
+// end — so a start-only request spans scrollback through the bottom of
+// the screen instead of stopping at -E 0, the TOP visible line (a
+// one-line span on alternate-screen panes; marvel#114).
+const captureVisibleEnd = 100000
+
+// captureBounds resolves the optional start/end params to concrete tmux
+// bounds. Either bound alone triggers a range capture; the missing bound
+// defaults to tmux's own default for that side (-S 0 = top of visible,
+// -E clamped to bottom of visible).
+func captureBounds(p captureParams) (start, end int, ranged bool) {
+	if p.Start == nil && p.End == nil {
+		return 0, 0, false
+	}
+	start, end = 0, captureVisibleEnd
+	if p.Start != nil {
+		start = *p.Start
+	}
+	if p.End != nil {
+		end = *p.End
+	}
+	return start, end, true
+}
+
 func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	var p captureParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -1123,8 +1148,8 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	}
 
 	var content string
-	if p.Start != nil && p.End != nil {
-		content, err = d.driver.CapturePaneRange(sess.PaneID, *p.Start, *p.End)
+	if start, end, ranged := captureBounds(p); ranged {
+		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
 	} else {
 		content, err = d.driver.CapturePane(sess.PaneID)
 	}
