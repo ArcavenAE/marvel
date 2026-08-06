@@ -876,15 +876,26 @@ func injectCmd() *cobra.Command {
 
 func captureCmd() *cobra.Command {
 	var start, end int
-	var hasRange bool
 	cmd := &cobra.Command{
 		Use:   "capture <session-key>",
 		Short: "Capture a session's pane content",
-		Args:  cobra.ExactArgs(1),
+		Long: `Capture a session's pane content.
+
+Without flags, captures the visible area. -S with a negative value reaches
+into scrollback; an omitted -E defaults to the bottom of the visible area.
+
+Full-screen TUI harnesses (interactive claude and friends) run on the tmux
+alternate screen, which has no scrollback — captures of those sessions cap
+at the visible screen regardless of -S.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := map[string]any{"session_key": args[0]}
-			if hasRange {
+			// Send only the bounds actually given: a defaulted end of 0
+			// would pin the span to the TOP visible line (marvel#114).
+			if cmd.Flags().Changed("start") {
 				p["start"] = start
+			}
+			if cmd.Flags().Changed("end") {
 				p["end"] = end
 			}
 			params, _ := json.Marshal(p)
@@ -907,11 +918,8 @@ func captureCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVarP(&start, "start", "S", 0, "start line (negative for scrollback)")
-	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line")
-	cmd.PreRun = func(cmd *cobra.Command, args []string) {
-		hasRange = cmd.Flags().Changed("start") || cmd.Flags().Changed("end")
-	}
+	cmd.Flags().IntVarP(&start, "start", "S", 0, "start line (negative for scrollback; default top of visible)")
+	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line (default bottom of visible)")
 	return cmd
 }
 
