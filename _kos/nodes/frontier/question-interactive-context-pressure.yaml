@@ -52,10 +52,33 @@ content: |
   value (w5su); interactive sessions get a best-effort scraped figure
   clearly labelled as approximate and harness-normalized.
 
-  Tracked: bd aae-orc-dc1j. Related: aae-orc-w5su (headless CTX%; scope
-  it headless-only so nobody assumes TUI coverage), aae-orc-gtpz
-  (shim), finding-005 (capture-pane tier), finding-007 (the headless
-  probe that left this untouched).
+  STATE 2026-08-06 (supersedes the framing above for claude):
+
+  - Interactive claude is SOLVED, and by neither (a) nor (b): the
+    statusline side channel (finding-011) exports raw occupancy WITH
+    the window denominator; shipped as `runtime.context_feed =
+    "statusline"` plus `marvel ctx-forward` into the heartbeat RPC.
+    The scrape-vs-headless-only dichotomy was false for claude; a
+    third, cooperative channel existed.
+  - codex and gemini have a named candidate (native OTEL, finding-008;
+    capable but not live-verified, occupancy derivation open).
+  - opencode and Crush have no verified channel; opencode's HTTP API
+    and plugin surface are unchecked candidates.
+  - Capture-pane scraping (option (a)) is ruled out as a default path:
+    fragile, per-harness, normalized figure, and now beaten on every
+    axis by the statusline precedent. Reopen only by deliberate
+    operator decision.
+  - Remaining work is structured as a two-phase sweep (secondary desk
+    catalog across all four runtimes, then primary live verification
+    for surviving candidates only, with a kill rule to headless-only):
+    probe-interactive-ctx-remainder-sweep.md.
+
+  Tracked: bd aae-orc-dc1j. Related: aae-orc-7hzb (statusline probe;
+  its "other harnesses" remainder is absorbed by the sweep brief),
+  aae-orc-w5su (headless CTX%; scope it headless-only so nobody
+  assumes TUI coverage), aae-orc-gtpz (shim), finding-005
+  (capture-pane tier), finding-007 (the headless probe that left this
+  untouched), finding-008 (OTEL), finding-011 (statusline).
 edges:
   - target: question-stream-attachment
     type: derives
