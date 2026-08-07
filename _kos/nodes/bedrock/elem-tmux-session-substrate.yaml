@@ -52,10 +52,22 @@ content: |
   not a path) isolates it cleanly, so the mechanism exists and the
   default declines to use it.
 
+  **Scoped 2026-08-07 (`aae-orc-by6j`, marvel #128).** The default is
+  now `marvel-<first 8 hex of sha256(~/.marvel)>`, derived in
+  `paths.Layout.TmuxSocketName` beside `RuntimeSocket`, so each HOME
+  gets its own tmux server. `MARVEL_TMUX_SOCKET` keeps its meaning as
+  the override, and `MARVEL_TMUX_SOCKET=default` reproduces the old
+  shared behavior. Verified in `scripts/rig-daemon-isolation.sh`
+  scenario 6: two daemons, two servers, neither able to see the
+  other's sessions. The namespace is scoped, not eliminated: two
+  daemons under one HOME still share one tmux server.
+
   This does not reopen the substrate decision. It records that
   "tmux is the terminal and human-view layer" left the namespace
-  question unanswered. Open at `question-daemon-isolation-boundary`;
-  work item `aae-orc-kvcs`.
+  question unanswered, and that the answer is the HOME-rooted layout.
+  See `question-daemon-isolation-boundary` and
+  `docs/design/daemon-isolation.md` decision 4; work item
+  `aae-orc-kvcs`.
 edges:
   - target: aae-orc::elem-tmux-cmc
     type: derives

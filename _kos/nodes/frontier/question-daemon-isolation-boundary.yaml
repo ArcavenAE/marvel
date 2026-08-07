@@ -87,11 +87,33 @@ content: |
 
   Probe: `aae-orc::_kos/probes/brief-marvel-runtime-socket-placement.md`
   (run 1 recorded 2026-08-06, corrected and closed 2026-08-07). The
-  probe is complete; no fix to either namespace has been built, so
-  nothing about the isolation boundary itself is a finding yet. The one
-  shipped change, PR #118, is attribution, not isolation.
+  probe is complete. The one change shipped at the time of writing, PR
+  #118, was attribution rather than isolation.
+
+  ANSWERED 2026-08-07, by build rather than by argument. The design is
+  `docs/design/daemon-isolation.md`; the verification is
+  `_kos/findings/finding-012-daemon-isolation-rig-verification.md` and
+  scenario 6 of `scripts/rig-daemon-isolation.sh`.
+
+  1. The isolation unit is the HOME-rooted `paths.Layout` (decision 1).
+  2. Yes. Both namespaces now derive from it: the control socket at
+     `Layout.RuntimeSocket` (marvel #122) and the tmux server name at
+     `Layout.TmuxSocketName` (marvel #128, `aae-orc-by6j`). Whether two
+     is the count is still not established, which is why both live in
+     `internal/paths` rather than each in its own package.
+  3. Leave alone (decision 5, marvel #123). Killing is `marvel daemon
+     --reclaim` or `marvel reap --confirm`.
+  4. Still a precondition for `question-multi-host`, now satisfied for
+     the single-host case.
+
+  Left open: whether a daemon may kill what it did not create at all
+  (decision 6), which `--reclaim` and reap still have to answer; and
+  the victim side, since the daemon whose panes are destroyed still
+  records nothing (`aae-orc-tt5e`, `aae-orc-4bz2`).
+
   Work items: `aae-orc-t6da` and `aae-orc-mh6g` (socket namespace),
   `aae-orc-kvcs` (tmux namespace and the unlogged kill),
+  `aae-orc-by6j` (the layout-derived tmux server name),
   `aae-orc-sqh0` (the same uid question this does not answer).
 edges:
   - target: elem-data-directory-permissions

@@ -192,6 +192,35 @@ Two consequences to state plainly:
   of Decision 5's kill posture. Two daemons sharing one HOME still share
   one tmux server.
 
+### Migration (resolved 2026-08-07)
+
+Ruled: accept the invisibility, document the cleanup, name the escape
+hatch. No adoption sweep.
+
+The rejected alternative was a one-time sweep over the shared default
+server at first start under the new scheme, adopting what matches
+records. It is the kindest option and the most code, and it reintroduces
+exactly one pass of the cross-server reach this decision removes. It was
+declined on measurement rather than taste: on the machine this shipped
+from there were zero live tmux servers and 529 stale socket files under
+`/private/tmp/tmux-501`, `tmux -L default list-sessions` reported no
+server, so the sweep would have been code written for a population that
+did not exist. If a fleet worth adopting ever turns up, the sweep is
+still available and the reasoning above is what it has to answer to.
+
+What ships instead:
+
+- The layout-derived default.
+- Cleanup instructions for an operator holding a live fleet on the
+  shared server: `tmux -L default kill-session -t marvel-<workspace>`
+  before upgrading. Nothing is destroyed if they do not; the sessions
+  keep running and stop being marvel's problem.
+- `MARVEL_TMUX_SOCKET=default` as the exact reproduction of the old
+  behavior. Verified rather than assumed: both `tmux list-sessions` and
+  `tmux -L default list-sessions` report the same socket,
+  `/private/tmp/tmux-501/default`, because `default` is tmux's own
+  default server name.
+
 ## Decision 5: the default posture toward unrecognised state (RESOLVED, Reading B)
 
 This is `aae-orc-kvcs` decision 2. **Ratified 2026-08-07: err on silent
@@ -351,9 +380,15 @@ rejecting a mismatch, which is authorization-shaped and belongs with
 ## Build sequence
 
 Status, 2026-08-07: steps 1 to 4 shipped in `ArcavenAE/marvel#122`, step
-7 in `#123`. Steps 5 and 6 are open. Step 6 was sequenced after 7 in the
-end, because 7 is what stops the destruction and 6 only lowers its
-frequency.
+7 in `#123`, step 5 in `#126`, step 6 in `#128`. Nothing here is open.
+Step 6 was sequenced after 7, because 7 is what stops the destruction and
+6 only lowers its frequency.
+
+The rig (`scripts/rig-daemon-isolation.sh`) gained scenario 6 with step
+6: two daemons under different homes, `MARVEL_TMUX_SOCKET` set nowhere,
+each on its own tmux server, each blind to the other's sessions. Unit
+tests cannot see this; the 109-byte failure below produced no marvel
+output at all.
 
 1. Decision 2. Socket resolves through `Layout`, both hardcode sites
    removed, `RuntimeSocket()` reconciled or deleted, path-length
