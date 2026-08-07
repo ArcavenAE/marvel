@@ -140,6 +140,8 @@ func (m *Manager) adoptOrKillPrefix(prefix string) (adopted, killed int, err err
 		}
 	}
 
+	actor := m.actorID()
+
 	for _, name := range names {
 		if !strings.HasPrefix(name, prefix) {
 			continue
@@ -150,11 +152,19 @@ func (m *Manager) adoptOrKillPrefix(prefix string) (adopted, killed int, err err
 		// Matches pre-L2 behavior for sessions marvel doesn't claim.
 		if _, gerr := m.store.GetWorkspace(workspace); gerr != nil {
 			if kerr := m.driver.KillSession(name); kerr != nil {
-				log.Printf("AdoptOrKill: kill unrecorded session %s: %v", name, kerr)
+				log.Printf("AdoptOrKill[%s]: kill unrecorded session %s: %v", actor, name, kerr)
 				continue
 			}
 			killed++
-			log.Printf("AdoptOrKill: killed unrecorded workspace tmux session %s", name)
+			log.Printf("AdoptOrKill[%s]: killed unrecorded workspace tmux session %s", actor, name)
+			events.Emit(m.Events, events.Event{
+				Kind:      events.KindReconcileKilled,
+				Severity:  events.SeverityWarning,
+				Workspace: workspace,
+				Actor:     actor,
+				Message: fmt.Sprintf(
+					"killed tmux session %s: workspace not in this daemon's records", name),
+			})
 			continue
 		}
 
@@ -168,22 +178,54 @@ func (m *Manager) adoptOrKillPrefix(prefix string) (adopted, killed int, err err
 			if sessKey, ok := recordedByPane[p.ID]; ok {
 				adopted++
 				m.recordPanePID(sessKey, p.PID)
-				log.Printf("AdoptOrKill: adopted pane %s (session %s)", p.ID, sessKey)
+				log.Printf("AdoptOrKill[%s]: adopted pane %s (session %s)", actor, p.ID, sessKey)
+				events.Emit(m.Events, events.Event{
+					Kind:      events.KindReconcileAdopted,
+					Workspace: workspace,
+					Session:   sessKey,
+					Actor:     actor,
+					Message:   fmt.Sprintf("adopted pane %s", p.ID),
+				})
 			} else {
 				if kerr := m.driver.KillPane(p.ID); kerr != nil {
-					log.Printf("AdoptOrKill: kill unrecorded pane %s: %v", p.ID, kerr)
+					log.Printf("AdoptOrKill[%s]: kill unrecorded pane %s: %v", actor, p.ID, kerr)
 					continue
 				}
 				killed++
-				log.Printf("AdoptOrKill: killed unrecorded pane %s in workspace %s", p.ID, workspace)
+				log.Printf("AdoptOrKill[%s]: killed unrecorded pane %s in workspace %s", actor, p.ID, workspace)
+				events.Emit(m.Events, events.Event{
+					Kind:      events.KindReconcileKilled,
+					Severity:  events.SeverityWarning,
+					Workspace: workspace,
+					Actor:     actor,
+					Message: fmt.Sprintf(
+						"killed pane %s: not in this daemon's records", p.ID),
+				})
 			}
 		}
 	}
 
 	if adopted > 0 || killed > 0 {
-		log.Printf("AdoptOrKill: %d adopted, %d killed", adopted, killed)
+		log.Printf("AdoptOrKill[%s]: %d adopted, %d killed", actor, adopted, killed)
 	}
 	return adopted, killed, nil
+}
+
+// actorID identifies this daemon process in the log lines and events
+// AdoptOrKill produces. Two daemons on one host append to the same
+// ~/.marvel/log/daemon.log by default, so an unattributed line cannot be
+// traced to the process that wrote it, and the daemon whose panes are
+// killed records nothing itself. pid distinguishes processes; the socket
+// path distinguishes the instances an operator addresses.
+//
+// SocketPath is set by daemon.Start before AdoptOrKill runs. It is empty
+// in tests that drive the Manager directly, which is why the socket half
+// is omitted rather than rendered blank.
+func (m *Manager) actorID() string {
+	if m.SocketPath == "" {
+		return fmt.Sprintf("pid=%d", os.Getpid())
+	}
+	return fmt.Sprintf("pid=%d socket=%s", os.Getpid(), m.SocketPath)
 }
 
 // recordPanePID commits an adopted pane's pid to the recorded session.
