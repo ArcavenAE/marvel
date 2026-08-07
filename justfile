@@ -214,6 +214,12 @@ demo-all:
 # renderer's tabwriter rather than estimated.
 session_pane_width := "149"
 
+# Floor for the CLI pane. The console wants 149 + 1 + this, which is why
+# the window defaults to 250. On a narrower terminal the CLI keeps this
+# many columns and the session table clips instead, because a full table
+# beside an unusable shell is the worse trade.
+cli_min_width := "100"
+
 # Operator console for watching a demo live: four panes in one tmux
 # session — live session table and a driver CLI side by side on top, event
 # tail and daemon log poll full-width below. Attach from your own terminal:
@@ -222,12 +228,24 @@ demo-watch: build
     #!/usr/bin/env bash
     set -euo pipefail
     tmux kill-session -t marvel-watch 2>/dev/null || true
-    tmux new-session -d -s marvel-watch -x 220 -y 55
+    tmux new-session -d -s marvel-watch -x 250 -y 55
     P0=$(tmux display -p -t marvel-watch '#{pane_id}')
     P2=$(tmux split-window -t "$P0" -v -l 50% -P -F '#{pane_id}')
     P1=$(tmux split-window -t "$P0" -h -P -F '#{pane_id}')
-    tmux resize-pane -t "$P0" -x {{session_pane_width}}
     P3=$(tmux split-window -t "$P2" -v -l 50% -P -F '#{pane_id}')
+    # tmux scales panes proportionally on resize, which is wrong for both
+    # of these. The session table is content-fixed: narrower and it drops
+    # the LLM column, wider and it renders blank padding. The CLI wants
+    # every column it can get. So the table is pinned and the CLI absorbs
+    # all the slack, re-applied on every resize because attaching from a
+    # real terminal is a resize.
+    RESIZE="{{justfile_directory()}}/scripts/demo-watch-resize.sh $P0 {{session_pane_width}} {{cli_min_width}}"
+    $RESIZE
+    # Synchronous on purpose. The script is three tmux calls, and with
+    # run-shell -b a reader can catch the pane at its proportionally
+    # scaled width before the hook re-pins it.
+    tmux set-hook -t marvel-watch client-resized "run-shell '$RESIZE'"
+    tmux set-hook -t marvel-watch window-resized "run-shell '$RESIZE'"
     # Layout: P0 sessions top-left, P1 CLI top-right, P2 events and P3 logs
     # full-width below. The two readouts you act ON sit beside the CLI you
     # act WITH; the two you read AFTER run underneath, full width, because
@@ -248,5 +266,5 @@ demo-watch: build
     tmux select-pane -t "$P1"
     echo "Operator console ready: tmux attach -t marvel-watch"
     echo "  top-left   sessions ({{session_pane_width}} cols: all columns + 12 of the model)"
-    echo "  top-right  CLI (focused)"
+    echo "  top-right  CLI (focused, takes every column the table does not)"
     echo "  bottom     events --follow, then daemon logs (full width)"
