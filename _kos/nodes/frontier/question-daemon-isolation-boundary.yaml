@@ -1,0 +1,87 @@
+id: question-daemon-isolation-boundary
+type: question
+confidence: frontier
+title: "What is the isolation boundary for concurrent marvel daemons on one host?"
+tags:
+  - isolation
+  - security
+content: |
+  Marvel has no isolation unit between two daemons running on the same
+  machine. The layout in `elem-data-directory-permissions` is HOME
+  scoped and mode enforced, but at least two runtime namespaces escape
+  it, and both are machine global:
+
+  - **The control socket.** `config.DefaultSocket` is the literal
+    `/tmp/marvel.sock`, hardcoded in two places (`config.go:19` and
+    `daemon.go:39`), and never resolved through `internal/paths`.
+  - **The tmux session prefix.** `marvel-*` on whichever tmux server
+    the driver reaches, which by default is the user's shared one.
+
+  Measured 2026-08-06 in an isolated rig (HOME separated daemons,
+  simulator runtime, no model tokens):
+
+  - A second daemon takes the socket from the first. The `--pidfile`
+    guard, which does default to `$HOME/.marvel/run/daemon.pid` and
+    does carry sshd-style refuse-if-live semantics, cannot fire,
+    because the guard is HOME scoped while the socket is machine
+    global. A guard that already ships is structurally unable to
+    protect the thing it looks like it protects.
+  - A client that reaches the wrong daemon gets a well formed,
+    successful, empty answer with exit code 0. A mutating call
+    (`marvel work`) reports success against the wrong daemon.
+  - A second daemon kills the first daemon's entire running fleet
+    through the tmux prefix. Verified independent of the socket
+    (distinct `--socket` per daemon: the fleet still died) and
+    independent of the starting daemon's own state (populated store
+    carrying its own workspace: still killed). The rule is not "empty
+    state kills"; it is "any `marvel-*` session not in my records gets
+    killed."
+  - Both namespaces already have a working manual override, `--socket`
+    and `MARVEL_TMUX_SOCKET`, and the default declines to use either.
+  - A daemon restarting against its own records adopts correctly. The
+    discrimination is by record, not by prefix.
+
+  THE QUESTION, which is not the same as the bugs it was found through:
+
+  1. What is the isolation unit? Candidates: the HOME rooted layout
+     (one flag isolates everything), an explicit named instance, or a
+     declared cluster. The layout already exists and everything else
+     keys off it, which argues for it, but it puts the socket on the
+     home filesystem, where unix sockets do not work on NFS.
+  2. Should every machine global namespace be derived from that one
+     unit, so they cannot drift apart again? Two were found by
+     working one bug. Nothing establishes that two is the count.
+  3. What is the default posture toward state a daemon does not
+     recognise: adopt, leave alone, or kill? Kill is the current
+     default and it is unlogged.
+  4. Is this a precondition for multi host (`question-multi-host`)?
+     Cross host scheduling treats the host as the isolation unit,
+     which assumes within host isolation exists. It does not.
+
+  Bears on `question-permission-model`: an agent marvel spawned runs at
+  the same uid and can reach both namespaces. Scoping them is not an
+  authorization boundary and must not be described as one.
+
+  Probe: `aae-orc::_kos/probes/brief-marvel-runtime-socket-placement.md`
+  (run 1 results recorded 2026-08-06; still a probe, no fix built, so
+  nothing here is a finding).
+  Work items: `aae-orc-t6da` and `aae-orc-mh6g` (socket namespace),
+  `aae-orc-kvcs` (tmux namespace and the unlogged kill),
+  `aae-orc-sqh0` (the same uid question this does not answer).
+edges:
+  - target: elem-data-directory-permissions
+    type: derives
+    note: "the layout this question says is incomplete: the control socket appears nowhere in its table"
+  - target: elem-tmux-session-substrate
+    type: derives
+    note: "the second machine-global namespace is a property of the substrate choice, unrecorded when it was ratified"
+  - target: question-multi-host
+    type: supports
+    note: "within-host isolation is a precondition for treating the host as the scheduling unit"
+  - target: question-permission-model
+    type: supports
+    note: "scoping these namespaces is not authorization; same-uid agents reach both either way"
+provenance:
+  created_by: agent
+  session: "2026-08-06-marvel-socket-probe"
+  created_at: "2026-08-06"
