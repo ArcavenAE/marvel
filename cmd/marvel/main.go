@@ -1099,9 +1099,17 @@ func configCmd() *cobra.Command {
 				if cl.Name == cfg.CurrentCluster {
 					marker = "* "
 				}
+				// A cluster with neither field set resolves to the
+				// layout default at use time. Show what it resolves to,
+				// marked, rather than an empty cell: the address column
+				// is where an operator checks which daemon they are
+				// pointed at, and blank reads as broken.
 				addr := cl.Socket
 				if cl.Server != "" {
 					addr = cl.Server
+				}
+				if addr == "" {
+					addr = config.ResolveSocket() + "  (default)"
 				}
 				identity := cl.Identity
 				if identity == "" {
