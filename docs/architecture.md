@@ -212,6 +212,21 @@ one constant bypassed the layout every other path honored. A config entry
 still pinning it gets a warning naming the new default. Full reasoning:
 `docs/design/daemon-isolation.md`.
 
+The path alone cannot say which daemon answered, so every response
+carries the layout home the daemon is rooted at (`daemon_home`), and the
+client warns on stderr when that differs from the home it resolved
+against. The warning names both homes and points at `--socket` and
+`$MARVEL_SOCKET`. It stays quiet for remote clusters, which are expected
+to run under a different home, and for daemons that predate the field,
+which simply omit it.
+
+This is diagnostic, not preventive. The field arrives on the response, so
+a read gets a warning before the operator trusts the answer, but a
+mutating call has already been carried out by the time the mismatch is
+visible. Preventing it would put the expectation on the request and have
+the daemon reject a mismatch, which is an authorization question tracked
+separately (`aae-orc-sqh0`).
+
 This is not an authorization boundary. A 0700 socket is private to the
 user and remains reachable by every agent marvel spawns, because those
 run at the same uid.

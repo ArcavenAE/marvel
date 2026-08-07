@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -92,6 +93,74 @@ func LegacySocketWarning(addr string) string {
 			"and a client that reaches the wrong one gets an empty answer with "+
 			"exit code 0. Update config.yaml, or set %s to silence this.",
 		LegacySocket, DefaultSocket(), SocketEnv)
+}
+
+// ClientHome returns the layout home this client resolves against,
+// ~/.marvel, or the empty string when the home directory cannot be
+// determined. It is the expectation a daemon's self-reported home is
+// compared with.
+func ClientHome() string {
+	layout, err := paths.Default()
+	if err != nil {
+		return ""
+	}
+	return layout.Home
+}
+
+// DaemonHomeWarning returns a warning to show the operator when the
+// daemon that answered is rooted at a different layout home than the
+// client resolved against, or the empty string when there is nothing to
+// warn about.
+//
+// This is what makes a wrong-daemon hit visible at all. Measured
+// 2026-08-06: a client that reaches the wrong daemon gets a well-formed,
+// successful, EMPTY answer with exit code 0, and a mutating call reports
+// success against the wrong daemon. Neither the path nor the exit code
+// distinguishes that from a correct call, so the daemon says which
+// layout it is rooted at and the client checks.
+//
+// It warns. It does not fail the command, and it cannot prevent
+// anything: the field arrives on the response, so a mutating call has
+// already been carried out by the time this runs. See
+// docs/design/daemon-isolation.md decision 8 and aae-orc-sqh0.
+//
+// Silent by design in three cases:
+//
+//   - Remote addresses (mrvl://, ssh://, tcp://, host:port). A remote
+//     daemon runs under its own home and is EXPECTED to differ; warning
+//     there would be noise on every single remote call.
+//   - An empty reported home, which is a daemon predating this field.
+//   - An empty client home, which leaves nothing to compare against.
+func DaemonHomeWarning(addr, daemonHome, clientHome string) string {
+	if daemonHome == "" || clientHome == "" {
+		return ""
+	}
+	if !isLocalSocket(addr) {
+		return ""
+	}
+	if daemonHome == clientHome {
+		return ""
+	}
+	return fmt.Sprintf(
+		"warning: the daemon at %s is rooted at %s, but this client resolved against %s. "+
+			"The answer above came from a different marvel. "+
+			"Pass --socket, or set %s, to reach the one you meant.",
+		addr, daemonHome, clientHome, SocketEnv)
+}
+
+// isLocalSocket reports whether addr names a Unix socket on this
+// machine. Mirrors the daemon's own address routing: a scheme means
+// remote, and a colon means host:port. A Unix socket path with a colon
+// in it would be misread here, and equally by the dialer, so the two
+// agree.
+func isLocalSocket(addr string) bool {
+	if isMRVL(addr) || isSSH(addr) {
+		return false
+	}
+	if strings.HasPrefix(addr, "tcp://") {
+		return false
+	}
+	return !strings.Contains(addr, ":")
 }
 
 // Config is the top-level marvel client configuration.

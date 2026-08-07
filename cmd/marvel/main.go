@@ -91,11 +91,26 @@ func resolveDaemonAddr() (string, daemon.DialOptions) {
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
-// threading through per-cluster dial options. All subcommands should
-// use this instead of daemon.SendRequest directly.
+// threading through per-cluster dial options, and warns when the daemon
+// that answered is not rooted at the layout home this client resolved
+// against. All subcommands should use this instead of
+// daemon.SendRequest directly.
 func send(req daemon.Request) (*daemon.Response, error) {
 	addr, opts := resolveDaemon()
-	return daemon.SendRequestWith(addr, req, opts)
+	resp, err := daemon.SendRequestWith(addr, req, opts)
+	if err != nil {
+		return nil, err
+	}
+	// Diagnostic only, and deliberately after the fact: the daemon's
+	// self-reported home arrives on the response, so a mutating request
+	// has already been carried out by the time a mismatch is visible.
+	// Prevention would put the expectation on the request and have the
+	// daemon reject it, which is authorization-shaped (aae-orc-sqh0).
+	// See docs/design/daemon-isolation.md decision 8.
+	if w := config.DaemonHomeWarning(addr, resp.DaemonHome, config.ClientHome()); w != "" {
+		fmt.Fprintln(os.Stderr, w)
+	}
+	return resp, nil
 }
 
 func main() {
