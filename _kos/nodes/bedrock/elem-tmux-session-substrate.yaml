@@ -38,6 +38,24 @@ content: |
   Evidence: MVP functional with tmux driver across sessions 008-026;
   finding-004 (shim-in-pane spike), finding-005 (stream-attachment
   probe), both 2026-07-31.
+
+  **Property recorded 2026-08-06, not known when this was ratified.**
+  The substrate carries a machine-global namespace. Sessions are named
+  `marvel-*` on whichever tmux server the driver reaches, and by
+  default that is the user's shared one. A daemon starting up
+  reconciles that prefix against its own records and kills what it does
+  not recognise, so a second daemon destroys the first daemon's running
+  fleet. Measured independent of the control socket (distinct
+  `--socket` per daemon: the fleet still died) and independent of the
+  starting daemon's state. `MARVEL_TMUX_SOCKET` (consumed as
+  `tmux -L <name>` at `internal/tmux/driver.go:88`, a socket name and
+  not a path) isolates it cleanly, so the mechanism exists and the
+  default declines to use it.
+
+  This does not reopen the substrate decision. It records that
+  "tmux is the terminal and human-view layer" left the namespace
+  question unanswered. Open at `question-daemon-isolation-boundary`;
+  work item `aae-orc-kvcs`.
 edges:
   - target: aae-orc::elem-tmux-cmc
     type: derives

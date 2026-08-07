@@ -13,6 +13,15 @@ content: |
   marvel need its own discovery mechanism? What happens when a remote
   host becomes unreachable — drain, reschedule, or wait? How does
   volume management (worktrees, shared dirs) work across hosts?
+
+  **Precondition surfaced 2026-08-06.** This question treats the host
+  as the scheduling and isolation unit, which assumes isolation exists
+  within a host. It does not. Two daemons on one machine share the
+  control socket path and the tmux session prefix, and the second one
+  takes the socket and kills the first one's fleet. Whatever answers
+  `question-daemon-isolation-boundary` also decides what a Host
+  resource is actually a boundary around, so that question is worth
+  settling before the scheduling algorithm is designed on top of it.
 edges:
   - target: elem-mvp-complete
     type: discovered_from

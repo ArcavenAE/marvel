@@ -31,6 +31,22 @@ content: |
   - Both default to the canonical paths above; empty string disables
 
   Evidence: session-025. `aae-orc-ax8`, `aae-orc-9d6` closed.
+
+  **Known incomplete (measured 2026-08-06).** The table above is the
+  on-disk layout, not the daemon's whole namespace. Two runtime
+  namespaces escape it and both are machine global: the control socket
+  (`/tmp/marvel.sock`, hardcoded at `config.go:19` and `daemon.go:39`,
+  never resolved through `internal/paths`) and the tmux session prefix
+  (`marvel-*` on the shared tmux server). Neither appears above.
+
+  This has a direct consequence for the `--pidfile` guard described in
+  this node. Its refuse-if-live semantics are real and on by default,
+  but the pid file is HOME scoped while the socket is machine global,
+  so the guard cannot protect the socket. Two daemons under different
+  HOMEs collide with no warning. Moving the socket into this layout is
+  what would make the guard load-bearing for it.
+
+  Open at `question-daemon-isolation-boundary`.
 edges:
   - target: elem-mrvl-protocol-ssh
     type: supports
