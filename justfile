@@ -148,7 +148,7 @@ demo-act1: build
     @echo ""
     @echo "Next, cause an unplanned pane loss and watch marvel recover it:"
     @echo "  ./bin/marvel describe session recover/line-worker-g1-0   # note PaneID %N"
-    @echo "  tmux kill-pane -t %1                                     # use that PaneID"
+    @echo "  tmux -L \"\$(./bin/marvel config tmux-server)\" kill-pane -t %1   # use that PaneID"
     @echo "  ./bin/marvel events --kind session.crashed              # immediate"
     @echo "  ./bin/marvel events --kind session.created              # replacement (~30-60s, crash-loop backoff)"
     @echo ""

@@ -81,8 +81,12 @@ vanish. Read its pane id first, then kill the pane:
 
 ```sh
 ./bin/marvel describe session recover/line-worker-g1-0   # note "PaneID": "%N"
-tmux kill-pane -t %1                                     # use the PaneID you saw
+tmux -L "$(./bin/marvel config tmux-server)" kill-pane -t %1   # use the PaneID you saw
 ```
+
+The `-L` is load-bearing. Marvel's panes live on a per-HOME tmux server, so a
+bare `tmux kill-pane -t %1` reaches tmux's shared default server instead and
+kills whatever `%1` is there, which is some other pane of yours.
 
 Marvel detects the vacated pane on its next reconcile tick, marks the session
 crashed, and (after a crash-loop backoff) spawns a replacement:
