@@ -125,6 +125,19 @@ content: |
      `Layout.TmuxSocketName` (marvel #128, `aae-orc-by6j`). Whether two
      is the count is still not established, which is why both live in
      `internal/paths` rather than each in its own package.
+
+     Two is NOT the count. A third surfaced 2026-08-07 while running
+     the demo end to end under an isolated HOME (`aae-orc-5kfw`): the
+     policy projection directory. `policy.projected` reported
+     `$TMPDIR/marvel-policies-<pid>/...` while HOME was
+     `/private/tmp/mrig`, so the projected settings file a harness
+     reads does not follow the layout. It is PID-suffixed, so two
+     daemons do not collide, and that is why this is a data point
+     rather than a bug: the namespace is scoped by something, just not
+     by the isolation unit. The pattern the first two shared holds
+     here too. Each was found by working an unrelated problem, never
+     by enumerating namespaces, which is the argument for enumerating
+     them rather than waiting for a fourth.
   3. Leave alone (decision 5, marvel #123). Killing is `marvel daemon
      --reclaim` or `marvel reap --confirm`.
   4. Still a precondition for `question-multi-host`, now satisfied for
