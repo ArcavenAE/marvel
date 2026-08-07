@@ -239,6 +239,12 @@ func (m *Manager) reconcilePrefix(prefix string, policy UnrecordedPolicy) (adopt
 			continue
 		}
 		for _, p := range panes {
+			// The store is checked FIRST and without reference to the
+			// Created marker. A recorded pane is ours by record, and
+			// panes made by builds before the marker existed carry none:
+			// fencing adoption on it would make the first restart after
+			// an upgrade fail to adopt its own agents, which is the one
+			// property this whole path exists to preserve.
 			if sessKey, ok := recordedByPane[p.ID]; ok {
 				adopted++
 				m.recordPanePID(sessKey, p.PID)
@@ -252,6 +258,19 @@ func (m *Manager) reconcilePrefix(prefix string, policy UnrecordedPolicy) (adopt
 				})
 				continue
 			}
+
+			// Unrecorded. Only panes marvel created are candidates for
+			// anything past this point. tmux makes one base shell pane
+			// per session and an operator can open more by hand; neither
+			// is in the store, so before this fence both were reported
+			// here and destroyed by the kill policy (#129). Skipped
+			// silently rather than reported: a healthy fleet's own base
+			// pane is not news, and reporting it is what left reap
+			// unable to ever say clean.
+			if !p.Created {
+				continue
+			}
+
 			if policy == LeaveUnrecorded {
 				acted++
 				log.Printf("%s[%s]: left pane %s running in workspace %s: not in this daemon's records",
@@ -326,6 +345,13 @@ func (m *Manager) UnrecordedTmuxState() ([]string, error) {
 			continue
 		}
 		for _, p := range panes {
+			// Same fence as reconcilePrefix: only panes marvel created
+			// can be candidates. This preview must agree with the action
+			// exactly, or `marvel reap` lists something `reap --confirm`
+			// will not destroy, or worse the reverse.
+			if !p.Created {
+				continue
+			}
 			if _, ok := recordedByPane[p.ID]; !ok {
 				found = append(found, fmt.Sprintf("pane %s in workspace %s", p.ID, workspace))
 			}

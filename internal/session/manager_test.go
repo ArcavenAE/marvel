@@ -557,3 +557,159 @@ func TestReapDeadCapsCrashedMarkers(t *testing.T) {
 		t.Fatalf("fresh state=%s, want %s", got.State, api.SessionCrashed)
 	}
 }
+
+// The bug this guards is #129: a healthy daemon on its own fleet
+// reported one reap candidate, and `reap --confirm` destroyed it. The
+// candidate was the base shell pane tmux creates with every session,
+// which is not in the store because it is not a marvel session. Every
+// pane in a healthy workspace is either recorded or not marvel's, so
+// the correct answer is nothing at all.
+//
+// finding-012 recorded the old behavior as reap working, because it
+// asserted "one candidate listed, one destroyed" rather than "nothing
+// listed on a healthy fleet". This test makes the assertion that
+// finding should have made.
+func TestReapReportsNothingOnAHealthyFleet(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-reap-healthy"
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &api.Session{
+		Name:      "t-r-g1-0",
+		Workspace: ws,
+		Team:      "t",
+		Role:      "r",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	// Precondition: the base pane really is there and really is
+	// unrecorded, or this test would pass for the wrong reason.
+	panes, err := driver.ListPanes("marvel-" + ws)
+	if err != nil {
+		t.Fatalf("list panes: %v", err)
+	}
+	var base, created int
+	for _, p := range panes {
+		if p.Created {
+			created++
+		} else {
+			base++
+		}
+	}
+	if base == 0 {
+		t.Fatalf("no unmarked base pane present, so this test cannot detect #129 (panes=%d)", len(panes))
+	}
+	if created == 0 {
+		t.Fatal("no marvel-created pane is marked; the marker is not being set at all")
+	}
+
+	found, err := mgr.UnrecordedTmuxState()
+	if err != nil {
+		t.Fatalf("UnrecordedTmuxState: %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("healthy fleet reports %d reap candidate(s), want 0: %v", len(found), found)
+	}
+}
+
+// A pane marvel did not create is never a candidate, even when it sits
+// inside a marvel workspace and is not in the store. An operator who
+// opens a shell in a marvel session must not lose it to reap.
+func TestUnrecordedTmuxStateIgnoresPanesMarvelDidNotCreate(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-foreign-pane"
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	tmuxSess := "marvel-" + ws
+	if err := driver.NewSession(tmuxSess); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	t.Cleanup(func() { _ = driver.KillSession(tmuxSess) })
+
+	found, err := mgr.UnrecordedTmuxState()
+	if err != nil {
+		t.Fatalf("UnrecordedTmuxState: %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("reported %d candidate(s) for a workspace whose only pane is tmux's own: %v",
+			len(found), found)
+	}
+}
+
+// The preview being right is not enough: --reclaim runs the kill policy
+// directly. On a healthy fleet it must adopt its own pane and leave the
+// base shell pane alone, or `marvel daemon --reclaim` damages the very
+// fleet it is reclaiming for.
+func TestAdoptOrKillSparesPanesMarvelDidNotCreate(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-reclaim-spares"
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &api.Session{
+		Name:      "t-r-g1-0",
+		Workspace: ws,
+		Team:      "t",
+		Role:      "r",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	before, err := driver.ListPanes("marvel-" + ws)
+	if err != nil {
+		t.Fatalf("list panes: %v", err)
+	}
+
+	adopted, killed, err := mgr.AdoptOrKill()
+	if err != nil {
+		t.Fatalf("AdoptOrKill: %v", err)
+	}
+	if adopted < 1 {
+		t.Errorf("adopted = %d, want at least 1 (our own recorded pane)", adopted)
+	}
+	if killed != 0 {
+		t.Errorf("killed = %d on a healthy fleet, want 0", killed)
+	}
+
+	after, err := driver.ListPanes("marvel-" + ws)
+	if err != nil {
+		t.Fatalf("list panes after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("panes %d -> %d: the kill policy destroyed part of a healthy fleet",
+			len(before), len(after))
+	}
+}
