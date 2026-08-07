@@ -109,6 +109,11 @@ type Daemon struct {
 	// exclusion.
 	socketLock *socketLock
 
+	// reclaim makes the startup reconcile destroy marvel-* tmux state
+	// this daemon does not own, instead of leaving it running. Off by
+	// default; `marvel daemon --reclaim` is the deliberate act.
+	reclaim bool
+
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
 
@@ -161,6 +166,12 @@ type Options struct {
 	// timeout without a 10-minute wait) via the daemon's --shift-timeout
 	// flag or MARVEL_SHIFT_TIMEOUT. See aae-orc-sape / ArcavenAE/marvel#88.
 	ShiftTimeout time.Duration
+	// Reclaim makes the startup reconcile pass destroy marvel-* tmux
+	// state this daemon does not own, rather than leaving it running and
+	// reporting it. The zero value is the ratified default (leave alone).
+	// Exposed as `marvel daemon --reclaim` for the operator who knows the
+	// host is theirs and wants it clean. See aae-orc-kvcs.
+	Reclaim bool
 	// ContextLimits, when non-nil, replaces the shipped model-to-window
 	// table the usage accountant resolves denominators against. Tests set
 	// it so a fixture's model does not have to be a real shipped entry.
@@ -226,6 +237,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		teamCtrl: teamCtrl,
 		driver:   driver,
 		pidFile:  opts.PidFile,
+		reclaim:  opts.Reclaim,
 		logs:     buf,
 		events:   evRing,
 		usage:    acct,
@@ -293,14 +305,22 @@ func (d *Daemon) Start(socketPath string) error {
 		}
 	}
 
-	// Reconcile marvel-* tmux state against recorded intent. With L2
-	// (bbolt) in use, panes that match the rehydrated intent are
-	// adopted (kept alive). Without L2 the store is empty and this
-	// degenerates to kill-all — the pre-Session-2 behavior of
-	// ArcavenAE/marvel#13's CleanupOrphanTmux fix. See orc finding-050
-	// (Session 2 of aae-orc-k4e4) for the architectural pivot.
-	if _, _, err := d.sessMgr.AdoptOrKill(); err != nil {
-		log.Printf("AdoptOrKill on startup: %v", err)
+	// Reconcile marvel-* tmux state against recorded intent. Panes that
+	// match the rehydrated intent are adopted; anything else is LEFT
+	// RUNNING and reported, unless the operator asked to reclaim.
+	//
+	// Kill used to be the default here, and without L2 the store is
+	// empty, so it degenerated to kill-all (ArcavenAE/marvel#13's
+	// CleanupOrphanTmux fix, orc finding-050). That is what let an
+	// ordinary `marvel daemon` destroy another daemon's entire running
+	// fleet. Reversed 2026-08-07 per docs/design/daemon-isolation.md
+	// decision 5: err on accumulation, not destruction.
+	reconcile, what := d.sessMgr.AdoptOrLeave, "AdoptOrLeave"
+	if d.reclaim {
+		reconcile, what = d.sessMgr.AdoptOrKill, "AdoptOrKill"
+	}
+	if _, _, err := reconcile(); err != nil {
+		log.Printf("%s on startup: %v", what, err)
 	}
 
 	// Announced from Start, not from the constructor. cmd/marvel installs
@@ -575,6 +595,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleDelete(req.Params)
 	case "scale":
 		return d.handleScale(req.Params)
+	case "reap":
+		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
 	case "run":
@@ -1213,6 +1235,50 @@ func stopMode(params json.RawMessage) (teardown bool, mode string, err error) {
 		return true, "teardown", nil
 	}
 	return false, "detach", nil
+}
+
+// handleReap lists marvel-* tmux state this daemon does not own and,
+// only when the caller confirms, destroys it.
+//
+// It is the other half of the 2026-08-07 ruling. Leaving unrecorded
+// state alone is the safe default, and it accumulates; this is how an
+// operator clears it deliberately, having seen what they are about to
+// lose. Confirmation is the caller's explicit flag, never inferred, so
+// the destructive branch cannot be reached by a command that merely
+// looks like a query.
+func (d *Daemon) handleReap(params json.RawMessage) Response {
+	var p struct {
+		Confirm bool `json:"confirm"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
+
+	found, err := d.sessMgr.UnrecordedTmuxState()
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	if !p.Confirm {
+		result, _ := json.Marshal(map[string]any{
+			"reaped":     false,
+			"candidates": found,
+		})
+		return Response{Result: result}
+	}
+
+	_, killed, err := d.sessMgr.AdoptOrKill()
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+	result, _ := json.Marshal(map[string]any{
+		"reaped":     true,
+		"killed":     killed,
+		"candidates": found,
+	})
+	return Response{Result: result}
 }
 
 func (d *Daemon) handleStop(params json.RawMessage) Response {

@@ -208,7 +208,11 @@ Recovery behavior, all shipped:
 - **`crashed`** is the transition state `ReapDead` sets when a pane is
   gone, distinguishing a dead process from a drained one.
 - **Adopt-on-restart.** A restarted daemon rehydrates the store and runs
-  `AdoptOrKill` against the live panes; agents survive the daemon.
+  `AdoptOrLeave` against the live panes; agents survive the daemon. Panes
+  it has no record of are left running and reported (`reconcile.left`),
+  not destroyed. Reclaiming is deliberate: `marvel daemon --reclaim`, or
+  `marvel reap --confirm`. Ratified 2026-08-07, err on accumulation
+  rather than destruction; see `docs/design/daemon-isolation.md`.
 - **SIGTERM is detach, not teardown.** `marvel stop` leaves agents
   running; `marvel stop --teardown` is the destructive form.
 - **Shift timeout with rollback.** A shift that cannot finish inside the
@@ -299,6 +303,8 @@ marvel scale <workspace/team> --role <r> --replicas N  # scale a role within a t
 marvel shift <workspace/team> [--role <r>]             # rolling shift (replace sessions with fresh ones)
 marvel run <command> [args...] --role <r>             # run a one-off agent session
 marvel kill <session-key>                            # kill a session
+marvel reap                                          # list marvel tmux state the daemon does not own
+marvel reap --confirm                                # destroy it
 marvel stop                                          # stop daemon, agents keep running (restart adopts them)
 marvel stop --teardown                               # stop daemon, delete sessions, kill panes
 marvel daemon                                        # start the daemon (foreground)

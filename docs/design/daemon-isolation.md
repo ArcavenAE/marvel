@@ -350,6 +350,11 @@ rejecting a mismatch, which is authorization-shaped and belongs with
 
 ## Build sequence
 
+Status, 2026-08-07: steps 1 to 4 shipped in `ArcavenAE/marvel#122`, step
+7 in `#123`. Steps 5 and 6 are open. Step 6 was sequenced after 7 in the
+end, because 7 is what stops the destruction and 6 only lowers its
+frequency.
+
 1. Decision 2. Socket resolves through `Layout`, both hardcode sites
    removed, `RuntimeSocket()` reconciled or deleted, path-length
    assertion as a test.

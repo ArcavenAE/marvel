@@ -132,6 +132,7 @@ func main() {
 	root.AddCommand(configCmd())
 	root.AddCommand(stopCmd())
 	root.AddCommand(eventsCmd())
+	root.AddCommand(reapCmd())
 	root.AddCommand(newCtxForwardCmd())
 
 	if err := root.Execute(); err != nil {
@@ -171,6 +172,7 @@ func daemonCmd() *cobra.Command {
 	var logMaxTotalMiB int
 	var stateBoltPath string
 	var shiftTimeout time.Duration
+	var reclaim bool
 
 	layout, _ := paths.Default()
 	defaultLog := ""
@@ -236,6 +238,7 @@ Examples:
 				PidFile:      pidFilePath,
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
+				Reclaim:      reclaim,
 			})
 			if err != nil {
 				return err
@@ -306,6 +309,8 @@ Examples:
 	f.NoOptDefVal = ":" + config.DefaultMRVLPort
 	cmd.Flags().StringVar(&listenSocket, "socket", "",
 		"Unix socket path (default "+config.DefaultSocket()+", or $"+config.SocketEnv+")")
+	cmd.Flags().BoolVar(&reclaim, "reclaim", false,
+		"destroy marvel tmux state this daemon does not own, instead of leaving it running")
 	cmd.Flags().StringVar(&logFilePath, "log-file", defaultLog,
 		"tee daemon stderr to this file (empty string disables)")
 	cmd.Flags().StringVar(&pidFilePath, "pidfile", defaultPid,
@@ -602,6 +607,62 @@ func openRotatingLog(path string, maxSizeMiB, maxFiles, maxTotalMiB int) (io.Clo
 		return nil, fmt.Errorf("open rotating log %s: %w", path, err)
 	}
 	return w, nil
+}
+
+// reapCmd is the deliberate counterpart to the default leave-alone
+// posture. It prints what it would destroy and stops; --confirm is what
+// actually destroys it.
+//
+// Showing first is not politeness, it is the ruling. Leaving unrecorded
+// state alone was chosen precisely because destruction should be an act
+// an operator takes with their eyes open, so a reap that killed on sight
+// would put the original failure back behind a new name.
+func reapCmd() *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "reap",
+		Short: "List (and with --confirm, destroy) marvel tmux state the daemon does not own",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]bool{"confirm": confirm})
+			resp, err := send(daemon.Request{Method: "reap", Params: params})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+
+			var result struct {
+				Reaped     bool     `json:"reaped"`
+				Killed     int      `json:"killed"`
+				Candidates []string `json:"candidates"`
+			}
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				return fmt.Errorf("parse reap result: %w", err)
+			}
+
+			if len(result.Candidates) == 0 {
+				fmt.Println("Nothing to reap: every marvel tmux session is in the daemon's records.")
+				return nil
+			}
+
+			for _, c := range result.Candidates {
+				fmt.Println("  " + c)
+			}
+			if result.Reaped {
+				fmt.Printf("\nReaped %d.\n", result.Killed)
+				return nil
+			}
+			fmt.Printf("\n%d unrecorded item(s), left running. Re-run with --confirm to destroy them.\n",
+				len(result.Candidates))
+			fmt.Println("These may belong to another running daemon. Check before confirming.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false,
+		"actually destroy the listed state (without this, reap only lists)")
+	return cmd
 }
 
 func workCmd() *cobra.Command {
