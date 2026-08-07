@@ -71,6 +71,20 @@ The acts read better watched than replayed. Two tools:
   defeats the one thing this pane is for. Resize the pane and the clip
   follows it.
 
+  **The console wants a terminal at least 250 columns wide.** The table is
+  content-fixed and the CLI is not, so the CLI takes every column the table
+  does not: at 250 that is 149 and 100, at 300 it is 149 and 150. tmux
+  would otherwise scale both proportionally, which is wrong in both
+  directions, stretching the table into blank padding on a wide terminal
+  and dropping its LLM column on a narrow one. A resize hook re-pins it,
+  including on attach, since attaching is itself a resize.
+
+  Below 250 the CLI keeps a 100-column floor and the table clips instead,
+  because a full table beside an unusable shell is the worse trade. At 220
+  the table runs 119 columns and loses LLM and RUNTIME. Both numbers are
+  `session_pane_width` and `cli_min_width` at the top of the justfile if
+  you want the other trade.
+
   The panes poll until a daemon appears, so start it in whichever order you
   like.
 
