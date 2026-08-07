@@ -43,11 +43,19 @@ The acts read better watched than replayed. Two tools:
   tail, then polls once a second and prints each new event exactly once,
   in order, using a ring-assigned sequence cursor. All the usual filters
   compose with it (`--workspace`, `--kind`, `--warnings`).
-- `just demo-watch` builds a four-pane tmux operator console (driver
-  shell, live session table, live event tail, daemon log poll). Attach
-  with `tmux attach -t marvel-watch`, drive the beats from the top-left
-  pane, and watch states flip in real time. The panes poll until a
-  daemon appears, so start it in whichever order you like.
+- `just demo-watch` builds a four-pane tmux operator console:
+
+  |  | left | right |
+  |---|---|---|
+  | **top** | live session table | live event tail |
+  | **bottom** | driver shell | daemon log poll |
+
+  Attach with `tmux attach -t marvel-watch`, drive the beats from the
+  bottom-left pane (already selected on attach), and watch states flip in
+  real time. The readouts sit on top: the session table directly above the
+  shell acting on it, the daemon log directly below the events it explains.
+  The panes poll until a daemon appears, so start it in whichever order you
+  like.
 
 ---
 
@@ -356,3 +364,22 @@ rm -f ~/.marvel/state/marvel.bolt
 `just clean` also removes `bin/` and the default socket, but it only kills the
 `marvel-demo` tmux session; `stop --teardown` is what ends every agent across
 all workspaces.
+
+Since #128 each HOME has its own tmux server, so anything reaching marvel's
+sessions with raw tmux needs `-L`. Ask the binary for the name rather than
+recomputing it:
+
+```sh
+tmux -L "$(marvel config tmux-server)" attach -t marvel-demo
+tmux -L "$(marvel config tmux-server)" list-sessions
+```
+
+A bare `tmux kill-session -t marvel-demo` now targets tmux's shared default
+server and silently reaches nothing. `just clean` was fixed to pass `-L`, and
+degrades with a message when `bin/marvel` is not built rather than pretending
+it cleaned up.
+
+The `marvel-watch` operator console from `just demo-watch` is unaffected. It is
+a plain tmux session of your own on the default server, and its panes reach the
+daemon over the control socket, so `tmux attach -t marvel-watch` is still
+correct as written above.
