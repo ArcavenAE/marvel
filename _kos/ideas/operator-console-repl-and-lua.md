@@ -77,13 +77,13 @@ IOS `set` mutates running-config imperatively. Marvel's model is
 declarative: you edit a manifest and re-apply. A `set` verb in a marvel
 shell has three possible meanings and they are not compatible:
 
-1. **Session-local preference.** `set cluster kinu`, `set workspace mixed`
-   — narrows what subsequent commands address. Harmless, genuinely
-   useful, and not really "set" in the IOS sense at all.
-2. **Mutate desired state.** `set team/role replicas 5` — this is
-   `marvel scale` with a different spelling, and it silently diverges the
-   live desired state from the manifest on disk that produced it. That
-   drift is the thing the declarative model exists to prevent.
+1. **Session-local preference.** `set cluster kinu`, `set workspace mixed`:
+   narrows what subsequent commands address. Harmless, genuinely useful,
+   and not really "set" in the IOS sense at all.
+2. **Mutate desired state.** `set team/role replicas 5` is `marvel scale`
+   with a different spelling, and it silently diverges the live desired
+   state from the manifest on disk that produced it. That drift is the
+   thing the declarative model exists to prevent.
 3. **Mutate actual state.** Meaningless: actual state is an observation.
 
 Reading 1 is safe and small. Reading 2 needs an answer to "where does
