@@ -158,6 +158,34 @@ func TestCheckSocketPath(t *testing.T) {
 	}
 }
 
+// IsTCPAddr is the one definition of the host:port rule, shared by the
+// daemon's listen and dial routing, the socket length check, and the
+// client's self-report comparison. These cases are the vocabulary all
+// three see.
+func TestIsTCPAddr(t *testing.T) {
+	cases := []struct {
+		addr string
+		want bool
+	}{
+		{"/Users/someone/.marvel/run/marvel.sock", false},
+		{"/tmp/marvel.sock", false},
+		{"marvel.sock", false},
+		{"0.0.0.0:9090", true},
+		{":9090", true},
+		{"tcp://host:9090", true},
+		{"mrvl://host", true},
+		{"ssh://op@host/run/marvel.sock", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.addr, func(t *testing.T) {
+			if got := IsTCPAddr(tc.addr); got != tc.want {
+				t.Errorf("IsTCPAddr(%q) = %v, want %v", tc.addr, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCheckMode(t *testing.T) {
 	dir := t.TempDir()
 

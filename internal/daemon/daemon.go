@@ -54,9 +54,11 @@ const (
 )
 
 // listenNetwork returns "tcp" if the address looks like host:port,
-// otherwise "unix". Used by the daemon listener side only.
+// otherwise "unix". The host:port rule itself is paths.IsTCPAddr, which
+// is the single definition shared with the client and with the socket
+// length check.
 func listenNetwork(addr string) string {
-	if strings.Contains(addr, ":") {
+	if paths.IsTCPAddr(addr) {
 		return "tcp"
 	}
 	return "unix"

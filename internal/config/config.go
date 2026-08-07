@@ -149,18 +149,18 @@ func DaemonHomeWarning(addr, daemonHome, clientHome string) string {
 }
 
 // isLocalSocket reports whether addr names a Unix socket on this
-// machine. Mirrors the daemon's own address routing: a scheme means
-// remote, and a colon means host:port. A Unix socket path with a colon
-// in it would be misread here, and equally by the dialer, so the two
-// agree.
+// machine. A scheme means remote; otherwise the host:port rule decides,
+// and that rule is paths.IsTCPAddr so the client cannot drift from what
+// the daemon and the dialer do.
+//
+// The scheme tests are kept explicit rather than left to the colon in
+// "://", so that adding a fourth scheme is a change here and not a
+// coincidence of punctuation.
 func isLocalSocket(addr string) bool {
-	if isMRVL(addr) || isSSH(addr) {
+	if isMRVL(addr) || isSSH(addr) || strings.HasPrefix(addr, "tcp://") {
 		return false
 	}
-	if strings.HasPrefix(addr, "tcp://") {
-		return false
-	}
-	return !strings.Contains(addr, ":")
+	return !paths.IsTCPAddr(addr)
 }
 
 // Config is the top-level marvel client configuration.
