@@ -70,19 +70,40 @@ func NewDriver() (*Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tmux not found: %w", err)
 	}
-	socket := os.Getenv("MARVEL_TMUX_SOCKET")
-	if socket == "" {
-		layout, lerr := paths.Default()
-		if lerr != nil {
-			return nil, fmt.Errorf("derive tmux socket name: %w", lerr)
-		}
-		socket = layout.TmuxSocketName()
+	socket, err := SocketName()
+	if err != nil {
+		return nil, err
 	}
 	return &Driver{
 		binary: path,
 		socket: socket,
 		paneMu: make(map[string]*sync.Mutex),
 	}, nil
+}
+
+// SocketEnv is the environment variable that overrides the derived tmux
+// server name. Named here, once, because the driver and every caller
+// that needs to report or reproduce the driver's target must agree on
+// it; a second string literal elsewhere is how the control socket's
+// default survived a fix by being declared twice (marvel #122).
+const SocketEnv = "MARVEL_TMUX_SOCKET"
+
+// SocketName resolves the tmux server name the driver will use: the
+// SocketEnv override when set, otherwise the layout-derived name.
+//
+// Exported so operators and scripts can ask marvel which tmux server to
+// reach rather than recomputing sha256(HOME) in shell. `just clean` and
+// the demo runbook both need `tmux -L <name>`, and a shell reimplementation
+// of the derivation would be a second definition of it.
+func SocketName() (string, error) {
+	if s := os.Getenv(SocketEnv); s != "" {
+		return s, nil
+	}
+	layout, err := paths.Default()
+	if err != nil {
+		return "", fmt.Errorf("derive tmux socket name: %w", err)
+	}
+	return layout.TmuxSocketName(), nil
 }
 
 // lockPane acquires the per-pane inject lock and returns its unlock

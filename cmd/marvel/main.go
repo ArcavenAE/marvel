@@ -25,6 +25,7 @@ import (
 	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/rlog"
+	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/upgrade"
 	"github.com/spf13/cobra"
 )
@@ -1098,6 +1099,29 @@ func configCmd() *cobra.Command {
 		Use:   "config",
 		Short: "Manage marvel cluster configuration",
 	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "tmux-server",
+		Short: "Print the tmux server name this HOME's daemon uses",
+		Long: `Print the tmux server name (` + "`tmux -L <name>`" + `) for this HOME.
+
+Since marvel #128 each HOME gets its own tmux server, so a bare
+` + "`tmux kill-session -t marvel-<workspace>`" + ` reaches the wrong server. Scripts
+and runbooks use this to get the name instead of recomputing it:
+
+  tmux -L "$(marvel config tmux-server)" kill-session -t marvel-demo
+
+MARVEL_TMUX_SOCKET overrides the derived name and is reported as-is.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := tmux.SocketName()
+			if err != nil {
+				return err
+			}
+			fmt.Println(name)
+			return nil
+		},
+	})
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",

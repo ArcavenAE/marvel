@@ -434,6 +434,16 @@ marvel get sessions --socket mrvl://kinu
 marvel get sessions --socket /tmp/marvel-dev.sock
 ```
 
+`--socket` takes either an `mrvl://` address or a Unix socket path. With
+neither `--socket` nor `--cluster`, marvel uses `MARVEL_SOCKET` if set and
+otherwise `~/.marvel/run/marvel.sock`.
+
+That default follows `HOME`, which is how you run more than one daemon on one
+machine: give each its own `HOME` and each gets its own control socket and its
+own tmux server, with neither able to see the other's sessions. `marvel config
+list` shows the resolved default, and `marvel config tmux-server` prints the
+tmux server name for scripts that need `tmux -L`.
+
 ## Deleting resources
 
 ```bash
@@ -446,6 +456,32 @@ marvel delete team dev/squad
 # Delete a workspace and everything in it
 marvel delete workspace dev
 ```
+
+## Reclaiming leftover tmux state
+
+A restarted daemon adopts the panes it has records for and **leaves the rest
+running**. It does not destroy tmux state it does not recognise, because that
+state may be another daemon's live fleet. What it left is reported as a
+`reconcile.left` warning, visible in `marvel events`.
+
+Two deliberate paths reclaim it. Neither is automatic:
+
+```bash
+marvel reap             # list what this daemon does not own, destroy nothing
+marvel reap --confirm   # destroy it
+marvel daemon --reclaim # kill unrecognised state at startup instead of leaving it
+```
+
+`marvel reap` on its own is a query. The listing warns that candidates may
+belong to another running daemon, which is worth taking literally: check before
+confirming.
+
+> **Known defect (ArcavenAE/marvel#129).** `reap` currently reports one false
+> candidate per live session, the base shell pane tmux creates before marvel
+> adds replica panes. A healthy daemon therefore never reports clean, and
+> `reap --confirm` on a healthy fleet destroys that pane. Agents survive, since
+> replicas live in their own windows, but do not read a non-empty `reap` listing
+> as evidence of leftovers until this is fixed.
 
 ## Version and upgrade
 

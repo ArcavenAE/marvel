@@ -65,7 +65,7 @@ demo: build
     ./bin/marvel get endpoints
     @echo ""
     @echo "Demo running. Use 'just stop' to tear down."
-    @echo "Attach to tmux: tmux attach -t marvel-demo"
+    @echo "Attach to tmux: tmux -L $(./bin/marvel config tmux-server) attach -t marvel-demo"
 
 # Show running state
 status: build
@@ -109,10 +109,30 @@ demo-shift: build
     @echo "Shift complete. Use 'just watch' to monitor or 'just stop' to tear down."
 
 # Clean up everything (kill all marvel tmux sessions)
+#
+# The kill-session needs -L: since #128 each HOME has its own tmux server,
+# so a bare kill-session targets tmux's shared default server and silently
+# reaches nothing. Asking the binary keeps the derivation in one place
+# rather than recomputing sha256(HOME) here. No build dependency, because
+# this recipe deletes bin/ and should still work when it is already gone;
+# it says what it skipped instead of failing or pretending.
 clean:
-    -tmux kill-session -t marvel-demo 2>/dev/null
-    -rm -f "${HOME}/.marvel/run/marvel.sock" "${HOME}/.marvel/run/marvel.sock.lock"
-    -rm -rf bin/
+    #!/usr/bin/env bash
+    set -uo pipefail
+    server=""
+    if [[ -x ./bin/marvel ]]; then
+      server=$(./bin/marvel config tmux-server 2>/dev/null || true)
+    fi
+    if [[ -n "${server}" ]]; then
+      tmux -L "${server}" kill-session -t marvel-demo 2>/dev/null || true
+      echo "cleaned tmux session marvel-demo on server ${server}"
+    else
+      echo "note: ./bin/marvel not built, so the tmux server name is unknown."
+      echo "      Skipped the tmux cleanup. Run 'just build' first, or:"
+      echo "      tmux -L \"\$(marvel config tmux-server)\" kill-session -t marvel-demo"
+    fi
+    rm -f "${HOME}/.marvel/run/marvel.sock" "${HOME}/.marvel/run/marvel.sock.lock"
+    rm -rf bin/
 
 # Three-act runnable demo. Full runbook: docs/demo.md.
 # Each recipe assumes a running daemon (`just start-bg` first).
@@ -199,11 +219,14 @@ demo-watch: build
     P1=$(tmux split-window -t "$P0" -v -P -F '#{pane_id}')
     P2=$(tmux split-window -t "$P0" -h -P -F '#{pane_id}')
     P3=$(tmux split-window -t "$P1" -h -P -F '#{pane_id}')
-    tmux send-keys -t "$P0" 'clear; echo "DRIVER — run demo beats here (runbook: docs/demo.md). Daemon: ./bin/marvel daemon &"' C-m
-    tmux send-keys -t "$P2" 'while :; do ./bin/marvel get sessions -w 1 2>/dev/null; sleep 2; clear; done' C-m
-    tmux send-keys -t "$P1" 'while :; do ./bin/marvel events --follow 2>/dev/null; sleep 2; done' C-m
+    # Layout: P0 top-left, P2 top-right, P1 bottom-left, P3 bottom-right.
+    # Readouts on top, driver shell bottom-left under the session table it
+    # acts on, logs bottom-right under the events they explain.
+    tmux send-keys -t "$P0" 'while :; do ./bin/marvel get sessions -w 1 2>/dev/null; sleep 2; clear; done' C-m
+    tmux send-keys -t "$P2" 'while :; do ./bin/marvel events --follow 2>/dev/null; sleep 2; done' C-m
+    tmux send-keys -t "$P1" 'clear; echo "DRIVER — run demo beats here (runbook: docs/demo.md). Daemon: ./bin/marvel daemon &"' C-m
     tmux send-keys -t "$P3" 'while :; do clear; ./bin/marvel daemon logs -n 14 2>/dev/null || echo "(daemon not up yet)"; sleep 2; done' C-m
-    tmux select-pane -t "$P0"
+    tmux select-pane -t "$P1"
     echo "Operator console ready: tmux attach -t marvel-watch"
-    echo "  top-left  DRIVER          top-right  sessions (live)"
-    echo "  bot-left  events --follow bot-right  daemon logs"
+    echo "  top-left  sessions (live) top-right  events --follow"
+    echo "  bot-left  DRIVER          bot-right  daemon logs"
