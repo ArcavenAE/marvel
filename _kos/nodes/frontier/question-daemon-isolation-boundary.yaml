@@ -92,8 +92,17 @@ content: |
 
   ANSWERED 2026-08-07, by build rather than by argument. The design is
   `docs/design/daemon-isolation.md`; the verification is
-  `_kos/findings/finding-012-daemon-isolation-rig-verification.md` and
+  `_kos/findings/finding-012-daemon-isolation-rig-verification.md`,
+  `_kos/findings/finding-013-tmux-server-isolation-by-home.md`, and
   scenario 6 of `scripts/rig-daemon-isolation.sh`.
+
+  Read finding-012 WITH its 2026-08-07 correction, not without it. Two
+  of its recorded results did not mean what they were recorded to mean,
+  and one of them concerns a destructive path: the single candidate its
+  reap scenario destroyed was tmux's base shell pane, not an orphan, so
+  reap's orphan identification is unverified and in fact wrong
+  (ArcavenAE/marvel#129). Isolation is verified; reap's correctness is
+  not, and the two were reported together.
 
   1. The isolation unit is the HOME-rooted `paths.Layout` (decision 1).
   2. Yes. Both namespaces now derive from it: the control socket at

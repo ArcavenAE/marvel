@@ -101,6 +101,52 @@ blind read. Both times the flaw made a result look stronger or weaker
 than it was, and both times only re-reading the primary evidence found
 it. A green tally is not a result.
 
+## Correction, 2026-08-07: the reap scenario measured the wrong object
+
+The claim above that "`marvel reap` listed one candidate and destroyed
+nothing; `reap --confirm` destroyed it" is true as written and does not
+mean what it was recorded to mean. Found while building finding-013.
+
+That one candidate was not an orphan. It was the tmux base pane (`%0`,
+running a shell) that tmux creates with every session before marvel
+splits replicas into it. `UnrecordedTmuxState` builds its recorded set
+from `sess.PaneID` over store sessions, and the base pane is never a
+marvel session, so it is never recorded and is always reported. A single
+healthy daemon on its own fleet reports "1 unrecorded item(s)", and
+`reap --confirm` on a healthy fleet destroys a pane inside a live
+session.
+
+So the scenario demonstrated that reap's plumbing works, not that reap
+correctly identifies orphans. The destructive half is worse than
+unproven: it is wrong, and this finding's green result helped it look
+right. Filed as ArcavenAE/marvel#129; it predates finding-013's change
+and was reproduced against the unmodified `358d882` binary.
+
+**Scenario 4b no longer reproduces**, also verified against unmodified
+`358d882`, so it is not a regression from later work. Two causes
+compounded: 4b inherited the fleet scenario 4's `reap --confirm` had
+already destroyed, and the `sims()` helper counts machine-wide while
+`marvel stop` is detach rather than teardown, so both readings were
+earlier scenarios' surviving simulators on a tmux server `--reclaim`
+never touched. Measured directly, `--reclaim` does take 2 simulators to
+0 and logs the kill. The rig has been fixed to start 4b from a clean
+slate with a loud precondition assertion, and to kill the prior
+scenario's tmux server so counts stop carrying earlier processes.
+
+**This is the third methodology error in this ticket family, and the
+first two are in this document.** All three share one shape: a check
+passed while measuring something other than what it claimed. The
+`pgrep -fc` error made a comparison vacuously true; the exit-code error
+in the sibling rustfmt work read `head`'s status instead of cargo's;
+this one counted a live shell pane as an orphan. Orc finding-114
+generalizes the lesson from a different tool: a green check does not
+mean the thing you declared was the thing that got checked. It applies
+to this rig as much as to rustfmt, which is why the correction is
+appended here rather than filed only downstream.
+
+The original text above is left unaltered. Findings record what was
+believed when written; corrections append.
+
 ## What this does NOT establish
 
 - Nothing about the tmux namespace being scoped. It is still
