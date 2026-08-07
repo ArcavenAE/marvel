@@ -137,9 +137,23 @@ The team controller runs a reconciliation loop every 2 seconds:
 Recovery is separate: it runs once at daemon start, not on the loop.
 `RehydrateRoleHealth` loads the persisted crash-loop state before the
 reconciler starts, so a role frozen at `MaxRestarts` stays held back across a
-restart instead of getting a free respawn. `AdoptOrKill` then reconciles the
+restart instead of getting a free respawn. `AdoptOrLeave` then reconciles the
 live tmux panes against the rehydrated store, which is what lets agents
 survive the daemon.
+
+Panes matching the rehydrated intent are adopted. Anything else under the
+`marvel-*` prefix is **left running and reported** as a `reconcile.left`
+warning naming the acting daemon. Killing it is a deliberate act:
+`marvel daemon --reclaim` at startup, or `marvel reap --confirm` against a
+running daemon. `marvel reap` on its own lists the candidates and destroys
+nothing.
+
+Kill used to be the default, so an ordinary `marvel daemon` destroyed the
+entire running fleet of any other daemon sharing the tmux server. Reversed
+2026-08-07: err on silent accumulation, not silent destruction. Orphaned
+panes cost memory and can be reclaimed whenever an operator notices;
+destroyed work cannot be recovered. See
+`docs/design/daemon-isolation.md` decision 5.
 
 ## Shift mechanics
 

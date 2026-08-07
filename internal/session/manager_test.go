@@ -286,6 +286,136 @@ func TestActorIDOmitsUnsetSocket(t *testing.T) {
 	}
 }
 
+// The ratified default: err on silent accumulation, not silent
+// destruction (2026-08-07). Before this, a plain `marvel daemon` killed
+// every marvel-* session it did not have records for, which destroyed a
+// second daemon's entire running fleet on an ordinary action.
+func TestAdoptOrLeaveLeavesUnrecordedStateRunning(t *testing.T) {
+	skipIfNoTmux(t)
+
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	prefix := "marvel-leavetest-"
+	other := prefix + "someone-elses-fleet"
+	if err := driver.NewSession(other); err != nil {
+		t.Fatalf("new session %s: %v", other, err)
+	}
+	t.Cleanup(func() { _ = driver.KillSession(other) })
+
+	ring := events.NewRing(10)
+	mgr := NewManager(api.NewStore(), driver)
+	mgr.Events = ring
+
+	_, left, err := mgr.reconcilePrefix(prefix, LeaveUnrecorded)
+	if err != nil {
+		t.Fatalf("reconcilePrefix: %v", err)
+	}
+	if left != 1 {
+		t.Fatalf("left = %d, want 1", left)
+	}
+	if !driver.HasSession(other) {
+		t.Fatal("unrecorded session was destroyed; the default must leave it running")
+	}
+
+	// Left alone must not mean unreported, or the ruling trades one
+	// silent failure for another.
+	got := ring.Snapshot(events.Filter{Kind: events.KindReconcileLeft}, 0)
+	if len(got) != 1 {
+		t.Fatalf("reconcile.left events = %d, want 1", len(got))
+	}
+	if got[0].Severity != events.SeverityWarning {
+		t.Errorf("severity = %q, want %q", got[0].Severity, events.SeverityWarning)
+	}
+	if got[0].Actor == "" {
+		t.Error("left event has no actor")
+	}
+	if killed := ring.Snapshot(events.Filter{Kind: events.KindReconcileKilled}, 0); len(killed) != 0 {
+		t.Errorf("emitted %d kill events under the leave policy", len(killed))
+	}
+}
+
+// Leaving other daemons' state alone must not cost adoption of our own,
+// which is what makes restart-without-agent-loss work.
+func TestAdoptOrLeaveStillAdoptsRecordedPanes(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-adopt-or-leave"
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &api.Session{
+		Name:      "t-r-g1-0",
+		Workspace: ws,
+		Team:      "t",
+		Role:      "r",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	adopted, _, err := mgr.AdoptOrLeave()
+	if err != nil {
+		t.Fatalf("AdoptOrLeave: %v", err)
+	}
+	if adopted < 1 {
+		t.Fatalf("adopted = %d, want at least 1", adopted)
+	}
+	if !driver.HasSession("marvel-" + ws) {
+		t.Fatal("our own workspace session went away")
+	}
+}
+
+// The reap preview and the reap action are computed the same way, so
+// what an operator is shown is what they lose. A preview that could
+// disagree with the action would put the surprise back.
+func TestUnrecordedTmuxStateMatchesWhatKillWouldDestroy(t *testing.T) {
+	skipIfNoTmux(t)
+
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	orphan := "marvel-reappreview"
+	if err := driver.NewSession(orphan); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	t.Cleanup(func() { _ = driver.KillSession(orphan) })
+
+	mgr := NewManager(api.NewStore(), driver)
+
+	found, err := mgr.UnrecordedTmuxState()
+	if err != nil {
+		t.Fatalf("UnrecordedTmuxState: %v", err)
+	}
+	var named bool
+	for _, f := range found {
+		if strings.Contains(f, orphan) {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("preview does not name the orphan %q: %v", orphan, found)
+	}
+
+	// The preview is read-only. Calling it must not change anything.
+	if !driver.HasSession(orphan) {
+		t.Fatal("UnrecordedTmuxState destroyed something; it must only look")
+	}
+}
+
 func TestReapDead(t *testing.T) {
 	skipIfNoTmux(t)
 

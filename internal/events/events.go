@@ -72,6 +72,16 @@ const (
 	// killed entity may belong to a second daemon that records nothing
 	// itself.
 	KindReconcileKilled Kind = "reconcile.killed"
+	// KindReconcileLeft records that a daemon found marvel-* tmux state
+	// it does not own and left it running, which is the default posture
+	// ratified 2026-08-07.
+	//
+	// Warning severity on purpose. The ruling accepted accumulating
+	// orphans as the better of two failures, and an accepted failure that
+	// nobody can see is just the other one wearing a different hat. This
+	// is the event that keeps "leave it alone" from being as silent as
+	// the kill it replaced.
+	KindReconcileLeft Kind = "reconcile.left"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
