@@ -81,6 +81,19 @@ func NewDriver() (*Driver, error) {
 	}, nil
 }
 
+// PaneMarker is the tmux user option marvel sets on every pane it
+// creates, and paneMarkerValue is what it sets it to. Read back into
+// PaneInfo.Created and checked before anything destructive runs.
+//
+// A tmux user option rather than marvel state, because the fact has to
+// outlive the daemon: a restarted daemon reconciles against panes it did
+// not create in this process, and a pane's provenance cannot come from a
+// store the daemon just rebuilt from disk.
+const (
+	PaneMarker      = "@marvel_pane"
+	paneMarkerValue = "1"
+)
+
 // SocketEnv is the environment variable that overrides the derived tmux
 // server name. Named here, once, because the driver and every caller
 // that needs to report or reproduce the driver's target must agree on
@@ -206,6 +219,24 @@ type PaneInfo struct {
 	PID     string
 	Command string
 	Title   string
+
+	// Created reports whether marvel made this pane, read back from the
+	// PaneMarker option marvel sets at creation. It is the fence around
+	// every destructive path: marvel must never destroy a pane it did not
+	// create.
+	//
+	// tmux itself creates one pane per session (the base shell from
+	// new-session), and an operator can open more by hand. Neither is a
+	// marvel session, so neither is in the store, so before this field
+	// existed both were reported as unrecorded and both were destroyed by
+	// reap --confirm and daemon --reclaim. A healthy single daemon on its
+	// own fleet reported one candidate that was its own session's base
+	// pane. See ArcavenAE/marvel#129 and finding-012's correction.
+	//
+	// False for panes made by builds older than this field. That is the
+	// safe direction: an untagged pane is left alone rather than
+	// destroyed.
+	Created bool
 }
 
 // NewPane creates a new window in the given session running the specified command.
@@ -238,6 +269,12 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string)
 
 	// Ensure window closes when command exits (don't leave orphaned shells).
 	_ = d.cmd("set-option", "-t", paneID, "remain-on-exit", "off").Run()
+
+	// Mark the pane as marvel's. Every destructive path checks this, so a
+	// pane marvel did not create is never a candidate. The mark lives in
+	// tmux rather than in marvel's store on purpose: it has to survive a
+	// daemon restart, and tmux is the thing that outlives the daemon.
+	_ = d.cmd("set-option", "-p", "-t", paneID, PaneMarker, paneMarkerValue).Run()
 
 	return paneID, nil
 }
@@ -385,7 +422,7 @@ func (d *Driver) ShowOption(session, option string) (string, error) {
 // ListPanes lists all panes across all windows in a session.
 func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 	out, err := d.cmd("list-panes", "-t", session, "-s",
-		"-F", "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}").CombinedOutput()
+		"-F", "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{"+PaneMarker+"}").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("list-panes %s: %s: %w", session, string(out), err)
 	}
@@ -395,7 +432,7 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 4)
+		parts := strings.SplitN(line, "\t", 5)
 		p := PaneInfo{ID: parts[0]}
 		if len(parts) > 1 {
 			p.PID = parts[1]
@@ -405,6 +442,9 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 		}
 		if len(parts) > 3 {
 			p.Title = parts[3]
+		}
+		if len(parts) > 4 {
+			p.Created = parts[4] == paneMarkerValue
 		}
 		panes = append(panes, p)
 	}
