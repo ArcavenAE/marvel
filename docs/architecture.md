@@ -153,7 +153,10 @@ entire running fleet of any other daemon sharing the tmux server. Reversed
 2026-08-07: err on silent accumulation, not silent destruction. Orphaned
 panes cost memory and can be reclaimed whenever an operator notices;
 destroyed work cannot be recovered. See
-`docs/design/daemon-isolation.md` decision 5.
+`docs/design/daemon-isolation.md` decision 5. Since 2026-08-07 daemons
+under different homes no longer share a tmux server at all, so the
+population `AdoptOrLeave` meets is normally the daemon's own leftovers;
+see [The tmux server](#the-tmux-server).
 
 ## Shift mechanics
 
@@ -230,6 +233,44 @@ separately (`aae-orc-sqh0`).
 This is not an authorization boundary. A 0700 socket is private to the
 user and remains reachable by every agent marvel spawns, because those
 run at the same uid.
+
+### The tmux server
+
+The control socket is one of two namespaces a daemon has to have to
+itself. The other is the tmux server its panes live on, and it is the
+destructive one: session names are `marvel-<workspace>`, so two daemons
+sharing a tmux server can each reach the other's entire running fleet.
+
+The daemon always runs on a dedicated tmux server (`tmux -L <name>`).
+Resolution order:
+
+1. `$MARVEL_TMUX_SOCKET`
+2. `marvel-<first 8 hex of sha256(~/.marvel)>`
+
+The derived name is 15 bytes whatever the home is, which matters because
+tmux refuses an over-long socket name with `File name too long` and
+marvel surfaces nothing: sessions simply stay pending. It is a pure
+function of the home, so a restarted daemon finds the same server and
+adopts its own panes.
+
+Until 2026-08 the default was the user's shared tmux server, so every
+marvel on the machine shared one namespace no matter how its HOME was
+set. Two consequences of the change:
+
+- Sessions an older build left on the shared server are invisible to the
+  new default rather than adopted. They keep running, and `marvel reap`
+  will not see them either, because reap looks at the daemon's own
+  server. Clean them up with `tmux -L default kill-session -t
+  marvel-<workspace>` before upgrading, or leave them and kill them
+  later; nothing destroys them.
+- `MARVEL_TMUX_SOCKET=default` reproduces the old shared behavior
+  exactly. `default` is tmux's own default server name, so `tmux -L
+  default` and a bare `tmux` are the same server.
+
+This shrinks the blast radius of a shared namespace; it does not remove
+it. Two daemons under one HOME still share one tmux server, which is why
+the leave-alone posture above ships alongside it. Full reasoning:
+`docs/design/daemon-isolation.md` decision 4.
 
 ### Cluster configuration
 

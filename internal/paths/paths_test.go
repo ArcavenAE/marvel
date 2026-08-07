@@ -123,6 +123,55 @@ func TestRuntimeSocketFollowsTheLayout(t *testing.T) {
 	}
 }
 
+// The tmux server is the second isolation unit, and the destructive one:
+// two daemons sharing it means either can reach the other's whole running
+// fleet. See docs/design/daemon-isolation.md decision 4, aae-orc-by6j.
+func TestTmuxSocketNameFollowsTheLayout(t *testing.T) {
+	a := WithHome("/home/alice/.marvel")
+	b := WithHome("/home/bob/.marvel")
+
+	if a.TmuxSocketName() == b.TmuxSocketName() {
+		t.Errorf("two layouts share a tmux server (%q); they must not", a.TmuxSocketName())
+	}
+
+	// Stability across restarts under the same HOME. Without this,
+	// adopt-on-restart breaks and every restart orphans its own fleet.
+	if got, want := WithHome("/home/alice/.marvel").TmuxSocketName(), a.TmuxSocketName(); got != want {
+		t.Errorf("name is not stable for one home: %q then %q", want, got)
+	}
+
+	// Shape: marvel- plus exactly 8 lowercase hex digits.
+	name := a.TmuxSocketName()
+	rest, ok := strings.CutPrefix(name, "marvel-")
+	if !ok {
+		t.Fatalf("name %q does not start with marvel-", name)
+	}
+	if len(rest) != 8 {
+		t.Errorf("name %q has a %d-digit suffix, want 8", name, len(rest))
+	}
+	for _, r := range rest {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			t.Errorf("name %q has non-hex digit %q", name, r)
+			break
+		}
+	}
+}
+
+// tmux refused a 109-byte socket name with "File name too long" and
+// marvel emitted nothing at all: sessions stayed pending forever. The
+// name must not grow with the depth of HOME, so measure it against a
+// home far deeper than the failing case.
+func TestTmuxSocketNameStaysShortForADeepHome(t *testing.T) {
+	deep := WithHome("/" + strings.Repeat("verylongdirectorysegment/", 20) + ".marvel")
+	if len(deep.Home) < 109 {
+		t.Fatalf("test home is only %d bytes; it is meant to exceed the 109-byte case", len(deep.Home))
+	}
+	if got := len(deep.TmuxSocketName()); got != 15 {
+		t.Errorf("name for a %d-byte home is %d bytes (%q), want 15",
+			len(deep.Home), got, deep.TmuxSocketName())
+	}
+}
+
 func TestCheckSocketPath(t *testing.T) {
 	cases := []struct {
 		name    string

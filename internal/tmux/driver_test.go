@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 func skipIfNoTmux(t *testing.T) {
@@ -25,6 +27,53 @@ func TestNewDriver(t *testing.T) {
 	}
 	if d.binary == "" {
 		t.Fatal("expected binary path")
+	}
+}
+
+// With no MARVEL_TMUX_SOCKET the driver must still scope itself to a
+// dedicated server. An empty socket here is the shared default tmux
+// server, which is the namespace a second daemon used to destroy the
+// first's fleet through. See aae-orc-by6j.
+func TestNewDriverDerivesASocketWhenTheEnvIsUnset(t *testing.T) {
+	skipIfNoTmux(t)
+	// TestMain sets this for the whole package; clear it for this case.
+	t.Setenv("MARVEL_TMUX_SOCKET", "")
+	t.Setenv("HOME", t.TempDir())
+
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	if d.Socket() == "" {
+		t.Fatal("driver fell back to the shared default tmux server")
+	}
+	layout, err := paths.Default()
+	if err != nil {
+		t.Fatalf("resolve layout: %v", err)
+	}
+	derived := layout.TmuxSocketName()
+	if d.Socket() != derived {
+		t.Errorf("socket %q, want the layout-derived %q", d.Socket(), derived)
+	}
+	// The derived name has to reach the -L argument, not just the field.
+	args := d.cmd("list-sessions").Args
+	if len(args) < 3 || args[1] != "-L" || args[2] != derived {
+		t.Errorf("tmux args %v do not carry -L %s", args, derived)
+	}
+}
+
+// The override has to keep working, because it is the escape hatch for
+// the shared-server behavior and for per-package test isolation.
+func TestNewDriverPrefersTheEnvOverride(t *testing.T) {
+	skipIfNoTmux(t)
+	t.Setenv("MARVEL_TMUX_SOCKET", "mxOverride")
+
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	if got := d.Socket(); got != "mxOverride" {
+		t.Errorf("socket %q, want mxOverride", got)
 	}
 }
 

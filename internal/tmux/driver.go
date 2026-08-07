@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 // DefaultHistoryLimit is the tmux history-limit (scrollback lines) marvel
@@ -24,12 +26,14 @@ const DefaultHistoryLimit = 100000
 type Driver struct {
 	binary string
 
-	// socket is the tmux server socket name. Empty means the default
-	// tmux server. When non-empty every tmux invocation prepends
-	// -L <socket>, scoping the driver to a dedicated server.
+	// socket is the tmux server socket name. Every tmux invocation
+	// prepends -L <socket>, scoping the driver to a dedicated server.
+	// Empty means the user's shared default tmux server, which is no
+	// longer what NewDriver produces: it now derives a name from the
+	// paths layout so each HOME gets its own tmux server.
 	//
-	// Set via the MARVEL_TMUX_SOCKET env var at NewDriver time. Tests
-	// use this to get per-package isolation from the system-wide tmux.
+	// MARVEL_TMUX_SOCKET overrides the derived name. Tests use it to get
+	// per-package isolation from the system-wide tmux.
 	socket string
 
 	// paneMu serializes SendKeys per pane. The daemon runs each inject
@@ -45,18 +49,38 @@ type Driver struct {
 
 // NewDriver creates a tmux driver, verifying tmux is available.
 //
-// If MARVEL_TMUX_SOCKET is set, the driver talks to a dedicated tmux
-// server at that socket name (tmux -L <socket>). Useful for test
-// isolation and for running marvel alongside an unrelated tmux
-// workflow on the same machine.
+// The driver always talks to a dedicated tmux server (tmux -L <name>).
+// The name is MARVEL_TMUX_SOCKET when set, and otherwise is derived from
+// the paths layout, so daemons under different HOMEs land on different
+// tmux servers and cannot see each other's sessions.
+//
+// Before this, the default was the user's shared tmux server, which is
+// how a second daemon destroyed the first's entire running fleet through
+// the marvel-* session prefix. Two consequences worth stating:
+//
+//   - marvel sessions left on the shared default server by an older
+//     build become invisible rather than adopted. They keep running.
+//     Clean them up with `tmux -L default kill-session -t marvel-<name>`.
+//   - MARVEL_TMUX_SOCKET=default reproduces the old shared behavior
+//     exactly, since `default` is tmux's own default server name.
+//
+// See docs/design/daemon-isolation.md decision 4.
 func NewDriver() (*Driver, error) {
 	path, err := exec.LookPath("tmux")
 	if err != nil {
 		return nil, fmt.Errorf("tmux not found: %w", err)
 	}
+	socket := os.Getenv("MARVEL_TMUX_SOCKET")
+	if socket == "" {
+		layout, lerr := paths.Default()
+		if lerr != nil {
+			return nil, fmt.Errorf("derive tmux socket name: %w", lerr)
+		}
+		socket = layout.TmuxSocketName()
+	}
 	return &Driver{
 		binary: path,
-		socket: os.Getenv("MARVEL_TMUX_SOCKET"),
+		socket: socket,
 		paneMu: make(map[string]*sync.Mutex),
 	}, nil
 }
@@ -92,9 +116,10 @@ func (d *Driver) cmd(args ...string) *exec.Cmd {
 	return exec.Command(d.binary, args...)
 }
 
-// Socket returns the tmux socket name the driver is scoped to, or
-// empty string for the default tmux server. Used by test teardown to
-// kill the right server.
+// Socket returns the tmux socket name the driver is scoped to. Used by
+// test teardown to kill the right server. A driver built by NewDriver
+// always has one; only a hand-built Driver literal can report empty,
+// which still means the shared default server.
 func (d *Driver) Socket() string { return d.socket }
 
 // HasSession checks if a tmux session exists.

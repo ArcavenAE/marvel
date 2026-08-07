@@ -19,6 +19,11 @@
 // Modes follow OpenSSH conventions. Private material is 0600 or 0700;
 // public material is 0644. The root directory is 0700.
 //
+// One name is derived here without being a file here: TmuxSocketName.
+// tmux owns that socket's location; the layout owns the name, because
+// the tmux server is an isolation boundary between daemons in the same
+// way the control socket is.
+//
 // The control socket is protected by its directory, not by its own mode.
 // Nothing in the tree chmods a socket, and with the common umask of 022
 // net.Listen creates it 0755. run/ is 0700 and mode-checked, which is
@@ -26,6 +31,8 @@
 package paths
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -125,6 +132,38 @@ func (l Layout) DaemonPid() string { return filepath.Join(l.RunDir(), "daemon.pi
 // protect it. See docs/design/daemon-isolation.md and aae-orc-t6da.
 func (l Layout) RuntimeSocket() string {
 	return filepath.Join(l.RunDir(), "marvel.sock")
+}
+
+// TmuxSocketName returns the tmux server socket NAME for this layout,
+// consumed as `tmux -L <name>`. It is a name, not a path: tmux places
+// the socket file itself, under its own per-uid directory.
+//
+// It lives here, beside RuntimeSocket, because the tmux session prefix
+// is the second machine-global namespace that escaped the HOME-rooted
+// layout, and it is the destructive one: a second daemon reached the
+// first daemon's entire running fleet through the shared default tmux
+// server. Deriving the name from Layout.Home gives each HOME its own
+// tmux server, so two daemons no longer see each other's sessions at
+// all. See docs/design/daemon-isolation.md decision 4 and aae-orc-by6j.
+//
+// Three constraints the derivation has to respect, all measured:
+//
+//   - It must be short. A 109-byte name was refused by tmux with "File
+//     name too long", and marvel emitted nothing at all: sessions simply
+//     stayed pending. This one is 15 bytes regardless of how deep Home is.
+//   - It must be stable across daemon restarts under the same HOME, or
+//     adopt-on-restart breaks and every restart orphans its own fleet.
+//     sha256 of Home is a pure function of the layout.
+//   - It must differ between HOMEs, which is the whole point.
+//
+// The scheme (marvel- plus the first 8 hex of sha256(Home)) is an
+// implementation choice; the constraints are not. Four bytes of hash is
+// not a collision guarantee, and it does not have to be: a collision
+// would put two HOMEs on one tmux server, which is exactly today's
+// behavior for every HOME.
+func (l Layout) TmuxSocketName() string {
+	sum := sha256.Sum256([]byte(l.Home))
+	return "marvel-" + hex.EncodeToString(sum[:4])
 }
 
 // MaxUnixSocketPath is the ceiling on a Unix-domain socket path,
