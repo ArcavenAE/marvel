@@ -207,26 +207,46 @@ demo-all:
     @echo ""
     @echo "Between acts: just stop && rm -f ~/.marvel/state/marvel.bolt && just start-bg"
 
+# Width of the session-table pane: every column of `marvel get sessions`
+# plus 12 characters of the model. 137 is where the LLM column starts in
+# the worst case the demo actually produces (STATE=crashloop-backoff, which
+# Act 1 demonstrates, and a 26-character agent name), measured against the
+# renderer's tabwriter rather than estimated.
+session_pane_width := "149"
+
 # Operator console for watching a demo live: four panes in one tmux
-# session — driver shell, live session table, live event tail, daemon
-# log poll. Attach from your own terminal: tmux attach -t marvel-watch
+# session — live session table and a driver CLI side by side on top, event
+# tail and daemon log poll full-width below. Attach from your own terminal:
+# tmux attach -t marvel-watch
 demo-watch: build
     #!/usr/bin/env bash
     set -euo pipefail
     tmux kill-session -t marvel-watch 2>/dev/null || true
     tmux new-session -d -s marvel-watch -x 220 -y 55
     P0=$(tmux display -p -t marvel-watch '#{pane_id}')
-    P1=$(tmux split-window -t "$P0" -v -P -F '#{pane_id}')
-    P2=$(tmux split-window -t "$P0" -h -P -F '#{pane_id}')
-    P3=$(tmux split-window -t "$P1" -h -P -F '#{pane_id}')
-    # Layout: P0 top-left, P2 top-right, P1 bottom-left, P3 bottom-right.
-    # Readouts on top, driver shell bottom-left under the session table it
-    # acts on, logs bottom-right under the events they explain.
-    tmux send-keys -t "$P0" 'while :; do ./bin/marvel get sessions -w 1 2>/dev/null; sleep 2; clear; done' C-m
+    P2=$(tmux split-window -t "$P0" -v -l 50% -P -F '#{pane_id}')
+    P1=$(tmux split-window -t "$P0" -h -P -F '#{pane_id}')
+    tmux resize-pane -t "$P0" -x {{session_pane_width}}
+    P3=$(tmux split-window -t "$P2" -v -l 50% -P -F '#{pane_id}')
+    # Layout: P0 sessions top-left, P1 CLI top-right, P2 events and P3 logs
+    # full-width below. The two readouts you act ON sit beside the CLI you
+    # act WITH; the two you read AFTER run underneath, full width, because
+    # event and log lines are long and a half-width pane wraps them.
+    #
+    # The session table is clipped to the pane rather than wrapped. A row
+    # with a real model name runs past 160 columns, and a wrapped table is
+    # unreadable at a glance, which is the only thing this pane is for.
+    # Clipping to the live pane width keeps it correct if you resize.
+    #
+    # The -t "$TMUX_PANE" is load-bearing. Bare `tmux display -p` resolves
+    # against the client's ACTIVE pane, which is the CLI, so the table
+    # would clip to 70 columns and lose everything from STATE rightward.
+    tmux send-keys -t "$P0" 'while :; do clear; ./bin/marvel get sessions 2>/dev/null | cut -c1-$(tmux display -p -t "$TMUX_PANE" "#{pane_width}"); sleep 2; done' C-m
+    tmux send-keys -t "$P1" 'clear; echo "CLI — run demo beats here (runbook: docs/demo.md). Daemon: ./bin/marvel daemon &"' C-m
     tmux send-keys -t "$P2" 'while :; do ./bin/marvel events --follow 2>/dev/null; sleep 2; done' C-m
-    tmux send-keys -t "$P1" 'clear; echo "DRIVER — run demo beats here (runbook: docs/demo.md). Daemon: ./bin/marvel daemon &"' C-m
-    tmux send-keys -t "$P3" 'while :; do clear; ./bin/marvel daemon logs -n 14 2>/dev/null || echo "(daemon not up yet)"; sleep 2; done' C-m
+    tmux send-keys -t "$P3" 'while :; do clear; ./bin/marvel daemon logs -n 10 2>/dev/null || echo "(daemon not up yet)"; sleep 2; done' C-m
     tmux select-pane -t "$P1"
     echo "Operator console ready: tmux attach -t marvel-watch"
-    echo "  top-left  sessions (live) top-right  events --follow"
-    echo "  bot-left  DRIVER          bot-right  daemon logs"
+    echo "  top-left   sessions ({{session_pane_width}} cols: all columns + 12 of the model)"
+    echo "  top-right  CLI (focused)"
+    echo "  bottom     events --follow, then daemon logs (full width)"

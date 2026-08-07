@@ -45,15 +45,32 @@ The acts read better watched than replayed. Two tools:
   compose with it (`--workspace`, `--kind`, `--warnings`).
 - `just demo-watch` builds a four-pane tmux operator console:
 
-  |  | left | right |
-  |---|---|---|
-  | **top** | live session table | live event tail |
-  | **bottom** | driver shell | daemon log poll |
+  ```
+  +---------------------------+----------+
+  | live session table (149w) | CLI      |   50% height
+  +---------------------------+----------+
+  | live event tail                      |   full width
+  +--------------------------------------+
+  | daemon log poll                      |   full width
+  +--------------------------------------+
+  ```
 
-  Attach with `tmux attach -t marvel-watch`, drive the beats from the
-  bottom-left pane (already selected on attach), and watch states flip in
-  real time. The readouts sit on top: the session table directly above the
-  shell acting on it, the daemon log directly below the events it explains.
+  Attach with `tmux attach -t marvel-watch` and drive the beats from the
+  CLI pane, top right, already selected on attach. The session table sits
+  beside it because those two are the pair you work in: you type a command
+  and watch the states flip next to it. Events and logs run full width
+  underneath because their lines are long, and a half-width pane wraps
+  them into noise.
+
+  The table pane is 149 columns, which is every column of `marvel get
+  sessions` plus 12 characters of the model. That is where the LLM column
+  starts in the worst case the demo actually produces, a
+  `crashloop-backoff` state (Act 1 demonstrates it) beside a 26-character
+  agent name. Rows are clipped to the pane rather than wrapped: a row
+  carrying a real model name runs past 160 columns, and a wrapped table
+  defeats the one thing this pane is for. Resize the pane and the clip
+  follows it.
+
   The panes poll until a daemon appears, so start it in whichever order you
   like.
 
