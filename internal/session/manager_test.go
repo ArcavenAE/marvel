@@ -1,11 +1,15 @@
 package session
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
 
@@ -159,6 +163,126 @@ func TestAdoptOrKill_PrefixOnly(t *testing.T) {
 	}
 	if !driver.HasSession(outsider) {
 		t.Fatalf("non-prefix session %s must not be touched", outsider)
+	}
+}
+
+// A fleet kill has to reach the event ring, not only the log. Before
+// aae-orc-kvcs it reached neither in the collected artifact set: the
+// killing daemon's log carried the line, `marvel events` was blank, and
+// an independent reader given the victim's artifacts misattributed a
+// marvel-caused kill to the environment.
+func TestAdoptOrKillEmitsKilledEventNamingTheActor(t *testing.T) {
+	skipIfNoTmux(t)
+
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+
+	prefix := "marvel-killevent-"
+	victim := prefix + "alpha"
+	if err := driver.NewSession(victim); err != nil {
+		t.Fatalf("new session %s: %v", victim, err)
+	}
+	t.Cleanup(func() { _ = driver.KillSession(victim) })
+
+	ring := events.NewRing(10)
+	mgr := NewManager(api.NewStore(), driver)
+	mgr.Events = ring
+	mgr.SocketPath = "/tmp/marvel-killevent.sock"
+
+	if _, killed, err := mgr.adoptOrKillPrefix(prefix); err != nil {
+		t.Fatalf("adoptOrKillPrefix: %v", err)
+	} else if killed != 1 {
+		t.Fatalf("killed = %d, want 1", killed)
+	}
+
+	got := ring.Snapshot(events.Filter{Kind: events.KindReconcileKilled}, 0)
+	if len(got) != 1 {
+		t.Fatalf("reconcile.killed events = %d, want 1", len(got))
+	}
+	ev := got[0]
+	if ev.Severity != events.SeverityWarning {
+		t.Errorf("severity = %q, want %q", ev.Severity, events.SeverityWarning)
+	}
+	if ev.Workspace != "alpha" {
+		t.Errorf("workspace = %q, want %q", ev.Workspace, "alpha")
+	}
+	// The actor is the whole point: with two daemons appending to one
+	// log file, an event that does not name the process that acted
+	// cannot be traced back to it.
+	wantActor := fmt.Sprintf("pid=%d socket=/tmp/marvel-killevent.sock", os.Getpid())
+	if ev.Actor != wantActor {
+		t.Errorf("actor = %q, want %q", ev.Actor, wantActor)
+	}
+	if !strings.Contains(ev.Message, victim) {
+		t.Errorf("message %q does not name the killed session %q", ev.Message, victim)
+	}
+}
+
+// An adopted pane emits too, so the ring shows both halves of a
+// reconcile pass and an operator can tell "adopted mine" from "killed
+// something else's" without reading the log.
+func TestAdoptOrKillEmitsAdoptedEvent(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-adopt-event"
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &api.Session{
+		Name:      "t-r-g1-0",
+		Workspace: ws,
+		Team:      "t",
+		Role:      "r",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	ring := events.NewRing(10)
+	mgr.Events = ring
+
+	if adopted, _, err := mgr.AdoptOrKill(); err != nil {
+		t.Fatalf("AdoptOrKill: %v", err)
+	} else if adopted < 1 {
+		t.Fatalf("adopted = %d, want at least 1", adopted)
+	}
+
+	got := ring.Snapshot(events.Filter{Kind: events.KindReconcileAdopted}, 0)
+	if len(got) < 1 {
+		t.Fatalf("reconcile.adopted events = %d, want at least 1", len(got))
+	}
+	if got[0].Actor == "" {
+		t.Error("adopted event has no actor")
+	}
+	if got[0].Session != sess.Key() {
+		t.Errorf("session = %q, want %q", got[0].Session, sess.Key())
+	}
+}
+
+// actorID omits the socket half rather than rendering it blank, so a
+// Manager driven directly by a test still produces a usable identity.
+func TestActorIDOmitsUnsetSocket(t *testing.T) {
+	mgr := NewManager(api.NewStore(), nil)
+
+	if got, want := mgr.actorID(), fmt.Sprintf("pid=%d", os.Getpid()); got != want {
+		t.Errorf("actorID with no socket = %q, want %q", got, want)
+	}
+
+	mgr.SocketPath = "/run/user/501/marvel/marvel.sock"
+	want := fmt.Sprintf("pid=%d socket=/run/user/501/marvel/marvel.sock", os.Getpid())
+	if got := mgr.actorID(); got != want {
+		t.Errorf("actorID with socket = %q, want %q", got, want)
 	}
 }
 

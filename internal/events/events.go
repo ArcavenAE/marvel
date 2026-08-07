@@ -60,6 +60,18 @@ const (
 	// admits — audibly, here — and budget.on_unmeasured = "refuse" is how
 	// they ratify the fail-closed posture instead.
 	KindAdmissionUnmeasured Kind = "admission.unmeasured"
+	// KindReconcileAdopted records that a daemon claimed a live tmux pane
+	// it found matching its own recorded intent at startup.
+	KindReconcileAdopted Kind = "reconcile.adopted"
+	// KindReconcileKilled records that a daemon destroyed a marvel-* tmux
+	// entity it did not find in its own records. This is the most
+	// destructive act marvel performs and until aae-orc-kvcs it was the
+	// only state transition in session.Manager with no event: the log
+	// carried it, the ring did not, so `marvel events` was blank for a
+	// fleet kill. Warning severity, and Actor is always set, because the
+	// killed entity may belong to a second daemon that records nothing
+	// itself.
+	KindReconcileKilled Kind = "reconcile.killed"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -110,6 +122,16 @@ type Event struct {
 	Team      string    `json:"team,omitempty"`
 	Role      string    `json:"role,omitempty"`
 	Session   string    `json:"session,omitempty"`
+	// Actor names the daemon process that took the action, as
+	// "pid=N socket=PATH". Empty on events whose actor is unambiguous.
+	//
+	// It exists because two daemons on one host append to the same
+	// ~/.marvel/log/daemon.log by default, so their lines interleave with
+	// nothing to tell them apart, and because the daemon whose work is
+	// destroyed records nothing at all. Set it on any event describing an
+	// action one daemon takes against state another daemon may own. See
+	// aae-orc-kvcs.
+	Actor string `json:"actor,omitempty"`
 	// Message is a short human-readable description. Keep it one
 	// line — operators scan dozens of these at a time.
 	Message string `json:"message"`

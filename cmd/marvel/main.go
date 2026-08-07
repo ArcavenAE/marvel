@@ -472,8 +472,20 @@ Examples:
 					if sessRef == "" && ev.Team != "" {
 						sessRef = ev.Workspace + "/" + ev.Team
 					}
+					if sessRef == "" {
+						sessRef = ev.Workspace
+					}
+					// Actor rides in the message rather than its own
+					// column: it is set on a small minority of events,
+					// and a column sized to a "pid=N socket=PATH" string
+					// would push MESSAGE off the right of every row that
+					// does not carry one.
+					msg := ev.Message
+					if ev.Actor != "" {
+						msg = fmt.Sprintf("%s [by %s]", msg, ev.Actor)
+					}
 					_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-						ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, ev.Message)
+						ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, msg)
 				}
 				_ = tw.Flush()
 			}
