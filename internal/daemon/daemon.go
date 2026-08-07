@@ -54,9 +54,11 @@ const (
 )
 
 // listenNetwork returns "tcp" if the address looks like host:port,
-// otherwise "unix". Used by the daemon listener side only.
+// otherwise "unix". The host:port rule itself is paths.IsTCPAddr, which
+// is the single definition shared with the client and with the socket
+// length check.
 func listenNetwork(addr string) string {
-	if strings.Contains(addr, ":") {
+	if paths.IsTCPAddr(addr) {
 		return "tcp"
 	}
 	return "unix"
@@ -82,6 +84,22 @@ type Request struct {
 type Response struct {
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
+
+	// DaemonHome is the layout home this daemon is rooted at
+	// (~/.marvel), stamped on every response so a client can tell
+	// whether the daemon it reached is the one it meant. Empty from a
+	// daemon that predates the field, and omitempty keeps the envelope
+	// readable by a client that predates it, so no protocol version bump
+	// or handshake is involved.
+	//
+	// Diagnostic, not preventive. A field on the RESPONSE is read after
+	// the request has already been sent: for read methods that is fine,
+	// but for mutating methods the client learns it hit the wrong daemon
+	// after it has already changed it. Prevention would put the
+	// expectation on the REQUEST and have the daemon reject a mismatch,
+	// which is authorization-shaped and belongs with aae-orc-sqh0. See
+	// docs/design/daemon-isolation.md decision 8.
+	DaemonHome string `json:"daemon_home,omitempty"`
 }
 
 // DefaultLogBufferLines is the default ring-buffer depth for the
@@ -113,6 +131,13 @@ type Daemon struct {
 	// this daemon does not own, instead of leaving it running. Off by
 	// default; `marvel daemon --reclaim` is the deliberate act.
 	reclaim bool
+
+	// home is the layout home this daemon is rooted at (~/.marvel),
+	// stamped onto every response. Empty when the home directory cannot
+	// be resolved, which is the same condition under which nothing else
+	// in the layout works either; the field is then simply absent from
+	// the wire and the client has nothing to compare.
+	home string
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -231,6 +256,15 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	acct := usage.New(store, usage.NewResolver(limits), usage.WithEvents(evRing))
 	sessMgr.Usage = acct
 
+	// Resolved once at construction rather than per response: the home
+	// cannot change under a running daemon, and a failure here is not
+	// worth refusing to start over. An empty home means the field is
+	// absent on the wire.
+	var home string
+	if layout, lerr := paths.Default(); lerr == nil {
+		home = layout.Home
+	}
+
 	d := &Daemon{
 		store:    store,
 		sessMgr:  sessMgr,
@@ -238,6 +272,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		driver:   driver,
 		pidFile:  opts.PidFile,
 		reclaim:  opts.Reclaim,
+		home:     home,
 		logs:     buf,
 		events:   evRing,
 		usage:    acct,
@@ -575,12 +610,21 @@ func (d *Daemon) handleRWC(rwc io.ReadWriteCloser) {
 	var req Request
 	if err := json.NewDecoder(rwc).Decode(&req); err != nil {
 		resp := Response{Error: fmt.Sprintf("decode request: %v", err)}
-		_ = json.NewEncoder(rwc).Encode(resp)
+		_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 		return
 	}
 
 	resp := d.dispatch(req)
-	_ = json.NewEncoder(rwc).Encode(resp)
+	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
+}
+
+// stamp records which daemon answered. It sits on the write path rather
+// than in the 14 handlers so no method can be added without it, and it
+// covers the decode-error reply too: a malformed request answered by the
+// wrong daemon is worth attributing as much as a successful one.
+func (d *Daemon) stamp(resp Response) Response {
+	resp.DaemonHome = d.home
+	return resp
 }
 
 func (d *Daemon) dispatch(req Request) Response {

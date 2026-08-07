@@ -139,10 +139,29 @@ func (l Layout) RuntimeSocket() string {
 // while probing this, and the tmux one failed silently.
 const MaxUnixSocketPath = 104
 
+// IsTCPAddr reports whether an address is host:port rather than a Unix
+// socket path. A colon is the whole rule.
+//
+// This is the single definition of that rule, and it lives here because
+// paths owns the socket and because both internal/config and
+// internal/daemon already import this package, so sharing it adds no
+// dependency edge. It was three inline copies before: the daemon's
+// listen and dial routing, this package's length check, and the client's
+// self-report comparison. Marvel #122 exists partly to delete a socket
+// default that survived a fix because it was declared twice, so a rule
+// with three encodings is the same defect one layer up.
+//
+// A Unix socket path containing a colon would be misread as TCP. That is
+// the behavior every copy already had, and keeping it in one place is
+// what makes it changeable.
+func IsTCPAddr(addr string) bool {
+	return strings.Contains(addr, ":")
+}
+
 // CheckSocketPath rejects a Unix socket path the kernel would truncate.
-// Addresses containing ":" are TCP and are not checked.
+// TCP addresses are not checked.
 func CheckSocketPath(path string) error {
-	if strings.Contains(path, ":") {
+	if IsTCPAddr(path) {
 		return nil
 	}
 	if len(path) > MaxUnixSocketPath {
