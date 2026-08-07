@@ -12,7 +12,7 @@ You don't need to use AI agents to contribute -- just follow this guide and subm
 
 - **Go 1.22+** -- [install](https://go.dev/doc/install)
 - **just** -- [install](https://github.com/casey/just)
-- **gofumpt** -- `go install mvdan.cc/gofumpt@latest`
+- **gofumpt v0.7.0** -- `go install mvdan.cc/gofumpt@v0.7.0` (the version CI checks against)
 - **golangci-lint** -- [install](https://golangci-lint.run/welcome/install/)
 
 ## Getting Started
