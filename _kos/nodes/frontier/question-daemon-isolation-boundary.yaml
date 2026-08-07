@@ -98,11 +98,26 @@ content: |
 
   Read finding-012 WITH its 2026-08-07 correction, not without it. Two
   of its recorded results did not mean what they were recorded to mean,
-  and one of them concerns a destructive path: the single candidate its
-  reap scenario destroyed was tmux's base shell pane, not an orphan, so
-  reap's orphan identification is unverified and in fact wrong
-  (ArcavenAE/marvel#129). Isolation is verified; reap's correctness is
-  not, and the two were reported together.
+  and one of them concerned a destructive path: the single candidate its
+  reap scenario destroyed was tmux's base shell pane, not an orphan.
+
+  That defect is now FIXED (ArcavenAE/marvel#129, PR #132,
+  `_kos/findings/finding-014-reap-destroyed-panes-marvel-did-not-create.md`).
+  Marvel marks every pane it creates and the destructive paths consider
+  only marked panes, so the invariant is now the stronger and simpler
+  one: marvel never destroys a pane it did not create. An operator's
+  hand-opened pane inside a marvel session is covered by the same fence.
+
+  The marker gates the unrecorded branch only; adoption still keys off
+  the store, or the first restart after an upgrade would fail to adopt
+  panes made by older builds. finding-014 records that this exact
+  mistake was made in the first draft of the fix and passed the full
+  suite, because no test covered the pane branch at all. That gap is
+  also why the original defect shipped.
+
+  Residual, untested rather than wrong: a genuine orphan created by a
+  pre-marker build carries no marker and is now left alone rather than
+  reaped. No live sessions existed when the change landed.
 
   1. The isolation unit is the HOME-rooted `paths.Layout` (decision 1).
   2. Yes. Both namespaces now derive from it: the control socket at

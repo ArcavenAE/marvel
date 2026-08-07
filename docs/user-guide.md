@@ -476,12 +476,15 @@ marvel daemon --reclaim # kill unrecognised state at startup instead of leaving 
 belong to another running daemon, which is worth taking literally: check before
 confirming.
 
-> **Known defect (ArcavenAE/marvel#129).** `reap` currently reports one false
-> candidate per live session, the base shell pane tmux creates before marvel
-> adds replica panes. A healthy daemon therefore never reports clean, and
-> `reap --confirm` on a healthy fleet destroys that pane. Agents survive, since
-> replicas live in their own windows, but do not read a non-empty `reap` listing
-> as evidence of leftovers until this is fixed.
+Marvel never destroys a pane it did not create. Every pane it makes carries a
+tmux marker, and the destructive paths consider only marked panes, so tmux's
+own base shell pane and any pane you opened by hand inside a marvel session
+are both safe. A healthy fleet reports nothing to reap.
+
+Panes created by marvel builds older than this marker carry none, so they are
+left alone rather than destroyed. That means a genuine orphan from an older
+build is not reapable; clean those up with `tmux -L "$(marvel config
+tmux-server)" kill-pane -t <pane>`.
 
 ## Version and upgrade
 
