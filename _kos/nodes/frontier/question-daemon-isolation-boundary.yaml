@@ -41,6 +41,28 @@ content: |
   - A daemon restarting against its own records adopts correctly. The
     discrimination is by record, not by prefix.
 
+  Corrected 2026-08-07, read-only on kinu. An earlier reading of these
+  runs held that the kill was unlogged and that a careful analyst
+  therefore misattributes it. Both need qualifying:
+
+  - The kill was always logged. `adoptOrKillPrefix` logs each kill and a
+    summary, `log.SetOutput` is installed before `Start` runs it, and
+    `--log-file` defaults to `~/.marvel/log/daemon.log`. That file
+    carries 11 such lines on this machine.
+  - The rig saw silence because stderr is teed only when it is a
+    terminal, and because HOME separation split the two daemons' log
+    files. In the default case both daemons append to one file, so the
+    kill line is in the obvious place. The misattribution result is a
+    property of that artifact set.
+  - What was genuinely absent: any structured event, so `marvel events`
+    was blank for the most destructive act marvel performs while every
+    neighbouring session transition emits; and any actor identity on the
+    line, so interleaved lines in a shared file could not be traced to a
+    process. Both shipped in marvel PR #118 as `reconcile.adopted` and
+    `reconcile.killed` with an additive `Event.Actor` field.
+  - Still absent, and not fixable from the acting daemon: the daemon
+    whose panes are killed records nothing.
+
   THE QUESTION, which is not the same as the bugs it was found through:
 
   1. What is the isolation unit? Candidates: the HOME rooted layout
@@ -53,7 +75,8 @@ content: |
      working one bug. Nothing establishes that two is the count.
   3. What is the default posture toward state a daemon does not
      recognise: adopt, leave alone, or kill? Kill is the current
-     default and it is unlogged.
+     default. It is now logged and evented with the acting daemon
+     named, which makes it attributable but no less destructive.
   4. Is this a precondition for multi host (`question-multi-host`)?
      Cross host scheduling treats the host as the isolation unit,
      which assumes within host isolation exists. It does not.
@@ -63,8 +86,10 @@ content: |
   authorization boundary and must not be described as one.
 
   Probe: `aae-orc::_kos/probes/brief-marvel-runtime-socket-placement.md`
-  (run 1 results recorded 2026-08-06; still a probe, no fix built, so
-  nothing here is a finding).
+  (run 1 recorded 2026-08-06, corrected and closed 2026-08-07). The
+  probe is complete; no fix to either namespace has been built, so
+  nothing about the isolation boundary itself is a finding yet. The one
+  shipped change, PR #118, is attribution, not isolation.
   Work items: `aae-orc-t6da` and `aae-orc-mh6g` (socket namespace),
   `aae-orc-kvcs` (tmux namespace and the unlogged kill),
   `aae-orc-sqh0` (the same uid question this does not answer).
