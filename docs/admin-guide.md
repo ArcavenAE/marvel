@@ -11,7 +11,7 @@ management, and operational concerns.
 marvel daemon
 ```
 
-Listens on `/tmp/marvel.sock`. Only processes on the same machine can
+Listens on `~/.marvel/run/marvel.sock`. Only processes on the same machine can
 connect. No authentication required — anyone who can reach the socket
 can issue commands.
 
@@ -34,7 +34,7 @@ connecting clients.
 
 Output:
 ```
-marvel daemon listening on /tmp/marvel.sock (unix)
+marvel daemon listening on ~/.marvel/run/marvel.sock (unix)
 mrvl:// listener on :6785
 remote access: --cluster <name>  (config: mrvl://kinu:6785)
 ```
@@ -211,7 +211,7 @@ marvel config list
 
 Output:
 ```
-* local           /tmp/marvel.sock
+* local           ~/.marvel/run/marvel.sock
   kinu            mrvl://michael@kinu
   staging         mrvl://deploy@staging.example.com:7000
 ```
@@ -235,7 +235,7 @@ marvel config remove-cluster staging
 ### Config file location
 
 `~/.marvel/config.yaml`. Created automatically on first use with a
-`local` cluster pointing to `/tmp/marvel.sock`.
+`local` cluster resolving to `~/.marvel/run/marvel.sock`.
 
 ## Data directory
 

@@ -43,28 +43,45 @@ var (
 
 // resolveDaemon returns both the address and the dial options for the
 // selected cluster. --identity overrides the cluster-level identity.
+// Precedence: --socket, then MARVEL_SOCKET, then the selected cluster's
+// Socket or Server, then the layout default (~/.marvel/run/marvel.sock).
+// config.ResolveSocket covers the last two rungs so every fall-through
+// branch below lands on the same answer; four of them used to reach a
+// hardcoded machine-global path instead. See
+// docs/design/daemon-isolation.md decision 3.
 func resolveDaemon() (string, daemon.DialOptions) {
+	addr, opts := resolveDaemonAddr()
+	if w := config.LegacySocketWarning(addr); w != "" {
+		fmt.Fprintln(os.Stderr, w)
+	}
+	return addr, opts
+}
+
+func resolveDaemonAddr() (string, daemon.DialOptions) {
 	if socketPath != "" {
 		return socketPath, daemon.DialOptions{Identity: identityPath}
 	}
+	if env := os.Getenv(config.SocketEnv); env != "" {
+		return env, daemon.DialOptions{Identity: identityPath}
+	}
 	cfg, err := config.Load()
 	if err != nil {
-		return config.DefaultSocket, daemon.DialOptions{Identity: identityPath}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
 	}
 	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		return config.DefaultSocket, daemon.DialOptions{Identity: identityPath}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
 	}
 	if cl == nil {
-		return config.DefaultSocket, daemon.DialOptions{Identity: identityPath}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
 	}
 	addr := cl.Socket
 	if cl.Server != "" {
 		addr = cl.Server
 	}
 	if addr == "" {
-		addr = config.DefaultSocket
+		addr = config.ResolveSocket()
 	}
 	id := identityPath
 	if id == "" {
@@ -181,7 +198,23 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sock := listenSocket
 			if sock == "" {
-				sock = config.DefaultSocket
+				sock = config.ResolveSocket()
+			}
+			if w := config.LegacySocketWarning(sock); w != "" {
+				fmt.Fprintln(os.Stderr, w)
+			}
+			if err := paths.CheckSocketPath(sock); err != nil {
+				return err
+			}
+			// net.Listen needs run/ to exist, and it is the directory
+			// mode (0700) that protects the socket: nothing chmods the
+			// socket itself, so with umask 022 it is created 0755.
+			// Scoped to the layout's own run dir, so an operator-supplied
+			// --socket elsewhere is never silently mkdir'd.
+			if layout.Home != "" && filepath.Dir(sock) == layout.RunDir() {
+				if err := layout.EnsureRunDir(); err != nil {
+					return err
+				}
 			}
 
 			// Ensure ~/.marvel/state/ exists before OpenBolt would try
@@ -272,7 +305,7 @@ Examples:
 		"start mrvl:// listener (use --mrvl=:<port> for a custom port)")
 	f.NoOptDefVal = ":" + config.DefaultMRVLPort
 	cmd.Flags().StringVar(&listenSocket, "socket", "",
-		"Unix socket path (default /tmp/marvel.sock)")
+		"Unix socket path (default "+config.DefaultSocket()+", or $"+config.SocketEnv+")")
 	cmd.Flags().StringVar(&logFilePath, "log-file", defaultLog,
 		"tee daemon stderr to this file (empty string disables)")
 	cmd.Flags().StringVar(&pidFilePath, "pidfile", defaultPid,

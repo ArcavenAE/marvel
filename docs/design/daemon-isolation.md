@@ -1,6 +1,7 @@
 # Daemon isolation: the socket and the tmux namespace
 
-Status: draft for ratification. Item 0 of `aae-orc-mh6g`.
+Status: ratified 2026-08-07, except Decision 6 which stays open and is
+no longer load-bearing. Item 0 of `aae-orc-mh6g`.
 Covers `aae-orc-t6da`, `aae-orc-kvcs` decisions 1 to 3, and the build
 items that follow from them.
 
@@ -191,11 +192,17 @@ Two consequences to state plainly:
   of Decision 5's kill posture. Two daemons sharing one HOME still share
   one tmux server.
 
-## Decision 5: the default posture toward unrecognised state (UNRESOLVED)
+## Decision 5: the default posture toward unrecognised state (RESOLVED, Reading B)
 
-This is `aae-orc-kvcs` decision 2, and it is the operator's call. Both
-readings are recorded here without a recommendation, because the
-tradeoff is between two real bugs pointing in opposite directions.
+This is `aae-orc-kvcs` decision 2. **Ratified 2026-08-07: err on silent
+accumulation, not silent destruction. Reading B.** The default becomes
+leave alone; killing requires an explicit act; the reaper ships with it,
+because Reading B is incomplete without one.
+
+Both readings are kept below as the reasoning, unedited. The tradeoff
+was between two real bugs pointing in opposite directions, and the
+ruling picked which one we would rather have, not which one was
+imaginary.
 
 The mechanism, for both readings: `AdoptOrKill`
 (`internal/session/manager.go:120`) lists tmux sessions under the
@@ -237,11 +244,41 @@ explicit verb or a `--reclaim` flag on the daemon, and operators have to
 remember to use it. It trades a loud destructive failure for a quiet
 accumulating one.
 
-### The question to answer
+### The ruling
 
 Which bug do we prefer to have. Silent destruction of running work, or
-silent accumulation of orphaned panes. Decision 4 makes the first
-rarer without making it less severe, and does nothing to the second.
+silent accumulation of orphaned panes. Decision 4 makes the first rarer
+without making it less severe, and does nothing to the second.
+
+Ratified 2026-08-07: **accumulation.** An orphaned pane costs memory and
+clutter and is recoverable at any later time by an operator who notices.
+Destroyed work is not recoverable at all, and Decision 4 lowers its
+frequency rather than its cost. A failure we can clean up beats a
+failure we can only regret.
+
+What this obliges, and all three are required for the change to be
+complete rather than merely safer:
+
+1. `AdoptOrKill` becomes adopt-or-leave. Unrecognised `marvel-*` state
+   is reported and left running.
+2. Killing moves behind an explicit act, not a default. A `--reclaim`
+   flag on the daemon covers the "I know this host is mine, clean it"
+   case at startup.
+3. A reaper verb, so accumulation stays a nuisance rather than becoming
+   the next silent failure. It must show what it would kill before
+   killing it, since the whole point of this ruling is that destruction
+   is the part we make deliberate.
+
+The reporting in item 1 is not optional. Leaving state alone silently
+would trade one silent failure for another, which is not what was
+ratified. The `reconcile.killed` event added in #118 gains a sibling for
+the left-alone case, and both name the acting daemon.
+
+Consequence for Decision 6, below: with leave-alone as the default, a
+daemon no longer kills what it did not create as a matter of course, so
+the question Decision 6 asks stops being load-bearing. It is retained as
+open because `--reclaim` and the reaper still have to decide what they
+are allowed to touch.
 
 ## Decision 6: may a daemon kill what it did not create (UNRESOLVED, and narrower than it looks)
 
@@ -327,12 +364,13 @@ rejecting a mismatch, which is authorization-shaped and belongs with
 4. Decision 7. Migration warning.
 5. Decision 8. Self-report field. Strictly after step 1.
 6. Decision 4. tmux socket name derivation.
-7. Decision 5, once ratified.
+7. Decision 5. Adopt-or-leave as the default, `--reclaim` for the
+   deliberate case, and the reaper verb with a dry run.
 
-Steps 1 through 5 are the socket namespace and are independent of the
-two unresolved decisions. Step 6 is independent of Decision 5 and can
-land before it; it is sequenced late only because the socket work is
-already scoped.
+Steps 1 through 5 are the socket namespace and were independent of the
+two decisions left open in the first draft. Step 6 is independent of
+Decision 5 and can land before it; it is sequenced late only because the
+socket work was already scoped.
 
 One item moved while writing this. `aae-orc-mh6g` item 3 filed the
 environment override as new work. It is not: `MARVEL_SOCKET` already

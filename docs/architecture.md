@@ -160,7 +160,7 @@ old-gen sessions are drained.
 Marvel supports three connection modes for CLI-to-daemon communication:
 
 ```
-/tmp/marvel.sock             Unix socket (local, default)
+~/.marvel/run/marvel.sock    Unix socket (local, default)
 mrvl://host                  Embedded SSH server (remote, port 6785)
 ssh://host/path/to/socket    Tunnel through system sshd (fallback)
 ```
@@ -169,15 +169,38 @@ The `mrvl://` protocol is the primary remote access mode. The daemon runs
 its own SSH server, generates its own host key, and manages its own
 authorized keys. No dependency on sshd.
 
-The local default is the literal `/tmp/marvel.sock` (`config.DefaultSocket`),
-and it is machine-global: no environment variable moves it, and neither does
-HOME. A starting daemon unlinks whatever is at its socket path without
-checking for a live owner, so a second daemon on that path takes new client
-connections while the first keeps running with no reachable path, and either
-one's shutdown unlinks the path. Give each concurrent daemon on a host its
-own distinct `--socket` path and pass that path to every client command
-aimed at it. Two daemons handed the same explicit path collide exactly as
-they do on the default.
+The local default resolves through the paths layout, so it follows HOME
+like every other runtime artifact marvel owns. Resolution order, daemon
+and client alike:
+
+1. `--socket`
+2. `$MARVEL_SOCKET`
+3. the selected cluster's `socket:` or `server:` in `config.yaml`
+4. `~/.marvel/run/marvel.sock`
+
+`run/` is mode 0700 and the socket is protected by that directory rather
+than by its own mode, since nothing chmods a socket and the common umask
+of 022 creates it 0755. This is the pattern tmux uses for
+`/tmp/tmux-<uid>`.
+
+Two daemons that resolve to the same socket path no longer collide
+silently. The starting daemon takes an advisory lock (`<socket>.lock`)
+before it unlinks anything, so a second daemon on a live path refuses to
+start with an error naming the holder, instead of taking the path and
+leaving the first running but unreachable. The lock is per path, so
+separate `--socket` values are independent, and the kernel releases it if
+the holder dies.
+
+Until 2026-08, the default was the literal `/tmp/marvel.sock`, declared
+twice in the tree and machine-global: neither HOME nor any environment
+variable moved it. Daemons isolated by HOME collided anyway, because that
+one constant bypassed the layout every other path honored. A config entry
+still pinning it gets a warning naming the new default. Full reasoning:
+`docs/design/daemon-isolation.md`.
+
+This is not an authorization boundary. A 0700 socket is private to the
+user and remains reachable by every agent marvel spawns, because those
+run at the same uid.
 
 ### Cluster configuration
 
@@ -186,7 +209,7 @@ Named clusters are stored in `~/.marvel/config.yaml`:
 ```yaml
 clusters:
   - name: local
-    socket: /tmp/marvel.sock
+    socket: ~/.marvel/run/marvel.sock
   - name: kinu
     server: mrvl://michael@kinu
   - name: staging

@@ -14,9 +14,15 @@
 //	log/daemon.log              daemon: tee'd stderr log      0600
 //	run/                        daemon: runtime state dir     0700
 //	run/daemon.pid              daemon: pid file              0644
+//	run/marvel.sock             daemon: control socket        dir-scoped
 //
 // Modes follow OpenSSH conventions. Private material is 0600 or 0700;
 // public material is 0644. The root directory is 0700.
+//
+// The control socket is protected by its directory, not by its own mode.
+// Nothing in the tree chmods a socket, and with the common umask of 022
+// net.Listen creates it 0755. run/ is 0700 and mode-checked, which is
+// the same pattern tmux uses for /tmp/tmux-<uid>.
 package paths
 
 import (
@@ -24,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Expected modes for each path kind.
@@ -105,16 +112,45 @@ func (l Layout) DaemonLog() string { return filepath.Join(l.LogDir(), "daemon.lo
 // DaemonPid returns the canonical path for the daemon's pid file.
 func (l Layout) DaemonPid() string { return filepath.Join(l.RunDir(), "daemon.pid") }
 
-// RuntimeSocket returns the preferred Unix-socket path for the daemon.
-// Uses $XDG_RUNTIME_DIR/marvel.sock when XDG_RUNTIME_DIR is set (XDG
-// base directory spec), otherwise /tmp/marvel.sock. The caller is
-// responsible for backward compatibility with any pre-existing
-// config.yaml entries that hard-code a socket.
-func RuntimeSocket() string {
-	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
-		return filepath.Join(rt, "marvel.sock")
+// RuntimeSocket returns the daemon's control socket path for this
+// layout: ~/.marvel/run/marvel.sock.
+//
+// It is a Layout method rather than a free function because the socket
+// is the isolation unit for concurrent daemons. The previous free
+// function resolved to $XDG_RUNTIME_DIR/marvel.sock or /tmp/marvel.sock
+// independent of HOME, had no callers outside its own test, and its live
+// branch on Darwin was the /tmp one. A machine-global socket is what let
+// a second daemon answer for the first, and it is why the pid-file guard
+// (which is HOME-scoped, and does run on every normal start) could not
+// protect it. See docs/design/daemon-isolation.md and aae-orc-t6da.
+func (l Layout) RuntimeSocket() string {
+	return filepath.Join(l.RunDir(), "marvel.sock")
+}
+
+// MaxUnixSocketPath is the ceiling on a Unix-domain socket path,
+// sun_path in sockaddr_un: 104 bytes on Darwin, 108 on Linux. We assert
+// against the smaller of the two everywhere so a path that works on a
+// developer's Mac cannot be one that only works there.
+//
+// The home-derived path measures 48 bytes, so this is a guardrail
+// against deep automounts and long CI checkouts rather than a current
+// problem. It is not theoretical: a 136-byte path under a session
+// scratchpad and a 109-byte tmux socket name were both hit by accident
+// while probing this, and the tmux one failed silently.
+const MaxUnixSocketPath = 104
+
+// CheckSocketPath rejects a Unix socket path the kernel would truncate.
+// Addresses containing ":" are TCP and are not checked.
+func CheckSocketPath(path string) error {
+	if strings.Contains(path, ":") {
+		return nil
 	}
-	return "/tmp/marvel.sock"
+	if len(path) > MaxUnixSocketPath {
+		return fmt.Errorf(
+			"socket path is %d bytes, over the %d-byte limit for a unix socket: %s",
+			len(path), MaxUnixSocketPath, path)
+	}
+	return nil
 }
 
 // EnsureHome creates ~/.marvel/ if it does not exist, with mode 0700.

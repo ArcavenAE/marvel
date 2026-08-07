@@ -111,7 +111,7 @@ demo-shift: build
 # Clean up everything (kill all marvel tmux sessions)
 clean:
     -tmux kill-session -t marvel-demo 2>/dev/null
-    -rm -f /tmp/marvel.sock
+    -rm -f "${HOME}/.marvel/run/marvel.sock" "${HOME}/.marvel/run/marvel.sock.lock"
     -rm -rf bin/
 
 # Three-act runnable demo. Full runbook: docs/demo.md.
