@@ -1,8 +1,10 @@
 package paths
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -98,14 +100,61 @@ func TestEnsureLogAndRunDirs(t *testing.T) {
 	}
 }
 
-func TestRuntimeSocket(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", "")
-	if got, want := RuntimeSocket(), "/tmp/marvel.sock"; got != want {
-		t.Errorf("no XDG_RUNTIME_DIR: got %q, want %q", got, want)
-	}
+// The socket is the isolation unit for concurrent daemons, so it has to
+// track the layout and nothing else. The predecessor resolved through
+// XDG_RUNTIME_DIR or /tmp independent of HOME, which is what let two
+// HOME-separated daemons collide. See aae-orc-t6da.
+func TestRuntimeSocketFollowsTheLayout(t *testing.T) {
+	// Set in the environment the old free function consulted, to prove
+	// the layout-derived path no longer answers to it.
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-	if got, want := RuntimeSocket(), "/run/user/1000/marvel.sock"; got != want {
-		t.Errorf("with XDG_RUNTIME_DIR: got %q, want %q", got, want)
+
+	a := WithHome("/home/alice/.marvel")
+	b := WithHome("/home/bob/.marvel")
+
+	if got, want := a.RuntimeSocket(), "/home/alice/.marvel/run/marvel.sock"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if a.RuntimeSocket() == b.RuntimeSocket() {
+		t.Errorf("two layouts share a socket path (%q); they must not", a.RuntimeSocket())
+	}
+	if filepath.Dir(a.RuntimeSocket()) != a.RunDir() {
+		t.Errorf("socket is not in RunDir: %q vs %q", a.RuntimeSocket(), a.RunDir())
+	}
+}
+
+func TestCheckSocketPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"layout default is comfortably under", "/Users/someone/.marvel/run/marvel.sock", false},
+		{"exactly at the limit", strings.Repeat("a", MaxUnixSocketPath), false},
+		{"one over the limit", strings.Repeat("a", MaxUnixSocketPath+1), true},
+		// A 136-byte path under a session scratchpad was hit by accident
+		// while probing this; it is the case the assertion exists for.
+		{"deep scratchpad path", "/private/tmp/claude-501/" + strings.Repeat("b", 120) + "/marvel.sock", true},
+		// TCP addresses have no sun_path ceiling.
+		{"tcp is not checked", "0.0.0.0:9090", false},
+		{"long tcp is not checked", strings.Repeat("h", 200) + ":9090", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckSocketPath(tc.path)
+			if tc.wantErr && err == nil {
+				t.Fatalf("CheckSocketPath(%d bytes) = nil, want error", len(tc.path))
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("CheckSocketPath(%d bytes) = %v, want nil", len(tc.path), err)
+			}
+			// The error has to name the number, or it sends the reader
+			// looking in the wrong place.
+			if err != nil && !strings.Contains(err.Error(), fmt.Sprint(len(tc.path))) {
+				t.Errorf("error does not name the length: %v", err)
+			}
+		})
 	}
 }
 

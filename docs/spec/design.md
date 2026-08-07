@@ -69,7 +69,7 @@ Maps runtime names to executable commands. MVP has two built-in runtimes:
 - `shell` — runs `bash` (interactive shell, proves session access)
 
 ### 2.6 Daemon
-Listens on Unix socket (`/tmp/marvel.sock`). Serves JSON-RPC for CLI.
+Listens on Unix socket (`~/.marvel/run/marvel.sock`). Serves JSON-RPC for CLI.
 Starts team reconciliation loop. Manages tmux sessions.
 
 ### 2.7 CLI

@@ -35,8 +35,13 @@ import (
 )
 
 const (
-	// DefaultSocket is the default Unix socket path.
-	DefaultSocket = "/tmp/marvel.sock"
+	// The default socket path used to be declared here as well as in
+	// internal/config, both as the literal /tmp/marvel.sock. This one
+	// had no callers, which is the whole hazard: a second declaration
+	// of a value like this survives a fix to the first and comes back
+	// the moment someone reaches for the nearest constant. The single
+	// resolution point is now config.ResolveSocket.
+
 	// DefaultMRVLPort is the default port for the mrvl:// protocol.
 	DefaultMRVLPort = "6785"
 	// ReconcileInterval is how often the team controller reconciles.
@@ -98,6 +103,11 @@ type Daemon struct {
 	// Path of the pid file to create on Start and remove on Stop.
 	// Empty = no pid file.
 	pidFile string
+
+	// Advisory lock on the control socket path, held from Start to
+	// shutdown. Nil for TCP listeners, which have their own kernel-level
+	// exclusion.
+	socketLock *socketLock
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -241,7 +251,7 @@ func (d *Daemon) LogBuffer() *logbuf.Buffer { return d.logs }
 
 // Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
 // The address format determines the network: "host:port" for TCP, a file path
-// for Unix. Examples: "/tmp/marvel.sock", "0.0.0.0:9090", ":9090".
+// for Unix. Examples: "~/.marvel/run/marvel.sock", "0.0.0.0:9090", ":9090".
 func (d *Daemon) Start(socketPath string) error {
 	// Refuse to start if a pid file already points at a live process.
 	if d.pidFile != "" {
@@ -253,7 +263,18 @@ func (d *Daemon) Start(socketPath string) error {
 	network := listenNetwork(socketPath)
 
 	if network == "unix" {
-		// Remove stale Unix socket.
+		if err := paths.CheckSocketPath(socketPath); err != nil {
+			return err
+		}
+		// Take the lock BEFORE unlinking. Removing the socket
+		// unconditionally is how a live daemon got left unreachable when
+		// a second one exited on the same path; holding the lock means
+		// the path we are about to unlink is nobody else's.
+		lock, err := lockSocketPath(socketPath)
+		if err != nil {
+			return err
+		}
+		d.socketLock = lock
 		_ = os.Remove(socketPath)
 	}
 
@@ -465,10 +486,14 @@ func (d *Daemon) shutdown(teardown bool) {
 		log.Printf("close bolt: %v", err)
 	}
 
-	// Only remove socket file for Unix sockets.
+	// Only remove socket file for Unix sockets. Unlink before releasing
+	// the lock, so no other daemon can bind the path in between and have
+	// this one delete its socket.
 	if addr != "" && listenNetwork(addr) == "unix" {
 		_ = os.Remove(addr)
 	}
+	d.socketLock.release()
+	d.socketLock = nil
 	if d.pidFile != "" {
 		_ = os.Remove(d.pidFile)
 	}
@@ -1258,10 +1283,10 @@ type DialOptions struct {
 //
 // Address formats:
 //
-//	/tmp/marvel.sock                          → Unix socket (default, local)
+//	~/.marvel/run/marvel.sock                 → Unix socket (default, local)
 //	mrvl://host                               → daemon SSH server on port 6785
 //	mrvl://user@host:port                     → daemon SSH server on custom port
-//	ssh://user@host/tmp/marvel.sock           → tunnel through sshd to Unix socket
+//	ssh://user@host/path/to/marvel.sock       → tunnel through sshd to Unix socket
 //	tcp://host:port                           → bare TCP (advanced use)
 func SendRequest(socketPath string, req Request) (*Response, error) {
 	return SendRequestWith(socketPath, req, DialOptions{})

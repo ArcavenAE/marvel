@@ -197,7 +197,7 @@ List your clusters:
 ```bash
 marvel config list
 #    NAME       ADDRESS                IDENTITY
-# *  local      /tmp/marvel.sock       -
+# *  local      ~/.marvel/run/marvel.sock  -
 #    prod       mrvl://prod-host       /Users/alice/.marvel/keys/client_ed25519
 #    staging    mrvl://staging-host    /Users/alice/.marvel/keys/staging_ed25519
 ```
