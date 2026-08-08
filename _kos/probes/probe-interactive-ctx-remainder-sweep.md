@@ -1657,3 +1657,120 @@ so provenance stops being optional; and `PreCompact` with trigger attribution
 falls out of the same wiring, which is simultaneously the instrument for the
 learned threshold in ruling 7 and the test of whether the shift trigger ever
 needed the channel program at all.
+
+## SCOPE QUALIFICATION: what was ruled out, and what emphatically was not
+
+This brief rules against OTEL for ONE use case: **context pressure**, meaning
+the occupancy numerator and the context-window denominator that feed CTX% and
+the shift trigger. That ruling is narrow, and it must not be read as a ruling
+on OTEL in marvel.
+
+Stated as a single sentence for anyone who reads no further:
+
+> **OTEL cannot carry context pressure. OTEL remains the right substrate for
+> spend, throughput, tool access, and attention metering, and the same
+> measurements that disqualified it here are positive evidence for those.**
+
+### Why the disqualifier is a qualifier elsewhere
+
+The finding against OTEL is that every harness token instrument that exists
+is a **monotonic cumulative Counter**. For occupancy that is fatal, because
+occupancy is a per-request LEVEL that RESETS at compaction; a counter folded
+into it reproduces finding-007 and grows worse the longer a session runs.
+
+But cumulative is the CORRECT shape for spend. Dollars spent do not reset at
+compaction. Neither do tokens billed, tools invoked, subagents spawned, or
+seconds of wall clock consumed. A counter is the right instrument for every
+one of those and the wrong instrument for exactly one thing, which is the
+thing this brief was about.
+
+So the sweep's negative result is a narrow mismatch between an instrument
+type and a quantity, not a defect in the channel.
+
+### What the sweep actually found, read affirmatively
+
+The same enumeration that killed the pressure case is an inventory of
+resource-matrix instrumentation marvel does not otherwise have. Claude Code
+2.1.226 carries 20 distinct `claude_code.*` names (8 metrics plus 12 spans).
+Mapped against the agentic resource matrix
+(`elem-agentic-resource-matrix`, the governing frame per CLAUDE.md):
+
+| Instrument | Matrix row it serves |
+|---|---|
+| `cost.usage`, `token.usage` | token spend, and the wave-1 metering already shipped |
+| `active_time.total` | time budgets |
+| `tool`, `tool.execution`, `bash.subprocess`, `mcp.rpc` | tool and filesystem access |
+| **`tool.blocked_on_user`** | **human attention** |
+| `subagent.spawn` | fleet composition and per-team accounting |
+| `lines_of_code.count`, `commit.count`, `pull_request.count` | output measurement, which is critic's remit (per-selected-outcome cost) |
+| `session.count`, `interaction`, `llm_request`, `hook` | lifecycle and throughput |
+| `compaction` (span) | the actuator signal, per the rulings above |
+
+`claude_code.tool.blocked_on_user` deserves its own line. Vision Gap 1 is
+operator attention routing, described there as the scarcest metered resource
+and explicitly recorded as having no owner. A harness is already emitting an
+instrument for precisely that quantity, and this review found it while
+looking for something else. That is worth carrying to whoever picks up Gap 1
+regardless of what happens to CTX%.
+
+codex's OTEL surface is similarly rich on spend
+(`codex.turn.token_usage.{input,cached_input,cache_write_input,
+non_cached_input,output,reasoning_output,total}_tokens`, plus `gen_ai.usage.*`
+on `codex.api_request`), and gemini emits `gemini_cli.token.usage` with a type
+dimension plus `gen_ai.client.token.usage` on the standard convention.
+
+### The two mechanisms found here that transfer to any OTEL work
+
+Both were discovered chasing pressure and neither depends on it:
+
+- **`OTEL_RESOURCE_ATTRIBUTES` is honored by claude and codex**, and claude
+  promotes resource attributes to datapoint labels by default. So marvel can
+  stamp its own pane identity into exported telemetry at spawn. This is free,
+  it costs nothing to do now, and it makes ANY later OTEL consumption
+  attributable to a marvel session. It should be done whether or not a byte
+  of OTEL is ever ingested.
+- **Two listener-free receive paths exist**: claude's Prometheus PULL exporter
+  (`OTEL_EXPORTER_PROMETHEUS_HOST`/`_PORT`, both present in the binary), where
+  marvel allocates the port per agent and scrapes on its own cadence, and
+  gemini's genuine file exporter. Both make attribution a function of a port
+  or path marvel itself assigned, which is the same move as the session-id
+  pin, and both avoid standing up a collector.
+
+### What is NOT ruled on here, and where it belongs
+
+`question-marvel-otel-architecture` holds the real design question: what
+marvel advertises, hosts, forwards, and subscribes to, with five candidate
+topologies and the kitchen-sink trap named. Nothing in this brief touches it.
+Its sub-question B (which signals the control loop actually needs) gains one
+answer from this sweep and only one: **context pressure is not among them,
+because OTEL cannot carry it.** Every other signal in that sub-question is
+untouched.
+
+Two corrections that node should absorb when someone harvests this:
+
+- It cites finding-008 as establishing that three harnesses emit native OTEL
+  "and that none of them exports context-window occupancy." The second half
+  now has a caveat: codex DOES publish its denominator over OTEL
+  (`context_window` and `auto_compact_token_limit` as attributes on
+  `codex.conversation_starts`). It publishes the numerator as a counter, so
+  the conclusion holds, but the reason is now instrument TYPE rather than
+  field absence, and that distinction matters for anyone re-checking it later.
+- Crush and opencode should be added as measured negatives: Crush links the
+  otel API plus noop only and has zero SDK or exporter symbols, so it cannot
+  export at all; opencode ships `@opentelemetry/api` and `sdk-trace` with no
+  exporter and no metrics SDK, and gates emission behind the Vercel AI SDK's
+  per-call `experimental_telemetry` flag with no config surface exposing it.
+
+### One genuine limitation, stated so it is not overclaimed
+
+For the standard `gen_ai.usage.*` semantic convention specifically, the sweep
+found a real defect rather than a mismatch: in opencode's bundle it is exactly
+`input_tokens` and `output_tokens`, with no cache and no reasoning term.
+Applied to a measured turn where input was 117 and cache read was 30080, a
+spec-conformant reading reports 117 against a true occupancy of 30199.
+
+**Conformance is the defect there**, and it cannot be fixed without breaking
+portability, which was the convention's whole value proposition. That is a
+limitation of one semantic convention for one quantity, not of OTEL as a
+transport or of vendor-namespaced instruments, and it should not be
+generalized either.
