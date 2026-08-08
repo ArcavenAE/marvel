@@ -18,42 +18,57 @@ auto-compaction on purpose costs real quota and a long session. That
 premise is false: the crossings already happened, and Claude Code wrote
 them down.
 
-Observed on kinu, 2026-08-08, over `~/.claude/projects/**/*.jsonl`
-(1535 files across 54 project directories):
+Measured on kinu, 2026-08-08, over `~/.claude/projects/**/*.jsonl`
+(1535 files, 54 project directories), by PARSING each line and testing
+`subtype == "compact_boundary"`:
 
 ```
-  44 files contain a system/compact_boundary line
- 112 such lines, of which:
-      71  carry compactMetadata with 8 keys (incl. preCompactDiscoveredTools)
-       7  carry compactMetadata with 7 keys (no preCompactDiscoveredTools)
-      34  carry no top-level compactMetadata at all
+ 77  compact_boundary records
+ 77  of 77 carry compactMetadata          (100 percent)
+ 71  with 8 keys (incl. preCompactDiscoveredTools)
+  6  with 7 keys (without it)
 ```
 
-So the usable corpus is **78 labelled events across two schema
-generations**, not the flat count.
+One additive optional field between two generations. Benign versioning by
+any standard we would apply to our own JSON. The corpus is clean.
 
-**A correction, and a method note that matters more than the number.** An
-earlier draft of this brief said 46 files and 126 lines. A second count by
-another reader said 44 and 105. The recount above says 44 and 112. All three
-were taken on the same host within an hour. The counts diverge because the
-counting methods diverge (match on `compact_boundary`, match on
-`compactMetadata`, parse and inspect the object) and because the corpus is
-LIVE: sessions are being appended to while it is being counted, including
-the session doing the counting.
+## Retraction, and the reason it is the most interesting thing here
 
-The rule that follows is the useful part: **state the method, not the
-number, and re-count at probe time.** Do not inherit any figure in this
-brief, including this one. Snapshot the corpus before mining so the
-denominator of the analysis does not move underneath it.
-
-The two key sets present, with the more recent one first:
+An earlier draft of this brief reported "112 matching lines, of which 34 carry
+no top-level compactMetadata," and told the probe that resolving those 34 was
+its first job because they were 30 percent of the corpus. **That was a grep
+artifact and it is retracted.** Matching the raw string `compact_boundary`
+returns lines that are not compaction records at all. Parsed:
 
 ```
-trigger, preTokens, postTokens, cumulativeDroppedTokens,
-durationMs, preservedSegment, preservedMessages, preCompactDiscoveredTools
+134  lines loosely matching the string
+ 77  actual compact_boundary records
+ 57  something else: 32 assistant, 21 user, 2 queue-operation, 2 attachment
 ```
 
-and the same list without `preCompactDiscoveredTools`. One sampled record:
+The 57 are **message content**: this review discussing compaction, written
+into the same transcript directory it is mining. The loose count was 112 when
+first taken and 134 hours later, and the delta is the sessions that produced
+this document.
+
+So the corpus is contaminated by the act of studying it, and the
+contamination is measurable and growing. Three consequences, and the last one
+is not about this probe:
+
+1. **Parse, never grep.** The probe filters on `subtype`, not on a substring.
+   Any count in this brief is reproducible only with the parsing method
+   stated beside it.
+2. **Snapshot before mining.** The corpus is live, and this probe's own
+   write-up is one of the things appending to it.
+3. **Observation perturbs the appropriated side too.** The sweep found that
+   attaching to Crush's contracted event stream registers marvel as a real
+   client. This is the same property on the channel class that was assumed
+   inert: reading a transcript directory cannot alter a harness, but WRITING
+   about what you read lands in the same directory. Any agent-run analysis of
+   agent transcripts has this problem, and a marvel feature that mines its
+   own fleet's transcripts would have it permanently.
+
+The corrected specimen, one record:
 
 ```
 trigger: auto
@@ -62,19 +77,12 @@ cumulativeDroppedTokens 453247
 durationMs 154351
 ```
 
-So the ground truth finding-007 wanted is a local corpus of labelled
+So the ground truth finding-007 wanted is a local corpus of 77 labelled
 compaction events, each paired with the full per-assistant-message
-`message.usage` series that precedes and follows it in the same file.
-Mining it costs zero model calls.
+`message.usage` series that precedes and follows it in the same file. Mining
+it costs zero model calls.
 
-The 34 lines with no top-level `compactMetadata` are the first thing to
-resolve, since they are 30 percent of the matches. Either they are an older
-generation that predates the field, or `compact_boundary` appears on them in
-some other position (a nested value, a tool result). Whichever it is, it
-decides whether the usable corpus is 78 or larger.
-
-**This is a probe, not a finding.** Nothing below has been computed. The
-numbers above are a count and one sampled record.
+**This is a probe, not a finding.** Nothing below has been computed.
 
 ## Hypothesis
 
@@ -201,8 +209,10 @@ carry counts and derived numbers, never transcript text.
 
 ## What would change the read
 
-Two schema generations are already visible in the counts above, and 34 of
-112 matching lines carry no top-level `compactMetadata` at all. If the older
-generation turns out to dominate, the usable corpus shrinks and the probe
-should say so rather than mixing generations. Field presence is checked per
-instance before anything is aggregated, not assumed from the match count.
+Field presence is checked per instance before anything is aggregated, not
+assumed from a match count. The corrected census says every record carries
+`compactMetadata` and the two generations differ by one optional field, so
+generation-mixing is not the hazard it appeared to be. The hazard that
+remains is the counting method itself: parse and filter on `subtype`, never
+match the raw string, or 57 lines of this review's own prose enter the
+sample.
