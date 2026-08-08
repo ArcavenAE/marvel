@@ -351,6 +351,7 @@ func TestBoltStore_StreamContextReadingZeroedOnRehydrate(t *testing.T) {
 	// disk only when something else writes the record. That is the path
 	// this guards.
 	s1.UpdateSessionContext("ws/agent-0", SessionContext{
+		ContextSource: ContextSourceAccountant,
 		ContextTokens: 34136, ContextLimit: 1_000_000, ContextPercent: 3.4136,
 		ContextRequests: 3, ContextModel: "claude-fable-5[1m]",
 	})
@@ -512,5 +513,65 @@ func TestBoltSchemaVersionUnchangedByBudget(t *testing.T) {
 	t.Parallel()
 	if boltSchemaVersion != 1 {
 		t.Errorf("boltSchemaVersion = %d; adding the Budget field must not bump it, because Rehydrate refuses a lower on-disk version too", boltSchemaVersion)
+	}
+}
+
+// TestBoltStore_LegacyAccountantReadingZeroedOnRehydrate covers the
+// upgrade boundary. marvel replaces its own daemon in place (daemon
+// reexec), so the first rehydrate after this change reads records written
+// by a binary that had no ContextSource field. Those readings deserialize
+// with ContextSource == "" and would otherwise survive as a frozen
+// percentage that nothing can refresh.
+//
+// Only the accountant ever wrote a request count, which is what makes it
+// a sound legacy marker. Delete this test together with the compat arm in
+// bolt.go once no supported upgrade path crosses the boundary.
+func TestBoltStore_LegacyAccountantReadingZeroedOnRehydrate(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "marvel.db")
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "ws"}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		Runtime: Runtime{Name: "claude", Command: "claude"},
+		State:   SessionRunning, CreatedAt: time.Now().UTC(),
+	}
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	// No ContextSource: exactly what an older binary persisted.
+	s1.UpdateSessionContext("ws/agent-0", SessionContext{
+		ContextTokens: 34136, ContextLimit: 1_000_000, ContextPercent: 3.4136,
+		ContextRequests: 3, ContextModel: "claude-fable-5[1m]",
+	})
+	if err := s1.UpdateSession("ws/agent-0", func(live *Session) error {
+		live.PaneID = "%7"
+		return nil
+	}); err != nil {
+		t.Fatalf("persist session: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+
+	got, err := s2.GetSession("ws/agent-0")
+	if err != nil {
+		t.Fatalf("get session after rehydrate: %v", err)
+	}
+	if got.ContextPercent != 0 || got.ContextTokens != 0 || !got.ContextAt.IsZero() {
+		t.Errorf("a pre-ContextSource accountant reading survived rehydrate "+
+			"and would render as live: %+v", got.SessionContext)
 	}
 }

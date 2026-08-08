@@ -426,3 +426,100 @@ func TestCloneTeamCopiesBudget(t *testing.T) {
 		t.Errorf("mutating a snapshot cleared the store's admission state: %+v", live.Admission)
 	}
 }
+
+// TestHeartbeatAfterUnresolvedAccountantReadingIsNotSuppressed pins the
+// interaction between the two CTX% producers on ONE session.
+//
+// The accountant stamps ContextRequests on every reading and may have no
+// window (codex carries no in-stream contextWindow, so an unresolved
+// window is its expected state, per finding-007). The cooperative
+// heartbeat stamps a percentage the agent computed itself, with no window
+// and no request count. Neither producer clears the other's fields.
+//
+// The renderer in cmd/marvel keys "?" on ContextRequests > 0 when
+// ContextLimit == 0. So once the accountant has touched a session with an
+// unresolved window, a later heartbeat carrying a REAL percentage is
+// still rendered "?" — absence printed over a measurement that exists.
+// That inverts what "?" is supposed to mean: nobody knows, not "the
+// accountant asked first".
+//
+// Reachable in one manifest line: nothing gates context_feed on runtime
+// mode. SupportsStream requires Mode == headless (claude.go:19) while the
+// feed only checks Runtime.ContextFeed (session/projection.go:126), and
+// manifest validation checks the feed's VALUE but never its mode
+// (api/manifest.go:282). A claude role declaring both gets both
+// producers. See aae-orc-ibu9.
+func TestHeartbeatAfterUnresolvedAccountantReadingIsNotSuppressed(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	sess := &Session{
+		Name: "agent-0", Workspace: "test-ws", Team: "agents", Role: "worker",
+		Runtime: Runtime{
+			Name: "claude", Command: "claude",
+			Mode: RuntimeModeHeadless, ContextFeed: ContextFeedStatusline,
+		},
+		State: SessionRunning, CreatedAt: time.Now().UTC(),
+	}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// The accountant reads, but cannot resolve a window.
+	s.UpdateSessionContext("test-ws/agent-0", SessionContext{
+		ContextTokens:   120000,
+		ContextRequests: 3,
+		ContextLimit:    0,
+	})
+
+	// The agent then reports a percentage it computed itself.
+	if err := s.UpdateSessionHeartbeat("test-ws/agent-0", 61.0, "claude-opus-5"); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+
+	got, _ := s.GetSession("test-ws/agent-0")
+	if got.ContextPercent != 61.0 {
+		t.Fatalf("heartbeat percentage = %v, want 61", got.ContextPercent)
+	}
+	if got.ContextSource != ContextSourceHeartbeat {
+		t.Errorf("ContextSource = %q, want %q: the producer must be declared, "+
+			"not inferred from which fields are populated",
+			got.ContextSource, ContextSourceHeartbeat)
+	}
+	// The heartbeat replaces the record rather than layering over it, so
+	// no accountant leftovers remain to be misread as provenance.
+	if got.ContextRequests != 0 {
+		t.Errorf("ContextRequests = %d after a heartbeat, want 0: a stale "+
+			"request count is what made the renderer print \"?\" over a real "+
+			"cooperative reading", got.ContextRequests)
+	}
+	if got.ContextTokens != 0 || got.ContextLimit != 0 {
+		t.Errorf("stream fields survived a heartbeat: tokens=%d limit=%d, want 0/0",
+			got.ContextTokens, got.ContextLimit)
+	}
+}
+
+// TestAccountantReadingDeclaresItsProducer is the other half: the
+// accountant must stamp its own provenance, or the renderer cannot tell
+// an unresolved window (render "?") from a cooperative percentage
+// (render the number).
+func TestAccountantReadingDeclaresItsProducer(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	sess := &Session{
+		Name: "agent-0", Workspace: "test-ws", Team: "agents", Role: "worker",
+		Runtime: Runtime{Name: "codex", Command: "codex", Mode: RuntimeModeHeadless},
+		State:   SessionRunning, CreatedAt: time.Now().UTC(),
+	}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	s.UpdateSessionContext("test-ws/agent-0", SessionContext{
+		ContextSource:   ContextSourceAccountant,
+		ContextTokens:   120000,
+		ContextRequests: 3,
+	})
+	got, _ := s.GetSession("test-ws/agent-0")
+	if got.ContextSource != ContextSourceAccountant {
+		t.Errorf("ContextSource = %q, want %q", got.ContextSource, ContextSourceAccountant)
+	}
+}

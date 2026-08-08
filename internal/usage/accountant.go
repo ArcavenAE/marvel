@@ -703,6 +703,7 @@ func (a *Accountant) TeamSpend(workspace, team string) TeamTotals {
 
 func (st *sessionState) reading() api.SessionContext {
 	out := api.SessionContext{
+		ContextSource:      api.ContextSourceAccountant,
 		ContextTokens:      st.tokens,
 		ContextLimit:       st.limit,
 		ContextLimitSource: string(st.limitSrc),
