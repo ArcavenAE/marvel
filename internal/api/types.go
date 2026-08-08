@@ -168,6 +168,20 @@ type Session struct {
 // The reading is raw occupancy against the model's window, which is not
 // the figure a harness displays to its own user (see internal/usage).
 type SessionContext struct {
+	// ContextSource names which producer wrote this reading. Two write
+	// the same field set from different places (the usage accountant
+	// parsing a stream, and a cooperative agent reporting a percentage
+	// it computed itself), and before this field existed three sites
+	// inferred the producer from which fields happened to be populated:
+	// the CLI renderer, the bolt rehydrate path, and the store's own
+	// reasoning about what to keep.
+	//
+	// Shape is not provenance. An accountant reading that could not
+	// resolve a window is shaped like nothing at all, so a later
+	// cooperative reading on the same session was rendered absent. See
+	// aae-orc-ibu9. Declared, never inferred, exactly as
+	// ContextLimitSource already is for the denominator.
+	ContextSource  ContextSourceKind
 	ContextPercent float64
 	ContextTokens  int
 	ContextLimit   int
@@ -183,6 +197,23 @@ type SessionContext struct {
 	ContextPeak float64
 	ContextAt   time.Time
 }
+
+// ContextSourceKind identifies a CTX% producer.
+type ContextSourceKind string
+
+const (
+	// ContextSourceNone is the zero value: no reading has landed.
+	ContextSourceNone ContextSourceKind = ""
+	// ContextSourceAccountant is the usage accountant reading a parsed
+	// harness stream. Carries a token count and a request count, and may
+	// carry no window at all when the model is unresolved.
+	ContextSourceAccountant ContextSourceKind = "accountant"
+	// ContextSourceHeartbeat is a cooperative agent reporting a
+	// percentage it computed itself over the heartbeat RPC. Carries no
+	// token count, no window, and no request count: the percentage IS
+	// the whole reading.
+	ContextSourceHeartbeat ContextSourceKind = "heartbeat"
+)
 
 // SessionMetrics is one process-sampler reading for a session, rolled up
 // over the pid subtree.

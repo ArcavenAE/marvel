@@ -509,7 +509,23 @@ func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64, model
 	if !ok {
 		return fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
-	sess.ContextPercent = contextPercent
+	// A heartbeat is a COMPLETE reading of its own shape, not a partial
+	// update layered over whatever the accountant left behind. Writing
+	// only the percentage used to leave the accountant's ContextRequests
+	// and ContextLimit standing, and three downstream sites read those
+	// leftovers as provenance: a heartbeat landing after an
+	// unresolved-window accountant reading was rendered "?" even though a
+	// real percentage had arrived. Replace the record, then declare who
+	// wrote it. See aae-orc-ibu9.
+	// ContextPeak is deliberately NOT carried across: an accountant peak
+	// is a high-water mark against a resolved window, and a heartbeat
+	// percentage is the agent's own figure against its own denominator.
+	// Carrying it would reintroduce the cross-producer mixing this fixes.
+	sess.SessionContext = SessionContext{
+		ContextSource:  ContextSourceHeartbeat,
+		ContextPercent: contextPercent,
+		ContextModel:   sess.ContextModel,
+	}
 	sess.LastHeartbeat = time.Now().UTC()
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any

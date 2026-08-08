@@ -218,10 +218,24 @@ func (s *Store) rehydrate() error {
 			}
 			// Nothing can refresh a STREAM reading for a session this
 			// daemon did not launch, so drop it rather than serve a frozen
-			// percentage. A heartbeat reading (percentage only, no request
-			// count) is refreshed by the agent itself and survives. See the
-			// persistence note at the top of the file.
-			if sess.ContextRequests > 0 {
+			// percentage. A heartbeat reading is refreshed by the agent
+			// itself and survives. See the persistence note at the top of
+			// the file.
+			//
+			// Keyed on the declared producer, not on "has a request count":
+			// an accountant reading that never resolved a window looks
+			// identical to a heartbeat by field shape, so the old test
+			// dropped some readings it should have kept and kept some it
+			// should have dropped. See aae-orc-ibu9.
+			//
+			// The ContextRequests arm is the pre-ContextSource legacy
+			// case: marvel upgrades in place (daemon reexec), so a bolt
+			// file written by an older binary carries readings with no
+			// declared producer. Only the accountant ever wrote a request
+			// count, so it is a sound legacy marker. Remove once no
+			// supported upgrade path crosses this boundary.
+			if sess.ContextSource == ContextSourceAccountant ||
+				(sess.ContextSource == ContextSourceNone && sess.ContextRequests > 0) {
 				sess.SessionContext = SessionContext{}
 			}
 			s.sessions[sess.Key()] = &sess

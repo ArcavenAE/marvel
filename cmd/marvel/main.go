@@ -1726,18 +1726,20 @@ func renderSessionTable(sessions []api.Session) string {
 		// denominator. `marvel describe session` carries the reason, and
 		// the fix is usually one runtime.context_window line.
 		//
-		// The two producers report different shapes, which is why "?" is
-		// keyed on the request count rather than on the window alone. The
-		// accountant stamps ContextRequests on every reading and may have
-		// no window; a heartbeat reports a percentage the agent computed
-		// itself, with no token count and no window to report. Keying "?"
-		// on ContextLimit alone would blank the simulator's column.
+		// Keyed on the DECLARED producer (ContextSource), not on which
+		// fields happen to be populated. The two producers report
+		// different shapes, and an accountant reading with an unresolved
+		// window is shaped like a heartbeat, so inferring from shape
+		// rendered real cooperative readings as "?". See aae-orc-ibu9.
 		ctx := "-"
 		switch {
 		case s.ContextAt.IsZero():
-		case s.ContextLimit > 0:
-			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
-		case s.ContextRequests > 0:
+		case s.ContextLimit == 0 && s.ContextSource != api.ContextSourceHeartbeat:
+			// No window resolved, so a percentage would be a fiction.
+			// The heartbeat is the one legitimate exception: it reports a
+			// percentage the agent computed itself and never needed a
+			// window to do it. Stating the exception explicitly is what
+			// stops a real cooperative reading being rendered absent.
 			ctx = "?"
 		default:
 			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
