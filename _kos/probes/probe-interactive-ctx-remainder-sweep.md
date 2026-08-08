@@ -649,10 +649,13 @@ the same move as the session-id pin.
 
 ### Two more local corpora, both verified on this machine
 
-The compaction-mining probe was written against 46 claude transcript files
-carrying labelled `compact_boundary` events (see that brief for why the
-count is stated as a method rather than a number). Two more corpora exist
-here:
+The compaction-mining probe was written against the claude transcript
+corpus: 77 labelled `compact_boundary` records, all 77 carrying
+`compactMetadata`, across two generations differing by one optional field.
+An earlier count of "112 matching lines, 34 without metadata" was a grep
+artifact and is retracted in that brief, along with the reason it matters:
+the 57 non-records were this review's own prose about compaction, landing in
+the directory it was mining. Two more corpora exist here:
 
 - **gemini**: 26 files under `~/.gemini/tmp/*/chats/`, **477 messages
   carrying a per-turn token series** shaped
@@ -808,7 +811,7 @@ scopes the project DB rather than the global config dir. Merely instantiating
 the contracted channel mutated host-global state outside the probe's
 sandbox.
 
-### The codex denominator is two terms, not one
+### The codex denominator: two terms in the catalog, ONE on the wire
 
 An earlier read in this brief treated `effective_context_window_percent` as
 codex computing the ratio marvel wants. That was an over-read. It is a field
@@ -817,15 +820,31 @@ of `struct ModelInfo with 38 elem` (verbatim), sitting alongside
 `comp_hash`. Static model config: the fraction of the window codex will
 actually use.
 
-The correction sharpens the row rather than weakening it. **codex's real
-denominator is `context_window` times `effective_context_window_percent`.** A
-marvel reading that used the raw `context_window` runs optimistic by exactly
-that fraction, which is the silent-misreport failure `limits.go` exists to
-refuse. Both terms have to travel together or the rung is unsound.
+**A first attempt at correcting that over-read went wrong in the opposite
+direction, and this paragraph is the fix.** The draft said marvel's real
+denominator is `context_window` times `effective_context_window_percent` and
+that both terms must travel together. They have already travelled: 272000 x
+0.95 = 258400, and 258400 is exactly what the rollout emits as
+`model_context_window` in 206 of 209 files with no other value corpus-wide.
+The number on the wire is already effective. A marvel that multiplies again
+lands on 245,480 and runs 5 percent PESSIMISTIC, firing shifts early.
 
-`session_meta` and `context_compaction` are both confirmed in codex's
-`rollout_item_type` enum, so the rollout has named record types for the two
-things this brief needs from it.
+Adapter rule: read `model_context_window` from the same `token_count` record
+as the level. Never read `models_cache.json`, and never apply the percentage
+yourself.
+
+**Correction to the record types, too.** A draft line here said `session_meta`
+and `context_compaction` are both in codex's `rollout_item_type` enum. That
+conflated two adjacent enums in the same string region. `context_compaction`
+belongs to the telemetry item-kind classifier, beside
+`response.compaction_trigger` and `dropped`; it never appears as an on-disk
+`.type` value. The census over 209 files gives six type values and it is not
+one of them. See the codex section below for the full list.
+
+Both errors are the same shape and worth naming as a method note: a
+correction appended in a later section left the wrong statement standing in
+an earlier one. In a document this long, fix the original rather than
+appending the fix.
 
 ### The actuator over OTEL, narrowed
 
@@ -1298,3 +1317,343 @@ not in the change but in the evidence. The same move is what turned the
 compaction-mining brief from "we should measure this someday" into "the
 measurement is on disk," and what turned the accountant's hysteresis from a
 reasoned constant into a testable one.
+
+## Synthesis round: the rulings the research did not produce
+
+The per-channel measurements above are the round-3 output. Round 4 put the
+lanes against each other and produced four rulings that no single measurement
+implied. Each is recorded with the argument, because the argument is what
+transfers.
+
+### 1. The numerator is marvel's, always. The THRESHOLD is the open question.
+
+The catalog kept framing the problem as "how does marvel read occupancy."
+That half is closed, and closed against trusting any harness: two runtimes
+use the same field name with opposite arithmetic (opencode additive, codex
+subsumptive), which is not an argument for per-harness Layout but proof of
+it. `Total` stays fenced to the mismatch invariant exactly as `doc.go` says.
+
+What is actually open is the threshold. Crush publishes two terms and
+actuates at a knowable point: `agent.go:57-59` at v0.88.0 carries
+`largeContextWindowThreshold = 200_000`, `largeContextWindowBuffer = 20_000`,
+`smallContextWindowRatio = 0.2`, so compaction fires when remaining drops
+under 20k for windows above 200k and otherwise under 20 percent. For the
+40960 window measured, that is compaction at 32768 occupancy: 80 percent,
+derivable, version-pinned.
+
+marvel does not want occupancy. It wants to predict compaction. So a marvel
+trigger that disagrees with the harness's own actuation point is wrong no
+matter how defensible its arithmetic.
+
+**The ruling splits by blast radius.** A wrong threshold makes marvel early
+or late; a wrong numerator makes marvel BLIND. Different failure magnitudes,
+so they do not deserve the same rule:
+
+- Numerator: computed by marvel from the token classes, never harness-supplied.
+- Threshold: MAY be harness-derived, but only as a declared constant behind a
+  version fence, with a conservative fallback on an unrecognized version.
+  Never inferred, never followed silently.
+
+Those three Crush constants are unexported, undocumented, and carry no
+compatibility promise, which is exactly why the fence and the fallback are
+the price of using them. Not generalized: four of five harnesses expose no
+actuation point at all. This is a Crush precision bonus, not a mechanism.
+
+### 2. Perturbation is eligibility, not grading. Blast radius is a third thing.
+
+Two separate attempts to fold new properties into the consent axis both
+failed, and the reasons differ.
+
+**Perturbation** (does obtaining the reading change the observed system)
+belongs in arbitration ELIGIBILITY, not in the grade. Grading asks whether
+the number is true; perturbation asks what obtaining it costs. Merging them
+corrupts the ladder. The sharper carve-out: where a harness's behavior KEYS
+ON BEING OBSERVED, as Crush's workspace reap does, the reading can change the
+agent's lifecycle, and that is a per-channel correctness bug needing a test,
+not a property needing a slot in the model.
+
+It also does not generalize, which was worth measuring rather than assuming.
+opencode was checked directly: 210 seconds idle with no observer, `created=1`
+before and after, `disposed=0`, and a touch returning 200 on the same
+instance. Observation is free there.
+
+**Blast radius** is a genuinely third property and the consent axis cannot
+see it. Consent grades the PROVENANCE of permission; it says nothing about
+MAGNITUDE. An in-process plugin is fully CONTRACTED and can hang the harness
+(measured: awaiting a client call at init deadlocks instance bootstrap
+silently, no error at DEBUG). A read-only sqlite handle is APPROPRIATED and
+can at worst be stale. Contracted-and-catastrophic is not a paradox; it is
+the axis measuring the wrong dimension. Blast radius belongs in eligibility
+cost alongside perturbation, not in the grade.
+
+The practical consequence, conceded by the lane that had ranked the plugin
+first: **a marvel plugin never goes in front of an operator's live session.**
+Only in front of marvel-spawned agents, where marvel already owns the process
+and a hang is marvel's own fault. That distinction does not exist anywhere in
+marvel today, and its absence is the actual gap.
+
+### 3. The inventory is a selection instrument, not a build list
+
+Cataloguing per channel is epistemically right and is also an invitation to
+build five implementations per harness. One criterion collapses it. **Does
+the channel carry occupancy AND denominator in the same record?**
+
+Applied to codex's eight enumerated surfaces, seven die: `state_5.sqlite`
+carries a cumulative (51.9M), `models_cache.json` is a static catalog that
+already disagrees with the live window on one model, OTEL counters reproduce
+finding-007 by construction, and `logs_2.sqlite`, the eleven hooks,
+`CODEX_HOME`, and the SessionStart push are not pressure channels at all
+(three of them are BINDING, which is a different job). The rollout
+`token_count` record survives.
+
+So: one channel per harness plus an honest absent state, with the full
+inventory kept in this probe as the EVIDENCE for the choice. Shipping five
+implementations per harness confuses the ruler with the thing measured.
+
+### 4. Spawn-time pinning is a REQUIREMENT, stated at the right altitude
+
+The three mechanisms found are not three features to exploit. `claude
+--session-id` ASSIGNS an identifier; `CODEX_HOME` NAMES A CONTAINER;
+`GEMINI_TELEMETRY_OUTFILE` names a file. One requirement underlies all three:
+
+> At spawn, marvel fixes either the artifact's IDENTITY or its LOCATION, so
+> that nothing has to be discovered afterward.
+
+Written that way, a sixth harness is evaluated in one command instead of a
+sweep, and the failure mode has a name: a harness offering neither is one
+marvel supervises blind. Crush is where that gets tested first.
+
+### The refutation that decided the round
+
+The standing counter-argument was that the whole measurement program may be
+optional, because the actuator only needs a compaction EVENT and an event
+needs no denominator. The compaction event does exist on all five harnesses,
+so the premise held.
+
+It fails anyway, and the refutation came from the lane whose own work it
+would have vindicated:
+
+**Shifting ON compaction is shifting AFTER the loss.** The uncontrolled
+summarization correctly priced as silent has already been paid by the time
+the event lands. What makes an event sufficient is a PRE hook. codex has one
+(`PreCompact`, carrying `trigger: manual|auto`). gemini has one
+(`PreCompress`). **Three of five have nothing before the fact.** So an
+event-only design works on two harnesses and silently degrades to
+shift-after-loss on the other three, which is the exact failure it was
+designed to avoid.
+
+The corollary, stated against the same lane's own interest: on codex
+specifically, if `PreCompact` ships then the rollout tail is the FALLBACK,
+not the primary. **The measurement program earns its keep on the three
+harnesses where the actuator has no early signal**, not on the one with the
+best file.
+
+### One self-inflicted defect the round surfaced
+
+`opencode/parser.go` sets `TotalExcludesCache: true` with a comment saying
+opencode's total is "defined over input + output + reasoning". Measured: 211
+of 211 assistant rows satisfy `total == input + output + reasoning +
+cache.read + cache.write`, zero violations.
+
+The harm is not a wrong number. `events.go:183` gates the layout arbiter on
+`!TotalExcludesCache`, so a wrong `true` **silently disables the one
+cross-check that would catch a wrong Layout**. The flag was set defensively
+because no caching turn had ever been observed. One has now.
+
+Sharper still: `ctx-channel-consent-and-fidelity.md` asserts the correct
+five-term identity and proposes fingerprinting it. So the graph states the
+identity in the idea file and denies it in the parser. That is a better
+specimen of the silent-failure taxonomy than anything the sweep found in a
+third-party harness, because it is internal and self-inflicted. Filed with
+evidence at `ArcavenAE/marvel#145`.
+
+### 5. The consent axis does not survive as an axis. Three things were hiding in it.
+
+It was inverted on CONTENT and on COST in the same round. A grading scheme
+that mispredicts both quality and freedom is not grading anything. What was
+load-bearing inside it splits three ways, and none of the three is a ladder:
+
+- **One absolute refusal, one bit.** No read path whose access surface
+  includes credential storage. `opencode.db` holds `credential` and
+  `control_account` beside the token counts. That is SOUL section 3 and it
+  needs no rungs. Note the refinement: this is categorical about a FILE, not
+  about a grade. Grade the ARTIFACT, not the manner of arrival, and
+  `~/.claude/projects` (a transcript directory with no credential table in
+  reach) comes in while `opencode.db` stays out.
+- **Failure signature**, which is what consent was proxying for: loud-absent
+  versus silent-wrong. The discriminant is not who published the channel, it
+  is **whether the channel carries a self-check**. codex has
+  `total == input + output` across 209 files with zero violations. Crush
+  persists its estimated-versus-measured flag nowhere, so the contracted
+  channel is the one that can lie quietly.
+- **Provenance recorded on the reading**, not a gate on admission. `Source`
+  beside `LimitSource`, the pattern already ratified.
+
+Of the three original grounds, CONTENT defeats exactly one: **declaration**.
+The argument was that a contracted schema tells you which quantity you hold.
+Claude's `compactMetadata` names `trigger`, `preTokens`, `postTokens`, and
+`cumulativeDroppedTokens` as distinct keys; the contracted span names
+`trigger` and `message_count`. The appropriated artifact out-declares the
+contracted one, so **declaration is a property of the payload, not of the
+consent grade**, and grading it by grade will keep producing this inversion.
+
+### 6. The kill condition fires. The apparatus was over-built.
+
+The consent file named its own kill condition: if arbitration never fires
+because no session has two eligible channels, the whole thing is ceremony.
+Checked per harness, and it fires.
+
+The channels marvel plausibly holds at once are **complementary, not rival**.
+Crush is FEED-N plus a one-shot denominator on a separate route. codex is a
+push binding pointing at a file. Composition is not arbitration. The three
+apparent rivals each collapse: Crush's sqlite read back 28639/414 matching
+the last SSE frame exactly, so choosing between them decides nothing;
+opencode's sqlite has no window in it at all, so it is not a rival on both
+terms; claude statusline versus transcript is the one real pair, and it is
+settled ONCE at adapter-authoring time, not per session.
+
+**What varies per session is PRESENCE, not preference.** So the replacement
+is the pattern marvel already ships: an ordered channel list declared by the
+adapter, the way `Layout` rides the payload because the parser knows its own
+harness. First channel that answers wins, `?` when none does, provenance
+stamped. A switch and a fallback, not an arbiter.
+
+One amendment carried from the perturbation ruling: a test with no slot has
+nowhere to put its result. Give the channel declaration one boolean,
+`ObservationRegisters`, so the fallback chain can prefer a non-registering
+channel when both answer. One field, not a model.
+
+### 7. Refuse the derived threshold. LEARN it.
+
+The threshold-may-be-harness-derived rule is rejected as a PREDICTOR. Three
+unexported constants at one version is not a model, and it is contradicted
+next door: codex publishes both its denominator terms and still fired
+compaction at 93.5 percent and 86 percent of window in the same corpus.
+Predicting a vendor's private policy from constants they did not export,
+when the realized value moves 7.5 points on a harness that does export, buys
+a number marvel would have to distrust anyway.
+
+What is worth having is the same quantity **observed rather than predicted**.
+Every harness leaves a compaction crossing legible: codex's all-zero
+sentinel, Crush's `prompt_tokens` going to zero with `summary_message_id`
+set, gemini's `PreCompress`. Record occupancy at the last pre-compaction
+sample and the realized threshold is MEASURED per session and per model.
+That is `LimitLearned`'s sibling and it fits the ratified ladder. Never a
+denominator, never a gate. And because the asymmetry argues the operator's
+conservative fallback should fire early anyway, the actuator never needs the
+harness's threshold predicted at all.
+
+### 8. The stop rule, and the eligibility gate that precedes fidelity
+
+**marvel builds one channel per runtime it can already launch. The catalog
+holds the rest.** Eligibility is three requirements, all mandatory:
+contracted or conceded; pinnable at spawn; carrying a declarable Cumulation.
+Fidelity ranks only what clears all three.
+
+Applied to gemini it overturns the round-3 ranking. Under this rule gemini
+builds `AfterModel` and nothing else. The local chat files are appropriated,
+so off the ladder. OTEL survives eligibility (its `api_response` log event
+carries per-request LEVELS, so the counter objection does not reach it) and
+still loses, because `GEMINI_CLI_SYSTEM_SETTINGS_PATH` lets marvel project a
+hook config per process without touching the operator's
+`~/.gemini/settings.json`, and no OTEL configuration has that isolation.
+Same number, less machinery, better blast radius. Three channels catalogued,
+one built, and the OTEL row stays alive for a different consumer.
+
+### 9. Two lanes for the ratio, which dissolves the third-FEED-kind question
+
+Crush's computed ratio is not a third FEED kind, because it is not the same
+quantity: it computes `input + cache_read` and drops cache-creation where
+marvel adds it, and its estimated-versus-measured flag lives in memory and
+reaches no channel. Arithmetic over a different definition with unmarked
+input quality cannot enter `internal/usage`.
+
+But it is the right number for a different consumer. **For metering you want
+terms, because you are answering "how full." For actuation you want the
+harness's own ratio, because you are answering "when will it compact," and
+the harness will act on its own arithmetic no matter whose is correct.**
+Agreeing with the harness about its own threshold beats being right by
+marvel's formula. Derived ratios go in the actuator lane, terms go in the
+metering lane, and the question of what kind of FEED it is dissolves.
+
+### 10. The concession, and the consumer nobody had named
+
+The standing claim that the measurement program is largely optional is
+withdrawn in half, by its own author. Stated plainly: **for shift triggers, a
+compaction event on five harnesses is sufficient and CTX% is not required.**
+The operator display is a genuine consumer but it does not fund the work, and
+leaning on it was a rationalization.
+
+What survives is a consumer nobody had named: **admission and dispatch**.
+`internal/admission` refuses over-budget work at the operator verbs and
+cannot do that from an edge-triggered event. An event tells you where you
+have BEEN; placing the next unit of work needs a LEVEL. So the sequencing
+claim stands (`hpeu` was never blocked on `dc1j`) and the stronger claim
+(measurement is largely optional) does not.
+
+The inferred compaction detector is ruled a **necessary fallback, demoted to
+fallback, and defective today**. Markers do not reach the generic adapter or
+any unknown CLI, so the floor stays. But codex writes `input=0 total=13221`
+at the moment of compaction and a 2048-token hysteresis fires on that record,
+booking post-compaction occupancy as zero: it fires for the wrong reason on
+the one harness with measured data. Discard `input==0 && total>0` before the
+detector sees it, gate the detector on marker-absent, then let SP4 replace
+both constants with measured false-positive and false-negative counts.
+
+### 11. The root cause, which is not a measurement question
+
+Four researchers spent a week of agent-hours on channels. The question was
+never "how do we read the number." It is **who is entitled to decide when a
+session ends.**
+
+marvel constructs the process environment at spawn and then went looking to
+DISCOVER a denominator it may ASSIGN. That is also why consent mislocates the
+Crush result: an observer registering as a live client is not a consent
+failure, it is what happens when a subordinate process is framed as an
+external system of record.
+
+The second face is procedural and cheaper to fix: the edge `hpeu blocked-by
+dc1j` was **inherited, never derived**. Nobody was asked to justify it, and a
+week of work followed from an unexamined dependency. That is
+`task-workflow.md`'s verify-the-premise rule applying to a graph edge rather
+than to a ticket body, which is a case the rule does not currently name.
+
+### 12. Every channel here is sand we do not own
+
+Asked whether any harness treats supervisor observability as a stated
+contract, the answer is **none**. Every channel that scored well is exhaust
+from a human-facing feature: a footer a person looks at, a log a person
+debugs. codex comes closest by naming `effective_context_window_percent`, and
+still ships it only as telemetry.
+
+There is one path from side effect to contract, and it is cheap. Crush parses
+Claude Code's `hookSpecificOutput` envelope, and its documentation invites
+hook requests. Three statuslines have already converged on Claude Code's
+`context_window.*` field names. So **one accepted upstream ask for a
+usage-carrying turn-end hook has fleet leverage**, because the convergence
+means a single field shape would port. That is the only move in this catalog
+that changes marvel's position rather than working within it, and it belongs
+to whoever owns upstream relations, not to the adapter work.
+
+Two roster corrections from the same pass. **amp is dropped**: usage rides
+per-message on assistant events, its `result` event carries no usage, and the
+documented pattern is accumulate-across-messages, which is finding-007's
+defect as the vendor's INTENDED read. **Copilot CLI's `STATUS_LINE` is still
+experimental** as of 2026-08, gated behind `feature_flags.enabled` in
+`~/.copilot/settings.json`. Not a blocker, because marvel writes that file.
+It is the warning.
+
+### What to build first
+
+**Interactive codex.** `CODEX_HOME` per spawned pane, the `SessionStart` hook
+pushing the absolute rollout path, and the tail with both refusals in the
+first commit (discard `input==0 && total>0`; grow on miss and hold the last
+reading rather than emitting zero). Both of those failure modes report LOW
+pressure at HIGH pressure, the direction that silently disables rotation.
+
+One build settles three things: it dissolves the binding problem instead of
+working around it; it gives `internal/usage` its second interactive producer,
+so provenance stops being optional; and `PreCompact` with trigger attribution
+falls out of the same wiring, which is simultaneously the instrument for the
+learned threshold in ruling 7 and the test of whether the shift trigger ever
+needed the channel program at all.
