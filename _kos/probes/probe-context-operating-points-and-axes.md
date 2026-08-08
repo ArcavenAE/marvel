@@ -127,11 +127,82 @@ Three observations that fall out of the table and are worth testing:
 
 ## Sub-probes, in value order
 
-**SP1. Locate the reliability knee.** Pair occupancy with an outcome signal
-from the transcript corpus. Success: a stated occupancy band per model where
-an error or retry rate rises, with its confidence interval, or a statement
-that the corpus cannot support the measurement. This is first because a
-dominated region changes a default rather than a tunable.
+**SP1. Locate the reliability knee.** ATTEMPTED 2026-08-08. Result: the
+corpus cannot support the measurement with the signals available, and the
+reasons are worth more than the attempt was.
+
+The only clean outcome signal in the transcripts that needs no content
+reading is `tool_result.is_error`. Measured across 34,570 tool results,
+bucketed by the occupancy of the assistant turn that issued the call:
+
+```
+occupancy band          tool results   errors   rate
+   50,000 -  99,999           2,471       93   3.76%
+  100,000 - 149,999           4,493      174   3.87%
+  150,000 - 199,999           5,067      162   3.20%
+  200,000 - 249,999           4,799      139   2.90%
+  250,000 - 299,999           4,353      144   3.31%
+  300,000 - 349,999           3,959      161   4.07%
+  350,000 - 399,999           3,621      145   4.00%
+  400,000 - 449,999           2,593       71   2.74%
+  450,000 - 499,999           1,306       38   2.91%
+  500,000 - 549,999             531       28   5.27%
+  550,000 - 599,999             433       16   3.70%
+  600,000 - 649,999             282       10   3.55%
+  650,000 - 699,999             227        4   1.76%
+                    overall  34,570    1,200   3.47%
+```
+
+No knee. The rate sits between 2.7 and 5.3 percent across every band with no
+trend, and the two highest bands show the LOWEST rates.
+
+**This does not falsify the reported knee.** It says this proxy cannot see
+it, and there are four reasons to expect that even if the knee is real:
+
+1. **The proxy measures the wrong thing.** A tool error is mostly a command
+   that legitimately failed: a grep with no match, a file that does not
+   exist, a build broken for reasons unrelated to the model. That noise floor
+   is large and roughly constant, and it would swamp a change in reasoning
+   quality.
+2. **Sample size collapses exactly where the question lives.** Below 500k
+   each band holds thousands of observations; above it, 531, 433, 282, 227.
+   The bands that would show the knee are the ones with no power.
+3. **Survivorship, and this is the serious one.** A session only reaches 700k
+   by not having gone badly wrong. Sessions that degrade get compacted,
+   abandoned, restarted, or taken over by their operator, which removes them
+   from the high-occupancy sample. **The corpus is conditioned on the outcome
+   being measured**, so high-occupancy sessions are a biased sample of
+   well-behaved ones. This is a structural problem for any observational
+   measurement of the knee, not a fixable defect of this attempt.
+4. **No internal quality signal is exposed.** `usage.iterations` is `[]` on
+   every record and `usage.speed` is `standard` on every record, so neither
+   carries retry or degradation information.
+
+**What would actually measure it**, in ascending cost:
+
+- **Rework detection.** Same file edited repeatedly in close succession, or
+  an edit reverted shortly after. Derivable from tool-call metadata without
+  reading content, and a far closer proxy for "the model is not getting it
+  right" than a failed command. Cheapest remaining option; try before
+  anything that costs quota.
+- **Correction-turn detection.** Short operator messages immediately
+  following an assistant turn. Needs care: message length is metadata, but
+  inferring intent from it approaches reading content, which the handling
+  note forbids.
+- **A controlled experiment.** The same task attempted from different
+  starting occupancies. The only design that escapes survivorship, because it
+  fixes the task and varies the condition. Costs quota, and it is the honest
+  answer if the cheap proxies also fail.
+- **critic.** An outcome signal on kept-versus-discarded work is exactly what
+  the knee needs and exactly what critic exists to produce. The knee is now a
+  second question blocked behind it, alongside the throughput unit of work.
+
+**Consequence for the dominated-region argument, recorded against our own
+interest.** The idea file claims the region past the knee is Pareto-dominated
+and that a scheduler should refuse it by default. That claim now rests
+entirely on operator observation, with one attempted measurement that neither
+confirms nor refutes it. It should be stated that way wherever it appears,
+and it should NOT be built into a default until a better signal exists.
 
 **SP2. Separate the cache-rebuild causes.** Decompose the 639M
 `cache_creation` tokens into post-compaction rebuild, segment growth, TTL

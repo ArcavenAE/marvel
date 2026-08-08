@@ -25,8 +25,16 @@ once, and a fleet makes each of them worse.
    information that makes it actionable.
 3. **Models behave differently at high occupancy, and some get worse.** Above
    roughly 600k, fable and opus become less reliable (operator observation).
-   So there is a region where you pay more per turn AND fail more often,
-   which is strictly dominated: no goal is served by operating there.
+   So there would be a region where you pay more per turn AND fail more
+   often, which is strictly dominated: no goal is served by operating there.
+
+   **Status of this claim, updated 2026-08-08: operator observation only.**
+   One attempt to measure it against the corpus failed to see it (SP1 of
+   `probe-context-operating-points-and-axes.md`): tool-error rate is flat at
+   2.7 to 5.3 percent across every occupancy band. That neither confirms nor
+   refutes, because the proxy is weak, the sample thins exactly where the
+   question lives, and high-occupancy sessions are survivors by construction.
+   Until a better signal exists this must not be built into a default.
 
 ## The one measured thing here
 
@@ -95,7 +103,10 @@ The goal is not the same in every case, and marvel should not encode one:
   and fail more. This one may not need to be a policy at all: a scheduler
   should arguably decline to enter a Pareto-dominated operating point by
   default, with an explicit operator opt-out, rather than requiring every
-  operator to discover the knee independently.
+  operator to discover the knee independently. **Blocked on measuring the
+  knee**, per the status note above; a default built on an unmeasured
+  discontinuity is exactly the silent-wrong failure this arc keeps ruling
+  against.
 
 So the manifest surface is per-role rather than global, and it is a
 POLICY selection plus its parameters, not a threshold percentage. Something
