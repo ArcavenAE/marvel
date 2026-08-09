@@ -211,6 +211,37 @@ content: |
   session cost; cache locality is a fleet property being managed per
   session; coordination overhead grows with fleet size rather than
   fleet output. Tracked: aae-orc-hfc0.
+
+  THE COMPACTION SIGNAL A TRIGGER WOULD CONSUME IS MEASURED NOW
+  (finding-023, 2026-08-09), and the detector half is sound while the
+  input half is not. Replayed against 63 labelled Claude compactions,
+  the shipped hysteresis fired 63 times with zero false negatives and a
+  minimum margin of 4.03x, so the reasoned constants are calibrated.
+  The trigger cannot rely on that yet, for three separate reasons all
+  pointing the same way, toward reporting LOW pressure at HIGH
+  pressure:
+
+  1. 19 of 82 boundaries produce no post-boundary sample in marvel's
+     series, so the detector cannot fire on them at all.
+  2. The primary-model latch freezes the reading. 19 sessions switch
+     model permanently; from that point the sink is never written and
+     the stored CTX% stays at its pre-switch value, worst case 79,246
+     against a session that reached 751,169. A trigger armed on a level
+     that has stopped moving never fires and looks correctly
+     configured, which is the same failure shape finding-016 named for
+     the wrong denominator.
+  3. "Compaction detected" is not "compaction happened." Two real
+     context drops of 16-20 percent carry no compaction record, and one
+     detection fired on a zero-occupancy record rather than on a
+     post-compaction level. Any trigger keyed on the compaction COUNT
+     inherits all three.
+
+  A READING NEEDS AN AGE, and this is the cheapest of the three fixes.
+  `api.SessionContext` carries no observation time, so neither the
+  frozen latch nor a session idle since yesterday (where the level
+  marvel holds bears no relation to the harness's own count, measured
+  0.14x to 18.6x across a resume gap) is distinguishable from a fresh
+  reading by an operator or by a gate.
 edges:
   - target: question-shifts
     type: derives

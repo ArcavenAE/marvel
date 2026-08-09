@@ -192,6 +192,58 @@ content: |
   the path is `payload.rate_limits`, a sibling of `payload.info`, not
   inside it. opencode and Crush have no headroom channel at all.
 
+  THE COMPACTION CORPUS IS MINED (finding-023, 2026-08-09), and the
+  detector it was mined to test passed. 63 of 63 labelled Claude
+  compactions with a sample on each side were detected by the shipped
+  hysteresis, zero false negatives, minimum margin 4.03x over the guard.
+  The comment at `accountant.go:14-31` calling the bound reasoned rather
+  than calibrated can be retired: it is calibrated now, against 63 events
+  rather than one recovered geometry, with a regression fixture at
+  `internal/usage/testdata/compaction_series_claudecode.json`.
+
+  What the same corpus says about the channel matters more than the
+  detector result, because all three items report LOW pressure at HIGH
+  pressure, which is the direction that silently disables rotation:
+
+  - **19 of 82 boundaries produce no post-boundary sample in marvel's
+    series at all**, so the detector cannot fire on them. In the clearest
+    session the last sample naming its latched primary model sits at line
+    3,110 of 5,283 and the six compactions after it are invisible.
+  - **The primary-model latch freezes CTX% permanently.** `fold` latches
+    the first model it sees and never re-latches. 19 sessions switch
+    model and never switch back; 3,563 later samples go to spend, the
+    sink is never written again, and the store keeps rendering the frozen
+    figure as current. Worst case froze at 79,246 tokens while the
+    session reached 751,169. That is a larger error than the denominator
+    error `aae-orc-sj34` was filed for, and it is silent. finding-016
+    already ruled that a model change invalidates the reading; this is
+    the measured cost of not having implemented it.
+  - **Zero-occupancy records exist on claude too.** 68 non-sidechain
+    assistant records carry all three prompt classes at zero. 67 name
+    `<synthetic>` and are excluded incidentally by the non-primary-model
+    guard; ONE names the session's real model, passes every guard, and
+    sits beside a compaction at 467,121 tokens. The discard rule
+    `aae-orc-mob4` sets for codex must key on the token values, because
+    the model name is not a reliable discriminator.
+
+  Three further properties a per-harness reader must handle: transcript
+  file order is NOT chronological (26 inversions, worst 25.2 hours, one
+  reading 134,037 where the true level was 967,915); not every context
+  drop is a labelled compaction (two drops of 16-20% with no boundary
+  record, both after an `away_summary`); and a boundary's `postTokens` is
+  not the level the next request carries (the first post-compaction
+  sample runs a median 61,658 tokens above it).
+
+  SP5 closed two runtimes negatively. gemini has a per-turn token series
+  and no compaction field anywhere in its local chat files, so it has no
+  ground truth on this machine; its `total` EXCLUDES `cached` (418 of 418
+  cached rows), the opposite of opencode, while whether `input` subsumes
+  `cached` is undecidable here because the largest observed prompt is
+  51,209 against a window in the millions. opencode's
+  `session_context_epoch` is present and empty, and its schema keys on
+  `session_id` alone, so it is a pointer to the current epoch and can
+  never hold a compaction history.
+
   Tracked: bd aae-orc-dc1j. Related: aae-orc-7hzb (statusline probe;
   its "other harnesses" remainder is absorbed by the sweep brief),
   aae-orc-w5su (headless CTX%; scope it headless-only so nobody
