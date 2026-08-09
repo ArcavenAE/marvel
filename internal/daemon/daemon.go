@@ -146,6 +146,16 @@ type Daemon struct {
 	// Always non-nil.
 	events *events.Ring
 
+	// Heartbeat auth notices repeat at the offending process's tick rate
+	// and never stop on their own, because nothing reaps an orphan. One
+	// line per refusal buried a daemon log in a live incident
+	// (aae-orc-k58k: 44 refusals in 90s from two orphans at a 2s tick).
+	// Throttled per (kind, session) so the condition still announces
+	// itself immediately and then stays quiet, reporting how many it
+	// swallowed when it next speaks.
+	hbAuthMu sync.Mutex
+	hbAuth   map[string]*heartbeatAuthNotice
+
 	// Per-session context and token accountant, fed by the adapter
 	// streams through the session manager. Always non-nil.
 	usage *usage.Accountant
@@ -1059,8 +1069,22 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 	auth, err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.SessionToken, p.ContextPercent, p.Model)
 	if err != nil {
 		if errors.Is(err, api.ErrHeartbeatUnauthorized) {
-			d.emitHeartbeatAuth(events.KindHeartbeatRefused, p.SessionKey,
-				"refused: token does not match the session claimed")
+			// Two different faults reach this branch and they have
+			// opposite remedies, so they get different messages and
+			// throttle independently. Presenting NO token is a producer
+			// that was not updated to send one (the codex reader shipped
+			// exactly that, see #176). Presenting a WRONG token is a live
+			// process holding a credential minted for an earlier
+			// incarnation of this session key: an orphan from a previous
+			// daemon, which nothing reaps (aae-orc-k58k).
+			cause, msg := "no-token", "refused: this heartbeat presented no token while the session "+
+				"carries one, so its producer is not sending MARVEL_HEARTBEAT_TOKEN"
+			if p.SessionToken != "" {
+				cause, msg = "stale-token", "refused: token does not match the session claimed; an "+
+					"orphaned agent from an earlier daemon is still heartbeating for this key. "+
+					"Clear it with 'marvel reap --confirm', or start with 'marvel daemon --reclaim'"
+			}
+			d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, p.SessionKey, msg)
 		}
 		return Response{Error: err.Error()}
 	}
@@ -1081,7 +1105,56 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 // The workspace/team/role coordinates come from the claimed session when
 // it exists, so a refusal can be filtered beside that session's other
 // events rather than only by kind.
+// heartbeatAuthInterval is how long a repeated heartbeat auth notice
+// stays quiet before it speaks again. A minute is long enough to stop a
+// 2s-tick orphan from owning the log and short enough that an operator
+// watching a fleet still sees the condition is ongoing.
+const heartbeatAuthInterval = time.Minute
+
+type heartbeatAuthNotice struct {
+	last       time.Time
+	suppressed int
+}
+
+// emitHeartbeatAuth reports a heartbeat that was refused or admitted
+// unbound. The first occurrence for a (kind, session) is always reported;
+// repeats inside heartbeatAuthInterval are counted and folded into the
+// next one, so a condition that cannot fix itself does not drown out
+// everything else in the log.
 func (d *Daemon) emitHeartbeatAuth(kind events.Kind, sessionKey, message string) {
+	d.emitHeartbeatAuth2(kind, "", sessionKey, message)
+}
+
+// emitHeartbeatAuth2 is emitHeartbeatAuth with a cause discriminator, so
+// two faults that share a kind and a session still each get reported
+// rather than one silencing the other.
+func (d *Daemon) emitHeartbeatAuth2(kind events.Kind, cause, sessionKey, message string) {
+	key := string(kind) + "|" + cause + "|" + sessionKey
+
+	d.hbAuthMu.Lock()
+	if d.hbAuth == nil {
+		d.hbAuth = make(map[string]*heartbeatAuthNotice)
+	}
+	n, seen := d.hbAuth[key]
+	if !seen {
+		n = &heartbeatAuthNotice{}
+		d.hbAuth[key] = n
+	}
+	now := time.Now()
+	if seen && now.Sub(n.last) < heartbeatAuthInterval {
+		n.suppressed++
+		d.hbAuthMu.Unlock()
+		return
+	}
+	swallowed := n.suppressed
+	n.suppressed = 0
+	n.last = now
+	d.hbAuthMu.Unlock()
+
+	if swallowed > 0 {
+		message = fmt.Sprintf("%s (%d more since the last notice)", message, swallowed)
+	}
+
 	ev := events.Event{
 		Kind:     kind,
 		Severity: events.SeverityWarning,
