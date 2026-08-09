@@ -50,6 +50,12 @@ def gemini(root):
     # indistinguishable from a level on a single-request turn.
     sessions_scored = 0
     sessions_with_decrease = 0
+    # Within-turn accumulation needs a MULTI-REQUEST turn, which is the
+    # test the Crush arm proposed (finding-020). A pair of consecutive
+    # model messages with no user message between them and a toolCalls
+    # array on the first is a second request inside one turn. An
+    # accumulator predicts the second value at roughly 2x the first.
+    turn_pairs = []
     for f in files:
         try:
             with open(f, errors="replace") as fh:
@@ -89,6 +95,19 @@ def gemini(root):
             sessions_scored += 1
             if any(b < a for a, b in zip(series, series[1:])):
                 sessions_with_decrease += 1
+
+        msgs = doc.get("messages") or []
+        toks = [(i, m) for i, m in enumerate(msgs)
+                if isinstance(m, dict) and isinstance(m.get("tokens"), dict)]
+        for (i1, m1), (i2, m2) in zip(toks, toks[1:]):
+            if not (m1.get("toolCalls") or []):
+                continue
+            if any((msgs[k] or {}).get("type") == "user" for k in range(i1 + 1, i2)):
+                continue
+            a = m1["tokens"].get("input") or 0
+            b = m2["tokens"].get("input") or 0
+            if a:
+                turn_pairs.append(b / a)
     return {
         "files": len(files),
         "messages_with_tokens": rows,
@@ -104,7 +123,12 @@ def gemini(root):
             "sessions_with_3plus_rows": sessions_scored,
             "sessions_whose_input_decreases": sessions_with_decrease,
             "session_cumulative_excluded": sessions_with_decrease > 0,
-            "per_turn_accumulation_excluded": False,
+            "same_turn_pairs": len(turn_pairs),
+            "same_turn_ratio_p50": round(st.median(turn_pairs), 3) if turn_pairs else None,
+            "same_turn_ratio_max": round(max(turn_pairs), 3) if turn_pairs else None,
+            "same_turn_pairs_at_or_above_1_8": sum(1 for r in turn_pairs if r >= 1.8),
+            "per_turn_accumulation_excluded": bool(turn_pairs)
+            and not any(r >= 1.8 for r in turn_pairs),
         },
         "downward_steps_past_marvel_hysteresis": steps,
     }

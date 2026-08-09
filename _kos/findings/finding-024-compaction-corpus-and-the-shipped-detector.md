@@ -99,15 +99,42 @@ confirms rather than inherits finding-007's addendum, which established
 the same thing from the other direction (the terminal `result` line IS
 cumulative and the per-message one is not).
 
-**Gemini's per-turn `input` is not SESSION-cumulative. Per-turn
-accumulation is not excluded.** 12 of 22 gemini sessions with three or
-more token rows contain a decrease in `input`, and a session accumulator
-cannot decrease. A per-TURN accumulator that resets at each turn
-boundary is not excluded and would be indistinguishable from a level on
-any single-request turn, which is what codex's open question is
-(finding-017 leaves the same distinction unsettled). The SP5 step count
-below is stated under the level reading and is void under the per-turn
-one, which is the honest scope for it.
+**Gemini's per-turn `input` is a level, on both halves of the test.**
+
+Session accumulation is excluded because a session accumulator cannot
+decrease, and 12 of 22 gemini sessions with three or more token rows
+contain a decrease in `input`.
+
+Within-turn accumulation is excluded by a test the Crush arm proposed
+and my corpus already contained: a multi-request turn. 350 pairs of
+token-bearing messages have no intervening `user` message and a
+`toolCalls` array on the first, so the model made a second request
+inside the same turn. A within-turn accumulator predicts the second
+value at roughly twice the first, since the prompt barely changes
+between them.
+
+```
+ratio of second request to first, 350 same-turn pairs
+p50 1.016   max 1.661   pairs at or above 1.8: 0
+```
+
+(A first pass counted 382 by printing the intervening-message types
+without filtering on them. The committed script filters, and its 350 is
+the number. The conclusion is the same either way, which is luck rather
+than justification.)
+
+The second request carries the first plus the tool result, which is a
+level. The residual case dissolves rather than surviving: an accumulator
+that reset on every model request would be indistinguishable from a
+level to any consumer, so there is nothing left for it to mean.
+
+Recorded because the discriminator generalizes and neither of us reached
+it alone. The Crush arm found that its two terms are settled by
+different tests (`completion_tokens` by observed decrease,
+`prompt_tokens` by the window bound, neither by both) and pointed out
+that the same asymmetry was sitting in my gemini result. Codex's version
+of this question is still open (finding-017), and the same test applies
+to it the moment an authenticated multi-turn `codex exec resume` exists.
 
 ## SP4: would the shipped detector have caught these?
 
@@ -352,10 +379,9 @@ summarization. Marvel's step detector would fire 3 times across those 477
 samples (two of them drops to exactly zero, which is the same hazard as
 above), and there is no label anywhere in the corpus against which to
 score those firings. So gemini has no compaction ground truth on this
-machine, and acquiring one needs a session run, not a mine. That step
-count assumes `input` is a level; see the cumulation check in the method
-section, which excludes session-cumulative and leaves per-turn
-accumulation open.
+machine, and acquiring one needs a session run, not a mine. The step
+count rests on `input` being a level, which the cumulation check in the
+method section establishes on both halves rather than assumes.
 
 One discriminating result came free, in the shape finding-017 used. Over
 the 418 rows with nonzero `cached`, `total == input + output + thoughts +
@@ -412,10 +438,9 @@ correction of a number rather than of a method.
 - **Whether cluster A is caused by scheduled task fires.** 4 of 5 against
   a 15 of 68 base rate.
 - **Whether gemini's `input` subsumes `cached`.** The corpus cannot
-  discriminate.
-- **Whether gemini's `input` accumulates within a TURN.** Session-level
-  accumulation is excluded; per-turn is not, and every gemini row here
-  could be a single-request turn, on which the two coincide.
+  discriminate. Its cumulation is settled (see the method section); its
+  layout is not, and the two are separate questions about the same
+  field.
 - **Anything about a live compaction crossing under marvel.** This is a
   mine of transcripts written by an operator's interactive sessions. The
   accountant consumes a headless NDJSON stream, and the correspondence
