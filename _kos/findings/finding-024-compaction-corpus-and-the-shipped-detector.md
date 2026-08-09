@@ -132,9 +132,40 @@ Recorded because the discriminator generalizes and neither of us reached
 it alone. The Crush arm found that its two terms are settled by
 different tests (`completion_tokens` by observed decrease,
 `prompt_tokens` by the window bound, neither by both) and pointed out
-that the same asymmetry was sitting in my gemini result. Codex's version
-of this question is still open (finding-017), and the same test applies
-to it the moment an authenticated multi-turn `codex exec resume` exists.
+that the same asymmetry was sitting in my gemini result.
+
+**Codex closed too, in the opposite direction, and the same corpus had
+been sitting beside the question the whole time.** The codex arm applied
+the decrease test to the rollout's `total_token_usage`, which is the
+accumulator `turn.completed` mirrors field for field. Verified here
+independently against the same 208 rollout files:
+
+```
+1,890  consecutive-pair comparisons        0 decreases
+  159  turn boundaries, 9 multi-turn sessions   0 decreases
+```
+
+A per-turn accumulator drops at every one of those 159. So codex's
+accumulator is SESSION-scoped, which is the worse of the two cases
+finding-017 named and the one `profiles.go` already declares. The
+declaration is now measured rather than noted.
+
+One difference between our runs, characterized rather than waved
+through: I counted one record matching the reset signature
+(`total == last` mid-series) where they counted zero. Both instances are
+a session's first real sample, one a duplicate emission of record 0 and
+one following an `info: null` record. Neither is a reset, so the
+conclusion converges once the definition is stated.
+
+| harness | cumulation | the test that settled it |
+|---|---|---|
+| claude (per-message `usage`) | level | window bound, by three orders of magnitude |
+| gemini (`tokens.input`) | level | observed decrease, then 350 same-turn pairs |
+| codex (`total_token_usage`) | session-cumulative | 159 turn boundaries, zero decreases |
+
+Three harnesses, three different tests, and no two of them settled by
+the same one. That is the transferable part: name the test, not the
+outcome.
 
 ## SP4: would the shipped detector have caught these?
 
@@ -477,3 +508,12 @@ correction of a number rather than of a method.
    `.crush/stats/index.html`, and the Claude terminal `result` line.
    The check is usually one query, and the failure is silent and
    understating.
+7. **Re-test every recorded blocker before inheriting it**, which is the
+   codex arm's addition and the sharper half of 6. finding-017 recorded
+   "needs an authenticated multi-turn `codex exec resume`"; that was true
+   of the exec stream and false of the rollout corpus sitting beside it,
+   and the question closed against data already on disk. This probe is
+   itself an instance: its brief existed because someone re-tested
+   "crossing a compaction costs real quota and a long session" and found
+   the crossings had already happened. A blocker is usually a property of
+   the channel someone happened to be looking at, not of the question.
