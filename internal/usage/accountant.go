@@ -306,10 +306,10 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 }
 
 // fold is the whole arithmetic, under one critical section. Order matters:
-// terminal samples leave before any occupancy work, and a subagent turn
-// or a non-primary model leaves before the compaction detector, whose
-// input would otherwise be a 33k collapse every time a routing model or a
-// Task tool answered.
+// terminal and cumulative samples leave before any occupancy work, and a
+// subagent turn or a non-primary model leaves before the compaction
+// detector, whose input would otherwise be a 33k collapse every time a
+// routing model or a Task tool answered.
 func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult {
 	var res foldResult
 
@@ -325,6 +325,35 @@ func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult 
 
 	if s.Terminal {
 		a.foldTerminalLocked(st, s, &res)
+		return res
+	}
+
+	// A feed reporting RUNNING TOTALS cannot produce an occupancy level,
+	// so it produces none. This is the same defect as reading Claude's
+	// terminal result line as a level (see doc.go), arriving through a
+	// different door: here every sample is a total, not just the last one,
+	// so there is no terminal marker to catch it.
+	//
+	// Codex is the measured case. `codex exec --json` turn.completed
+	// reports the session's accumulated usage. In this repo's own
+	// tool_call.jsonl fixture it says input_tokens 28110, while the
+	// harness's per-request record for that same thread id says the two
+	// requests were 14005 then 14105: the true prompt at turn end was
+	// 14105, and 28110 is their sum. The overstatement is 1.99x on a
+	// two-request turn and grows with request count.
+	//
+	// The tokens are real money, so they are recorded as spend by
+	// REPLACEMENT rather than accumulation, and the occupancy level is
+	// left untouched so CTX% renders absence.
+	if s.Cumulation == CumulationSession {
+		a.stats.CumulativeSamples++
+		a.setSpendLocked(st, s)
+		if a.warnOnceLocked("cumulative:" + s.Harness) {
+			res.warnings = append(res.warnings, fmt.Sprintf(
+				"harness %s: per-turn usage is a running session total, not a per-request level, so its tokens count toward spend and CTX%% is reported absent; occupancy needs that harness's own per-request record",
+				s.Harness,
+			))
+		}
 		return res
 	}
 
@@ -494,6 +523,27 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 	st.spend.Requests++
 	if s.CostUSD != nil {
 		st.spend.CostUSD += *s.CostUSD
+		st.spend.CostReported = true
+	}
+	st.spend.ObservedAt = a.clock()
+}
+
+// setSpendLocked records a sample whose classes are running session
+// totals: the new total REPLACES the previous one. Accumulating them
+// would square the count, which is the spend-column form of the same
+// mistake that reading a cumulative series as a level is in the occupancy
+// column. Requests counts observations, so it still increments; for a
+// cumulative feed that is turns rather than requests.
+func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
+	st.spend.In = s.In
+	st.spend.Out = s.Out
+	st.spend.CacheReadIn = s.CacheReadIn
+	st.spend.CacheCreationIn = s.CacheCreationIn
+	st.spend.ReasoningOut = s.ReasoningOut
+	st.spend.PromptTokens = s.Occupancy()
+	st.spend.Requests++
+	if s.CostUSD != nil {
+		st.spend.CostUSD = *s.CostUSD
 		st.spend.CostReported = true
 	}
 	st.spend.ObservedAt = a.clock()

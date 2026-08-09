@@ -1,6 +1,14 @@
 # Probe brief: rework as the degradation proxy for the reliability knee
 
-**Status:** OPEN (brief only; designed, not run).
+**Status:** RUN 2026-08-08. Result: `probe-rework-detection-result.md`.
+Outcome: the pre-stated success signals were not met and one pre-stated
+failure signal fired. The knee is undecidable from this corpus. Three
+structural reasons, all measured, all new: 67 of 78 compaction boundaries
+fire at a `preTokens` median of 467,446, so the natural experiment's
+intervention sits below the reported knee; model mix is not constant across
+occupancy bands and within-model trends disagree in direction; and no
+main-thread transcript carries a terminal `result` record, so the censoring
+hazard cannot be computed as specified.
 **Question:** `question-interactive-context-pressure`, `question-shift-triggers`.
 **Medium:** mining the local Claude Code transcript corpus. No model calls, no
 harness sessions, no daemon.

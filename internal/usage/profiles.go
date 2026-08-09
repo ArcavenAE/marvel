@@ -46,17 +46,43 @@ var profiles = map[string]profile{
 		vendorTotal:       false,
 	},
 	codex.Harness: {
-		// UNVERIFIED against a real multi-turn capture: codex exec
-		// one-shot has a single turn, so whether input_tokens is a level
-		// or a session total across turns rests on the field layout plus
-		// the synthetic resume fixture. `codex exec resume` settles it.
-		cumulation: CumulationRequest,
-		// thread.started carries only thread_id on 0.146.0; the parser
-		// reads a model field that arrives empty, so the model comes from
-		// the launch args or nowhere.
+		// MEASURED, and it corrects the earlier reading. turn.completed
+		// carries a RUNNING TOTAL, not a per-request level, and the
+		// single-turn fixture that looked inconclusive already showed it.
+		//
+		// tool_call.jsonl reports input_tokens 28110 / cached 24064 /
+		// output 76 for thread 019fba87-d036-7ae1-a20e-7187ef8e3329.
+		// Codex's own per-request record for that same thread (its
+		// rollout file, event_msg/token_count) holds two requests:
+		// last_token_usage input 14005 then 14105, and total_token_usage
+		// 14005 then 28110 with cached 11008 then 24064. The exec stream
+		// matches total_token_usage field for field. The prompt at turn
+		// end was 14105; marvel read 28110.
+		//
+		// One turn was enough because that turn made two model requests
+		// (a tool call and an answer). The earlier note looked for the
+		// accumulation ACROSS turns and so did not think to check within
+		// one, which is why a fixture already in the repo went unread.
+		//
+		// Not settled: whether the accumulator resets at a turn boundary
+		// or runs for the session. Both remain consistent with a
+		// single-turn capture, and the fold treats them alike, since
+		// neither is a level. A multi-turn authenticated `codex exec
+		// resume` decides it.
+		cumulation: CumulationSession,
+		// thread.started carries only thread_id on 0.146.0 (re-verified
+		// live against codex-cli 0.146.0); the parser reads a model field
+		// that arrives empty, so the model comes from the launch args or
+		// nowhere. Codex names the model elsewhere (turn_context.model in
+		// the rollout, and `model` on 10 of its 11 hook payloads), just
+		// not in the exec stream.
 		modelFromStream: false,
-		limitInStream:   false,
-		vendorTotal:     false,
+		// The exec stream declares no window. The rollout does, twice
+		// over: event_msg/task_started.model_context_window at the start
+		// of every turn and event_msg/token_count.info.model_context_window
+		// per request. Neither is this feed.
+		limitInStream: false,
+		vendorTotal:   false,
 	},
 	opencode.Harness: {
 		// Measured against a live two-turn session: input fell from 6018

@@ -25,12 +25,25 @@ const contextFixture = `{"type":"system","subtype":"init","session_id":"fixture-
 {"type":"result","subtype":"success","is_error":false,"session_id":"fixture-ctx","duration_ms":4816,"num_turns":3,"stop_reason":"end_turn","total_cost_usd":0.4264,"usage":{"input_tokens":11701,"output_tokens":455,"cache_read_input_tokens":72131,"cache_creation_input_tokens":17162},"modelUsage":{"claude-fable-5[1m]":{"inputTokens":11701,"outputTokens":455,"cacheReadInputTokens":72131,"cacheCreationInputTokens":17162,"costUSD":0.4264,"contextWindow":1000000,"maxOutputTokens":64000}},"permission_denials":[]}
 `
 
-// codexContextFixture has no model and no window anywhere, which is the
-// unresolved-denominator case.
+// codexContextFixture has no model and no window anywhere. Its usage is
+// codex's running session total rather than a per-request level, which is
+// why it lights no CTX% at all; see
+// TestCodexStreamLightsNoContextColumn.
 const codexContextFixture = `{"type":"thread.started","thread_id":"fixture-cx-ctx"}
 {"type":"turn.started"}
 {"type":"turn.completed","usage":{"input_tokens":13992,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
 `
+
+// opencodeContextFixture is the harness that names no model and declares
+// no window while still reporting a per-request LEVEL, so it carries the
+// unresolved-denominator and manifest-override cases. Tokens are the
+// repo's measured caching.jsonl row: input 27 with 7936 read from cache,
+// additive, so occupancy is 7963.
+const opencodeContextFixture = `{"type":"step_start","timestamp":1786225503670,"sessionID":"ses_fixture","part":{"id":"prt_a","messageID":"msg_a","sessionID":"ses_fixture","type":"step-start"}}
+{"type":"step_finish","timestamp":1786225504400,"sessionID":"ses_fixture","part":{"id":"prt_b","reason":"stop","messageID":"msg_a","sessionID":"ses_fixture","type":"step-finish","tokens":{"total":7966,"input":27,"output":3,"reasoning":0,"cache":{"write":0,"read":7936}}}}
+`
+
+const opencodeFixtureOccupancy = 27 + 7936
 
 // runObservedHarness drives one stubbed harness through the whole byte
 // path with a real accountant over a real store.
@@ -151,18 +164,23 @@ func TestClaudeStreamLightsTheContextColumn(t *testing.T) {
 	}
 }
 
-// TestUnresolvedWindowReportsAbsenceEndToEnd: codex names no model and no
-// window, so tokens are real and the percentage is not invented.
+// TestUnresolvedWindowReportsAbsenceEndToEnd: opencode names no model and
+// no window, so tokens are real and the percentage is not invented. This
+// is the "?" state, distinct from never-measured.
+//
+// codex used to carry this case. It cannot any more: its stream reports
+// running totals, so there is no level to report against any window. See
+// TestCodexStreamLightsNoContextColumn.
 func TestUnresolvedWindowReportsAbsenceEndToEnd(t *testing.T) {
-	store, _, ring, mgr, sess := runObservedHarness(t, "codex", codexContextFixture, 0)
+	store, _, ring, mgr, sess := runObservedHarness(t, "opencode", opencodeContextFixture, 0)
 
 	got := waitForContext(t, store, sess.Key(), func(c api.SessionContext) bool {
 		return c.ContextRequests > 0
 	})
 
-	// Subsumptive layout: input_tokens already contains the cached tokens.
-	if got.ContextTokens != 13992 {
-		t.Errorf("tokens = %d, want 13992", got.ContextTokens)
+	// Additive layout: the cache read sits beside input, not inside it.
+	if got.ContextTokens != opencodeFixtureOccupancy {
+		t.Errorf("tokens = %d, want %d", got.ContextTokens, opencodeFixtureOccupancy)
 	}
 	if got.ContextLimit != 0 {
 		t.Errorf("limit = %d, want 0 (no model, no window, no guess)", got.ContextLimit)
@@ -183,7 +201,7 @@ func TestUnresolvedWindowReportsAbsenceEndToEnd(t *testing.T) {
 // The operator's escape hatch: one manifest line resolves the window for
 // a model marvel's table does not know.
 func TestManifestWindowResolvesUnknownModel(t *testing.T) {
-	store, _, _, mgr, sess := runObservedHarness(t, "codex", codexContextFixture, 258_400)
+	store, _, _, mgr, sess := runObservedHarness(t, "opencode", opencodeContextFixture, 258_400)
 
 	got := waitForContext(t, store, sess.Key(), func(c api.SessionContext) bool {
 		return c.ContextRequests > 0
@@ -191,11 +209,62 @@ func TestManifestWindowResolvesUnknownModel(t *testing.T) {
 	if got.ContextLimit != 258_400 {
 		t.Errorf("limit = %d, want 258400 from runtime.context_window", got.ContextLimit)
 	}
-	if got.ContextPercent < 5.4 || got.ContextPercent > 5.42 {
-		t.Errorf("percent = %v, want about 5.41", got.ContextPercent)
+	wantPct := 100 * float64(opencodeFixtureOccupancy) / 258_400
+	if got.ContextPercent < wantPct-0.01 || got.ContextPercent > wantPct+0.01 {
+		t.Errorf("percent = %v, want about %.2f", got.ContextPercent, wantPct)
 	}
 	if got.ContextLimitSource != "manifest" {
 		t.Errorf("limit source = %q, want manifest", got.ContextLimitSource)
+	}
+
+	if err := mgr.Delete(sess.Key()); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+}
+
+// TestCodexStreamLightsNoContextColumn pins a deliberate product change.
+//
+// `codex exec --json` turn.completed reports the session's accumulated
+// usage, not the prompt at that moment, so no occupancy level exists to
+// report. marvel therefore renders "-" for a codex session, and a
+// runtime.context_window line does NOT change that: the denominator was
+// never the missing piece. The tokens still reach spend.
+//
+// Before this, marvel reported the accumulated figure as the level, which
+// on the repo's own tool_call fixture would have read 28110 against a
+// true 14105.
+func TestCodexStreamLightsNoContextColumn(t *testing.T) {
+	store, acct, _, mgr, sess := runObservedHarness(t, "codex", codexContextFixture, 258_400)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s := acct.Stats(); s.CumulativeSamples > 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if s := acct.Stats(); s.CumulativeSamples == 0 {
+		t.Fatal("the codex sample never reached the accountant")
+	}
+
+	live, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !live.ContextAt.IsZero() {
+		t.Errorf("a reading was stamped: %+v; CTX%% must render absent", live.SessionContext)
+	}
+	if live.ContextTokens != 0 {
+		t.Errorf("tokens = %d, want 0", live.ContextTokens)
+	}
+
+	// Spend still records the harness's total.
+	spend, ok := acct.SessionSpend(sess.Key())
+	if !ok {
+		t.Fatal("no spend recorded for a session whose tokens are real")
+	}
+	if spend.PromptTokens != 13992 {
+		t.Errorf("PromptTokens = %d, want 13992", spend.PromptTokens)
 	}
 
 	if err := mgr.Delete(sess.Key()); err != nil {

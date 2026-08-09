@@ -170,14 +170,22 @@ func TestSampleFromEventRejectsEventsWithoutUsage(t *testing.T) {
 
 func TestProfilesCoverEveryStreamCapableHarness(t *testing.T) {
 	t.Parallel()
-	for _, h := range []string{claudecode.Harness, codex.Harness, opencode.Harness} {
+	// Cumulation is asserted per harness, not uniformly: codex is the one
+	// harness whose stream reports running totals, and an assertion that
+	// every harness reports levels is how that went unnoticed.
+	want := map[string]Cumulation{
+		claudecode.Harness: CumulationRequest,
+		codex.Harness:      CumulationSession,
+		opencode.Harness:   CumulationRequest,
+	}
+	for h, w := range want {
 		p, ok := profileFor(h)
 		if !ok {
 			t.Errorf("harness %q has no profile; its samples would be ignored", h)
 			continue
 		}
-		if p.cumulation != CumulationRequest {
-			t.Errorf("harness %q cumulation = %q, want %q", h, p.cumulation, CumulationRequest)
+		if p.cumulation != w {
+			t.Errorf("harness %q cumulation = %q, want %q", h, p.cumulation, w)
 		}
 	}
 	if _, ok := profileFor("crush"); ok {
