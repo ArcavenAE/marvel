@@ -566,3 +566,465 @@ written. No liteLLM instance was contacted.
 - [LiteLLM: Security Update, Suspected Supply Chain Incident (March 2026)](https://docs.litellm.ai/blog/security-update-march-2026)
 - [LM Studio: REST API v0 endpoints](https://lmstudio.ai/docs/developer/rest/endpoints)
 
+---
+
+# Addendum, second pass, 2026-08-09
+
+Written against the same ticket after a premise check. The first pass stands
+unedited above; this pass adds what it did not reach and rules on the two
+questions it left unasked. Same three evidence grades, same standing rule.
+
+**Premise check.** The five questions the ticket names are answered above, and
+the structural claims re-verify at HEAD `0886801`: the word "backend" occurs
+once in the Go tree, in `internal/api/store.go` about bolt persistence, and
+"router" occurs nowhere. So the concepts are still absent and the first pass
+is still accurate. What was missing was a graph node, a ruling on where these
+concepts sit in the committed vocabulary, and one case.
+
+**The case.** `gemini` appears zero times in the study and zero times in the
+source idea file. It is the sharpest instance of the question, and
+`finding-016` already carried it: "router-initiated switch. gemini routes
+between models mid-session and announces it only on a separate
+`model_routing` event."
+
+## 10. There are two routers, and the first pass modelled one
+
+The study treats a router as a network hop between the harness and a backend,
+addressed by an environment variable and observable, in principle, over HTTP.
+That is one of two.
+
+- **External router.** liteLLM. A separate process reached over the network.
+  Sections 2 through 5 above are about this one.
+- **Internal router.** A model-selection decision made inside the harness
+  process, over a policy marvel never sees, published only in whatever the
+  harness chooses to emit.
+
+The internal router is not hypothetical and not confined to one vendor.
+`finding-016` lists three mechanisms: claude runs up to three model slots in
+one session (`ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+`CLAUDE_CODE_SUBAGENT_MODEL`), codex emits
+`codex.compaction.model_fallback` with a `model_downshift` reason, and gemini
+routes on `model_routing`.
+
+**MEASURED (this repo, HEAD).** Marvel's own code already names the internal
+router, and solves it. `internal/usage/sample.go:104` documents why a terminal
+sample's window must be indexed by the session's primary model:
+
+> Selecting that entry by anything else (first key, max, a range) is wrong: a
+> session routing across models carries several entries with windows differing
+> by 5x, and Go map iteration is randomized.
+
+**MEASURED (fixtures).** The 5x is real and it is in two of this repo's own
+claude fixtures. `hello.ndjson` and `tool_call.ndjson` each carry a terminal
+`modelUsage` map with two entries: `claude-haiku-4-5-20251001` at
+`contextWindow` 200000, and `claude-fable-5[1m]` at 1000000. One session, one
+terminal record, two denominators five times apart.
+
+So "the session's context window" is not one number in the simplest shipped
+fixture, and the reason is a router inside the harness. Marvel handles it by
+keying on `primaryRaw`.
+
+**The consequence for any manifest surface.** A `backend:` field beside
+`runtime:` describes the external router and cannot describe the internal one,
+because the internal one is not configuration marvel supplies. It is harness
+behavior. A design that adds the field handles liteLLM and misses the case
+that already perturbs a shipped adapter.
+
+## 11. Model identity and denominator identity are independent
+
+The first pass framed section 3 as "can marvel learn the served model", and
+treated that as the thing a router threatens. Two of marvel's own harnesses
+say the question is the wrong one, and marvel's type system already separates
+them: `internal/usage/profiles.go` carries `modelFromStream` and
+`limitInStream` as independent booleans on the `profile` struct.
+
+**MEASURED (this repo).** The occupied cells, with the fourth from documentary
+research rather than code:
+
+| harness | names its model | declares its window | consequence |
+|---|---|---|---|
+| claude | yes, per request | yes, per model, on the terminal line | router is announced on the same record as the count |
+| codex | no, not in the exec stream | no, not in the exec stream (the rollout declares it twice) | model name would key nothing |
+| opencode | no | no | neither term |
+| gemini | on a separate event (INFERRED) | nowhere (INFERRED) | the two terms must be joined |
+
+Codex is the case that breaks the intuition, and `finding-017` settled it:
+the model name IS captured, in `turn_context.model` and on ten of eleven hook
+payloads, and naming it keys nothing, because every model on the host reports
+258400 against a catalog giving all eight models identical values. "The window
+is keyed by model" and "the window is one number for this account and plan"
+predict identical data, so a table entry would be a per-account plan limit
+wearing a model name.
+
+Read the two together and the ruling falls out. **Marvel needs the
+denominator. It needs the model only to know when to invalidate a learned
+denominator.** Codex shows the denominator can be sound while the model key is
+worthless. Gemini would show the converse: a model key that changes usefully
+often, against no denominator at all.
+
+**The refinement, and it is sharper than "does the harness name its model".**
+Claude also routes between models, and it costs marvel nothing, because
+`message.model` rides the same record as the token counts it describes. Gemini
+splits them: the numerator arrives on `AfterModel`, the model identity on
+`model_routing`. A consumer must join two event streams, and every gap in that
+join attributes a count to the wrong denominator, silently.
+
+So the harmful property is not the router and not the missing name. It is
+**the model identity and the token count arriving on separate records**. That
+is a third profile axis the struct does not have, and it is the one worth
+adding when a harness forces it.
+
+This is the FEED-2 versus FEED-N split stated in the terms this study was
+asked about. A FEED-2 channel carries both terms, so the router is harmless
+whether it is internal or external. A FEED-N channel carries the numerator
+only, so marvel supplies the denominator from a table keyed on a model the
+router is free to change. **A router only hurts on FEED-N.**
+
+## 12. Ruling: no new primitive, and specifically not three of them
+
+The ticket asks whether router and backend are new primitives, refinements of
+B14's LLM term, or properties of the runtime. None of the three.
+
+**Not a B14 term.** B14's composition is `Agent = Persona + Identity + Role(s)
++ LLM + Tools`. Its five terms are library items selected when an agent is
+composed. A backend is not selected at composition time; it is resolved at
+request time, sometimes by a party that is neither the operator nor marvel.
+Adding it to a composition of authored artifacts would put a runtime outcome
+in a list of design choices.
+
+**Not a runtime property.** `elem-runtime-names-harness` is bedrock and
+`runtime` names the harness. The first pass is right that a router is a third
+thing. Section 10 adds the reason it cannot be folded in anyway: the internal
+router is the harness's own behavior, so a field describing it would describe
+the adapter, not the deployment.
+
+**Not a resource-matrix row.** Cache locality and token spend are already rows
+of the seventeen. A router changes their values and their attribution. It does
+not add a resource.
+
+**What is warranted instead** is the thing the first pass already named from
+the other direction, and it is a field on a struct that exists rather than a
+type that does not: a **provenance grade on the reading's model identity**,
+ranked the way `LimitSource` is ranked, distinguishing server-attested from
+client-echoed from launch-flag-derived. Section 11 adds a second candidate,
+the same-record axis on `profile`. Both are cheap, both are local to
+`internal/usage`, and neither claims marvel owns a router.
+
+The failure mode this avoids is on the record in this repo's own CLAUDE.md:
+`Pack`, `Vault`, `Volume`, `Schedule`, `Gateway` and `Readycheck` survive as
+model-only prose with no type and no code. A `Router` resource today would be
+the seventh.
+
+## 13. The one place marvel has already decided the backend does not matter
+
+Abstract questions about modelling a backend have one concrete site.
+
+**MEASURED (this repo).** `NormalizeModel` in `internal/usage/limits.go`
+strips `us.`, `eu.`, `apac.` and a leading `anthropic.` before a window
+lookup. Its documented reason is regional: "Pricing differs by region; the
+window does not." The rule is stated about regions and also erases the
+provider, because `us.anthropic.claude-sonnet-4-6` is a Bedrock model id and
+the bare form is not. Both collapse to one key.
+
+`finding-016` axis 4 says the same model id through a different provider can
+carry a different window, and axis 5 says the 1M window is gated by a beta
+header per account per backend rather than being intrinsic to the model.
+
+I am not claiming the strip is wrong: no measurement here compares a Bedrock
+window against a direct one for the same id, and the regional half of the
+justification looks sound. I am claiming this is the site. If "backend" ever
+has to become a key in marvel, it becomes one here first, and the question is
+narrow enough to settle with one measurement rather than a design.
+
+## 14. The trigger
+
+The honest answer to the ticket is that no new primitive is warranted **yet**,
+and the trigger is specific enough to recognize without judgment:
+
+> **Marvel adopts a harness that routes between models AND publishes no
+> per-model window on the record carrying the token count.**
+
+Gemini is that harness. Marvel ships six adapters (claude, codex, opencode,
+forestage, simulator, generic) and gemini is not among them; the string
+appears twice in the Go tree, both in a `doc.go` comment saying it was out of
+scope and unavailable to measure. So the trigger has not fired.
+
+A second trigger, cheaper and named in section 2 above: the operator's `curl`
+loop against the hybrid endpoint reading `x-litellm-model-id` on N identical
+requests. If the id varies, Position A is unsound and the external layer is
+real. If it is constant, a spawn-time record answers the external case
+entirely.
+
+Either one firing moves this from a concept marvel declines to carry into one
+with a measured reason to exist.
+
+## 15. What this pass did not establish
+
+- **Anything about gemini by measurement.** Every gemini claim here is
+  documentary, from the channel research recorded on `aae-orc-6c2r` (itself
+  labelled desk measurement, not a probe run) and from `finding-016`. I did
+  not run gemini, read its source, or see a `model_routing` event.
+- **Whether the same-record property is the right third profile axis** or a
+  special case of something more general. One harness suggests it; one harness
+  is not a taxonomy.
+- **Whether a Bedrock window differs from a direct window for any id marvel's
+  table carries.** Section 13 names the site, not the answer.
+- **Whether claude's `message.model` is server-attested or client-echoed.**
+  Unchanged from the first pass: two hypotheses, no discriminating evidence.
+- **Everything the first pass listed in section 7.** None of it was retested.
+
+## Addendum provenance
+
+Written 2026-08-09 against `aae-orc-eooi`, in an isolated clone at marvel HEAD
+`0886801`. Method: reading this repository and its fixtures, plus the graph
+artifacts cited. Zero model calls, zero network reads, no harness started, no
+liteLLM instance contacted, nothing outside the clone touched.
+
+---
+
+# Third pass, 2026-08-09: the provider is a window key, measured
+
+Prompted by a Crush data point relayed from the `k2mi` rig: `crush stats`
+reports Messages by Provider and Usage by Model as separate breakdowns, and
+prices per day by provider ($0.00 for a local model). The question that makes
+that evidence rather than decoration is whether the split is real in the data
+or produced by the renderer, so I went looking for the stored form.
+
+I did not start a Crush server. Starting one refreshes host-global
+`providers.json` and `hyper.json`, because `--data-dir` scopes only the
+project database.
+
+## 16. What marvel's own research already settled
+
+Two of the four questions were already answered in this repo, in
+`probe-interactive-ctx-remainder-sweep.md` round 3, measured against Crush
+v0.88.0:
+
+- **Crush is already tiered FEED-N here.** Occupancy rides the server SSE
+  session frame; `model.context_window` comes from a separate REST call to
+  `/v1/workspaces/{id}/agent`. The brief's own words: this "splits Crush's
+  feed into FEED-N plus a one-shot lookup rather than a FEED-2." So Crush sits
+  on the side of the section 11 split where a router hurts, and it is the next
+  adapter in the queue (`aae-orc-k2mi`, in progress today).
+- **The denominator source is a catalog, not a per-message field.**
+  `~/.local/share/crush/providers.json`, 40 providers, and every model
+  carries a `context_window`.
+
+## 17. The measurement: 141 of 249 shared model ids disagree on the window
+
+**MEASURED (kinu, 2026-08-09, read-only `jq` over a static file; no server
+started, no request issued).** Crush's catalog is keyed provider first, model
+second, and each model entry carries both `context_window` and per-provider
+pricing.
+
+| quantity | value |
+|---|---|
+| providers | 40 |
+| distinct model ids | 948 |
+| model ids offered by more than one provider | 249 |
+| of those, ids whose `context_window` DISAGREES across providers | **141** |
+| of those, disagreeing by 1.5x or more | **52** |
+
+Some disagreement is cosmetic (1000000 against 1048576 is decimal against
+binary). The 52 are not: `claude-sonnet-4-6` is 200000 at `anthropic` and
+1000000 at `vertexai`; `grok-4.5` spans 328000, 500000 and 1000000.
+
+**Every model id in marvel's shipped table is provider-variable, at exact
+spelling.** All seven keys, ignoring the `[1m]` suffixed forms:
+
+| marvel table key | marvel's value | catalog spread across providers |
+|---|---|---|
+| `claude-haiku-4-5` | 200000 | 200000, 204800 |
+| `claude-fable-5` (as `[1m]`) | 1000000 | 264000 (copilot), 1000000 |
+| `claude-sonnet-4-6` | 200000 | 200000 (anthropic), 1000000 (vertexai and three others) |
+| `claude-sonnet-5` | 1000000 | 264000 (copilot), 1000000 |
+| `claude-opus-4-7` | 200000 | 200000 (aihubmix), 1000000 (anthropic) |
+| `claude-opus-4-8` | 200000 | 200000 (aihubmix), 1000000 (anthropic) |
+| `claude-opus-5` | 1000000 | 264000 (copilot), 1000000 (anthropic) |
+
+`claude-opus-5` is the cleanest collision: marvel's table returns 1000000, and
+a copilot-served model of that exact id is catalogued at 264000. Marvel would
+resolve `LimitFromTable`, the most confident non-measured rung, and be wrong
+by 3.8x with no signal.
+
+**A hypothesis I formed and the data refuted.** Copilot's rows show cost 0 for
+every model, which looked like the codex pattern from finding-017: a
+per-account plan limit wearing a model name. It is not. Copilot's 30 models
+carry nine distinct windows (16384 through 1048576), with 264000 on 11 of
+them. So copilot CLAMPS a subset of models below their native window and
+leaves the rest alone, which is a third pattern beside "keyed by model" and
+"one number per account". The uniform thing at copilot is the price, not the
+window, and price and window turn out to be provider effects of different
+shapes.
+
+## 18. What this does not establish, and it matters
+
+This is **Crush's catalog**, a third party's curation of 40 vendors. It is not
+a measurement of any vendor's served window. Two reasons to hold it loosely:
+
+- A catalog can be stale or wrong, and nothing here checks one against a live
+  API.
+- **Crush and marvel disagree about which axis carries the 1M window.** Marvel
+  puts it in the model name (`claude-opus-4-8` 200000 beside
+  `claude-opus-4-8[1m]` 1000000, the entitlement axis, finding-016 axis 5).
+  Crush puts it in the provider row (anthropic's `claude-opus-4-8` is
+  1000000). At least one of them is modelling the axis wrong, and marvel
+  cannot tell which from here. Provider and entitlement are entangled, so
+  "key the table by provider" would not resolve the entanglement. It would
+  relocate it.
+
+What the measurement DOES establish is narrower and still decisive: **the one
+shipping harness in this survey that fronts many providers, and that maintains
+a 1405-model catalog precisely to answer "what is this model's window", found
+it necessary to key that catalog by (provider, model) rather than by model.**
+That is an independent design vote on the exact question of section 13, cast
+by someone who had to ship an answer.
+
+## 19. The consequence, which is sharper than the first pass had it
+
+finding-016 argued the table is the rung of last resort because its **miss**
+rate is structural. This adds the worse half: **the table's HIT can be wrong.**
+For all seven keys marvel ships, a correct-looking exact match returns a
+number whose truth depends on a provider marvel does not record, does not
+read, and has no field for. A miss renders `?`, which is the designed
+behavior. A wrong hit renders a confident number, which is the failure
+`internal/usage` exists to prevent.
+
+Two fixes, both inside `internal/usage`, neither a new type:
+
+1. **Strengthen the KNOW step the first pass already recommended.** Recording
+   the ambient provider-selecting environment at spawn stops being a nice
+   provenance record and becomes the input to (2). Section 6 argued for it on
+   the grounds that it fixes the direct case; this argues for it on the
+   grounds that the table is unsound without it.
+2. **A provider-sensitivity guard on the table.** Where an id's window varies
+   by provider and the provider is unknown, resolve `?` rather than the
+   default. That is the `?`-rather-than-guess discipline applied one level up:
+   today it fires on an unknown model, and it should also fire on a known
+   model whose answer depends on something unknown.
+
+`NormalizeModel` is where this lands, and section 13's framing needs
+correcting. I called the `anthropic.` strip "the site, not the answer" and
+said no measurement compared a Bedrock window against a direct one. The
+comparison above is not that measurement either, but it is close enough to
+retire the idea that the question is speculative. The strip's stated
+justification ("Pricing differs by region; the window does not") is sound
+about regions and silent about providers, and providers are where the 5x
+lives.
+
+## 20. The ruling is unchanged, and here is why the new evidence does not move it
+
+The provider is a real key. It is not a marvel primitive.
+
+Crush separating provider from model is a stronger version of the same
+observation the first pass made about liteLLM's model-group/deployment split:
+the layer below the harness is genuinely two-level, and Position A ("the
+router IS the backend") is weakened further, since a shipping harness names
+provider and model as different things at the same distance. None of that
+requires marvel to grow a type. It requires a field marvel already has
+somewhere to be keyed on one more thing, and a guard that refuses a lookup it
+cannot key.
+
+On the cost half of the data point: **marvel never prices.** There is no
+price table anywhere in `internal/usage`; `Sample.CostUSD` is a `*float64`
+copied from whatever the harness reported (`sample.go:134` and `:148`), and
+opencode's fixtures report `"cost":0`. Crush's provider-priced cost column is
+Crush doing a job marvel deliberately does not do. So provider is load-bearing
+for the WINDOW and not load-bearing for SPEND, which is the opposite of what
+the cost column suggests at a glance.
+
+The trigger from section 14 stands unchanged. This adds a second, independent
+consequence on a different axis, and both now point at the same near-term
+event: the Crush adapter (`aae-orc-k2mi`, in progress). Crush is FEED-N by
+this repo's own tiering, and Crush is the harness whose catalog demonstrates
+provider-keyed windows. Whoever ships that adapter meets both.
+
+## 21. Fourth pass: the schema answers, and one negative I did not predict
+
+The `k2mi` rig answered the four schema questions by measurement (crush
+v0.88.1, isolated rig, `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` to avoid the
+global-cache refresh, zero host drift). Full detail in
+`finding-019-crush-context-pressure-channel.md`, marvel#166. Three of my open
+items close and one framing of mine needs correcting.
+
+**The hedge resolves in favor of the argument.** `provider` is its own
+nullable `TEXT` column on `messages`, beside `model`, both added by later
+migration; live rows read `provider='ollama'` and `model='qwen3:0.6b'`
+separately. It is not liteLLM's `model_group` shape. Section 18's design-vote
+reading stands at the stored level, not just the catalog level: Crush keys by
+provider in the catalog AND records provider per message in the database.
+
+**Per-message, and unconstrained.** `sessions` carries no provider or model
+column at all, so nothing structurally prevents one session from holding rows
+with two providers. Not observed on the rig, where every assistant row read
+`ollama`.
+
+**No window in the database.** Zero hits for `context`, `window` or
+`max_token` across all five tables. My section 11 harmful case is confirmed in
+the strongest available form, and the rig's own formulation is sharper than
+mine: the DB has per-message model attribution and no window, the REST route
+has the window and no history, and neither surface joins them. Worse than
+separate records, they are separate surfaces, and the REST route reports the
+workspace's CURRENT agent model, so it cannot answer what window applied to a
+past message even in principle.
+
+**The negative, and it corrects section 10 rather than confirming it.** I have
+been treating a per-message provider column as a routing record. It is not a
+complete one. Crush has two model slots, `models.large` and `models.small`.
+With the slots configured to different models, a TUI session's title
+generation ran on the small model and **no row appeared**; the output landed
+in `sessions.title`. Summarization is the same class. So
+`messages.provider/model` records the model that served each persisted
+conversational turn, not every model call the session made, **and carries no
+marker distinguishing the two**.
+
+That makes Crush a fourth instance of the internal router alongside claude,
+codex and gemini, and the first to demonstrate a distinct failure: the
+harness's own routing record is silently partial. It is the same shape as
+finding-016 axis 6 (claude's three model slots), arriving in a different
+vendor with a different persistence story.
+
+The design consequence is a caution rather than a new recommendation. A marvel
+that reads a harness's provider field to answer "what served this session"
+gets a true answer about a subset and no signal about the remainder. Reading
+the harness's own record is better than guessing and is still not a
+measurement of every call.
+
+**Not relied on here:** the `crush stats` page that prompted this thread. Its
+`usage_by_model` entries carry `{model, provider, message_count}` and no token
+fields, and its totals sum `sessions.prompt_tokens`, which is a per-request
+LEVEL rather than a running total. Measured on the rig: a three-turn session
+issuing 28672 / 28712 / 28782 contributed only 28782, undercounting by about
+3x. The provider/model split it displays is real and stored; the token
+aggregation beside it is not a quantity to price anything off. Cost is stored
+per session (`sessions.cost REAL`), not per message, and the 0.0 for ollama is
+a stored literal from catalog pricing rather than a render-time derivation.
+
+**The ruling is unchanged by the fourth pass, and the trigger is unchanged.**
+Nothing here argues for a primitive. Two of the three fixes already named
+absorb it: the spawn-time environment record is what tells marvel which
+provider a session was pointed at when the harness's own record is silent, and
+the provider-sensitivity guard is unaffected. What is new is a bound on how
+much a harness-read can ever deliver, which belongs in whatever design
+`aae-orc-k2mi` produces.
+
+## Third-pass provenance
+
+Written 2026-08-09 against `aae-orc-eooi`. Method: read-only `jq` over
+`~/.local/share/crush/providers.json` (436KB, mtime 2026-08-09 00:52, refreshed
+by another agent's rig rather than by me), plus this repo's
+`probe-interactive-ctx-remainder-sweep.md` and `internal/usage`. No Crush
+server started, no socket opened, no request issued, no file written outside
+the clone. The Crush stats-surface observation is relayed rather than
+observed; the catalog numbers are mine.
+
+## Addendum sources
+
+All in-tree: `internal/usage/sample.go`, `internal/usage/profiles.go`,
+`internal/usage/limits.go`, `internal/runtime/claudecode/testdata/hello.ndjson`
+and `tool_call.ndjson`, `internal/usage/doc.go`,
+`_kos/findings/finding-016-effective-autocompact-window-is-the-predictive-denominator.md`,
+`_kos/findings/finding-017-codex-context-pressure-channel.md`,
+`_kos/nodes/bedrock/elem-runtime-names-harness.yaml`. Gemini and Crush channel
+detail from bd `aae-orc-6c2r` notes (2026-08-08).
+
