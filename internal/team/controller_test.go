@@ -1051,24 +1051,187 @@ func (c *testClock) Advance(d time.Duration)  { c.t = c.t.Add(d) }
 // scoped to their per-package tmux server.
 func killPaneAndWait(t *testing.T, paneID string) {
 	t.Helper()
-	tmuxCmd := func(args ...string) *exec.Cmd {
-		if socket := os.Getenv("MARVEL_TMUX_SOCKET"); socket != "" {
-			return exec.Command("tmux", append([]string{"-L", socket}, args...)...)
-		}
-		return exec.Command("tmux", args...)
-	}
-	if err := tmuxCmd("kill-pane", "-t", paneID).Run(); err != nil {
+	if err := tmuxTestCmd("kill-pane", "-t", paneID).Run(); err != nil {
 		t.Fatalf("tmux kill-pane %s: %v", paneID, err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		out, err := tmuxCmd("list-panes", "-a", "-F", "#{pane_id}").CombinedOutput()
+		out, err := tmuxTestCmd("list-panes", "-a", "-F", "#{pane_id}").CombinedOutput()
 		if err != nil || !strings.Contains(string(out), paneID) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("tmux still reports pane %s alive after kill-pane", paneID)
+}
+
+// tmuxTestCmd builds a tmux invocation against the per-package test
+// server TestMain created, so an out-of-band kill in a test never
+// reaches the operator's own tmux.
+func tmuxTestCmd(args ...string) *exec.Cmd {
+	if socket := os.Getenv(tmux.SocketEnv); socket != "" {
+		return exec.Command("tmux", append([]string{"-L", socket}, args...)...)
+	}
+	return exec.Command("tmux", args...)
+}
+
+// killWorkspaceAndWait destroys a workspace's whole tmux session out of
+// band: the shape of an external event that takes every replica of a role
+// down together, such as a foreign daemon reclaiming the marvel-* prefix
+// or a `tmux kill-server`. Waits until tmux confirms the session is gone
+// so the next reconcile tick observes the loss.
+func killWorkspaceAndWait(t *testing.T, workspace string) {
+	t.Helper()
+	target := "marvel-" + workspace
+	if out, err := tmuxTestCmd("kill-session", "-t", target).CombinedOutput(); err != nil {
+		t.Fatalf("tmux kill-session %s: %v (%s)", target, err, out)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err := tmuxTestCmd("list-sessions", "-F", "#{session_name}").CombinedOutput()
+		if err != nil || !strings.Contains(string(out), target) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("tmux still reports session %s alive after kill-session", target)
+}
+
+// TestReapChargesOneCrashPerRolePerTick: a reconcile tick that finds k
+// panes of one role gone records ONE crash against that role, not k.
+// RoleHealth is per-role state, so charging it per lost replica scaled a
+// single event by the replica count — a three-replica role went from
+// restart count 0 to 3 and from a 30s backoff to a 4m one on a single
+// external kill. See aae-orc-4bz2.
+func TestReapChargesOneCrashPerRolePerTick(t *testing.T) {
+	skipIfNoTmux(t)
+
+	runtime := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	cases := []struct {
+		name      string
+		workspace string
+		roles     []api.Role
+	}{
+		{
+			name:      "one replica lost",
+			workspace: "test-charge-one",
+			roles: []api.Role{
+				{Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: runtime},
+			},
+		},
+		{
+			name:      "three replicas of one role lost together",
+			workspace: "test-charge-three",
+			roles: []api.Role{
+				{Name: "worker", Replicas: 3, RestartPolicy: api.RestartAlways, Runtime: runtime},
+			},
+		},
+		{
+			name:      "two roles lost together are charged separately",
+			workspace: "test-charge-two-roles",
+			roles: []api.Role{
+				{Name: "worker", Replicas: 3, RestartPolicy: api.RestartAlways, Runtime: runtime},
+				{Name: "supervisor", Replicas: 2, RestartPolicy: api.RestartAlways, Runtime: runtime},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _, ctrl, cleanup := setup(t)
+			t.Cleanup(cleanup)
+
+			clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+			ctrl.now = clock.Now
+
+			createTeamFixture(t, store, tc.workspace, "squad", tc.roles)
+			ctrl.ReconcileOnce()
+			for _, role := range tc.roles {
+				if got := len(store.ListSessionsByTeamRole(tc.workspace, "squad", role.Name)); got != role.Replicas {
+					t.Fatalf("role %s: expected %d sessions, got %d", role.Name, role.Replicas, got)
+				}
+			}
+
+			killWorkspaceAndWait(t, tc.workspace)
+			ctrl.ReconcileOnce()
+
+			for _, role := range tc.roles {
+				rh, ok := ctrl.RoleHealthSnapshot(tc.workspace, "squad", role.Name)
+				if !ok {
+					t.Fatalf("role %s: expected crash-loop state after the loss", role.Name)
+				}
+				if rh.RestartCount != 1 {
+					t.Errorf("role %s: expected 1 crash for the tick, got %d", role.Name, rh.RestartCount)
+				}
+				if want := clock.Now().Add(computeBackoff(2)); !rh.BackoffUntil.Equal(want) {
+					t.Errorf("role %s: expected backoff until %s, got %s", role.Name, want, rh.BackoffUntil)
+				}
+			}
+		})
+	}
+}
+
+// TestExternalLossDoesNotExhaustMaxRestarts: losing every replica at once
+// must leave the role's restart budget intact and let the reconciler
+// repair the team when the backoff window elapses. Before the per-tick
+// charge, a three-replica role with max_restarts=3 spent its whole budget
+// on one event, and the next loss froze the role at the saturation
+// sentinel where the only recovery is deleting the team.
+func TestExternalLossDoesNotExhaustMaxRestarts(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	ws := "test-external-loss"
+	createTeamFixture(t, store, ws, "squad", []api.Role{{
+		Name: "worker", Replicas: 3, MaxRestarts: 3,
+		RestartPolicy: api.RestartAlways,
+		Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}})
+
+	ctrl.ReconcileOnce()
+	if got := len(store.ListSessionsByTeamRole(ws, "squad", "worker")); got != 3 {
+		t.Fatalf("expected 3 sessions, got %d", got)
+	}
+
+	killWorkspaceAndWait(t, ws)
+	ctrl.ReconcileOnce()
+
+	rh, ok := ctrl.RoleHealthSnapshot(ws, "squad", "worker")
+	if !ok {
+		t.Fatal("expected crash-loop state after the loss")
+	}
+	if rh.RestartCount != 1 {
+		t.Fatalf("expected 1 of 3 restarts spent, got %d", rh.RestartCount)
+	}
+	if rh.BackoffUntil.Equal(saturationFreezeUntil) {
+		t.Fatal("role frozen at the saturation sentinel after a single loss")
+	}
+	if alive := aliveCount(store, ws, "squad", "worker"); alive != 0 {
+		t.Fatalf("expected the backoff window to hold replacements, got %d alive", alive)
+	}
+
+	clock.Advance(2 * time.Minute)
+	ctrl.ReconcileOnce()
+
+	if alive := aliveCount(store, ws, "squad", "worker"); alive != 3 {
+		t.Fatalf("expected 3 replicas back after the backoff window, got %d", alive)
+	}
+}
+
+// aliveCount reports how many of a role's sessions count toward its
+// replica total, which is what the reconciler repairs against.
+func aliveCount(store *api.Store, workspace, team, role string) int {
+	n := 0
+	for _, sess := range store.ListSessionsByTeamRole(workspace, team, role) {
+		if sess.State.CountsAsAlive() {
+			n++
+		}
+	}
+	return n
 }
 
 func TestShiftSessionNaming(t *testing.T) {

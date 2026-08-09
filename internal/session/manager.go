@@ -943,6 +943,13 @@ func (m *Manager) ReapDead() []ReapedSession {
 			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
 				live.State = api.SessionCrashed
 				live.PaneID = ""
+				// The absence of the pane IS the process-alive verdict
+				// (the health path defers to this one for that check), so
+				// the last reading taken while the pane was alive must
+				// not survive the transition. Without this a session
+				// killed out of band reported state=crashed alongside
+				// health=healthy. See aae-orc-4bz2.
+				live.HealthState = api.HealthUnhealthy
 				return nil
 			}); err != nil {
 				log.Printf("warning: mark crashed %s: %v", sess.Key(), err)
