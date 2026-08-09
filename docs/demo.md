@@ -24,18 +24,66 @@ so at that beat rather than papering over it.
   working auth for each. The per-session CPU and RSS columns populate without
   auth; the `agent.*` token and cost events need a real model turn.
 
-Start each act from a clean daemon. Marvel persists state to
-`~/.marvel/state/marvel.bolt`; to avoid one act's sessions bleeding into the
-next, tear down and clear state between acts:
+### Run the acts on a scratch layout
+
+Run the demo on its own layout, not on the one your real fleet uses. Every
+piece of marvel's state has a flag, and the tmux namespace has an env var:
 
 ```sh
-./bin/marvel stop --teardown        # end the daemon and every agent
-rm -f ~/.marvel/state/marvel.bolt   # forget persisted resources
-./bin/marvel daemon &               # fresh daemon
+D=/tmp/marvel-demo-layout; mkdir -p "$D"
+MARVEL_TMUX_SOCKET=marvel-demo-layout ./bin/marvel daemon \
+  --socket     "$D/m.sock" \
+  --state-bolt "$D/marvel.bolt" \
+  --log-file   "$D/daemon.log" \
+  --pidfile    "$D/daemon.pid" &
+
+export MARVEL_SOCKET="$D/m.sock" MARVEL_TMUX_SOCKET=marvel-demo-layout
+```
+
+Export those two in every shell that drives the acts, including the
+`just demo-watch` panes, or the client talks to a different daemon than the
+one you started.
+
+`--state-bolt` at a fresh path is the load-bearing one. An empty store has no
+desired state to rehydrate, so the daemon adopts nothing and spawns nothing on
+its first tick. Pointed at a populated store instead, a daemon reconciles
+whatever it finds, which can mean real agent processes and real model spend
+you did not ask for.
+
+`MARVEL_TMUX_SOCKET` is the one to not skip. The tmux server name is otherwise
+derived from the layout's home, so a daemon started without it lands on the
+same tmux server your real sessions live on, where its reconcile pass meets
+panes it does not own.
+
+Do not reach for `HOME` to get this. It moves marvel's layout and the
+harness's credential lookup together: the daemon is isolated, and the claude
+it spawns cannot log in, while `marvel get sessions` reports the session
+`running` and `healthy` throughout. See
+`_kos/findings/finding-025-home-isolation-breaks-harness-auth.md`.
+
+Between acts, start clean so one act's sessions do not bleed into the next:
+
+```sh
+./bin/marvel stop --teardown   # end the daemon and every agent
+rm -rf "$D" && mkdir -p "$D"   # forget persisted resources
+# then the daemon command above again
 ```
 
 `marvel events` reads a bounded in-memory ring, so it is empty on a fresh
 daemon and fills as the act runs.
+
+### Running against your real fleet instead
+
+If you are demonstrating on the fleet you actually operate, drop the flags and
+run `./bin/marvel daemon` on the default `~/.marvel` layout. Then the
+between-acts reset above is destructive to real work, so do not use it: the
+teardown ends every agent in every workspace, and clearing
+`~/.marvel/state/marvel.bolt` discards the desired state they came from.
+
+The two modes are easy to mix up in a terminal you have been pasting into.
+`./bin/marvel config tmux-server` tells you which one you are on: the scratch
+layout answers with the name you exported, the real one answers
+`marvel-<hash>`.
 
 ## Watching live
 
@@ -518,10 +566,22 @@ demonstrates a settled layer rather than a moving one.
 
 ## Cleanup
 
+On the scratch layout from Prerequisites, cleanup is the daemon plus the
+directory that held all of its state:
+
 ```sh
 ./bin/marvel stop --teardown
-rm -f ~/.marvel/state/marvel.bolt
+rm -rf /tmp/marvel-demo-layout
+unset MARVEL_SOCKET MARVEL_TMUX_SOCKET
 ```
+
+`unset` matters as much as the `rm`. A leftover `MARVEL_SOCKET` in your shell
+points every later `marvel` command at a socket that no longer exists, and the
+connection error that produces looks nothing like its cause.
+
+On the default layout, the equivalent is `./bin/marvel stop --teardown` and
+`rm -f ~/.marvel/state/marvel.bolt`. That second command discards the desired
+state of your real fleet, so run it only if that is what you mean.
 
 `just clean` also removes `bin/` and the default socket, but it only kills the
 `marvel-demo` tmux session; `stop --teardown` is what ends every agent across

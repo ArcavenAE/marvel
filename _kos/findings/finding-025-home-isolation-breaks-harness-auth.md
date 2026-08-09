@@ -84,12 +84,18 @@ teardown).
 
 - The Act 3 extension in `docs/demo.md` was verified end to end on this
   recipe and is now written.
-- `docs/demo.md`'s prerequisites still tell a reader to `rm -f
+- `docs/demo.md`'s prerequisites told a reader to `rm -f
   ~/.marvel/state/marvel.bolt` and run `marvel daemon` against the default
-  home. That is correct only if the `rm` precedes the daemon. PR #184
-  added a justfile warning for the reverse order. Whether the runbook
-  should recommend the scratch-layout recipe as its default is an open
-  operator call, not taken here.
+  home, which is correct only if the `rm` precedes the daemon. PR #184
+  added a justfile warning for the reverse order. RULED 2026-08-09: the
+  runbook defaults to the scratch layout, with the default home kept as
+  the labelled operate-your-real-fleet case. Shipped in PR #188.
 - The four flags are documented individually in `marvel daemon --help`.
   Nothing documents them as a set, which is why the obvious lever (`HOME`)
-  is the one that gets reached for.
+  is the one that gets reached for. `aae-orc-7t7d` carries the ask for one
+  selector that sets them coherently, since five flags is four-fifths of
+  an isolation an operator can get wrong.
+- The health-surface half of this is `aae-orc-9box`: marvel reported the
+  session `running` and `healthy` for the entire time its agent sat at a
+  login prompt. Expired credentials, revoked tokens and an unreachable
+  model all present the same way.
