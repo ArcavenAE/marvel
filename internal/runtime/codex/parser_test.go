@@ -342,8 +342,19 @@ func TestParseTurnUsagePromotesCacheClasses(t *testing.T) {
 	}
 	// The point of the subsumptive layout: cached tokens are already in
 	// In, so occupancy is In alone and never the 25000 a sum would give.
+	//
+	// This row alone does not prove the layout. 13992 > 11008 is what an
+	// additive harness with a large new prompt would also show, which is
+	// why AdditiveConfirmed is one-sided. The proof is the window bound
+	// over codex's own per-request records: In peaks at 93.8% of the
+	// declared window, In + cache reaches 186.6%. See parser.go.
 	if got := r.Occupancy(); got != 13992 {
 		t.Errorf("occupancy = %d, want 13992 (In alone, not In+cache)", got)
+	}
+	// One-sided by design: a subsumptive In is always the larger number,
+	// so this must stay false no matter how warm the cache is.
+	if r.AdditiveConfirmed() {
+		t.Error("AdditiveConfirmed fired on a subsumptive payload")
 	}
 	// No total_tokens on the wire, so the layout invariant is disabled.
 	if r.Total != 0 {
@@ -357,15 +368,21 @@ func TestParseTurnUsagePromotesCacheClasses(t *testing.T) {
 	}
 }
 
-// TestParseResumeOccupancyIsALevel exercises the multi-turn occupancy
-// series codex `exec` one-shot cannot produce.
+// TestParseResumeAppliesLayoutPerTurn pins that Occupancy() applies the
+// declared layout to every turn payload. It does NOT say the results are
+// occupancy levels, and the earlier name did.
 //
 // SYNTHETIC FIXTURE: resume.jsonl is hand-composed from two real
-// turn.completed payloads. Whether codex's input_tokens is a per-turn
-// level or a running session total is UNVERIFIED against a real capture;
-// `codex exec resume` is the command that settles it. This test pins the
-// level reading the parser and accountant assume.
-func TestParseResumeOccupancyIsALevel(t *testing.T) {
+// turn.completed payloads, so it is evidence about parsing and about
+// nothing else. The question it used to claim to settle is settled, in
+// the other direction: codex's turn.completed usage is a running total.
+// The specimen is tool_call.jsonl, whose single turn reports 28110 while
+// codex's own per-request record for that thread shows prompts of 14005
+// then 14105. See internal/usage/profiles.go and
+// TestCumulativeSamplesProduceNoOccupancy, which is where the consequence
+// is enforced: this layer keeps reporting the harness's fields as the
+// harness stated them.
+func TestParseResumeAppliesLayoutPerTurn(t *testing.T) {
 	t.Parallel()
 	got := collectFixture(t, "resume.jsonl")
 

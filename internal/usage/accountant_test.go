@@ -337,26 +337,91 @@ func TestNonPrimaryModelRoutedToSpendOnly(t *testing.T) {
 
 // A harness that names no model anywhere (codex, opencode) must not have
 // every one of its own samples read as a model switch.
+//
+// opencode carries this. codex used to, and no longer can: its samples
+// are running totals and leave the fold before the routing check ever
+// runs. The two measured opencode levels are used here because a level
+// that FALLS between turns is also the shape a session total cannot have.
 func TestUnnamedModelDoesNotRouteAsNonPrimary(t *testing.T) {
 	t.Parallel()
 	a, _, _ := newTestAccountant(t, Table{})
 
-	for _, in := range []int{13992, 28110} {
-		a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
-			Layout: rtevents.LayoutSubsumptive, In: in, CacheReadIn: in / 2,
-		}))
+	for _, in := range []int{6018, 27} {
+		a.Observe(testCoords, turnEvent(opencode.Harness, additive(in, 0, 0)))
 	}
 
 	occ, _ := a.SessionOccupancy(testCoords.AgentID)
 	if occ.Requests != 2 {
 		t.Errorf("requests = %d, want 2", occ.Requests)
 	}
-	// Subsumptive: the cache class is inside In, so occupancy is In alone.
-	if occ.Tokens != 28110 {
-		t.Errorf("tokens = %d, want 28110 (In alone under the subsumptive layout)", occ.Tokens)
+	if occ.Tokens != 27 {
+		t.Errorf("tokens = %d, want 27 (the last level, not the 6045 sum)", occ.Tokens)
 	}
 	if s := a.Stats(); s.NonPrimarySamples != 0 {
 		t.Errorf("non-primary samples = %d, want 0", s.NonPrimarySamples)
+	}
+}
+
+// TestCumulativeSamplesProduceNoOccupancy is the codex guard, and the
+// numbers are the specimen that overturned its profile.
+//
+// The repo's own tool_call.jsonl fixture reports turn.completed
+// input_tokens 28110 for thread 019fba87-d036-7ae1-a20e-7187ef8e3329.
+// Codex's per-request record for that same thread holds two requests:
+// prompts of 14005 then 14105, accumulating to 28110. The prompt at turn
+// end was 14105. A feed that cannot tell those apart must report no
+// level at all rather than the sum, so CTX% renders "-".
+func TestCumulativeSamplesProduceNoOccupancy(t *testing.T) {
+	t.Parallel()
+	a, sink, _ := newTestAccountant(t, Table{"gpt-5.6-sol": 258_400})
+
+	a.Bind(testCoords, Bind{Harness: codex.Harness, Args: []string{"-m", "gpt-5.6-sol"}})
+	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutSubsumptive, In: 14005, CacheReadIn: 11008, Out: 71,
+	}))
+	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutSubsumptive, In: 28110, CacheReadIn: 24064, Out: 76,
+	}))
+
+	if _, ok := sink.get(testCoords.AgentID); ok {
+		t.Error("a reading was written from a cumulative feed; CTX% must render absent")
+	}
+	// SessionOccupancy's bool reports that state EXISTS (Bind made it),
+	// not that a level was measured, so the level itself is the assertion.
+	occ, _ := a.SessionOccupancy(testCoords.AgentID)
+	if occ.Tokens != 0 {
+		t.Errorf("tokens = %d, want 0; no level is derivable from a running total", occ.Tokens)
+	}
+	if occ.Requests != 0 {
+		t.Errorf("requests = %d, want 0", occ.Requests)
+	}
+	if occ.Percent != 0 {
+		t.Errorf("percent = %v, want 0 even though the window resolved", occ.Percent)
+	}
+
+	st := a.Stats()
+	if st.CumulativeSamples != 2 {
+		t.Errorf("cumulative samples = %d, want 2", st.CumulativeSamples)
+	}
+	if st.SamplesObserved != 0 {
+		t.Errorf("samples observed = %d, want 0 (none entered occupancy)", st.SamplesObserved)
+	}
+
+	// The tokens are still real money. A running total REPLACES the
+	// previous one: accumulating them would report 42115 prompt tokens
+	// for a session that used 28110.
+	spend, ok := a.SessionSpend(testCoords.AgentID)
+	if !ok {
+		t.Fatal("no spend recorded")
+	}
+	if spend.PromptTokens != 28110 {
+		t.Errorf("PromptTokens = %d, want 28110 (the latest total, not the 42115 sum)", spend.PromptTokens)
+	}
+	if spend.Out != 76 {
+		t.Errorf("Out = %d, want 76 (the latest total, not the 147 sum)", spend.Out)
+	}
+	if spend.CacheReadIn != 24064 {
+		t.Errorf("CacheReadIn = %d, want 24064 (the latest total)", spend.CacheReadIn)
 	}
 }
 
@@ -497,12 +562,8 @@ func TestUnresolvedLimitReportsAbsence(t *testing.T) {
 	t.Parallel()
 	a, sink, ring := newTestAccountant(t, Table{})
 
-	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
-		Layout: rtevents.LayoutSubsumptive, In: 13992,
-	}))
-	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
-		Layout: rtevents.LayoutSubsumptive, In: 28110,
-	}))
+	a.Observe(testCoords, turnEvent(opencode.Harness, additive(13992, 0, 0)))
+	a.Observe(testCoords, turnEvent(opencode.Harness, additive(28110, 0, 0)))
 
 	got, ok := sink.get(testCoords.AgentID)
 	if !ok {
@@ -573,10 +634,8 @@ func TestBindResolvesDenominatorBeforeFirstSample(t *testing.T) {
 	t.Parallel()
 	a, sink, _ := newTestAccountant(t, Table{})
 
-	a.Bind(testCoords, Bind{Harness: codex.Harness, Args: []string{"-m", "gpt-x"}, Window: 258_400})
-	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
-		Layout: rtevents.LayoutSubsumptive, In: 25_840,
-	}))
+	a.Bind(testCoords, Bind{Harness: opencode.Harness, Args: []string{"-m", "gpt-x"}, Window: 258_400})
+	a.Observe(testCoords, turnEvent(opencode.Harness, additive(25_840, 0, 0)))
 
 	got, ok := sink.get(testCoords.AgentID)
 	if !ok {
@@ -882,13 +941,17 @@ func TestSpendPromptTokensAppliesLayout(t *testing.T) {
 		want    int
 	}{
 		{
+			// codex is subsumptive AND cumulative, so its running totals
+			// replace rather than accumulate. Layout still governs which
+			// classes count: summing the raw classes would read 42165
+			// against the harness's own 28110.
 			name:    "subsumptive counts In alone",
 			harness: codex.Harness,
 			samples: []rtevents.RequestUsage{
 				{Layout: rtevents.LayoutSubsumptive, In: 13992, CacheReadIn: 6996},
 				{Layout: rtevents.LayoutSubsumptive, In: 28110, CacheReadIn: 14055},
 			},
-			want: 13992 + 28110,
+			want: 28110,
 		},
 		{
 			name:    "additive counts In plus the cache classes",

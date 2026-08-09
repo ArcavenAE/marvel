@@ -123,6 +123,12 @@ func (p *Parser) handleLine(line []byte, emit func(events.Event)) {
 	}
 }
 
+// handleThreadStarted lifts thread.started. Model and Cwd are read
+// hopefully: codex-cli 0.146.0 emits thread_id and nothing else (verified
+// live), so SessionStartedData goes out empty for this harness. The fields
+// stay because absence costs nothing and a later codex may fill them; the
+// consequence, that marvel learns no model from this stream, is recorded
+// in internal/usage/profiles.go.
 func (p *Parser) handleThreadStarted(raw json.RawMessage, emit func(events.Event)) {
 	var body struct {
 		ThreadID string `json:"thread_id"`
@@ -147,6 +153,11 @@ func (p *Parser) handleThreadStarted(raw json.RawMessage, emit func(events.Event
 
 // codexUsage mirrors the turn.completed usage object. Codex reports token
 // counts but no cost; Usage.Cost therefore stays nil for this harness.
+//
+// These counts are RUNNING TOTALS, not a per-request level: they track
+// codex's own total_token_usage accumulator field for field. Do not read
+// them as occupancy. internal/usage carries the measurement and the
+// consequence (profiles.go, codex.Harness).
 type codexUsage struct {
 	InputTokens           int `json:"input_tokens"`
 	CachedInputTokens     int `json:"cached_input_tokens"`
@@ -176,6 +187,18 @@ func (p *Parser) handleTurnCompleted(raw json.RawMessage, emit func(events.Event
 			// cached_input_tokens, so summing double-counts. The cache
 			// classes still ride along because spend and cache-hit
 			// accounting need them.
+			//
+			// The evidence is the window bound, because a single warm
+			// turn cannot tell the two layouts apart (a subsumptive In is
+			// the larger number either way, which is why
+			// AdditiveConfirmed is one-sided). Across 2081 token records
+			// in codex's own per-request logs, against the 258400 window
+			// codex declares beside them: In alone never exceeds the
+			// window and peaks at 93.8%, while In + cached + cache_write
+			// exceeds it on 801 records and reaches 186.6%. A harness
+			// cannot hold 186% of its context window. Under an additive
+			// layout the two readings would have swapped places, with the
+			// sum plausible and In a small remainder.
 			Layout:          events.LayoutSubsumptive,
 			In:              body.Usage.InputTokens,
 			Out:             body.Usage.OutputTokens,
@@ -186,6 +209,17 @@ func (p *Parser) handleTurnCompleted(raw json.RawMessage, emit func(events.Event
 			// the TotalMismatch invariant is disabled here. Codex also
 			// emits no session.ended, so it is the one harness with
 			// neither guard on its declared layout.
+			//
+			// Leave it at 0. Codex's reasoning_output_tokens is a SUBSET
+			// of output_tokens, not a term beside it, so the shared
+			// TotalMismatch sum (In + Out + ReasoningOut) would
+			// double-count reasoning and report a phantom mismatch on
+			// every thinking turn. Measured over the 1665 per-request
+			// records that carry nonzero reasoning: total equals
+			// input + output on all 1665 and input + output + reasoning
+			// on none. Rows with zero reasoning satisfy both and were
+			// excluded. Wiring a Total here needs TotalExcludesCache plus
+			// a reasoning-subset flag first.
 		},
 	}, nil))
 }

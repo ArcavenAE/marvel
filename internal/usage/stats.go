@@ -46,6 +46,13 @@ type Stats struct {
 	// classes did not equal the harness's terminal totals: a missed or
 	// duplicated sample, or a stale reading.
 	ReconcileMismatches uint64
+	// CumulativeSamples counts samples from a feed that reports running
+	// session totals rather than per-request levels. They feed spend by
+	// replacement and are excluded from occupancy: a total is not a
+	// level, and the error in reading one as the other grows with request
+	// count. Codex's `codex exec --json` turn.completed is the measured
+	// case; see profiles.go.
+	CumulativeSamples uint64
 	// CumulationViolations counts sessions whose accumulation EXCEEDED
 	// the terminal totals. Strictly greater is an arithmetic
 	// contradiction (more input tokens counted than the session used) and

@@ -75,18 +75,40 @@ func DefaultTable() Table {
 		"claude-opus-5":     1_000_000,
 		"claude-opus-5[1m]": 1_000_000,
 
-		// codex: DELIBERATELY EMPTY. A window of 258400 was measured on
-		// codex 0.146.0 (the rollout file's
-		// token_count.info.model_context_window), but the model NAME was
-		// not captured, because thread.started carries only thread_id.
-		// The number therefore has no key. One `codex exec --model <m>`
-		// turn, or a read of the default in the user's codex config, keys
-		// it and this section gains a line. Nothing fills it by itself:
-		// codex declares no window in its exec stream, so Learn is never
-		// reached for it (see Learn). Until then codex CTX% renders `?`
-		// unless an operator sets runtime.context_window. Shipping 258400
-		// under a guessed key would be an invisible limitation; an empty
-		// section is a visible one with a one-line fix.
+		// codex: DELIBERATELY EMPTY, and the earlier reason was the wrong
+		// one. The missing piece was never the model name. Codex names
+		// its model in the rollout (turn_context.model) and on 10 of its
+		// 11 hook payloads; only the exec stream withholds it. Naming the
+		// model would not have keyed anything.
+		//
+		// What is missing is evidence that the window VARIES by model.
+		// Measured over 209 rollout files, 2097 per-request records and
+		// 369 turn starts: every declaration is 258400, for all three
+		// models that appear (gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna).
+		// The catalog agrees, listing context_window 272000 and
+		// effective_context_window_percent 95 for all eight models, and
+		// 272000 x 0.95 is exactly 258400. So "the window is keyed by
+		// model" and "the window is one number for this account" predict
+		// identical data here, and the corpus cannot separate them. A
+		// table entry would be a per-account plan limit wearing a model
+		// name.
+		//
+		// One model already refuses the key: gpt-5.4 carries
+		// max_context_window 1000000 against context_window 272000.
+		//
+		// The rung this belongs on is not the table. Codex declares the
+		// window beside the level in its own record, so the resolution
+		// should come from that feed, not from a shipped constant.
+		// Whoever wires it: read model_context_window from the same
+		// record as the level, and do NOT multiply by
+		// effective_context_window_percent. The declared number is
+		// already the effective one; multiplying again lands on 245480,
+		// runs 5% pessimistic, and fires shifts early.
+		//
+		// Until that feed exists, codex CTX% renders "-" (its exec-stream
+		// samples are cumulative and produce no level at all; see
+		// profiles.go) and an operator's runtime.context_window is the
+		// only denominator.
 
 		// opencode: EMPTY, and equally not self-filling. No window
 		// measurement exists for any opencode model, and opencode declares
@@ -283,11 +305,16 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 // shape: contextWindow rides the terminal result line.
 //
 // SCOPE: reached only for a feed that declares a window, so today only
-// Claude ever calls it. Codex and opencode declare none anywhere in their
-// streams, so their empty table sections do not fill themselves; they need
-// a keyed measurement in DefaultTable or runtime.context_window per role.
-// A codex OTEL feed (conversation_starts carries the model) is the first
-// plausible route to changing that.
+// Claude ever calls it. Codex and opencode declare none in the streams
+// marvel reads, so their empty table sections do not fill themselves; they
+// need runtime.context_window per role until a feed that carries a window
+// exists.
+//
+// "Anywhere in their streams" was too strong for codex. Its exec stream
+// declares none, but its own per-request record declares one on every
+// turn start and every request, which makes a codex feed a better route
+// than the OTEL metrics (whose conversation_starts carries the window but
+// no session identifier, so it cannot be attributed per session).
 //
 // A declaration that contradicts the shipped table logs once per model:
 // that is the drift detector for a vendor window change.
