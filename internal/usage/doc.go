@@ -43,6 +43,25 @@
 // silently, and an admission gate that reads unresolved as 0% admits
 // everything. There is deliberately no fleet-wide default-window knob.
 //
+// The ladder, most authoritative first, is limitLadder in limits.go:
+// stream, learned, manifest, feed, table, table-alias, then unresolved.
+// LimitSource.Rank is the comparison; do not re-derive precedence by
+// comparing the string values.
+//
+// One rung pair on that ladder will look wrong at first reading. A window
+// the harness declares in its own STREAM sits at rung 1, above the
+// operator's runtime.context_window. The same window declared by the same
+// harness on the statusline FEED sits at rung 4, below it. Transport, not
+// content, is what differs, and it is the difference that matters: the
+// stream is the channel the harness is enforcing compaction against, so
+// overruling it would make marvel's denominator disagree with the one
+// governing the session, whereas the feed is a side channel read
+// opportunistically off a human-facing status hook, with no version
+// handle and no statement of which of the six effective-window axes
+// (finding-016) it reflects. An operator who wrote a window into the
+// manifest outranks a channel that only describes the session. Ruled
+// 2026-08-08; the full reasoning is at limitLadder.
+//
 // # Raw occupancy, not the harness's displayed figure
 //
 // The reported percentage is raw occupancy against the model's context

@@ -22,6 +22,11 @@ const (
 	LimitLearned LimitSource = "learned"
 	// LimitFromManifest means an operator set runtime.context_window.
 	LimitFromManifest LimitSource = "manifest"
+	// LimitFromFeed means the harness declared the window on a cooperative
+	// side channel rather than in its own stream: today the statusline
+	// feed's context_window.context_window_size. Ranked BELOW the manifest
+	// on purpose; see the asymmetry note below.
+	LimitFromFeed LimitSource = "feed"
 	// LimitFromTable means an exact hit in the shipped model table.
 	LimitFromTable LimitSource = "table"
 	// LimitFromTableAlias means a short alias resolved to a table entry.
@@ -30,6 +35,66 @@ const (
 	// keyed fact.
 	LimitFromTableAlias LimitSource = "table-alias"
 )
+
+// limitLadder is the total ordering of the resolution ladder, most
+// authoritative first. It is the single source of truth for precedence:
+// Rank reads it, Resolve's branch order must agree with it, and
+// TestLimitLadderIsTotal fails if a LimitSource constant is declared
+// without a place on it.
+//
+// # The stream/feed asymmetry, and why it is deliberate
+//
+// The same fact (a window the harness itself declares) sits at rung 1
+// when it arrives in the harness's own stream and at rung 4, below the
+// operator's manifest override, when it arrives on the statusline feed.
+// A reader hitting this for the first time will read it as a bug. It is
+// the operator ruling of 2026-08-08
+// (question-interactive-context-pressure, RESOLUTION LADDER), and the
+// reasoning is that transport carries information the number does not:
+//
+//   - A stream declaration is the harness stating the window it is
+//     currently enforcing compaction against, in the same channel as the
+//     token counts it is stating it about. Overruling it with a manifest
+//     value would make marvel's denominator disagree with the one that
+//     actually governs the session's behavior. The override's job is to
+//     fill absence, not to overrule measurement.
+//   - A feed declaration is a side channel: a cooperative hook the
+//     harness invokes for a human-facing status string, whose payload
+//     marvel reads opportunistically. It is one harness release away from
+//     changing meaning with no version handle on it, and the effective
+//     auto-compact window it reports varies on six axes that the operator
+//     may know about and the payload does not name (finding-016). So an
+//     operator who has written runtime.context_window has stated
+//     something the side channel cannot contradict on its own authority.
+//
+// Put shortly: rung 1 is for the channel that governs the session, and
+// the manifest outranks every channel that merely describes it.
+var limitLadder = []LimitSource{
+	LimitFromStream,
+	LimitLearned,
+	LimitFromManifest,
+	LimitFromFeed,
+	LimitFromTable,
+	LimitFromTableAlias,
+	LimitUnresolved,
+}
+
+// Rank returns the source's position on the resolution ladder, 1 being
+// the most authoritative and LimitUnresolved the least. An undeclared
+// value ranks after every declared one, so a source from a newer writer
+// is treated as least authoritative rather than most.
+//
+// Exported because precedence is a fact consumers need: an admission gate
+// that refuses on low confidence has to compare rungs, and comparing the
+// string values would encode this ordering a second time.
+func (s LimitSource) Rank() int {
+	for i, l := range limitLadder {
+		if l == s {
+			return i + 1
+		}
+	}
+	return len(limitLadder) + 1
+}
 
 // Table maps a normalized model id to its context window in tokens.
 type Table map[string]int
@@ -211,9 +276,21 @@ type Request struct {
 	RuntimeArgs []string
 	// ManifestLimit is runtime.context_window, 0 when unset.
 	ManifestLimit int
-	// SampleLimit is a window declared by the feed alongside the sample,
-	// 0 when the feed carried none.
+	// SampleLimit is a window declared in the harness's own stream
+	// alongside the sample, 0 when the stream carried none. Resolves as
+	// LimitFromStream, the top rung.
+	//
+	// No production call site populates it today: the stream-declared
+	// window reaches the accountant as Sample.DeclaredLimit and is stamped
+	// inside the fold, not through Resolve. The field is the eventual
+	// route for a feed that declares its window with the sample (a codex
+	// per-request record, an OTEL metric), and is exercised by tests.
 	SampleLimit int
+	// FeedLimit is a window declared on a cooperative side channel rather
+	// than in the stream, 0 when none arrived. Resolves as LimitFromFeed,
+	// which ranks BELOW ManifestLimit; SampleLimit ranks above it. That is
+	// the deliberate asymmetry documented at limitLadder.
+	FeedLimit int
 }
 
 // Resolver walks the denominator ladder and caches windows a harness has
@@ -243,11 +320,14 @@ func NewResolver(t Table) *Resolver {
 // A zero window means unresolved; callers must report absence rather than
 // substituting a default.
 //
-// Rung order puts the in-feed declaration above the operator override on
-// purpose: the harness's own belief about the window is what enforces
-// compaction, so it is ground truth for behavior. The override's job is
-// to fill absence, not to overrule measurement. A manifest value later
-// contradicted by an in-feed declaration is logged once, naming both.
+// The branch order below must match limitLadder, which carries the
+// reasoning and is asserted against this function in
+// TestResolveAgreesWithTheLadder. In short: an in-STREAM declaration
+// outranks the operator override because it is what enforces compaction,
+// while a declaration on the statusline FEED ranks under it because a
+// side channel describes the session rather than governing it. Either one
+// contradicting the manifest is logged once, naming both and naming which
+// won.
 func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 	model := req.StreamModel
 	if model == "" {
@@ -272,7 +352,15 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 	}
 
 	if req.ManifestLimit > 0 {
+		if req.FeedLimit > 0 && req.FeedLimit != req.ManifestLimit {
+			r.warnOnce("feed-override:"+model, "context window: %s feed declared %d for %q; the manifest's %d wins, because a side channel does not outrank an operator override",
+				req.Harness, req.FeedLimit, model, req.ManifestLimit)
+		}
 		return req.ManifestLimit, LimitFromManifest, model
+	}
+
+	if req.FeedLimit > 0 {
+		return req.FeedLimit, LimitFromFeed, model
 	}
 
 	if model != "" {
