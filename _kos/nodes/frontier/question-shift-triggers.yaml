@@ -81,17 +81,53 @@ content: |
   detection (aae-orc-tzzn).
 
   SHIFTING IS NOT OBVIOUSLY THE CHEAP SIDE. Compaction is measured at
-  154s median, up to 275s (finding-016). A cold shift is UNMEASURED,
-  and plausibly costs the same order or more, which would invert the
-  intuition this node's trigger list rests on. Standby tiers trade
-  money for latency and marvel already owns the machinery (a hot
-  standby is a replica that exists before it is scheduled, a reconciler
-  question rather than a new subsystem). The comparison is four-way:
-  token cost, wall-clock cost, standby carrying cost, and quality
-  delta. Three are measurable with instruments already built; the
-  fourth is what critic exists for. Tracked: aae-orc-r4q6 (measure one
-  handoff end to end, the highest-value missing number), aae-orc-56w0
-  (price the standby tiers).
+  154s median, up to 275s (finding-016). Standby tiers trade money for
+  latency and marvel already owns the machinery (a hot standby is a
+  replica that exists before it is scheduled, a reconciler question
+  rather than a new subsystem). The comparison is four-way: token cost,
+  wall-clock cost, standby carrying cost, and quality delta. Three are
+  measurable with instruments already built; the fourth is what critic
+  exists for. Tracked: aae-orc-56w0 (price the standby tiers).
+
+  MEASURED 2026-08-08 (finding-018, aae-orc-r4q6), and the answer is
+  split. The CONTROL PLANE is not the expensive side and the inversion
+  suspected above does not happen there: a one-role shift completes in
+  8.92s median (n=7, IQR 5ms), and the cost scales linearly at 7.99s
+  per role across three role counts with residuals under 10ms. That is
+  four reconcile ticks per role; roughly 88 percent of a one-role shift
+  is waiting for the 2s ticker rather than doing work, which makes
+  shift latency a tunable rather than a cost. The crossover with a 154s
+  compaction sits near 19 roles.
+
+  BUT THE COMPARISON IS NOT LIKE FOR LIKE, and this is the part that
+  bears on triggers. A compaction preserves the working context,
+  compressed. A marvel shift preserves nothing: finding-018 confirms in
+  code that there is no drain (shiftDrain calls kill-pane on the
+  predecessor with no signal-then-wait and no chance to finish a turn),
+  and that no handoff artifact exists anywhere in the repository. The
+  shift is fast partly BECAUSE it does not do the work a handoff
+  implies. So whether a shift beats a compaction END TO END is still
+  undetermined: it depends on how many turns a successor needs to
+  rediscover its predecessor's working state, and that is unmeasurable
+  while there is nothing for it to read. The handoff artifact is
+  therefore the blocking measurement for this node's cost model, not a
+  separate design nicety.
+
+  THE COLD-SUCCESSOR PREMIUM IS PRICED, and it is money rather than
+  time. Derived from five instrumented harness runs (finding-018):
+  cache write costs 8.8x cache read per token, so a successor that must
+  re-create 77.5k of 95.4k input tokens pays roughly 6.3x the run cost
+  of a warm one. No wall-clock penalty for a cold cache was detectable
+  at that sample size. Anyone arguing cache locality here should argue
+  it in dollars.
+
+  MARVEL EMITS NO READINESS EVENT. The instant the control plane
+  decides a successor can take over is made inside allReady, between
+  session.created and session.deleted, with nothing written to the
+  event ring. finding-018 had to poll the session table at 50Hz to
+  timestamp it. It is the boundary of the only stage that grows when
+  real harnesses replace simulators, and it is the stage a trigger
+  would need to reason about.
 
   A PER-SESSION ACTUATOR CAN REDUCE FLEET THROUGHPUT, which is the
   reason automatic triggers should not ship ahead of a fleet-level
