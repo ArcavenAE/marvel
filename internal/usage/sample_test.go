@@ -189,7 +189,7 @@ func TestProfilesCoverEveryStreamCapableHarness(t *testing.T) {
 		}
 	}
 	if _, ok := profileFor("crush"); ok {
-		t.Error("crush has a profile, but it publishes no structured stream")
+		t.Error("crush has a profile, but nothing produces crush samples: it has no runtime adapter and its feed is SSE over a socket, not harness stdout")
 	}
 	if _, ok := profileFor(""); ok {
 		t.Error("the empty harness resolved to a profile")

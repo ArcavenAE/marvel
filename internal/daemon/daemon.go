@@ -1041,7 +1041,13 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 
 // Heartbeat params
 type heartbeatParams struct {
-	SessionKey     string  `json:"session_key"`
+	SessionKey string `json:"session_key"`
+	// SessionToken is the secret marvel minted for this session at spawn
+	// and injected into its environment as MARVEL_HEARTBEAT_TOKEN. It is
+	// what binds the reading below to the session named above; the key
+	// alone is public, guessable from `marvel get sessions`, and every
+	// agent on the host can reach this socket.
+	SessionToken   string  `json:"session_token,omitempty"`
 	ContextPercent float64 `json:"context_percent"`
 	// Model is the model as the reporter names it, "" when the
 	// reporter does not know (the simulator). The statusline feed
@@ -1055,12 +1061,45 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
-	if err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.ContextPercent, p.Model); err != nil {
+	auth, err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.SessionToken, p.ContextPercent, p.Model)
+	if err != nil {
+		if errors.Is(err, api.ErrHeartbeatUnauthorized) {
+			d.emitHeartbeatAuth(events.KindHeartbeatRefused, p.SessionKey,
+				"refused: token does not match the session claimed")
+		}
 		return Response{Error: err.Error()}
+	}
+	if auth == api.HeartbeatAuthUnbound {
+		d.emitHeartbeatAuth(events.KindHeartbeatUnbound, p.SessionKey,
+			"admitted unbound: session record carries no token, restart it to bind its heartbeat")
 	}
 
 	result, _ := json.Marshal(map[string]string{"status": "ok"})
 	return Response{Result: result}
+}
+
+// emitHeartbeatAuth records an authentication outcome on the ring and in
+// the daemon log. Both, because the two answer different questions: the
+// ring is what an operator filters when a session's CTX% or liveness
+// looks wrong, and the log is what survives the ring's eviction window.
+//
+// The workspace/team/role coordinates come from the claimed session when
+// it exists, so a refusal can be filtered beside that session's other
+// events rather than only by kind.
+func (d *Daemon) emitHeartbeatAuth(kind events.Kind, sessionKey, message string) {
+	ev := events.Event{
+		Kind:     kind,
+		Severity: events.SeverityWarning,
+		Session:  sessionKey,
+		Message:  message,
+	}
+	if sess, err := d.store.GetSession(sessionKey); err == nil {
+		ev.Workspace = sess.Workspace
+		ev.Team = sess.Team
+		ev.Role = sess.Role
+	}
+	events.Emit(d.events, ev)
+	log.Printf("heartbeat %s for %s: %s", kind, sessionKey, message)
 }
 
 // Run params

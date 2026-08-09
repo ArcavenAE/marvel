@@ -92,6 +92,21 @@ const (
 	// killed entity may belong to a second daemon that records nothing
 	// itself.
 	KindReconcileKilled Kind = "reconcile.killed"
+	// KindHeartbeatRefused records that a heartbeat claimed a session it
+	// was not issued for: it presented no token, or the wrong one, for a
+	// session marvel minted a token for. Warning severity, and it names
+	// the claimed session, because the interesting case is not a broken
+	// agent reporting itself but one process reporting on another's
+	// behalf. LastHeartbeat feeds the healthcheck, the restart policy,
+	// and shift readiness, so a forged one keeps a dead peer looking
+	// healthy for as long as it keeps sending.
+	KindHeartbeatRefused Kind = "heartbeat.refused"
+	// KindHeartbeatUnbound records that a heartbeat was admitted against
+	// a session record carrying no token hash: a session spawned before
+	// marvel minted tokens, still beating across the upgrade. Warning
+	// severity: the exemption drains as those sessions end, and an
+	// accepted gap nobody can see is not an accepted gap.
+	KindHeartbeatUnbound Kind = "heartbeat.unbound"
 	// KindReconcileLeft records that a daemon found marvel-* tmux state
 	// it does not own and left it running, which is the default posture
 	// ratified 2026-08-07.

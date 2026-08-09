@@ -172,9 +172,20 @@ name = "squad"
 	}
 	if len(sessionsForHB) > 0 {
 		sessionKey := sessionsForHB[0].Workspace + "/" + sessionsForHB[0].Name
+		// The token never crosses the wire in a get response, which is
+		// the point of it, so this in-process test reads it where the
+		// spawned agent reads it from: the record marvel minted it into.
+		spawned, gerr := d.store.GetSession(sessionKey)
+		if gerr != nil {
+			t.Fatalf("get session %s: %v", sessionKey, gerr)
+		}
 		resp, err = SendRequest(sock, Request{
 			Method: "heartbeat",
-			Params: mustMarshal(t, map[string]any{"session_key": sessionKey, "context_percent": 55.5}),
+			Params: mustMarshal(t, map[string]any{
+				"session_key":     sessionKey,
+				"session_token":   spawned.HeartbeatToken,
+				"context_percent": 55.5,
+			}),
 		})
 		if err != nil {
 			t.Fatalf("heartbeat: %v", err)

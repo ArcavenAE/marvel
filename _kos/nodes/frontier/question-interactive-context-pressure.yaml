@@ -192,6 +192,76 @@ content: |
   the path is `payload.rate_limits`, a sibling of `payload.info`, not
   inside it. opencode and Crush have no headroom channel at all.
 
+  CRUSH MEASURED 2026-08-09 (finding-020, bd aae-orc-k2mi), and it
+  corrects this node in four places.
+
+  1. THE TUI IS NOT A CLIENT OF THE SERVER BY DEFAULT. At v0.88.1
+     neither the TUI nor `crush run` registers a workspace unless
+     `CRUSH_CLIENT_SERVER=1` is in the process environment. The channel
+     is a spawn-time environment lever, which is enforcement locus 1,
+     so marvel observes exactly the sessions it provisioned. Better
+     than the claim it replaces.
+  2. ATTACHING DOES NOT REGISTER MARVEL AS A CLIENT of any session.
+     Constraint 1 above says it does, citing `attached_clients`. That
+     counter is bumped by `POST .../current-session`, a separate write
+     a reader never makes; holding the events stream leaves it
+     unchanged. The perturbation is real but it is LIFECYCLE COUPLING:
+     an unobserved workspace is reaped in 10 to 15 seconds, and a
+     marvel observer keeps it alive indefinitely. Full decomposition
+     and the ruling: question-channel-observation-cost.
+  3. CREDENTIAL ADJACENCY IS NOT AN APPROPRIATED-CHANNEL PROPERTY.
+     Constraint 2 above contrasts `opencode.db`'s credential tables
+     with a capture-pane scrape that physically cannot reach a secret.
+     Crush's CONTRACTED socket serves the registering client's whole
+     process environment on `GET /v1/workspaces`, measured at 76
+     entries including a database password and both `SSH_AUTH_SOCK`
+     paths. In a marvel deployment that block is the environment
+     marvel constructed at spawn.
+  4. THE NUMERATOR RULE NEEDS A CARVE-OUT. The sweep ruled that marvel
+     computes the numerator from token classes and never takes the
+     harness's. Crush's stream carries `prompt_tokens` and
+     `completion_tokens` and no classes at all, so it is Crush's
+     composition (input plus cache-read, excluding cache-creation) or
+     no reading.
+
+  What held: `prompt_tokens` is a level, re-derived independently and
+  extended to a two-request tool-calling turn (29465 then 29582, where
+  cumulative predicts about 59047). `completion_tokens` is also a
+  level, which the desk research left open (966 then 179; a running
+  total cannot fall). The denominator is `GET
+  /v1/workspaces/{id}/agent` -> `model.context_window`, confirmed at
+  40960 for a locally discovered ollama model, which was the case the
+  research said was written nowhere. Compaction shows as
+  `prompt_tokens` 0 with `summary_message_id` set, and the zero
+  PERSISTS until the next request completes rather than lasting one
+  record as codex's sentinel does.
+
+  A channel the sweep missed: `crush session last --json` and `crush
+  session show <id> --json`, documented for agents, reading the project
+  database directly, with no server, no workspace, no client
+  registration and no `CRUSH_CLIENT_SERVER`. Poll-only and carries no
+  denominator, so it does not replace the socket, but it is the only
+  channel in this catalog with no measured side effect.
+
+  Five surfaces in total, three carrying a numerator and exactly one
+  carrying the denominator. `crush stats` is NOT one of the three: its
+  HTML sums `sessions.prompt_tokens` across sessions, which sums a
+  per-request LEVEL and so counts one request per session. Measured, a
+  three-turn session at 28672 / 28712 / 28782 contributed 28782,
+  undercounting by roughly 3x with the error growing in turn count.
+  Neither occupancy nor spend, so it is citable for session and message
+  counts and nothing token-shaped. The project database carries no
+  window field at all (grepped the schema for context, window and
+  max_token across all five tables), and its per-message `provider` and
+  `model` columns record only persisted conversational turns: title
+  generation runs on the `models.small` slot and persists no row.
+
+  No Crush adapter was written and none should be yet: marvel has no
+  Crush runtime adapter to declare the channel or construct the
+  environment, and the transport is HTTP and SSE over a unix socket
+  rather than the harness stdout `internal/runtime` is built around.
+  That belongs to aae-orc-6c2r, with finding-020 as its input.
+
   THE COMPACTION CORPUS IS MINED (finding-024, 2026-08-09), and the
   detector it was mined to test passed. 63 of 63 labelled Claude
   compactions with a sample on each side were detected by the shipped

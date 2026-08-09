@@ -202,11 +202,17 @@ Recovery behavior, all shipped:
   `crashloop-backoff` with the pane left alive, so the state is visible
   while the reconciler holds off. Per-role tracking lives in
   `team.RoleHealth`, written through to the bolt `role_health` bucket and
-  rehydrated at daemon start.
+  rehydrated at daemon start. The charge is one crash per role per
+  reconcile tick, not one per lost replica: a role whose replicas go down
+  together (a tmux server dying, a host reboot, a foreign daemon
+  reclaiming the prefix) is one event, and marvel cannot see which of
+  those it was. See finding-019.
 - **`Role.MaxRestarts`** caps restarts per replica slot; on saturation the
   session is left `failed` rather than respawned. Zero means unlimited.
+  The count never decays, and clearing it means deleting the team.
 - **`crashed`** is the transition state `ReapDead` sets when a pane is
-  gone, distinguishing a dead process from a drained one.
+  gone, distinguishing a dead process from a drained one. It carries
+  `health=unhealthy`: the pane's absence is the process-alive verdict.
 - **Adopt-on-restart.** A restarted daemon rehydrates the store and runs
   `AdoptOrLeave` against the live panes; agents survive the daemon. Panes
   it has no record of are left running and reported (`reconcile.left`),
@@ -236,9 +242,15 @@ What exists today:
   `internal/runtime/events`; `internal/session/bridge.go` lifts each kind
   into its `agent.*` ring kind. Read it with `marvel events`.
 - **The heartbeat RPC** (`handleHeartbeat` → `UpdateSessionHeartbeat`), a
-  daemon method carrying `session_key` and `context_percent`. Cooperative,
-  and one of the CTX% column's two producers (the other is
-  `internal/usage`, fed by adapter streams).
+  daemon method carrying `session_key`, `session_token`, and
+  `context_percent`. Cooperative, and one of the CTX% column's two
+  producers (the other is `internal/usage`, fed by adapter streams). The
+  token is minted per session at spawn and injected as
+  `MARVEL_HEARTBEAT_TOKEN`, so a heartbeat is bound to the session it
+  claims; a mismatch is refused and lands on the ring as
+  `heartbeat.refused`. Records written before the token existed are
+  admitted as `heartbeat.unbound` until those sessions end. See
+  finding-022.
 - **`marvel inject`**, operator keystrokes into a pane.
 
 The adopted shape (roadmap M2): an **external NATS bus, supervised by

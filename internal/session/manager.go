@@ -432,6 +432,17 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
+	// Mint the heartbeat token before the record exists, so no session is
+	// ever in the store without one. The plaintext rides the caller's
+	// pointer into planLaunch, where the adapter puts it in the pane's
+	// environment; only the digest is stored.
+	token, hash, terr := api.NewHeartbeatToken()
+	if terr != nil {
+		return fmt.Errorf("create session %s: %w", sess.Key(), terr)
+	}
+	sess.HeartbeatToken = token
+	sess.HeartbeatTokenHash = hash
+
 	if err := m.store.CreateSession(sess); err != nil {
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
@@ -860,6 +871,9 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath
+		if sess.HeartbeatToken != "" {
+			envs[api.HeartbeatTokenEnv] = sess.HeartbeatToken
+		}
 	}
 	return cmd, envs
 }
@@ -943,6 +957,13 @@ func (m *Manager) ReapDead() []ReapedSession {
 			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
 				live.State = api.SessionCrashed
 				live.PaneID = ""
+				// The absence of the pane IS the process-alive verdict
+				// (the health path defers to this one for that check), so
+				// the last reading taken while the pane was alive must
+				// not survive the transition. Without this a session
+				// killed out of band reported state=crashed alongside
+				// health=healthy. See aae-orc-4bz2.
+				live.HealthState = api.HealthUnhealthy
 				return nil
 			}); err != nil {
 				log.Printf("warning: mark crashed %s: %v", sess.Key(), err)

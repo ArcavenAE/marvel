@@ -9,6 +9,18 @@ was taken for this document.
 **Prior work it re-reads:** `probe-interactive-ctx-remainder-sweep.md` (rounds 3
 and 4, and its SCOPE QUALIFICATION section), `finding-008-harness-native-telemetry.md`.
 
+**Premise check, 2026-08-09.** `aae-orc-e06y` was written on the premise that
+nothing tracks the affirmative inventory. That premise was false by the time the
+ticket was worked: this document was committed on 2026-08-08 in `f26eb10` and
+already maps instruments to matrix rows with graded evidence. Three things the
+ticket asked for were genuinely missing, and Parts 7b, 7c, and 9 below are them:
+a register keyed by matrix row rather than by harness, carrying instrument type
+and a per-row verdict on whether that type matches the quantity; a statement of
+which rows marvel already meters without OTEL; and consumer notes shaped for
+`aae-orc-jcle` and `aae-orc-1n6b`. The node harvest that
+`aae-orc-w7bd` item 1 asks for was also still outstanding and landed with this
+edit.
+
 ## Why this document exists
 
 The remainder sweep ruled OTEL out. The ruling is correct and it is narrow, and
@@ -251,6 +263,118 @@ where the instrument type is right: spend, tool access, and time. That
 concentration is the affirmative result, stated as a shape rather than a
 headline.
 
+## Part 7b: the register, keyed by matrix row
+
+Parts 2 through 4 are keyed by harness, which is the right shape for someone
+wiring one adapter and the wrong shape for someone asking what a matrix row can
+be metered with. This register inverts them. It adds the column the per-harness
+tables do not carry: whether the instrument's TYPE matches the quantity the row
+names, which is the axis the whole negative result turned on.
+
+Evidence tiers are the ones declared at the top: MEASURED (live on kinu),
+BINARY (literal read from an installed binary, emission conditions unverified),
+DOCS (vendor documentation only, nothing on this host). Read BINARY and DOCS
+together as documented-but-unmeasured. Instrument types marked INFERRED were
+read from a name, not from a symbol; only `claude_code.token.usage` has a
+verbatim counter construction behind it.
+
+| Row | Instrument | Type | Harness | Type matches quantity? | Evidence |
+|---|---|---|---|---|---|
+| 1 context window | `codex.conversation_starts` attrs `context_window`, `auto_compact_token_limit`, `max_output_tokens` | log event | codex | DENOMINATOR yes. The window is a per-conversation constant, so an event is a fine carrier | BINARY |
+| 1 | `claude_code.api_request` attrs `input_tokens`, `cache_read_tokens`, `cache_creation_tokens` | log event | claude | NUMERATOR yes per request; the denominator is absent from the feed entirely | MEASURED |
+| 1 | `claude_code.token.usage` | cumulative counter (VERBATIM) | claude | No. This is the disqualifier: a counter cannot express a level that resets | MEASURED |
+| 1 | `codex.turn.token_usage` | histogram | codex | Shape is closer to right (per-turn), attribution is missing: no `conversation.id` on the default metric dimensions | BINARY |
+| 1 | `compaction` span, attrs `trigger`, `message_count` | span | claude | As an ACTUATOR yes; as a level no, and it carries no token counts | BINARY |
+| 1 | `codex.task.compact`, `codex.compaction.model_fallback` | span | codex | Actuator yes, and carries tokens on the same span | BINARY |
+| 1 | `gemini_cli.chat_compression`, attrs `tokens_before`, `tokens_after` | counter plus log event | gemini | Actuator yes, and the only one carrying both counts | DOCS |
+| 2 tokens / spend / rate | `claude_code.token.usage` (attrs `type`, `model`) | cumulative counter (VERBATIM) | claude | Yes. Cumulative is correct for a quantity that never resets | MEASURED |
+| 2 | `claude_code.cost.usage` | counter (INFERRED) | claude | Yes. The direct dollar line | MEASURED |
+| 2 | `claude_code.api_request` attr `cost_usd` | log event | claude | Yes, per request rather than aggregated | MEASURED |
+| 2 | `codex.turn.token_usage`, `token_type` in {total, input, cached_input, cache_write_input, non_cached_input, output, reasoning_output} | histogram | codex | Yes, at the richest class decomposition in the catalog | BINARY |
+| 2 | `gen_ai.usage.*` on `codex.api_request` | convention counter | codex | Yes for billing, subject to the conformance defect in Part 6 | BINARY |
+| 2 | `gemini_cli.token.usage`, type in {input, output, thought, cache, tool} | counter | gemini | Yes | DOCS |
+| 2 | `gen_ai.client.token.usage` | convention counter | gemini | Yes, same conformance caveat | DOCS |
+| 2 | `gemini_cli.token.efficiency` | unknown | gemini | Unassessed. The name appears in the sweep with no measurement behind it | DOCS |
+| 3 cache locality | `claude_code.api_request` attrs `cache_read_tokens`, `cache_creation_tokens` | log event | claude | Partial. It meters cache hit volume after the fact; the row is about placement and batching decisions, which no instrument informs | MEASURED |
+| 3 | `codex.turn.token_usage` types `cached_input`, `cache_write_input` | histogram | codex | Partial, same reason | BINARY |
+| 3 | `gemini_cli.token.usage` type `cache` | counter | gemini | Partial, same reason | DOCS |
+| 4 model / runtime capability | `model` attribute on token, cost, and request instruments; codex default metric dimensions | attribute, not an instrument | claude, codex, gemini | Attribution only. Enough to say which model was used, nothing about placement across the cost, privacy, latency, capability gradient | MEASURED (claude), BINARY (codex), DOCS (gemini) |
+| 5 tool access (MCP) | `claude_code.tool.execution`, `tool` span, `mcp.rpc` span | counter plus spans | claude | Yes for access accounting. Metering only; enforcement stays at locus 1 | BINARY |
+| 5 | `codex.tool.call` plus `codex.tool.call.duration_ms` | counter plus histogram | codex | Yes | BINARY |
+| 5 | tool-call count and latency | counter plus histogram | gemini | Yes | DOCS |
+| 5 | `claude_code.code_edit_tool.decision` | counter (INFERRED) | claude | Partial. Decision accounting, not access accounting | BINARY |
+| 6 filesystem / git access | `claude_code.bash.subprocess` span | span | claude | Partial. Observes an invocation; says nothing about the path scope the row governs | BINARY |
+| 6 | file-operation counts | counter | gemini | Partial, same reason | DOCS |
+| 7 data services | none | | | No coverage | |
+| 8 work-tracking access | none | | | No coverage | |
+| 9 session I/O access | none | | | No coverage, and not an OTEL-shaped question: this is the two-plane substrate decision | |
+| 10 interagent communication | none | | | No coverage by construction. The M2 bus would be the emitter and it is unbuilt | |
+| 11 authority | none | | | No coverage. The M1 identity lane is the prerequisite | |
+| 12 compute | none from any harness | | | No harness coverage. Marvel meters this itself; see Part 7c | |
+| 13 human attention | `claude_code.tool.blocked_on_user` | counter (INFERRED) | claude | UNKNOWN, and this is the register's load-bearing unknown. If it carries duration or outstanding-approval count it meters the row; if it counts interruption events it is a proxy | BINARY |
+| 14 time | `claude_code.active_time.total` | counter (INFERRED) | claude | Yes for elapsed wall clock. No for the deadlines and timeboxes the row also names, which are policy rather than telemetry | MEASURED |
+| 14 | `codex.api_request.duration_ms`, `codex.sse_event.duration_ms`, `codex.tool.call.duration_ms` | histograms | codex | Yes on latency, at a fidelity no other harness matches | BINARY |
+| 14 | api-request count and latency | counter plus histogram | gemini | Yes on latency | DOCS |
+| 15 durable agent state | compaction spans, indirectly | span | claude, codex, gemini | Weak. Marvel owns the handoff schema per `elem-handoff-schema-ownership`, but no schema has shipped, so there is nothing yet to instrument | BINARY, DOCS |
+| 16 behavior provisioning | none | | | No coverage. A sideshow question, not a telemetry one | |
+| 17 credential custody | none | | | No coverage, and correctly so. Credentials must not appear in a telemetry feed | |
+
+### Reading the register
+
+**Two rows of seventeen have an instrument whose type matches its quantity
+without qualification: row 2 (spend) and row 5 (tool access).** Five more are
+partial or attribution-only (1, 3, 4, 6, 14). One is unknown and is the most
+valuable one (13). Nine have nothing from harness OTEL (7, 8, 9, 10, 11, 12, 15,
+16, 17).
+
+That is a different count from Part 7's "seven of seventeen rows have some OTEL
+instrument", and both are correct: Part 7 counts PRESENCE, this counts TYPE
+MATCH. The gap between the two numbers is the whole content of the affirmative
+reading, so I state both rather than picking the flattering one.
+
+The count is not a rubber stamp. Had the type-match column come out yes
+everywhere, it would have been evidence of nothing, because a register that
+cannot fail is not a measurement. It comes out no on row 1's numerator, unknown
+on row 13, partial on five rows, and empty on nine.
+
+**Two row references in Part 2 do not resolve against the matrix, and I am
+correcting them here rather than editing the table above them.** Part 2 maps
+`subagent.spawn` to "12 (fleet composition)" and `session.count` to "7/12
+(lifecycle, fleet composition)". Row 12 is compute and row 7 is data services.
+Neither lifecycle nor fleet composition is a numbered row of the 17; both are
+marvel org-model concerns. `session.count`, `subagent.spawn`, `interaction`,
+`llm_request`, `hook`, and `gemini_cli.session.count` are real instruments
+serving real marvel needs, and they belong to the org model rather than to the
+resource matrix. They are omitted from the register above for that reason, not
+because they are unavailable.
+
+## Part 7c: what marvel already meters without OTEL
+
+Stated because a telemetry inventory read alone implies rows are unmetered when
+they are metered elsewhere, and because it bounds what any OTEL work would
+actually add.
+
+| Row | Marvel-side surface | Status |
+|---|---|---|
+| 1 context window | `internal/usage` (accountant, limits, ladder, profiles) reading the harness stream per finding-007 | built, headless-scoped |
+| 2 tokens / spend | `internal/usage` plus `internal/admission` (manifest-declared team budgets, gates at the operator verbs, refusals in events; PR #101, finding-009) | first brick of locus 2 shipped |
+| 12 compute | `internal/procstat` (per-session CPU and RSS, with darwin and linux readers) | built, wave-1 metering |
+| 5, 6, 16 | environment construction at spawn, enforcement locus 1 | built |
+| 15 durable agent state | shift mechanics real; handoff schema owned but not shipped | schema pending |
+
+And the honest statement about marvel's own OTEL surface: `internal/otel` is
+`metrics.go` at 35 lines plus a test. It builds a stdout meter provider and
+declares one gauge, `marvel.agent.context_window_percent`. Nothing in the daemon
+imports the package. Its only importer in the tree is `cmd/simulator`, which
+records simulated engine values into the gauge through `engine.OnRecord`. There
+is no collector, no trace export, and no ingest path, and the OTEL funnel is
+HELD per the orc's `docs/marvel-remap-2026-08.md` section 2. Marvel is an OTEL
+producer of one simulated gauge. That is the whole of it today.
+
+(This corrects the frontier node's phrasing in one small way: the node says the
+gauge is one "that nothing populates". Nothing in the daemon populates it; the
+simulator does.)
+
 ## Part 8: the two mechanisms that transfer regardless
 
 Both were found chasing pressure and neither depends on it.
@@ -271,6 +395,78 @@ Note the tension with finding-008, which recommends one shared in-process OTLP
 receiver. The sweep's later rounds prefer listener-free paths. These are not
 reconciled in either document, and reconciling them is
 `question-marvel-otel-architecture`'s job, not this inventory's.
+
+## Part 9: what the two consumer tickets can take from this
+
+Written to be usable by `aae-orc-jcle` and `aae-orc-1n6b` without re-deriving
+the register, and deliberately short of doing either ticket's work.
+
+**For `aae-orc-jcle` (implement the ratified collection shape).** The register
+is a subscription allowlist in draft form, which is sub-question B's other half.
+If the chosen shape has to justify every signal it materializes, the defensible
+set today is rows 2, 5, and 14: spend, tool access, and elapsed time, where the
+instrument type matches the quantity. Row 13 joins that set or leaves it on one
+measurement (see below), and it is the only one whose answer would change the
+shape rather than the volume. Rows 7 through 11 and 16 and 17 need no ingest
+path at all, because there is nothing to ingest. Two facts constrain the build
+regardless of shape: the events ring has no subscribe or fan-out seam, and the
+only signals arriving as spans rather than metrics (compaction, tool, mcp.rpc,
+bash.subprocess) require trace ingest, which is a second pipeline, not a second
+exporter setting.
+
+**For `aae-orc-1n6b` (per-harness telemetry advertisement).** The register says
+what advertisement would buy per harness, which is the input that ticket lacks.
+Claude and codex are the only harnesses worth advertising to: claude serves rows
+2, 5, 13, and 14 and honors standard env vars; codex serves rows 2, 5, and 14
+and is the only harness publishing its own window, on `conversation_starts`.
+Gemini is the case where advertisement is not the mechanism at all, because its
+file exporter means marvel assigns a path rather than an endpoint. Opencode and
+Crush need the documented no-op path the ticket already names, and the register
+puts a number on what that no-op costs: zero rows.
+
+The two listener-free paths in Part 8 bear directly on 1n6b's cross-cutting
+question. If claude is scraped over its Prometheus PULL exporter on a
+marvel-allocated port and gemini writes to a marvel-assigned path, then neither
+is advertisement in the service-directory sense, and only codex remains as an
+endpoint-advertisement case. That would make the directory question smaller than
+the ticket assumes. I am not ruling on it; the shape of the contest changes and
+1n6b should know it changes.
+
+## What this register could not establish
+
+Held to the shape `finding-017-codex-context-pressure-channel.md` uses, because
+the claim most worth having here is also the least evidenced.
+
+1. **What `tool.blocked_on_user` counts.** The register's highest-value row
+   rests on a name read from a binary. Whether it meters duration blocked,
+   approvals outstanding, or interruption events is unmeasured, and the three
+   answers give row 13 an instrument, a partial instrument, and a proxy
+   respectively. Nothing in this document narrows it.
+2. **Instrument type for most claude instruments.** Only `token.usage` has a
+   verbatim construction. `cost.usage`, `active_time.total`,
+   `tool.blocked_on_user`, `subagent.spawn`, `interaction`, `llm_request`, and
+   `hook` are typed by inference from their names. If any of them is a histogram
+   or an up-down counter, its row verdict moves.
+3. **Emission conditions for everything at BINARY tier.** A literal in a binary
+   proves a name exists. It does not prove the instrument is emitted under
+   default configuration, at what cardinality, or with which attributes. Codex
+   was never driven live at all.
+4. **The whole gemini row.** Not installed on this host. Every gemini verdict in
+   the register is documentation read at face value, including the file-exporter
+   claim that Part 4 calls the one place OTEL wins.
+5. **Whether codex metrics can carry `conversation.id`.** The default dimensions
+   do not include it. That it cannot be added was not established, only that no
+   path to adding it was found.
+6. **Cost of ingesting any of this at fleet scale.** Sub-question G (cardinality
+   under short-lived churning sessions) is untouched. A register of what exists
+   says nothing about what it costs to keep.
+7. **Whether marvel should consume any of it.** Presence is not a build
+   argument, and the topology question is not this document's.
+
+Two further limits inherited rather than introduced: everything is macOS at
+pinned harness versions (claude 2.1.220 and 2.1.226, codex 0.146.0, opencode
+1.18.5, Crush 0.67.0), so B13 applies; and the register is assembled from two
+prior desk-research documents with exactly one live model turn under all of it.
 
 ## What this inventory does NOT rule on
 

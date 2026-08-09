@@ -2,6 +2,27 @@
 // launching BYOA agent sessions. Each adapter knows how to construct the
 // execution environment (command, args, env vars) for a specific runtime
 // (forestage, bare claude CLI, or any generic command).
+//
+// A constructed environment can leak. Measured on Crush v0.88.1
+// (finding-020): its server serves the client's entire process
+// environment on GET /v1/workspaces, 76 entries including a database
+// password, to any client of a host-shared socket. Environment
+// construction is marvel's one built enforcement locus, so a harness that
+// republishes it turns the enforcement surface into a disclosure surface.
+// Adapters put identity, paths and flags in the environment; secrets
+// belong somewhere a harness cannot serialize.
+//
+// No Crush adapter exists yet. When one is written it needs
+// CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1 unconditionally, because without
+// it every spawned session rewrites the host-global provider cache, and
+// CRUSH_GLOBAL_DATA does not contain that write. Relocating
+// CRUSH_GLOBAL_DATA is safe (caches and model selections);
+// CRUSH_GLOBAL_CONFIG is the operator's credential store and is not.
+//
+// It also needs a stated position on crushrc. Crush executes a project
+// directory's .crushrc as bash at config load, ahead of any permission
+// list, and marvel workspaces are checkouts of arbitrary repositories.
+// Measured firing on `crush run` with no trust prompt (finding-020 §9).
 package runtime
 
 import (
@@ -164,6 +185,14 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
+		// The socket is what makes a heartbeat possible, so the token
+		// travels with it and a session that cannot reach the daemon
+		// carries no secret. This is enforcement locus 1: marvel
+		// constructs the environment, and what the agent can prove about
+		// itself is what marvel put there.
+		if ctx.Session.HeartbeatToken != "" {
+			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
+		}
 	}
 	return env
 }

@@ -119,3 +119,48 @@ was therefore checked by breaking the code, not by watching it pass.
   live foreign daemon (`aae-orc-2cms`). That question is now narrower:
   per-HOME tmux servers mean a foreign daemon's panes are not visible at
   all.
+
+## Addendum, 2026-08-09: re-verified live, and one test added
+
+`aae-orc-reya` was filed against this defect about thirty minutes before
+PR #132 merged, so it outlived its own fix. Re-checking it produced two
+things worth keeping.
+
+**The fix holds under a live rig.** Isolated `HOME` and tmux server, a
+two-replica generic fleet, ground truth read straight from tmux: the base
+pane is present and unmarked (`%0`, `marker=`), both replicas carry
+`marker=1`, `marvel reap` says "Nothing to reap", and `reap --confirm`
+leaves every pane id in place.
+
+**Marvel is not sensitive to `base-index` or `pane-base-index`.** With
+`base-index 3` and `pane-base-index 7` set in the rig's `.tmux.conf`, the
+panes come back as `pane_index=7 window_index=3,4,5` and reap still
+reports clean. Nothing in the driver targets a pane by index; every
+`-t` argument is a `%id`.
+
+**The reason to reject the `%0` guard is sharper than "base-index is
+configurable".** Pane ids are allocated per server in creation order and
+are unaffected by either index option, so `%0` stays `%0` no matter how a
+user configures tmux. What actually breaks an id guard is a second
+workspace: two workspaces of two replicas each put the base panes at `%0`
+and `%3`, and only the first of those is `%0`. The original text is right
+that the number is not a fact, for a reason it does not name.
+
+**Which exposed a gap in the tests above.** Every test in this finding
+uses one workspace, so every one of them also passes against the guard
+this finding rejects. I confirmed that by replacing the `!p.Created`
+fence with `p.ID == "%0"` and running them:
+`TestReapReportsNothingOnAHealthyFleet` and
+`TestUnrecordedTmuxStateIgnoresPanesMarvelDidNotCreate` both PASS. The
+suite proved the defect was gone without proving the fix had the shape
+that keeps it gone.
+
+`TestReapReportsNothingWhenTheBasePaneIsNotPaneZero` closes that. It
+builds two workspaces, asserts its own preconditions (the later workspace
+has an unmarked base pane, and its id is not `%0`, so an id guard and a
+provenance guard genuinely disagree), and then asserts reap reports
+nothing. Against the `%0` fence it fails with `1 reap candidate(s), want
+0: [pane %3 in workspace test-basepane-second]`.
+
+Same lesson as the section above, one level up. The earlier check
+confirmed the behavior was right; this one confirms the mechanism is.

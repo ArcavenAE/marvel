@@ -11,7 +11,11 @@ tags:
 content: |
   finding-008 established that three target harnesses emit native OTEL
   (Claude Code live-verified, Codex, Gemini CLI) and that none of them
-  exports context-window occupancy. That answers what is available. It
+  exports context-window occupancy. (Corrected 2026-08-09: none exports
+  an occupancy GAUGE, which is the claim that holds. Codex does export
+  its context-window DENOMINATOR, as `context_window` and
+  `auto_compact_token_limit` attributes on `codex.conversation_starts`.
+  See the corrections block below.) That answers what is available. It
   does not answer what marvel should DO with it, which is a design
   question with a composability trap on both sides: do too little and
   marvel cannot use telemetry for its own control decisions; do too
@@ -29,10 +33,14 @@ content: |
 
   Two facts verified 2026-08-01 that constrain the design:
 
-  - `internal/otel` is a 32-line stub: a stdout meter provider and a
-    `marvel.agent.context_window_percent` gauge that nothing populates
-    (it waits on `aae-orc-w5su`). Marvel is an OTEL producer with no
-    ingest path. Nothing is entrenched.
+  - `internal/otel` is a 35-line stub: a stdout meter provider and a
+    `marvel.agent.context_window_percent` gauge. Nothing in the daemon
+    populates it or imports the package; its only importer in the tree
+    is `cmd/simulator`, which records simulated engine values into the
+    gauge through `engine.OnRecord` (re-verified 2026-08-09; the
+    earlier "nothing populates" was true of the daemon, not of the
+    tree). Marvel is an OTEL producer with no ingest path. Nothing is
+    entrenched.
   - The events ring (`internal/events`) is append-only with NO
     subscribe or fan-out seam; it is polled by `marvel events`. So
     "marvel subscribes to portions of the feed" requires a seam that
@@ -186,6 +194,51 @@ content: |
   liteLLM shipped a credential-stealing supply-chain compromise in two
   releases, which is a live consideration for a component that would sit in
   the credential path.
+
+  ## Corrections absorbed 2026-08-09 (aae-orc-e06y, aae-orc-w7bd item 1)
+
+  Both were named by the remainder sweep and repeated by the inventory
+  as debts this node had not paid. Paying them here.
+
+  1. **Codex publishes its denominator over OTEL.**
+     `codex.conversation_starts` carries `context_window`,
+     `auto_compact_token_limit`, and `max_output_tokens`. The
+     conclusion that OTEL cannot carry context pressure still stands,
+     and the REASON changes: it is instrument TYPE (the numerator is a
+     cumulative counter) rather than field absence. Anyone re-checking
+     this later needs the distinction, because "the field is missing"
+     invites a fix that "the type is wrong" does not. Two cautions
+     ride with it: the codex catalog and the wire disagree on the
+     denominator (two terms in the catalog, one on the wire), and the
+     codex default metric dimensions carry no `conversation.id`, so
+     the logs are attributable per conversation and the metrics are
+     not.
+  2. **Crush and opencode are measured negatives.** Crush 0.67.0 links
+     the otel API plus `metric/noop` and `trace/noop` only, with no
+     SDK and no exporter, so it cannot export at all; its analytics
+     stream is PostHog to `data.charm.land`, which is Charm's channel
+     and not marvel-addressable. opencode 1.18.5 ships
+     `@opentelemetry/api` and `sdk-trace` with no exporter and no
+     metrics SDK (its SDK init was removed upstream in
+     sst/opencode#1738), and gates emission behind the Vercel AI SDK's
+     per-call `experimental_telemetry` flag with no config surface
+     exposing it. Both serve zero matrix rows over OTEL. For both, the
+     finding-007 stream and sqlite accountant remains the only path,
+     and sub-question E's "documented no-op" is the whole of what
+     advertisement can do for them.
+
+  A register keyed by matrix row rather than by harness, carrying
+  instrument TYPE and a per-row verdict on whether that type matches
+  the quantity, is Part 7b of
+  `probe-otel-affirmative-inventory.md`. Its headline: two rows of
+  seventeen (2 spend, 5 tool access) have an instrument whose type
+  matches its quantity without qualification; five are partial or
+  attribution-only (1, 3, 4, 6, 14); one is unknown and is the most
+  valuable (13, human attention); nine have nothing from harness OTEL.
+  That is a subscription allowlist in draft form and therefore the
+  other half of sub-question B, which until now had exactly one answer
+  (context pressure is not among the signals, because OTEL cannot
+  carry it).
 
   Tracked: aae-orc-e06y (the affirmative inventory), aae-orc-24oy /
   aae-orc-fkvv / aae-orc-tpda (the deferred OTEL studies, which still

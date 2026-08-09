@@ -82,9 +82,16 @@
 // separately (question-interactive-context-pressure); native harness
 // OTEL is the first plausible path to it.
 //
-// Crush and Gemini CLI are out of scope: Crush publishes no structured
-// stream (its token counts live only in a per-repo sqlite database) and
-// Gemini was not available to measure.
+// Crush and Gemini CLI are out of scope, and for Crush the earlier
+// reason recorded here was measured false. Crush v0.88.1 publishes a
+// structured SSE stream carrying a per-request occupancy level, a REST
+// route carrying the window, and two documented JSON CLI surfaces
+// besides (finding-020). What it lacks is a marvel runtime adapter to
+// declare the channel and construct the environment, and a transport:
+// the feed is HTTP and SSE over a unix socket rather than the harness
+// stdout internal/runtime is built around. A profile here with no
+// producer would be a claim about a design that does not exist. Gemini
+// was not available to measure.
 //
 // # Feed-agnostic by construction
 //

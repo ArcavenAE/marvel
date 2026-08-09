@@ -490,6 +490,83 @@ func TestReapDead(t *testing.T) {
 	}
 }
 
+// TestReapDeadClearsStaleHealthReading: a session marked Crashed must not
+// keep publishing the health reading it carried while its pane was alive.
+// After an external kill, `marvel get sessions` reported state=crashed
+// alongside health=healthy: the pane's absence is the process-alive
+// verdict, and ReapDead was recording the state transition without it.
+// See aae-orc-4bz2.
+func TestReapDeadClearsStaleHealthReading(t *testing.T) {
+	skipIfNoTmux(t)
+
+	cases := []struct {
+		name  string
+		prior api.HealthState
+	}{
+		{name: "healthy", prior: api.HealthHealthy},
+		{name: "unknown", prior: api.HealthUnknown},
+		{name: "already unhealthy", prior: api.HealthUnhealthy},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := api.NewStore()
+			driver, err := tmux.NewDriver()
+			if err != nil {
+				t.Fatalf("new driver: %v", err)
+			}
+			mgr := NewManager(store, driver)
+
+			ws := "test-reap-health-" + tc.name
+			t.Cleanup(func() {
+				_ = mgr.CleanupWorkspace(ws)
+			})
+
+			sess := &api.Session{
+				Name:      "dying-0",
+				Workspace: ws,
+				Team:      "agents",
+				Role:      "worker",
+				Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			}
+			if err := mgr.Create(sess); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+				live.HealthState = tc.prior
+				return nil
+			}); err != nil {
+				t.Fatalf("seed health state: %v", err)
+			}
+
+			if err := driver.KillPane(sess.PaneID); err != nil {
+				t.Fatalf("kill pane %s: %v", sess.PaneID, err)
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for driver.HasPane(sess.PaneID) && time.Now().Before(deadline) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if driver.HasPane(sess.PaneID) {
+				t.Fatalf("tmux still reports pane %s alive after kill-pane", sess.PaneID)
+			}
+
+			if reaped := mgr.ReapDead(); len(reaped) != 1 {
+				t.Fatalf("expected 1 reaped session, got %d", len(reaped))
+			}
+			got, err := store.GetSession(sess.Key())
+			if err != nil {
+				t.Fatalf("get crashed marker: %v", err)
+			}
+			if got.State != api.SessionCrashed {
+				t.Fatalf("expected state=%s, got %s", api.SessionCrashed, got.State)
+			}
+			if got.HealthState != api.HealthUnhealthy {
+				t.Errorf("expected health=%s on a crashed session, got %s", api.HealthUnhealthy, got.HealthState)
+			}
+		})
+	}
+}
+
 // TestReapDeadCapsCrashedMarkers verifies the store keeps at most one
 // Crashed session per role — a saturated role's many crashes must not
 // accumulate ghosts. See ArcavenAE/marvel#10, aae-orc-8ci.
@@ -743,5 +820,135 @@ func TestDaemonTempDirsAreLayoutScoped(t *testing.T) {
 	// The two kinds stay distinct so pipes and settings files do not mix.
 	if alphaProjection == alphaStream {
 		t.Errorf("projection and stream dirs are both %s, want distinct", alphaProjection)
+	}
+}
+
+// A second workspace's base pane is not %0, and that is what separates
+// the fence marvel shipped from the one it rejected.
+//
+// tmux allocates pane ids per server in creation order, so the base pane
+// of the first workspace is %0 and the base pane of the next is whatever
+// comes after that workspace's replicas. Every other test in this file
+// uses one workspace, so each of them would also pass against a guard
+// that simply skipped %0 — the shape finding-014 ruled out. Measured on a
+// live rig: two workspaces of two replicas each gave base panes at %0 and
+// %3.
+//
+// The test therefore asserts on the SECOND workspace, where an id guard
+// and a provenance guard disagree, and it fails loudly if the ids come
+// out such that they would agree.
+func TestReapReportsNothingWhenTheBasePaneIsNotPaneZero(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	workspaces := []string{"test-basepane-first", "test-basepane-second"}
+	for _, ws := range workspaces {
+		if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+			t.Fatalf("create workspace %s: %v", ws, err)
+		}
+		t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+		for i := range 2 {
+			sess := &api.Session{
+				Name:      fmt.Sprintf("t-r-g1-%d", i),
+				Workspace: ws,
+				Team:      "t",
+				Role:      "r",
+				Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			}
+			if err := mgr.Create(sess); err != nil {
+				t.Fatalf("create session %s/%s: %v", ws, sess.Name, err)
+			}
+		}
+	}
+
+	// Precondition: the later workspace really does carry an unmarked
+	// base pane whose id is not %0. Without it this test would pass
+	// against the id guard too, and prove nothing.
+	second := "marvel-" + workspaces[1]
+	panes, err := driver.ListPanes(second)
+	if err != nil {
+		t.Fatalf("list panes %s: %v", second, err)
+	}
+	var unmarked []string
+	for _, p := range panes {
+		if !p.Created {
+			unmarked = append(unmarked, p.ID)
+		}
+	}
+	if len(unmarked) == 0 {
+		t.Fatalf("%s has no unmarked base pane, so this test cannot tell the two fences apart (panes=%d)",
+			second, len(panes))
+	}
+	for _, id := range unmarked {
+		if id == "%0" {
+			t.Fatalf("%s base pane is %%0, so an id guard would agree here and the test proves nothing", second)
+		}
+	}
+
+	found, err := mgr.UnrecordedTmuxState()
+	if err != nil {
+		t.Fatalf("UnrecordedTmuxState: %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("healthy two-workspace fleet reports %d reap candidate(s), want 0: %v", len(found), found)
+	}
+}
+
+// TestCreateMintsHeartbeatToken: no session reaches the store without a
+// token, because the daemon refuses any heartbeat it cannot bind and a
+// session spawned without one would go stale, fail its healthcheck, and
+// restart on a policy that expects it to be beating.
+func TestCreateMintsHeartbeatToken(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+	// Never opened by this test; the manager only copies it into the
+	// launch environment. Per-test path anyway, because a fixed one is a
+	// shared host resource waiting for the day something does open it.
+	mgr.SocketPath = t.TempDir() + "/marvel.sock"
+
+	ws := "test-sess-token"
+	t.Cleanup(func() {
+		_ = mgr.CleanupWorkspace(ws)
+	})
+
+	sess := &api.Session{
+		Name:      "agent-0",
+		Workspace: ws,
+		Team:      "agents",
+		Role:      "worker",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if sess.HeartbeatToken == "" {
+		t.Fatal("Create left the session with no heartbeat token to inject")
+	}
+	stored, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("get from store: %v", err)
+	}
+	if stored.HeartbeatTokenHash != api.HashHeartbeatToken(sess.HeartbeatToken) {
+		t.Fatalf("stored hash %q does not verify the minted token", stored.HeartbeatTokenHash)
+	}
+
+	// The ad-hoc path builds its own environment rather than going
+	// through an adapter, so it needs its own assertion.
+	_, env := mgr.directCommand(sess)
+	if got := env[api.HeartbeatTokenEnv]; got != sess.HeartbeatToken {
+		t.Errorf("%s = %q in the ad-hoc environment, want the minted token", api.HeartbeatTokenEnv, got)
 	}
 }
