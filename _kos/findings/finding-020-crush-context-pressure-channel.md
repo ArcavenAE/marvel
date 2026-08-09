@@ -143,28 +143,67 @@ model change, not per turn.
 Nothing here needs multiplying. Crush publishes one window term and
 applies its own compaction thresholds to it internally.
 
-**Settled with the codex arm, after I conceded this wrongly and had the
-concession refused.** The disagreement was whether a window reached by a
-separate REST call sits at rung 1 (`stream`, the channel the harness
-enforces compaction against) or rung 4 (`feed`, a side channel read
-opportunistically). I gave the rung up on the catalog evidence below,
-reasoning that a route reporting the workspace's CURRENT agent cannot say
-what window applied to a past message. That concession was wrong and the
-codex arm was right to decline it: CTX% is a live reading, so historical
-answerability is not a property of the quantity being resolved. The
-harness's own auto-summarize StopCondition actuates against the number this
-route returns, which is the rung-1 test, and transport was never the test.
+**The rung is NOT settled, and it should stop being settled between two
+arms.** The codex arm and I have now taken three positions across three
+exchanges: transport (theirs, withdrawn), governance (mine, conceded,
+concession declined), attributability (theirs, current). Each move was made
+by deferring to the other's evidence. That is not convergence, and one more
+round of it would produce a fourth position rather than an answer.
 
-Both harnesses therefore supply the window as `stream`. The real difference
-is LIFETIME and it produces a rule rather than a demotion: codex's window
-cannot go stale because it is re-read with every level, while a separately
-fetched window goes stale on model change with no signal on the stream. So
-a fetched window carries **refetch on model change, and a window fetched
-under a different model is unresolved rather than stale**.
+So I read `limitLadder` and `doc.go` rather than each other. Both texts are
+in `internal/usage/limits.go` and both are quoted here because the outcome
+turns on them.
 
-Recorded because two arms swapping positions is a worse outcome than either
-holding one, and the reasoning that decides it belongs where it can be
-checked.
+Rung 1 is defined by a sentence with two conjuncts: "the harness stating
+the window it is currently enforcing compaction against, **in the same
+channel as the token counts it is stating it about**." Crush satisfies the
+first (its auto-summarize StopCondition actuates against exactly this
+number) and fails the second (separate route). The codex arm is right that
+the second conjunct exists and right that I had been reading the
+paragraph's closing summary, "rung 1 is for the channel that governs the
+session," which states only the first.
+
+But rung 4 does not fit either, and this is the part neither of us checked.
+It is defined as "a side channel read opportunistically off a human-facing
+status hook, with no version handle and no statement of which of the six
+effective-window axes it reflects." Against Crush's route, measured:
+
+| rung-4 property | Crush `GET /v1/workspaces/{id}/agent` |
+|---|---|
+| side channel, read opportunistically | no: a documented first-class API route |
+| off a human-facing status hook | no: no hook involved, no human-facing string |
+| no version handle | no: `/v1` route prefix, and `GET /v1/version` returns `v0.88.1` with a build id |
+| names no effective-window axis | partial: it names the model, not the entitlement or threshold axes |
+
+Three of four fail outright. So the ladder's text was written with two
+channels in view, a harness stream and a statusline hook, and Crush's route
+is a third shape it does not describe. Forcing it onto either rung imports
+reasoning that does not apply, which is exactly what both of us did.
+
+**The consequence is decidable on evidence even though the rung is not.**
+Rung 4 sits below `LimitFromManifest`, so placing Crush there means an
+operator's hand-written `runtime.context_window` outranks the live route.
+The stated reason manifest outranks feed is that the feed's number varies
+on axes the operator may know about and the payload does not name. Here
+that argument runs backwards: the router study measured the window as a
+provider-plus-model property with 141 of 249 shared model ids disagreeing
+across providers, and an operator writing a window by hand will write the
+model's headline number, which is the value that is wrong by up to 3.8x.
+On this harness the manifest is the more likely error, not the correction.
+
+**This belongs to the operator.** It is a change to a ruled ladder, the
+ruling was the operator's on 2026-08-08, and the evidence for revisiting it
+did not exist then. What I would put in front of them: either Crush's route
+is rung 1 on the governance conjunct with the same-channel conjunct
+relaxed, or the ladder gains a rung between manifest and feed for a
+contracted, versioned, live query that is neither the stream nor a status
+hook. I am not choosing between those in a finding.
+
+**One thing IS settled and it survives either answer.** A window not
+re-read with its level goes stale on model change with no signal, so a
+fetched window carries **refetch on model change, and a window fetched
+under a different model is unresolved rather than stale**. Both arms agree
+on this and it is the part that actually protects a reading.
 
 **The table is not a fallback here, and the router study measured why.**
 `~/.local/share/crush/providers.json` is keyed provider first and model

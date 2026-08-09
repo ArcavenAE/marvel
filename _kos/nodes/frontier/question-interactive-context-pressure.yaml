@@ -256,6 +256,41 @@ content: |
   `model` columns record only persisted conversational turns: title
   generation runs on the `models.small` slot and persists no row.
 
+  LADDER RUNG FOR CRUSH'S WINDOW: OPEN, AND IT NEEDS THE OPERATOR
+  RATHER THAN ANOTHER ROUND BETWEEN ARMS. The 2026-08-08 RESOLUTION
+  LADDER ruling above was made with two channels in view, a harness
+  stream and a statusline hook. Crush's `GET /v1/workspaces/{id}/agent`
+  is a third shape and the ladder's own text does not describe it.
+  Rung 1's definition has two conjuncts, "the window it is currently
+  enforcing compaction against" and "in the same channel as the token
+  counts it is stating it about"; Crush satisfies the first and fails
+  the second. Rung 4's definition fails on three of four properties:
+  it is not a side channel read opportunistically, not off a
+  human-facing status hook, and it carries a version handle (`/v1`
+  prefix, `GET /v1/version` returning v0.88.1 plus a build id). It
+  names the model axis but not the entitlement or threshold axes.
+
+  The consequence is decidable even though the rung is not. Rung 4
+  sits below LimitFromManifest, so placing Crush there lets a
+  hand-written `runtime.context_window` outrank the live route. The
+  stated reason manifest outranks feed is that the feed's number
+  varies on axes the operator may know and the payload does not name.
+  Here that runs backwards: aae-orc-eooi measured the window as a
+  provider-plus-model property with 141 of 249 shared model ids
+  disagreeing across providers, so an operator writing the model's
+  headline number is the more likely error.
+
+  Two candidate resolutions for the operator: relax the same-channel
+  conjunct so a contracted live query qualifies for rung 1, or add a
+  rung between manifest and feed for a contracted, versioned, live
+  query that is neither the stream nor a status hook. Not chosen here.
+
+  Settled either way, and it is the part that protects a reading: a
+  window not re-read with its level goes stale on model change with no
+  signal, so a fetched window carries "refetch on model change, and a
+  window fetched under a different model is unresolved rather than
+  stale."
+
   No Crush adapter was written and none should be yet: marvel has no
   Crush runtime adapter to declare the channel or construct the
   environment, and the transport is HTTP and SSE over a unix socket
