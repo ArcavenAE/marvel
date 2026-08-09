@@ -109,6 +109,17 @@ unproven and consistent with either reading. Turn 5 produced a long answer
 at 966 and turn 6 a one-word answer at 179. A running total cannot fall.
 The same fall appears inside the tool-calling turn, 216 then 185.
 
+**Both discriminators the mining arm names are satisfied here, and I am
+stating that rather than leaving it implied.** A session accumulator can
+never decrease, and `completion_tokens` decreases twice (966 to 179, 216 to
+185). A level must stay under the window while a running total over N
+requests cannot, and every `prompt_tokens` sample across the seven requests
+sits between 28674 and 29582 against a 40960 window, where a running total
+would have passed it at request 2 and reached roughly 200k by request 7.
+The one place `prompt_tokens` falls is the compaction in §4, which is a
+reset rather than an ordinary sample, so the window bound is what carries
+that term and the observed decrease is what carries the other.
+
 That second result is load-bearing beyond bookkeeping, because Crush's own
 displayed ratio is `(CompletionTokens + PromptTokens) / ContextWindow`. If
 completion had been cumulative, Crush's own actuation point would drift
@@ -131,6 +142,29 @@ model change, not per turn.
 
 Nothing here needs multiplying. Crush publishes one window term and
 applies its own compaction thresholds to it internally.
+
+**Settled with the codex arm, after I conceded this wrongly and had the
+concession refused.** The disagreement was whether a window reached by a
+separate REST call sits at rung 1 (`stream`, the channel the harness
+enforces compaction against) or rung 4 (`feed`, a side channel read
+opportunistically). I gave the rung up on the catalog evidence below,
+reasoning that a route reporting the workspace's CURRENT agent cannot say
+what window applied to a past message. That concession was wrong and the
+codex arm was right to decline it: CTX% is a live reading, so historical
+answerability is not a property of the quantity being resolved. The
+harness's own auto-summarize StopCondition actuates against the number this
+route returns, which is the rung-1 test, and transport was never the test.
+
+Both harnesses therefore supply the window as `stream`. The real difference
+is LIFETIME and it produces a rule rather than a demotion: codex's window
+cannot go stale because it is re-read with every level, while a separately
+fetched window goes stale on model change with no signal on the stream. So
+a fetched window carries **refetch on model change, and a window fetched
+under a different model is unresolved rather than stale**.
+
+Recorded because two arms swapping positions is a worse outcome than either
+holding one, and the reasoning that decides it belongs where it can be
+checked.
 
 **The table is not a fallback here, and the router study measured why.**
 `~/.local/share/crush/providers.json` is keyed provider first and model
@@ -172,14 +206,33 @@ The part that is worse than recorded, and worse than the codex sentinel:
   session that in fact holds roughly 28k of system prompt plus a summary.
   The harness's displayed figure is wrong in the same direction and by the
   same mechanism.
-- **`summary_message_id` is a has-ever-compacted marker, not an event.**
-  It stays set afterward. Detecting a compaction crossing needs the
-  `prompt_tokens` transition to zero or a change in the id's value.
+- **`summary_message_id` is a has-ever-compacted marker, not an event, and
+  that is categorical rather than a hit rate.** It stays set afterward, so
+  it cannot distinguish this compaction from a previous one at any
+  reliability. It is not a weak discriminator; it is not a discriminator.
+  Detecting a crossing needs the `prompt_tokens` transition to zero or a
+  change in the id's value.
 
 Any Crush reader must discard the zero rather than fold it, exactly as
-finding-017 required for codex, and must hold the previous reading rather
-than emit zero. Both failure modes report LOW pressure at HIGH pressure,
-which is the direction that silently disables rotation.
+finding-017 required for codex. What it does INSTEAD splits in two, and
+the second branch is the one this harness makes ordinary:
+
+- **A reader that has seen a good level holds it.** Emitting zero reports
+  LOW pressure at HIGH pressure, the direction that silently disables
+  rotation.
+- **A reader that has NOT seen one reports ABSENCE.** It has nothing to
+  hold, so `internal/usage`'s stated discipline applies unchanged: a wrong
+  number is worse than absence, and that specifically rules out zero and
+  rules out a neighbouring session's level.
+
+The second branch is not an edge case here. Because Crush's zero is
+durable state rather than a passing record, every attach to a session that
+compacted while nothing was watching lands in it: daemon restart, adopted
+pane, a session idle since last night. On a harness whose sentinel lasts
+one record the no-prior-reading case is rare; on this one it is the
+ordinary startup path. (The branch was named by the compaction-mining arm
+against its own corpus, and it corrects what this section said in its first
+pass, which asserted the hold without its precondition.)
 
 **Discard on the token values, not on the companion field.** The
 compaction-mining arm measured the same artifact class on Claude Code (68
@@ -428,6 +481,19 @@ database as a routing record should know that before they aggregate it.
 Cost is stored rather than computed at render time (`sessions.cost REAL NOT
 NULL DEFAULT 0.0`, no per-message column), and reads a literal 0.0 for
 ollama because the provider catalog prices it at zero.
+
+**One hazard from a sibling arm that does NOT reach these surfaces.** The
+codex arm relayed a measurement that Claude Code writes records physically
+later than records carrying much older timestamps, 26 times across 2 of 422
+sessions, worst case 25.2 hours, clustered before compactions. That defeats
+a reader taking the last line of an append-only log. None of Crush's
+surfaces is one. The SSE frames are live pushes consumed in arrival order;
+the REST routes are queries against current state; `sessions.prompt_tokens`
+is a single mutable column overwritten in place rather than an appended
+record, so there is no ordering to get wrong. The `messages` table is
+append-shaped, but no channel I measured derives occupancy from it. Stated
+as a negative rather than skipped, because the check was cheap and the
+reason it does not apply is structural rather than lucky.
 
 **Consolidated inventory, all measured at v0.88.1:**
 
