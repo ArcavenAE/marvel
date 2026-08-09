@@ -1325,11 +1325,57 @@ func (d *Daemon) handleReap(params json.RawMessage) Response {
 	return Response{Result: result}
 }
 
+// StopResult is what a stop request reports back before the daemon exits.
+type StopResult struct {
+	Status string `json:"status"`
+	Mode   string `json:"mode"`
+	// Unowned lists the marvel-* tmux state this daemon has no record of.
+	// Teardown deletes recorded sessions and kills recorded workspaces'
+	// tmux sessions, so anything in here survives it.
+	Unowned []string `json:"unowned,omitempty"`
+}
+
+// stopReport builds the response for a stop request, surveying what a
+// teardown will leave standing.
+//
+// Teardown is scoped to recorded state on purpose: Decision 5
+// (docs/design/daemon-isolation.md, ratified 2026-08-07) reserves the
+// destruction of marvel-* tmux state this daemon does not own for the
+// explicit acts, `marvel daemon --reclaim` and `marvel reap --confirm`.
+// A daemon that swept by name at teardown would destroy a second
+// daemon's fleet, which is the bug that ruling was written to end.
+//
+// What was missing is the honesty, not the sweep. The CLI printed
+// "agents torn down" whatever survived, because this response was built
+// before shutdown and carried nothing about it. Surveying here, on the
+// request goroutine, is what makes the answer reachable at all: the
+// shutdown goroutine ends the process. See ArcavenAE/marvel#92.
+func (d *Daemon) stopReport(teardown bool, mode string) Response {
+	res := StopResult{Status: "stopping", Mode: mode}
+	if teardown {
+		found, err := d.sessMgr.UnrecordedTmuxState()
+		if err != nil {
+			// A survey that cannot run is worth a log line and nothing
+			// more: refusing the stop over it would strand the operator.
+			log.Printf("survey unowned tmux state: %v", err)
+		}
+		res.Unowned = found
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("marshal stop result: %v", err)}
+	}
+	return Response{Result: data}
+}
+
 func (d *Daemon) handleStop(params json.RawMessage) Response {
 	teardown, mode, err := stopMode(params)
 	if err != nil {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
+	// Survey before the shutdown goroutine starts, so the answer is
+	// computed while the process is still alive to send it.
+	resp := d.stopReport(teardown, mode)
 	// Shut down off the request goroutine: the client is still reading
 	// this connection, and the listener closes inside shutdown.
 	go func() {
@@ -1341,8 +1387,7 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 		}
 		os.Exit(0)
 	}()
-	result, _ := json.Marshal(map[string]string{"status": "stopping", "mode": mode})
-	return Response{Result: result}
+	return resp
 }
 
 // handleReexec tells the running daemon to replace its own process image

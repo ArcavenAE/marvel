@@ -1560,9 +1560,12 @@ while every agent keeps running in its tmux pane. The next
 'marvel daemon' start reads that state back and adopts the live panes,
 so a restart or an upgrade costs no agent context.
 
-Use --teardown when you want the machine clean. Every session is
-deleted and every workspace tmux session killed before the daemon
-exits; nothing is left to adopt.`,
+Use --teardown when you want the machine clean. Every session this
+daemon recorded is deleted and every recorded workspace's tmux session
+killed before it exits, so it leaves nothing of its own to adopt.
+marvel-* tmux state it never recorded is reported rather than
+destroyed; 'marvel daemon --reclaim' and 'marvel reap --confirm' are
+the acts that destroy that.`,
 		Example: `  marvel stop              # detach, agents keep running
   marvel stop --teardown   # end every agent, then stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1574,10 +1577,23 @@ exits; nothing is left to adopt.`,
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			if teardown {
-				fmt.Println("marvel daemon stopping, agents torn down")
-			} else {
+			if !teardown {
 				fmt.Println("marvel daemon detaching, agents keep running")
+				return nil
+			}
+			fmt.Println("marvel daemon stopping, agents torn down")
+			// A daemon old enough to send no body has nothing to report,
+			// and the teardown it just ran still happened: do not turn
+			// that into a failed command.
+			if len(resp.Result) == 0 {
+				return nil
+			}
+			var result daemon.StopResult
+			if uerr := json.Unmarshal(resp.Result, &result); uerr != nil {
+				return fmt.Errorf("decode stop result: %w", uerr)
+			}
+			if w := stopWarning(result.Unowned); w != "" {
+				fmt.Fprintln(os.Stderr, w)
 			}
 			return nil
 		},
@@ -1585,6 +1601,27 @@ exits; nothing is left to adopt.`,
 	cmd.Flags().BoolVar(&teardown, "teardown", false,
 		"delete every session and kill its tmux session before stopping")
 	return cmd
+}
+
+// stopWarning renders what a teardown leaves standing. Returns an empty
+// string when there is nothing to report, so the common case stays quiet.
+//
+// Teardown removes what the daemon recorded; marvel-* tmux state it never
+// recorded survives by design (docs/design/daemon-isolation.md Decision
+// 5). Saying so is the difference between "agents torn down" being a
+// report and being a guess. See ArcavenAE/marvel#92.
+func stopWarning(unowned []string) string {
+	if len(unowned) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "warning: teardown removes only what this daemon recorded; %d marvel tmux item(s) survive it:\n",
+		len(unowned))
+	for _, item := range unowned {
+		fmt.Fprintf(&b, "  %s\n", item)
+	}
+	fmt.Fprint(&b, "clear them with 'marvel daemon --reclaim' or 'marvel reap --confirm'")
+	return b.String()
 }
 
 // --- Watch mode ---
