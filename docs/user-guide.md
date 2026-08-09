@@ -361,9 +361,13 @@ run the review has only `codex exec --dangerously-bypass-hook-trust`,
 which runs every enabled hook in that `CODEX_HOME` without review.
 
 Attribution needs nothing extra. `marvel codex-ctx` reads
-`MARVEL_SOCKET`, `MARVEL_WORKSPACE` and `MARVEL_SESSION` from the
-environment the adapter already constructs at spawn, so a codex started
-outside marvel finds none of them and the command does nothing. It also
+`MARVEL_SOCKET`, `MARVEL_WORKSPACE`, `MARVEL_SESSION` and
+`MARVEL_HEARTBEAT_TOKEN` from the environment the adapter already
+constructs at spawn, so a codex started outside marvel finds none of them
+and the command does nothing. The token is what lets the daemon tell this
+session reporting itself from any other process on the host reporting on
+its behalf; without it a beat is refused and the CTX% cell shows `-`. It
+also
 prints nothing at all: a codex hook's stdout is fed to the model as a
 developer message, so a status line here would be context the reporter
 itself added.

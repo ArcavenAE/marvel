@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/runtime/codex"
 	"github.com/spf13/cobra"
@@ -121,39 +122,7 @@ func newCodexCtxCmd() *cobra.Command {
 			if !send || socket == "" || workspace == "" || session == "" {
 				return nil
 			}
-			p := map[string]any{
-				"session_key":     workspace + "/" + session,
-				"context_percent": pct,
-				"model":           model,
-			}
-			// context_window is the producer half of a seam whose
-			// consumer does not exist: internal/daemon.heartbeatParams
-			// has no field for it and drops it. See the long comment in
-			// ctxforward.go, which names the two edits that finish it.
-			//
-			// Codex sharpens that open decision rather than settling it.
-			// This window is a `stream` declaration (rung 1), and codex is
-			// the clean case: limitLadder's rung-1 sentence has two
-			// conjuncts, the harness enforcing compaction against the
-			// window AND stating it "in the same channel as the token
-			// counts it is stating it about", and model_context_window
-			// satisfies both by riding the level's own record.
-			//
-			// Do NOT generalize the rung from this comment. A window the
-			// harness serves over a separate contracted query satisfies
-			// the first conjunct and not the second, and rung 4's text
-			// (a human-facing status hook, no version handle) does not
-			// describe it either. That case is open with the operator,
-			// marvel PR #172; see finding-023 and finding-020. Whatever
-			// rung it lands on, it needs a refetch rule codex does not:
-			// fetched under a different model, a window is unresolved
-			// rather than stale.
-			//
-			// The heartbeat RPC carries no rung and no window, so the
-			// distinction is lost at this seam today.
-			if window > 0 {
-				p["context_window"] = window
-			}
+			p := codexHeartbeatParams(workspace, session, os.Getenv(api.HeartbeatTokenEnv), model, pct, window)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemon.SendRequest(socket, daemon.Request{
@@ -163,4 +132,60 @@ func newCodexCtxCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// codexHeartbeatParams builds the heartbeat RPC's params. It is a
+// separate function so a test can assert what goes on the wire without
+// standing up a daemon; the pair of keys below is exactly what the
+// merge of #170 and #168 got wrong, and an inline literal inside a
+// cobra closure is not reachable by any test that would have caught it.
+func codexHeartbeatParams(workspace, session, token, model string, pct float64, window int) map[string]any {
+	p := map[string]any{
+		"session_key":     workspace + "/" + session,
+		"context_percent": pct,
+		"model":           model,
+	}
+	// The token marvel minted for this session at spawn, exactly as
+	// ctx-forward sends it. Without it the daemon refuses the beat:
+	// authenticateHeartbeat fails open only when the record carries no
+	// hash, and Manager.Create now mints one before the record exists, so
+	// every session spawned by a current daemon has one. A tokenless codex
+	// beat lands as ErrHeartbeatUnauthorized and CTX% renders absence.
+	//
+	// That is not hypothetical: it is what the merge of #170 and #168
+	// produced. codexctx was written against a base where
+	// UpdateSessionHeartbeat took no token, and the two landed the same
+	// night. Nothing failed to compile, because the payload is a
+	// map[string]any on the wire, and no test on either side covered the
+	// pair.
+	if token != "" {
+		p["session_token"] = token
+	}
+	// context_window is the producer half of a seam whose consumer does
+	// not exist: internal/daemon.heartbeatParams has no field for it and
+	// drops it. See the long comment in ctxforward.go, which names the two
+	// edits that finish it.
+	//
+	// Codex sharpens that open decision rather than settling it. This
+	// window is a `stream` declaration (rung 1), and codex is the clean
+	// case: limitLadder's rung-1 sentence has two conjuncts, the harness
+	// enforcing compaction against the window AND stating it "in the same
+	// channel as the token counts it is stating it about", and
+	// model_context_window satisfies both by riding the level's own record.
+	//
+	// Do NOT generalize the rung from this comment. A window the harness
+	// serves over a separate contracted query satisfies the first conjunct
+	// and not the second, and rung 4's text (a human-facing status hook,
+	// no version handle) does not describe it either. That case is open
+	// with the operator, marvel PR #172; see finding-023 and finding-020.
+	// Whatever rung it lands on, it needs a refetch rule codex does not:
+	// fetched under a different model, a window is unresolved rather than
+	// stale.
+	//
+	// The heartbeat RPC carries no rung and no window, so the distinction
+	// is lost at this seam today.
+	if window > 0 {
+		p["context_window"] = window
+	}
+	return p
 }

@@ -408,6 +408,57 @@ unable to answer it. The same thing happened here. The framing "needs an
 authenticated multi-turn resume" was true of the exec stream and false of
 the corpus beside it.
 
+## Two correct PRs broke each other on merge, and CI could not see it
+
+Added after the fact, because it is the most transferable thing in this
+finding.
+
+PR #168 made the heartbeat RPC require a per-session token:
+`UpdateSessionHeartbeat` takes it as a parameter, `authenticateHeartbeat`
+fails open only when the record carries no hash, and `Manager.Create`
+mints a hash before the record exists. PR #170, this one, added a second
+heartbeat producer that presented no token, because it was written
+against a base where the parameter did not exist. Both merged the same
+night, #168 first.
+
+The result on `b8cc831`: every codex session spawned by a current daemon
+has a hash, so `subtle.ConstantTimeCompare(Hash(""), hash)` mismatches,
+the beat is refused as `ErrHeartbeatUnauthorized`, `ContextAt` stays
+zero, and CTX% renders `-`. The feature this whole finding is about was
+dead on arrival at merge.
+
+**Neither PR was wrong and neither CI run could have caught it.** The
+heartbeat payload is a `map[string]any` marshalled to JSON, so a missing
+key is not a type error; the build was clean. #168's tests cover the
+daemon's auth behavior and #170's cover the payload decision, and both
+suites pass at the merge commit. The contract that broke lives between
+two packages and was asserted in neither.
+
+Three things generalize:
+
+1. **A new producer against a contract under concurrent change is the
+   risk, not a new consumer.** The fanout gave each arm a different
+   harness and told each to reach the same RPC. That shape guarantees N
+   independent implementations of one contract, and the contract was
+   itself being hardened by an arm none of the others could see.
+2. **`map[string]any` on a wire seam converts a compile error into a
+   silent one.** `ctxforward.go` and `codexctx.go` build the same payload
+   as untyped literals inside cobra closures, which is also why no test
+   could reach either. The fix extracts `codexHeartbeatParams` so the
+   payload is addressable; a shared typed struct for the params would be
+   stronger and is not in this PR.
+3. **Green CI on two PRs is not evidence about their merge.** Both were
+   verified against a base that predated the other. The check that would
+   have caught it is running the feature end to end after the merge, not
+   before it, and I had run exactly that check before #168 existed.
+
+Cheapest durable guard, and what this PR does: assert the wire key by
+name in `cmd/marvel`, verified to fail without the fix. The daemon-side
+field is `heartbeatParams.SessionToken`, tagged
+`json:"session_token,omitempty"` in `internal/daemon/daemon.go`; it is
+unexported, so the test spells the key rather than deriving it, and says
+so.
+
 ## What was not established
 
 - **Whether hook trust can be pre-seeded at all**, and where an accepted
