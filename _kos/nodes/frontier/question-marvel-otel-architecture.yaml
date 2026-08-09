@@ -157,6 +157,36 @@ content: |
   Gap 1 has an instrument nobody had noticed. Worth its own check
   before it is designed around.
 
+  THE FIRST CONCRETE OTEL PRODUCER MARVEL MIGHT CONSUME IS NOT A HARNESS
+  (`study-router-and-backend-layering.md`, aae-orc-eooi, 2026-08-08). A
+  router in the path (liteLLM is the instance studied) ships an `otel`
+  callback emitting GenAI-semconv spans with model, provider, token usage,
+  and cost, plus an opt-in v2 mode producing one trace per request
+  covering auth, guardrails, the LLM call, and DB writes. Every sub-question
+  on this node is posed in terms of harnesses as the emitters. If the
+  richest emitter is a piece of infrastructure the operator already runs,
+  sub-question A (topology) and sub-question E (advertisement) both change
+  shape, because a router does not need marvel to advertise an endpoint to
+  it and is not something marvel supervises.
+
+  This does NOT reopen the occupancy ruling above. A router's spans carry
+  the same cumulative token counters, so the type mismatch stands. It bears
+  on the affirmative inventory instead: the resource-matrix rows that are
+  correctly cumulative (dollars, tokens billed, tools invoked, seconds) may
+  be better served from one router than from N harnesses, and cost in
+  particular is a quantity the router computes rather than infers.
+
+  Carried as documentary INFERENCE, not measurement: the study could not run
+  liteLLM (not installed on this host; the operator's instance was left
+  untouched by direction), so every liteLLM claim is read from vendor
+  documentation rather than executed. It also surfaced two cautions worth
+  keeping beside any adoption decision: a router can rewrite the response
+  `model` field to the client-facing alias (liteLLM issue #22709), which
+  would corrupt any per-model attribution marvel derived downstream, and
+  liteLLM shipped a credential-stealing supply-chain compromise in two
+  releases, which is a live consideration for a component that would sit in
+  the credential path.
+
   Tracked: aae-orc-e06y (the affirmative inventory), aae-orc-24oy /
   aae-orc-fkvv / aae-orc-tpda (the deferred OTEL studies, which still
   carry the superseded framing and should be updated from the

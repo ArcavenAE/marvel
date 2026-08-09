@@ -143,6 +143,55 @@ content: |
   aae-orc-k2mi (Crush), aae-orc-9jvb (opencode). The plumbing that
   gated all three shipped in marvel#153 and #154.
 
+  CODEX DONE 2026-08-08 (finding-017, marvel#156 and #159), and it did not
+  land the way this order anticipated. The probe did not add a codex
+  occupancy channel; it REMOVED one that was never real. `turn.completed`
+  is a running session total rather than a per-request level, so the exec
+  stream yields no occupancy at all and codex CTX% now renders absent
+  rather than a wrong number. Full correction and its four supporting
+  measurements: question-stream-attachment correction (iii). Crush
+  (k2mi) and opencode (9jvb) remain, and remain serialized, because all
+  three land in `internal/usage`.
+
+  THE LADDER IS BUILT, THE FEED IS NOT WIRED TO IT (marvel#159,
+  aae-orc-38yr still open). `LimitFromFeed` exists at the ruled rung, and
+  precedence is now an explicit total ordering with a test that parses the
+  constants out of `limits.go` so a rung-less `LimitSource` fails. But the
+  statusline feed does not stamp the WRONG source, it stamps NOTHING:
+  `ctx-forward` parsed the declared window, used it for a local
+  cross-check, and dropped it before the heartbeat. The producer half now
+  emits it; `internal/daemon` has no field to receive it and `internal/api`
+  leaves `ContextLimit` at zero.
+
+  Two traps recorded on 38yr for whoever finishes it. Stamping "feed" in
+  the store would implement the LABEL without the LADDER, because the
+  ruling only bites if the heartbeat path calls `Resolve` with both the
+  feed limit and the manifest limit. And `UpdateSessionHeartbeat`'s
+  percentage-only shape is the DISCRIMINATOR telling the two CTX%
+  producers apart downstream, including in bolt rehydrate and the
+  renderer, so adding a window narrows it: a contract decision, not
+  plumbing.
+
+  THE CONSENT CATALOG NAMED THE WRONG CODEX FIELD. This node's CONCEDED
+  grade cites codex's `agent_transcript_path`. All eleven hook input
+  schemas embedded in the binary require `transcript_path`;
+  `agent_transcript_path` appears in exactly one, `subagent-stop`, and is a
+  subagent's file. The consent GRADE is unchanged and the channel works;
+  the field name was wrong, and a design built on it would have found it
+  absent everywhere it mattered.
+
+  HEADROOM IS A SEPARATE QUANTITY WITH A SEPARATE ATTRIBUTION RULE
+  (`probe-rate-limit-headroom-channel-catalog.md`, aae-orc-reif). Claude's
+  statusline already carries `rate_limits` with five-hour and seven-day
+  windows, sourced from response headers, and `ctx-forward` was discarding
+  it because its struct omitted the field. Captured in marvel#159.
+  Deliberately NOT forwarded over the heartbeat: headroom is
+  account-scoped, so N sessions on one account are N reporters of ONE
+  quantity, and a per-session column of it would be a category error
+  rather than merely a hard problem. Also corrects finding-007 on codex:
+  the path is `payload.rate_limits`, a sibling of `payload.info`, not
+  inside it. opencode and Crush have no headroom channel at all.
+
   Tracked: bd aae-orc-dc1j. Related: aae-orc-7hzb (statusline probe;
   its "other harnesses" remainder is absorbed by the sweep brief),
   aae-orc-w5su (headless CTX%; scope it headless-only so nobody
