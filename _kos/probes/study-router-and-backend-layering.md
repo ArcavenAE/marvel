@@ -780,6 +780,175 @@ Written 2026-08-09 against `aae-orc-eooi`, in an isolated clone at marvel HEAD
 artifacts cited. Zero model calls, zero network reads, no harness started, no
 liteLLM instance contacted, nothing outside the clone touched.
 
+---
+
+# Third pass, 2026-08-09: the provider is a window key, measured
+
+Prompted by a Crush data point relayed from the `k2mi` rig: `crush stats`
+reports Messages by Provider and Usage by Model as separate breakdowns, and
+prices per day by provider ($0.00 for a local model). The question that makes
+that evidence rather than decoration is whether the split is real in the data
+or produced by the renderer, so I went looking for the stored form.
+
+I did not start a Crush server. Starting one refreshes host-global
+`providers.json` and `hyper.json`, because `--data-dir` scopes only the
+project database.
+
+## 16. What marvel's own research already settled
+
+Two of the four questions were already answered in this repo, in
+`probe-interactive-ctx-remainder-sweep.md` round 3, measured against Crush
+v0.88.0:
+
+- **Crush is already tiered FEED-N here.** Occupancy rides the server SSE
+  session frame; `model.context_window` comes from a separate REST call to
+  `/v1/workspaces/{id}/agent`. The brief's own words: this "splits Crush's
+  feed into FEED-N plus a one-shot lookup rather than a FEED-2." So Crush sits
+  on the side of the section 11 split where a router hurts, and it is the next
+  adapter in the queue (`aae-orc-k2mi`, in progress today).
+- **The denominator source is a catalog, not a per-message field.**
+  `~/.local/share/crush/providers.json`, 40 providers, and every model
+  carries a `context_window`.
+
+## 17. The measurement: 141 of 249 shared model ids disagree on the window
+
+**MEASURED (kinu, 2026-08-09, read-only `jq` over a static file; no server
+started, no request issued).** Crush's catalog is keyed provider first, model
+second, and each model entry carries both `context_window` and per-provider
+pricing.
+
+| quantity | value |
+|---|---|
+| providers | 40 |
+| distinct model ids | 948 |
+| model ids offered by more than one provider | 249 |
+| of those, ids whose `context_window` DISAGREES across providers | **141** |
+| of those, disagreeing by 1.5x or more | **52** |
+
+Some disagreement is cosmetic (1000000 against 1048576 is decimal against
+binary). The 52 are not: `claude-sonnet-4-6` is 200000 at `anthropic` and
+1000000 at `vertexai`; `grok-4.5` spans 328000, 500000 and 1000000.
+
+**Every model id in marvel's shipped table is provider-variable, at exact
+spelling.** All seven keys, ignoring the `[1m]` suffixed forms:
+
+| marvel table key | marvel's value | catalog spread across providers |
+|---|---|---|
+| `claude-haiku-4-5` | 200000 | 200000, 204800 |
+| `claude-fable-5` (as `[1m]`) | 1000000 | 264000 (copilot), 1000000 |
+| `claude-sonnet-4-6` | 200000 | 200000 (anthropic), 1000000 (vertexai and three others) |
+| `claude-sonnet-5` | 1000000 | 264000 (copilot), 1000000 |
+| `claude-opus-4-7` | 200000 | 200000 (aihubmix), 1000000 (anthropic) |
+| `claude-opus-4-8` | 200000 | 200000 (aihubmix), 1000000 (anthropic) |
+| `claude-opus-5` | 1000000 | 264000 (copilot), 1000000 (anthropic) |
+
+`claude-opus-5` is the cleanest collision: marvel's table returns 1000000, and
+a copilot-served model of that exact id is catalogued at 264000. Marvel would
+resolve `LimitFromTable`, the most confident non-measured rung, and be wrong
+by 3.8x with no signal.
+
+**A hypothesis I formed and the data refuted.** Copilot's rows show cost 0 for
+every model, which looked like the codex pattern from finding-017: a
+per-account plan limit wearing a model name. It is not. Copilot's 30 models
+carry nine distinct windows (16384 through 1048576), with 264000 on 11 of
+them. So copilot CLAMPS a subset of models below their native window and
+leaves the rest alone, which is a third pattern beside "keyed by model" and
+"one number per account". The uniform thing at copilot is the price, not the
+window, and price and window turn out to be provider effects of different
+shapes.
+
+## 18. What this does not establish, and it matters
+
+This is **Crush's catalog**, a third party's curation of 40 vendors. It is not
+a measurement of any vendor's served window. Two reasons to hold it loosely:
+
+- A catalog can be stale or wrong, and nothing here checks one against a live
+  API.
+- **Crush and marvel disagree about which axis carries the 1M window.** Marvel
+  puts it in the model name (`claude-opus-4-8` 200000 beside
+  `claude-opus-4-8[1m]` 1000000, the entitlement axis, finding-016 axis 5).
+  Crush puts it in the provider row (anthropic's `claude-opus-4-8` is
+  1000000). At least one of them is modelling the axis wrong, and marvel
+  cannot tell which from here. Provider and entitlement are entangled, so
+  "key the table by provider" would not resolve the entanglement. It would
+  relocate it.
+
+What the measurement DOES establish is narrower and still decisive: **the one
+shipping harness in this survey that fronts many providers, and that maintains
+a 1405-model catalog precisely to answer "what is this model's window", found
+it necessary to key that catalog by (provider, model) rather than by model.**
+That is an independent design vote on the exact question of section 13, cast
+by someone who had to ship an answer.
+
+## 19. The consequence, which is sharper than the first pass had it
+
+finding-016 argued the table is the rung of last resort because its **miss**
+rate is structural. This adds the worse half: **the table's HIT can be wrong.**
+For all seven keys marvel ships, a correct-looking exact match returns a
+number whose truth depends on a provider marvel does not record, does not
+read, and has no field for. A miss renders `?`, which is the designed
+behavior. A wrong hit renders a confident number, which is the failure
+`internal/usage` exists to prevent.
+
+Two fixes, both inside `internal/usage`, neither a new type:
+
+1. **Strengthen the KNOW step the first pass already recommended.** Recording
+   the ambient provider-selecting environment at spawn stops being a nice
+   provenance record and becomes the input to (2). Section 6 argued for it on
+   the grounds that it fixes the direct case; this argues for it on the
+   grounds that the table is unsound without it.
+2. **A provider-sensitivity guard on the table.** Where an id's window varies
+   by provider and the provider is unknown, resolve `?` rather than the
+   default. That is the `?`-rather-than-guess discipline applied one level up:
+   today it fires on an unknown model, and it should also fire on a known
+   model whose answer depends on something unknown.
+
+`NormalizeModel` is where this lands, and section 13's framing needs
+correcting. I called the `anthropic.` strip "the site, not the answer" and
+said no measurement compared a Bedrock window against a direct one. The
+comparison above is not that measurement either, but it is close enough to
+retire the idea that the question is speculative. The strip's stated
+justification ("Pricing differs by region; the window does not") is sound
+about regions and silent about providers, and providers are where the 5x
+lives.
+
+## 20. The ruling is unchanged, and here is why the new evidence does not move it
+
+The provider is a real key. It is not a marvel primitive.
+
+Crush separating provider from model is a stronger version of the same
+observation the first pass made about liteLLM's model-group/deployment split:
+the layer below the harness is genuinely two-level, and Position A ("the
+router IS the backend") is weakened further, since a shipping harness names
+provider and model as different things at the same distance. None of that
+requires marvel to grow a type. It requires a field marvel already has
+somewhere to be keyed on one more thing, and a guard that refuses a lookup it
+cannot key.
+
+On the cost half of the data point: **marvel never prices.** There is no
+price table anywhere in `internal/usage`; `Sample.CostUSD` is a `*float64`
+copied from whatever the harness reported (`sample.go:134` and `:148`), and
+opencode's fixtures report `"cost":0`. Crush's provider-priced cost column is
+Crush doing a job marvel deliberately does not do. So provider is load-bearing
+for the WINDOW and not load-bearing for SPEND, which is the opposite of what
+the cost column suggests at a glance.
+
+The trigger from section 14 stands unchanged. This adds a second, independent
+consequence on a different axis, and both now point at the same near-term
+event: the Crush adapter (`aae-orc-k2mi`, in progress). Crush is FEED-N by
+this repo's own tiering, and Crush is the harness whose catalog demonstrates
+provider-keyed windows. Whoever ships that adapter meets both.
+
+## Third-pass provenance
+
+Written 2026-08-09 against `aae-orc-eooi`. Method: read-only `jq` over
+`~/.local/share/crush/providers.json` (436KB, mtime 2026-08-09 00:52, refreshed
+by another agent's rig rather than by me), plus this repo's
+`probe-interactive-ctx-remainder-sweep.md` and `internal/usage`. No Crush
+server started, no socket opened, no request issued, no file written outside
+the clone. The Crush stats-surface observation is relayed rather than
+observed; the catalog numbers are mine.
+
 ## Addendum sources
 
 All in-tree: `internal/usage/sample.go`, `internal/usage/profiles.go`,

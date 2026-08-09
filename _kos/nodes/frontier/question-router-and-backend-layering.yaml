@@ -155,6 +155,71 @@ content: |
   a per-team virtual key is management, and it is the one management
   act that buys fleet-wide spend attribution obtainable no other way.
 
+  THE PROVIDER IS A WINDOW KEY, MEASURED 2026-08-09 (third pass). Crush's
+  on-disk catalog `~/.local/share/crush/providers.json` is keyed provider
+  first, model second, and carries a `context_window` per entry. Read-only
+  over the static file, no server started: 40 providers, 948 distinct model
+  ids, 249 offered by more than one provider, and 141 of those 249 DISAGREE
+  on the window, 52 of them by 1.5x or more. `claude-sonnet-4-6` is 200000
+  at anthropic and 1000000 at vertexai.
+
+  ALL SEVEN model ids in marvel's shipped table are provider-variable at
+  exact spelling. The cleanest collision: marvel's table returns 1000000 for
+  `claude-opus-5` and a copilot-served model of that exact id is catalogued
+  at 264000, so marvel would resolve `LimitFromTable`, the most confident
+  non-measured rung, and be wrong by 3.8x with no signal.
+
+  A hypothesis formed and REFUTED in the same pass: copilot's uniform cost 0
+  suggested the finding-017 codex pattern (a per-account plan limit wearing a
+  model name). It is not. Copilot's 30 models carry nine distinct windows,
+  264000 on 11 of them, so copilot CLAMPS a subset below native and leaves
+  the rest. Price is the uniform thing at copilot, not the window.
+
+  HELD LOOSELY, deliberately. This is a third party's curation of 40 vendors,
+  not a measurement of any vendor's served window, and nothing here checks it
+  against a live API. Crush and marvel also DISAGREE about which axis carries
+  the 1M: marvel puts it in the model name (`claude-opus-4-8` 200000 beside
+  `claude-opus-4-8[1m]` 1000000, finding-016 axis 5, entitlement), Crush puts
+  it in the provider row (anthropic's `claude-opus-4-8` is 1000000). At least
+  one models the axis wrong and marvel cannot tell which. Provider and
+  entitlement are entangled, so keying the table by provider would relocate
+  the entanglement rather than resolve it. What the measurement DOES
+  establish: the one shipping harness here that fronts many providers, and
+  that maintains a 1405-model catalog precisely to answer "what is this
+  model's window", found it necessary to key by (provider, model).
+
+  THE CONSEQUENCE, sharper than the first pass had it. finding-016 argued the
+  table is last resort because its MISS rate is structural. The table's HIT
+  can also be wrong: for all seven keys marvel ships, a correct-looking exact
+  match returns a number whose truth depends on a provider marvel does not
+  record, does not read, and has no field for. A miss renders `?`, which is
+  designed. A wrong hit renders a confident number, which is the failure
+  internal/usage exists to prevent. Two fixes, both inside internal/usage and
+  neither a new type: (1) the KNOW step above stops being a nice provenance
+  record and becomes load-bearing, since the table is unsound without it;
+  (2) a provider-sensitivity guard, resolving `?` where an id's window varies
+  by provider and the provider is unknown. That is the `?`-rather-than-guess
+  discipline applied one level up: today it fires on an unknown model, and it
+  should also fire on a known model whose answer depends on something
+  unknown.
+
+  RULING UNCHANGED BY THE THIRD PASS. The provider is a real key and it is
+  not a marvel primitive. Crush naming provider and model as different things
+  at the same distance weakens Position A further, and requires no type: it
+  requires a field marvel already has to be keyed on one more thing, plus a
+  guard that refuses a lookup it cannot key. On cost, the opposite of what
+  Crush's provider-priced column suggests at a glance: marvel NEVER prices.
+  There is no price table in internal/usage; `Sample.CostUSD` is a *float64
+  copied from the harness's own figure. Provider is load-bearing for the
+  WINDOW and not for SPEND.
+
+  BOTH CONSEQUENCES NOW POINT AT ONE NEAR-TERM EVENT: the Crush adapter
+  (`aae-orc-k2mi`, in progress 2026-08-09). This repo's own sweep tiers Crush
+  FEED-N (occupancy on the SSE session frame; `model.context_window` from a
+  separate REST call to /v1/workspaces/{id}/agent, so "FEED-N plus a one-shot
+  lookup rather than a FEED-2"), and Crush is the harness whose catalog
+  demonstrates provider-keyed windows. Whoever ships that adapter meets both.
+
   ONE CONCRETE SITE, if backend ever becomes a key. `NormalizeModel` in
   `internal/usage/limits.go` strips `us.`, `eu.`, `apac.` and a leading
   `anthropic.` before a window lookup, justified as regional ("Pricing
@@ -175,6 +240,14 @@ content: |
   table. Whether claude's `message.model` is server-attested or
   client-echoed, which is open in the DIRECT case and which a router
   converts from a possibility into a likelihood.
+
+  STILL NOT ESTABLISHED AFTER THE THIRD PASS: whether Crush's catalog matches
+  any vendor's served window (no live API was called); whether Crush stores
+  provider as its own column or parses a namespaced string, and whether one
+  Crush session can hold rows with two providers (asked of the k2mi rig,
+  unanswered at time of writing, so the stats-surface observation stays
+  relayed rather than observed); and which of marvel or Crush models the
+  1M-entitlement axis correctly.
 edges:
   - target: question-interactive-context-pressure
     type: derives
