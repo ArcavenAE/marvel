@@ -944,7 +944,7 @@ provider-keyed windows. Whoever ships that adapter meets both.
 The `k2mi` rig answered the four schema questions by measurement (crush
 v0.88.1, isolated rig, `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` to avoid the
 global-cache refresh, zero host drift). Full detail in
-`finding-019-crush-context-pressure-channel.md`, marvel#166. Three of my open
+`finding-020-crush-context-pressure-channel.md`, marvel#166. Three of my open
 items close and one framing of mine needs correcting.
 
 **The hedge resolves in favor of the argument.** `provider` is its own
@@ -1007,6 +1007,102 @@ provider a session was pointed at when the harness's own record is silent, and
 the provider-sensitivity guard is unaffected. What is new is a bound on how
 much a harness-read can ever deliver, which belongs in whatever design
 `aae-orc-k2mi` produces.
+
+## 22. Fifth pass: the workspace is a routing locus, and it defeats my own recommendation
+
+Two further results from the `k2mi` rig, neither of which I asked for, and the
+first of which lands on the recommendation this study has been strengthening
+for three passes. Both relayed as measured by that rig, not re-measured here.
+
+**Crush executes a project-local `.crushrc` as bash at config load.** Measured
+firing on `crush run` with no trust prompt, and outside the `allowed_tools`
+permission list, because it runs before any agent turn exists. A `crushrc` is
+documented as building configuration by calling builtins including `provider`
+and `model`.
+
+That makes the **workspace** a routing locus, and it is a fifth one, distinct
+from the four in section 10. Routing can be decided by marvel's constructed
+environment, by the operator's global config, by the harness's internal slot
+policy, by an external router, and now by a script shipped in the repository
+being worked on.
+
+**The consequence for section 6's KNOW recommendation is direct and negative.**
+Recording the ambient provider-selecting environment at spawn is what the
+fourth pass called load-bearing, on the grounds that it is what tells marvel
+which provider a session was pointed at when the harness's own record is
+silent. A `.crushrc` overrides that after the record is taken. Marvel would
+hold a spawn-time observation that is accurate about what marvel handed over
+and wrong about what ran.
+
+This is finding-016's open-loop ruling arriving with a concrete mechanism
+rather than as a caution. The first pass already stated it in the abstract:
+recording the environment records what marvel handed the harness, not what the
+harness used, so the record is an assignment and "assignment without
+observation is open-loop". Section 19 then leaned on that record anyway,
+because the provider-sensitivity guard needs an input. The guard still needs
+one; what changes is that a spawn-time environment read cannot be that input
+on its own, and the honest grade for a provider derived that way is
+**assigned, not observed**, which is precisely the provenance grading section
+12 said was the warranted fix. The two recommendations turn out to be one:
+the guard is only sound if the provider it keys on carries its own grade.
+
+Worth naming without overreaching: for an agent fleet, the repository being
+worked on is frequently content an agent can write. I am not developing that
+into a threat claim, and nothing here was tested from that angle. It is
+recorded because a routing locus that is writable by the workload is a
+different kind of locus from the other four.
+
+**Config and data are split, and only one half holds credentials.**
+`~/.config/crush/crush.json` is mode 0600 and carries per-provider `api_key`;
+`~/.local/share/crush/crush.json` is 0644, model selections and
+`recent_models`, no secrets. `CRUSH_GLOBAL_DATA` is relocatable,
+`CRUSH_GLOBAL_CONFIG` is the operator's credential store, and project-local
+config outranks both.
+
+Two things follow. The precedence chain a fleet would have to respect to pin a
+per-workspace provider is project-local over data over config, which is the
+reverse of where the credentials live. And section 6's MANAGE ruling gains its
+cleanest supporting case: the relocatable half is the one marvel could touch
+without going near a credential store, so the SOUL section 3 boundary has a
+natural seam here rather than needing to be drawn by care.
+
+## 23. Hoisting one claim out of the Crush sections, because it is not about Crush
+
+The rig's closing observation is correct and I am acting on it. This sentence
+has been sitting inside a Crush narrative across two passes:
+
+> Marvel and Crush disagree about which axis carries the 1M window. Marvel
+> puts it in the model name (`claude-opus-4-8` 200000 beside
+> `claude-opus-4-8[1m]` 1000000, the entitlement axis, finding-016 axis 5).
+> Crush puts it in the provider row (anthropic's `claude-opus-4-8` is
+> 1000000).
+
+**That is a claim about `internal/usage/limits.go`, not about Crush.** It says
+marvel's table may be mis-keyed for a reason that has nothing to do with which
+harness reads it, and it would be equally true if Crush did not exist. Crush's
+catalog is only the instrument that made the disagreement visible.
+
+Stated on its own terms: marvel's table encodes the 1M window as a property of
+a model NAME, via the `[1m]` suffix that `NormalizeModel` deliberately
+preserves. finding-016 axis 5 says the 1M window is a BETA ENTITLEMENT
+(`context-1m-2025-08-07`), gated per account per backend, so the same model id
+is a 200k model or a 1M model depending on whether the beta is enabled for
+that account on that backend. A suffix in a model name cannot express an
+account-and-backend-scoped grant. It can only express what the harness chose
+to spell.
+
+So `claude-opus-4-8` and `claude-opus-4-8[1m]` are not two models. They are one
+model under two entitlement states, and the table reads them as two keys
+because that is how the spelling arrives. Whether that is harmless depends on
+whether the harness's spelling tracks the entitlement faithfully in every case,
+which is untested here and is the thing to test. Two of the table's values are
+fixture-verified, so this is not an assertion that the table is wrong; it is
+an assertion that the table's KEY is an axis narrower than the fact it stores,
+and that marvel currently has no way to notice a mismatch.
+
+This is the same shape as the provider result in section 19 and it compounds
+with it: the window depends on at least model, provider, and entitlement, and
+the table is keyed on a string that reliably carries only the first.
 
 ## Third-pass provenance
 

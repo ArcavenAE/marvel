@@ -243,7 +243,7 @@ content: |
 
   FOURTH PASS 2026-08-09: the k2mi rig answered the schema questions by
   measurement (crush v0.88.1, isolated rig,
-  CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1, zero host drift; finding-019,
+  CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1, zero host drift; finding-020,
   marvel#166). Three open items close, one framing corrects.
 
   - The hedge RESOLVES IN FAVOR of the design-vote argument. `provider` is
@@ -294,10 +294,77 @@ content: |
   unaffected. What is new is a BOUND on how much a harness-read can ever
   deliver, which belongs in whatever design aae-orc-k2mi produces.
 
+  FIFTH PASS 2026-08-09. Two further k2mi results, relayed as measured by that
+  rig rather than re-measured here, plus one claim hoisted out of the Crush
+  narrative because it is not about Crush.
+
+  THE WORKSPACE IS A FIFTH ROUTING LOCUS, AND IT DEFEATS THE KNOW STEP. Crush
+  executes a project-local `.crushrc` as BASH at config load, measured firing
+  on `crush run` with no trust prompt and outside the allowed_tools permission
+  list, because it runs before any agent turn exists. A crushrc is documented
+  as building config by calling builtins including `provider` and `model`. So
+  routing can be decided by marvel's constructed environment, the operator's
+  global config, the harness's internal slot policy, an external router, OR a
+  script shipped in the repository being worked on.
+
+  The consequence is negative for this node's own recommendation. Recording
+  the ambient provider-selecting environment at spawn was called load-bearing
+  in the fourth pass. A .crushrc overrides it AFTER the record is taken, so
+  marvel would hold a spawn-time observation accurate about what marvel handed
+  over and wrong about what ran. This is finding-016's open-loop ruling with a
+  concrete mechanism instead of a caution. What changes: a spawn-time
+  environment read cannot be the guard's only input, and the honest grade for
+  a provider derived that way is ASSIGNED, NOT OBSERVED. That collapses the
+  two warranted fixes into one: the provider-sensitivity guard is sound only
+  if the provider it keys on carries its own provenance grade. Recorded
+  without overreach: for an agent fleet the repository being worked on is
+  frequently content an agent can write, so a routing locus writable by the
+  workload is a different kind of locus from the other four. Nothing was
+  tested from that angle.
+
+  CONFIG/DATA SPLIT: `~/.config/crush/crush.json` is 0600 and carries
+  per-provider api_key; `~/.local/share/crush/crush.json` is 0644, model
+  selections and recent_models, no secrets. CRUSH_GLOBAL_DATA is relocatable,
+  CRUSH_GLOBAL_CONFIG is the credential store, project-local outranks both.
+  The precedence a fleet must respect to pin a per-workspace provider is
+  project-local over data over config, the reverse of where credentials live.
+  The MANAGE=no ruling gains its cleanest supporting case: the relocatable
+  half is the one marvel could touch without going near a credential store, so
+  the SOUL section 3 boundary has a natural seam rather than needing care.
+
+  HOISTED, BECAUSE IT IS A CLAIM ABOUT internal/usage/limits.go AND NOT ABOUT
+  CRUSH. Marvel's table encodes the 1M window as a property of a model NAME,
+  via the `[1m]` suffix NormalizeModel deliberately preserves. finding-016
+  axis 5 says the 1M window is a BETA ENTITLEMENT (context-1m-2025-08-07),
+  gated per account per backend, so the same model id is a 200k model or a 1M
+  model depending on whether the beta is enabled for that account on that
+  backend. A suffix in a model name cannot express an account-and-backend
+  scoped grant; it can only express what the harness chose to spell. So
+  `claude-opus-4-8` and `claude-opus-4-8[1m]` are not two models. They are one
+  model under two entitlement states, read as two keys because that is how the
+  spelling arrives. This is NOT an assertion that the table is wrong (two
+  values are fixture-verified). It asserts that the table's KEY is an axis
+  narrower than the fact it stores, and marvel has no way to notice a
+  mismatch. Would be equally true if Crush did not exist; Crush's catalog was
+  only the instrument that made it visible. Compounds with the provider
+  result: the window depends on at least model, provider and entitlement, and
+  the table is keyed on a string that reliably carries only the first.
+
   STILL NOT ESTABLISHED: whether Crush's catalog matches any vendor's served
-  window (no live API was called); which of marvel or Crush models the
-  1M-entitlement axis correctly; and whether a Crush session in practice ever
-  holds two providers, which the schema permits and the rig did not exhibit.
+  window (no live API was called); whether the harness's `[1m]` spelling
+  tracks the entitlement faithfully in every case, which is the test the
+  hoisted claim asks for; and whether a Crush session in practice ever holds
+  two providers, which the schema permits and the rig did not exhibit. On the
+  last, the rig proposed a cheaper substitute than waiting for a live routing
+  decision: set models.large and models.small to different PROVIDERS and
+  trigger a summarize, which runs on the small slot and DOES persist a row
+  (is_summary_message=1). If that row carries the small slot's provider while
+  conversational rows carry the large slot's, one session holds two providers
+  without needing the router to decide anything. The sharper result it would
+  buy is not "two providers occur" but whether the partial record of the
+  fourth pass is ARBITRARILY partial: the same small slot persists a row for
+  summarize and none for title generation, so a consumer cannot reason about
+  which calls are recorded from any boundary the harness exposes.
 edges:
   - target: question-interactive-context-pressure
     type: derives
