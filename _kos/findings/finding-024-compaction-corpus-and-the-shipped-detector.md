@@ -223,6 +223,22 @@ discarded. The Claude case says the discard must key on the token values,
 because the model name is not a reliable discriminator: on this harness 67
 of 68 announce themselves and one does not.
 
+**The rule generalizes, and the reason is that each harness offers a
+DIFFERENT companion field that looks like a discriminator and fails in a
+different way.** Three harnesses, three failures:
+
+| harness | the tempting companion signal | how it fails |
+|---|---|---|
+| claude | `model` reads `<synthetic>` | 67 of 68, and the 68th names the session's real model |
+| codex | `model` | absent from the sentinel record entirely (verified here: 16 all-zero records across 2,099 `token_count` records in 210 rollout files, no `model` key on any of them) |
+| crush | `summary_message_id` is set | never clears after the compaction, so it marks has-ever-compacted rather than this event (finding-020) |
+
+Crush's is the categorical one and it is the better argument than mine: a
+field that cannot distinguish this compaction from a previous one is not a
+discriminator at any hit rate, where my claude figure is only a hit rate.
+The token values are the one signal all three publish and none of them
+qualifies away.
+
 One hazard checked and NOT found: if a session's first sample were a
 `<synthetic>` zero, `fold` would latch `<synthetic>` as primary and route
 every real sample away forever. 10 sessions do start that way, and all 10
@@ -264,6 +280,18 @@ record's own timestamp removed 2 of the 5 detector false positives and
 changed no true positive. The rate is low (26 in 77,711) and the
 consequence is not: it is a 7x understatement at the single moment the
 number is load-bearing.
+
+**Measured absent on codex, and the null is weaker than it looks.** The
+codex arm tested rather than inheriting: zero inversions across 210
+rollout files, over every record type, with no unparseable timestamps and
+no file where last-by-position differs from newest-by-timestamp
+(finding-023). That is a real negative and it does not exclude the
+property. My rate is 2 of 422 sessions, and a codex rate identical to
+Claude's would still produce a clean null across 210 files about 37% of
+the time. They ordered by timestamp anyway, which is the right call when
+the fix is one comparison and the failure understates. Recorded here
+because a per-harness reader should inherit the METHOD, not either
+result.
 
 ### The primary-model latch, and CTX% that stops moving
 

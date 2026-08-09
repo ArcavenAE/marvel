@@ -222,9 +222,37 @@ content: |
     assistant records carry all three prompt classes at zero. 67 name
     `<synthetic>` and are excluded incidentally by the non-primary-model
     guard; ONE names the session's real model, passes every guard, and
-    sits beside a compaction at 467,121 tokens. The discard rule
-    `aae-orc-mob4` sets for codex must key on the token values, because
-    the model name is not a reliable discriminator.
+    sits beside a compaction at 467,121 tokens.
+
+  THE ZERO-SAMPLE RULE IS FLEET-WIDE, NOT A CLAUDE FACT, and it is
+  ruled on three measured harnesses rather than argued from one.
+  DISCARD ON THE TOKEN VALUES; never on a companion field. Each harness
+  offers a different companion signal that looks like a discriminator
+  and each fails differently: claude's `model` reads `<synthetic>` on 67
+  of 68 and names the session's real model on the 68th; codex publishes
+  no `model` key on the sentinel record at all (16 all-zero records
+  across 2,099 `token_count` records in 210 rollout files); Crush's
+  `summary_message_id` never clears, so it marks has-ever-compacted
+  rather than this event. Crush's is the categorical case and the
+  strongest form of the rule: a field that cannot distinguish this
+  compaction from a previous one is not a discriminator at any hit
+  rate.
+
+  THE DISCARD NEEDS A COMPANION RULE, because discarding alone leaves
+  the question of what to report. Hold the last good level where one
+  exists; report ABSENCE where none does. A reader attaching to a
+  session already in the post-compaction state has no prior reading to
+  hold, which is every daemon restart, every adopted pane, and every
+  session that compacted unobserved. Absence is already this package's
+  discipline (a wrong number is worse than absence) and zero is a wrong
+  number. The exposure differs by channel shape: codex and claude write
+  a transient record a tailer can skip (claude measured at 259.9s to
+  the next nonzero level), while Crush's zero is the current value of a
+  mutable column that a poller sits on until the next request
+  completes.
+
+  Evidence: finding-024 (claude), finding-023 (codex),
+  finding-020 (Crush).
 
   Three further properties a per-harness reader must handle: transcript
   file order is NOT chronological (26 inversions, worst 25.2 hours, one
