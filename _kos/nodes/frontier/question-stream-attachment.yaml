@@ -118,7 +118,7 @@ content: |
   normalized to a configurable threshold plus a reserved buffer and reads
   higher than raw occupancy.
 
-  TWO CORRECTIONS TO THE PARAGRAPH ABOVE, 2026-08-08.
+  THREE CORRECTIONS TO THE PARAGRAPH ABOVE, 2026-08-08.
 
   (i) THE OPENCODE SHAPE IS WRONG AS WRITTEN. "step_finish.part.tokens.input
   (+cache)" came from finding-007's SP1, whose supporting row had both cache
@@ -141,6 +141,55 @@ content: |
   varies on six independent axes (harness release, user settings, model,
   backend service, entitlement, model slot), so it must be learned and
   invalidated per tuple rather than assigned once. Tracked: aae-orc-sj34.
+
+  (iii) THE CODEX SHAPE IS WRONG IN THE LOAD-BEARING WAY, AND THE CONSEQUENCE
+  IS THAT THE EXEC STREAM CANNOT PRODUCE CODEX OCCUPANCY AT ALL (finding-017,
+  aae-orc-pt8k). `codex exec --json` `turn.completed` reports a RUNNING SESSION
+  TOTAL, not a per-request level. The repo's own `tool_call.jsonl` fixture
+  reports 28110 for a thread whose rollout shows two requests with prompts
+  14005 then 14105 and `total_token_usage` 14005 then 28110; the exec stream
+  matches `total_token_usage` field for field. marvel was reading 28110 as
+  occupancy where the truth was 14105. This is the same class of defect
+  correction (i) records for opencode and that finding-007 measured when a
+  cumulative total was read as a level, now for the third time in this arc.
+  So the rollout behind the hook pointer is not one option among several, it
+  is the ONLY source. Fixed in marvel#159: `fold` honors `Cumulation` (a field
+  previously set and never read), codex is `CumulationSession`, and codex CTX%
+  renders absent rather than a wrong number.
+
+  Four supporting corrections from the same probe:
+
+  - `LayoutSubsumptive` for codex STANDS, but the evidence the code cited
+    could not discriminate it. `input_tokens` 13992 with `cached` 11008 is
+    equally what an additive harness shows on a large new prompt. The
+    discriminator is the window bound over 2081 records against the 258400
+    codex declares beside them: `In` alone peaks at 93.8 percent and never
+    exceeds the window, while `In + cached + cache_write` exceeds it on 801
+    records and reaches 186.6 percent.
+  - REASONING IS A SUBSET OF OUTPUT. Over 1665 nonzero-reasoning records,
+    `total == in + out` holds on all 1665 and `total == in + out + reasoning`
+    on none. `TotalMismatch` sums `In + Out + ReasoningOut`, so publishing a
+    codex Total would report a phantom mismatch on every thinking turn.
+  - THE HOOK POINTER FIELD IS `transcript_path`, NOT `agent_transcript_path`.
+    All eleven hook input schemas embedded in the codex binary list
+    `transcript_path` as required; `agent_transcript_path` appears in exactly
+    one, `subagent-stop`, where it is a SUBAGENT's file. A design built on the
+    name the consent catalog carried would have found it absent everywhere it
+    mattered.
+  - A SECOND DENOMINATOR SOURCE EXISTS that this node's "table keyed on the
+    launch -m arg" sentence does not mention:
+    `event_msg/task_started.model_context_window`, present at the start of
+    every turn (369 records), which fired even in an unauthenticated probe
+    that never received a model response.
+
+  Still open on codex, and stated rather than glossed: whether the accumulator
+  resets per turn or per session is unestablished (it needs an authenticated
+  multi-turn `codex exec resume`, declined on credential cost). And the
+  denominator CANNOT be keyed to a model from this corpus, because all three
+  models observed and all eight in the shipped table report the identical
+  258400, so "keyed by model" and "one number per account or plan" predict the
+  same data. That is the finding-007 failure shape exactly, and it was
+  reported as indeterminate rather than shipped as a table line.
 
   A related correction to the capture-pane ruling this node carries above: the
   disqualifier is not that a TUI is uncooperative, it is that there is no

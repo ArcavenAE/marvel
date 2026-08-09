@@ -80,6 +80,80 @@ content: |
   region must not be built into a default. Next attempt is rework
   detection (aae-orc-tzzn).
 
+  REWORK DETECTION RAN AND THE KNEE IS UNDECIDABLE FROM THIS CORPUS
+  (`probe-rework-detection-result.md`, aae-orc-tzzn, 2026-08-08). A
+  pre-registered failure signal fired, so it lands as a probe result and
+  NOT as a finding. 255,071 transcript lines parsed, 0 parse failures.
+  Rework does not separate across occupancy bands, in the same shape SP1's
+  error rate did not: pooled repeated-invocation runs 0.23 to 1.59 percent
+  below 600k and 1.24 percent (95 percent CI 0.68 to 2.27) above it, an
+  interval that CONTAINS the below-600k rate.
+
+  The verdict is "undecidable", deliberately not "invisible", because
+  "invisible" would claim the measurement had power to see an effect and
+  saw none. It did not have that power, and the probe can now say exactly
+  where the power went. Three structural reasons, only the first
+  anticipated by the brief:
+
+  1. THE PRIMARY ANALYSIS CANNOT REACH THE KNEE. 67 of 78 compaction
+     boundaries fire at a `preTokens` median of 467,446 and none between
+     500k and 900k, so the natural experiment's intervention sits BELOW the
+     question. The auto-compact threshold is roughly 467k; the reported
+     knee is roughly 600k.
+  2. MODEL MIX IS NOT CONSTANT ACROSS BANDS, and within-model trends
+     disagree in DIRECTION. One model steps up across 300k to 400k while
+     another falls, both with non-overlapping intervals. A flat pooled
+     series is what two opposing series produce. This applies retroactively
+     to SP1's pooled table.
+  3. THE CENSORING HAZARD IS NOT COMPUTABLE as specified: 0 of 415
+     main-thread transcripts carry a terminal `result` record.
+
+  Survivorship is also worse than the brief predicted, and for a reason the
+  brief did not have: the high-occupancy population is selected on
+  CONFIGURATION, not only on outcome, since a session only passes 500k if
+  it did not auto-compact at 467k. That is a change of population, not a
+  bias of degree. So flat-or-falling rework above 600k is NOT evidence
+  against the knee, and the dominated region still must not be built into
+  a default. Also ruled out along the way: `file-history-delta` is not a
+  revert oracle (no content digest, 7 percent file coverage).
+
+  THE HANDOFF ARTIFACT IS NOW DESIGNED, AND THE COST MATH ARGUES FOR IT
+  (`probe-shift-handoff-artifact.md`, aae-orc-7opc). Writing a handoff at
+  the p50 pressure point costs about $0.125, of which 92 percent is the
+  predecessor re-reading its own context, so asking for one costs roughly
+  one ordinary turn. Reading a 2k-token artifact is 2.6 percent of the
+  measured cold re-warm. Break-even is five successor turns at 95k
+  occupancy and ONE turn at the occupancy where shifts actually fire.
+
+  The liability is the grace window, not the tokens: three roles each
+  burning a 60s grace costs 210s, which loses to the 154s compaction by an
+  order. So handoff defaults off, and an unresponsive predecessor
+  short-circuits at one tick rather than waiting out the grace. Gate S0
+  (does any harness expose an event at which a departing agent can be
+  ASKED, and acknowledge, before its pane dies) is unanswered and blocks
+  the whole arc; a "no" across all four harnesses is a real result that
+  forces the involuntary path.
+
+  Two results from that probe bear on this node directly. The stage-rig
+  discipline RULES OUT the cheapest option: marvel already parses the
+  session stream and could summarize it with no cooperation, no bus, and
+  no cost at the pressure point, which F25 forbids on its own cited
+  measurement. And `question-marvel-graceful-stop` asks for the same
+  window under a different verb, so that should be one mechanism with two
+  callers rather than two mechanisms.
+
+  THE READINESS INSTANT IS NOW IN THE RING (marvel#159).
+  `team.shift-role-ready` fires at the `allReady` verdict carrying
+  workspace, team, role, successor generation, and the admitting gate, so
+  the 50Hz poll finding-018 needed is no longer required to price
+  launch-to-ready. Two limits an automatic trigger must respect: it stamps
+  the control plane's OBSERVATION of readiness rather than the instant the
+  successor became capable, so with a 2s ticker it is up to one tick late
+  and finding-018's 1.09s first-heartbeat column stays unobservable from
+  the ring; and `allReady` has exactly one caller, so scale-up and restart
+  still produce no readiness signal at all (aae-orc-h8lp). Anything
+  pricing time-to-useful today sees a shift-biased sample.
+
   SHIFTING IS NOT OBVIOUSLY THE CHEAP SIDE. Compaction is measured at
   154s median, up to 275s (finding-016). Standby tiers trade money for
   latency and marvel already owns the machinery (a hot standby is a
