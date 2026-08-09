@@ -2,6 +2,20 @@
 // launching BYOA agent sessions. Each adapter knows how to construct the
 // execution environment (command, args, env vars) for a specific runtime
 // (forestage, bare claude CLI, or any generic command).
+//
+// A constructed environment can leak. Measured on Crush v0.88.1
+// (finding-020): its server serves the client's entire process
+// environment on GET /v1/workspaces, 76 entries including a database
+// password, to any client of a host-shared socket. Environment
+// construction is marvel's one built enforcement locus, so a harness that
+// republishes it turns the enforcement surface into a disclosure surface.
+// Adapters put identity, paths and flags in the environment; secrets
+// belong somewhere a harness cannot serialize.
+//
+// No Crush adapter exists yet. When one is written it needs
+// CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1 unconditionally, because without
+// it every spawned session rewrites the host-global provider cache, and
+// CRUSH_GLOBAL_DATA does not contain that write.
 package runtime
 
 import (

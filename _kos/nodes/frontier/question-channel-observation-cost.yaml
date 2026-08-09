@@ -18,7 +18,7 @@ content: |
   answers it for one harness. It is scoped to the cost of obtaining a
   reading, not to the reading's truth.
 
-  RULED 2026-08-09 from measurement (finding-019, crush v0.88.1).
+  RULED 2026-08-09 from measurement (finding-020, crush v0.88.1).
 
   PERTURBATION IS NOT A THIRD AXIS AND NOT A GENERAL ELIGIBILITY COST.
   The word was naming three things that behave differently, and
@@ -77,6 +77,28 @@ content: |
   than a risk to manage, and the consent axis had placed the
   contracted socket as far from that boundary as it is possible to be.
 
+  EXPOSURE INVERTS THE PERMISSION MODEL RATHER THAN TAXING IT, which
+  is why it outranks the rest of this node. Environment construction
+  at spawn is marvel's ONE built enforcement locus (loci 2 and 3 do
+  not exist), so permission-through-environment is not one mechanism
+  among several, it is the whole of what marvel enforces today. A
+  harness that serializes the constructed environment makes the
+  enforcement surface the disclosure surface: the same act by which
+  marvel constrains an agent publishes the constraint's contents. A
+  cost can be accepted; an inversion has to be designed around, and
+  the design that survives it keeps secrets out of the constructed
+  environment rather than weighing the channel against them.
+
+  SECOND INSTANCE OF ONE SHAPE, SAME DAY, DIFFERENT REPO. The
+  harden-mr5c arm established that `api.Session` reaches bbolt and
+  every mrvl:// client through the same encoder, so any credential on
+  a store resource is published by default. Same shape with the
+  serialization path owned by a vendor instead of by marvel. Both say
+  that a credential adjacent to a value that gets serialized is a
+  credential that gets served, and that the predictive axis is where
+  the bytes go rather than who was asked. Two instances is enough to
+  stop treating either as a local defect.
+
   This is the second inversion of the same shape. The sweep already
   found that DECLARATION is a property of the payload rather than of
   the consent grade, because an appropriated artifact out-declared a
@@ -120,4 +142,4 @@ provenance:
   created_by: agent
   session: marvel-k2mi-crush-channel-2026-08-09
   created_at: "2026-08-09"
-  discovered_from: finding-019-crush-context-pressure-channel
+  discovered_from: finding-020-crush-context-pressure-channel

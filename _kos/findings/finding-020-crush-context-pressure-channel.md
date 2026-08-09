@@ -1,4 +1,4 @@
-# finding-019: the Crush context-pressure channel, and what perturbation turned out to be
+# finding-020: the Crush context-pressure channel, and what perturbation turned out to be
 
 - **Date:** 2026-08-09
 - **Status:** captured. Channel measured; four recorded claims refuted; the
@@ -161,6 +161,30 @@ finding-017 required for codex, and must hold the previous reading rather
 than emit zero. Both failure modes report LOW pressure at HIGH pressure,
 which is the direction that silently disables rotation.
 
+**Discard on the token values, not on the companion field.** The
+compaction-mining arm measured the same artifact class on Claude Code (68
+non-sidechain all-zero usage records over 117,493, 67 of them naming model
+`<synthetic>` and one naming the session's real model beside a
+467,121-token boundary), which makes the zero-valued record a cross-harness
+class with at least three members rather than a Crush quirk. Their
+transferable rule applies here directly and I am adopting it: key the
+refusal on the zero itself, never on `summary_message_id` being set. My
+corpus contains no counterexample, but I never looked for one, and a Crush
+row with `prompt_tokens` 0 and no `summary_message_id` would defeat a
+companion-keyed discard silently. Their measurement is not mine; it is
+recorded here because it changes what a Crush reader should be written to
+do.
+
+Two further results from that arm bear on this section and neither is
+measured on Crush. On Claude the first post-compaction sample runs a median
+61,658 tokens above the boundary's own `postTokens`, because the harness
+re-primes system prompt, tools and memory that the summary figure does not
+count, which is the measured reason not to seed a reader's level from a
+summary row. And two drops of 16 to 20 percent in that corpus carry no
+compaction record at all, so "the level fell" and "a compaction happened"
+are separate claims. A Crush reader inferring compaction from a fall rather
+than from the zero would inherit that error.
+
 ## 5. No token classes exist on this channel
 
 The SSE stream carries exactly two token numbers, `prompt_tokens` and
@@ -265,6 +289,19 @@ deployment that block is the environment marvel constructed at spawn, so
 turning the channel on publishes marvel's own credential material to every
 client of a socket that is shared across all workspaces on the host.
 
+**This inverts marvel's permission model rather than taxing it, and that
+is the reason it outranks everything else on this arm.** Environment
+construction at spawn is marvel's one built enforcement locus; loci 2 and
+3 do not exist. Permission-through-environment is not one mechanism among
+several, it is the whole of what marvel currently enforces. A channel that
+serializes the constructed environment to any client of a shared socket
+turns the enforcement surface into the disclosure surface: the same act by
+which marvel constrains an agent is the act that publishes the constraint's
+contents. That is a different kind of finding from a cost to be priced. A
+cost can be accepted; an inversion has to be designed around, and the
+design that survives it is to keep secrets out of the constructed
+environment rather than to weigh the channel's benefits against it.
+
 Consent asks who permitted the read. Fidelity asks how true the number is.
 This asks what enabling the channel makes readable by someone else, and
 none of the three predicts it. It is the sweep's blast-radius property
@@ -277,6 +314,16 @@ it is possible to be.
 The measured mitigation is partial. Socket mode is `srwxr-xr-x`, and BSD
 semantics require write permission to connect, so other users cannot reach
 it. Every process running as the operator can.
+
+**Second instance of one shape, same day, different repo.** The
+`harden-mr5c` arm established that `api.Session` reaches bbolt and every
+`mrvl://` client through the same encoder, so any credential placed on a
+store resource is published by default. This is that shape again with the
+serialization path owned by a vendor instead of by marvel. Both say the
+same thing: a credential adjacent to a value that gets serialized is a
+credential that gets served, and the axis that predicts it is where the
+bytes go, not who was asked. Two instances in one day is enough to stop
+treating either as a local defect.
 
 ## 7. Two channels the research did not list, and why no adapter is written
 
@@ -445,8 +492,44 @@ Recorded here rather than as a passing note because
 workaround, and the workaround (`CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1`) is
 now a spawn-time recommendation in §6.
 
-**Candidate upstream report, not filed:** `CRUSH_GLOBAL_DATA` does not
-relocate the provider-catalog write. The variable names where global data
-lives and the updater writes elsewhere. Filing that on
-`charmbracelet/crush` is a layer-2 defect record under the three-layer
-rubric and needs the upstream-claim gate; it is left to the operator.
+## Candidate upstream report, held
+
+`CRUSH_GLOBAL_DATA` does not relocate the provider-catalog write. The
+variable names where global data lives, and the updater writes to the host
+path anyway.
+
+Evidence, both runs on crush v0.88.1 darwin/arm64:
+
+| run | `CRUSH_GLOBAL_DATA` | `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE` | host `providers.json` | host `hyper.json` | rig `providers.json` |
+|---|---|---|---|---|---|
+| trial | rig | unset | mtime moved | content changed | not created |
+| control | rig | `1` | unchanged | unchanged | n/a |
+
+The variable is honored elsewhere in the same tree: `projects.json` was
+written into the rig data directory on the rebuild run, so this is the
+provider and hyper updater specifically, not the variable being ignored
+wholesale.
+
+**The upstream-claim gate has NOT been run on this.** No pinned upstream
+SHA, no clean-tree reproduction against a build I made, no search of
+`charmbracelet/crush` issues for prior art. It is recorded here as a
+layer-2 candidate under the three-layer rubric, and who files it (and after
+running the gate) is the operator's call.
+
+## For whoever writes the Crush adapter
+
+Three environment entries, all measured, none optional:
+
+- `CRUSH_CLIENT_SERVER=1` if the session is to be observable at all.
+  Without it neither the TUI nor `crush run` registers a workspace, and
+  the SSE and REST channels have nothing to read.
+- `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` always, whether or not the
+  channel is used. Without it every marvel-spawned Crush session rewrites
+  the host-global provider cache. `CRUSH_GLOBAL_DATA` does not substitute.
+- `-H` passed explicitly rather than derived. The default socket path is
+  built from `TMPDIR`, and a `TMPDIR` long enough to exceed the ~104-byte
+  `sun_path` limit makes the server fall back to `/tmp/crush-<uid>.sock`
+  silently.
+
+And one thing to keep OUT of that environment: anything secret, per §6.
+The socket serves the constructed environment to every client on the host.

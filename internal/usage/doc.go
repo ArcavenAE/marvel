@@ -86,7 +86,7 @@
 // reason recorded here was measured false. Crush v0.88.1 publishes a
 // structured SSE stream carrying a per-request occupancy level, a REST
 // route carrying the window, and two documented JSON CLI surfaces
-// besides (finding-019). What it lacks is a marvel runtime adapter to
+// besides (finding-020). What it lacks is a marvel runtime adapter to
 // declare the channel and construct the environment, and a transport:
 // the feed is HTTP and SSE over a unix socket rather than the harness
 // stdout internal/runtime is built around. A profile here with no
