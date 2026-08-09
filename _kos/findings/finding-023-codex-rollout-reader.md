@@ -325,6 +325,14 @@ manifest and feed for a contracted, versioned, live query that is
 neither the stream nor a status hook. I support that and add no third
 candidate.
 
+One correction to how I first stated the stakes, from crush-channel: a
+rung placement does not decide only whether the manifest outranks the
+channel. `limitLadder` orders `stream`, `learned`, `manifest`, `feed`, so
+rung 1 also outranks `LimitLearned` at rung 2 and rung 4 loses to it. On
+Crush that second effect is unlikely ever to bind, since anything learned
+for it would be learned from the same route, but the mechanism is two
+comparisons and the record should say so.
+
 Two things are decidable meanwhile and both are recorded there. **`feed`
 is the worse of the two placements on consequence**: rung 4 sits below
 `LimitFromManifest`, so it lets a hand-written window outrank the live
