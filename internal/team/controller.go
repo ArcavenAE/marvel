@@ -437,8 +437,37 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 	}
 }
 
+// reconcileRole repairs a role at the team's current generation. Outside a
+// shift that is the only generation in play; reconcileShift calls
+// reconcileRoleAt instead, because mid-shift the team generation is
+// aspirational.
 func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
-	// Normal reconciliation uses all generations — generation scoping is only
+	c.reconcileRoleAt(t, role, t.Generation)
+}
+
+// shiftRepairGeneration returns the generation a mid-shift repair of role
+// should carry. Roles the shift has already carried over belong to the new
+// generation; every other role still belongs to the old one, because the
+// team generation is aspirational until the shift completes and an abort
+// may hand it back. Tagging every repair with the new generation is what
+// left a rolled-back team holding sessions of a generation it no longer
+// claims, undrainable because the abort deletes only the shifting role's.
+// See aae-orc-d0pt, finding-010 defect 2.
+func shiftRepairGeneration(t *api.Team, role string) int64 {
+	shifted := t.Shift.RoleIndex
+	if shifted > len(t.Shift.Roles) {
+		shifted = len(t.Shift.Roles)
+	}
+	for _, r := range t.Shift.Roles[:shifted] {
+		if r == role {
+			return t.Generation
+		}
+	}
+	return t.Shift.OldGeneration
+}
+
+func (c *Controller) reconcileRoleAt(t *api.Team, role *api.Role, generation int64) {
+	// Counting uses all generations — generation scoping is only
 	// for shift logic (shiftLaunch/shiftDrain). This ensures non-shifting roles
 	// aren't disrupted when only one role shifts and the team generation advances.
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
@@ -505,13 +534,13 @@ func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
 		// and `marvel get sessions` doesn't carry the ghost forward.
 		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, role.Name)
 		for i := actual; i < desired; i++ {
-			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
+			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, generation, c.nextIndex(t, role, generation))
 			sess := &api.Session{
 				Name:       name,
 				Workspace:  t.Workspace,
 				Team:       t.Name,
 				Role:       role.Name,
-				Generation: t.Generation,
+				Generation: generation,
 				Runtime:    role.Runtime,
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
@@ -914,10 +943,11 @@ func (c *Controller) reconcileShift(t *api.Team) {
 
 	shiftingRoleName := t.Shift.Roles[t.Shift.RoleIndex]
 
-	// Reconcile non-shifting roles normally with current generation.
+	// Reconcile non-shifting roles normally, each at the generation it
+	// actually belongs to. See shiftRepairGeneration.
 	for i := range t.Roles {
 		if t.Roles[i].Name != shiftingRoleName {
-			c.reconcileRole(t, &t.Roles[i])
+			c.reconcileRoleAt(t, &t.Roles[i], shiftRepairGeneration(t, t.Roles[i].Name))
 		}
 	}
 
@@ -955,23 +985,42 @@ func (c *Controller) reconcileShift(t *api.Team) {
 // normal reconciliation converges the replica counts. Either way the
 // shift state is cleared, which resumes normal reconciliation and
 // unblocks scale (the daemon refuses scale while a shift is in progress).
-// An operator-visible warning names the phase and the generation rolled
-// back to. Caller holds c.mu. See aae-orc-qkfl.
+// An operator-visible warning names the phase and the state the abort
+// left: the generation rolled back to, or the generation it stopped at
+// and how far it got. Caller holds c.mu. See aae-orc-qkfl, aae-orc-d0pt.
 func (c *Controller) abortStuckShift(t *api.Team) {
 	var role string
 	if t.Shift.RoleIndex < len(t.Shift.Roles) {
 		role = t.Shift.Roles[t.Shift.RoleIndex]
 	}
+	// Rolling the counter back is only honest while nothing has drained.
+	// At the first role's launch the pre-shift state is intact, so the
+	// team goes back to the generation it came from. Once a drain has
+	// happened the old generation's sessions are gone, and handing the
+	// team back to it would name a generation that no longer exists; the
+	// shift stops where it stands instead, and reconciliation converges
+	// the roles that never got their turn. Generation is written in
+	// exactly two places, InitiateShift and here; without this restore a
+	// stuck shift leaked one permanently, and since the session key is
+	// <team>-<role>-g<gen>-<index> the leak renamed every session the
+	// team created afterwards. See aae-orc-d0pt, finding-010 defect 1.
+	rollback := t.Shift.Phase == api.ShiftLaunching && t.Shift.RoleIndex == 0
+	oldGen := t.Shift.OldGeneration
 	elapsed := c.nowUTC().Sub(t.Shift.StartedAt)
-	log.Printf("shift: %s stuck in %s for %s (role %s), aborting and rolling back to gen %d",
-		t.Key(), t.Shift.Phase, elapsed, role, t.Shift.OldGeneration)
+	outcome := fmt.Sprintf("rolled back to gen %d", oldGen)
+	if !rollback {
+		outcome = fmt.Sprintf("stopped at gen %d with %d of %d roles shifted",
+			t.Generation, t.Shift.RoleIndex, len(t.Shift.Roles))
+	}
+	log.Printf("shift: %s stuck in %s for %s (role %s), aborting, %s",
+		t.Key(), t.Shift.Phase, elapsed, role, outcome)
 	events.Emit(c.Events, events.Event{
 		Kind:      events.KindShiftTimedOut,
 		Severity:  events.SeverityWarning,
 		Workspace: t.Workspace,
 		Team:      t.Name,
 		Role:      role,
-		Message:   fmt.Sprintf("shift stuck in %s past %s, rolled back to gen %d", t.Shift.Phase, c.shiftTimeout(), t.Shift.OldGeneration),
+		Message:   fmt.Sprintf("shift stuck in %s past %s, %s", t.Shift.Phase, c.shiftTimeout(), outcome),
 	})
 	if t.Shift.Phase == api.ShiftLaunching && role != "" {
 		for _, sess := range c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role, t.Generation) {
@@ -980,10 +1029,18 @@ func (c *Controller) abortStuckShift(t *api.Team) {
 			}
 		}
 	}
-	_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+		if rollback {
+			live.Generation = oldGen
+		}
 		live.Shift = api.ShiftState{}
 		return nil
-	})
+	}); err != nil {
+		log.Printf("shift: abort clear shift state for %s: %v", t.Key(), err)
+	}
+	if rollback {
+		t.Generation = oldGen
+	}
 	t.Shift = api.ShiftState{}
 }
 

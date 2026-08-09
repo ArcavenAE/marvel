@@ -50,6 +50,10 @@ when `Phase == ShiftLaunching && RoleIndex == 0`; ship together with
 Defect 2's tagging fix or the restore strands undrainable orphans):
 bd aae-orc-d0pt carries the full fixer note.
 
+FIXED 2026-08-09 (see "What the fix established" below). Past the
+first role's drain the abort now says `stopped at gen N with M of K
+roles shifted` instead of claiming a rollback it cannot perform.
+
 ## Defect 2: mid-shift repairs of non-shifting roles mint the new generation
 
 During a shift, `reconcileShift` repairs non-shifting roles via
@@ -61,6 +65,15 @@ replacement is also new-generation. Dates to the original shift probe
 (a762e35). Fix: tag non-shifting-role repairs with
 `Shift.OldGeneration`; the team generation is aspirational until the
 shift completes.
+
+FIXED 2026-08-09, with one correction to that fix shape: tagging
+EVERY non-shifting role with `OldGeneration` is wrong once the shift
+is past its first role. A role at `Shift.Roles[:RoleIndex]` has
+already been carried over and its sessions are the new generation, so
+repairing it at the old one would mint the orphan the fix was meant
+to prevent, in the other direction. The rule is per-role, not
+per-team: already-shifted roles repair at `Team.Generation`,
+everything else at `Shift.OldGeneration`.
 
 ## Defect 3: restart_policy=never bypasses crash accounting (resource leak)
 
@@ -96,12 +109,56 @@ sessions count as launched.
 `TestShiftTimeoutAbortsStuckLaunch` (controller_test.go:1181) asserts
 phase, per-generation counts, and the event, but never
 `team.Generation`, and its fixture is single-role with a one-hour
-heartbeat timeout, so the health path never fires. The runbook's
+heartbeat timeout, so the health path never fires. A single-role
+fixture cannot see Defect 2 at all: with one role there is no
+non-shifting role to repair. The runbook's
 "verified run" for beat 1d used a one-role team, matching the test
 fixture rather than the three-role manifest the beat instructs the
 operator to apply. The general lesson: a runbook beat verified only to
 its event is verified only to its event. Post-state inspection is what
 converted a passing demo into four tickets.
+
+## What the fix established (2026-08-09)
+
+Defects 1 and 2 both still reproduced on `main` at 0886801, eight days
+and roughly forty commits after they were characterized, including
+after Defect 3's fix landed. The premise check was
+`TestShiftAbortStateCoherence` run against unmodified `main`: `team
+generation = 2, want 1` and `role sidecar: session squad-sidecar-g2-0
+at generation 2, want 1`. Each half was then falsified independently
+by reverting the other, so neither test passes on one fix alone.
+
+Three things the original investigation did not name:
+
+**The two defects are one failure with two halves, and the second
+half is the load-bearing one.** Defect 1 alone is a wrong number on a
+`describe team`. What makes it structural is the session key
+`<team>-<role>-g<gen>-<index>`: a leaked generation renames every
+session the team creates afterwards, and `RoleHealth` persists to
+bolt, so the rename survives a daemon restart.
+
+**A mis-tagged repair is silently adopted as its role's new
+generation.** This one needs no abort at all. Repair a role while an
+earlier role is shifting, and the replacement is tagged at the team
+generation. When that role's turn arrives, `shiftLaunch` counts it
+against `ListSessionsByTeamRoleGeneration(role, t.Generation)`, finds
+the replica count already satisfied, and flips straight to draining.
+The role is reported shifted without ever rotating a session, and the
+session carried forward as "new generation" predates the shift.
+Covered by `TestShiftRepairBeforeTurnDoesNotCountAsLaunch`.
+
+**Defect 4 is separable and shift-independent.** The demo's third
+symptom (`restarter` and `capped` absent from `get sessions`) is not
+an abort defect. It reproduces with no shift: `restartSession`
+deletes the row before setting the backoff, so `store.ListSessions`,
+which is all `get sessions` reads, has nothing to show. The repo's
+own `TestHealthRestartBackoff` already asserts the zero-row window.
+Since Defect 3's fix, the two roles fail differently: `failstop`
+freezes with its failed row intact and is visible, while a
+`MaxRestarts`-saturated role's row is deleted first and the freeze
+then makes the absence permanent rather than a 60-second window.
+Fixing it means a new surface (a placeholder row, or `RoleHealth` in
+the listing), which is why it did not ship with the state fix.
 
 ## Method knowledge (isolation)
 
@@ -130,3 +187,10 @@ expected output; the capped-role note misses the one post-backoff
 respawn before saturation; the crashloop-backoff note needs one clause
 saying 1d is where the event becomes observable; the daemon-start
 lines should carry the distinct-socket guidance.
+
+Beat 1d's quote became true with the fix rather than needing a
+rewrite, since the demo aborts at role index 0 where rollback is the
+honest outcome. What it was missing was the post-state check that
+turned this beat into four tickets, now written into the beat. The
+remaining three items stand; the socket guidance belongs to
+aae-orc-t6da.

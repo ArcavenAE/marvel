@@ -1918,3 +1918,263 @@ func TestShiftRoleReadyEventIsPerRole(t *testing.T) {
 		}
 	}
 }
+
+// roleGen is one role's post-condition: how many sessions it should have
+// and which generation they should carry.
+type roleGen struct {
+	role       string
+	count      int
+	generation int64
+}
+
+// TestShiftAbortStateCoherence covers aae-orc-d0pt: the state a stuck
+// shift's abort leaves behind must match what the abort event claims. Two
+// cases, because the honest answer differs by how far the shift got.
+//
+// Falsification: without the Generation restore in abortStuckShift the
+// launching case fails on team.Generation (2, want 1); without the
+// old-generation tagging in reconcileShift it fails on the non-shifting
+// role's sessions surviving the abort at generation 2; without the
+// phase/index guard the draining case fails by restoring a generation
+// whose sessions were already drained.
+func TestShiftAbortStateCoherence(t *testing.T) {
+	skipIfNoTmux(t)
+
+	beat := func() *api.HealthCheck {
+		// Generous timeout: the sessions stay HealthUnknown rather than
+		// unhealthy, so the only thing blocking the shift is allReady's
+		// first-heartbeat requirement, which never arrives.
+		return &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Hour, FailureThreshold: 3}
+	}
+	sleeper := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+
+	tests := []struct {
+		name string
+		ws   string
+		// roles in shift order; the stuck one carries the heartbeat gate.
+		roles []api.Role
+		// drive advances the shift to the point the abort should fire.
+		drive func(t *testing.T, store *api.Store, sessMgr *session.Manager, ctrl *Controller, teamKey string)
+		// wantGen is the team generation the abort must leave behind.
+		wantGen int64
+		// wantRoles is the per-role session state after the abort.
+		wantRoles []roleGen
+		wantMsg   string
+	}{
+		{
+			// Nothing has drained, so the pre-shift state is still intact
+			// and rollback is the honest outcome: the generation counter
+			// goes back, and no session anywhere carries the abandoned
+			// generation. The sidecar is deleted mid-shift to force the
+			// repair path that mints replacements while a shift is open.
+			name: "launching first role rolls back",
+			ws:   "test-abort-launching",
+			roles: []api.Role{
+				{Name: "worker", Replicas: 1, Runtime: sleeper, HealthCheck: beat()},
+				{Name: "sidecar", Replicas: 1, Runtime: sleeper},
+			},
+			drive: func(t *testing.T, store *api.Store, sessMgr *session.Manager, ctrl *Controller, teamKey string) {
+				t.Helper()
+				ctrl.ReconcileOnce() // launches the stuck gen-2 worker
+				sides := store.ListSessionsByTeamRole("test-abort-launching", "squad", "sidecar")
+				if len(sides) != 1 {
+					t.Fatalf("sidecar sessions before repair = %d, want 1", len(sides))
+				}
+				if err := sessMgr.Delete(sides[0].Key()); err != nil {
+					t.Fatalf("delete sidecar: %v", err)
+				}
+				ctrl.ReconcileOnce() // repairs the sidecar mid-shift
+			},
+			wantGen: 1,
+			wantRoles: []roleGen{
+				{role: "worker", count: 1, generation: 1},
+				{role: "sidecar", count: 1, generation: 1},
+			},
+			wantMsg: "rolled back to gen 1",
+		},
+		{
+			// alpha has already shifted and its old generation is gone, so
+			// restoring the counter would point the team at a generation
+			// that no longer exists. The shift stops where it stands and
+			// the message says so.
+			name: "draining past first role stops forward",
+			ws:   "test-abort-forward",
+			roles: []api.Role{
+				{Name: "alpha", Replicas: 1, Runtime: sleeper},
+				{Name: "beta", Replicas: 1, Runtime: sleeper, HealthCheck: beat()},
+			},
+			drive: func(t *testing.T, store *api.Store, sessMgr *session.Manager, ctrl *Controller, teamKey string) {
+				t.Helper()
+				// Ticks: alpha launches and goes ready, drains, index
+				// advances, then beta launches and sticks.
+				for i := 0; i < 6; i++ {
+					ctrl.ReconcileOnce()
+				}
+				team, err := store.GetTeam(teamKey)
+				if err != nil {
+					t.Fatalf("get team: %v", err)
+				}
+				if team.Shift.RoleIndex != 1 {
+					t.Fatalf("role index = %d, want 1 (alpha shifted, beta stuck)", team.Shift.RoleIndex)
+				}
+			},
+			wantGen: 2,
+			wantRoles: []roleGen{
+				{role: "alpha", count: 1, generation: 2},
+				{role: "beta", count: 1, generation: 1},
+			},
+			wantMsg: "stopped at gen 2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, sessMgr, ctrl, cleanup := setup(t)
+			t.Cleanup(cleanup)
+			ring := events.NewRing(0)
+			ctrl.Events = ring
+			clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+			ctrl.now = clock.Now
+			ctrl.ShiftTimeout = 2 * time.Minute
+
+			createTeamFixture(t, store, tc.ws, "squad", tc.roles)
+			teamKey := tc.ws + "/squad"
+
+			ctrl.ReconcileOnce()
+			if err := ctrl.InitiateShift(teamKey, ""); err != nil {
+				t.Fatalf("initiate shift: %v", err)
+			}
+			tc.drive(t, store, sessMgr, ctrl, teamKey)
+
+			clock.Advance(3 * time.Minute)
+			ctrl.ReconcileOnce()
+
+			team, err := store.GetTeam(teamKey)
+			if err != nil {
+				t.Fatalf("get team: %v", err)
+			}
+			if team.Generation != tc.wantGen {
+				t.Errorf("team generation = %d, want %d", team.Generation, tc.wantGen)
+			}
+			if team.Shift.Phase != api.ShiftNone || team.Shift.OldGeneration != 0 ||
+				team.Shift.RoleIndex != 0 || len(team.Shift.Roles) != 0 || !team.Shift.StartedAt.IsZero() {
+				t.Errorf("shift state = %+v, want zero (shift cleared)", team.Shift)
+			}
+			for _, want := range tc.wantRoles {
+				all := store.ListSessionsByTeamRole(tc.ws, "squad", want.role)
+				if len(all) != want.count {
+					t.Errorf("role %s: %d sessions, want %d", want.role, len(all), want.count)
+				}
+				for _, s := range all {
+					if s.Generation != want.generation {
+						t.Errorf("role %s: session %s at generation %d, want %d",
+							want.role, s.Name, s.Generation, want.generation)
+					}
+				}
+			}
+			evs := ring.Snapshot(events.Filter{Kind: events.KindShiftTimedOut}, 0)
+			if len(evs) != 1 {
+				t.Fatalf("shift-timed-out events = %d, want 1", len(evs))
+			}
+			if !strings.Contains(evs[0].Message, tc.wantMsg) {
+				t.Errorf("abort message = %q, want it to contain %q", evs[0].Message, tc.wantMsg)
+			}
+
+			// One more tick: the post-abort state must be a fixed point,
+			// not a state normal reconciliation immediately re-mints out of.
+			ctrl.ReconcileOnce()
+			for _, want := range tc.wantRoles {
+				for _, s := range store.ListSessionsByTeamRole(tc.ws, "squad", want.role) {
+					if s.Generation != want.generation {
+						t.Errorf("after a settling tick, role %s: session %s at generation %d, want %d",
+							want.role, s.Name, s.Generation, want.generation)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestShiftRepairBeforeTurnDoesNotCountAsLaunch covers the healthy-path
+// half of aae-orc-d0pt's tagging defect. A role repaired while an earlier
+// role is shifting must keep the old generation, or shiftLaunch counts the
+// repair as that role's new generation when its turn comes and the role is
+// declared shifted without ever rotating a session.
+//
+// Falsification: with the repair tagged at the team generation, beta's turn
+// finds its replica count already satisfied at generation 2, so no
+// beta-g2 session is created and the session predating the shift is the
+// one carried forward.
+func TestShiftRepairBeforeTurnDoesNotCountAsLaunch(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	sleeper := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+
+	createTeamFixture(t, store, "test-shift-repair", "squad", []api.Role{
+		{Name: "alpha", Replicas: 1, Runtime: sleeper},
+		{Name: "beta", Replicas: 1, Runtime: sleeper},
+	})
+	teamKey := "test-shift-repair/squad"
+
+	ctrl.ReconcileOnce()
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
+		t.Fatalf("initiate shift: %v", err)
+	}
+
+	// Kill beta while alpha holds the shift, then let the reconciler
+	// repair it. beta has not had its turn, so the replacement belongs to
+	// the generation beta is still running.
+	betas := store.ListSessionsByTeamRole("test-shift-repair", "squad", "beta")
+	if len(betas) != 1 {
+		t.Fatalf("beta sessions = %d, want 1", len(betas))
+	}
+	if err := sessMgr.Delete(betas[0].Key()); err != nil {
+		t.Fatalf("delete beta: %v", err)
+	}
+	ctrl.ReconcileOnce()
+
+	repaired := store.ListSessionsByTeamRole("test-shift-repair", "squad", "beta")
+	if len(repaired) != 1 {
+		t.Fatalf("beta sessions after repair = %d, want 1", len(repaired))
+	}
+	if repaired[0].Generation != 1 {
+		t.Fatalf("mid-shift repair of a role awaiting its turn = generation %d, want 1",
+			repaired[0].Generation)
+	}
+	repairedKey := repaired[0].Key()
+
+	// Run the shift out. beta's turn must launch a fresh generation-2
+	// session and drain the repair, not adopt it.
+	for i := 0; i < 40; i++ {
+		ctrl.ReconcileOnce()
+		team, err := store.GetTeam(teamKey)
+		if err != nil {
+			t.Fatalf("get team: %v", err)
+		}
+		if team.Shift.Phase == api.ShiftNone {
+			break
+		}
+	}
+	team, err := store.GetTeam(teamKey)
+	if err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	if team.Shift.Phase != api.ShiftNone {
+		t.Fatalf("shift did not complete, phase %s", team.Shift.Phase)
+	}
+	if _, err := store.GetSession(repairedKey); err == nil {
+		t.Errorf("session %s survived the shift, want it drained with generation 1", repairedKey)
+	}
+	for _, role := range []string{"alpha", "beta"} {
+		sessions := store.ListSessionsByTeamRole("test-shift-repair", "squad", role)
+		if len(sessions) != 1 {
+			t.Errorf("role %s: %d sessions after the shift, want 1", role, len(sessions))
+			continue
+		}
+		if sessions[0].Generation != 2 {
+			t.Errorf("role %s: session %s at generation %d after the shift, want 2",
+				role, sessions[0].Name, sessions[0].Generation)
+		}
+	}
+}
