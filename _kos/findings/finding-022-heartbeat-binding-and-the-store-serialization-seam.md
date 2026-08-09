@@ -1,4 +1,4 @@
-# finding-019: a secret on api.Session is published by the same encoder that persists it
+# finding-022: a secret on api.Session is published by the same encoder that persists it
 
 **Date:** 2026-08-09
 **Ticket:** `aae-orc-mr5c` (heartbeat RPC unauthenticated and unbound to

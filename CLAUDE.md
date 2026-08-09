@@ -244,7 +244,7 @@ What exists today:
   claims; a mismatch is refused and lands on the ring as
   `heartbeat.refused`. Records written before the token existed are
   admitted as `heartbeat.unbound` until those sessions end. See
-  finding-019.
+  finding-022.
 - **`marvel inject`**, operator keystrokes into a pane.
 
 The adopted shape (roadmap M2): an **external NATS bus, supervised by
