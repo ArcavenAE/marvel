@@ -1066,6 +1066,34 @@ cleanest supporting case: the relocatable half is the one marvel could touch
 without going near a credential store, so the SOUL section 3 boundary has a
 natural seam here rather than needing to be drawn by care.
 
+### 22a. Sixth pass: the partiality is measured, and it is unpredictable
+
+The fourth pass recorded that Crush's routing record is partial and carries no
+marker. I proposed a probe to test whether it is *arbitrarily* partial. The
+rig did not need one: it held both halves already and put them together
+(`finding-020` section 8).
+
+| internal call, both on `models.small` | `message_count` | artifact |
+|---|---|---|
+| title generation | held at 2 | none; `sessions.title` changed |
+| summarization | 2 to 3 | a row, `summary_message_id` set, `is_summary_message` on it |
+
+Same slot, same class of call, opposite persistence. **There is no property
+Crush exposes from which a consumer could predict which model calls leave an
+artifact.** The consequence is worth stating in its plainest form: any
+per-model or per-provider aggregate built from that table is over an unknown
+subset. That is a second and independent reason not to price anything off the
+`crush stats` page, beside the level-versus-total error in section 21.
+
+This upgrades the fourth pass from "partial, with no marker" to "the
+partiality is unpredictable from anything the harness publishes", which is the
+form a Crush adapter design has to carry.
+
+The two-provider probe was **not** run, on the correct ground that the
+measurement above answers the question the probe was wanted for while the
+probe itself would answer a weaker one. My open item stays open and untested
+rather than soft-closed.
+
 ## 23. Hoisting one claim out of the Crush sections, because it is not about Crush
 
 The rig's closing observation is correct and I am acting on it. This sentence
