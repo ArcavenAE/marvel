@@ -336,6 +336,77 @@ role's old generation is gone. It stops where it stands instead and says so:
 `shift stuck in launching past 15s, stopped at gen 2 with 1 of 3 roles
 shifted`. Normal reconciliation converges the roles that never got a turn.
 
+### 1e. Whole-role loss: one crash charged, not one per replica
+
+Beat 1a kills one pane of a two-replica role, which charges that role one
+crash. It would also charge one crash under the accounting marvel used
+before #162, so it cannot show what changed. This beat loses every replica
+of a role at the same instant, which is what a dying tmux server, a host
+reboot, or a foreign daemon's reclaim actually looks like.
+
+`demo-act1-fleet-loss` is one role with three replicas. Three is the
+smallest count where the difference is unmistakable.
+
+```sh
+./bin/marvel work examples/demo-act1-fleet-loss.toml
+sleep 6
+./bin/marvel get sessions   # three workers, healthy
+```
+
+Kill the workspace's whole tmux session rather than one pane. The session is
+named for the workspace, so this reaches `bulk` and nothing else:
+
+```sh
+tmux -L "$(./bin/marvel config tmux-server)" kill-session -t marvel-bulk
+sleep 10
+```
+
+The ring reports the loss per replica, because three sessions did die:
+
+```sh
+./bin/marvel events --kind session.crashed   # three events
+```
+
+The charge is in the log, not the ring, and that is where the change shows:
+
+```sh
+./bin/marvel daemon logs -n 200 | grep reap
+```
+
+A verified run, 2026-08-09, one second after the kill:
+
+```
+reap: session bulk/line-worker-g1-0 crashed (role bulk/line/worker restart #1, next backoff=59.99s)
+reap: session bulk/line-worker-g1-1 crashed with the rest of role bulk/line/worker in one tick; already charged
+reap: session bulk/line-worker-g1-2 crashed with the rest of role bulk/line/worker in one tick; already charged
+```
+
+One charge, two refusals to charge again, and the role sits at restart #1
+with a 60-second window. Charged per replica the same event would have put
+it at restart #3 with a 4-minute window, and a role with `max_restarts = 3`
+would have had nothing left after a single incident that killed no more
+agents than one tick's worth.
+
+All three replicas come back together when that one window elapses:
+
+```sh
+sleep 70
+./bin/marvel get sessions   # three workers, healthy, ~64s after the kill
+```
+
+They also come back under their original names. The index is
+`max(existing)+1` with no gap filling, so a role that loses every replica
+frees every key and gets all of them back, while a role that loses one
+replica out of three sees the replacement take a new index.
+
+Marvel is deliberately not guessing at the cause here. It cannot tell an
+external kill from an application exit at the point the reap runs: both
+present as a pane id tmux no longer lists, and a single-pane session
+collapses its server when its own process exits, so the tempting
+discriminator does not survive a check. The rule bounds the blast radius of
+one tick instead of classifying it. Flapping still escalates, because
+flapping repeats across ticks.
+
 ---
 
 ## Act 2 — Observe
