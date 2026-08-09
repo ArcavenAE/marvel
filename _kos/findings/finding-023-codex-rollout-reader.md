@@ -1,8 +1,9 @@
 # finding-023: the codex rollout reader, and the hook that speaks to the model
 
 - **Date:** 2026-08-09
-- **Status:** captured. Reader built and verified end to end; three of
-  finding-017's open questions moved, one of them closed against me.
+- **Status:** captured. Reader built and verified end to end. Three of
+  finding-017's open questions moved and one closed; the ladder-rung
+  question it touched is open with the operator (marvel PR #172).
 - **Probe:** codex-cli 0.146.0 on macOS arm64. Independent re-census of
   209 rollout files (2098 `token_count` records); live hook capture under
   an isolated `CODEX_HOME`; app-server `hooks/list` interrogation;
@@ -14,7 +15,7 @@
 
 ## Summary
 
-The reader is built and codex CTX% resolves. Four things came out of
+The reader is built and codex CTX% resolves. Six things came out of
 building it that the design did not have going in:
 
 1. **A codex hook's stdout is fed to the model.** A line printed by a
@@ -156,6 +157,25 @@ feed shows as a gap in CTX% diagnosed through `marvel describe session`,
 which is the same posture ctx-forward takes toward its own errors, one
 step further.
 
+**The general rule, which is crush-channel's and belongs here because
+codex supplies the trap.** A hook's stdout is a per-harness contract, so
+a hook body does not port across harnesses. Crush's is the inverse of
+codex's and worse: exit 0 means stdout is parsed as a JSON envelope, and
+`decision: "allow"` is affirmative pre-approval that bypasses the
+permission prompt and beats no-opinion when hooks aggregate. A reporter
+hook must omit that field on Crush and print nothing on codex, and the
+two failure modes are opposite, one polluting context and one granting
+permissions.
+
+The clause that makes it operational is the collision that invites the
+port in the first place: **this holds even when both harnesses call the
+thing a hook and share event names.** Codex's vocabulary is
+`PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `PreCompact`,
+`PostCompact`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`,
+`Stop`, `PermissionRequest`. Read that list beside Claude Code's and a
+shared hook body looks obviously correct. The event names match; the
+stdout contracts do not.
+
 ## Hook trust: mapped, not closed
 
 finding-017 marked this critical path, on the reasoning that a design
@@ -236,11 +256,19 @@ reported 0% for a session at 93.8%.
 
 ## Two things settled with the sibling arms
 
-**The rung: both are `stream`. The test is what the rung decides, which
-is precedence against the operator's manifest.** This took four
-exchanges and the answer moved three times, twice by each arm deferring
-to the other. The route matters more than the destination, so it is
+**The rung: codex is `stream` and settled. Crush is neither rung, and
+goes to the operator.** This took five exchanges, the answer moved three
+times, and twice it moved by one arm deferring to the other rather than
+to evidence. The route matters more than the destination, so it is
 recorded whole.
+
+**Codex first, because it is the part that is actually decided.**
+`limitLadder`'s rung-1 sentence is two conjuncts: the harness stating the
+window it is currently enforcing compaction against, AND doing so "in the
+same channel as the token counts it is stating it about". Codex satisfies
+both. `model_context_window` rides the record carrying the level, in the
+artifact codex compacts against. It is the case the ladder was written
+to describe, and nothing below disturbs it.
 
 I first read limitLadder's asymmetry as turning partly on transport, and
 said so. crush-channel refuted that: Crush's window comes from a separate
@@ -266,32 +294,49 @@ a live reading that nothing in the ladder asks to answer about past
 messages. Codex's window would fail that test too if asked about a
 message from a session that has since changed models.
 
-That leaves my formulation needing a defence I could not give it, so
-here is the argument that decides it against me. **The rung decides one
-thing: whether the operator's `runtime.context_window` outranks the
-channel.** The ladder says so directly, and gives the reason: overruling
-a rung-1 declaration with a manifest value "would make marvel's
-denominator disagree with the one that actually governs the session's
-behavior". Crush's auto-summarize actuates against the number its REST
-route returns. An operator's manifest window overriding it produces
-exactly that harm, identically to codex. So Crush belongs above the
-manifest, which is rung 1.
+I then argued Crush up to rung 1 on the ladder's stated PURPOSE:
+overruling a rung-1 declaration with a manifest value "would make
+marvel's denominator disagree with the one that actually governs the
+session's behavior", and Crush's auto-summarize actuates against the
+number its route returns, so the harm is identical. crush-channel
+declined to accept that, correctly, and did the check neither of us had
+done: they tested rung 4's definition against their channel instead of
+only rung 1's. It fails on three of four properties. Rung 4 is written
+about "a side channel read opportunistically off a human-facing status
+hook, with no version handle and no statement of which of the six
+effective-window axes it reflects". Crush's route is a documented
+first-class API, no hook and nothing human-facing, carrying a `/v1`
+prefix and a version endpoint. Only the axes clause partly holds.
 
-Rung 4's description does not fit Crush either, read literally: it is
-written about "a cooperative hook the harness invokes for a human-facing
-status string", one release from changing meaning with no version handle,
-reporting an effective auto-compact window that varies on six unnamed
-axes. A typed API field naming the model's context window is none of
-those.
+So the ladder's text was drafted with two channels in view, a harness
+stream and a statusline hook, and Crush's route is a third shape it does
+not describe. Each of us had been quoting the clause that fit our own
+conclusion: I took the conjunct rung 1 fails, they took the paragraph's
+closing summary that rung 1 passes, and neither of us tested the
+destination.
 
-And the residue of my objection, the race between fetching a window and
-reading a level under a possibly-changed model, is not fixed by a
-demotion. A rung-4 window still divides the level; it just loses to a
-manifest value that may be equally wrong. The refetch rule is the only
-treatment that helps, and crush-channel states it in the strong form: a
-window fetched under a different model is **unresolved**, not stale. That
-is the package. Both `stream`, plus refetch-or-unresolved wherever the
-window does not ride the level's own record.
+**That makes it a ruling, not a derivation.** The ladder is a ratified
+artifact and the ruling was the operator's on 2026-08-08; the evidence
+for revisiting it did not exist then, and two arms are not the authority
+to amend it. crush-channel routes it in marvel PR #172 with two
+candidates and no preference: relax the same-channel conjunct so a
+contracted live query qualifies for rung 1, or add a rung between
+manifest and feed for a contracted, versioned, live query that is
+neither the stream nor a status hook. I support that and add no third
+candidate.
+
+Two things are decidable meanwhile and both are recorded there. **`feed`
+is the worse of the two placements on consequence**: rung 4 sits below
+`LimitFromManifest`, so it lets a hand-written window outrank the live
+route, and the router study measured the window as a provider-plus-model
+property where the hand-written number is the model's headline value and
+wrong by up to 3.8x. Demoting promotes the more likely error. And **the
+residue of my own objection is not fixed by any rung**: the race between
+fetching a window and reading a level under a changed model is treated
+only by the refetch rule, in crush-channel's strong form, where a window
+fetched under a different model is **unresolved** rather than stale. That
+rule holds at whichever rung the operator picks, and codex needs none of
+it, because its window is re-read with every level.
 
 **Codex's model name cannot reach the accountant's primary-model latch,
 and that is now checked rather than assumed.** probe-0tnf measured the
@@ -323,13 +368,23 @@ for field:
 | decreases in `total_token_usage.total_tokens` | **0** |
 | turn boundaries with a sample on both sides | 159 |
 | decreases at a turn boundary | **0** |
-| mid-series records where total equals last (the reset signature) | 0 |
+| later-sample records where total equals last (the reset signature) | 1, and it is a duplicate |
 
 A per-turn accumulator drops at every turn boundary. This one crosses
 159 of them, across 9 multi-turn sessions carrying up to 45 turns each,
 without dropping once. **The accumulator is session-scoped**, which is
 the worse of the two cases finding-017 named and the one
 `internal/usage/profiles.go` already declares as `CumulationSession`.
+
+probe-0tnf reproduced this against the same 208 files and reported one
+`total == last` where my first pass reported none, which is worth
+stating because the reconciliation is the definition rather than the
+data. Every session's first sample has `total == last` trivially (208 of
+them), so only later samples can carry the reset signature. Exactly one
+does, and it is a duplicate: two byte-identical records 3.7 seconds
+apart, both `total` 18690 and `last` 18690. My pass excluded it through
+a `prev != v` guard that happens to filter duplicates; theirs counted it
+and then characterized it. Same data, no reset either way.
 
 The honest limit: this measures the rollout's own accumulator. That
 `turn.completed` mirrors it was established on a single-turn fixture, so
@@ -383,7 +438,9 @@ the corpus beside it.
 - `docs/user-guide.md` (Codex context pressure)
 - finding-017 (the channel and the refutation this implements),
   finding-011 (the claude feed), finding-016 (effective windows)
-- finding-020 (the Crush channel, PR #166): the rung question above, and
-  the per-feed cumulation point that both arms reached independently
+- finding-020 (the Crush channel, merged as 16add0c): the per-feed
+  cumulation point both arms reached independently, and the hook-stdout
+  contract whose codex half is above. The rung question is marvel PR
+  #172, open with the operator
 - finding-024 (the compaction corpus, probe-0tnf): the ordering property
   and the primary-model latch measurement this reader is checked against

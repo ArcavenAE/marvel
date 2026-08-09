@@ -132,21 +132,22 @@ func newCodexCtxCmd() *cobra.Command {
 			// ctxforward.go, which names the two edits that finish it.
 			//
 			// Codex sharpens that open decision rather than settling it.
-			// This window is a `stream` declaration (rung 1). The test is
-			// what the rung decides, which is whether the operator's
-			// runtime.context_window outranks the channel: overruling a
-			// window the harness enforces compaction against would make
-			// marvel's denominator disagree with the one governing the
-			// session. Not transport, and not whether the window rides
-			// the level's own record, both of which were proposed and
-			// withdrawn while adjudicating this with the Crush arm
-			// (2026-08-09; see finding-023 and finding-020).
+			// This window is a `stream` declaration (rung 1), and codex is
+			// the clean case: limitLadder's rung-1 sentence has two
+			// conjuncts, the harness enforcing compaction against the
+			// window AND stating it "in the same channel as the token
+			// counts it is stating it about", and model_context_window
+			// satisfies both by riding the level's own record.
 			//
-			// A window that does NOT ride the level's record still ranks
-			// here, and carries a refetch rule instead: fetched under a
-			// different model it is unresolved, not stale. Codex needs no
-			// such rule, because model_context_window is re-read with
-			// every level.
+			// Do NOT generalize the rung from this comment. A window the
+			// harness serves over a separate contracted query satisfies
+			// the first conjunct and not the second, and rung 4's text
+			// (a human-facing status hook, no version handle) does not
+			// describe it either. That case is open with the operator,
+			// marvel PR #172; see finding-023 and finding-020. Whatever
+			// rung it lands on, it needs a refetch rule codex does not:
+			// fetched under a different model, a window is unresolved
+			// rather than stale.
 			//
 			// The heartbeat RPC carries no rung and no window, so the
 			// distinction is lost at this seam today.
