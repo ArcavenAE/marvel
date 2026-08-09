@@ -1016,16 +1016,56 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 		if c.allReady(newGen, role) {
 			log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
 				t.Workspace, t.Name, role.Name, len(newGen), t.Shift.OldGeneration)
-			_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+			// Record the phase flip before announcing it. A failed update
+			// leaves the team in launching, so allReady is consulted again
+			// next tick, and an event emitted ahead of the write would then
+			// be a readiness stamp for a transition that did not happen.
+			// Emitting after the write keeps the ring's count of
+			// KindShiftRoleReady equal to the number of transitions.
+			if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 				live.Shift.Phase = api.ShiftDraining
 				return nil
-			})
+			}); err != nil {
+				log.Printf("shift: %s advance role %s to draining: %v", t.Key(), role.Name, err)
+				return
+			}
 			t.Shift.Phase = api.ShiftDraining
+			events.Emit(c.Events, events.Event{
+				Kind:       events.KindShiftRoleReady,
+				Workspace:  t.Workspace,
+				Team:       t.Name,
+				Role:       role.Name,
+				Generation: t.Generation,
+				Message: fmt.Sprintf("gen %d ready, gate=%s, draining gen %d: %s",
+					t.Generation, readinessGate(role), t.Shift.OldGeneration,
+					strings.Join(sessionKeys(newGen), " ")),
+			})
 		} else {
 			log.Printf("shift: %s/%s role %s — %d sessions launched, waiting for readiness",
 				t.Workspace, t.Name, role.Name, len(newGen))
 		}
 	}
+}
+
+// readinessGate names the rule allReady applied, so a reader of the
+// readiness event can tell a heartbeat-gated successor from one admitted on
+// pane existence alone. The distinction matters for anything reasoning about
+// shift latency: pane-Running fires within about 100 ms of spawn and says
+// nothing about whether the harness inside can work yet.
+func readinessGate(role *api.Role) string {
+	if role.HealthCheck == nil {
+		return "running"
+	}
+	return string(role.HealthCheck.Type)
+}
+
+// sessionKeys returns the session keys in order, for event messages.
+func sessionKeys(sessions []api.Session) []string {
+	keys := make([]string, 0, len(sessions))
+	for i := range sessions {
+		keys = append(keys, sessions[i].Key())
+	}
+	return keys
 }
 
 // allReady returns true if all sessions are ready to take over.

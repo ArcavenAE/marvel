@@ -115,10 +115,26 @@ func TestResolveLadderPrecedence(t *testing.T) {
 			wantSource: LimitLearned,
 		},
 		{
+			// The asymmetry, stated as a case so it cannot be quietly
+			// flipped: the same fact from the same harness loses to the
+			// manifest here and beats it above, because a side channel
+			// describes the session and the stream governs it.
+			name:       "manifest beats feed",
+			req:        Request{StreamModel: "claude-haiku-4-5", FeedLimit: 444_444, ManifestLimit: 111_111},
+			wantLimit:  111_111,
+			wantSource: LimitFromManifest,
+		},
+		{
 			name:       "manifest beats table",
 			req:        Request{StreamModel: "claude-haiku-4-5", ManifestLimit: 111_111},
 			wantLimit:  111_111,
 			wantSource: LimitFromManifest,
+		},
+		{
+			name:       "feed beats table",
+			req:        Request{StreamModel: "claude-haiku-4-5", FeedLimit: 444_444},
+			wantLimit:  444_444,
+			wantSource: LimitFromFeed,
 		},
 		{
 			name:       "table exact hit",

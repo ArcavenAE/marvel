@@ -1673,3 +1673,248 @@ func TestContextReadingIsNotAHeartbeat(t *testing.T) {
 		t.Error("a session with a context reading but no heartbeat was declared shift-ready")
 	}
 }
+
+// TestShiftRoleReadyEventFiresOnceAtTheTransition covers the gap orc
+// finding-018 measured: the instant the control plane decides a successor
+// generation may take over is made inside allReady, between session.created
+// and session.deleted, and until this event nothing was written to the ring
+// for it. The finding had to poll the session table at 50 Hz to timestamp it.
+//
+// The role is heartbeat-gated so the launching phase lasts several ticks
+// with no heartbeat arriving. That separates "not ready yet" from "ready" in
+// time, which a role with no healthcheck cannot do (it is ready on the same
+// tick it is created). Falsification: without the emit in shiftLaunch the
+// ring carries no team.shift-role-ready and the count assertion fails; with
+// an emit placed inside allReady instead of at the phase flip, the count is
+// the number of launching ticks rather than 1.
+func TestShiftRoleReadyEventFiresOnceAtTheTransition(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	ctrl.ShiftTimeout = 1 * time.Hour
+
+	// A one-hour heartbeat timeout keeps every session in HealthUnknown, so
+	// the only thing gating the shift is allReady's first-heartbeat rule.
+	createTeamFixture(t, store, "test-shift-ready", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 2,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Hour, FailureThreshold: 3},
+		},
+	})
+	teamKey := "test-shift-ready/squad"
+
+	readyEvents := func() []events.Event {
+		return ring.Snapshot(events.Filter{Kind: events.KindShiftRoleReady}, 0)
+	}
+
+	ctrl.ReconcileOnce()
+	if got := len(store.ListSessionsByTeamRoleGeneration("test-shift-ready", "squad", "worker", 1)); got != 2 {
+		t.Fatalf("expected 2 gen-1 sessions, got %d", got)
+	}
+	if got := len(readyEvents()); got != 0 {
+		t.Fatalf("readiness events before any shift = %d, want 0", got)
+	}
+
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
+		t.Fatalf("initiate shift: %v", err)
+	}
+
+	// Several ticks in the launching phase with no heartbeat: the successors
+	// exist and are running, but the control plane has not committed to them.
+	for i := 0; i < 4; i++ {
+		ctrl.ReconcileOnce()
+		team, _ := store.GetTeam(teamKey)
+		if team.Shift.Phase != api.ShiftLaunching {
+			t.Fatalf("tick %d: phase = %s, want launching (no heartbeat has arrived)", i, team.Shift.Phase)
+		}
+		if got := len(readyEvents()); got != 0 {
+			t.Fatalf("tick %d: readiness events = %d, want 0 before the successors are ready", i, got)
+		}
+	}
+
+	gen2 := store.ListSessionsByTeamRoleGeneration("test-shift-ready", "squad", "worker", 2)
+	if len(gen2) != 2 {
+		t.Fatalf("expected 2 gen-2 sessions launched, got %d", len(gen2))
+	}
+	wantKeys := make([]string, 0, len(gen2))
+	for _, s := range gen2 {
+		wantKeys = append(wantKeys, s.Key())
+		if err := store.UpdateSession(s.Key(), func(live *api.Session) error {
+			live.LastHeartbeat = time.Now().UTC()
+			return nil
+		}); err != nil {
+			t.Fatalf("set heartbeat on %s: %v", s.Key(), err)
+		}
+	}
+
+	// The tick that observes the heartbeats is the readiness transition.
+	ctrl.ReconcileOnce()
+	team, _ := store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftDraining {
+		t.Fatalf("phase = %s after heartbeats, want draining", team.Shift.Phase)
+	}
+	evs := readyEvents()
+	if len(evs) != 1 {
+		t.Fatalf("readiness events at the transition = %d, want exactly 1", len(evs))
+	}
+
+	ev := evs[0]
+	if ev.Workspace != "test-shift-ready" || ev.Team != "squad" || ev.Role != "worker" {
+		t.Errorf("event scope = %s/%s role %s, want test-shift-ready/squad role worker",
+			ev.Workspace, ev.Team, ev.Role)
+	}
+	if ev.Generation != 2 {
+		t.Errorf("event generation = %d, want 2 (the successor generation)", ev.Generation)
+	}
+	if ev.Severity != events.SeverityInfo {
+		t.Errorf("severity = %s, want %s", ev.Severity, events.SeverityInfo)
+	}
+	for _, key := range wantKeys {
+		if !strings.Contains(ev.Message, key) {
+			t.Errorf("message %q does not name successor session %s", ev.Message, key)
+		}
+	}
+	if !strings.Contains(ev.Message, string(api.HealthCheckHeartbeat)) {
+		t.Errorf("message %q does not name the gate that admitted the successors", ev.Message)
+	}
+
+	// The readiness stamp must precede the first predecessor teardown.
+	// That ordering is the whole point of having it in the ring.
+	for _, d := range ring.Snapshot(events.Filter{Kind: events.KindSessionDeleted}, 0) {
+		if d.Seq < ev.Seq {
+			t.Errorf("session.deleted seq %d precedes readiness seq %d", d.Seq, ev.Seq)
+		}
+	}
+
+	// Drive the shift to completion: the count must stay at 1 across every
+	// remaining tick, including the ones that run after the shift clears.
+	for i := 0; i < 20; i++ {
+		ctrl.ReconcileOnce()
+		team, _ = store.GetTeam(teamKey)
+		if team.Shift.Phase == api.ShiftNone {
+			break
+		}
+	}
+	if team.Shift.Phase != api.ShiftNone {
+		t.Fatalf("shift did not complete, phase %s", team.Shift.Phase)
+	}
+	ctrl.ReconcileOnce()
+	if got := len(readyEvents()); got != 1 {
+		t.Fatalf("readiness events after the shift completed = %d, want exactly 1", got)
+	}
+}
+
+// TestShiftRoleReadyEventAbsentWhenSuccessorNeverReady is the negative half
+// of the bar: a successor generation that never satisfies allReady must never
+// produce a readiness stamp, however many ticks it is given. The shift times
+// out and rolls back instead. Falsification: an emit keyed on session
+// creation or on pane-Running rather than on the allReady verdict would fire
+// here, because these successors do reach Running.
+func TestShiftRoleReadyEventAbsentWhenSuccessorNeverReady(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	clock := newTestClock(time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+	ctrl.ShiftTimeout = 2 * time.Minute
+
+	createTeamFixture(t, store, "test-shift-never-ready", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Hour, FailureThreshold: 3},
+		},
+	})
+	teamKey := "test-shift-never-ready/squad"
+
+	ctrl.ReconcileOnce()
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
+		t.Fatalf("initiate shift: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		ctrl.ReconcileOnce()
+	}
+
+	// The successor is Running but has never heartbeat, so it is not ready.
+	gen2 := store.ListSessionsByTeamRoleGeneration("test-shift-never-ready", "squad", "worker", 2)
+	if len(gen2) != 1 {
+		t.Fatalf("expected 1 gen-2 session launched, got %d", len(gen2))
+	}
+	if gen2[0].State != api.SessionRunning {
+		t.Fatalf("successor state = %s, want running (the test needs a live-but-unready pane)", gen2[0].State)
+	}
+
+	clock.Advance(3 * time.Minute)
+	ctrl.ReconcileOnce()
+
+	team, _ := store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %s, want none after the timeout aborted the shift", team.Shift.Phase)
+	}
+	if got := len(ring.Snapshot(events.Filter{Kind: events.KindShiftTimedOut}, 0)); got == 0 {
+		t.Fatal("expected a team.shift-timed-out event")
+	}
+	if got := len(ring.Snapshot(events.Filter{Kind: events.KindShiftRoleReady}, 0)); got != 0 {
+		t.Fatalf("readiness events for a successor that never became ready = %d, want 0", got)
+	}
+}
+
+// TestShiftRoleReadyEventIsPerRole pins the granularity claim: the readiness
+// stamp is per role, not per shift and not per session. A two-role shift
+// crosses the launching-to-draining boundary twice, in shift order, so it
+// must produce two events; a four-replica role crosses it once, so it must
+// produce one. Falsification: an emit per successor session would give 5
+// here rather than 2, and an emit hung off team.shift-completed would give 1.
+func TestShiftRoleReadyEventIsPerRole(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+
+	createTeamFixture(t, store, "test-shift-ready-multi", "squad", []api.Role{
+		{Name: "supervisor", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "worker", Replicas: 4, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-shift-ready-multi/squad"
+
+	ctrl.ReconcileOnce()
+	if err := ctrl.InitiateShift(teamKey, ""); err != nil {
+		t.Fatalf("initiate shift: %v", err)
+	}
+	for i := 0; i < 40; i++ {
+		ctrl.ReconcileOnce()
+		team, _ := store.GetTeam(teamKey)
+		if team.Shift.Phase == api.ShiftNone {
+			break
+		}
+	}
+	team, _ := store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftNone {
+		t.Fatalf("shift did not complete, phase %s", team.Shift.Phase)
+	}
+
+	evs := ring.Snapshot(events.Filter{Kind: events.KindShiftRoleReady}, 0)
+	if len(evs) != 2 {
+		t.Fatalf("readiness events for a 2-role shift = %d, want 2 (one per role)", len(evs))
+	}
+	// Snapshot is oldest-first, and shiftOrder puts the supervisor last.
+	if evs[0].Role != "worker" || evs[1].Role != "supervisor" {
+		t.Errorf("readiness roles = [%s %s], want [worker supervisor] (supervisor shifts last)",
+			evs[0].Role, evs[1].Role)
+	}
+	for _, ev := range evs {
+		if ev.Generation != 2 {
+			t.Errorf("role %s: generation = %d, want 2", ev.Role, ev.Generation)
+		}
+		if !strings.Contains(ev.Message, "gate=running") {
+			t.Errorf("role %s: message %q, want gate=running for a role with no healthcheck", ev.Role, ev.Message)
+		}
+	}
+}
