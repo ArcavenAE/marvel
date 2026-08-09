@@ -1,0 +1,123 @@
+id: question-channel-observation-cost
+type: question
+confidence: frontier
+title: "What does observing a harness cost, and where does that cost live in the channel model?"
+tags:
+  - marvel
+  - observability
+  - harness
+  - governance
+content: |
+  The CTX% channel model has two axes. CONSENT gates (contracted,
+  conceded, appropriated) and FIDELITY orders (proximity to a
+  per-request prompt level with token classes intact). The Crush
+  measurement produced costs neither axis predicts, on the CONTRACTED
+  side where the supporting arguments were supposed not to reach.
+
+  This node holds the third-property question and the ruling that
+  answers it for one harness. It is scoped to the cost of obtaining a
+  reading, not to the reading's truth.
+
+  RULED 2026-08-09 from measurement (finding-019, crush v0.88.1).
+
+  PERTURBATION IS NOT A THIRD AXIS AND NOT A GENERAL ELIGIBILITY COST.
+  The word was naming three things that behave differently, and
+  separating them dissolves the question:
+
+  1. REGISTRATION is a property of the CALL, not of the channel.
+     Holding Crush's `GET /v1/workspaces/{id}/events` open left
+     `attached_clients` unchanged; the counter moved only when the same
+     client also issued `POST /v1/workspaces/{id}/current-session`,
+     which a reader never needs. Grading the channel would have booked
+     the hazard against a set of calls only one of which carries it.
+  2. LIFECYCLE COUPLING is real, is a per-channel correctness bug, and
+     points the opposite way from the worry that motivated it. An
+     unobserved Crush workspace was reaped 10 to 15 seconds after its
+     last client exited; the same teardown with a marvel-shaped
+     observer holding only the events stream left it alive past 90
+     seconds with zero real clients. Marvel does not pay to keep its
+     reading alive. Marvel prevents the harness's own collection, and
+     an observer outliving its agent is a leak marvel creates. That
+     needs a test per channel, which is where the sweep's ruling 2
+     carve-out already put it.
+  3. HOST-GLOBAL SIDE EFFECTS are a SPAWN-TIME ENVIRONMENT OBLIGATION,
+     which is enforcement locus 1 and needs no new machinery. Starting
+     a Crush server refreshes `~/.local/share/crush/hyper.json` and
+     `providers.json`. `CRUSH_GLOBAL_DATA` does NOT relocate that
+     write (measured: the write still landed on the host path);
+     `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` prevents it (control run:
+     both hashes and both mtimes held).
+
+  THE PROPOSED BOOLEAN IS REFUTED. The sweep's ruling 6 offered one
+  field, `ObservationRegisters`, so a fallback chain could prefer a
+  non-registering channel. On its first real instance the field is
+  unanswerable: false for the read, true for a write no reader makes,
+  and either way it names the wrong hazard, since what needs handling
+  is workspace liveness rather than a counter. A boolean whose first
+  instance cannot be set is a guess with a type. What the adapter
+  should declare instead is the ordered list of CALLS it makes, which
+  it already owns.
+
+  EXPOSURE IS THE GENUINE THIRD PROPERTY, and it is not perturbation.
+  `GET /v1/workspaces` serves the registering client's full process
+  environment as `env`: 76 entries on the measured run, including
+  `BEADS_DOLT_PASSWORD` and both `SSH_AUTH_SOCK` paths. In a marvel
+  deployment that block IS the environment marvel constructed at
+  spawn, so enabling the channel publishes marvel's own credential
+  material to every client of a socket shared across all workspaces on
+  the host. Socket mode `srwxr-xr-x` plus BSD connect semantics keeps
+  other users out; every process running as the operator is in.
+
+  Consent asks who permitted the read. Fidelity asks how true the
+  number is. Exposure asks what enabling the channel makes readable by
+  someone else, and none of the three predicts it. It is the sweep's
+  BLAST RADIUS property landing on an unanticipated surface: not "can
+  this channel hang the harness" but "does enabling this channel widen
+  the credential surface." SOUL section 3 makes that a boundary rather
+  than a risk to manage, and the consent axis had placed the
+  contracted socket as far from that boundary as it is possible to be.
+
+  This is the second inversion of the same shape. The sweep already
+  found that DECLARATION is a property of the payload rather than of
+  the consent grade, because an appropriated artifact out-declared a
+  contracted one. Credential adjacency now inverts the same way. Two
+  of the three original grounds for the consent gate have been
+  measured onto the wrong axis, which is worth naming as a pattern
+  rather than as two accidents.
+
+  OPEN, and none of it blocks the first adapter:
+
+  - Exposure has no slot yet. It is ruled to belong in eligibility
+    beside blast radius, not in the grade, but nothing in the code
+    carries either, because no channel declaration exists.
+  - Whether lifecycle coupling generalizes. Measured present on Crush
+    and measured ABSENT on opencode (210 seconds idle with no
+    observer, created and disposed counts unchanged). Two harnesses is
+    a contrast, not a rule.
+  - Whether the exposure finding recurs. One instance. The question to
+    ask of every future channel is what the harness serves ABOUT the
+    client, not only what it serves about the session.
+  - Whether the operator wants the provider-catalog trade at all.
+    `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` buys isolation at the cost
+    of a catalog that stops refreshing, which is free for a
+    marvel-pinned local model and not free otherwise.
+
+  Related bd: aae-orc-k2mi (the Crush probe that produced this),
+  aae-orc-dc1j (the option (c) ruling), aae-orc-6c2r (the adapter that
+  will be the first consumer), aae-orc-9jvb (opencode, where
+  credential adjacency was the original argument).
+edges:
+  - target: question-interactive-context-pressure
+    type: derives
+    note: "the cost half of the per-harness channel model that dc1j option (c) opened"
+  - target: elem-agentic-resource-matrix
+    type: supports
+    note: "spawn-time environment obligations land on enforcement locus 1, which the matrix already owns"
+  - target: question-stream-attachment
+    type: derives
+    note: "an observer that outlives its agent is an attachment-lifetime defect, not a parsing one"
+provenance:
+  created_by: agent
+  session: marvel-k2mi-crush-channel-2026-08-09
+  created_at: "2026-08-09"
+  discovered_from: finding-019-crush-context-pressure-channel
