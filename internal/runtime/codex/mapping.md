@@ -95,14 +95,22 @@ Compares what codex actually emits with the sketch in
    replacement and produce no occupancy, so a codex session renders CTX%
    as "-" and `runtime.context_window` does not change that. Occupancy
    for codex needs the rollout's own per-request record, which is the
-   channel `agent_transcript_path`-style hook payloads point at (the
-   field is `transcript_path`; `agent_transcript_path` exists only on
-   SubagentStop and names a subagent's file).
+   channel hook payloads point at through `transcript_path`
+   (`agent_transcript_path` exists only on SubagentStop and names a
+   subagent's file). That reader is now built: see "The rollout file"
+   below, `rollout.go`, and `marvel codex-ctx`.
 
-   Still open: whether the accumulator resets at a turn boundary or runs
-   for the session. Both remain consistent with a single-turn capture,
-   and the fold treats them alike since neither is a level. A multi-turn
-   authenticated `codex exec resume` decides it.
+   SETTLED 2026-08-09: the accumulator is SESSION-scoped. The rollout
+   carries `total_token_usage` beside every level, and a session
+   accumulator can never decrease. Across the corpus: 1890
+   consecutive-pair comparisons and 159 turn boundaries with a sample on
+   both sides, from 9 multi-turn sessions of up to 45 turns, with ZERO
+   decreases and no record where total falls back to last. A per-turn
+   accumulator drops at every boundary. The one step left is whether
+   `turn.completed` keeps mirroring `total_token_usage` ACROSS a turn
+   boundary, which the single-turn fixture cannot show and an
+   authenticated multi-turn `codex exec resume` would. The fold treats
+   both scopes alike since neither is a level.
 
    Not read anywhere: the rollout file's
    `rate_limits.primary.used_percent` (observed 95.0) is the WEEKLY PLAN
@@ -148,6 +156,39 @@ codex exec --json --skip-git-repo-check <role.args...> '<prompt>' < /dev/null > 
   `runtime.args`; the adapter injects neither, to avoid widening a
   harness's authority by default.
 
+## The rollout file: the only occupancy source
+
+`rollout.go` reads a second codex artifact, and the reason it exists at
+all is that the stream above cannot answer the question. `turn.completed`
+carries codex's `total_token_usage` accumulator field for field, so it is
+a running total rather than a level (finding-017 §4). The rollout JSONL
+codex writes per session carries both, side by side:
+
+| field | what it is | marvel |
+|---|---|---|
+| `payload.info.last_token_usage.input_tokens` | the prompt for that request | **the level** |
+| `payload.info.total_token_usage.*` | running totals over the session | never read |
+| `payload.info.model_context_window` | the window, already effective | the denominator |
+
+Records to discard, both measured across 209 files and 2098 samples:
+
+- `payload.info == null`, which codex writes once at a session's first
+  `token_count` (1 occurrence).
+- `last_token_usage.input_tokens == 0` with a nonzero `total_tokens`: the
+  sentinel codex writes at every compaction (16 occurrences). Reading it
+  as a level reports 0% at the moment the session is fullest.
+
+The reader takes the file's path from a hook payload's `transcript_path`
+and never derives it. It reads a tail that grows on a miss (64KB, 256KB,
+1MB, 4MB) rather than a fixed window, because the largest single record
+is 1,776,484 bytes and the largest gap between consecutive samples is
+1,792,084, so a fixed window can land inside one tool output and see
+nothing. At rest the first rung is ample: across the 207 files carrying
+samples, the newest usable record began at most 9,909 bytes from EOF.
+
+`session_meta.payload.context_window` is NOT a size. It is the one-key
+object `{"window_id": ...}`, which is compaction-generation identity.
+
 ## Gaps
 
 - **Not exercised across multiple turns.** `exec` one-shot is single-turn;
@@ -157,3 +198,16 @@ codex exec --json --skip-git-repo-check <role.args...> '<prompt>' < /dev/null > 
   is unconfirmed.
 - **macOS only**, codex-cli 0.146.0 only. The event dialect has changed
   across codex versions; re-verify on upgrade.
+- **`.zst` rollout compression is untested under a live reader.** The
+  binary carries a `codex.rollout_compression.*` metric family, the
+  string `jsonl.zst`, and "compressed rollout reader is busy", so
+  compression is a background job rather than archive-on-demand. No
+  `.zst` file exists on the measured host, so what a reader sees when its
+  file is replaced by a compressed sibling mid-session is unknown.
+  `ReadOccupancy` opens by path per call and holds no handle, so the
+  failure mode is a hold rather than a stale read, but that is reasoning
+  and not a measurement.
+- **Whether `SessionStart source:"compact"` opens a NEW rollout file** is
+  unverified. It would matter to any reader that tracked `(dev,ino)`;
+  this one does not, because it takes the path from the hook payload on
+  every fire.
