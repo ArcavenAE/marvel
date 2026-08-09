@@ -99,6 +99,33 @@ content: |
   the bytes go rather than who was asked. Two instances is enough to
   stop treating either as a local defect.
 
+  THIRD INSTANCE, AND THE ONLY EXECUTABLE ONE. A `crushrc` in a
+  project directory is a Bash script Crush runs at config load, with
+  the same embedded shell the `bash` tool uses. Measured: a `.crushrc`
+  written into a project directory fired on `crush run` with no trust
+  prompt, no `--yolo`, and outside the `allowed_tools` permission list
+  entirely, because it runs before any agent turn exists to permit. A
+  read-only `crush session list --json` in the same directory did not
+  fire it, so the trigger is starting a session.
+
+  Marvel's workspaces are checkouts of arbitrary repositories, so
+  launching a Crush session in one executes whatever `.crushrc` that
+  repository ships, as the marvel user, with the constructed
+  environment in scope. Composed with the exposure result above it is
+  one finding rather than two: a repo-supplied script runs with the
+  same environment the harness serves over its socket. An adapter
+  needs a stated position (refuse, sandbox under curtain, or accept
+  and say so) before it launches anything. Undecided is an honest
+  state; silent is not.
+
+  The same mechanism is also the advantage. Project-local config
+  outranks global, so a marvel-projected hook or setting is a file
+  marvel writes into its own workspace, never a touch of the
+  operator's credential-bearing `~/.config/crush/crush.json`. Crush
+  splits config from data across two variables and only the config one
+  holds credentials, which is a better split than codex's single
+  CODEX_HOME beside auth.json.
+
   This is the second inversion of the same shape. The sweep already
   found that DECLARATION is a property of the payload rather than of
   the consent grade, because an appropriated artifact out-declared a

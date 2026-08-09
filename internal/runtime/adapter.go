@@ -15,7 +15,14 @@
 // No Crush adapter exists yet. When one is written it needs
 // CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1 unconditionally, because without
 // it every spawned session rewrites the host-global provider cache, and
-// CRUSH_GLOBAL_DATA does not contain that write.
+// CRUSH_GLOBAL_DATA does not contain that write. Relocating
+// CRUSH_GLOBAL_DATA is safe (caches and model selections);
+// CRUSH_GLOBAL_CONFIG is the operator's credential store and is not.
+//
+// It also needs a stated position on crushrc. Crush executes a project
+// directory's .crushrc as bash at config load, ahead of any permission
+// list, and marvel workspaces are checkouts of arbitrary repositories.
+// Measured firing on `crush run` with no trust prompt (finding-020 §9).
 package runtime
 
 import (

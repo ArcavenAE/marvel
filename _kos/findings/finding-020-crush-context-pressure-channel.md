@@ -132,6 +132,26 @@ model change, not per turn.
 Nothing here needs multiplying. Crush publishes one window term and
 applies its own compaction thresholds to it internally.
 
+**The table is not a fallback here, and the router study measured why.**
+`~/.local/share/crush/providers.json` is keyed provider first and model
+second: 40 providers, 948 model ids, 249 of them offered by more than one
+provider, and **141 of those 249 disagree with themselves on
+`context_window`**, 52 by a factor of 1.5 or more. All seven model ids in
+marvel's shipped table are provider-variable at exact spelling.
+`claude-opus-5` is 1000000 at anthropic and 264000 at copilot, and marvel's
+table returns 1000000, so a `LimitFromTable` resolution would be wrong by
+3.8x with no signal that anything happened. (Measured by the router and
+backend study, aae-orc-eooi, not by me.)
+
+Combined with §8's result that the database carries no window at all, that
+closes the denominator question for this harness: the REST route or the
+provider-keyed catalog, never a model-keyed table. The study also notes
+that marvel and Crush disagree about which axis carries a 1M window, marvel
+putting it in the model name (`claude-opus-4-8` beside
+`claude-opus-4-8[1m]`, the entitlement axis) and Crush putting it in the
+provider row. At least one of the two is modelling it wrong, so keying by
+provider relocates that entanglement rather than resolving it.
+
 ## 4. Compaction reports empty at the moment of maximum pressure
 
 `POST /v1/workspaces/{id}/agent/sessions/{sid}/summarize` on a session
@@ -425,7 +445,77 @@ say which window applied to a historical message. The database has the
 per-message model and no window; the route has the window and no history.
 Neither surface joins them.
 
-## What changed in the code
+## 9. The hook contract, the config split, and a repo-supplied script that runs before anything
+
+Added 2026-08-09 in response to the codex arm's two questions about hook
+surfaces. Both answers came out differently from codex, and chasing the
+second one turned up the sharpest exposure result on this arm.
+
+**Hook stdout is not fed to the model, and the real trap is the other
+direction.** On codex, a hook's stdout came back in the rollout as a
+`developer` role item, so a status line printed by a context reporter would
+become a context source once per fire. Crush's contract is stricter: exit 0
+means stdout is parsed as a JSON envelope (`version`, `decision`, `halt`,
+`reason`, `context`, `updated_input`), exit 2 blocks the call with stderr as
+the deny reason, exit 49 halts the turn, and any other code is logged and
+ignored. Text reaches the model only through the explicit `context` field.
+So a Crush hook that printed a status line would not silently become a
+context source.
+
+The hazard on this harness points the opposite way. `decision: "allow"` is
+documented as **affirmative pre-approval that bypasses the permission
+prompt entirely**, and hooks aggregate across config order with `allow`
+beating no opinion. A hook written to report rather than to decide must
+omit the field, not set it to something benign. Porting a hook design from
+a harness whose stdout is inert into one where stdout can grant permissions
+is the failure this pair of measurements exists to prevent.
+
+**Config and data split across two variables, and only one of them holds
+credentials.** Codex keeps hooks and `auth.json` in one `CODEX_HOME`, which
+is why relocating it takes the operator's credentials along. Crush splits
+them. `CRUSH_GLOBAL_CONFIG` points at `~/.config/crush/`, whose `crush.json`
+is mode 0600 and carries per-provider `api_key` values.
+`CRUSH_GLOBAL_DATA` points at `~/.local/share/crush/`, whose `crush.json` is
+mode 0644 and holds model selections and `recent_models`, no secrets; the
+embedded docs state outright that data directories hold machine-owned JSON
+state and that Crush does not discover or execute a `crushrc` from them.
+
+So the adapter rule is asymmetric and the asymmetry is usable: relocating
+`CRUSH_GLOBAL_DATA` is safe, relocating `CRUSH_GLOBAL_CONFIG` moves the
+operator's credential store and must not be done casually.
+
+**And marvel does not need to touch either, because project-local config
+outranks both.** Crush's documented precedence is `.crushrc` / `crushrc` /
+`.crush.json` / `crush.json` in the project directory first, closer-to-cwd
+winning, then the global config. Marvel owns the workspace directory, so a
+marvel-projected hook or setting is a file marvel writes into its own
+workspace. That is a genuine structural advantage over codex, where the
+only home for a hook is the credential-bearing directory and the hook is
+therefore an operator setup step.
+
+**The same mechanism is a code-execution surface, and this is the part that
+matters most.** A `crushrc` is documented as a plain Bash script executed at
+load time with the same embedded shell the `bash` tool uses. Measured: I
+wrote a `.crushrc` into a project directory that redirects a line to a file,
+and `crush run` in that directory executed it. No trust prompt, no `--yolo`,
+and the `allowed_tools` permission list does not apply because the script
+runs at config load, before any agent turn exists to be permitted. A
+read-only `crush session list --json` in the same directory did not fire it,
+so the trigger is starting a session rather than touching the project.
+
+Marvel's workspaces are checkouts of arbitrary repositories. Launching a
+Crush session in one executes whatever `.crushrc` that repository ships, as
+the marvel user, with the environment marvel constructed in scope. Composed
+with §6 that is one finding rather than two: a repo-supplied script runs
+with the constructed environment that the same harness also serves over its
+socket. This is the third instance today of one shape, and it is the only
+one where the payload is executable rather than merely readable.
+
+Any Crush adapter needs a position on this before it launches anything. The
+options are to refuse `crushrc` (there is no documented flag for it, so this
+would need an upstream ask), to sandbox the launch under curtain, or to
+declare it accepted and say so. Naming it as undecided is the honest state;
+picking silently is not.
 
 Two shipped statements are now measured false, and both assert the
 opposite of what this probe found.
