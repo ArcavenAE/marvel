@@ -566,3 +566,227 @@ written. No liteLLM instance was contacted.
 - [LiteLLM: Security Update, Suspected Supply Chain Incident (March 2026)](https://docs.litellm.ai/blog/security-update-march-2026)
 - [LM Studio: REST API v0 endpoints](https://lmstudio.ai/docs/developer/rest/endpoints)
 
+---
+
+# Addendum, second pass, 2026-08-09
+
+Written against the same ticket after a premise check. The first pass stands
+unedited above; this pass adds what it did not reach and rules on the two
+questions it left unasked. Same three evidence grades, same standing rule.
+
+**Premise check.** The five questions the ticket names are answered above, and
+the structural claims re-verify at HEAD `0886801`: the word "backend" occurs
+once in the Go tree, in `internal/api/store.go` about bolt persistence, and
+"router" occurs nowhere. So the concepts are still absent and the first pass
+is still accurate. What was missing was a graph node, a ruling on where these
+concepts sit in the committed vocabulary, and one case.
+
+**The case.** `gemini` appears zero times in the study and zero times in the
+source idea file. It is the sharpest instance of the question, and
+`finding-016` already carried it: "router-initiated switch. gemini routes
+between models mid-session and announces it only on a separate
+`model_routing` event."
+
+## 10. There are two routers, and the first pass modelled one
+
+The study treats a router as a network hop between the harness and a backend,
+addressed by an environment variable and observable, in principle, over HTTP.
+That is one of two.
+
+- **External router.** liteLLM. A separate process reached over the network.
+  Sections 2 through 5 above are about this one.
+- **Internal router.** A model-selection decision made inside the harness
+  process, over a policy marvel never sees, published only in whatever the
+  harness chooses to emit.
+
+The internal router is not hypothetical and not confined to one vendor.
+`finding-016` lists three mechanisms: claude runs up to three model slots in
+one session (`ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+`CLAUDE_CODE_SUBAGENT_MODEL`), codex emits
+`codex.compaction.model_fallback` with a `model_downshift` reason, and gemini
+routes on `model_routing`.
+
+**MEASURED (this repo, HEAD).** Marvel's own code already names the internal
+router, and solves it. `internal/usage/sample.go:104` documents why a terminal
+sample's window must be indexed by the session's primary model:
+
+> Selecting that entry by anything else (first key, max, a range) is wrong: a
+> session routing across models carries several entries with windows differing
+> by 5x, and Go map iteration is randomized.
+
+**MEASURED (fixtures).** The 5x is real and it is in two of this repo's own
+claude fixtures. `hello.ndjson` and `tool_call.ndjson` each carry a terminal
+`modelUsage` map with two entries: `claude-haiku-4-5-20251001` at
+`contextWindow` 200000, and `claude-fable-5[1m]` at 1000000. One session, one
+terminal record, two denominators five times apart.
+
+So "the session's context window" is not one number in the simplest shipped
+fixture, and the reason is a router inside the harness. Marvel handles it by
+keying on `primaryRaw`.
+
+**The consequence for any manifest surface.** A `backend:` field beside
+`runtime:` describes the external router and cannot describe the internal one,
+because the internal one is not configuration marvel supplies. It is harness
+behavior. A design that adds the field handles liteLLM and misses the case
+that already perturbs a shipped adapter.
+
+## 11. Model identity and denominator identity are independent
+
+The first pass framed section 3 as "can marvel learn the served model", and
+treated that as the thing a router threatens. Two of marvel's own harnesses
+say the question is the wrong one, and marvel's type system already separates
+them: `internal/usage/profiles.go` carries `modelFromStream` and
+`limitInStream` as independent booleans on the `profile` struct.
+
+**MEASURED (this repo).** The occupied cells, with the fourth from documentary
+research rather than code:
+
+| harness | names its model | declares its window | consequence |
+|---|---|---|---|
+| claude | yes, per request | yes, per model, on the terminal line | router is announced on the same record as the count |
+| codex | no, not in the exec stream | no, not in the exec stream (the rollout declares it twice) | model name would key nothing |
+| opencode | no | no | neither term |
+| gemini | on a separate event (INFERRED) | nowhere (INFERRED) | the two terms must be joined |
+
+Codex is the case that breaks the intuition, and `finding-017` settled it:
+the model name IS captured, in `turn_context.model` and on ten of eleven hook
+payloads, and naming it keys nothing, because every model on the host reports
+258400 against a catalog giving all eight models identical values. "The window
+is keyed by model" and "the window is one number for this account and plan"
+predict identical data, so a table entry would be a per-account plan limit
+wearing a model name.
+
+Read the two together and the ruling falls out. **Marvel needs the
+denominator. It needs the model only to know when to invalidate a learned
+denominator.** Codex shows the denominator can be sound while the model key is
+worthless. Gemini would show the converse: a model key that changes usefully
+often, against no denominator at all.
+
+**The refinement, and it is sharper than "does the harness name its model".**
+Claude also routes between models, and it costs marvel nothing, because
+`message.model` rides the same record as the token counts it describes. Gemini
+splits them: the numerator arrives on `AfterModel`, the model identity on
+`model_routing`. A consumer must join two event streams, and every gap in that
+join attributes a count to the wrong denominator, silently.
+
+So the harmful property is not the router and not the missing name. It is
+**the model identity and the token count arriving on separate records**. That
+is a third profile axis the struct does not have, and it is the one worth
+adding when a harness forces it.
+
+This is the FEED-2 versus FEED-N split stated in the terms this study was
+asked about. A FEED-2 channel carries both terms, so the router is harmless
+whether it is internal or external. A FEED-N channel carries the numerator
+only, so marvel supplies the denominator from a table keyed on a model the
+router is free to change. **A router only hurts on FEED-N.**
+
+## 12. Ruling: no new primitive, and specifically not three of them
+
+The ticket asks whether router and backend are new primitives, refinements of
+B14's LLM term, or properties of the runtime. None of the three.
+
+**Not a B14 term.** B14's composition is `Agent = Persona + Identity + Role(s)
++ LLM + Tools`. Its five terms are library items selected when an agent is
+composed. A backend is not selected at composition time; it is resolved at
+request time, sometimes by a party that is neither the operator nor marvel.
+Adding it to a composition of authored artifacts would put a runtime outcome
+in a list of design choices.
+
+**Not a runtime property.** `elem-runtime-names-harness` is bedrock and
+`runtime` names the harness. The first pass is right that a router is a third
+thing. Section 10 adds the reason it cannot be folded in anyway: the internal
+router is the harness's own behavior, so a field describing it would describe
+the adapter, not the deployment.
+
+**Not a resource-matrix row.** Cache locality and token spend are already rows
+of the seventeen. A router changes their values and their attribution. It does
+not add a resource.
+
+**What is warranted instead** is the thing the first pass already named from
+the other direction, and it is a field on a struct that exists rather than a
+type that does not: a **provenance grade on the reading's model identity**,
+ranked the way `LimitSource` is ranked, distinguishing server-attested from
+client-echoed from launch-flag-derived. Section 11 adds a second candidate,
+the same-record axis on `profile`. Both are cheap, both are local to
+`internal/usage`, and neither claims marvel owns a router.
+
+The failure mode this avoids is on the record in this repo's own CLAUDE.md:
+`Pack`, `Vault`, `Volume`, `Schedule`, `Gateway` and `Readycheck` survive as
+model-only prose with no type and no code. A `Router` resource today would be
+the seventh.
+
+## 13. The one place marvel has already decided the backend does not matter
+
+Abstract questions about modelling a backend have one concrete site.
+
+**MEASURED (this repo).** `NormalizeModel` in `internal/usage/limits.go`
+strips `us.`, `eu.`, `apac.` and a leading `anthropic.` before a window
+lookup. Its documented reason is regional: "Pricing differs by region; the
+window does not." The rule is stated about regions and also erases the
+provider, because `us.anthropic.claude-sonnet-4-6` is a Bedrock model id and
+the bare form is not. Both collapse to one key.
+
+`finding-016` axis 4 says the same model id through a different provider can
+carry a different window, and axis 5 says the 1M window is gated by a beta
+header per account per backend rather than being intrinsic to the model.
+
+I am not claiming the strip is wrong: no measurement here compares a Bedrock
+window against a direct one for the same id, and the regional half of the
+justification looks sound. I am claiming this is the site. If "backend" ever
+has to become a key in marvel, it becomes one here first, and the question is
+narrow enough to settle with one measurement rather than a design.
+
+## 14. The trigger
+
+The honest answer to the ticket is that no new primitive is warranted **yet**,
+and the trigger is specific enough to recognize without judgment:
+
+> **Marvel adopts a harness that routes between models AND publishes no
+> per-model window on the record carrying the token count.**
+
+Gemini is that harness. Marvel ships six adapters (claude, codex, opencode,
+forestage, simulator, generic) and gemini is not among them; the string
+appears twice in the Go tree, both in a `doc.go` comment saying it was out of
+scope and unavailable to measure. So the trigger has not fired.
+
+A second trigger, cheaper and named in section 2 above: the operator's `curl`
+loop against the hybrid endpoint reading `x-litellm-model-id` on N identical
+requests. If the id varies, Position A is unsound and the external layer is
+real. If it is constant, a spawn-time record answers the external case
+entirely.
+
+Either one firing moves this from a concept marvel declines to carry into one
+with a measured reason to exist.
+
+## 15. What this pass did not establish
+
+- **Anything about gemini by measurement.** Every gemini claim here is
+  documentary, from the channel research recorded on `aae-orc-6c2r` (itself
+  labelled desk measurement, not a probe run) and from `finding-016`. I did
+  not run gemini, read its source, or see a `model_routing` event.
+- **Whether the same-record property is the right third profile axis** or a
+  special case of something more general. One harness suggests it; one harness
+  is not a taxonomy.
+- **Whether a Bedrock window differs from a direct window for any id marvel's
+  table carries.** Section 13 names the site, not the answer.
+- **Whether claude's `message.model` is server-attested or client-echoed.**
+  Unchanged from the first pass: two hypotheses, no discriminating evidence.
+- **Everything the first pass listed in section 7.** None of it was retested.
+
+## Addendum provenance
+
+Written 2026-08-09 against `aae-orc-eooi`, in an isolated clone at marvel HEAD
+`0886801`. Method: reading this repository and its fixtures, plus the graph
+artifacts cited. Zero model calls, zero network reads, no harness started, no
+liteLLM instance contacted, nothing outside the clone touched.
+
+## Addendum sources
+
+All in-tree: `internal/usage/sample.go`, `internal/usage/profiles.go`,
+`internal/usage/limits.go`, `internal/runtime/claudecode/testdata/hello.ndjson`
+and `tool_call.ndjson`, `internal/usage/doc.go`,
+`_kos/findings/finding-016-effective-autocompact-window-is-the-predictive-denominator.md`,
+`_kos/findings/finding-017-codex-context-pressure-channel.md`,
+`_kos/nodes/bedrock/elem-runtime-names-harness.yaml`. Gemini and Crush channel
+detail from bd `aae-orc-6c2r` notes (2026-08-08).
+

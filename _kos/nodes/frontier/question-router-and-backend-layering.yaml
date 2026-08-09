@@ -1,0 +1,192 @@
+id: question-router-and-backend-layering
+type: question
+confidence: frontier
+title: "Router and backend as layers below the harness: are they marvel primitives, and is the served model knowable?"
+tags:
+  - marvel
+  - observability
+  - harness
+  - resource-matrix
+content: |
+  Marvel's model of what serves an agent has one rung, the harness.
+  Reality has more: a harness talks to a ROUTER or directly to a
+  BACKEND, which may fan out further, and the router may choose per
+  request. The operator runs both shapes on the same fleet
+  (`local-ai-mac`: local and cloud are backends only, hybrid puts
+  liteLLM in front), so any model marvel adopts must describe both
+  without special-casing one.
+
+  Urgent rather than merely absent because finding-016 established that
+  CTX% needs a denominator varying on six axes, one of which is backend
+  service. A router does not add a seventh axis. It can make that axis
+  unobservable, and a model-to-window table keyed on a model marvel
+  believes is in use returns a confident wrong number when something
+  else was served. That is the silent-wrong failure this arc keeps
+  ruling against.
+
+  Studied twice: `_kos/probes/study-router-and-backend-layering.md`
+  (first pass 2026-08-08, five questions, three left unresolved on
+  purpose; addendum 2026-08-09). Source idea:
+  `_kos/ideas/router-and-backend-as-first-class-concepts.md`.
+
+  RULING 2026-08-09: NO NEW PRIMITIVE IS WARRANTED YET.
+
+  Not a B14 term. B14 composes Agent = Persona + Identity + Role(s) +
+  LLM + Tools, and its five terms are library items selected when an
+  agent is composed. A backend is resolved at REQUEST time, sometimes
+  by a party that is neither operator nor marvel. It does not belong in
+  a list of design choices.
+
+  Not a runtime property. `elem-runtime-names-harness` is bedrock and
+  holds. The reason is stronger than "a router is a third thing": the
+  internal router (below) is the harness's own behavior, so a field
+  describing it would describe the adapter rather than the deployment.
+
+  Not a resource-matrix row. Cache locality and token spend are already
+  rows. A router changes their values and their attribution; it adds no
+  resource.
+
+  What IS warranted are two fields on structs that already exist, both
+  local to `internal/usage`: a PROVENANCE GRADE on a reading's model
+  identity, ranked as `LimitSource` is ranked (server-attested vs
+  client-echoed vs launch-flag-derived), and possibly a same-record
+  axis on `profile` (below). Neither claims marvel owns a router.
+
+  The failure mode being avoided is on the record: Pack, Vault, Volume,
+  Schedule, Gateway and Readycheck survive as model-only prose with no
+  type and no code. A Router resource today would be the seventh.
+
+  THERE ARE TWO ROUTERS, AND THE FIRST PASS MODELLED ONE.
+
+  - EXTERNAL router: a separate process over the network, addressed by
+    environment, observable in principle over HTTP. liteLLM publishes
+    the distinction itself, per request, in `x-litellm-model-group`
+    (what was asked for), `x-litellm-model-id` (which deployment
+    served), and `x-litellm-model-api-base`. Marvel can read none of
+    it: the harness owns the HTTP connection and marvel reads its
+    stdout.
+  - INTERNAL router: a model-selection decision inside the harness
+    process. Claude runs up to three model slots per session
+    (`ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+    `CLAUDE_CODE_SUBAGENT_MODEL`); codex emits
+    `codex.compaction.model_fallback` with a `model_downshift` reason;
+    gemini routes on `model_routing` (finding-016).
+
+  Marvel already names the internal router in code and already solves
+  it. `internal/usage/sample.go:104` records that a terminal sample's
+  window must be indexed by the session's primary model because "a
+  session routing across models carries several entries with windows
+  differing by 5x, and Go map iteration is randomized." Measured in
+  this repo's own fixtures: `hello.ndjson` and `tool_call.ndjson` each
+  carry `claude-haiku-4-5-20251001` at contextWindow 200000 beside
+  `claude-fable-5[1m]` at 1000000, one session, one terminal record.
+
+  Consequence for any manifest surface, including `aae-orc-2lfg`: a
+  `backend:` field beside `runtime:` describes the external router and
+  cannot describe the internal one. It handles liteLLM and misses the
+  case that already perturbs a shipped adapter.
+
+  IS THE SERVED MODEL KNOWABLE? The question is the wrong one, and
+  marvel's own type system already separates the two facts it conflates.
+  `internal/usage/profiles.go` carries `modelFromStream` and
+  `limitInStream` as independent booleans.
+
+  - codex: names its model (turn_context.model, ten of eleven hook
+    payloads) and naming it KEYS NOTHING, because every model on the
+    host reports 258400 against a catalog giving all eight models
+    identical values. A table entry would be a per-account plan limit
+    wearing a model name (finding-017).
+  - gemini: routes usefully often and publishes NO window anywhere; the
+    denominator lives in a static table in its source (documentary,
+    `aae-orc-6c2r`).
+
+  So: marvel needs the DENOMINATOR. It needs the model only to know
+  when to INVALIDATE a learned denominator. The two are independent and
+  only one is load-bearing.
+
+  The refinement, sharper than "does the harness name its model":
+  claude routes too and it costs marvel nothing, because
+  `message.model` rides the same record as the counts it describes.
+  Gemini splits them (numerator on `AfterModel`, identity on
+  `model_routing`), so a consumer must join two streams and every gap
+  in the join attributes a count to the wrong denominator, silently.
+  The harmful property is the MODEL IDENTITY AND THE TOKEN COUNT
+  ARRIVING ON SEPARATE RECORDS. That restates the FEED-2 versus FEED-N
+  split: a FEED-2 channel carries both terms and the router is
+  harmless; a FEED-N channel carries the numerator only and marvel must
+  supply a denominator keyed on a model the router may change. A router
+  only hurts on FEED-N.
+
+  THE TRIGGER that would warrant a primitive, stated so it can be
+  recognized without judgment:
+
+    Marvel adopts a harness that routes between models AND publishes no
+    per-model window on the record carrying the token count.
+
+  Gemini is that harness. Marvel ships six adapters (claude, codex,
+  opencode, forestage, simulator, generic); gemini is not among them
+  and appears twice in the Go tree, both in a doc.go comment recording
+  it as out of scope and unavailable to measure. The trigger has not
+  fired.
+
+  SECOND TRIGGER, cheap and unrun: one curl loop of N identical
+  requests against the operator's hybrid endpoint reading
+  `x-litellm-model-id` on each. Constant id means a spawn-time record
+  answers the external case entirely. Varying id means routing is
+  per-request, "the backend of this session" has no referent, and the
+  external layer is real. This is the single most decision-relevant
+  unknown and it touches the operator's running router, so it is the
+  operator's to run.
+
+  KNOW / PRESENT / MANAGE, from the first pass and unchanged. KNOW yes,
+  and the cheapest step needs no router: record the ambient
+  backend-selecting environment observed at spawn, which also fixes the
+  DIRECT case, since marvel is equally blind there. That record is an
+  ASSIGNMENT, not an observation, and finding-016's open-loop ruling
+  applies verbatim. PRESENT yes, graded, never a synthesized guess.
+  MANAGE no, on three arguments that are not the reflexive one: SOUL
+  section 3 (a router holds live provider credentials for every backend
+  it fronts), supply chain (liteLLM's PyPI package shipped a credential
+  stealer in 1.82.7 and 1.82.8 on 2026-03-24, and marvel installing a
+  router would put marvel inside that blast radius against the
+  platform's own frozen-composition rule), and vision value 10 (a
+  router is capacity; marvel should own the record of what routed
+  where, not the routing). Boundary case left to the operator: minting
+  a per-team virtual key is management, and it is the one management
+  act that buys fleet-wide spend attribution obtainable no other way.
+
+  ONE CONCRETE SITE, if backend ever becomes a key. `NormalizeModel` in
+  `internal/usage/limits.go` strips `us.`, `eu.`, `apac.` and a leading
+  `anthropic.` before a window lookup, justified as regional ("Pricing
+  differs by region; the window does not"). The rule is stated about
+  regions and also erases the PROVIDER, since `us.anthropic.<id>` is a
+  Bedrock id and the bare form is not. finding-016 axis 4 says provider
+  can change the window and axis 5 says the 1M window is a beta gated
+  per account per backend. Not claimed wrong here: no measurement
+  compares a Bedrock window against a direct one for the same id. It is
+  the site, and it is narrow enough to settle with one measurement.
+
+  NOT ESTABLISHED. Anything about gemini by measurement (all gemini
+  claims are documentary). Anything about liteLLM by execution (the
+  whole external-router section is documentary; no instance was
+  contacted). Whether the same-record property is the right third
+  profile axis or a special case of something general. Whether a
+  Bedrock window differs from a direct one for any id in marvel's
+  table. Whether claude's `message.model` is server-attested or
+  client-echoed, which is open in the DIRECT case and which a router
+  converts from a possibility into a likelihood.
+edges:
+  - target: question-interactive-context-pressure
+    type: derives
+    note: "the layer below the harness is where finding-016's backend-service axis lives; this question asks whether marvel can read it"
+  - target: elem-runtime-names-harness
+    type: supports
+    note: "the ruling upholds it: router and backend are a third thing, and the internal router is adapter behavior rather than deployment configuration"
+  - target: elem-agentic-resource-matrix
+    type: supports
+    note: "a router changes the values and attribution of the cache-locality and token-spend rows without adding a row"
+provenance:
+  created_by: agent
+  session: marvel-eooi-router-backend-2026-08-09
+  created_at: "2026-08-09"
+  discovered_from: study-router-and-backend-layering
