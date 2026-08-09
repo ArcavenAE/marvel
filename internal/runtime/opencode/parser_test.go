@@ -324,11 +324,11 @@ func TestParseStepFinishPromotesEveryTokenClass(t *testing.T) {
 	if r.Cost == nil {
 		t.Fatal("cost unset; opencode reports one (0 for the free model)")
 	}
-	// The total covers input + output + reasoning (measured), which is
-	// what TotalExcludesCache declares, so the invariant is silent on a
-	// well-formed line.
-	if !r.TotalExcludesCache {
-		t.Error("total_excludes_cache unset; the comparison would then include classes opencode's total omits")
+	// A non-caching line satisfies both readings of the total, which is
+	// why it was never evidence for either. It is still the arithmetic
+	// check's baseline: silent on a well-formed line.
+	if r.TotalExcludesCache {
+		t.Error("total_excludes_cache set; opencode's total covers the cache classes (see caching.jsonl)")
 	}
 	if r.TotalMismatch() != 0 {
 		t.Errorf("total mismatch = %d, want 0 on a well-formed line", r.TotalMismatch())
@@ -339,77 +339,129 @@ func TestParseStepFinishPromotesEveryTokenClass(t *testing.T) {
 	}
 }
 
-// TestParseCachingTurnConfirmsAdditiveLayout covers the one unverified
-// premise in this adapter, whether tokens.input already subsumes
-// cache.read, and the one signal that speaks to it.
-//
-// SYNTHETIC FIXTURE. caching.jsonl is a warm caching turn in the shape the
-// additive reading implies: a small input against a large cache read, with
-// total == input + output + reasoning as measured on the free model
-// (finding-007). Under that shape input cannot contain cache.read, which
-// is what AdditiveConfirmed reports. The check is one-sided; see the
-// subsumptive case below.
-func TestParseCachingTurnConfirmsAdditiveLayout(t *testing.T) {
-	t.Parallel()
-	got := collectFixture(t, "caching.jsonl")
-
+// requestOf returns the RequestUsage on the fixture's last turn.completed.
+func requestOf(t *testing.T, fixture string) *events.RequestUsage {
+	t.Helper()
 	var r *events.RequestUsage
-	for _, ev := range got {
+	for _, ev := range collectFixture(t, fixture) {
 		if ev.Event == events.KindTurnCompleted {
 			r = ev.Data.(events.TurnData).Request
 		}
 	}
 	if r == nil {
-		t.Fatal("turn.completed carries no Request")
+		t.Fatalf("%s: no turn.completed carrying a Request", fixture)
 	}
-	if r.CacheReadIn == 0 && r.CacheCreationIn == 0 {
-		t.Fatal("fixture no longer exercises a caching model")
+	return r
+}
+
+// TestParseCachingTurnConfirmsAdditiveLayout settles the premise this
+// adapter carried unmeasured: whether tokens.input already subsumes
+// tokens.cache.read.
+//
+// MEASURED FIXTURE. caching.jsonl is the second turn of a live two-turn
+// opencode 1.18.15 session (`run --format json --continue`), captured
+// 2026-08-08. input 27 against cache.read 7936: input cannot be smaller
+// than a set it contains, so the additive reading is confirmed from real
+// data rather than assumed. AdditiveConfirmed is what reports it, and it
+// is one-sided; caching_first_turn.jsonl is the other half.
+func TestParseCachingTurnConfirmsAdditiveLayout(t *testing.T) {
+	t.Parallel()
+	r := requestOf(t, "caching.jsonl")
+
+	// tokens: {total 7966, input 27, output 3, reasoning 0,
+	//          cache {write 0, read 7936}}
+	if r.In != 27 || r.Out != 3 || r.ReasoningOut != 0 || r.Total != 7966 {
+		t.Errorf("request = in %d out %d reasoning %d total %d, want 27/3/0/7966",
+			r.In, r.Out, r.ReasoningOut, r.Total)
 	}
-	// The measured total definition must not read as a layout fault: it is
-	// the same number under either reading of input, so a mismatch here
-	// would fire on every caching turn and mean nothing.
-	if got := r.TotalMismatch(); got != 0 {
-		t.Errorf("total mismatch = %d, want 0; opencode's total omits the cache classes by definition", got)
+	if r.CacheReadIn != 7936 || r.CacheCreationIn != 0 {
+		t.Errorf("cache = read %d write %d, want 7936/0", r.CacheReadIn, r.CacheCreationIn)
 	}
 	if !r.AdditiveConfirmed() {
 		t.Errorf("input %d against cache read %d must confirm the additive reading", r.In, r.CacheReadIn)
 	}
-	if got := r.Occupancy(); got != 29240 {
-		t.Errorf("occupancy = %d, want 29240 (input + cache read + cache write)", got)
+	if got := r.Occupancy(); got != 7963 {
+		t.Errorf("occupancy = %d, want 7963 (input + cache read + cache write)", got)
 	}
 }
 
-// TestParseSubsumptiveShapeCannotBeConfirmed is the other half, and the
-// reason AdditiveConfirmed is documented as one-sided: if tokens.input
-// DOES contain the cached tokens it is necessarily the larger number, so
-// no line in that world can be distinguished from a cold additive one.
-// Marvel would over-count occupancy by the cache classes and nothing in
-// the stream would say so. One paid caching turn is the only settlement.
-func TestParseSubsumptiveShapeCannotBeConfirmed(t *testing.T) {
+// TestParseCachingTurnTotalCoversCacheClasses is the regression guard on
+// the declaration this fixture corrected. Under the retired
+// TotalExcludesCache reading the comparison would omit 7936 tokens and
+// report a mismatch that size, so a zero here is only reachable with the
+// cache classes inside the sum. That makes the check non-vacuous on the
+// shape that matters, which is the whole reason the fixture exists.
+func TestParseCachingTurnTotalCoversCacheClasses(t *testing.T) {
 	t.Parallel()
-	got := parseLines(t, `{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish","tokens":{"total":29257,"input":29240,"output":12,"reasoning":5,"cache":{"write":200,"read":29000}},"cost":0}}`)
-	r := got[0].Data.(events.TurnData).Request
-	if r == nil {
-		t.Fatal("turn.completed carries no Request")
+	r := requestOf(t, "caching.jsonl")
+
+	if r.TotalExcludesCache {
+		t.Fatal("total_excludes_cache set; that suppresses the comparison this fixture measures")
 	}
-	if r.TotalMismatch() != 0 {
-		t.Errorf("total mismatch = %d, want 0: the total is well-formed under either reading", r.TotalMismatch())
+	if got := r.TotalMismatch(); got != 0 {
+		t.Errorf("total mismatch = %d, want 0: 27 + 3 + 0 + 7936 + 0 == 7966", got)
+	}
+}
+
+// TestParseCachingTurnWithLargeInputCannotConfirm is the other half, and
+// the reason AdditiveConfirmed is documented as one-sided. A caching turn
+// whose input happens to exceed its cache read is indistinguishable from
+// what a subsumptive harness would emit, so silence proves nothing.
+//
+// MEASURED FIXTURE. caching_first_turn.jsonl is the FIRST turn of the same
+// live session as caching.jsonl: input 6018 against cache.read 1920. The
+// arithmetic check still holds on it, which is the point of keeping the
+// two apart.
+func TestParseCachingTurnWithLargeInputCannotConfirm(t *testing.T) {
+	t.Parallel()
+	r := requestOf(t, "caching_first_turn.jsonl")
+
+	// tokens: {total 7951, input 6018, output 2, reasoning 11,
+	//          cache {write 0, read 1920}}
+	if r.In != 6018 || r.CacheReadIn != 1920 {
+		t.Errorf("request = in %d cache read %d, want 6018/1920", r.In, r.CacheReadIn)
 	}
 	if r.AdditiveConfirmed() {
-		t.Error("a subsumptive input must not confirm the additive reading")
+		t.Error("input above cache read cannot confirm the additive reading")
+	}
+	if got := r.TotalMismatch(); got != 0 {
+		t.Errorf("total mismatch = %d, want 0: 6018 + 2 + 11 + 1920 + 0 == 7951", got)
 	}
 }
 
-// A total that stops matching input + output + reasoning is a vendor
-// schema change, and that is the one thing the total is asked to catch.
+// TestParseConsecutiveTurnsCarryLevelsNotSessionTotals is the evidence
+// behind usage.profiles declaring opencode CumulationRequest. The two
+// fixtures are turn 1 and turn 2 of ONE session, so a running session
+// total could only grow; input instead falls from 6018 to 27 as the prompt
+// moves into the cache. Treating these as totals would have made every
+// warm turn look like a session that shrank.
+func TestParseConsecutiveTurnsCarryLevelsNotSessionTotals(t *testing.T) {
+	t.Parallel()
+	first := requestOf(t, "caching_first_turn.jsonl")
+	second := requestOf(t, "caching.jsonl")
+
+	if first.In <= second.In {
+		t.Errorf("input %d then %d; a session total cannot fall, so this no longer shows levels",
+			first.In, second.In)
+	}
+	if second.Total >= first.Total+second.In+second.Out {
+		t.Errorf("total %d then %d looks accumulated, not per-request", first.Total, second.Total)
+	}
+}
+
+// A total that stops covering every class is a vendor schema change, and
+// that is the one thing the total is asked to catch. The line below is the
+// shape opencode was previously declared to emit, a total over input +
+// output + reasoning alone; if it ever became real, the check now says so
+// instead of being switched off in anticipation of it.
 func TestParseTotalDefinitionChangeIsReported(t *testing.T) {
 	t.Parallel()
-	got := parseLines(t, `{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish","tokens":{"total":29257,"input":40,"output":12,"reasoning":5,"cache":{"write":200,"read":29000}},"cost":0}}`)
+	got := parseLines(t, `{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish","tokens":{"total":57,"input":40,"output":12,"reasoning":5,"cache":{"write":200,"read":29000}},"cost":0}}`)
 	r := got[0].Data.(events.TurnData).Request
 	if r == nil {
 		t.Fatal("turn.completed carries no Request")
 	}
-	if got := r.TotalMismatch(); got != 29200 {
-		t.Errorf("total mismatch = %d, want 29200 (29257 - (40+12+5))", got)
+	if got := r.TotalMismatch(); got != -29200 {
+		t.Errorf("total mismatch = %d, want -29200 (57 - (40+12+5+29000+200))", got)
 	}
 }

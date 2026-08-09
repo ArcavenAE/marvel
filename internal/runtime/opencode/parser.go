@@ -186,23 +186,34 @@ func (p *Parser) handleStepFinish(raw json.RawMessage, emit func(events.Event)) 
 			Cost: &cost,
 		},
 		Request: &events.RequestUsage{
-			// Additive is an assumption, not a measurement: every fixture
-			// we hold is a non-caching model (cache read and write both
-			// 0), where additive and subsumptive are indistinguishable.
-			// TotalExcludesCache is what keeps the total from being read as
-			// an arbiter of that assumption: opencode's total is defined
-			// over input + output + reasoning, so it is the same number
-			// under either reading. AdditiveConfirmed is the check that
-			// does speak to it, and it needs a caching turn to fire.
-			Layout:             events.LayoutAdditive,
-			In:                 part.Tokens.Input,
-			Out:                part.Tokens.Output,
-			CacheReadIn:        part.Tokens.Cache.Read,
-			CacheCreationIn:    part.Tokens.Cache.Write,
-			ReasoningOut:       part.Tokens.Reasoning,
-			Total:              part.Tokens.Total,
-			TotalExcludesCache: true,
-			Cost:               &cost,
+			// Additive is measured, not assumed: on 179 caching turns
+			// tokens.input ran BELOW tokens.cache.read (as low as 1 against
+			// 35584), which input cannot do if it already contained the
+			// cached tokens. testdata/caching.jsonl is one such turn, and
+			// AdditiveConfirmed reports it.
+			//
+			// TotalExcludesCache stays unset because the same measurement
+			// falsified it: opencode's total covers the cache classes too.
+			// Every one of 215 step_finish rows satisfied total == input +
+			// output + reasoning + cache.read + cache.write, and the 17
+			// that also satisfied the narrower input + output + reasoning
+			// were exactly the 17 non-caching rows, where the two readings
+			// are the same arithmetic. Declaring the narrower definition
+			// only suppressed TotalMismatch on every caching turn.
+			//
+			// Residual: cache.write was 0 on all 215 rows, so its share of
+			// the total is inferred from cache.read rather than measured. A
+			// cache-creation turn would settle it, and until one arrives
+			// this reading errs toward a check that can raise a false
+			// alarm over one that cannot speak.
+			Layout:          events.LayoutAdditive,
+			In:              part.Tokens.Input,
+			Out:             part.Tokens.Output,
+			CacheReadIn:     part.Tokens.Cache.Read,
+			CacheCreationIn: part.Tokens.Cache.Write,
+			ReasoningOut:    part.Tokens.Reasoning,
+			Total:           part.Tokens.Total,
+			Cost:            &cost,
 		},
 	}, nil))
 }

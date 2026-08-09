@@ -59,14 +59,17 @@ var profiles = map[string]profile{
 		vendorTotal:     false,
 	},
 	opencode.Harness: {
-		// UNVERIFIED for the same reason as codex.
+		// Measured against a live two-turn session: input fell from 6018
+		// to 27 across turns as the prompt moved into cache, which a
+		// running session total cannot do. See the opencode fixture pair
+		// caching_first_turn.jsonl and caching.jsonl.
 		cumulation:      CumulationRequest,
 		modelFromStream: false,
 		limitInStream:   false,
-		// step_finish publishes tokens.total, over in + out + reasoning
-		// only (measured). It checks the harness's own arithmetic, not the
-		// unverified cache layout: see Sample.TotalMismatch and
-		// Sample.AdditiveConfirmed.
+		// step_finish publishes tokens.total, over in + out + reasoning +
+		// cache.read + cache.write (measured on 215 step_finish rows). It
+		// checks the harness's own arithmetic, not the layout: see
+		// Sample.TotalMismatch and Sample.AdditiveConfirmed.
 		vendorTotal: true,
 	},
 }
