@@ -31,8 +31,28 @@ const (
 	KindShiftStarted      Kind = "team.shift-started"
 	KindShiftCompleted    Kind = "team.shift-completed"
 	KindShiftTimedOut     Kind = "team.shift-timed-out"
-	KindRoleSaturated     Kind = "role.saturated"
-	KindRoleRemoved       Kind = "role.removed"
+	// KindShiftRoleReady records the instant the control plane decided a
+	// role's successor generation may take over: allReady returned true and
+	// the shift advanced from launching to draining. It is the boundary
+	// between the two stages of a shift, and the only stage boundary that
+	// will move when real harnesses replace simulators, so it is the stamp
+	// an automatic shift trigger has to reason about.
+	//
+	// The subject is the ROLE's successor generation, not one session,
+	// because allReady is a group gate over every replica. Session is
+	// therefore left empty even for a single-replica role: a field that is
+	// populated only at replicas=1 would let a consumer join by session key
+	// and silently lose the multi-replica rows. The successor keys and the
+	// gate that admitted them ride in Message; Generation carries the
+	// successor generation as data.
+	//
+	// Fires at most once per role per shift: the phase flip that emits it is
+	// also the flip that stops allReady being consulted for that role. See
+	// orc finding-018, which had to poll the session table at 50 Hz to
+	// timestamp this instant because the ring did not carry it.
+	KindShiftRoleReady Kind = "team.shift-role-ready"
+	KindRoleSaturated  Kind = "role.saturated"
+	KindRoleRemoved    Kind = "role.removed"
 	// KindPolicyProjected records that marvel wrote (or rewrote) a
 	// session's projected Claude Code settings file — the observable
 	// signal of a policy landing at spawn and of live re-projection after
@@ -142,6 +162,14 @@ type Event struct {
 	// action one daemon takes against state another daemon may own. See
 	// aae-orc-kvcs.
 	Actor string `json:"actor,omitempty"`
+	// Generation names the team generation the event is about, when the
+	// event is about one. Sessions already carry the generation in their
+	// name (`<team>-<role>-g<gen>-<index>`), but an event whose subject is a
+	// whole generation has nowhere to put it, which is how the shift
+	// stage boundary in KindShiftRoleReady would otherwise have had to
+	// encode its most load-bearing coordinate in prose. Zero means the
+	// event is not generation-scoped.
+	Generation int64 `json:"generation,omitempty"`
 	// Message is a short human-readable description. Keep it one
 	// line — operators scan dozens of these at a time.
 	Message string `json:"message"`
