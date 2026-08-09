@@ -191,6 +191,24 @@ across providers, and an operator writing a window by hand will write the
 model's headline number, which is the value that is wrong by up to 3.8x.
 On this harness the manifest is the more likely error, not the correction.
 
+**The same defect is in marvel's own shipped table, and it does NOT change
+the rung ask.** Stating that plainly because a new cross-reference inside a
+decision document invites the reader to assume it moves the decision. The
+router study reports `claude-opus-5` at 1000000 for anthropic against 264000
+for copilot, so `LimitFromTable` can resolve wrong by 3.8x with no signal
+(`aae-orc-eooi`; the copilot figure is that study's catalog measurement, not
+mine). I checked the marvel half directly: `defaultTable` in
+`internal/usage/limits.go` carries eleven keys over seven distinct model ids,
+every one keyed on the model id alone with no provider dimension, and
+`claude-opus-5` is 1_000_000 there. `table` already sits below `feed` in
+`limitLadder`, so placing Crush's route at either candidate rung already
+outranks it and nothing here needs a different answer. What it does is
+promote the paragraph above from a claim about one harness to a claim about
+a class: a provider-blind static number outranking a provider-aware live one
+is wrong in the same direction wherever it appears, and it appears in our
+code, not only in a hypothetical operator's manifest. The table's own defect
+is the router study's to file, not this finding's.
+
 **This belongs to the operator.** It is a change to a ruled ladder, the
 ruling was the operator's on 2026-08-08, and the evidence for revisiting it
 did not exist then. What I would put in front of them: either Crush's route
