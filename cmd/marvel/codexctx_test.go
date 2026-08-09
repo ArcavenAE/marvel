@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // hookPayload builds a codex hook payload in the shape codex-cli 0.146.0
@@ -162,5 +165,81 @@ func TestCodexReadingIgnoresTheCumulativeTotal(t *testing.T) {
 	}
 	if pct < 49.99 || pct > 50.01 {
 		t.Errorf("pct = %v, want 50: total_token_usage was read as the level", pct)
+	}
+}
+
+// TestCodexHeartbeatParamsCarriesTheSessionToken is the test whose
+// absence let #170 and #168 break each other. Each PR was correct and
+// tested on its own: #168 made the daemon require a token, #170 added a
+// second forwarder that did not send one. The payload is a
+// map[string]any on the wire, so nothing failed to compile, and CI was
+// green on both.
+//
+// The daemon side of this contract is heartbeatParams in
+// internal/daemon/daemon.go, whose token field is tagged
+// `json:"session_token,omitempty"`. That type is unexported, so this
+// asserts the wire key by name. A rename there without a change here
+// reintroduces exactly this class, which is why the key is spelled out
+// rather than derived.
+func TestCodexHeartbeatParamsCarriesTheSessionToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		token     string
+		wantToken bool
+	}{
+		{
+			name:      "token present is forwarded",
+			token:     "abc123",
+			wantToken: true,
+		},
+		{
+			// A session spawned before tokens existed has no token to
+			// present. The daemon admits that beat and says so on the
+			// ring, so sending an empty string would be worse than
+			// omitting the key: it hashes to a value that matches no
+			// record and turns a documented fail-open into a refusal.
+			name:      "no token omits the key rather than sending empty",
+			token:     "",
+			wantToken: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := codexHeartbeatParams("ws", "sess", tt.token, "gpt-5.6-sol", 94.0, 258400)
+
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("unmarshal params: %v", err)
+			}
+
+			v, present := got["session_token"]
+			if present != tt.wantToken {
+				t.Errorf("session_token present = %v, want %v (params: %s)", present, tt.wantToken, raw)
+			}
+			if tt.wantToken && v != tt.token {
+				t.Errorf("session_token = %v, want %q", v, tt.token)
+			}
+			if got["session_key"] != "ws/sess" {
+				t.Errorf("session_key = %v, want ws/sess", got["session_key"])
+			}
+		})
+	}
+}
+
+// TestCodexHeartbeatTokenEnvMatchesCtxForward pins the env var the hook
+// reads. ctx-forward reads api.HeartbeatTokenEnv and the adapter writes
+// it into the pane environment; a codex hook reading a different name
+// would find nothing and fail silently, which is the same failure with
+// a different cause.
+func TestCodexHeartbeatTokenEnvMatchesCtxForward(t *testing.T) {
+	t.Parallel()
+	if api.HeartbeatTokenEnv != "MARVEL_HEARTBEAT_TOKEN" {
+		t.Fatalf("HeartbeatTokenEnv = %q; the codex hook stanza documented in docs/user-guide.md names the old one", api.HeartbeatTokenEnv)
 	}
 }
