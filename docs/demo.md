@@ -237,6 +237,20 @@ after the shift started: `shift stuck in launching past 15s, rolled back to
 gen 1`. The flag wins when set; otherwise the env var is parsed as a Go
 duration; unset leaves the built-in 10-minute default.
 
+Check the state the abort left behind, not just the event. The team must be
+back on the generation the message names, and every session it holds must
+carry that generation:
+
+```sh
+./bin/marvel describe team health/ward    # Generation: 1, no shift in progress
+./bin/marvel get sessions                 # every row a g1 name
+```
+
+An abort that has already drained a role cannot roll back, because that
+role's old generation is gone. It stops where it stands instead and says so:
+`shift stuck in launching past 15s, stopped at gen 2 with 1 of 3 roles
+shifted`. Normal reconciliation converges the roles that never got a turn.
+
 ---
 
 ## Act 2 — Observe
