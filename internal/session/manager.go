@@ -15,6 +15,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/runtime"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 	"github.com/arcavenae/marvel/internal/tmux"
@@ -33,14 +34,16 @@ type Manager struct {
 	// wire a ring.
 	Events events.Emitter
 	// StreamDir holds the per-session FIFOs marvel reads agent output
-	// from. Defaults to a per-process temp directory; the pipes carry no
-	// content at rest, so there is nothing to preserve across restarts.
+	// from. Defaults to a per-layout temp directory (see daemonTempDir).
+	// The pipes carry no content at rest, so nothing here needs to survive
+	// a restart; NewFIFO replaces a leftover pipe rather than failing on it.
 	StreamDir string
 	// ProjectionDir holds the per-session projected policy settings files
-	// (finding-024's contract half). Defaults to a per-process temp
-	// directory. The files are derived from the store's policies, so they
-	// are rewritten at spawn and on re-projection; nothing is preserved
-	// across restarts.
+	// (finding-024's contract half). Defaults to a per-layout temp
+	// directory (see daemonTempDir). The path must survive a restart even
+	// though the content need not: an adopted agent goes on reading the
+	// file it was launched with, and re-projection has to land on that
+	// same path to reach it.
 	ProjectionDir string
 	// Usage receives adapter events for token and context accounting.
 	// Nil is safe, matching Events.
@@ -70,13 +73,42 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
 func defaultStreamDir() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("marvel-streams-%d", os.Getpid()))
+	return daemonTempDir("marvel-streams")
 }
 
 // defaultProjectionDir keeps one daemon's projected settings files away
 // from another's.
 func defaultProjectionDir() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("marvel-policies-%d", os.Getpid()))
+	return daemonTempDir("marvel-policies")
+}
+
+// daemonTempDir names a daemon-owned scratch directory that is unique per
+// HOME and stable across restarts.
+//
+// Both properties are load-bearing, and the process id supplied only the
+// first. A session outlives the daemon that spawned it: `marvel stop`
+// leaves agents running and a restarted daemon adopts them, but an adopted
+// agent keeps reading the settings file whose path it was launched with,
+// and marvel records that path nowhere. Under a pid-keyed directory the
+// new daemon computed a different path, so Reproject rewrote a file no
+// agent was reading and a policy edit appeared to apply while changing
+// nothing. The same keying orphaned a directory per daemon lifetime with
+// nothing to remove them: 15 projection and 17 stream directories had
+// accumulated in the development machine's temp directory when this was
+// measured.
+//
+// Layout.Tag preserves the isolation the pid provided, because concurrent
+// daemons are separated by HOME here: the control socket and the tmux
+// server name already draw the boundary in the same place.
+func daemonTempDir(prefix string) string {
+	layout, err := paths.Default()
+	if err != nil {
+		// A per-process directory is worse than a per-layout one, but it
+		// is better than refusing to build a manager over an unresolvable
+		// home directory.
+		return filepath.Join(os.TempDir(), fmt.Sprintf("%s-%d", prefix, os.Getpid()))
+	}
+	return filepath.Join(os.TempDir(), prefix+"-"+layout.Tag())
 }
 
 // marvelSessionPrefix is the tmux session name prefix marvel owns.

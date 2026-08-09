@@ -162,8 +162,23 @@ func (l Layout) RuntimeSocket() string {
 // would put two HOMEs on one tmux server, which is exactly today's
 // behavior for every HOME.
 func (l Layout) TmuxSocketName() string {
+	return "marvel-" + l.Tag()
+}
+
+// Tag is a short identifier for this layout: the first 8 hex digits of
+// sha256(Home). It carries the three constraints documented on
+// TmuxSocketName (short, stable across restarts under one HOME, distinct
+// between HOMEs) without the tmux-specific prefix.
+//
+// It is exported because those constraints are not tmux's alone. Any
+// daemon-owned name outside the ~/.marvel tree faces them: it has to
+// separate concurrent daemons, and it has to survive a restart, because
+// the agents a daemon leaves running keep using the names the previous
+// process handed them. The process id satisfies the first and fails the
+// second, so a name keyed on it silently changes identity at every start.
+func (l Layout) Tag() string {
 	sum := sha256.Sum256([]byte(l.Home))
-	return "marvel-" + hex.EncodeToString(sum[:4])
+	return hex.EncodeToString(sum[:4])
 }
 
 // MaxUnixSocketPath is the ceiling on a Unix-domain socket path,

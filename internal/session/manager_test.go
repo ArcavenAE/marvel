@@ -713,3 +713,35 @@ func TestAdoptOrKillSparesPanesMarvelDidNotCreate(t *testing.T) {
 			len(before), len(after))
 	}
 }
+
+func TestDaemonTempDirsAreLayoutScoped(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates process-wide state.
+	alphaHome := t.TempDir()
+	betaHome := t.TempDir()
+
+	t.Setenv("HOME", alphaHome)
+	alphaProjection, alphaStream := defaultProjectionDir(), defaultStreamDir()
+
+	t.Setenv("HOME", betaHome)
+	if got := defaultProjectionDir(); got == alphaProjection {
+		t.Errorf("two HOMEs share projection dir %s; concurrent daemons must not", got)
+	}
+	if got := defaultStreamDir(); got == alphaStream {
+		t.Errorf("two HOMEs share stream dir %s; concurrent daemons must not", got)
+	}
+
+	// Back to the first HOME: a restarted daemon must land on the same
+	// paths, or re-projection writes files the adopted agents never read.
+	t.Setenv("HOME", alphaHome)
+	if got := defaultProjectionDir(); got != alphaProjection {
+		t.Errorf("projection dir = %s after returning to the same HOME, want %s", got, alphaProjection)
+	}
+	if got := defaultStreamDir(); got != alphaStream {
+		t.Errorf("stream dir = %s after returning to the same HOME, want %s", got, alphaStream)
+	}
+
+	// The two kinds stay distinct so pipes and settings files do not mix.
+	if alphaProjection == alphaStream {
+		t.Errorf("projection and stream dirs are both %s, want distinct", alphaProjection)
+	}
+}
