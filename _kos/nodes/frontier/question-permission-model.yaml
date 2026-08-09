@@ -49,6 +49,46 @@ content: |
   - How does the layer-1 enforcement compose with curtain's
     sandbox profiles when both are present?
   - What's the audit-trail signal for capability denials?
+
+  HARVEST 2026-08-09 (finding-022). The heartbeat RPC is now bound to the
+  session it claims, and the way it was done is the answer to the third
+  sub-question above for at least this one capability.
+
+  session.Manager.Create mints a 256-bit token before the record exists;
+  the digest rides the record (persisted, so adopted sessions survive a
+  daemon restart) and the plaintext goes only into the pane environment.
+  The check moved INTO Store.UpdateSessionHeartbeat's signature under the
+  same lock as the write, so it is not caller discipline. Refusals emit
+  heartbeat.refused on the ring. Senders read the env var rather than a
+  flag, because argv is world-readable from the process table. One
+  deliberate fail-open: a record with no token hash is admitted and emits
+  heartbeat.unbound, because refusing would make adopt-on-restart
+  destructive on upgrade; it drains as those sessions end.
+
+  This is enforcement locus 1 doing work, and it stayed inside the M1
+  boundary: no principal model, no token service, no policy language.
+
+  THE DURABLE POINT IS BROADER THAN THE FIX. api.Session reaches bbolt
+  and every mrvl:// client through the same encoder, so ANY CREDENTIAL
+  ADDED TO A STORE RESOURCE IS PUBLISHED BY DEFAULT. Bears on
+  aae-orc-wbqi (projected policy tamper-proofing).
+
+  A SECOND INSTANCE OF THE SAME SHAPE landed the same day from an
+  unrelated arm: Crush's GET /v1/workspaces serves the registering
+  client's full process environment, so enabling that channel would
+  publish the environment marvel constructed at spawn to every client of
+  a host-shared socket (finding-020 section 6). One path is ours and one
+  is a vendor's, and both say the same thing: a credential adjacent to a
+  value that gets serialized is a credential that gets served, and the
+  axis that predicts it is where the bytes go rather than who was asked.
+  Since environment construction at spawn is marvel's ONE built
+  enforcement locus, that is an inversion of this question's premise
+  rather than a cost to price against it.
+
+  TWO LIMITS NOT ADDRESSED by the heartbeat fix, both named in
+  finding-022: same-uid environment reads (an agent that hunts can take a
+  sibling's token, which is enforcement locus 3 plus curtain), and
+  event-ring pressure from spammed refusals.
 edges:
   - target: elem-runtime-adapter-framework
     type: derives

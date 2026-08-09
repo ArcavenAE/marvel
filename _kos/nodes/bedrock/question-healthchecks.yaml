@@ -11,6 +11,31 @@ content: |
 
   Prompt-response and richer agent signals are future work.
   See finding-003-healthchecks and _kos/ideas/health-signal-taxonomy.md.
+
+  HARVEST 2026-08-09 (finding-019). Two corrections to the restart
+  accounting, both measured on a three-replica role whose tmux session
+  died out of band.
+
+  The charge is ONE CRASH PER ROLE PER RECONCILE TICK, not one per lost
+  replica. RoleHealth is per-role state, so the old charge scaled a
+  single event by replica count in both the backoff exponent and the
+  MaxRestarts budget: restart count went 0 to 3 and backoff 30s to 4m on
+  one event, and with max_restarts=3 the whole budget was spent, freezing
+  the role at the year-9999 sentinel on the next loss. Flapping still
+  escalates, because flapping repeats across ticks.
+
+  ReapDead now sets health=unhealthy alongside state=crashed. The pane's
+  absence IS the process-alive verdict, so the stale healthy reading was
+  the bug. It was reachable by any reap rather than only by external
+  kills, and invisible because a normal crash is followed by a respawn
+  that clears the marker.
+
+  STILL OPEN, and both are pre-existing MaxRestarts properties rather
+  than anything the external kill introduced: RestartCount never decays
+  (no success-based reset, so a role losing a pane once a month walks to
+  saturation), and the only path to clear it is `marvel delete team`,
+  which destroys sessions to reset a counter. Operator ruling wanted
+  before either is built.
 edges:
   - target: aae-orc::question-marvel-beyond-mvp
     type: derives
