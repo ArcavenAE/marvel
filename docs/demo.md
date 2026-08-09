@@ -17,7 +17,9 @@ so at that beat rather than papering over it.
 - `just build` (produces `bin/marvel` and `bin/simulator`).
 - Act 1 and Act 3 need no model auth. Act 1 uses only `sleep`; Act 3 needs the
   `claude` binary on PATH (the projection events fire whether or not claude is
-  authenticated, because marvel writes the settings file itself).
+  authenticated, because marvel writes the settings file itself). The Act 3
+  extension is the exception: CTX% only appears once a session takes a real
+  turn, so that beat needs working claude auth and spends two short turns.
 - Act 2 needs the three harness binaries (`claude`, `codex`, `opencode`) and
   working auth for each. The per-session CPU and RSS columns populate without
   auth; the `agent.*` token and cost events need a real model turn.
@@ -419,20 +421,90 @@ Roles whose harness has no Claude Code settings surface (codex, opencode,
 generic) log the policy as advisory and are not projected. Nothing is dropped
 silently.
 
-### Act 3 extension — shift onto a new metering contract (PLANNED, not written)
+### Act 3 extension: shift onto a new metering contract
 
-The intended beat: apply a team without `context_feed`, confirm the TUI
-session's CTX% is `-`, add `context_feed = "statusline"` to the manifest,
-re-apply, then `marvel shift` the team — generation 2 spawns with the feed
-and CTX% appears on the fresh sessions.
+Policy content re-projects onto a running session. A runtime field does not.
+This beat shows the difference, and shows `marvel shift` as the migration
+path for the half that cannot be retrofitted. Verified end to end on
+2026-08-09; it needs claude auth and spends two short model turns.
 
-Why shift and not just re-apply: a session's runtime is frozen at spawn.
-Re-projection reads `context_feed` from the SESSION's runtime copy, so a
-manifest change reaches only sessions created after it — the live
-re-projection that works for policy content does not retrofit the feed onto
-running sessions. Tracked as a known wrinkle (bd: frozen-runtime
-re-projection); this beat is not in the runbook until either the wrinkle is
-fixed or the shift-based sequence is verified end to end.
+Start a team whose interactive claude role has no `context_feed`, and give
+it a turn so the `-` means something:
+
+```sh
+./bin/marvel work examples/context-feed-off.toml
+sleep 8
+./bin/marvel inject feed/watch-watcher-g1-0 "say only the word ready" -e
+sleep 30
+./bin/marvel get sessions   # CTX% is "-", LLM is "-"
+./bin/marvel capture feed/watch-watcher-g1-0   # the pane's own line has both
+```
+
+That contrast is the whole motivation. In the verified run the pane reported
+14% and $1.18 on its own status line while marvel's CTX% cell stayed `-`. The
+harness is metering itself and printing the figure to the human, and marvel
+cannot see any of it.
+
+Now add the feed and re-apply. Nothing happens, and nothing is supposed to:
+
+```sh
+./bin/marvel work examples/context-feed.toml
+sleep 6
+./bin/marvel get sessions                        # still GEN 1, still "-"
+./bin/marvel events --kind policy.projected      # "no events"
+```
+
+A session's runtime is frozen at spawn, and re-projection reads
+`context_feed` from the session's copy rather than the role's, so a manifest
+change reaches only sessions created after it. The live re-projection that
+works for policy content does not retrofit the feed. Tracked as
+`aae-orc-mjrm`; until it is fixed, a shift is the migration path, and the
+`no events` above is how you tell the wrinkle from a typo in your manifest.
+
+Shift, and the new generation spawns with the feed:
+
+```sh
+./bin/marvel shift feed/watch
+sleep 25
+./bin/marvel events --kind policy.projected   # "projected at spawn" for g2
+./bin/marvel get sessions                      # GEN 2, CTX% still "-" (no turn yet)
+./bin/marvel inject feed/watch-watcher-g2-0 "say only the word ready" -e
+sleep 35
+./bin/marvel get sessions                      # CTX% populated, LLM populated
+```
+
+A verified run produced this event sequence in five seconds, and the g2 row
+then read `CTX% 14%` with `LLM Opus 5 (1M context)`. It ran against an
+equivalent manifest pair in workspace `act3`, so the keys below read
+`act3/meter-watcher-*` where the commands above give you
+`feed/watch-watcher-*`:
+
+```
+team.shift-started     act3/meter               gen 1→2 roles=[watcher]
+policy.projected       act3/meter-watcher-g2-0  policy "" projected at spawn: ...
+session.created        act3/meter-watcher-g2-0  pane %2
+team.shift-role-ready  act3/meter               gen 2 ready, gate=running, draining gen 1
+session.deleted        act3/meter-watcher-g1-0  session deleted
+team.shift-completed   act3/meter               gen 2 active
+```
+
+Note `policy "" projected at spawn`. The role declares no policy, so the
+projected file is the feed and nothing else. That empty policy name is the
+signal that `context_feed` alone caused the projection.
+
+Two things worth expecting before you run this in front of anyone.
+
+**Marvel's status line replaces yours in that pane.** The projected
+`--settings` file wins over your own `~/.claude/settings.json` for the
+`statusLine` key, so the g2 pane shows marvel's format (`Opus 5 (1M context)
+· CTX 14% · $1.18 · acct ...`) where g1 showed whatever you have configured.
+Nothing outside the pane changes, and your settings file is not touched.
+
+**`ContextLimit` stays 0 on a fed session.** `marvel describe session` shows
+`ContextPercent` and `ContextModel` populated with `ContextLimit: 0` and an
+empty `ContextLimitSource`, because the feed hands over a percentage the
+harness already computed rather than tokens for marvel to divide. A blank
+limit here is the feed working, not a resolution failure.
 
 ### Act 5 — Meter (PLANNED, not written)
 

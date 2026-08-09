@@ -20,9 +20,9 @@
 #   ./bin/marvel daemon &
 #   ./bin/marvel work examples/demo-act1-health.toml
 #
-# Watch the health path (heartbeat timeout is 6s, threshold 2, so the first
-# action lands ~10s after spawn; capped saturates ~30s later after one
-# backoff window):
+# Watch the health path (heartbeat timeout is 6s, threshold 1, so the first
+# action lands ~7s after spawn; capped saturates ~70s later, after one
+# backoff window and a second staleness. Measured 2026-08-09):
 #   ./bin/marvel events --workspace health --warnings
 #   ./bin/marvel events --kind session.restarted
 #   ./bin/marvel events --kind session.failed
