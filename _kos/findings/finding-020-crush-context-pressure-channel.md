@@ -199,6 +199,28 @@ relaxed, or the ladder gains a rung between manifest and feed for a
 contracted, versioned, live query that is neither the stream nor a status
 hook. I am not choosing between those in a finding.
 
+**Both arms have since converged on the first candidate, and the reason it
+is not a fourth swap is that neither arm argued from the other.** The codex
+arm's case is from the ladder's own stated harm: overruling a rung-1
+declaration with a manifest value "would make marvel's denominator disagree
+with the one that actually governs the session's behavior", and Crush's
+auto-summarize actuates against the number this route returns, so a
+manifest override produces that harm here identically to codex. Set beside
+the rung-4 table above, both texts point the same way: rung 4's description
+does not fit, and rung 1's stated harm does apply.
+
+One overstatement in that case, and it does not change the conclusion. It
+says the rung decides "exactly one thing", whether the manifest outranks
+the channel. It decides two: rung 1 also sits above `LimitLearned`, so a
+rung-1 Crush window would outrank a learned one and a rung-4 window would
+lose to it. For this harness that is unlikely to bind, since anything
+learned for Crush would be learned from the same route, but "exactly one
+thing" is not the mechanism.
+
+So the operator ask narrows from "which rung" to "ratify relaxing the
+same-channel conjunct, or add the intermediate rung". The ladder is still
+theirs to amend, and two arms agreeing is not the same as it being ruled.
+
 **One thing IS settled and it survives either answer.** A window not
 re-read with its level goes stale on model change with no signal, so a
 fetched window carries **refetch on model change, and a window fetched
@@ -517,6 +539,19 @@ that served each persisted conversational turn, not every model call the
 session made, and no marker distinguishes the two. Anyone reading this
 database as a routing record should know that before they aggregate it.
 
+**And the record is arbitrarily partial, not partial along a boundary a
+consumer could reason about.** Both title generation and summarization run
+on the same `models.small` slot, and they persist differently: title
+generation adds no row at all (measured, `message_count` held at 2 while
+`sessions.title` changed), while summarization does add one, marked
+`is_summary_message=1` (measured, `message_count` went 2 to 3 with
+`summary_message_id` set). Same slot, same class of internal call, opposite
+persistence. So there is no property exposed by the harness from which a
+consumer could predict which model calls leave an artifact. That is a
+stronger caution than the two-provider question the router study opened,
+and it is the one that bears on a Crush adapter: any per-model or
+per-provider aggregate built from this table is over an unknown subset.
+
 Cost is stored rather than computed at render time (`sessions.cost REAL NOT
 NULL DEFAULT 0.0`, no per-message column), and reads a literal 0.0 for
 ollama because the provider catalog prices it at zero.
@@ -636,6 +671,26 @@ opposite of what this probe found.
   the same false reason. It now states the reason that holds.
 
 No behavior changes. No profile is added.
+
+## One assumption I inherited from myself
+
+Named because the compaction-mining arm asked for it and because the shape
+is worth more than the instance.
+
+I re-derived `prompt_tokens` as a level because the ticket told me to, and I
+settled `completion_tokens` because that gap was named as open. What I never
+questioned is the claim the whole §2 table rests on: that the SSE `session`
+frame is emitted once per model request. I inferred that from frame counts
+matching the request counts I expected, which is the same move as reading a
+field's meaning off an earlier finding's authority.
+
+It happens to be checkable after the fact and it held. The tool-calling turn
+produced exactly two usage-bearing frames and four messages, which is what a
+once-per-request emitter predicts and what a once-per-turn emitter does not.
+But I checked it because someone asked, not because I had treated it as a
+claim, and the reason it was hard to notice is that the evidence I already
+had was consistent with it. The failure mode has a name worth keeping:
+confirmed by data I did not collect for that purpose.
 
 ## What was not established
 
