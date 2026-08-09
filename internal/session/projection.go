@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -114,14 +115,14 @@ func (m *Manager) reprojectContext(sess api.Session) (*runtime.LaunchContext, ru
 // A role with no policy and no context feed yields wrote=false, no error.
 // An adapter with no settings surface logs the policy as advisory and
 // yields wrote=false. A referenced policy that is not in the store is an
-// error (validation should prevent it, so reaching here means drift worth
-// surfacing).
+// error, and so is a projection path outside the projection directory
+// (validation or the adapter contract should prevent both, so reaching
+// here means drift worth surfacing).
 //
 // Policy content is still written unmodified — marvel never edits a key
 // the policy declares. When the runtime opts into context_feed =
-// "statusline", marvel ADDS its own statusLine/subagentStatusLine keys,
-// and only where the policy does not define them (policy wins). See
-// finding-011.
+// "statusline", marvel ADDS the feed keys the adapter renders, and only
+// where the policy does not define them (policy wins). See finding-011.
 func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Adapter) (runtime.ProjectionTarget, bool, bool, error) {
 	feed := lctx.Session.Runtime.ContextFeed == api.ContextFeedStatusline
 	if m.ProjectionDir == "" || (lctx.Role.Policy == "" && !feed) {
@@ -133,6 +134,13 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 		log.Printf("session %s: runtime %q has no settings surface; policy %q / context feed are advisory, not projected",
 			lctx.Session.Key(), adapter.Name(), lctx.Role.Policy)
 		return target, false, false, nil
+	}
+	// The dir is marvel's to write in; anywhere else is the user's. An
+	// adapter that answers with a path outside it would have marvel
+	// editing a config file it does not own, so refuse rather than write.
+	if !withinDir(m.ProjectionDir, target.Path) {
+		return target, false, false, fmt.Errorf("runtime %q projection path %s is outside projection dir %s",
+			adapter.Name(), target.Path, m.ProjectionDir)
 	}
 
 	settings := map[string]any{}
@@ -147,7 +155,7 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 		}
 	}
 	if feed {
-		injectStatuslineFeed(settings)
+		injectStatuslineFeed(settings, adapter, lctx.Session.Key())
 	}
 
 	changed, err := writeProjectionFile(target.Path, settings)
@@ -157,41 +165,52 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 	return target, true, changed, nil
 }
 
-// writeProjectionFile renders settings as indented JSON and writes it to
-// path, creating the parent directory. It reports whether the new content
-// differs from what was already there, so callers can emit an event only on
-// a real contract change. Files are 0600: a settings fragment can carry an
-// allow/deny list an operator would not want world-readable.
-// injectStatuslineFeed adds the statusLine/subagentStatusLine hooks that
-// forward the harness's own context figures to the heartbeat RPC, keyed to
-// this daemon's binary so the pane needs no PATH assumption. Policy wins:
-// a key the settings document already carries is left untouched.
+// injectStatuslineFeed adds the hooks that forward the harness's own
+// context figures to the heartbeat RPC, keyed to this daemon's binary so
+// the pane needs no PATH assumption.
 //
-// refreshInterval keeps the feed beating while the session idles —
-// statusline updates are event-driven and go quiet between prompts, which
-// would otherwise starve a heartbeat healthcheck watching this session.
-func injectStatuslineFeed(settings map[string]any) {
+// The adapter owns the schema. Marvel owns two things only: the command
+// the hook runs, and the merge rule. Policy wins, so a key the settings
+// document already carries is left untouched.
+//
+// An adapter that reads a projected settings file without implementing
+// StatuslineFeeder gets no feed rather than someone else's keys, and says
+// so: an operator who asked for context_feed and got nothing needs a
+// reason in the log, not silence.
+func injectStatuslineFeed(settings map[string]any, adapter runtime.Adapter, sessionKey string) {
+	feeder, ok := adapter.(runtime.StatuslineFeeder)
+	if !ok {
+		log.Printf("session %s: runtime %q reads a settings file but declares no context-feed schema; feed not projected",
+			sessionKey, adapter.Name())
+		return
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		log.Printf("context feed: cannot resolve marvel binary path, feed not injected: %v", err)
 		return
 	}
-	hook := map[string]any{
-		"type":            "command",
-		"command":         exe + " ctx-forward",
-		"refreshInterval": 15,
-	}
-	if _, ok := settings["statusLine"]; !ok {
-		settings["statusLine"] = hook
-	}
-	if _, ok := settings["subagentStatusLine"]; !ok {
-		settings["subagentStatusLine"] = map[string]any{
-			"type":    "command",
-			"command": exe + " ctx-forward",
+	for key, value := range feeder.StatuslineFeed(exe + " ctx-forward") {
+		if _, exists := settings[key]; !exists {
+			settings[key] = value
 		}
 	}
 }
 
+// withinDir reports whether path lies inside dir. Used to hold adapters to
+// the projection directory they were handed.
+func withinDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// writeProjectionFile renders settings as indented JSON and writes it to
+// path, creating the parent directory. It reports whether the new content
+// differs from what was already there, so callers can emit an event only on
+// a real contract change. Files are 0600: a settings fragment can carry an
+// allow/deny list an operator would not want world-readable.
 func writeProjectionFile(path string, settings map[string]any) (bool, error) {
 	// A nil settings map projects an empty object rather than the JSON
 	// literal null, so the harness always reads a well-formed settings file.

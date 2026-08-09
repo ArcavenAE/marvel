@@ -36,6 +36,14 @@ func (f *Forestage) ProjectionFor(ctx *LaunchContext, dir string) ProjectionTarg
 	}
 }
 
+// StatuslineFeed renders marvel's context feed in Claude Code's settings
+// schema, which is the schema forestage's projected file reaches through
+// the claude passthrough. Same keys as the claude adapter, deliberately
+// shared rather than duplicated: one settings surface, one rendering.
+func (f *Forestage) StatuslineFeed(command string) map[string]any {
+	return claudeStatuslineFeed(command)
+}
+
 func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {

@@ -317,6 +317,132 @@ func TestProjectionInjectsStatuslineFeed(t *testing.T) {
 	}
 }
 
+// feedlessAdapter reads a projected settings file but has no context-feed
+// schema of its own. It stands in for the next harness added to marvel:
+// something that accepts a settings path but is not Claude Code.
+type feedlessAdapter struct{ dir string }
+
+func (feedlessAdapter) Name() string { return "feedless" }
+
+func (feedlessAdapter) Prepare(_ *runtime.LaunchContext) (*runtime.LaunchResult, error) {
+	return &runtime.LaunchResult{Command: "feedless"}, nil
+}
+
+func (a feedlessAdapter) ProjectionFor(ctx *runtime.LaunchContext, dir string) runtime.ProjectionTarget {
+	target := dir
+	if a.dir != "" {
+		target = a.dir
+	}
+	return runtime.ProjectionTarget{
+		Supported: true,
+		Path:      filepath.Join(target, strings.ReplaceAll(ctx.Session.Key(), "/", "-")+".settings.json"),
+	}
+}
+
+// seedFeedSessionForRuntime is seedFeedSession with the runtime name under
+// test, so the manager resolves the adapter registered for it.
+func seedFeedSessionForRuntime(t *testing.T, mgr *Manager, image string) string {
+	t.Helper()
+	sess := &api.Session{
+		Name:      "squad-watcher-g1-0",
+		Workspace: "acme",
+		Team:      "squad",
+		Role:      "watcher",
+		Runtime:   api.Runtime{Name: image, Command: image, ContextFeed: api.ContextFeedStatusline},
+	}
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := mgr.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionRunning
+		live.PaneID = "%1"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	return sess.Key()
+}
+
+// applyFeedManifestForRuntime applies feedOnlyManifest with the claude
+// runtime swapped for the named one.
+func applyFeedManifestForRuntime(t *testing.T, mgr *Manager, image string) {
+	t.Helper()
+	manifest := strings.Replace(feedOnlyManifest,
+		`    image = "claude"
+    command = "claude"`,
+		`    image = "`+image+`"
+    command = "`+image+`"`, 1)
+	m, err := api.ParseManifestBytes([]byte(manifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+}
+
+// TestProjectionFeedIsAdapterOwned covers marvel#146: the feed keys come
+// from the adapter, so a harness that reads a projected settings file but
+// declares no feed schema gets none. Falsification: with the undispatched
+// call, Claude Code's statusLine and subagentStatusLine are written into
+// this harness's file, where they mean nothing.
+func TestProjectionFeedIsAdapterOwned(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+	mgr.adapters.Register(feedlessAdapter{})
+
+	applyFeedManifestForRuntime(t, mgr, "feedless")
+	key := seedFeedSessionForRuntime(t, mgr, "feedless")
+
+	// The file is still written: the projection surface is real, only the
+	// feed schema is missing.
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("Reproject changed = %d, want 1", n)
+	}
+	path := filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	got := readProjection(t, path)
+
+	for _, key := range []string{"statusLine", "subagentStatusLine"} {
+		if v, ok := got[key]; ok {
+			t.Errorf("projection carries Claude Code's %s for a non-Claude harness: %v", key, v)
+		}
+	}
+}
+
+// TestProjectionRefusesPathOutsideProjectionDir covers the second half of
+// marvel#146's candidate adapter-contract rule: no adapter writes outside
+// the directory it was handed. Falsification: without the guard, marvel
+// creates and edits a settings file in a directory it does not own.
+func TestProjectionRefusesPathOutsideProjectionDir(t *testing.T) {
+	t.Parallel()
+	mgr, ring := projectionManager(t)
+	// An adapter pointing at the user's own config directory rather than
+	// the projection dir, which is the shape the rule exists to refuse.
+	userConfig := t.TempDir()
+	mgr.adapters.Register(feedlessAdapter{dir: userConfig})
+
+	applyFeedManifestForRuntime(t, mgr, "feedless")
+	key := seedFeedSessionForRuntime(t, mgr, "feedless")
+
+	if n := mgr.Reproject(); n != 0 {
+		t.Fatalf("Reproject changed = %d, want 0 for an out-of-dir path", n)
+	}
+	stray := filepath.Join(userConfig, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	if _, err := os.Stat(stray); !os.IsNotExist(err) {
+		t.Errorf("wrote outside the projection dir at %s (err=%v)", stray, err)
+	}
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindPolicyProjected}, 0)); n != 0 {
+		t.Errorf("refused projection emitted %d events, want 0", n)
+	}
+}
+
+// TestDaemonTempDirsAreLayoutScoped covers marvel#147. The stream and
+// projection directories have to be unique per daemon AND stable across a
+// restart, because `marvel stop` leaves agents running and an adopted agent
+// keeps reading the settings path it was launched with. Falsification: keyed
+// on the process id, two HOMEs in one process share a directory (no
+// isolation), which is what this asserts against.
+
 // TestProjectionPolicyWinsOverFeed covers the merge contract: a policy
 // that declares its own statusLine keeps it verbatim; the feed only adds
 // keys the policy does not define. Falsification: if injection
