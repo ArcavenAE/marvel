@@ -251,6 +251,29 @@ func TestEveryDefaultTableEntryResolves(t *testing.T) {
 	}
 }
 
+// opus-5 is keyed under both spellings because Claude Code stamps [1m]
+// on the init model and the modelUsage key, while per-request
+// message.model omits it. Both must resolve, and both must resolve to
+// the same window: the model has no 200k variant, so a spelling split
+// here would be a reporting split, not a real one.
+func TestOpus5ResolvesUnderBothSpellings(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(DefaultTable())
+	for _, model := range []string{"claude-opus-5", "claude-opus-5[1m]"} {
+		limit, src, _ := r.Resolve(Request{StreamModel: model})
+		if limit != 1_000_000 {
+			t.Errorf("%s: limit = %d, want 1000000", model, limit)
+		}
+		if src != LimitFromTable {
+			t.Errorf("%s: source = %q, want %q", model, src, LimitFromTable)
+		}
+	}
+	// A dated snapshot must land on the bare key, not fall off the table.
+	if limit, src, _ := r.Resolve(Request{StreamModel: "claude-opus-5-20260801"}); limit != 1_000_000 || src != LimitFromTable {
+		t.Errorf("dated snapshot: limit = %d, source = %q; want 1000000 from %q", limit, src, LimitFromTable)
+	}
+}
+
 func TestEveryAliasResolvesToARealEntry(t *testing.T) {
 	t.Parallel()
 	tbl := DefaultTable()
