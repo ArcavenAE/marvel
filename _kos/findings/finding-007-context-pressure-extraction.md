@@ -89,12 +89,47 @@ CTX%. Codex's `input_tokens` (13992) already includes `cached_input_tokens`
 occupancy proxy for Codex is `input_tokens` itself, not a sum.
 
 **OpenCode carries a total but no limit.** `step_finish.part.tokens` was
-`{total:29893, input:29879, output:2, reasoning:12, cache:{write:0, read:0}}`,
-with `total = input + output + reasoning`. Occupancy is `input` plus the cache
-classes; the free model does not cache, so whether OpenCode's `input` already
-subsumes `cache.read` for a caching model is unverified here. The context limit
-is not in the stream and must come from a marvel table (or OpenCode's own model
-DB, out of band).
+`{total:29893, input:29879, output:2, reasoning:12, cache:{write:0, read:0}}`.
+Occupancy is `input` plus the cache classes. The context limit is not in the
+stream and must come from a marvel table (or OpenCode's own model DB, out of
+band).
+
+> **CORRECTED IN PLACE 2026-08-08. The sentence that stood here, "with
+> `total = input + output + reasoning`", was removed rather than annotated,
+> because it was read downstream as a general fact and it is not one.**
+>
+> The row above has BOTH cache classes at zero. On such a row
+> `total == in + out + reasoning` and
+> `total == in + out + reasoning + cache.read + cache.write` are the SAME
+> ARITHMETIC. The observation could not discriminate between them, so it was
+> evidence for neither, and stating the narrower identity presented a
+> degenerate measurement as a settled shape.
+>
+> Measured 2026-08-08 against 215 `step_finish` rows in the local opencode
+> store plus a fresh two-turn capture on opencode 1.18.15: **215 of 215
+> satisfy the cache-inclusive identity**, and the 17 rows that also satisfy
+> the narrower triple are **exactly the 17 non-caching rows**. Two caching
+> models agree independently. The same data settles the adjacent question
+> below in the other direction: 179 caching rows carry `input` BELOW
+> `cache.read` (as low as 1 against 35584), so `input` does not subsume cache
+> reads and the additive layout is correct.
+>
+> `cache.write` was 0 on all 215 rows and both live turns, so its share of
+> `total` remains inferred rather than observed.
+>
+> **What this cost, and why the correction is worth this much space.** The
+> removed sentence justified `TotalExcludesCache: true` in the opencode
+> adapter, which is the single flag that SUPPRESSES the `TotalMismatch`
+> cross-check. So the unsupported claim disabled the instrument that would
+> have falsified it, and it was quoted in `internal/runtime/events/events.go`
+> as the motivating measurement. Fixed in marvel#154.
+>
+> **The process failure is narrower and more interesting than "a finding was
+> wrong."** This finding DID flag the adjacent gap: the next sentence said
+> cache subsumption was "unverified here". The caveat sat beside the claim
+> without being attached to it, and a downstream reader took the unqualified
+> half as general. A caveat that does not travel with the claim it qualifies
+> is not a caveat. See `aae-orc-37hm`.
 
 ## SP2: the "selected other values" inventory
 
@@ -211,10 +246,13 @@ for the simulator.
   documented behavior, not measured across a compaction. This is the top
   recommended follow-up: one long Claude session that crosses auto-compact, with
   the occupancy series and the transcript `compactMetadata` captured together.
-- **OpenCode cache inclusion unverified.** The free deepseek model does not
-  cache, so whether OpenCode's `tokens.input` already subsumes `cache.read` for a
-  caching model (Anthropic via OpenCode) is untested. One paid caching-model turn
-  settles it.
+- ~~**OpenCode cache inclusion unverified.**~~ **CLOSED 2026-08-08.** Settled
+  against 215 store rows plus a live two-turn capture on 1.18.15: `input` does
+  NOT subsume `cache.read` (179 caching rows carry input below cache read), so
+  the additive layout is correct, and `total` DOES include the cache classes
+  (215/215), which is the opposite of what the SP1 prose above asserted. See
+  the correction block in SP1 and marvel#154. `cache.write` remains inferred,
+  having been 0 on every observed row.
 - **Codex/OpenCode single-turn only.** Their per-turn usage shape is verified;
   multi-turn accumulation (`codex exec resume`, OpenCode `serve`) is not, though
   Claude's four-turn accumulation is the pattern the others should follow.
