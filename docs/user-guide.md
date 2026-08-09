@@ -279,26 +279,31 @@ zero:
 
 - `CTX%` is `-` until marvel has a context reading for the session.
   Two things produce one: the harness's own usage reporting, parsed out
-  of a headless `claude`, `codex`, or `opencode` stream, and the
-  cooperative `heartbeat` RPC that the bundled simulator calls. An
-  interactive pane publishes neither. After a daemon restart, a
-  stream-derived reading goes back to `-`, because nothing can refresh
-  one for a stream marvel is no longer reading; a heartbeat reading
-  survives the restart and is refreshed by the next heartbeat.
+  of a headless `claude` or `opencode` stream, and the cooperative
+  `heartbeat` RPC that the bundled simulator, the claude statusline feed
+  and the codex hook feed all call. An interactive pane publishes
+  neither on its own. After a daemon restart, a stream-derived reading
+  goes back to `-`, because nothing can refresh one for a stream marvel
+  is no longer reading; a heartbeat reading survives the restart and is
+  refreshed by the next heartbeat.
+- Codex is not on the stream list, and no runtime setting puts it there.
+  Its `exec --json` usage object is a running total rather than a level,
+  so there is no occupancy in it to read at any window. See "Codex
+  context pressure" below for the channel that works.
 - `CPU%` and `RSS` are `-` before the first sampler pass, and on
   platforms where marvel has no process-table reader (anything other
   than macOS and Linux).
 
 `CTX%` has a third state. A `?` means the token count is real but the
 window to divide it by is not known, so there is no honest percentage to
-print; `marvel describe session` shows the tokens either way. Codex and
-opencode declare no window in their streams, so a model marvel has no
-figure for reads `?` until you give it one:
+print; `marvel describe session` shows the tokens either way. OpenCode
+declares no window in its stream, so a model marvel has no figure for
+reads `?` until you give it one:
 
 ```toml
 [team.role.runtime]
-image = "codex"
-context_window = 258400
+image = "opencode"
+context_window = 200000   # the window of the model this role runs
 ```
 
 The percentage is raw occupancy: the prompt sent to the model, cache
@@ -311,6 +316,64 @@ this session compacts".
 
 Per-process IO counters are read on Linux only; `marvel describe session`
 reports `IOAvailable: false` elsewhere.
+
+### Codex context pressure
+
+Codex reports its context in one place only: the rollout JSONL it writes
+per session. Its `exec --json` stream carries a running total instead of
+a level, so nothing marvel parses out of the stream is occupancy, and
+setting `runtime.context_window` for a codex role does not light CTX%.
+
+The rollout is reached through a codex hook, which hands over the file's
+absolute path. Marvel ships the hook command; you install the stanza,
+because codex reads its hooks from `$CODEX_HOME/config.toml`, the same
+directory that holds your credentials, and marvel does not write there.
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "/opt/homebrew/bin/marvel codex-ctx"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "/opt/homebrew/bin/marvel codex-ctx"
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "/opt/homebrew/bin/marvel codex-ctx"
+```
+
+Use the absolute path to your own marvel binary. `SessionStart` gives a
+reading before the first turn, `Stop` refreshes it at every turn
+boundary, and `PostToolUse` keeps a long tool-heavy turn from going
+unmeasured; drop any of the three you do not want.
+
+Codex requires each hook to be trusted before it will run one. Start
+codex interactively once after adding the stanza and accept the hook
+review; the review does not appear in `codex exec`, and an untrusted
+hook is skipped silently rather than reported. Automation that cannot
+run the review has only `codex exec --dangerously-bypass-hook-trust`,
+which runs every enabled hook in that `CODEX_HOME` without review.
+
+Attribution needs nothing extra. `marvel codex-ctx` reads
+`MARVEL_SOCKET`, `MARVEL_WORKSPACE` and `MARVEL_SESSION` from the
+environment the adapter already constructs at spawn, so a codex started
+outside marvel finds none of them and the command does nothing. It also
+prints nothing at all: a codex hook's stdout is fed to the model as a
+developer message, so a status line here would be context the reporter
+itself added.
+
+Two readings never arrive. Marvel holds the previous figure instead of
+publishing a zero when the rollout's newest record is the all-zero
+sample codex writes at compaction, and when a large tool output has
+pushed the newest real record beyond the tail marvel reads. Occupancy
+only rises within a compaction generation, so a stale reading is safe
+where a zero one is not.
 
 ### Watch mode
 

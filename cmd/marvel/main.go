@@ -150,6 +150,7 @@ func main() {
 	root.AddCommand(eventsCmd())
 	root.AddCommand(reapCmd())
 	root.AddCommand(newCtxForwardCmd())
+	root.AddCommand(newCodexCtxCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
