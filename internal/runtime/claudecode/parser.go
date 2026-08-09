@@ -14,7 +14,16 @@ import (
 
 // Harness is the value emitted in events.Event.Harness for streams
 // parsed by this package.
-const Harness = "claude-code"
+//
+// It must equal the Claude adapter's Name(), because both spellings key
+// internal/usage.profileFor: events reach it via this const, and a
+// session's launch-time bind reaches it via api.Session.Runtime.Name,
+// which is the adapter name an operator writes as runtime.image. The
+// value is "claude" rather than "claude-code" because the manifest
+// literal is the one an operator types and the one codex and opencode
+// already agree on. Nothing parses it off a harness stream, so it is
+// marvel's to name.
+const Harness = "claude"
 
 // Config carries the marvel-side context every emitted event needs.
 // AgentID and Workspace are stamped on every event; HarnessSessionID
