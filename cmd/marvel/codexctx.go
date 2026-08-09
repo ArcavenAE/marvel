@@ -132,16 +132,21 @@ func newCodexCtxCmd() *cobra.Command {
 			// ctxforward.go, which names the two edits that finish it.
 			//
 			// Codex sharpens that open decision rather than settling it.
-			// This window is a `stream` declaration (rung 1), and the
-			// clause that makes it one is limitLadder's "in the same
-			// channel as the token counts it is stating it about":
-			// model_context_window sits in the SAME record as the level
-			// it divides, so no sample can be paired with the wrong
-			// window. Governance is not the test and neither is
-			// transport. A window fetched separately, however
-			// authoritative, describes the harness now rather than the
-			// sample it divides, which is rung 4 (adjudicated with the
-			// Crush arm, 2026-08-09; see finding-023 and finding-020).
+			// This window is a `stream` declaration (rung 1). The test is
+			// what the rung decides, which is whether the operator's
+			// runtime.context_window outranks the channel: overruling a
+			// window the harness enforces compaction against would make
+			// marvel's denominator disagree with the one governing the
+			// session. Not transport, and not whether the window rides
+			// the level's own record, both of which were proposed and
+			// withdrawn while adjudicating this with the Crush arm
+			// (2026-08-09; see finding-023 and finding-020).
+			//
+			// A window that does NOT ride the level's record still ranks
+			// here, and carries a refetch rule instead: fetched under a
+			// different model it is unresolved, not stale. Codex needs no
+			// such rule, because model_context_window is re-read with
+			// every level.
 			//
 			// The heartbeat RPC carries no rung and no window, so the
 			// distinction is lost at this seam today.

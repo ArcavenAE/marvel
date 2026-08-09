@@ -236,9 +236,11 @@ reported 0% for a session at 93.8%.
 
 ## Two things settled with the sibling arms
 
-**The rung: codex is `stream`, Crush is `feed`, and the test is
-attributability rather than transport or governance.** This took three
-exchanges and moved twice, so the reasoning matters more than the answer.
+**The rung: both are `stream`. The test is what the rung decides, which
+is precedence against the operator's manifest.** This took four
+exchanges and the answer moved three times, twice by each arm deferring
+to the other. The route matters more than the destination, so it is
+recorded whole.
 
 I first read limitLadder's asymmetry as turning partly on transport, and
 said so. crush-channel refuted that: Crush's window comes from a separate
@@ -255,19 +257,41 @@ The REST route reports the workspace's CURRENT agent, so it cannot say
 which window applied to a past message even in principle. On that
 evidence they offered `feed` and I take it.
 
-The operative property is one the ladder already states and neither of us
-was reading closely enough. Rung 1 is described as the harness stating
-its window "in the same channel as the token counts it is stating it
-about". That clause is attributability, not governance and not transport.
-Codex satisfies it: `model_context_window` sits in the same record as the
-level it divides, so no sample can be paired with the wrong window.
-Crush's window is fetched separately and describes the agent now, so it
-cannot be attributed to the sample it divides. Same clause, two answers,
-and both arms reached them from the same sentence.
+I proposed attributability next, from the ladder's clause about the
+harness stating its window "in the same channel as the token counts it is
+stating it about", and read Crush's separately fetched window as failing
+it. crush-channel then withdrew their own concession, correctly: they had
+imported historical answerability from a different question, and CTX% is
+a live reading that nothing in the ladder asks to answer about past
+messages. Codex's window would fail that test too if asked about a
+message from a session that has since changed models.
 
-The refetch rule crush-channel wants holds at either rung and is the
-practical half: a window fetched under one model must not divide a level
-produced under another.
+That leaves my formulation needing a defence I could not give it, so
+here is the argument that decides it against me. **The rung decides one
+thing: whether the operator's `runtime.context_window` outranks the
+channel.** The ladder says so directly, and gives the reason: overruling
+a rung-1 declaration with a manifest value "would make marvel's
+denominator disagree with the one that actually governs the session's
+behavior". Crush's auto-summarize actuates against the number its REST
+route returns. An operator's manifest window overriding it produces
+exactly that harm, identically to codex. So Crush belongs above the
+manifest, which is rung 1.
+
+Rung 4's description does not fit Crush either, read literally: it is
+written about "a cooperative hook the harness invokes for a human-facing
+status string", one release from changing meaning with no version handle,
+reporting an effective auto-compact window that varies on six unnamed
+axes. A typed API field naming the model's context window is none of
+those.
+
+And the residue of my objection, the race between fetching a window and
+reading a level under a possibly-changed model, is not fixed by a
+demotion. A rung-4 window still divides the level; it just loses to a
+manifest value that may be equally wrong. The refetch rule is the only
+treatment that helps, and crush-channel states it in the strong form: a
+window fetched under a different model is **unresolved**, not stale. That
+is the package. Both `stream`, plus refetch-or-unresolved wherever the
+window does not ride the level's own record.
 
 **Codex's model name cannot reach the accountant's primary-model latch,
 and that is now checked rather than assumed.** probe-0tnf measured the
