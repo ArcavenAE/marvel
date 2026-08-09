@@ -1176,3 +1176,157 @@ and `tool_call.ndjson`, `internal/usage/doc.go`,
 `_kos/nodes/bedrock/elem-runtime-names-harness.yaml`. Gemini and Crush channel
 detail from bd `aae-orc-6c2r` notes (2026-08-08).
 
+
+---
+
+# Eighth pass, 2026-08-09: the repair, specified and costed
+
+Operator instruction relayed via the lead: this is not "file it and move on".
+Study the problem and task out a fix, saying what the repair is and what each
+option costs. `aae-orc-l8v1` (P1) carries the defect; this section specifies
+the work.
+
+Read first, and neither is a duplicate of the general claim: **`aae-orc-wyza`**
+(the bare-versus-`[1m]` split encodes an undocumented default-versus-maximum
+reading, which is the entitlement axis, and it already cost a reviewer a round
+of investigation on 2026-08-08) and **`aae-orc-rm6o`** (`claude-sonnet-5`
+likely missing its `[1m]` spelling). They are the entitlement instance and the
+miss instance of the same key defect, and `rm6o` is the useful contrast: a
+miss renders `?` and announces itself, which is exactly the behavior this
+repair is trying to buy for the hit.
+
+## 24. A worse instance of the same defect, one rung from the top
+
+**MEASURED (this repo, HEAD).** Before designing anything, the same key
+narrowness turns out to bite somewhere higher and more dangerous than the
+table, and nothing in this arc has named it.
+
+`Resolver.learned` is keyed on `NormalizeModel(model)`, the identical narrow
+key. Three facts compound it:
+
+1. **One Resolver per daemon.** `internal/daemon/daemon.go:256` builds it once
+   (`usage.New(store, usage.NewResolver(limits), ...)`), so `learned` is
+   fleet-wide across every session that daemon runs.
+2. **`LimitLearned` is rung 2, above `LimitFromManifest`.** In `Resolve`, the
+   learned branch returns before the manifest branch is reached, so a learned
+   window silently overrules an operator's explicit `runtime.context_window`.
+3. **It is silent where the neighbouring branches are not.** A stream
+   declaration that contradicts the manifest calls `warnOnce`. A feed
+   declaration that loses to the manifest calls `warnOnce`. The learned branch
+   returns with no comparison and no log.
+
+`Learn` is reached today only by claude (the only harness declaring a window
+in a stream marvel reads). So on a daemon running claude sessions across two
+backends, the first session to finish teaches a window that then outranks the
+operator's own override for every later session naming that model id, without
+a line in the log.
+
+That is strictly worse than the table defect that prompted this work: rung 2
+rather than rung 5, populated at runtime rather than shipped and reviewable,
+and it overrules the one rung an operator controls. It should be fixed first.
+
+Not established: whether any operator has run a mixed-backend fleet on one
+daemon. This is a mechanism, like the copilot figure, not an incident.
+
+## 25. The design insight: the discriminator is not "which provider"
+
+The obvious repair is to widen the key to (model, provider, entitlement). It
+does not work, and the reason is this study's own conclusion: **marvel cannot
+know which provider served a request.** A key naming a value marvel cannot
+supply is a key that never matches.
+
+The usable question is narrower and answerable:
+
+> Not "which provider is this?" but "is this session on the vendor default,
+> or has something redirected it?"
+
+That is cheap and conservative. The redirection mechanisms for claude are
+enumerated in finding-016 axis 4 (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`,
+`_FOUNDRY`, `_MANTLE`, `_GATEWAY`, `_ANTHROPIC_AWS`,
+`_ANTHROPIC_GOOGLE_CLOUD`, plus `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_BEDROCK_SERVICE_TIER`). **MEASURED: marvel's Go tree contains none
+of these strings.** The discriminator does not exist yet; it is the deliverable
+of the KNOW step this study has recommended since the first pass.
+
+The asymmetry that makes it work: the table's shipped values are the vendor's
+direct-API windows. When nothing has redirected the session, they are right,
+and today's behavior is correct. When something has, they are unkeyed for that
+path. So the guard only has to detect *departure from default*, and it can
+treat "cannot tell" as departure.
+
+## 26. Four options, costed
+
+**Option A. Provenance grade on the resolved value.** Attach a key-confidence
+grade beside `LimitSource`, distinguishing a window whose key was fully
+discriminating from one resolved on a key known to be narrower than the fact.
+
+- Cost: small. One field, plus the plumbing that already exists for
+  `LimitSource` through the store, the API and the renderer.
+- Buys: a consumer *can* refuse, and an operator can see why a number is soft.
+- Does not itself prevent a wrong number being shown.
+- Verdict: necessary, not sufficient. Ships as the vocabulary the other
+  options speak.
+
+**Option B. Wider key, provider in the key.**
+
+- Cost: high, and **blocked**. Requires provider observation, which sections 2
+  through 21 conclude is unavailable from where marvel stands, and which pass
+  5 showed is defeatable by a repo-supplied `.crushrc` even when marvel
+  constructs the environment.
+- Failure mode if built anyway: every lookup misses until a provider is known,
+  which is Option C with more machinery and a worse name.
+- Verdict: **do not build now.** Revisit only if a provider becomes reliably
+  observable, which is the study's standing trigger.
+
+**Option C. Refuse on a known-ambiguous key (the recommended core).** Mark the
+table entries whose window is not determined by the model id alone, and when
+the discriminator says the session is redirected (or cannot be determined),
+resolve `LimitUnresolved` rather than the default-path value.
+
+- Cost: moderate. Needs the discriminator from section 25 (the spawn-time
+  environment record) as its input, which is the real work. The guard in
+  `Resolve` is small, and `TestResolveAgreesWithTheLadder` constrains it
+  usefully: the guard must refuse *within* a rung, never reorder rungs.
+- Regression, and it is smaller than it looks: for a session on the vendor
+  default, nothing changes. For a redirected session, cold-start CTX% renders
+  `?` until the harness teaches a window. For claude that is one session,
+  because `Learn` fills the learned rung from the terminal line, so the table
+  is the cold-start guess rather than the steady-state answer.
+- Buys: converts the silent-wrong hit into a loud-absent miss, which is the
+  behavior `rm6o` already gets for free by missing.
+
+**Option D. Fix the learned key, and warn when it overrules the manifest.**
+Key `learned` on the same discriminated key as the table, and log once when a
+learned value contradicts a manifest override, matching what the stream and
+feed branches already do.
+
+- Cost: small, and mostly independent of the others. The key change is the
+  same function; the warn is three lines beside two existing ones.
+- Verdict: **ship first.** Highest rung affected, live for claude today, and
+  the only one of the four that silently overrules the operator.
+
+## 27. Recommended sequence, and what it does not fix
+
+1. **D** first. Small, self-contained, highest rung, and correct regardless of
+   what the rest of the design becomes.
+2. **A** next, as the vocabulary. Grading is additive and unblocks the
+   renderer showing why a number is soft.
+3. The **discriminator** (spawn-time environment record). This is the real
+   engineering, it is the KNOW step, and it is the input C needs.
+4. **C** on top of it.
+5. **B** deferred behind the standing trigger.
+
+Sequence tickets `wyza` and `rm6o` inside this rather than beside it: `rm6o`
+is a one-line data question that A and C do not touch, and `wyza` is the
+entitlement half of the same key, whose empirical question (does a bare-keyed
+session on a split model actually get 200k) is exactly the fixture the
+discriminator work would produce anyway.
+
+**What this does not fix, stated plainly.** A `.crushrc`, a project-scope
+setting, or any config file that redirects the backend without touching the
+environment marvel constructed leaves marvel believing the session is on the
+default when it is not. The guard is sound for environment-mediated
+redirection only. It converts the common case to correct and the
+env-redirected case to loud-absent, and leaves config-file redirection
+silent-wrong. That residue is smaller than today's and it is not zero, and
+anyone reading a graded value must know which of the three they are in.
