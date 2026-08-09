@@ -1,0 +1,18 @@
+# Repo-level toolchain pins.
+#
+# `just lint` and the lefthook pre-commit lint step both invoke a bare
+# `golangci-lint`. Without a pin here that name resolves against whatever
+# the machine's global mise config happens to carry, so the command fails
+# outright on a machine that has never installed the tool, and silently
+# runs a different version from CI on a machine that has. A blocked
+# pre-commit hook is the moment someone reaches for --no-verify, which
+# skips fmt-check and vet along with the lint.
+#
+# The version MUST match the one .github/workflows/ci.yml passes to
+# step-security/golangci-lint-action. internal/toolchain/pin_test.go
+# asserts that, so the two cannot drift apart unnoticed.
+#
+# Additive on purpose: go and gofumpt keep resolving the way they do
+# today (global mise config, or CI's own install step). See issue #119.
+[tools]
+golangci-lint = "2.10.1"
