@@ -1,0 +1,26 @@
+{
+  "source": "claude code transcript, one auto-compaction",
+  "harness": "claude",
+  "boundary_index": 8,
+  "pre_tokens": 467111,
+  "post_tokens": 12429,
+  "dropped": 454682,
+  "occupancy_series": [
+    462747,
+    463259,
+    463811,
+    464244,
+    465068,
+    465702,
+    466134,
+    466571,
+    116155,
+    124357,
+    124758,
+    125109,
+    125678,
+    125819,
+    126652,
+    127590
+  ]
+}

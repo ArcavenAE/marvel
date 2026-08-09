@@ -1,6 +1,46 @@
 # Probe brief: compaction ground truth is already on disk, dozens of times
 
-**Status:** OPEN (brief only; not started).
+**Status:** RUN and CLOSED 2026-08-09. SP2 and SP3 in finding-016
+(2026-08-08); SP1, SP4 and SP5 in finding-024 (2026-08-09).
+
+Results, one line each:
+
+- **SP1, answered.** Marvel's occupancy formula tracks `preTokens` to a
+  median 0.4% low (47 of 56 contiguous events within 1%), never exactly,
+  and the residual is a one-request lag rather than a formula error.
+  Across a resume gap the relationship disappears entirely (0.14x to
+  18.6x).
+- **SP2 and SP3, answered by finding-016**, and not recomputed.
+- **SP4, answered in the detector's favor.** 63 of 63 labelled events
+  detected, zero false negatives, minimum margin 4.03x over the guard.
+  The reasoned constants are now calibrated. Five false positives across
+  30,583 samples, of which two are real unlabelled context drops.
+  Regression fixture at
+  `internal/usage/testdata/compaction_series_claudecode.json`.
+- **SP5, answered for gemini and opencode.** Neither has a labelled
+  compaction corpus on this machine: gemini's chat files carry a token
+  series and no compaction field at all, and opencode's
+  `session_context_epoch` is empty and is a per-session pointer that
+  could not hold a history anyway. codex is finding-017; Crush is the
+  k2mi arm.
+
+Two claims in the brief below are refuted by the run and are corrected in
+place where they appear: subagent context IS minable (1,186 subagent
+transcript files, two of the 82 boundaries inside them), and the file
+counts have moved again because the corpus is live.
+
+The result the probe did not go looking for: three separate mechanisms
+report LOW pressure at HIGH pressure, the direction that silently
+disables shift rotation. See finding-024.
+
+Scripts: `scripts/mine_claude_compactions.py`,
+`scripts/mine_other_harness_compactions.py`.
+
+---
+
+**Original brief follows, unedited except where a claim is struck.**
+
+**Status when written:** OPEN (brief only; not started).
 **Question:** `question-interactive-context-pressure`, and the compaction
 half of `question-shift-triggers`.
 **Probe medium:** mining existing local artifacts. No model calls, no
@@ -195,9 +235,15 @@ any probe that spends model quota.
 - **Forcing a compaction.** The premise is that this is unnecessary. If a
   sub-probe genuinely needs a controlled crossing, record that as a result
   rather than running it here.
-- **The subagent question.** No `isSidechain: true` assistant line exists in
+- ~~**The subagent question.** No `isSidechain: true` assistant line exists in
   the local corpus, so subagent context is not minable this way and stays
-  with `subagentStatusLine`.
+  with `subagentStatusLine`.~~ **REFUTED 2026-08-09 (finding-024).**
+  Subagent transcripts are 1,186 separate files under
+  `<project>/<session>/subagents/`, carrying thousands of
+  `isSidechain: true` usage lines, and two of the 82 compaction
+  boundaries are inside them. The claim was true of the flat glob it was
+  measured with and false of the corpus. Subagents compact, in windows
+  marvel is not watching.
 
 ## Handling note
 
