@@ -1,0 +1,106 @@
+id: question-managed-runtime-placement
+type: question
+confidence: frontier
+title: "Managed agent runtimes as placement: peer ruling made, adapter shape open"
+content: |
+  Does marvel run inside a managed agent runtime (AWS Bedrock AgentCore,
+  Google's Gemini Enterprise Agent Platform), sit beside one as a peer,
+  or ignore both?
+
+  **RULED 2026-08-09 (aae-orc-1s7y, finding-021): peer, for the AWS
+  arm.** A managed runtime is one more Host under marvel's scheduler,
+  reached through a second `Instance` implementation. Marvel stays a
+  local process owning its own reconciliation loop.
+
+  The disqualifier for target is mechanical, not philosophical: an
+  agent running inside AgentCore has no primitive that creates a
+  sibling session. Only `InvokeAgentRuntime`, called from outside,
+  brings a session into existence, so a reconciler whose output is
+  creating and destroying sessions cannot run as one of the things it
+  converges. Session lifetime compounds it (8h microVM, 14d Instances)
+  against a daemon meant to outlive the agents it supervises.
+
+  BYOA is NOT the reason target fails, and recording that matters. The
+  container is arbitrary, the compute-type comparison says "Models and
+  frameworks: Any", and AWS documents third-party coding harnesses as
+  consumers of its shell channel. Refusing target on BYOA grounds would
+  leave the question reopenable by anyone who reads the container spec.
+
+  **Three premises from the brief (2026-08-01) and the orc crosswalk
+  (2026-07-17) were refuted by the 2026-08-09 documentation read.**
+  There is a terminal (`InvokeAgentRuntimeCommandShell`: persistent
+  interactive shell over WebSocket binary frames, reconnect with
+  output replay, 10 concurrent per runtime, 1h per connection). There
+  is a persistent host in the customer's own account (Instances compute
+  type, GA 2026-08-06: EC2 managed instances, 14-day sessions,
+  reattaching EBS volumes, multiple agents per instance sharing a
+  filesystem). Filesystem state persists even on microVMs (managed
+  session storage, 1 GB, preview) though NOT for FIFOs, which the
+  stream-attachment path uses.
+
+  **The seam is `Instance`, not `Adapter`.** `Adapter.Prepare` returns
+  a command string documented as passed to `tmux new-window`; an
+  AgentCore session is an API call. `internal/runtime/instance.go`
+  declares Spawn / Kill / Inject / Capture / Events, which map onto
+  InvokeAgentRuntime / StopRuntimeSession / CommandShell write /
+  replay buffer / response stream. So this does not stretch
+  elem-runtime-adapter-framework; it needs a sibling implementation and
+  a real Host type (`internal/api/types.go` Host is two fields today).
+
+  OPEN SUB-QUESTIONS:
+
+  (a) Does the 10-concurrent-shell cap bind per runtime or per
+      endpoint? Decides whether marvel can attach to more than ten
+      cloud sessions, which is the difference between a fleet and a
+      demo. Unanswerable without an account.
+  (b) Does a full-screen TUI survive the CommandShell binary frame
+      channel? AWS asserts it; finding-004 signal 5h says terminal
+      query response is open-ended per harness and version.
+  (c) Cold-start latency, and whether finding-018's shift timings
+      survive a cloud placement.
+  (d) Cost at fleet scale. Unit prices published; our duty cycle never
+      measured against them.
+  (e) The GCP arm. Peer-by-default and under-evidenced: no interactive
+      terminal or PTY channel is documented, no equivalent of the
+      Instances compute type, and the quota pages did not render
+      numbers. Re-read before any GCP work rather than treating the
+      AWS ruling as covering it.
+  (f) AgentCore AB Testing plus Configuration Bundles collides with
+      ADR-007: statistically gated automatic promotion is the judging
+      the platform reserves for humans. Renting the traffic split
+      while keeping promotion a human act is a design constraint to
+      settle before anyone builds on it.
+  (g) SOUL section 3 boundary. One operator using their own AWS
+      credentials is the permitted case; storing anyone else's tokens
+      in AgentCore Identity so marvel can route them is the forbidden
+      one, and the service makes that easy to do by accident. Whatever
+      adapter ships must state it.
+
+  NOT A COMMITMENT TO BUILD. The ruling closes the direction question
+  and names the seam. Whether a cloud placement is worth building at
+  all stays gated on multi-host (M5) and the bet tripwire.
+
+  Evidence: finding-021 (documentation study 2026-08-09 plus a code
+  read at 0886801; nothing provisioned, nothing spent, so every vendor
+  capability is documented-only). Prior art: orc
+  `_kos/ideas/agentcore-crosswalk.md`.
+edges:
+  - target: elem-runtime-adapter-framework
+    type: discovered_from
+    note: "the framework was the expected seam and is the wrong one: Adapter is command-shaped for tmux new-window, Instance is the level that fits an API-driven session"
+  - target: elem-tmux-session-substrate
+    type: supports
+    note: "the substrate survives the ruling. tmux stays for local sessions; cloud sessions coexist rather than replace. Measured: 3 non-test files import internal/tmux, 14 driver call sites"
+  - target: question-multi-host
+    type: derives
+    note: "a managed runtime is a Host, so this lands on the same scheduling and placement surface M5 opens"
+  - target: question-marvel-otel-architecture
+    type: supports
+    note: "AgentCore telemetry can leave via DISABLE_ADOT_OBSERVABILITY=true, so a vendor default does not decide this question"
+  - target: aae-orc::val-user-sovereignty
+    type: implements
+    note: "choosing peer over target is what keeps the value intact. Instances (compute in the customer's own account) softens the local-first tension without removing it; the instances are not the operator's to launch, patch or terminate"
+provenance:
+  created_by: human
+  session: "aae-orc-1s7y"
+  created_at: "2026-08-09"
