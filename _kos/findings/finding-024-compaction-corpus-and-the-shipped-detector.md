@@ -152,10 +152,22 @@ declaration is now measured rather than noted.
 
 One difference between our runs, characterized rather than waved
 through: I counted one record matching the reset signature
-(`total == last` mid-series) where they counted zero. Both instances are
-a session's first real sample, one a duplicate emission of record 0 and
-one following an `info: null` record. Neither is a reset, so the
-conclusion converges once the definition is stated.
+(`total == last` mid-series) where they counted zero. Neither is a
+reset. One follows an `info: null` record, so it is a session's first
+real sample where `total == last` holds trivially. The other is a
+DUPLICATE EMISSION: two byte-identical records 3.7 seconds apart, and
+the sample after them continues the accumulator (`total` 37841 against
+`last` 19151) rather than restarting it. Their count came from a
+`prev != v` guard that filters duplicates incidentally; counting it and
+then characterizing it is the better order, and it converges once the
+definition is stated.
+
+The duplicate is worth one line as a corpus property in its own right. A
+reader that DIFFERENCES consecutive totals to recover a per-request
+delta sees a phantom zero-cost request there. A reader that takes a
+level never differences and is immune, which is what both marvel's
+accountant and the codex reader do, but the surface exists for anyone
+who reaches for the difference.
 
 | harness | cumulation | the test that settled it |
 |---|---|---|
@@ -166,6 +178,38 @@ conclusion converges once the definition is stated.
 Three harnesses, three different tests, and no two of them settled by
 the same one. That is the transferable part: name the test, not the
 outcome.
+
+Two refinements from the other arms, both of which change how the rule
+should be applied rather than merely restating it.
+
+**The test is derived from what the harness exposes, not chosen from a
+menu.** The codex arm put this as "none of the three tests was available
+on the other two harnesses", which is stronger than my data supports:
+the window bound was available on codex, and finding-017 used it there
+to settle layout. The defensible version has one clean instance. The
+window bound is dead on gemini, whose largest observed prompt is 51,209
+against a window in the millions, so no reading of it can exceed the
+window and the test cannot discriminate anything. A blocker inherited
+from another channel is costly for exactly this reason: it names a test
+that was unavailable where someone was looking, and says nothing about
+the channel beside it.
+
+**Prefer a test whose NEGATIVE result would also have carried
+information**, which is the Crush arm's refinement and the sharper of
+the two. Applied to my own work it is not flattering. The gemini
+decrease test is ONE-SIDED: observing a decrease excludes a session
+accumulator, but observing none would have been consistent with both a
+level and an accumulator, since a level only falls at a compaction and
+those sessions may simply never have had one. I got the informative side
+of a one-sided test. The same-turn ratio test is two-sided and is what
+actually closed gemini; the decrease result is a corroborating
+observation rather than the load-bearing one, and the codex arm's
+turn-boundary test is two-sided in the same way (drops would have meant
+per-turn accumulation, and their absence excludes it).
+
+This is finding-017's own standard, that a test which could not have
+come out differently is not evidence, applied one level up to the choice
+of test rather than to a single measurement.
 
 ## SP4: would the shipped detector have caught these?
 
