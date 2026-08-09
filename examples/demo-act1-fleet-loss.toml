@@ -1,0 +1,50 @@
+# Marvel demo: Act 1, whole-role loss in one tick.
+#
+# Three workers in ONE role. Beat 1a kills a single pane, which charges the
+# role one crash under both the old and the new accounting, so it cannot
+# show what changed. This manifest exists to lose every replica of a role
+# at the same instant, which is what a dying tmux server, a host reboot, or
+# a foreign daemon's reclaim actually looks like.
+#
+# Marvel charges the ROLE one crash for that tick, not one per replica.
+# Three replicas is the smallest count where the difference is unmistakable:
+# under per-replica charging the role would land at restart #3 with a
+# 4-minute backoff, and all three would sit missing for that long.
+#
+# Requires: `sleep` on PATH (always present). No model auth needed.
+#
+# Setup:
+#   just build
+#   ./bin/marvel work examples/demo-act1-fleet-loss.toml
+#
+# Lose the whole role at once, then read the LOG rather than the ring. The
+# tmux session is named for the workspace, so this reaches `bulk` and
+# nothing else:
+#   tmux -L "$(./bin/marvel config tmux-server)" kill-session -t marvel-bulk
+#   ./bin/marvel events --kind session.crashed   # three, one per replica
+#   ./bin/marvel daemon logs | grep reap         # ONE charge, two "already charged"
+#
+# See docs/demo.md beat 1e for the full sequence and what each line means.
+#
+# Cleanup:
+#   ./bin/marvel stop --teardown
+
+[workspace]
+name = "bulk"
+
+[[team]]
+name = "line"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 3
+
+    [team.role.runtime]
+    image = "generic"
+    command = "sleep"
+    args = ["3600"]
+
+    [team.role.healthcheck]
+    type = "process-alive"
+    timeout = "10s"
+    failure_threshold = 3

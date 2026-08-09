@@ -336,6 +336,166 @@ role's old generation is gone. It stops where it stands instead and says so:
 `shift stuck in launching past 15s, stopped at gen 2 with 1 of 3 roles
 shifted`. Normal reconciliation converges the roles that never got a turn.
 
+### 1e. Whole-role loss: one crash charged, not one per replica
+
+Beat 1a kills one pane of a two-replica role, which charges that role one
+crash. It would also charge one crash under the accounting marvel used
+before #162, so it cannot show what changed. This beat loses every replica
+of a role at the same instant, which is what a dying tmux server, a host
+reboot, or a foreign daemon's reclaim actually looks like.
+
+`demo-act1-fleet-loss` is one role with three replicas. Three is the
+smallest count where the difference is unmistakable.
+
+```sh
+./bin/marvel work examples/demo-act1-fleet-loss.toml
+sleep 6
+./bin/marvel get sessions   # three workers, healthy
+```
+
+Kill the workspace's whole tmux session rather than one pane. The session is
+named for the workspace, so this reaches `bulk` and nothing else:
+
+```sh
+tmux -L "$(./bin/marvel config tmux-server)" kill-session -t marvel-bulk
+sleep 10
+```
+
+The ring reports the loss per replica, because three sessions did die:
+
+```sh
+./bin/marvel events --kind session.crashed   # three events
+```
+
+The charge is in the log, not the ring, and that is where the change shows:
+
+```sh
+./bin/marvel daemon logs -n 200 | grep reap
+```
+
+A verified run, 2026-08-09, one second after the kill:
+
+```
+reap: session bulk/line-worker-g1-0 crashed (role bulk/line/worker restart #1, next backoff=59.99s)
+reap: session bulk/line-worker-g1-1 crashed with the rest of role bulk/line/worker in one tick; already charged
+reap: session bulk/line-worker-g1-2 crashed with the rest of role bulk/line/worker in one tick; already charged
+```
+
+One charge, two refusals to charge again, and the role sits at restart #1
+with a 60-second window. Charged per replica the same event would have put
+it at restart #3 with a 4-minute window, and a role with `max_restarts = 3`
+would have had nothing left after a single incident that killed no more
+agents than one tick's worth.
+
+All three replicas come back together when that one window elapses:
+
+```sh
+sleep 70
+./bin/marvel get sessions   # three workers, healthy, ~64s after the kill
+```
+
+They also come back under their original names. The index is
+`max(existing)+1` with no gap filling, so a role that loses every replica
+frees every key and gets all of them back, while a role that loses one
+replica out of three sees the replacement take a new index.
+
+Marvel is deliberately not guessing at the cause here. It cannot tell an
+external kill from an application exit at the point the reap runs: both
+present as a pane id tmux no longer lists, and a single-pane session
+collapses its server when its own process exits, so the tempting
+discriminator does not survive a check. The rule bounds the blast radius of
+one tick instead of classifying it. Flapping still escalates, because
+flapping repeats across ticks.
+
+### 1f. A second daemon finds state it does not own: `reconcile.left`
+
+A daemon starting up reconciles the tmux namespace against its own records.
+When it finds marvel state it has no record of, it leaves it running and
+says so. That is the posture ratified 2026-08-07: accumulate orphans rather
+than destroy live work.
+
+This beat needs two daemons sharing one tmux server, which is exactly what
+the scratch layout in Prerequisites makes safe to arrange. Give each daemon
+its own state and socket, and point both at the same `MARVEL_TMUX_SOCKET`:
+
+```sh
+A=/tmp/mv-a; B=/tmp/mv-b; mkdir -p "$A" "$B"
+
+MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel daemon \
+  --socket "$A/m.sock" --state-bolt "$A/marvel.bolt" \
+  --log-file "$A/daemon.log" --pidfile "$A/daemon.pid" &
+sleep 3
+
+MARVEL_SOCKET="$A/m.sock" MARVEL_TMUX_SOCKET=mv-shared \
+  ./bin/marvel work examples/demo-act1-recovery.toml
+sleep 5
+```
+
+Now start a second daemon on the same tmux server with an empty store of its
+own. It comes up, sees a workspace it has never heard of, and leaves it
+alone:
+
+```sh
+MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel daemon \
+  --socket "$B/m.sock" --state-bolt "$B/marvel.bolt" \
+  --log-file "$B/daemon.log" --pidfile "$B/daemon.pid" &
+sleep 4
+
+MARVEL_SOCKET="$B/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel events
+```
+
+A verified run, 2026-08-09:
+
+```
+warning  reconcile.left  recover  left tmux session marvel-recover running:
+  workspace not in this daemon's records. Reclaim with `marvel reap` if it
+  is stale [by pid=78885 socket=/tmp/mv-b/m.sock]
+```
+
+Two things in that one line. It is **warning** severity, because an accepted
+failure nobody can see is just the other failure wearing a different hat.
+And it names the **actor**, `pid=` and `socket=`, because two daemons on one
+host otherwise interleave into the same log with nothing to tell them apart,
+and the daemon whose work is at stake records nothing itself.
+
+Confirm the first daemon's agents never noticed:
+
+```sh
+MARVEL_SOCKET="$A/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel get sessions
+```
+
+Both workers still `running` and `healthy`. Ask the second daemon what it is
+holding back from, and it lists rather than acts:
+
+```sh
+MARVEL_SOCKET="$B/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel reap
+```
+
+```
+  tmux session marvel-recover (whole workspace)
+
+1 unrecorded item(s), left running. Re-run with --confirm to destroy them.
+These may belong to another running daemon. Check before confirming.
+```
+
+Clean up both:
+
+```sh
+for d in "$B" "$A"; do
+  MARVEL_SOCKET="$d/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel stop --teardown
+done
+rm -rf "$A" "$B"
+```
+
+**This runbook does not demonstrate the destroying path,** and that is a
+deliberate omission rather than a gap. `marvel daemon --reclaim` and
+`marvel reap --confirm` turn this beat into one that destroys whatever the
+other daemon is running, and the events for it (`reconcile.killed`, same
+actor field) exist for the operator who has already decided. A runbook is a
+thing people paste from before they have finished reading it. The reasoning,
+and the ruling behind the leave-it-running default, is in
+`docs/design/daemon-isolation.md`.
+
 ---
 
 ## Act 2 — Observe
