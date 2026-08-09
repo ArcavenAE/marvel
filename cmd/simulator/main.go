@@ -80,13 +80,10 @@ func main() {
 		// token is what separates them.
 		token := os.Getenv(api.HeartbeatTokenEnv)
 		engine.OnHeartbeat = func(pct float64) error {
-			p := map[string]any{
-				"session_key":     sessionKey,
-				"context_percent": pct,
-			}
-			if token != "" {
-				p["session_token"] = token
-			}
+			// The simulator does not know a model name, so it sends none
+			// and any prior reading stands. Built through the shared
+			// constructor so this producer moves with the contract.
+			p := api.NewHeartbeatRequestWithToken(sessionKey, token, pct, "")
 			params, _ := json.Marshal(p)
 			resp, err := daemon.SendRequest(*socket, daemon.Request{
 				Method: "heartbeat",

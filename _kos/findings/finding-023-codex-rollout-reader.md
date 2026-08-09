@@ -176,11 +176,24 @@ thing a hook and share event names.** Codex's vocabulary is
 shared hook body looks obviously correct. The event names match; the
 stdout contracts do not.
 
-## Hook trust: mapped, not closed
+## Hook trust: off the critical path, and the graph should say so
 
-finding-017 marked this critical path, on the reasoning that a design
-requiring `--dangerously-bypass-hook-trust` is not shippable. I did not
-close it. What I established:
+**Stated plainly, because finding-017 marked this critical path and the
+graph still carries that**: `--dangerously-bypass-hook-trust` is not
+needed by the shipped design, and nothing in this channel depends on the
+trust question. Marvel cannot install the codex hook at all, because
+`auth.json` lives in `$CODEX_HOME` and the hook stanza is operator setup;
+an operator who can write the stanza can run the TUI review that grants
+trust. What remains open is only whether trust can be pre-seeded
+non-interactively, which is a convenience with no dependent.
+
+finding-017's reasoning was that a design requiring the bypass flag is not
+shippable. That reasoning is sound and its premise turned out false: this
+design does not require it. Whoever harvests should retire the critical-
+path marking rather than carry it forward.
+
+Below is what I established while the question still looked load-bearing.
+I did not close it:
 
 - **The gate is silent.** An enabled, untrusted hook does not run and
   nothing says so: no warning on stderr, no line in the rollout, no
@@ -452,12 +465,43 @@ Three things generalize:
    have caught it is running the feature end to end after the merge, not
    before it, and I had run exactly that check before #168 existed.
 
-Cheapest durable guard, and what this PR does: assert the wire key by
-name in `cmd/marvel`, verified to fail without the fix. The daemon-side
-field is `heartbeatParams.SessionToken`, tagged
-`json:"session_token,omitempty"` in `internal/daemon/daemon.go`; it is
-unexported, so the test spells the key rather than deriving it, and says
-so.
+**The first guard I wrote was too weak, and the operator named why.** I
+asserted the wire key by name in `cmd/marvel`, verified to fail without
+the fix. That catches this instance and not the next one, because a
+fourth forwarder that never calls my constructor is not covered by a test
+of my constructor. A test that builds the params in-process cannot catch
+the omission of a field it does not know to set.
+
+Three forwarders already existed, which decides the fix: `ctxforward.go`,
+`codexctx.go`, and `cmd/simulator/main.go`. #168 updated two of the
+three. Mine was the one it could not see. Crush is a likely fourth.
+
+So the guard is a shared type and constructor rather than a third call
+site remembering. `api.HeartbeatRequest` is now the one definition of the
+wire shape, `internal/daemon`'s local name is an alias of it, and every
+producer builds it through `api.NewHeartbeatRequest`. **The token is
+deliberately not a parameter**: every forwarder reads it from the same
+variable, and a parameter is a thing a fourth forwarder can forget to
+pass. There is nothing to omit.
+
+The boundary test is `TestEveryProducerShapeIsAdmitted`, which drives
+each real producer's bytes through the real `handleHeartbeat` against a
+session registered the way the manager registers one, with
+`TestABareMapPayloadIsRefused` as its negative half (without which a
+handler that admitted everything would pass). Falsified by pointing the
+constructor at the wrong environment variable, which reproduces tonight's
+failure with tonight's payload:
+
+    handleHeartbeat({"session_key":"ws/agent-bound","context_percent":93.85,
+      "model":"gpt-5.6-sol","context_window":258400})
+      = "session ws/agent-bound: heartbeat token does not match the session it claims"
+
+One thing typing the shape did settle by accident. `context_window` had
+been a stray map key the daemon dropped; it is now a field the daemon
+parses and still never reads. The comment in `ctxforward.go` named two
+edits that would finish that seam, and one of them is now made. Typing a
+value is not consuming it, and the contract decision it named is
+untouched.
 
 ## What was not established
 

@@ -139,32 +139,23 @@ func newCodexCtxCmd() *cobra.Command {
 // standing up a daemon; the pair of keys below is exactly what the
 // merge of #170 and #168 got wrong, and an inline literal inside a
 // cobra closure is not reachable by any test that would have caught it.
-func codexHeartbeatParams(workspace, session, token, model string, pct float64, window int) map[string]any {
-	p := map[string]any{
-		"session_key":     workspace + "/" + session,
-		"context_percent": pct,
-		"model":           model,
-	}
-	// The token marvel minted for this session at spawn, exactly as
-	// ctx-forward sends it. Without it the daemon refuses the beat:
-	// authenticateHeartbeat fails open only when the record carries no
-	// hash, and Manager.Create now mints one before the record exists, so
-	// every session spawned by a current daemon has one. A tokenless codex
-	// beat lands as ErrHeartbeatUnauthorized and CTX% renders absence.
+func codexHeartbeatParams(workspace, session, token, model string, pct float64, window int) api.HeartbeatRequest {
+	// The token marvel minted for this session at spawn. Without it the
+	// daemon refuses the beat: authenticateHeartbeat fails open only when
+	// the record carries no hash, and Manager.Create now mints one before
+	// the record exists, so every session spawned by a current daemon has
+	// one. A tokenless codex beat lands as ErrHeartbeatUnauthorized and
+	// CTX% renders absence.
 	//
 	// That is not hypothetical: it is what the merge of #170 and #168
-	// produced. codexctx was written against a base where
-	// UpdateSessionHeartbeat took no token, and the two landed the same
-	// night. Nothing failed to compile, because the payload is a
-	// map[string]any on the wire, and no test on either side covered the
-	// pair.
-	if token != "" {
-		p["session_token"] = token
-	}
+	// produced. This forwarder was written against a base where the field
+	// did not exist. It now builds the same type every other producer
+	// builds, so the next field added to the contract breaks this line at
+	// compile time rather than at runtime. See finding-023.
+	p := api.NewHeartbeatRequestWithToken(workspace+"/"+session, token, pct, model)
 	// context_window is the producer half of a seam whose consumer does
-	// not exist: internal/daemon.heartbeatParams has no field for it and
-	// drops it. See the long comment in ctxforward.go, which names the two
-	// edits that finish it.
+	// not exist: the daemon parses it and never reads it. See the long
+	// comment in ctxforward.go, which names the edit that would finish it.
 	//
 	// Codex sharpens that open decision rather than settling it. This
 	// window is a `stream` declaration (rung 1), and codex is the clean
@@ -182,10 +173,10 @@ func codexHeartbeatParams(workspace, session, token, model string, pct float64, 
 	// fetched under a different model, a window is unresolved rather than
 	// stale.
 	//
-	// The heartbeat RPC carries no rung and no window, so the distinction
-	// is lost at this seam today.
+	// Zero means the payload declared no window, and an undeclared window
+	// must not arrive as a declared zero.
 	if window > 0 {
-		p["context_window"] = window
+		p.ContextWindow = window
 	}
 	return p
 }
