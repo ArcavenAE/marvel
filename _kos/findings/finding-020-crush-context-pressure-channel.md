@@ -221,6 +221,15 @@ So the operator ask narrows from "which rung" to "ratify relaxing the
 same-channel conjunct, or add the intermediate rung". The ladder is still
 theirs to amend, and two arms agreeing is not the same as it being ruled.
 
+**The two candidates differ in blast radius, which is a property of the
+options rather than an argument for either** (the codex arm's observation,
+and it is the one thing an operator needs that neither arm's evidence
+supplies). Relaxing the same-channel conjunct changes what rung 1 MEANS for
+every future channel, including ones nobody has surveyed. Adding a rung
+between manifest and feed changes only where one new shape sits. If the
+smaller commitment is wanted, the second is smaller. Neither arm states a
+preference.
+
 **One thing IS settled and it survives either answer.** A window not
 re-read with its level goes stale on model change with no signal, so a
 fetched window carries **refetch on model change, and a window fetched
@@ -294,6 +303,16 @@ one record the no-prior-reading case is rare; on this one it is the
 ordinary startup path. (The branch was named by the compaction-mining arm
 against its own corpus, and it corrects what this section said in its first
 pass, which asserted the hold without its precondition.)
+
+**How the codex forwarder satisfies this, and why copying its shape is not
+the same as copying its property.** The codex arm verified absence two ways,
+in source and end to end: its reading path writes nothing when it has no
+usable sample, so a session that never had a good level keeps a zero
+`ContextAt` and the renderer's first switch arm leaves the cell at `-`. That
+is satisfied by DECLINING TO SEND rather than by holding correctly. A reader
+that instead holds a value in-process across fires loses the property, on
+either harness. Worth stating because the forwarder shape is the obvious
+thing to port and the property is not in the shape.
 
 **Discard on the token values, not on the companion field.** The
 compaction-mining arm measured the same artifact class on Claude Code (68
