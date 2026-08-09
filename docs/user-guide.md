@@ -264,10 +264,26 @@ marvel get sessions
 
 Output:
 ```
-WORKSPACE  TEAM       ROLE    GEN  NAME                   STATE    HEALTH   CTX%  CPU%   RSS   DESK  AGENT
-dev        squad      worker  1    squad-worker-g1-0      running  unknown  3%    99.9   412M  1     claude
-dev        squad      worker  1    squad-worker-g1-1      running  unknown  ?     0.4    380M  2     codex
+WORKSPACE  TEAM   ROLE    GEN  AGENT NAME         STATE    HEALTH   CTX%  CPU%  RSS   DESK  RUNTIME  LLM
+dev        squad  worker  1    squad-worker-g1-0  running  unknown  3%    99.9  412M  1     claude   claude-opus-5
+dev        squad  worker  1    squad-worker-g1-1  running  unknown  -     0.4   380M  2     codex    gpt-5.6-sol
 ```
+
+Two of those columns are easy to read as one thing, and they are not:
+
+- `RUNTIME` is the **harness** the session runs: `claude`, `codex`,
+  `opencode`, `generic`. It is the manifest's `runtime` block, and it
+  names a program.
+- `LLM` is the **model** that harness is talking to, as the metering
+  producer named it. A `-` means marvel has no model name for the
+  session, which is the normal reading before the first turn.
+
+The agent is neither column. An agent is its persona, identity, role,
+model and tools together; `AGENT NAME` is the session key marvel gave
+that composition. Two roles can run the same runtime against different
+models, and one runtime can be pointed at a different model per role, so
+reading `RUNTIME` as "which agent is this" gives the wrong answer as soon
+as a team is heterogeneous.
 
 `CPU%` and `RSS` come from a sampler that runs every 5 seconds and rolls
 up each agent's whole process subtree, not just the process tmux started
@@ -282,10 +298,11 @@ zero:
   of a headless `claude` or `opencode` stream, and the cooperative
   `heartbeat` RPC that the bundled simulator, the claude statusline feed
   and the codex hook feed all call. An interactive pane publishes
-  neither on its own. After a daemon restart, a stream-derived reading
-  goes back to `-`, because nothing can refresh one for a stream marvel
-  is no longer reading; a heartbeat reading survives the restart and is
-  refreshed by the next heartbeat.
+  neither on its own until you turn a feed on: see "Interactive claude
+  context pressure" and "Codex context pressure" below. After a daemon
+  restart, a stream-derived reading goes back to `-`, because nothing
+  can refresh one for a stream marvel is no longer reading; a heartbeat
+  reading survives the restart and is refreshed by the next heartbeat.
 - Codex is not on the stream list, and no runtime setting puts it there.
   Its `exec --json` usage object is a running total rather than a level,
   so there is no occupancy in it to read at any window. See "Codex
@@ -316,6 +333,74 @@ this session compacts".
 
 Per-process IO counters are read on Linux only; `marvel describe session`
 reports `IOAvailable: false` elsewhere.
+
+### Interactive claude context pressure
+
+An interactive claude session emits no stream to parse, so the usage
+accountant cannot meter it and `CTX%` stays `-`. One manifest line turns
+on a cooperative feed instead:
+
+```toml
+[team.role.runtime]
+image = "claude"
+command = "claude"
+context_feed = "statusline"
+```
+
+`"statusline"` is the only value. Anything else fails manifest
+validation rather than being ignored.
+
+That is the whole setup. You add nothing to your own Claude Code
+settings, and marvel writes nothing under `~/.claude`. At spawn, marvel
+projects a per-session settings file (the same file a `policy` is written
+into) carrying `statusLine` and `subagentStatusLine` hooks that invoke
+`marvel ctx-forward`, and passes that file to the harness with
+`--settings`. Claude Code calls the hook with its own status JSON;
+`ctx-forward` reads the context figure out of the payload, forwards it to
+the daemon's heartbeat RPC, and prints the status line the human in the
+pane sees. Both feeds are wired: the main session's and its subagents'.
+
+This is the opposite arrangement from codex below, and the difference is
+whose file it is. Claude Code takes a settings path on the command line,
+so marvel can hand it one it owns. Codex reads hooks only from
+`$CODEX_HOME/config.toml`, next to your credentials, which marvel does
+not write. So claude is one manifest line and codex is a stanza you
+install by hand.
+
+What to know before relying on it:
+
+- **The main hook carries `refreshInterval = 15`.** Statusline updates
+  are event-driven and go quiet between prompts, so without the interval
+  an idle session would stop beating and starve a heartbeat healthcheck
+  watching it. The subagent hook has no interval; a subagent turn is
+  bounded.
+- **A policy wins.** If the role's `policy` defines `statusLine` or
+  `subagentStatusLine` itself, marvel leaves it alone and adds nothing.
+  Marvel only fills keys the settings document does not already carry.
+- **The feed is fixed at spawn.** Adding `context_feed` to a manifest and
+  re-applying does not retrofit the feed onto sessions that are already
+  running: re-projection reads the flag from the session's spawn-time
+  runtime copy. New sessions get it, so `marvel shift` the team (or
+  scale, or let a restart happen) to migrate a running one.
+
+Verify it end to end with `examples/context-feed.toml`, which is this
+manifest with nothing else in it:
+
+```bash
+marvel work examples/context-feed.toml
+# CTX% is "-" until the session takes a turn, so give it one
+marvel inject feed/watch-watcher-g1-0 "say only the word ready" -e
+marvel get sessions                            # CTX% populates
+marvel describe session feed/watch-watcher-g1-0
+```
+
+The pane's own bottom line shows the human-facing half of the same feed
+(`Haiku 4.5 · CTX 13% · $0.04`). Marvel's `CTX%` reads lower, for the
+raw-occupancy reason above.
+
+Roles whose harness has no settings surface log the feed as advisory and
+get nothing projected; the daemon log says so rather than failing
+quietly.
 
 ### Codex context pressure
 
@@ -429,6 +514,33 @@ marvel inject dev/squad-worker-g1-0 "C-c" --literal=false
 **When to use:** Giving an agent a task, interrupting a stuck agent,
 sending Ctrl-C to stop a runaway process. This is the "executive
 privilege" operation — you're typing into another agent's terminal.
+
+## Events
+
+```bash
+marvel events                             # the last 100
+marvel events --follow                    # live tail
+marvel events --warnings                  # warning severity only
+marvel events --workspace dev             # scope to a workspace
+marvel events --kind session.crashed      # one kind
+```
+
+Two families share the ring. Control-plane kinds report what marvel did
+to a session; `agent.*` kinds report what the agent inside it did, and
+appear only for sessions whose runtime marvel can observe.
+
+`--kind` on a name that does not exist prints no events rather than an
+error, so a typo and "this never happened" produce the same table. Ask
+for the catalog rather than guessing:
+
+```bash
+marvel events --list-kinds
+```
+
+It needs no daemon, and it is generated from the same constants the ring
+emits, so it cannot describe kinds this binary does not have. When a
+`--kind` filter matches nothing and the name is not one marvel declares,
+the command says so on stderr.
 
 ## Scaling
 
