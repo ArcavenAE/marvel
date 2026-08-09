@@ -33,10 +33,44 @@ start: build
     ./bin/marvel daemon
 
 # Start the daemon in the background
-start-bg: build
+start-bg: build _store-warn
     ./bin/marvel daemon &
-    @sleep 1
-    @echo "marvel daemon started"
+    @just _wait-ready
+
+# Warn when the durable store already holds desired state. Starting a
+# daemon reconciles whatever it records, which spawns live agent sessions
+# and spends model tokens (aae-orc-cxdf, reproduced 2026-08-09: one
+# unflagged start produced 20 sessions plus live claude, codex and
+# opencode calls). Deliberately warns rather than refusing or wiping: a
+# populated store is legitimate state for an operator restarting their
+# own fleet, and only they can tell that from leftovers.
+_store-warn:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    store="${HOME}/.marvel/state/marvel.bolt"
+    if [[ -s "${store}" ]]; then
+        echo "warning: ${store} already holds desired state"
+        echo "         ($(du -h "${store}" | cut -f1), modified $(date -r "${store}" '+%Y-%m-%d %H:%M'))."
+        echo "         The daemon will reconcile it on start, which can spawn live agents"
+        echo "         and spend model tokens. To start from a clean store: just demo-reset"
+        echo ""
+    fi
+
+# Block until the daemon answers, instead of assuming it is up after a
+# fixed sleep. The old `sleep 1` printed "started" while sessions were
+# still spawning.
+_wait-ready:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for _ in $(seq 1 50); do
+        if ./bin/marvel get workspaces >/dev/null 2>&1; then
+            echo "marvel daemon ready"
+            exit 0
+        fi
+        sleep 0.2
+    done
+    echo "marvel daemon did not answer within 10s; see ${HOME}/.marvel/log/daemon.log" >&2
+    exit 1
 
 # Stop the daemon and clean up all tmux sessions
 stop:
@@ -45,6 +79,14 @@ stop:
 # Stop the daemon but leave agents running; the next `just daemon` adopts them
 detach:
     ./bin/marvel stop || true
+
+# Was prose in `just demo-all` telling the reader to retype three
+# commands; the reason it exists is aae-orc-cxdf, so it belongs in a
+# recipe. Removes durable state: the demo path, not the fleet path.
+# Stop, wipe the store, and start clean between demo acts
+demo-reset: stop
+    rm -f "${HOME}/.marvel/state/marvel.bolt"
+    @just start-bg
 
 # Load the demo manifest
 demo: build
@@ -205,7 +247,7 @@ demo-all:
     @echo "  just demo-act2    # Observe (needs harness auth)"
     @echo "  just demo-act3    # Control plane"
     @echo ""
-    @echo "Between acts: just stop && rm -f ~/.marvel/state/marvel.bolt && just start-bg"
+    @echo "Between acts: just demo-reset"
 
 # Width of the session-table pane: every column of `marvel get sessions`
 # plus 12 characters of the model. 137 is where the LLM column starts in
