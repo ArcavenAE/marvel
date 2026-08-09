@@ -265,8 +265,12 @@ func (c *Controller) ReconcileOnce() {
 	// respawned instantly forever (ArcavenAE/marvel#11). We defer the
 	// spawn decision to reconcileRole, which already honors BackoffUntil
 	// and (now) MaxRestarts saturation.
+	//
+	// The charge is per role per tick, not per lost replica: see
+	// noteReapedCrash.
+	charged := make(map[string]bool)
 	for _, r := range c.sessMgr.ReapDead() {
-		c.noteReapedCrash(r)
+		c.noteReapedCrash(r, charged)
 	}
 	c.evaluateHealth()
 
@@ -280,7 +284,22 @@ func (c *Controller) ReconcileOnce() {
 // crash in the role's health. If the team or role has vanished (e.g.,
 // workspace delete cascade in progress), the crash is untracked — the
 // reconciler won't try to recreate those sessions anyway.
-func (c *Controller) noteReapedCrash(r session.ReapedSession) {
+//
+// charged tracks which roles this tick has already charged, so a tick
+// that finds k panes of one role gone records ONE crash rather than k.
+// RoleHealth is per-role state, so charging it per lost replica scaled a
+// single event by the replica count: three replicas taken down together
+// by a tmux server dying, a foreign daemon reclaiming the marvel-* prefix,
+// or a host reboot moved the role from restart count 0 to 3 and from a
+// 30s backoff to a 4m one, and a role with max_restarts=3 spent its whole
+// budget so the next loss froze it permanently. Marvel cannot tell an
+// external kill from an application exit at this point — both present as
+// a pane ID tmux no longer lists, and a harness exiting from the last
+// pane collapses its tmux session exactly as a kill does — so the fix is
+// cause-agnostic: bound the blast radius of one event instead of guessing
+// at its cause. Flapping still escalates, because flapping repeats across
+// ticks. See aae-orc-4bz2.
+func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string]bool) {
 	t, err := c.store.GetTeam(r.Workspace + "/" + r.Team)
 	if err != nil {
 		return
@@ -320,6 +339,12 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession) {
 		})
 		return
 	}
+	if charged[roleKey] {
+		log.Printf("reap: session %s crashed with the rest of role %s in one tick; already charged",
+			r.Key, roleKey)
+		return
+	}
+	charged[roleKey] = true
 	if c.noteCrashAndBackoff(r.Workspace, r.Team, r.Role, role.MaxRestarts) {
 		rh := c.roleHealth[roleKey]
 		log.Printf("reap: session %s crashed (role %s restart #%d, next backoff=%s)",

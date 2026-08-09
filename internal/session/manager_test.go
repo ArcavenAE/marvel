@@ -490,6 +490,83 @@ func TestReapDead(t *testing.T) {
 	}
 }
 
+// TestReapDeadClearsStaleHealthReading: a session marked Crashed must not
+// keep publishing the health reading it carried while its pane was alive.
+// After an external kill, `marvel get sessions` reported state=crashed
+// alongside health=healthy: the pane's absence is the process-alive
+// verdict, and ReapDead was recording the state transition without it.
+// See aae-orc-4bz2.
+func TestReapDeadClearsStaleHealthReading(t *testing.T) {
+	skipIfNoTmux(t)
+
+	cases := []struct {
+		name  string
+		prior api.HealthState
+	}{
+		{name: "healthy", prior: api.HealthHealthy},
+		{name: "unknown", prior: api.HealthUnknown},
+		{name: "already unhealthy", prior: api.HealthUnhealthy},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := api.NewStore()
+			driver, err := tmux.NewDriver()
+			if err != nil {
+				t.Fatalf("new driver: %v", err)
+			}
+			mgr := NewManager(store, driver)
+
+			ws := "test-reap-health-" + tc.name
+			t.Cleanup(func() {
+				_ = mgr.CleanupWorkspace(ws)
+			})
+
+			sess := &api.Session{
+				Name:      "dying-0",
+				Workspace: ws,
+				Team:      "agents",
+				Role:      "worker",
+				Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			}
+			if err := mgr.Create(sess); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+				live.HealthState = tc.prior
+				return nil
+			}); err != nil {
+				t.Fatalf("seed health state: %v", err)
+			}
+
+			if err := driver.KillPane(sess.PaneID); err != nil {
+				t.Fatalf("kill pane %s: %v", sess.PaneID, err)
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for driver.HasPane(sess.PaneID) && time.Now().Before(deadline) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if driver.HasPane(sess.PaneID) {
+				t.Fatalf("tmux still reports pane %s alive after kill-pane", sess.PaneID)
+			}
+
+			if reaped := mgr.ReapDead(); len(reaped) != 1 {
+				t.Fatalf("expected 1 reaped session, got %d", len(reaped))
+			}
+			got, err := store.GetSession(sess.Key())
+			if err != nil {
+				t.Fatalf("get crashed marker: %v", err)
+			}
+			if got.State != api.SessionCrashed {
+				t.Fatalf("expected state=%s, got %s", api.SessionCrashed, got.State)
+			}
+			if got.HealthState != api.HealthUnhealthy {
+				t.Errorf("expected health=%s on a crashed session, got %s", api.HealthUnhealthy, got.HealthState)
+			}
+		})
+	}
+}
+
 // TestReapDeadCapsCrashedMarkers verifies the store keeps at most one
 // Crashed session per role — a saturated role's many crashes must not
 // accumulate ghosts. See ArcavenAE/marvel#10, aae-orc-8ci.
