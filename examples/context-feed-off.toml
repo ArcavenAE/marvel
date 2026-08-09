@@ -1,0 +1,30 @@
+# Marvel example: the same team as context-feed.toml, without the feed.
+#
+# This is the "before" half of the Act 3 extension in docs/demo.md: apply
+# it, take a turn, and watch CTX% stay "-" while the pane's own status
+# line shows the harness knows its context perfectly well. That is the
+# gap context_feed closes.
+#
+# Apply context-feed.toml over this one and nothing happens to the
+# running session, because a session's runtime is frozen at spawn. The
+# feed reaches generation 2, which is what `marvel shift` is for.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/context-feed-off.toml
+
+[workspace]
+name = "feed"
+
+[[team]]
+name = "watch"
+
+  [[team.role]]
+  name = "watcher"
+  replicas = 1
+  permissions = "plan"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
