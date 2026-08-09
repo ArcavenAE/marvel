@@ -7,7 +7,7 @@ content: |
   Google's Gemini Enterprise Agent Platform), sit beside one as a peer,
   or ignore both?
 
-  **RULED 2026-08-09 (aae-orc-1s7y, finding-019): peer, for the AWS
+  **RULED 2026-08-09 (aae-orc-1s7y, finding-021): peer, for the AWS
   arm.** A managed runtime is one more Host under marvel's scheduler,
   reached through a second `Instance` implementation. Marvel stays a
   local process owning its own reconciliation loop.
@@ -80,7 +80,7 @@ content: |
   and names the seam. Whether a cloud placement is worth building at
   all stays gated on multi-host (M5) and the bet tripwire.
 
-  Evidence: finding-019 (documentation study 2026-08-09 plus a code
+  Evidence: finding-021 (documentation study 2026-08-09 plus a code
   read at 0886801; nothing provisioned, nothing spent, so every vendor
   capability is documented-only). Prior art: orc
   `_kos/ideas/agentcore-crosswalk.md`.

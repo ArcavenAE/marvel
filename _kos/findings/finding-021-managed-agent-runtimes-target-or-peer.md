@@ -1,4 +1,4 @@
-# finding-019: AWS AgentCore and the Gemini Enterprise Agent Platform are peers, not deployment targets
+# finding-021: AWS AgentCore and the Gemini Enterprise Agent Platform are peers, not deployment targets
 
 - **Date:** 2026-08-09
 - **Status:** captured. Ruling made; the central premise of the probe brief was checked and partly refuted; the vendor arms diverge and are split.
