@@ -100,10 +100,17 @@ Compares what codex actually emits with the sketch in
    subagent's file). That reader is now built: see "The rollout file"
    below, `rollout.go`, and `marvel codex-ctx`.
 
-   Still open: whether the accumulator resets at a turn boundary or runs
-   for the session. Both remain consistent with a single-turn capture,
-   and the fold treats them alike since neither is a level. A multi-turn
-   authenticated `codex exec resume` decides it.
+   SETTLED 2026-08-09: the accumulator is SESSION-scoped. The rollout
+   carries `total_token_usage` beside every level, and a session
+   accumulator can never decrease. Across the corpus: 1890
+   consecutive-pair comparisons and 159 turn boundaries with a sample on
+   both sides, from 9 multi-turn sessions of up to 45 turns, with ZERO
+   decreases and no record where total falls back to last. A per-turn
+   accumulator drops at every boundary. The one step left is whether
+   `turn.completed` keeps mirroring `total_token_usage` ACROSS a turn
+   boundary, which the single-turn fixture cannot show and an
+   authenticated multi-turn `codex exec resume` would. The fold treats
+   both scopes alike since neither is a level.
 
    Not read anywhere: the rollout file's
    `rate_limits.primary.used_percent` (observed 95.0) is the WEEKLY PLAN

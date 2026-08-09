@@ -38,6 +38,10 @@ building it that the design did not have going in:
    the file.** Codex has never been seen writing them out of order, but
    Claude Code does, and the absence measured here is too thin to lean
    on for one comparison's worth of cost.
+6. **The accumulator is session-scoped, settled from data already on
+   disk.** finding-017 said this needed an authenticated multi-turn
+   run. It needed a discriminator, which probe-0tnf supplied: 159 turn
+   boundaries crossed with zero decreases.
 
 ## The premise check
 
@@ -232,28 +236,38 @@ reported 0% for a session at 93.8%.
 
 ## Two things settled with the sibling arms
 
-**The rung is `stream`, and transport is not the test.** I first read
-limitLadder's stream/feed asymmetry as turning partly on transport, and
-said so to the crush arm. crush-channel pushed back with a case that
-breaks that reading: Crush's window comes from a separate REST call
-(`GET /v1/workspaces/{id}/agent`, `model.context_window`, measured 40960
-for a locally discovered model), and Crush's own auto-summarize condition
-actuates against that same number. A separate round trip, and still the
-number the harness enforces compaction against.
+**The rung: codex is `stream`, Crush is `feed`, and the test is
+attributability rather than transport or governance.** This took three
+exchanges and moved twice, so the reasoning matters more than the answer.
 
-They are right, and the ladder's own text says so if read carefully: rung
-1 is for the channel that GOVERNS the session, rung 4 for a side channel
-that merely describes it, and a human-facing status hook with no version
-handle is the thing rung 4 was written about. Codex's window rides the
-level's own record; Crush's arrives by a call the harness answers about
-itself. Both govern. Both are `stream`.
+I first read limitLadder's asymmetry as turning partly on transport, and
+said so. crush-channel refuted that: Crush's window comes from a separate
+REST call (`GET /v1/workspaces/{id}/agent`, measured 40960 for a locally
+discovered model) whose number Crush's own auto-summarize condition
+actuates against, so a separate round trip can still be the window the
+harness enforces. Transport is not the test, and I withdrew it.
 
-The genuine difference is lifetime, which is crush-channel's point and I
-adopt it: codex's window cannot go stale because it is re-read with every
-level, while a separately fetched window goes stale on model change with
-no signal. That argues for a refetch rule on the fetched side, not a
-demotion. Recorded here so the two channels do not ship one concept at
-two rungs.
+They then measured the thing that decides it. Crush's model catalog is
+keyed provider-first: 141 of 249 multi-provider model ids disagree with
+themselves on `context_window`, 52 of them by 1.5x or more, with
+`claude-opus-5` at 1000000 under anthropic against 264000 under copilot.
+The REST route reports the workspace's CURRENT agent, so it cannot say
+which window applied to a past message even in principle. On that
+evidence they offered `feed` and I take it.
+
+The operative property is one the ladder already states and neither of us
+was reading closely enough. Rung 1 is described as the harness stating
+its window "in the same channel as the token counts it is stating it
+about". That clause is attributability, not governance and not transport.
+Codex satisfies it: `model_context_window` sits in the same record as the
+level it divides, so no sample can be paired with the wrong window.
+Crush's window is fetched separately and describes the agent now, so it
+cannot be attributed to the sample it divides. Same clause, two answers,
+and both arms reached them from the same sentence.
+
+The refetch rule crush-channel wants holds at either rung and is the
+practical half: a window fetched under one model must not divide a level
+produced under another.
 
 **Codex's model name cannot reach the accountant's primary-model latch,
 and that is now checked rather than assumed.** probe-0tnf measured the
@@ -267,16 +281,57 @@ writes `sess.ContextModel` and nothing else; the accountant is fed only
 by `sampleFromEvent` off the adapter event stream, and codex's stream
 names no model. Inert by two independent facts rather than by luck.
 
+## The accumulator is session-scoped, and the data was already on disk
+
+finding-017 left open whether codex's accumulator resets at a turn
+boundary or runs for the session, and said it needed an authenticated
+multi-turn `codex exec resume`. It did not. probe-0tnf supplied the
+discriminator while reporting a Gemini result: a session accumulator can
+never decrease, so one decrease anywhere in the series settles it.
+
+Applied to the rollout corpus, which carries `total_token_usage` beside
+every level and is the same accumulator `turn.completed` mirrors field
+for field:
+
+| measurement | result |
+|---|---|
+| consecutive-pair comparisons | 1890 |
+| decreases in `total_token_usage.total_tokens` | **0** |
+| turn boundaries with a sample on both sides | 159 |
+| decreases at a turn boundary | **0** |
+| mid-series records where total equals last (the reset signature) | 0 |
+
+A per-turn accumulator drops at every turn boundary. This one crosses
+159 of them, across 9 multi-turn sessions carrying up to 45 turns each,
+without dropping once. **The accumulator is session-scoped**, which is
+the worse of the two cases finding-017 named and the one
+`internal/usage/profiles.go` already declares as `CumulationSession`.
+
+The honest limit: this measures the rollout's own accumulator. That
+`turn.completed` mirrors it was established on a single-turn fixture, so
+whether the mirroring survives a turn boundary is the one step still
+needing an authenticated multi-turn `exec`. The declaration in
+profiles.go is now supported by measurement rather than by an
+unverified note, which is a different thing from proven.
+
+Worth naming because it is the second instance in this arc: finding-017
+closed its own refutation with a fixture already sitting in the repo,
+after the question had been framed in a way that made the fixture look
+unable to answer it. The same thing happened here. The framing "needs an
+authenticated multi-turn resume" was true of the exec stream and false of
+the corpus beside it.
+
 ## What was not established
 
 - **Whether hook trust can be pre-seeded at all**, and where an accepted
   review persists. Three candidate mechanisms refuted, the granting path
   identified, the storage not found. Needs an authenticated interactive
   codex.
-- **Whether the codex accumulator resets per turn or per session.**
-  Untouched here; still needs an authenticated multi-turn
-  `codex exec resume`. It does not change the treatment, since neither
-  is a level.
+- **Whether `turn.completed` keeps mirroring `total_token_usage` across
+  a turn boundary.** The accumulator's scope is settled above; this
+  remaining step is the only part that still needs an authenticated
+  multi-turn `codex exec resume`. It does not change the treatment,
+  since neither scope is a level.
 - **Whether the window varies by model.** Untouched, and the corpus still
   cannot separate "keyed by model" from "one number for this account and
   plan". No table entry was added.
