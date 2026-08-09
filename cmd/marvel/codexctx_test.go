@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/arcavenae/marvel/internal/api"
 )
 
 // hookPayload builds a codex hook payload in the shape codex-cli 0.146.0
@@ -168,19 +166,12 @@ func TestCodexReadingIgnoresTheCumulativeTotal(t *testing.T) {
 	}
 }
 
-// TestCodexHeartbeatParamsCarriesTheSessionToken is the test whose
-// absence let #170 and #168 break each other. Each PR was correct and
-// tested on its own: #168 made the daemon require a token, #170 added a
-// second forwarder that did not send one. The payload is a
-// map[string]any on the wire, so nothing failed to compile, and CI was
-// green on both.
-//
-// The daemon side of this contract is heartbeatParams in
-// internal/daemon/daemon.go, whose token field is tagged
-// `json:"session_token,omitempty"`. That type is unexported, so this
-// asserts the wire key by name. A rename there without a change here
-// reintroduces exactly this class, which is why the key is spelled out
-// rather than derived.
+// TestCodexHeartbeatParamsCarriesTheSessionToken covers this forwarder's
+// own payload. The contract itself is pinned at the boundary instead, in
+// internal/daemon: TestEveryProducerShapeIsAdmitted drives every real
+// producer's bytes through the real handler, and TestABareMapPayloadIsRefused
+// is its negative half. This one stays because it is the cheap local
+// check, not because it is the guard.
 func TestCodexHeartbeatParamsCarriesTheSessionToken(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -228,18 +219,9 @@ func TestCodexHeartbeatParamsCarriesTheSessionToken(t *testing.T) {
 			if got["session_key"] != "ws/sess" {
 				t.Errorf("session_key = %v, want ws/sess", got["session_key"])
 			}
+			if got["context_window"] != float64(258400) {
+				t.Errorf("context_window = %v, want 258400", got["context_window"])
+			}
 		})
-	}
-}
-
-// TestCodexHeartbeatTokenEnvMatchesCtxForward pins the env var the hook
-// reads. ctx-forward reads api.HeartbeatTokenEnv and the adapter writes
-// it into the pane environment; a codex hook reading a different name
-// would find nothing and fail silently, which is the same failure with
-// a different cause.
-func TestCodexHeartbeatTokenEnvMatchesCtxForward(t *testing.T) {
-	t.Parallel()
-	if api.HeartbeatTokenEnv != "MARVEL_HEARTBEAT_TOKEN" {
-		t.Fatalf("HeartbeatTokenEnv = %q; the codex hook stanza documented in docs/user-guide.md names the old one", api.HeartbeatTokenEnv)
 	}
 }

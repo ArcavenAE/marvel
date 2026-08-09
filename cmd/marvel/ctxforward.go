@@ -416,19 +416,13 @@ func newCtxForwardCmd() *cobra.Command {
 			// is not a property of any session; see the rateLimits type.
 			// It reaches the pane and stops there until an account-scoped
 			// home exists to send it to.
-			p := map[string]any{
-				"session_key":     workspace + "/" + session,
-				"context_percent": pct,
-				"model":           model,
-			}
-			// The token marvel minted for this session at spawn. It is
-			// what lets the daemon tell this session reporting itself
-			// from any other process on the host reporting on its
-			// behalf. Absent (a session spawned before tokens existed)
-			// the daemon admits the beat and says so on the ring.
-			if token := os.Getenv(api.HeartbeatTokenEnv); token != "" {
-				p["session_token"] = token
-			}
+			// The constructor reads the token marvel minted for this
+			// session at spawn. It is what lets the daemon tell this
+			// session reporting itself from any other process on the host
+			// reporting on its behalf. Absent (a session spawned before
+			// tokens existed) the daemon admits the beat and says so on
+			// the ring.
+			p := api.NewHeartbeatRequest(workspace+"/"+session, pct, model)
 			// context_window is the harness's own declared window for this
 			// session. It is emitted as the PRODUCER half of a seam whose
 			// consumer does not exist yet: internal/daemon's heartbeatParams
@@ -438,9 +432,15 @@ func newCtxForwardCmd() *cobra.Command {
 			// feature, and nothing renders differently because of it.
 			//
 			// Two edits complete it, both outside cmd/marvel and both
-			// deliberately not made here: a window field on
-			// internal/daemon.heartbeatParams, and a window argument on
+			// deliberately not made here: a window field on the wire type,
+			// and a window argument on
 			// internal/api.Store.UpdateSessionHeartbeat.
+			//
+			// The first of those is now made and the second is not, which
+			// is why this window still goes nowhere. api.HeartbeatRequest
+			// carries ContextWindow, so the daemon parses it into a field
+			// instead of dropping an untyped map key; it still reads it
+			// nowhere. Typing a value is not consuming it.
 			//
 			// Whoever makes them should read the comment already standing in
 			// UpdateSessionHeartbeat first. It states that a percentage is
@@ -456,7 +456,7 @@ func newCtxForwardCmd() *cobra.Command {
 			// Zero means the payload declared no window, and an undeclared
 			// window must not arrive as a declared zero.
 			if window > 0 {
-				p["context_window"] = window
+				p.ContextWindow = window
 			}
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.

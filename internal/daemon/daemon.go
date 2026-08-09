@@ -1039,21 +1039,16 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 	return Response{Result: result}
 }
 
-// Heartbeat params
-type heartbeatParams struct {
-	SessionKey string `json:"session_key"`
-	// SessionToken is the secret marvel minted for this session at spawn
-	// and injected into its environment as MARVEL_HEARTBEAT_TOKEN. It is
-	// what binds the reading below to the session named above; the key
-	// alone is public, guessable from `marvel get sessions`, and every
-	// agent on the host can reach this socket.
-	SessionToken   string  `json:"session_token,omitempty"`
-	ContextPercent float64 `json:"context_percent"`
-	// Model is the model as the reporter names it, "" when the
-	// reporter does not know (the simulator). The statusline feed
-	// sends the harness's display name.
-	Model string `json:"model,omitempty"`
-}
+// heartbeatParams is an alias, not a copy: producers build the same type
+// through api.NewHeartbeatRequest, so the wire contract has one
+// definition and a field rename breaks every call site at compile time
+// rather than one of them at runtime. The alias keeps the local spelling
+// used throughout this file and its tests.
+//
+// The previous arrangement was a struct here and a map literal at each
+// producer, which is how a forwarder came to omit SessionToken silently.
+// See api.HeartbeatRequest and finding-023.
+type heartbeatParams = api.HeartbeatRequest
 
 func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 	var p heartbeatParams
