@@ -1,0 +1,41 @@
+{
+  "session_id": "a0c612a1-7ab9-4a00-8972-716d77a340bc",
+  "transcript_path": "/tmp/scratch-home/.claude/projects/-tmp-scratch-home-proj/a0c612a1-7ab9-4a00-8972-716d77a340bc.jsonl",
+  "cwd": "/tmp/scratch-home/proj",
+  "effort": {
+    "level": "high"
+  },
+  "model": {
+    "id": "claude-opus-5[1m]",
+    "display_name": "Opus 5 (1M context)"
+  },
+  "workspace": {
+    "current_dir": "/tmp/scratch-home/proj",
+    "project_dir": "/tmp/scratch-home/proj",
+    "added_dirs": []
+  },
+  "version": "2.1.226",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 0,
+    "total_duration_ms": 314,
+    "total_api_duration_ms": 0,
+    "total_lines_added": 0,
+    "total_lines_removed": 0
+  },
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 1000000,
+    "current_usage": null,
+    "used_percentage": null,
+    "remaining_percentage": null
+  },
+  "exceeds_200k_tokens": false,
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  }
+}

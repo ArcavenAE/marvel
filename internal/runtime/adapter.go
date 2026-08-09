@@ -43,14 +43,42 @@ type LaunchContext struct {
 // The session manager calls ProjectionFor at spawn and on every live
 // re-projection; it writes Settings JSON to Path only when Supported.
 type ProjectionTarget struct {
-	// Supported reports whether this harness exposes a Claude Code
-	// settings-fragment surface. False for harnesses that have none
-	// (codex, opencode, generic today); marvel then logs the referenced
-	// policy as advisory for that runtime rather than dropping it silently.
+	// Supported reports whether this harness reads a settings fragment
+	// from a path marvel chooses. False for harnesses that do not (codex,
+	// opencode, generic today); marvel then logs the referenced policy as
+	// advisory for that runtime rather than dropping it silently.
+	//
+	// The bar is deliberately "accepts a settings path as a launch
+	// argument", not "has a settings file". A harness with a config file
+	// but no way to be handed one can only be configured by writing into
+	// the user's own config directory, where the blast radius is their
+	// interactive use of that tool in every project and it outlives
+	// marvel's uninstall. Returning false and logging the policy as
+	// advisory is the correct answer for that harness.
 	Supported bool
 	// Path is the file marvel writes the resolved settings fragment to.
-	// Set only when Supported.
+	// Set only when Supported, and it must be inside the dir passed to
+	// ProjectionFor; the session manager refuses a path outside it.
 	Path string
+}
+
+// StatuslineFeeder is the optional half of the projection contract. An
+// adapter implements it when its harness can express marvel's context
+// feed as keys in its own settings schema, and the session manager asks
+// the adapter for those keys rather than assuming any one harness's.
+//
+// Splitting it from Adapter keeps two things apart that a single
+// Supported flag ran together: whether a harness reads a projected
+// settings file at all, and whether it has somewhere to put a CTX% hook.
+// A harness can do the first without the second, and an adapter that does
+// not implement this gets no feed keys rather than another harness's.
+type StatuslineFeeder interface {
+	// StatuslineFeed renders the context feed in this harness's own
+	// settings schema. command is the full shell command the hook must
+	// run. The manager merges the returned keys into the projected
+	// settings only where the policy has not already defined them, so a
+	// policy always wins over the feed.
+	StatuslineFeed(command string) map[string]any
 }
 
 // LaunchResult is what the adapter returns: the fully resolved command,

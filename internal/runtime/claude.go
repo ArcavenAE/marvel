@@ -30,6 +30,35 @@ func (c *Claude) ProjectionFor(ctx *LaunchContext, dir string) ProjectionTarget 
 	}
 }
 
+// StatuslineFeed renders marvel's context feed in Claude Code's settings
+// schema. It lives here rather than in the session manager so the keys sit
+// beside the --settings flag in Prepare that makes them reachable, and so
+// a harness with a different schema cannot be handed these ones.
+//
+// refreshInterval keeps the feed beating while the session idles:
+// statusline updates are event-driven and go quiet between prompts, which
+// would otherwise starve a heartbeat healthcheck watching this session.
+// The subagent hook carries no interval because a subagent turn is bounded.
+func (c *Claude) StatuslineFeed(command string) map[string]any {
+	return claudeStatuslineFeed(command)
+}
+
+// claudeStatuslineFeed is shared with the forestage adapter, which reaches
+// the same Claude Code settings surface through its passthrough.
+func claudeStatuslineFeed(command string) map[string]any {
+	return map[string]any{
+		"statusLine": map[string]any{
+			"type":            "command",
+			"command":         command,
+			"refreshInterval": 15,
+		},
+		"subagentStatusLine": map[string]any{
+			"type":    "command",
+			"command": command,
+		},
+	}
+}
+
 func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {

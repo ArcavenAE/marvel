@@ -63,6 +63,18 @@ func DefaultTable() Table {
 		"claude-opus-4-8":       200_000,
 		"claude-opus-4-8[1m]":   1_000_000,
 
+		// opus-5 has no 200k variant: 1M is both the default and the
+		// maximum, so the two spellings below carry the same number and
+		// neither can be the wrong denominator for the other. The
+		// suffixed key still earns its line, because Claude Code stamps
+		// [1m] on the init model and the modelUsage key even for a model
+		// whose only window is 1M (claude-fable-5[1m] above is the
+		// fixture-verified instance of that), and NormalizeModel keeps
+		// the suffix, so a bare key alone would miss. Verified 2026-08-08
+		// against the vendor model catalog.
+		"claude-opus-5":     1_000_000,
+		"claude-opus-5[1m]": 1_000_000,
+
 		// codex: DELIBERATELY EMPTY. A window of 258400 was measured on
 		// codex 0.146.0 (the rollout file's
 		// token_count.info.model_context_window), but the model NAME was

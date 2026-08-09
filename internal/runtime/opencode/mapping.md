@@ -1,8 +1,10 @@
 # opencode → event vocabulary — mapping and divergences
 
 Verified against real fixtures from opencode 1.18.5 on 2026-07-31
-(`testdata/hello.jsonl`, `testdata/tool_call.jsonl`, `testdata/error.jsonl`,
-captured live via `opencode run --format json -m <model> <prompt> </dev/null`).
+(`testdata/hello.jsonl`, `testdata/tool_call.jsonl`, `testdata/error.jsonl`)
+and from opencode 1.18.15 on 2026-08-08 (`testdata/caching_first_turn.jsonl`,
+`testdata/caching.jsonl`, turns 1 and 2 of one session), all captured live
+via `opencode run --format json -m <model> <prompt> </dev/null`.
 Compares what opencode actually emits with the sketch in
 `aae-orc/docs/design/director-envelope-and-adapter-events.md` §3.3.
 
@@ -51,33 +53,43 @@ uses underscores (`step_start`); the nested `part.type` uses hyphens
    in `ocTokens` and silently dropped; they now ride
    `TurnData.Request` (Total, ReasoningOut, CacheCreationIn, CacheReadIn).
 
-   **`Request.Layout` is `additive` on an assumption, not a
-   measurement.** Whether `tokens.input` already subsumes `cache.read` on
-   a caching model is unverified: every fixture we hold is the free
-   `opencode/deepseek-v4-flash-free` model, where `cache.write` and
-   `cache.read` are both 0 and additive and subsumptive are
-   indistinguishable. If the assumption is wrong, occupancy over-counts by
-   whatever `input` already contains; every class is carried raw, so the
-   correction is one `Layout` line and no data is lost.
+   **`Request.Layout` is `additive`, measured.** Settled 2026-08-08
+   against 215 real `step-finish` rows on this host (opencode's local
+   store, four models across `opencode` and `ollama` providers) plus a
+   fresh live two-turn capture on opencode 1.18.15. 179 caching rows carry
+   `input` BELOW `cache.read`, down to `{input 1, cache.read 35584}`, and
+   `input` cannot be smaller than a set it contains. Occupancy is
+   `input + cache.read + cache.write`.
+   `RequestUsage.AdditiveConfirmed()` is the in-band signal and remains
+   one-sided: it fires on a warm turn, and silence still proves nothing
+   because a subsumptive `input` would always be the larger number.
+   `testdata/caching.jsonl` is the confirming turn;
+   `testdata/caching_first_turn.jsonl` is a caching turn from the same
+   session where `input` (6018) exceeds `cache.read` (1920) and so cannot
+   confirm anything.
 
-   **`tokens.total` cannot arbitrate that question, and is not asked to.**
-   Measured (finding-007), opencode's total is `input + output +
-   reasoning`: `{total 29893, input 29879, output 2, reasoning 12}` with
-   `cache` zero. A total defined that way is the same number whether
-   `input` subsumes `cache.read` or not, so comparing it against a sum
-   that includes the cache classes would report a mismatch equal to those
-   classes on every caching turn, under a right assumption as readily as a
-   wrong one. `Request.TotalExcludesCache` therefore holds the comparison
-   to the `input + output + reasoning` triple, where it does earn its
-   keep: a nonzero result means opencode changed what `total` covers.
+   **`tokens.total` covers the cache classes**, which the earlier reading
+   had backwards. All 215 rows satisfy `total == input + output +
+   reasoning + cache.read + cache.write`; only 17 satisfy the narrower
+   `input + output + reasoning`, and those 17 are exactly the 17
+   non-caching rows, where the two identities are the same arithmetic.
+   finding-007's `{total 29893, input 29879, output 2, reasoning 12}` is
+   one of those non-caching rows, so it never distinguished the two
+   readings. `Request.TotalExcludesCache` is therefore NOT set: setting it
+   held the comparison to the narrow triple and so suppressed
+   `TotalMismatch` by the whole cache read on every caching turn, which is
+   precisely where the check has something to say.
 
-   The one live signal on the layout itself is
-   `RequestUsage.AdditiveConfirmed()`: `input < cache.read` is impossible
-   if `input` already contained the cached tokens, so a warm caching turn
-   (small `input`, large `cache.read`) confirms the additive reading from
-   real data. It is one-sided. Silence proves nothing, because a
-   subsumptive `input` is always the larger number. One paid caching-model
-   turn settles the question either way.
+   Residual gap: `cache.write` was 0 on all 215 rows and on both live
+   turns, so its share of `total` is inferred from `cache.read` rather
+   than measured. A cache-creation turn settles it. Until one arrives the
+   declaration errs toward a check that can raise a false alarm (bounded
+   by `cache.write`) over one that cannot speak at all.
+
+   **`Cumulation` is `request`, measured.** The two live turns are one
+   session: `input` falls 6018 → 27 as the prompt moves into cache, and
+   across the local store six consecutive step-finish pairs show `total`
+   or `input` decreasing. A running session total cannot fall.
 
 3. **A tool part carries call and result in one event.** OpenCode's `tool`
    part is a small state machine (`pending` → `running` → `completed`/`error`).
@@ -125,6 +137,9 @@ opencode run --format json <role.args...> '<prompt>' < /dev/null > <fifo>
   Bedrock-Claude smoke `t.Skip`s unless authorized. Event shapes are real;
   a completed (non-rejected) tool turn against a paid model is unconfirmed
   beyond the synthetic `state.status:completed` unit test.
+- **No observed `cache.write`.** Zero on all 215 local-store rows and on
+  both live turns, so its participation in `tokens.total` is inferred, not
+  measured. See the residual note under divergence 2.
 - **`serve` + `attach` SSE surface unimplemented** — the richer session /
   permission / streaming path, deferred per scope.
-- **macOS only**, opencode 1.18.5 only.
+- **macOS only**, opencode 1.18.5 and 1.18.15 only.
