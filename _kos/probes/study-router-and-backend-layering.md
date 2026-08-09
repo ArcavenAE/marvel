@@ -843,9 +843,33 @@ spelling.** All seven keys, ignoring the `[1m]` suffixed forms:
 | `claude-opus-5` | 1000000 | 264000 (copilot), 1000000 (anthropic) |
 
 `claude-opus-5` is the cleanest collision: marvel's table returns 1000000, and
-a copilot-served model of that exact id is catalogued at 264000. Marvel would
-resolve `LimitFromTable`, the most confident non-measured rung, and be wrong
-by 3.8x with no signal.
+the catalog assigns 264000 to copilot's model of that exact id. Marvel would
+resolve `LimitFromTable` and be wrong by 3.8x with no signal.
+
+**Correction, 2026-08-09 (seventh pass).** An earlier revision of this
+sentence called `LimitFromTable` "the most confident non-measured rung". That
+is wrong and the ladder in `limits.go` says so: `LimitFromManifest` sits two
+rungs above the table and is equally non-measured, being an operator
+assertion. The table is rung 5 of 7, above only `table-alias` and
+`unresolved`, and finding-016 already gives it its correct name, the rung of
+last resort.
+
+**The severity does not come from the rung's position, and restating it that
+way was a mistake worth naming.** It comes from the failure MODE. A table MISS
+resolves `?` and renders absence, which is loud. A table HIT renders a number,
+and nothing anywhere distinguishes a hit that is right from a hit whose key
+was too narrow to be right. The rung could sit last and the problem would be
+identical, because the problem is that a wrong hit is indistinguishable from a
+correct one.
+
+Two further precisions the same correction pass adds:
+
+- The table has 11 keys which reduce to 7 distinct base model ids. All 7 are
+  provider-variable in the catalog at exact spelling. "All seven ids" means
+  the base ids, not 7 of the 11 keys.
+- Marvel ships no copilot adapter, so the 3.8x is a demonstrated MECHANISM
+  rather than a live defect. Nothing here shows marvel returning a wrong
+  number to anyone today. What it shows is that the key cannot exclude it.
 
 **A hypothesis I formed and the data refuted.** Copilot's rows show cost 0 for
 every model, which looked like the codex pattern from finding-017: a
@@ -1065,6 +1089,34 @@ reverse of where the credentials live. And section 6's MANAGE ruling gains its
 cleanest supporting case: the relocatable half is the one marvel could touch
 without going near a credential store, so the SOUL section 3 boundary has a
 natural seam here rather than needing to be drawn by care.
+
+### 22a. Sixth pass: the partiality is measured, and it is unpredictable
+
+The fourth pass recorded that Crush's routing record is partial and carries no
+marker. I proposed a probe to test whether it is *arbitrarily* partial. The
+rig did not need one: it held both halves already and put them together
+(`finding-020` section 8).
+
+| internal call, both on `models.small` | `message_count` | artifact |
+|---|---|---|
+| title generation | held at 2 | none; `sessions.title` changed |
+| summarization | 2 to 3 | a row, `summary_message_id` set, `is_summary_message` on it |
+
+Same slot, same class of call, opposite persistence. **There is no property
+Crush exposes from which a consumer could predict which model calls leave an
+artifact.** The consequence is worth stating in its plainest form: any
+per-model or per-provider aggregate built from that table is over an unknown
+subset. That is a second and independent reason not to price anything off the
+`crush stats` page, beside the level-versus-total error in section 21.
+
+This upgrades the fourth pass from "partial, with no marker" to "the
+partiality is unpredictable from anything the harness publishes", which is the
+form a Crush adapter design has to carry.
+
+The two-provider probe was **not** run, on the correct ground that the
+measurement above answers the question the probe was wanted for while the
+probe itself would answer a weaker one. My open item stays open and untested
+rather than soft-closed.
 
 ## 23. Hoisting one claim out of the Crush sections, because it is not about Crush
 

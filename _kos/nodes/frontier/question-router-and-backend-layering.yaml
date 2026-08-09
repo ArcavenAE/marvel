@@ -163,11 +163,31 @@ content: |
   on the window, 52 of them by 1.5x or more. `claude-sonnet-4-6` is 200000
   at anthropic and 1000000 at vertexai.
 
-  ALL SEVEN model ids in marvel's shipped table are provider-variable at
-  exact spelling. The cleanest collision: marvel's table returns 1000000 for
-  `claude-opus-5` and a copilot-served model of that exact id is catalogued
-  at 264000, so marvel would resolve `LimitFromTable`, the most confident
-  non-measured rung, and be wrong by 3.8x with no signal.
+  ALL SEVEN base model ids in marvel's shipped table are provider-variable at
+  exact spelling (the table's 11 keys reduce to 7 distinct base ids). The
+  cleanest collision: marvel's table returns 1000000 for `claude-opus-5` and
+  the catalog assigns 264000 to copilot's model of that exact id, so marvel
+  would resolve `LimitFromTable` and be wrong by 3.8x with no signal.
+
+  CORRECTION 2026-08-09 (seventh pass), because the wrong version was about
+  to be escalated. An earlier revision called `LimitFromTable` "the most
+  confident non-measured rung". That is FALSE: `limitLadder` puts
+  `LimitFromManifest` two rungs above the table, and manifest is equally
+  non-measured, being an operator assertion. The table is rung 5 of 7, above
+  only `table-alias` and `unresolved`, and finding-016 already names it the
+  rung of last resort.
+
+  THE SEVERITY DOES NOT COME FROM RUNG POSITION. It comes from the failure
+  MODE: a table MISS resolves `?` and renders absence, which is loud; a table
+  HIT renders a number, and nothing distinguishes a hit that is right from a
+  hit whose key was too narrow. The rung could sit last and the problem would
+  be identical.
+
+  SCOPE OF THE HARM: marvel ships no copilot adapter, so the 3.8x is a
+  demonstrated MECHANISM rather than a live defect. Nothing shows marvel
+  returning a wrong number to anyone today. What is shown is that the key
+  cannot exclude it, and that the catalog claim is a third party's curation
+  rather than measured vendor behavior.
 
   A hypothesis formed and REFUTED in the same pass: copilot's uniform cost 0
   suggested the finding-017 codex pattern (a per-account plan limit wearing a
@@ -350,21 +370,37 @@ content: |
   result: the window depends on at least model, provider and entitlement, and
   the table is keyed on a string that reliably carries only the first.
 
+  SIXTH PASS 2026-08-09: ARBITRARILY PARTIAL IS NOW MEASURED, not inferred,
+  and it needed no extra run. The fourth pass recorded that the harness's
+  routing record is partial. The k2mi rig had both halves already and put them
+  together (finding-020 section 8):
+
+  - Title generation: `message_count` HELD at 2 while `sessions.title`
+    changed. No row.
+  - Summarization: `message_count` went 2 to 3 with `summary_message_id` set,
+    and `is_summary_message` on that row. A row.
+
+  Same `models.small` slot, same class of internal call, opposite persistence.
+  So there is NO property Crush exposes from which a consumer could predict
+  which model calls leave an artifact. The consequence, stated plainly: ANY
+  per-model or per-provider aggregate built from that table is over an
+  UNKNOWN SUBSET. That includes the `crush stats` page the fourth pass already
+  declined to price from, for a second and independent reason.
+
+  This upgrades the fourth pass's caution from "the record is partial with no
+  marker" to "the partiality is unpredictable from anything the harness
+  publishes", which is the stronger form and the one a k2mi design must carry.
+
   STILL NOT ESTABLISHED: whether Crush's catalog matches any vendor's served
   window (no live API was called); whether the harness's `[1m]` spelling
   tracks the entitlement faithfully in every case, which is the test the
   hoisted claim asks for; and whether a Crush session in practice ever holds
-  two providers, which the schema permits and the rig did not exhibit. On the
-  last, the rig proposed a cheaper substitute than waiting for a live routing
-  decision: set models.large and models.small to different PROVIDERS and
-  trigger a summarize, which runs on the small slot and DOES persist a row
-  (is_summary_message=1). If that row carries the small slot's provider while
-  conversational rows carry the large slot's, one session holds two providers
-  without needing the router to decide anything. The sharper result it would
-  buy is not "two providers occur" but whether the partial record of the
-  fourth pass is ARBITRARILY partial: the same small slot persists a row for
-  summarize and none for title generation, so a consumer cannot reason about
-  which calls are recorded from any boundary the harness exposes.
+  two providers, which the schema permits and the rig did not exhibit. The rig
+  did NOT run the two-provider probe it had proposed (large and small slots on
+  different providers, then a summarize), on the correct ground that the
+  measurement above answers the question the probe was wanted for and the
+  probe would answer a weaker one. Recorded as UNTESTED rather than
+  soft-closed.
 edges:
   - target: question-interactive-context-pressure
     type: derives
