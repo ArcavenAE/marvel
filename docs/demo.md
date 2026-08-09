@@ -124,15 +124,26 @@ crashed, and (after a crash-loop backoff) spawns a replacement:
 
 ```sh
 ./bin/marvel events --kind session.crashed     # "pane %1 gone"  (immediate)
-sleep 35
+./bin/marvel get sessions                       # crashed row, DESK blank, RSS 0B
+sleep 75
 ./bin/marvel events --kind session.created     # replacement line-worker-g1-2
 ./bin/marvel get sessions                       # back to two healthy workers
 ```
 
-Timing note: marvel treats a vanished pane as a crash and applies a 30-second
-crash-loop backoff before respawning, so the replacement appears roughly 30 to
-60 seconds after the kill, not instantly. That backoff is deliberate: it is
-what stops a process that exits on startup from respawning in a tight loop.
+Timing note, measured 2026-08-09: the crash lands within about 2 seconds and
+the replacement about 62 seconds after the kill. Marvel treats a vanished pane
+as a crash and charges the role a restart, and the first charge sets a
+60-second window; the second is 2 minutes, the third 4, doubling to a 5-minute
+ceiling. So kill the same role twice in a session and the second wait is twice
+as long. That backoff is deliberate: it is what stops a process that exits on
+startup from respawning in a tight loop.
+
+Nothing announces the wait. `health.crashloop-backoff` fires only when a live
+session is re-evaluated inside its window, and on this path the session is a
+crashed marker rather than a live one, so the ring stays quiet between the two
+events above. The crashed row in `get sessions` is the whole signal: it holds
+its place with `DESK` blank and `RSS` at `0B` until the replacement spawns. If
+you sample too early, read the row, not the empty event filter.
 
 TODO(finding): the task brief described this beat as `session.crashed` then
 `session.restarted`. That is not what the pane-loss path emits. The recovery
@@ -189,14 +200,38 @@ sleep 12
 ./bin/marvel events --kind session.restarted     # restarter + capped, restart #1
 ./bin/marvel events --kind session.failed         # failstop, restart_policy=never
 
-sleep 60
+sleep 90
 ./bin/marvel events --kind role.saturated          # capped hit max_restarts=1
 ./bin/marvel events --kind session.restarted        # restarter now on restart #2
 ```
 
 The healthcheck uses a 6-second timeout and a threshold of 1, so the first
-action lands about 8 to 10 seconds after spawn; `capped` saturates about a
-minute later, after one backoff window.
+action lands about 7 seconds after spawn; `capped` saturates about 70 seconds
+after that, once its one backoff window has elapsed and the replacement has
+gone stale in turn.
+
+Then check the table, because the three policies leave three different rows
+behind and only one of them is the row a reader expects. Measured 2026-08-09,
+about two minutes in:
+
+```sh
+./bin/marvel get sessions   # capped + failstop, both failed; restarter absent
+```
+
+- `failstop` holds its row from the first failure onward: `failed`,
+  `unhealthy`, pane alive. It never leaves the table.
+- `capped` leaves the table for about 60 seconds after its one restart, comes
+  back, saturates, and then holds its row permanently as `failed` /
+  `unhealthy`. Saturation is what makes the row stay, not what removes it.
+- `restarter` is the one that goes missing. Every restart deletes the session
+  and the replacement waits out the backoff, so the row is absent for 60
+  seconds, then 2 minutes, then 4. Look at an arbitrary moment a few minutes
+  in and a healthy always-restart role is more likely to be missing from the
+  table than present.
+
+A beat that verifies only an event cannot catch a state defect, which is how
+the 1d rollback bug (`aae-orc-d0pt`) survived a verified run. Read the table
+after the events, every time.
 
 TODO(finding): two events in the health vocabulary are not observable through
 this beat.
@@ -303,8 +338,9 @@ drive it by hand.
 A verified run produced, across the three harnesses uniformly:
 `agent.session.started`, `agent.turn.started`, `agent.turn.completed` (with
 token counts), `agent.message.completed`, and `agent.session.ended` (with cost,
-token totals, and duration). That the same five event kinds describe three
-unrelated harnesses is the point of the act.
+token totals, and duration). That those same five kinds describe three
+unrelated harnesses is the point of the act. They are five of the thirty-five
+the ring carries; `marvel events --list-kinds` prints the rest.
 
 Deterministic vs auth-dependent:
 
@@ -318,9 +354,14 @@ CTX% producers, current state (supersedes an earlier TODO here that said
 the heartbeat RPC was the only producer): there are three. The stream-fed
 usage accountant meters headless sessions; the statusline feed
 (`context_feed`, finding-011) meters interactive claude via the heartbeat
-RPC; and the heartbeat RPC accepts any cooperative reporter (the
-simulator). Interactive codex/opencode remain unmetered — no statusline
-equivalent has been probed for them yet (aae-orc-7hzb).
+RPC; and the heartbeat RPC accepts any cooperative reporter, which now
+covers codex as well as the simulator. Codex reports through a hook on
+its rollout file rather than a statusline, because its `exec --json`
+stream carries a running total instead of a level; the operator installs
+that stanza in `~/.codex/config.toml` by hand, since marvel does not
+write to `CODEX_HOME`. Setup for both feeds is in the user guide under
+"Interactive claude context pressure" and "Codex context pressure".
+Interactive opencode remains unmetered (aae-orc-7hzb).
 
 Because each `-p` role is headless with a one-shot prompt, the harness exits
 when its turn completes, and marvel reaps the vacated pane with

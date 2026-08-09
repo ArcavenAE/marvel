@@ -438,6 +438,7 @@ func eventsCmd() *cobra.Command {
 	var workspace, team, role, session, kind string
 	var warningsOnly bool
 	var follow bool
+	var listKinds bool
 	cmd := &cobra.Command{
 		Use:   "events",
 		Short: "List recent session/team state-transition events",
@@ -467,8 +468,17 @@ Examples:
   marvel events --kind admission.refused     # spawns a team budget refused
   marvel events --warnings                   # only warning-severity events
   marvel events --follow                     # live tail; poll the ring every second
-  marvel --cluster desk events               # remote daemon via mrvl://`,
+  marvel events --list-kinds                 # every kind --kind accepts
+  marvel --cluster desk events               # remote daemon via mrvl://
+
+A --kind that matches nothing prints no events rather than an error, so a
+misspelled kind and a kind that never fired look the same. --list-kinds
+prints the catalog, and needs no daemon.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if listKinds {
+				printKindCatalog(os.Stdout)
+				return nil
+			}
 			buildParams := func(sinceSeq uint64) json.RawMessage {
 				params := map[string]any{"n": n}
 				if sinceSeq > 0 {
@@ -557,6 +567,13 @@ Examples:
 			if err != nil {
 				return err
 			}
+			// An empty result under a --kind nobody declares is the
+			// silent-success shape: it reads as "this never happened".
+			// Say which of the two it is, on stderr so a script's
+			// stdout and exit code are unchanged.
+			if len(evs) == 0 && kind != "" && !events.IsKnownKind(kind) {
+				_, _ = fmt.Fprintf(os.Stderr, "note: no event kind named %q; run 'marvel events --list-kinds' for the catalog\n", kind)
+			}
 			if len(evs) == 0 && !follow {
 				fmt.Println("no events")
 				return nil
@@ -592,7 +609,33 @@ Examples:
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed, agent.tool.call)")
 	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "show only warning-severity events")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "poll for new events every second until interrupted")
+	cmd.Flags().BoolVar(&listKinds, "list-kinds", false, "print every event kind --kind accepts, then exit")
 	return cmd
+}
+
+// printKindCatalog renders the event-kind catalog in two groups, because
+// the split is the one thing an operator scanning the list needs: the
+// control-plane kinds report what marvel did to a session, the agent
+// kinds report what the agent inside it did, and only the second family
+// depends on a runtime marvel can observe.
+func printKindCatalog(w io.Writer) {
+	var control, agent []events.Kind
+	for _, k := range events.AllKinds() {
+		if strings.HasPrefix(string(k), "agent.") {
+			agent = append(agent, k)
+		} else {
+			control = append(control, k)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "Control plane (%d): what marvel did to a session\n", len(control))
+	for _, k := range control {
+		_, _ = fmt.Fprintf(w, "  %s\n", k)
+	}
+	_, _ = fmt.Fprintf(w, "\nAgent stream (%d): what the agent inside a session did\n", len(agent))
+	for _, k := range agent {
+		_, _ = fmt.Fprintf(w, "  %s\n", k)
+	}
+	_, _ = fmt.Fprintf(w, "\nAgent kinds appear only for sessions whose runtime marvel can\nobserve; an interactive pane publishes no stream to parse.\n")
 }
 
 // openRotatingLog opens the daemon's on-disk log file with the rlog

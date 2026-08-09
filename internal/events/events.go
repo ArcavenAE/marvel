@@ -142,6 +142,77 @@ const (
 	KindAgentError               Kind = "agent.error"
 )
 
+// allKinds is every kind the ring can carry, in declaration order:
+// control-plane first, agent stream second. It backs `marvel events
+// --list-kinds`, which exists because `--kind` on a name that does not
+// exist returns an empty result rather than an error, so a typo and "this
+// never happened" are the same output.
+//
+// A hand-maintained list drifts. TestAllKindsCoversEveryDeclaredConstant
+// parses this file and fails when a declared Kind constant is missing
+// here, so the catalog cannot fall behind the constants it describes.
+var allKinds = []Kind{
+	KindSessionCreated,
+	KindSessionDeleted,
+	KindSessionCrashed,
+	KindSessionRestarted,
+	KindSessionFailed,
+	KindHealthCheckFailed,
+	KindCrashLoopBackoff,
+	KindShiftStarted,
+	KindShiftCompleted,
+	KindShiftTimedOut,
+	KindShiftRoleReady,
+	KindRoleSaturated,
+	KindRoleRemoved,
+	KindPolicyProjected,
+	KindContextLimitUnresolved,
+	KindAdmissionRefused,
+	KindAdmissionCleared,
+	KindAdmissionUnmeasured,
+	KindReconcileAdopted,
+	KindReconcileKilled,
+	KindHeartbeatRefused,
+	KindHeartbeatUnbound,
+	KindReconcileLeft,
+	KindAgentSessionStarted,
+	KindAgentSessionEnded,
+	KindAgentTurnStarted,
+	KindAgentTurnCompleted,
+	KindAgentMessageDelta,
+	KindAgentMessageCompleted,
+	KindAgentToolCall,
+	KindAgentToolResult,
+	KindAgentPermissionRequested,
+	KindAgentAuthRequired,
+	KindAgentHealthHeartbeat,
+	KindAgentError,
+}
+
+// AllKinds returns every kind the ring can carry, in declaration order.
+// The returned slice is a copy: the catalog is read by a CLI command, and
+// a caller sorting it in place would reorder it for everyone.
+func AllKinds() []Kind {
+	out := make([]Kind, len(allKinds))
+	copy(out, allKinds)
+	return out
+}
+
+// IsKnownKind reports whether name is a kind this build declares.
+//
+// Callers use it to tell an empty filter result apart from a misspelled
+// filter. It is deliberately not wired into `--kind` as a hard rejection:
+// a client can be older than the daemon it talks to, and refusing a kind
+// the daemon knows about would turn version skew into a broken command.
+func IsKnownKind(name string) bool {
+	for _, k := range allKinds {
+		if string(k) == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Severity mirrors the kubernetes Warning/Normal distinction. Lets
 // operators filter `marvel events --severity warning` for the things
 // that need attention.
