@@ -401,6 +401,91 @@ content: |
   measurement above answers the question the probe was wanted for and the
   probe would answer a weaker one. Recorded as UNTESTED rather than
   soft-closed.
+  EIGHTH PASS 2026-08-09: THE REPAIR, SPECIFIED AND COSTED. Operator
+  instruction via the lead: not "file it and move on" but study the problem
+  and task out a fix. Defect ticket is `aae-orc-l8v1` (P1). Prior instances,
+  neither a duplicate: `aae-orc-wyza` (bare-vs-[1m] encodes an undocumented
+  default-vs-maximum reading; the entitlement axis; already cost a reviewer a
+  round of investigation) and `aae-orc-rm6o` (claude-sonnet-5 likely missing
+  its [1m] spelling; a MISS, therefore loud, and the useful contrast case).
+
+  A WORSE INSTANCE ONE RUNG FROM THE TOP, measured at HEAD and unnamed until
+  now. `Resolver.learned` is keyed on the identical narrow `NormalizeModel`
+  key, and three facts compound it: (1) ONE Resolver per daemon
+  (internal/daemon/daemon.go:256), so `learned` is fleet-wide across every
+  session; (2) `LimitLearned` is RUNG 2, ABOVE `LimitFromManifest`, and the
+  learned branch returns before the manifest branch is reached, so a learned
+  window silently overrules an operator's explicit runtime.context_window;
+  (3) it is SILENT where its neighbours are not, since stream-vs-manifest and
+  feed-vs-manifest both call warnOnce and the learned branch logs nothing.
+  `Learn` is reached today only by claude. On a daemon running claude across
+  two backends, the first session to finish teaches a window that outranks the
+  operator's override for every later session naming that model id, with no
+  log line. Strictly worse than the table defect: rung 2 not rung 5, populated
+  at runtime rather than shipped and reviewable, and it overrules the one rung
+  the operator controls. NOT ESTABLISHED that any operator has run a
+  mixed-backend fleet on one daemon; this is a mechanism, not an incident.
+
+  THE DESIGN INSIGHT: the discriminator is NOT "which provider". Widening the
+  key to (model, provider, entitlement) fails on this study's own conclusion,
+  that marvel cannot know which provider served a request, and a key naming a
+  value marvel cannot supply never matches. The answerable question is
+  narrower: IS THIS SESSION ON THE VENDOR DEFAULT, OR HAS SOMETHING REDIRECTED
+  IT? Redirection mechanisms are enumerated in finding-016 axis 4
+  (CLAUDE_CODE_USE_BEDROCK/_VERTEX/_FOUNDRY/_MANTLE/_GATEWAY/_ANTHROPIC_AWS/
+  _ANTHROPIC_GOOGLE_CLOUD, ANTHROPIC_BASE_URL, ANTHROPIC_BEDROCK_SERVICE_TIER).
+  MEASURED: marvel's Go tree contains NONE of these strings, so the
+  discriminator does not exist yet and is the deliverable of the KNOW step.
+  The asymmetry that makes it work: the table's shipped values ARE the
+  vendor's direct-API windows, so when nothing has redirected the session they
+  are right and today's behavior is correct. The guard only has to detect
+  DEPARTURE FROM DEFAULT, and may treat "cannot tell" as departure.
+
+  FOUR OPTIONS, COSTED.
+  - A. PROVENANCE GRADE on the resolved value, beside LimitSource,
+    distinguishing a fully-discriminating key from one known to be narrower
+    than the fact. Cost SMALL (one field plus plumbing that exists for
+    LimitSource). Buys: a consumer can refuse and an operator can see why a
+    number is soft. Prevents nothing by itself. NECESSARY, NOT SUFFICIENT.
+  - B. WIDER KEY with provider in it. Cost HIGH and BLOCKED: needs provider
+    observation this study concludes is unavailable, and which pass 5 showed
+    a repo-supplied .crushrc defeats even when marvel builds the environment.
+    If built anyway it degrades into option C with more machinery. DO NOT
+    BUILD NOW; revisit on the standing trigger.
+  - C. REFUSE ON A KNOWN-AMBIGUOUS KEY (recommended core). Mark entries whose
+    window is not determined by model id alone; when the discriminator says
+    redirected or undeterminable, resolve LimitUnresolved rather than the
+    default-path value. Cost MODERATE: needs the discriminator as input (the
+    real work); the guard in Resolve is small, and
+    TestResolveAgreesWithTheLadder usefully constrains it, since the guard
+    must refuse WITHIN a rung and never reorder rungs. Regression smaller than
+    it looks: no change for default-path sessions; for redirected sessions
+    cold-start CTX% renders `?` until the harness teaches a window, which for
+    claude is ONE session because Learn fills the learned rung from the
+    terminal line. Buys: converts the silent-wrong HIT into the loud-absent
+    MISS that rm6o already gets for free.
+  - D. FIX THE LEARNED KEY and warn when it overrules the manifest. Cost
+    SMALL and mostly independent. SHIP FIRST: highest rung affected, live for
+    claude today, and the only one of the four that silently overrules the
+    operator.
+
+  RECOMMENDED SEQUENCE: D first (small, self-contained, correct regardless of
+  what the rest becomes), then A as the vocabulary, then the DISCRIMINATOR
+  (the spawn-time environment record, the real engineering and the KNOW step),
+  then C on top of it, with B deferred behind the trigger. Sequence wyza and
+  rm6o INSIDE this rather than beside it: rm6o is a one-line data question A
+  and C do not touch, and wyza's empirical question (does a bare-keyed session
+  on a split model actually get 200k) is exactly the fixture the discriminator
+  work produces anyway.
+
+  WHAT THE REPAIR DOES NOT FIX: a .crushrc, a project-scope setting, or any
+  config file redirecting the backend WITHOUT touching the environment marvel
+  constructed leaves marvel believing the session is on the default when it is
+  not. The guard is sound for ENVIRONMENT-MEDIATED redirection only. It makes
+  the common case correct and the env-redirected case loud-absent, and leaves
+  config-file redirection silent-wrong. That residue is smaller than today's
+  and is not zero, and anyone reading a graded value must know which of the
+  three cases they are in.
 edges:
   - target: question-interactive-context-pressure
     type: derives
