@@ -1,4 +1,4 @@
-# finding-019: the codex rollout reader, and the hook that speaks to the model
+# finding-023: the codex rollout reader, and the hook that speaks to the model
 
 - **Date:** 2026-08-09
 - **Status:** captured. Reader built and verified end to end; three of
@@ -34,6 +34,10 @@ building it that the design did not have going in:
    Taking the path from the hook payload on every fire, and holding no
    file handle between fires, removes what `.zst` replacement and a new
    file on compaction would have broken.
+5. **The reader orders by the record's own timestamp, not by position in
+   the file.** Codex has never been seen writing them out of order, but
+   Claude Code does, and the absence measured here is too thin to lean
+   on for one comparison's worth of cost.
 
 ## The premise check
 
@@ -94,6 +98,35 @@ mid-turn a tool output can bury it. A fixed window is safe in the state
 you can measure afterwards and unsafe in the state you measure from,
 which is why the ladder is not optional and why measuring finished files
 alone would have concluded that it was.
+
+## Position is not time
+
+probe-0tnf measured a property of the Claude Code transcript corpus that
+bears directly on any reader taking "the last record in the file": 26
+records across 2 of 422 sessions carry a timestamp OLDER than a record
+physically before them, worst case 90,895 seconds (25.2 hours), and they
+cluster immediately before a compaction boundary. One such record read
+134,037 where the session's true level was 967,915. That is the same
+failure direction as the compaction sentinel, arriving through a
+different door.
+
+I tested codex for it rather than assuming either way. Over 210 rollout
+files, across every record type and not only samples: **zero
+inversions**, and every timestamp parsed. In no file does the last
+usable sample in file order differ from the newest usable sample by
+timestamp.
+
+The reader orders by timestamp anyway. The absence measured here does
+not carry much: a rate like Claude's 2-in-422 would produce no inversion
+across 210 files roughly a third of the time, so this corpus cannot
+distinguish "codex does not do this" from "codex does it rarely and I
+did not catch it". Against that, the fix is one comparison in a loop
+that already holds both records. A record whose timestamp does not parse
+falls back to file order, so an undatable record neither wins nor loses
+silently; that branch has never fired on codex.
+
+Re-run over the corpus after the change: every reading identical, max
+level still 218,755.
 
 ## The hook speaks to the model
 
@@ -197,6 +230,43 @@ The fixture is the case worth naming: its newest `token_count` IS the
 compaction sentinel. A reader that took the newest record would have
 reported 0% for a session at 93.8%.
 
+## Two things settled with the sibling arms
+
+**The rung is `stream`, and transport is not the test.** I first read
+limitLadder's stream/feed asymmetry as turning partly on transport, and
+said so to the crush arm. crush-channel pushed back with a case that
+breaks that reading: Crush's window comes from a separate REST call
+(`GET /v1/workspaces/{id}/agent`, `model.context_window`, measured 40960
+for a locally discovered model), and Crush's own auto-summarize condition
+actuates against that same number. A separate round trip, and still the
+number the harness enforces compaction against.
+
+They are right, and the ladder's own text says so if read carefully: rung
+1 is for the channel that GOVERNS the session, rung 4 for a side channel
+that merely describes it, and a human-facing status hook with no version
+handle is the thing rung 4 was written about. Codex's window rides the
+level's own record; Crush's arrives by a call the harness answers about
+itself. Both govern. Both are `stream`.
+
+The genuine difference is lifetime, which is crush-channel's point and I
+adopt it: codex's window cannot go stale because it is re-read with every
+level, while a separately fetched window goes stale on model change with
+no signal. That argues for a refetch rule on the fetched side, not a
+demotion. Recorded here so the two channels do not ship one concept at
+two rungs.
+
+**Codex's model name cannot reach the accountant's primary-model latch,
+and that is now checked rather than assumed.** probe-0tnf measured the
+latch's cost on claude: `fold` latches the first model it sees and never
+re-latches, so after a permanent model switch 3,548 samples across 19
+sessions route to spend while the occupancy level FREEZES, worst case
+frozen at 79,246 while the session reached 751,169. `codex-ctx` forwards
+a model name, so the question is live rather than academic. It does not
+reach it: `handleHeartbeat` calls `store.UpdateSessionHeartbeat`, which
+writes `sess.ContextModel` and nothing else; the accountant is fed only
+by `sampleFromEvent` off the adapter event stream, and codex's stream
+names no model. Inert by two independent facts rather than by luck.
+
 ## What was not established
 
 - **Whether hook trust can be pre-seeded at all**, and where an accepted
@@ -213,13 +283,12 @@ reported 0% for a session at 93.8%.
 - **Whether `.zst` compression replaces a live session's file**, and
   whether a compaction opens a new rollout. Both removed from this
   design's critical path, neither answered.
-- **The rung this window belongs on, at the seam.** The reader knows the
-  window is a `stream` declaration (rung 1): it rides the same record as
-  the level, in the artifact codex enforces compaction against. The
-  heartbeat RPC carries no rung and no window, so `context_window` is
-  emitted into a parameter the daemon drops, exactly as ctx-forward's is.
-  Finishing that seam is the contract decision already named in
-  `ctxforward.go`, and codex sharpens it rather than settling it.
+- **The seam, not the rung.** The rung is settled (see below); what is
+  not is that the heartbeat RPC carries neither rung nor window, so
+  `context_window` is emitted into a parameter the daemon drops, exactly
+  as ctx-forward's is. Finishing that seam is the contract decision
+  already named in `ctxforward.go`, and a second producer sharpens it
+  rather than settling it.
 - **Anything about a codex session that marvel did not spawn.** The
   command reads `MARVEL_SESSION` and friends from the environment, so a
   hand-run codex fires the hook and does nothing. That is intended, and
@@ -235,3 +304,7 @@ reported 0% for a session at 93.8%.
 - `docs/user-guide.md` (Codex context pressure)
 - finding-017 (the channel and the refutation this implements),
   finding-011 (the claude feed), finding-016 (effective windows)
+- finding-020 (the Crush channel, PR #166): the rung question above, and
+  the per-feed cumulation point that both arms reached independently
+- finding-024 (the compaction corpus, probe-0tnf): the ordering property
+  and the primary-model latch measurement this reader is checked against

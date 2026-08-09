@@ -14,10 +14,16 @@ import (
 // writes, so the tests below vary one thing at a time against a real
 // record rather than against a struct literal.
 func tokenCountLine(in, total, window int) string {
-	return fmt.Sprintf(`{"timestamp":"2026-08-08T20:22:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{`+
+	return tokenCountLineAt("2026-08-08T20:22:20.000Z", in, total, window)
+}
+
+// tokenCountLineAt is tokenCountLine with the record's own timestamp
+// under the caller's control, for the ordering tests.
+func tokenCountLineAt(ts string, in, total, window int) string {
+	return fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{`+
 		`"total_token_usage":{"input_tokens":999999,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":999999},`+
 		`"last_token_usage":{"input_tokens":%d,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":76,"reasoning_output_tokens":32,"total_tokens":%d},`+
-		`"model_context_window":%d}}}`, in, total, window)
+		`"model_context_window":%d}}}`, ts, in, total, window)
 }
 
 // TestSampleFromLineDiscards covers the per-record rules. The first two
@@ -306,6 +312,71 @@ func TestNewestSampleWins(t *testing.T) {
 	}
 	if got.Level != 3000 {
 		t.Errorf("Level = %d, want 3000", got.Level)
+	}
+}
+
+// TestNewestSampleOrdersByTimestampNotPosition. Claude Code writes
+// records physically later than records with a much older timestamp, 26
+// times across 2 of 422 sessions, clustered just before a compaction
+// (probe-0tnf). Codex has not been seen doing it, over 210 files and
+// every record type, but that absence is too thin to lean on and the
+// ordering is one comparison. A last-in-file reader returns 40000 here
+// where the session is at 200000.
+func TestNewestSampleOrdersByTimestampNotPosition(t *testing.T) {
+	t.Parallel()
+	buf := []byte(
+		tokenCountLineAt("2026-08-08T20:22:20.000Z", 100000, 100076, 258400) + "\n" +
+			tokenCountLineAt("2026-08-08T21:44:00.000Z", 200000, 200076, 258400) + "\n" +
+			tokenCountLineAt("2026-08-07T19:10:00.000Z", 40000, 40076, 258400) + "\n")
+	got, ok := newestSample(buf, false)
+	if !ok {
+		t.Fatal("no sample found")
+	}
+	if got.Level != 200000 {
+		t.Errorf("Level = %d, want 200000: the back-dated trailing record won", got.Level)
+	}
+}
+
+// TestNewestSampleFallsBackToFileOrderWhenUndatable: a record with no
+// usable timestamp cannot be ordered by time, and must neither win nor
+// lose silently. File order decides, and the later record takes it.
+func TestNewestSampleFallsBackToFileOrderWhenUndatable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		buf  string
+		want int
+	}{
+		{
+			name: "undatable record after a dated one",
+			buf: tokenCountLineAt("2026-08-08T20:22:20.000Z", 100000, 100076, 258400) + "\n" +
+				tokenCountLineAt("not-a-timestamp", 40000, 40076, 258400) + "\n",
+			want: 40000,
+		},
+		{
+			name: "dated record after an undatable one",
+			buf: tokenCountLineAt("", 100000, 100076, 258400) + "\n" +
+				tokenCountLineAt("2026-08-08T20:22:20.000Z", 40000, 40076, 258400) + "\n",
+			want: 40000,
+		},
+		{
+			name: "equal timestamps tie to the later record",
+			buf: tokenCountLineAt("2026-08-08T20:22:20.000Z", 100000, 100076, 258400) + "\n" +
+				tokenCountLineAt("2026-08-08T20:22:20.000Z", 40000, 40076, 258400) + "\n",
+			want: 40000,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := newestSample([]byte(tt.buf), false)
+			if !ok {
+				t.Fatal("no sample found")
+			}
+			if got.Level != tt.want {
+				t.Errorf("Level = %d, want %d", got.Level, tt.want)
+			}
+		})
 	}
 }
 

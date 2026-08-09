@@ -145,10 +145,32 @@ func readOccupancyFrom(r io.ReaderAt, size int64) (Reading, error) {
 	return Reading{}, ErrNoSample
 }
 
-// newestSample scans a tail buffer forward and returns the LAST usable
-// token_count record in it. Forward-and-keep-the-last is deliberate:
+// newestSample scans a tail buffer forward and returns the newest usable
+// token_count record in it, newest by the record's OWN timestamp rather
+// than by its position in the file. Forward-and-compare is deliberate:
 // scanning backward would have to re-derive line boundaries from the
 // wrong end for no gain, since the buffer is already in memory.
+//
+// Position is not time, and a sibling harness proves it. In the Claude
+// Code transcript corpus, 26 records across 2 of 422 sessions carry a
+// timestamp OLDER than a record physically before them, worst case 25.2
+// hours, and they cluster immediately before a compaction boundary; one
+// such record read 134,037 where the session's true level was 967,915
+// (probe-0tnf, 2026-08-09). A last-in-file reader there reports a stale
+// and far lower level, which is the same failure direction as the
+// compaction sentinel.
+//
+// Codex does not do this, measured: zero inversions across 210 rollout
+// files, over every record type and not only samples, with every
+// timestamp parseable. That absence is weak on its own, since a rate
+// like Claude's 2-in-422 would produce no inversion here about a third
+// of the time. Ordering by timestamp costs one comparison, so this
+// reader does not rely on the absence holding.
+//
+// A record whose timestamp did not parse cannot be ordered by time, so
+// any comparison involving one falls back to file order. Never observed
+// on codex; the branch exists because an unparseable timestamp must not
+// silently win or silently lose.
 //
 // partialHead says the buffer begins mid-file, so its first line is
 // almost certainly a fragment and is dropped. A trailing fragment is
@@ -182,8 +204,21 @@ func newestSample(buf []byte, partialHead bool) (Reading, bool) {
 		if !bytes.Contains(line, []byte("token_count")) {
 			continue
 		}
-		if reading, ok := sampleFromLine(line); ok {
+		reading, ok := sampleFromLine(line)
+		if !ok {
+			continue
+		}
+		switch {
+		case !found:
 			out, found = reading, true
+		case out.TS.IsZero() || reading.TS.IsZero():
+			// Undatable on one side: file order is the only signal left,
+			// and later in the file is the better guess.
+			out = reading
+		case !reading.TS.Before(out.TS):
+			// Equal timestamps fall here too, so a tie goes to the later
+			// record, which is the file-order answer.
+			out = reading
 		}
 	}
 	return out, found
