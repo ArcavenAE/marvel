@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -419,6 +420,14 @@ func newCtxForwardCmd() *cobra.Command {
 				"session_key":     workspace + "/" + session,
 				"context_percent": pct,
 				"model":           model,
+			}
+			// The token marvel minted for this session at spawn. It is
+			// what lets the daemon tell this session reporting itself
+			// from any other process on the host reporting on its
+			// behalf. Absent (a session spawned before tokens existed)
+			// the daemon admits the beat and says so on the ring.
+			if token := os.Getenv(api.HeartbeatTokenEnv); token != "" {
+				p["session_token"] = token
 			}
 			// context_window is the harness's own declared window for this
 			// session. It is emitted as the PRODUCER half of a seam whose

@@ -427,3 +427,48 @@ func TestNewStreamParserRejectsUnknownFormat(t *testing.T) {
 		t.Fatal("expected a parser")
 	}
 }
+
+// TestAdaptersInjectHeartbeatToken: the heartbeat token is enforcement
+// locus 1 in practice: marvel constructs the environment, so what an
+// agent can prove about itself is what marvel put there. An adapter that
+// forwards MARVEL_SOCKET without the token hands its agent a channel it
+// cannot authenticate on, and the daemon refuses every beat.
+func TestAdaptersInjectHeartbeatToken(t *testing.T) {
+	t.Parallel()
+
+	const token = "3f1c0d5e" // shape does not matter here, presence does
+
+	for _, a := range []Adapter{&Forestage{}, &Claude{}, &Codex{}, &OpenCode{}, &Simulator{}, &Generic{}} {
+		t.Run(a.Name(), func(t *testing.T) {
+			t.Parallel()
+
+			ctx := testContext()
+			ctx.Session.Runtime.Name = a.Name()
+			ctx.Session.Runtime.Command = "/usr/local/bin/" + a.Name()
+			ctx.Session.HeartbeatToken = token
+
+			result, err := a.Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if got := result.Env[api.HeartbeatTokenEnv]; got != token {
+				t.Errorf("%s = %q, want %q", api.HeartbeatTokenEnv, got, token)
+			}
+			// argv is world-readable from the process table; the token
+			// must not be there for every agent on the host to copy.
+			if strings.Contains(result.Command, token) {
+				t.Errorf("token appears in argv: %s", result.Command)
+			}
+
+			// No socket, no heartbeat channel, so no secret in the pane.
+			ctx.SocketPath = ""
+			result, err = a.Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare without socket: %v", err)
+			}
+			if got, ok := result.Env[api.HeartbeatTokenEnv]; ok {
+				t.Errorf("%s = %q on a session with no socket, want absent", api.HeartbeatTokenEnv, got)
+			}
+		})
+	}
+}

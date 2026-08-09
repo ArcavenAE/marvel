@@ -899,3 +899,56 @@ func TestReapReportsNothingWhenTheBasePaneIsNotPaneZero(t *testing.T) {
 		t.Fatalf("healthy two-workspace fleet reports %d reap candidate(s), want 0: %v", len(found), found)
 	}
 }
+
+// TestCreateMintsHeartbeatToken: no session reaches the store without a
+// token, because the daemon refuses any heartbeat it cannot bind and a
+// session spawned without one would go stale, fail its healthcheck, and
+// restart on a policy that expects it to be beating.
+func TestCreateMintsHeartbeatToken(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+	// Never opened by this test; the manager only copies it into the
+	// launch environment. Per-test path anyway, because a fixed one is a
+	// shared host resource waiting for the day something does open it.
+	mgr.SocketPath = t.TempDir() + "/marvel.sock"
+
+	ws := "test-sess-token"
+	t.Cleanup(func() {
+		_ = mgr.CleanupWorkspace(ws)
+	})
+
+	sess := &api.Session{
+		Name:      "agent-0",
+		Workspace: ws,
+		Team:      "agents",
+		Role:      "worker",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if sess.HeartbeatToken == "" {
+		t.Fatal("Create left the session with no heartbeat token to inject")
+	}
+	stored, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("get from store: %v", err)
+	}
+	if stored.HeartbeatTokenHash != api.HashHeartbeatToken(sess.HeartbeatToken) {
+		t.Fatalf("stored hash %q does not verify the minted token", stored.HeartbeatTokenHash)
+	}
+
+	// The ad-hoc path builds its own environment rather than going
+	// through an adapter, so it needs its own assertion.
+	_, env := mgr.directCommand(sess)
+	if got := env[api.HeartbeatTokenEnv]; got != sess.HeartbeatToken {
+		t.Errorf("%s = %q in the ad-hoc environment, want the minted token", api.HeartbeatTokenEnv, got)
+	}
+}

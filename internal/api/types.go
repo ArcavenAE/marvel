@@ -153,8 +153,35 @@ type Session struct {
 	RestartCount    int          `toml:"-"`
 	LastHealthCheck time.Time    `toml:"-"`
 	CreatedAt       time.Time    `toml:"-"`
-	SessionMetrics  `toml:"-"`
-	SessionContext  `toml:"-"`
+	// HeartbeatToken is the secret marvel mints at spawn and injects into
+	// the session's process environment. It binds a heartbeat to the
+	// session that claims it: the RPC takes a session key off the wire,
+	// and without this any process reaching the socket could stamp any
+	// session's liveness and context pressure.
+	//
+	// `json:"-"` is load-bearing twice over. The store's records go to
+	// bbolt through encoding/json, and ListSessions goes to every RPC
+	// client the same way, so a serialized plaintext token would be
+	// readable by exactly the sibling agents it is meant to separate. The
+	// plaintext therefore lives in this process's memory and in the
+	// spawned agent's environment, nowhere else. HeartbeatTokenHash is
+	// what persists.
+	HeartbeatToken string `json:"-" toml:"-"`
+	// HeartbeatTokenHash is the SHA-256 of HeartbeatToken, hex-encoded.
+	// It persists and it travels on the wire, which is safe: a 256-bit
+	// random token is not recoverable from its digest, and verification
+	// only ever needs to recompute it.
+	//
+	// Persisting the hash is what lets an adopted session keep beating
+	// across a daemon restart. The agent still holds the plaintext in its
+	// environment; the rehydrated record still holds the digest to check
+	// it against.
+	//
+	// Empty means the record predates this field, which is the one case
+	// AuthenticateHeartbeat admits unbound. See its comment.
+	HeartbeatTokenHash string `toml:"-"`
+	SessionMetrics     `toml:"-"`
+	SessionContext     `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.

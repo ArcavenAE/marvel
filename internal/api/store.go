@@ -490,9 +490,17 @@ func (s *Store) UpdatePolicy(key string, fn func(*Policy) error) error {
 	return s.persistPut(bucketPolicies, p.Key(), p)
 }
 
-// UpdateSessionHeartbeat updates a session's context pressure and
-// heartbeat timestamp. Kept as a convenience helper; equivalent to
-// UpdateSession with the corresponding closure.
+// UpdateSessionHeartbeat authenticates a heartbeat and, if it holds,
+// updates the session's context pressure and heartbeat timestamp. It
+// returns how the heartbeat was admitted, or ErrHeartbeatUnauthorized
+// when the presented token does not match the session it claims.
+//
+// The token is a parameter of the write rather than a separate check the
+// caller may forget, and the check happens under the same lock as the
+// write. Any future caller of this method has to hold a token to reach
+// the assignment below, which is the point: LastHeartbeat feeds the
+// heartbeat healthcheck, the restart policy, and shift readiness, and
+// ContextPercent is one of the CTX% column's two producers.
 //
 // Note: heartbeat fields are classified ephemeral in finding-050's
 // data-model walk — they're persisted alongside the rest of the
@@ -502,12 +510,16 @@ func (s *Store) UpdatePolicy(key string, fn func(*Policy) error) error {
 // dominant write rate for marvel's bbolt usage; if it surfaces as a
 // performance issue, batch by waiting N heartbeats before persisting
 // (or move heartbeat state into a separate in-memory-only path).
-func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64, model string) error {
+func (s *Store) UpdateSessionHeartbeat(key, token string, contextPercent float64, model string) (HeartbeatAuth, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[key]
 	if !ok {
-		return fmt.Errorf("session %s: %w", key, ErrNotFound)
+		return "", fmt.Errorf("session %s: %w", key, ErrNotFound)
+	}
+	auth, err := authenticateHeartbeat(sess, token)
+	if err != nil {
+		return "", fmt.Errorf("session %s: %w", key, err)
 	}
 	// A heartbeat is a COMPLETE reading of its own shape, not a partial
 	// update layered over whatever the accountant left behind. Writing
@@ -543,7 +555,10 @@ func (s *Store) UpdateSessionHeartbeat(key string, contextPercent float64, model
 	// downstream (bolt rehydrate keeps this one, the renderer prints it as
 	// a percentage rather than as an unresolved window).
 	sess.ContextAt = sess.LastHeartbeat
-	return s.persistPut(bucketSessions, sess.Key(), sess)
+	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
+		return "", err
+	}
+	return auth, nil
 }
 
 // UpdateSessionContext records one context-window reading.

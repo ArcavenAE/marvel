@@ -242,9 +242,15 @@ What exists today:
   `internal/runtime/events`; `internal/session/bridge.go` lifts each kind
   into its `agent.*` ring kind. Read it with `marvel events`.
 - **The heartbeat RPC** (`handleHeartbeat` → `UpdateSessionHeartbeat`), a
-  daemon method carrying `session_key` and `context_percent`. Cooperative,
-  and one of the CTX% column's two producers (the other is
-  `internal/usage`, fed by adapter streams).
+  daemon method carrying `session_key`, `session_token`, and
+  `context_percent`. Cooperative, and one of the CTX% column's two
+  producers (the other is `internal/usage`, fed by adapter streams). The
+  token is minted per session at spawn and injected as
+  `MARVEL_HEARTBEAT_TOKEN`, so a heartbeat is bound to the session it
+  claims; a mismatch is refused and lands on the ring as
+  `heartbeat.refused`. Records written before the token existed are
+  admitted as `heartbeat.unbound` until those sessions end. See
+  finding-022.
 - **`marvel inject`**, operator keystrokes into a pane.
 
 The adopted shape (roadmap M2): an **external NATS bus, supervised by
