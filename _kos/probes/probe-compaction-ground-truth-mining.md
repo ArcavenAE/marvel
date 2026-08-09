@@ -1,7 +1,7 @@
 # Probe brief: compaction ground truth is already on disk, dozens of times
 
 **Status:** RUN and CLOSED 2026-08-09. SP2 and SP3 in finding-016
-(2026-08-08); SP1, SP4 and SP5 in finding-023 (2026-08-09).
+(2026-08-08); SP1, SP4 and SP5 in finding-024 (2026-08-09).
 
 Results, one line each:
 
@@ -31,7 +31,7 @@ counts have moved again because the corpus is live.
 
 The result the probe did not go looking for: three separate mechanisms
 report LOW pressure at HIGH pressure, the direction that silently
-disables shift rotation. See finding-023.
+disables shift rotation. See finding-024.
 
 Scripts: `scripts/mine_claude_compactions.py`,
 `scripts/mine_other_harness_compactions.py`.
@@ -237,7 +237,7 @@ any probe that spends model quota.
   rather than running it here.
 - ~~**The subagent question.** No `isSidechain: true` assistant line exists in
   the local corpus, so subagent context is not minable this way and stays
-  with `subagentStatusLine`.~~ **REFUTED 2026-08-09 (finding-023).**
+  with `subagentStatusLine`.~~ **REFUTED 2026-08-09 (finding-024).**
   Subagent transcripts are 1,186 separate files under
   `<project>/<session>/subagents/`, carrying thousands of
   `isSidechain: true` usage lines, and two of the 82 compaction

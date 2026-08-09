@@ -265,6 +265,34 @@ def zero_census(usage_records):
     return guarded, unguarded, models
 
 
+def cumulation_check(usage_records):
+    """Is this session's per-message usage a LEVEL or a running total?
+
+    Never inherited from an earlier finding: reading a cumulative series
+    as a level is the defect internal/usage exists to prevent, and it has
+    now been found on three harnesses (codex turn.completed, Crush's
+    stats page, Claude's own terminal result line).
+
+    The discriminator is the window bound. A running total over N
+    requests cannot stay under a context window; a level must. Returns
+    the request count, the sum of the per-request occupancies, and the
+    largest single value, so the two readings can be compared directly.
+    """
+    n = 0
+    total = 0
+    peak = 0
+    last_id = ""
+    for r in usage_records:
+        if r["sidechain"] or not r["msg_id"] or r["msg_id"] == last_id:
+            continue
+        last_id = r["msg_id"]
+        occ = occupancy(r)
+        n += 1
+        total += occ
+        peak = max(peak, occ)
+    return n, total, peak
+
+
 def latch_census(usage_records):
     """Does this session switch model and never switch back?
 
@@ -400,7 +428,14 @@ def main():
     zero_models = Counter()
     latches = []
 
+    biggest = (0, 0, 0)
+    corpus_peak = 0
+
     for f in files:
+        n, tot, peak = cumulation_check(f["usage"])
+        corpus_peak = max(corpus_peak, peak)
+        if n > biggest[0]:
+            biggest = (n, tot, peak)
         g, ug, zm = zero_census(f["usage"])
         zero_guarded += g
         zero_unguarded += ug
@@ -554,6 +589,13 @@ def main():
             "fp_drop": summarize([r["drop"] for r in fp_rows]),
             "boundary_drop": summarize([r["drop"] for r in sp4_rows if r["drop"] is not None]),
             "boundary_guard": summarize([r["guard"] for r in sp4_rows if r["guard"] is not None]),
+        },
+        "cumulation_check": {
+            "largest_session_requests": biggest[0],
+            "largest_session_sum_of_occupancies": biggest[1],
+            "largest_session_peak_level": biggest[2],
+            "corpus_peak_level": corpus_peak,
+            "reading": ("level" if corpus_peak < biggest[1] / 10 else "INDETERMINATE"),
         },
         "zero_occupancy_records": {
             "total": zero_guarded + zero_unguarded,

@@ -28,7 +28,7 @@ type compactionSeries struct {
 // The constants in accountant.go were reasoned rather than calibrated,
 // against a single recovered geometry of roughly 167k down to 96k. This
 // fixture is the calibration: 466,571 down to 116,155, one of the 63
-// labelled events finding-023 replayed, on which the detector fired 63
+// labelled events finding-024 replayed, on which the detector fired 63
 // times with no false negative and never came within 4x of its guard.
 //
 // It also pins the two things a synthetic series cannot: the approach is

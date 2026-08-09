@@ -1,4 +1,4 @@
-# finding-023: the shipped compaction detector survives 63 labelled events, and three other things in the same corpus report LOW pressure at HIGH pressure
+# finding-024: the shipped compaction detector survives 63 labelled events, and three other things in the same corpus report LOW pressure at HIGH pressure
 
 - **Date:** 2026-08-09
 - **Status:** measured. SP1 and SP4 answered; SP5 answered for gemini and
@@ -78,6 +78,36 @@ of the corpus rather than of the method.
 
 Only token counts, timestamps, model names, message ids and compaction
 metadata were read. Paths appear in artifacts only as a salted digest.
+
+### Both corpora were tested for cumulation before anything was read as a level
+
+Added after the fact, prompted by the Crush arm finding a third instance
+of the same class: `.crush/stats/index.html` carries cumulative sums
+across sessions, `codex exec --json`'s `turn.completed` is a running
+session total (finding-017), and reading either as a level is the defect
+`internal/usage` exists to prevent. Inheriting "this field is a level"
+from an earlier finding is exactly the move that produced two of those
+three.
+
+**Claude's per-assistant-message `usage` is a level. Excluded by three
+orders of magnitude.** In the largest session, 1,654 deduplicated
+requests carry per-request occupancies summing to 491,457,832 tokens,
+while the largest single value anywhere in the corpus is 967,915, under
+a 1M window. A cumulative series cannot sit below the window at request
+1,654 and it cannot fall, and this one falls at all 63 boundaries. This
+confirms rather than inherits finding-007's addendum, which established
+the same thing from the other direction (the terminal `result` line IS
+cumulative and the per-message one is not).
+
+**Gemini's per-turn `input` is not SESSION-cumulative. Per-turn
+accumulation is not excluded.** 12 of 22 gemini sessions with three or
+more token rows contain a decrease in `input`, and a session accumulator
+cannot decrease. A per-TURN accumulator that resets at each turn
+boundary is not excluded and would be indistinguishable from a level on
+any single-request turn, which is what codex's open question is
+(finding-017 leaves the same distinction unsettled). The SP5 step count
+below is stated under the level reading and is void under the per-turn
+one, which is the honest scope for it.
 
 ## SP4: would the shipped detector have caught these?
 
@@ -273,7 +303,10 @@ summarization. Marvel's step detector would fire 3 times across those 477
 samples (two of them drops to exactly zero, which is the same hazard as
 above), and there is no label anywhere in the corpus against which to
 score those firings. So gemini has no compaction ground truth on this
-machine, and acquiring one needs a session run, not a mine.
+machine, and acquiring one needs a session run, not a mine. That step
+count assumes `input` is a level; see the cumulation check in the method
+section, which excludes session-cumulative and leaves per-turn
+accumulation open.
 
 One discriminating result came free, in the shape finding-017 used. Over
 the 418 rows with nonzero `cached`, `total == input + output + thoughts +
@@ -331,6 +364,9 @@ correction of a number rather than of a method.
   a 15 of 68 base rate.
 - **Whether gemini's `input` subsumes `cached`.** The corpus cannot
   discriminate.
+- **Whether gemini's `input` accumulates within a TURN.** Session-level
+  accumulation is excluded; per-turn is not, and every gemini row here
+  could be a single-request turn, on which the two coincide.
 - **Anything about a live compaction crossing under marvel.** This is a
   mine of transcripts written by an operator's interactive sessions. The
   accountant consumes a headless NDJSON stream, and the correspondence
@@ -358,3 +394,9 @@ correction of a number rather than of a method.
    were real drops with no compaction, and one detection fired on a zero
    record. Any shift trigger keyed on the compaction COUNT inherits all
    three.
+6. **Test every aggregate for cumulation before reading it as a level,
+   including one an earlier finding already blessed.** Three instances
+   across three harnesses now: codex's `turn.completed`, Crush's
+   `.crush/stats/index.html`, and the Claude terminal `result` line.
+   The check is usually one query, and the failure is silent and
+   understating.

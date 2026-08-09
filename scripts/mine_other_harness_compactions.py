@@ -44,6 +44,12 @@ def gemini(root):
     cached_over_input = 0
     max_input = 0
     steps = []
+    # Cumulation check, per finding-024: a SESSION accumulator can never
+    # decrease, so any session whose input series falls excludes that
+    # reading. A per-TURN accumulator is not excluded by this and is
+    # indistinguishable from a level on a single-request turn.
+    sessions_scored = 0
+    sessions_with_decrease = 0
     for f in files:
         try:
             with open(f, errors="replace") as fh:
@@ -51,6 +57,7 @@ def gemini(root):
         except (OSError, ValueError):
             continue
         prev = None
+        series = []
         for m in doc.get("messages") or []:
             if not isinstance(m, dict):
                 continue
@@ -74,9 +81,14 @@ def gemini(root):
                 identities["cached_nonzero"] += 1
                 identities["total==in+out+thoughts+tool (cached>0)"] += tot == i + o + th + tl
                 identities["total==in+out+thoughts+tool+cached (cached>0)"] += tot == i + o + th + tl + c
+            series.append(i)
             if prev is not None and prev - i > hysteresis(prev):
                 steps.append((prev, i))
             prev = i
+        if len(series) >= 3:
+            sessions_scored += 1
+            if any(b < a for a, b in zip(series, series[1:])):
+                sessions_with_decrease += 1
     return {
         "files": len(files),
         "messages_with_tokens": rows,
@@ -88,6 +100,12 @@ def gemini(root):
         "identities_on_cached_rows": identities.most_common(),
         "rows_with_cached_over_input": cached_over_input,
         "max_input_tokens": max_input,
+        "cumulation_check": {
+            "sessions_with_3plus_rows": sessions_scored,
+            "sessions_whose_input_decreases": sessions_with_decrease,
+            "session_cumulative_excluded": sessions_with_decrease > 0,
+            "per_turn_accumulation_excluded": False,
+        },
         "downward_steps_past_marvel_hysteresis": steps,
     }
 
