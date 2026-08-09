@@ -939,6 +939,75 @@ event: the Crush adapter (`aae-orc-k2mi`, in progress). Crush is FEED-N by
 this repo's own tiering, and Crush is the harness whose catalog demonstrates
 provider-keyed windows. Whoever ships that adapter meets both.
 
+## 21. Fourth pass: the schema answers, and one negative I did not predict
+
+The `k2mi` rig answered the four schema questions by measurement (crush
+v0.88.1, isolated rig, `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` to avoid the
+global-cache refresh, zero host drift). Full detail in
+`finding-019-crush-context-pressure-channel.md`, marvel#166. Three of my open
+items close and one framing of mine needs correcting.
+
+**The hedge resolves in favor of the argument.** `provider` is its own
+nullable `TEXT` column on `messages`, beside `model`, both added by later
+migration; live rows read `provider='ollama'` and `model='qwen3:0.6b'`
+separately. It is not liteLLM's `model_group` shape. Section 18's design-vote
+reading stands at the stored level, not just the catalog level: Crush keys by
+provider in the catalog AND records provider per message in the database.
+
+**Per-message, and unconstrained.** `sessions` carries no provider or model
+column at all, so nothing structurally prevents one session from holding rows
+with two providers. Not observed on the rig, where every assistant row read
+`ollama`.
+
+**No window in the database.** Zero hits for `context`, `window` or
+`max_token` across all five tables. My section 11 harmful case is confirmed in
+the strongest available form, and the rig's own formulation is sharper than
+mine: the DB has per-message model attribution and no window, the REST route
+has the window and no history, and neither surface joins them. Worse than
+separate records, they are separate surfaces, and the REST route reports the
+workspace's CURRENT agent model, so it cannot answer what window applied to a
+past message even in principle.
+
+**The negative, and it corrects section 10 rather than confirming it.** I have
+been treating a per-message provider column as a routing record. It is not a
+complete one. Crush has two model slots, `models.large` and `models.small`.
+With the slots configured to different models, a TUI session's title
+generation ran on the small model and **no row appeared**; the output landed
+in `sessions.title`. Summarization is the same class. So
+`messages.provider/model` records the model that served each persisted
+conversational turn, not every model call the session made, **and carries no
+marker distinguishing the two**.
+
+That makes Crush a fourth instance of the internal router alongside claude,
+codex and gemini, and the first to demonstrate a distinct failure: the
+harness's own routing record is silently partial. It is the same shape as
+finding-016 axis 6 (claude's three model slots), arriving in a different
+vendor with a different persistence story.
+
+The design consequence is a caution rather than a new recommendation. A marvel
+that reads a harness's provider field to answer "what served this session"
+gets a true answer about a subset and no signal about the remainder. Reading
+the harness's own record is better than guessing and is still not a
+measurement of every call.
+
+**Not relied on here:** the `crush stats` page that prompted this thread. Its
+`usage_by_model` entries carry `{model, provider, message_count}` and no token
+fields, and its totals sum `sessions.prompt_tokens`, which is a per-request
+LEVEL rather than a running total. Measured on the rig: a three-turn session
+issuing 28672 / 28712 / 28782 contributed only 28782, undercounting by about
+3x. The provider/model split it displays is real and stored; the token
+aggregation beside it is not a quantity to price anything off. Cost is stored
+per session (`sessions.cost REAL`), not per message, and the 0.0 for ollama is
+a stored literal from catalog pricing rather than a render-time derivation.
+
+**The ruling is unchanged by the fourth pass, and the trigger is unchanged.**
+Nothing here argues for a primitive. Two of the three fixes already named
+absorb it: the spawn-time environment record is what tells marvel which
+provider a session was pointed at when the harness's own record is silent, and
+the provider-sensitivity guard is unaffected. What is new is a bound on how
+much a harness-read can ever deliver, which belongs in whatever design
+`aae-orc-k2mi` produces.
+
 ## Third-pass provenance
 
 Written 2026-08-09 against `aae-orc-eooi`. Method: read-only `jq` over

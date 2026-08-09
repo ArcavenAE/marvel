@@ -241,13 +241,63 @@ content: |
   client-echoed, which is open in the DIRECT case and which a router
   converts from a possibility into a likelihood.
 
-  STILL NOT ESTABLISHED AFTER THE THIRD PASS: whether Crush's catalog matches
-  any vendor's served window (no live API was called); whether Crush stores
-  provider as its own column or parses a namespaced string, and whether one
-  Crush session can hold rows with two providers (asked of the k2mi rig,
-  unanswered at time of writing, so the stats-surface observation stays
-  relayed rather than observed); and which of marvel or Crush models the
-  1M-entitlement axis correctly.
+  FOURTH PASS 2026-08-09: the k2mi rig answered the schema questions by
+  measurement (crush v0.88.1, isolated rig,
+  CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1, zero host drift; finding-019,
+  marvel#166). Three open items close, one framing corrects.
+
+  - The hedge RESOLVES IN FAVOR of the design-vote argument. `provider` is
+    its own nullable TEXT column on `messages`, beside `model`, live rows
+    reading provider='ollama' and model='qwen3:0.6b' separately. Not
+    liteLLM's model_group shape. Crush keys by provider in the CATALOG and
+    records provider per message in the DATABASE.
+  - Per-message and unconstrained: `sessions` carries no provider or model
+    column, so nothing structurally prevents one session holding two
+    providers. Not observed (every assistant row read ollama).
+  - NO WINDOW IN THE DATABASE. Zero hits for context/window/max_token across
+    all five tables. The harmful case is confirmed in its strongest form, and
+    the rig's formulation beats mine: the DB has per-message model
+    attribution and no window, the REST route has the window and no history,
+    neither surface joins them. Separate SURFACES, not merely separate
+    records, and the REST route reports the workspace's CURRENT agent model
+    so it cannot answer what window applied to a past message in principle.
+
+  THE NEGATIVE, which CORRECTS the framing above rather than confirming it. A
+  per-message provider column is NOT a complete routing record. Crush has two
+  model slots (models.large, models.small); with them configured to different
+  models, a TUI session's title generation ran on the small model and NO ROW
+  APPEARED (output landed in sessions.title). Summarization is the same
+  class. So messages.provider/model records the model that served each
+  persisted CONVERSATIONAL TURN, not every model call, and carries no marker
+  distinguishing the two. Crush is therefore a FOURTH internal-router
+  instance (with claude, codex, gemini) and the first to show a distinct
+  failure: the harness's own routing record is silently PARTIAL. Same shape
+  as finding-016 axis 6 (claude's three model slots) in a different vendor.
+  Consequence is a caution, not a new recommendation: a marvel that reads a
+  harness's provider field to answer "what served this session" gets a true
+  answer about a subset and no signal about the remainder.
+
+  NOT RELIED ON: the `crush stats` page that prompted the thread. Its
+  usage_by_model entries carry {model, provider, message_count} and NO token
+  fields, and its totals sum sessions.prompt_tokens, a per-request LEVEL
+  rather than a running total (measured: a three-turn session issuing 28672 /
+  28712 / 28782 contributed only 28782, undercounting ~3x). The
+  provider/model split it displays is real and stored; the token aggregation
+  beside it is not a quantity to price off. Cost is stored per SESSION
+  (sessions.cost REAL), not per message; 0.0 for ollama is a stored literal
+  from catalog pricing.
+
+  RULING AND TRIGGER UNCHANGED BY THE FOURTH PASS. Nothing here argues for a
+  primitive, and two of the named fixes absorb it: the spawn-time environment
+  record is what tells marvel which provider a session was pointed at when
+  the harness's own record is silent, and the provider-sensitivity guard is
+  unaffected. What is new is a BOUND on how much a harness-read can ever
+  deliver, which belongs in whatever design aae-orc-k2mi produces.
+
+  STILL NOT ESTABLISHED: whether Crush's catalog matches any vendor's served
+  window (no live API was called); which of marvel or Crush models the
+  1M-entitlement axis correctly; and whether a Crush session in practice ever
+  holds two providers, which the schema permits and the rig did not exhibit.
 edges:
   - target: question-interactive-context-pressure
     type: derives
