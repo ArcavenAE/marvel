@@ -164,6 +164,14 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
+		// The socket is what makes a heartbeat possible, so the token
+		// travels with it and a session that cannot reach the daemon
+		// carries no secret. This is enforcement locus 1: marvel
+		// constructs the environment, and what the agent can prove about
+		// itself is what marvel put there.
+		if ctx.Session.HeartbeatToken != "" {
+			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
+		}
 	}
 	return env
 }

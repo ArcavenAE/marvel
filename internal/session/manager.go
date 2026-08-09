@@ -432,6 +432,17 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
+	// Mint the heartbeat token before the record exists, so no session is
+	// ever in the store without one. The plaintext rides the caller's
+	// pointer into planLaunch, where the adapter puts it in the pane's
+	// environment; only the digest is stored.
+	token, hash, terr := api.NewHeartbeatToken()
+	if terr != nil {
+		return fmt.Errorf("create session %s: %w", sess.Key(), terr)
+	}
+	sess.HeartbeatToken = token
+	sess.HeartbeatTokenHash = hash
+
 	if err := m.store.CreateSession(sess); err != nil {
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
@@ -860,6 +871,9 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath
+		if sess.HeartbeatToken != "" {
+			envs[api.HeartbeatTokenEnv] = sess.HeartbeatToken
+		}
 	}
 	return cmd, envs
 }

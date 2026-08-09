@@ -144,7 +144,7 @@ func TestRenderSessionTableWithHeartbeat(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := store.UpdateSessionHeartbeat("ws/agent-0", 55.4, ""); err != nil {
+	if _, err := store.UpdateSessionHeartbeat("ws/agent-0", "", 55.4, ""); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 

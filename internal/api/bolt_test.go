@@ -408,7 +408,7 @@ func TestBoltStore_HeartbeatContextReadingSurvivesRehydrate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := s1.UpdateSessionHeartbeat("ws/agent-0", 64.0, ""); err != nil {
+	if _, err := s1.UpdateSessionHeartbeat("ws/agent-0", "", 64.0, ""); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	if err := s1.CloseBolt(); err != nil {

@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
 	marvelotel "github.com/arcavenae/marvel/internal/otel"
 	"github.com/arcavenae/marvel/internal/simulator"
@@ -74,11 +75,19 @@ func main() {
 	// Heartbeat to daemon.
 	if *socket != "" {
 		sessionKey := *workspace + "/" + *name
+		// From the environment rather than a flag: an argv is readable
+		// from the process table by every agent on the host, and the
+		// token is what separates them.
+		token := os.Getenv(api.HeartbeatTokenEnv)
 		engine.OnHeartbeat = func(pct float64) error {
-			params, _ := json.Marshal(map[string]any{
+			p := map[string]any{
 				"session_key":     sessionKey,
 				"context_percent": pct,
-			})
+			}
+			if token != "" {
+				p["session_token"] = token
+			}
+			params, _ := json.Marshal(p)
 			resp, err := daemon.SendRequest(*socket, daemon.Request{
 				Method: "heartbeat",
 				Params: params,
