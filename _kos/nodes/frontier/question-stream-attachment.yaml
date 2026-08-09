@@ -116,7 +116,38 @@ content: |
   (contextWindow), so marvel's raw-occupancy proxy agrees by
   construction; Claude Code's DISPLAYED "% until auto-compact" is
   normalized to a configurable threshold plus a reserved buffer and reads
-  higher than raw occupancy. Unblocks aae-orc-w5su with the derivation
+  higher than raw occupancy.
+
+  TWO CORRECTIONS TO THE PARAGRAPH ABOVE, 2026-08-08.
+
+  (i) THE OPENCODE SHAPE IS WRONG AS WRITTEN. "step_finish.part.tokens.input
+  (+cache)" came from finding-007's SP1, whose supporting row had both cache
+  classes at ZERO and therefore could not discriminate between the candidate
+  identities. Measured against 215 store rows plus a live two-turn capture on
+  1.18.15: `total` INCLUDES the cache classes (215/215), and `input` does NOT
+  subsume `cache.read` (179 caching rows carry input below cache read, as low
+  as 1 against 35584). The additive proxy is right; the total definition
+  asserted alongside it was not. Corrected in finding-007 in place; adapter
+  fixed in marvel#154.
+
+  (ii) "AGREES BY CONSTRUCTION" IS TRUE ON THE NUMERATOR AND MISLEADING ON THE
+  DENOMINATOR. finding-016: `contextWindow` is the honest CAPACITY figure but
+  it is NOT the quantity that predicts compaction. The predictive denominator
+  is the EFFECTIVE AUTO-COMPACT WINDOW. Measured p50 fire point 467635 against
+  a configured `autoCompactWindow` of 500000, which is 93.5 percent of the
+  effective window and 46.8 percent of the 1M context window. So a reading
+  that agrees with the harness on raw occupancy can still be off by 2x as a
+  predictor of the event marvel actually wants to act on. The denominator also
+  varies on six independent axes (harness release, user settings, model,
+  backend service, entitlement, model slot), so it must be learned and
+  invalidated per tuple rather than assigned once. Tracked: aae-orc-sj34.
+
+  A related correction to the capture-pane ruling this node carries above: the
+  disqualifier is not that a TUI is uncooperative, it is that there is no
+  version number on the screen, so it can only fail quietly.
+  Uncooperative-with-a-version-handle is a different case. See
+  question-interactive-context-pressure, which now carries the ruled
+  per-harness channel model (consent gates, fidelity orders). Unblocks aae-orc-w5su with the derivation
   fixed. Still frontier: no live compaction crossing was measured (cost
   discipline), OpenCode cache-inclusion for a caching model is unverified,
   and Codex/OpenCode multi-turn accumulation is untested. See finding-007.

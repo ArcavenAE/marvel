@@ -19,9 +19,88 @@ content: |
   Questions:
   - Which triggers should be team-level vs role-level?
   - How does context pressure aggregate? (any session? average? all?)
+    SEE THE 2026-08-08 STATE BELOW: this question is not merely open,
+    it is posed wrongly, and answering it as stated would build a
+    defect.
   - What failure detection is feasible with current heartbeat data?
   - How does marvel detect Claude Code updates or API changes?
   - Is Schedule resource type the right abstraction for timed shifts?
+
+  STATE 2026-08-08. The context-pressure trigger listed above assumes a
+  FILL LEVEL with a THRESHOLD. That framing is now understood to be
+  wrong in three ways, and this node had carried it untouched since
+  2026-03-31.
+
+  1. THE THRESHOLD HAS NO STABLE DENOMINATOR. finding-016: the quantity
+     that predicts compaction is the effective auto-compact window, not
+     the model context window, and it varies on six independent axes
+     (harness release, user settings, model, backend service,
+     entitlement, model slot). A fleet runs combinations simultaneously,
+     so a column of percentages computed against six-dimensionally
+     varying denominators is a column of incommensurable numbers
+     presented as comparable. Alerting on it is worse than sorting by
+     it.
+  2. OCCUPANCY IS A PRICE MULTIPLIER, NOT A CAPACITY CONSUMPTION.
+     Context is rent, not purchase: the whole context is re-read at
+     cache-read price every turn. Measured across 139 local sessions,
+     cache-read tokens paid per output token produced: 107x below 100k
+     median occupancy, 261x above 300k, a 2.4x ratio. A percentage
+     discards exactly the information that makes the trigger
+     actionable.
+  3. AGGREGATION IS A SCHEDULING HAZARD, NOT A CHOICE OF STATISTIC.
+     This is the sharp correction to the question as posed. Rate limits
+     (input and output TPM, TPD, request rate, plan quota) bind per
+     ACCOUNT and are shared across the whole fleet. A context-pressure
+     trigger that fires on several agents at once consumes a burst of
+     exactly the resource it does not model, so the remedy for one
+     session degrades all of them. Any answer to "any session? average?
+     all?" that does not model the shared limit is a correlated-failure
+     generator.
+
+  WHAT REPLACES A THRESHOLD. A per-role POLICY SELECTION plus its
+  parameters, not a global percentage. Named candidates: never
+  auto-compress (shift before the harness summarizes anything, correct
+  when the accumulated context is the valuable artifact); allow
+  auto-compression (correct when the model performs well hot, or a
+  shift costs more than a compaction); hold below a cost ceiling
+  (correct when carrying rate rather than capacity binds); refuse the
+  dominated region.
+
+  THE DOMINATED REGION IS NOT YET MEASURABLE, and this is a live
+  constraint on any default. The operator observation is that above
+  roughly 600k some models cost more AND fail more. SP1 attempted to
+  locate that knee against the corpus and returned a clean negative:
+  tool-error rate is flat at 2.7 to 5.3 percent across every occupancy
+  band. Three reasons, the third structural: the proxy is weak, the
+  sample thins where the question lives, and high-occupancy sessions
+  are SURVIVORS by construction, since a session that degraded badly
+  was compacted or abandoned before reaching the band that would show
+  it. Survivorship means no purely observational read of this corpus
+  can locate the knee. Until something measures it, the dominated
+  region must not be built into a default. Next attempt is rework
+  detection (aae-orc-tzzn).
+
+  SHIFTING IS NOT OBVIOUSLY THE CHEAP SIDE. Compaction is measured at
+  154s median, up to 275s (finding-016). A cold shift is UNMEASURED,
+  and plausibly costs the same order or more, which would invert the
+  intuition this node's trigger list rests on. Standby tiers trade
+  money for latency and marvel already owns the machinery (a hot
+  standby is a replica that exists before it is scheduled, a reconciler
+  question rather than a new subsystem). The comparison is four-way:
+  token cost, wall-clock cost, standby carrying cost, and quality
+  delta. Three are measurable with instruments already built; the
+  fourth is what critic exists for. Tracked: aae-orc-r4q6 (measure one
+  handoff end to end, the highest-value missing number), aae-orc-56w0
+  (price the standby tiers).
+
+  A PER-SESSION ACTUATOR CAN REDUCE FLEET THROUGHPUT, which is the
+  reason automatic triggers should not ship ahead of a fleet-level
+  objective. Four mechanisms, all reachable with what marvel ships or
+  plans: correlated shifts burst a shared limit; high occupancy makes
+  occupancy a per-fleet CONCURRENCY limit rather than only a per-
+  session cost; cache locality is a fleet property being managed per
+  session; coordination overhead grows with fleet size rather than
+  fleet output. Tracked: aae-orc-hfc0.
 edges:
   - target: question-shifts
     type: derives

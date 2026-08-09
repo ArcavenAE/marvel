@@ -1,7 +1,7 @@
 id: question-interactive-context-pressure
 type: question
 confidence: frontier
-title: "Context pressure for interactive/TUI sessions: scrape the rendered indicator, or accept headless-only?"
+title: "Context pressure for interactive/TUI sessions: which cooperative channel per harness, at what consent grade, against which denominator?"
 tags:
   - marvel
   - observability
@@ -72,6 +72,76 @@ content: |
     catalog across all four runtimes, then primary live verification
     for surviving candidates only, with a kill rule to headless-only):
     probe-interactive-ctx-remainder-sweep.md.
+
+  STATE 2026-08-08. The question is ANSWERED IN SHAPE by an operator
+  ruling, and the two options in the title are both retired.
+
+  OPTION (c), RULED: per-harness cooperative channels, graded by
+  CONSENT, arbitrated by FIDELITY.
+
+  - Consent GATES rather than orders, in three grades. CONTRACTED: the
+    harness publishes it for consumers (a documented socket, an HTTP
+    API, a hook, OTEL). CONCEDED: the harness hands marvel the pointer,
+    so one field converts a glob into a handoff (claude's
+    `transcript_path`, codex's `agent_transcript_path`, a Crush
+    `PreToolUse` hook exporting `CRUSH_SESSION_ID`). APPROPRIATED:
+    marvel went looking. Appropriated is OFF the ladder, not a low rung
+    on it: a probe instrument only, whose production form is whatever
+    conceded or contracted variant can be negotiated.
+  - Fidelity orders separately: proximity to a per-request prompt level
+    with the token classes intact.
+  - The capture-pane ruling above SURVIVES but its stated reason was
+    slightly wrong, and the wrong reason generalizes badly. A TUI's
+    disqualifier is not that it is uncooperative. It is that THERE IS
+    NO VERSION NUMBER ON THE SCREEN, so it can only fail quietly.
+    Uncooperative-with-a-version-handle (a database carrying a
+    migration table) is a different animal from
+    uncooperative-without-one.
+
+  Three constraints (c) carries that (a) and (b) never had to answer:
+
+  1. A channel can be fully CONTRACTED and still not free. Attaching to
+     Crush's documented event stream registers marvel as a real client:
+     `AttachClient` bumps a stream count, `attached_clients` is exposed
+     on the session, and observers use stream count to detect live
+     subscribers. During the sweep an unobserved workspace was reaped
+     before use. Merely starting a Crush server also refreshed
+     host-global caches outside the probe sandbox. Neither is a consent
+     failure; both are observation changing the observed system, so
+     PERTURBATION is a third property the consent axis does not
+     predict.
+  2. Credential adjacency is categorical, not a matter of care.
+     `opencode.db` holds credential and account tables in the same file
+     as the token counts. A capture-pane scrape physically cannot reach
+     a credential; a database handle can. SOUL section 3 makes that a
+     boundary rather than a risk to manage.
+  3. A channel available only where the harness happens to run cannot
+     be a FOUNDATION, because a foundation must be uniform across the
+     fleet. Local reads are an optimization that raises fidelity where
+     they exist, never the plan.
+
+  DENOMINATOR VARIANCE, from finding-016 and load-bearing here: the
+  quantity that predicts compaction is the EFFECTIVE AUTO-COMPACT
+  WINDOW, not the model context window, and it varies on six
+  independent axes (harness release, user settings, model, backend
+  service, entitlement, model slot). Measured p50 fire point 467635
+  against a configured 500000 (93.5 percent); the same occupancy over a
+  1M context window reads 46.8 percent. So a channel that delivers a
+  numerator without declaring WHICH denominator it is against delivers
+  a number that is wrong by 2x half the time.
+
+  RESOLUTION LADDER, operator-ruled 2026-08-08: a harness-declared
+  window arriving via the statusline FEED gets its own `LimitSource`
+  rung ranked BELOW `LimitFromManifest`. Stream stays at rung 1 above
+  manifest, so the same fact from the same harness carries opposite
+  precedence depending on transport. Deliberate (a live stream is not a
+  side channel) and surprising, so it must be documented rather than
+  discovered. Tracked: aae-orc-38yr.
+
+  IMPLEMENTATION ORDER, operator-ruled: codex, then Crush, then
+  opencode, with cross-cutting plumbing first. bd aae-orc-pt8k (codex),
+  aae-orc-k2mi (Crush), aae-orc-9jvb (opencode). The plumbing that
+  gated all three shipped in marvel#153 and #154.
 
   Tracked: bd aae-orc-dc1j. Related: aae-orc-7hzb (statusline probe;
   its "other harnesses" remainder is absorbed by the sweep brief),

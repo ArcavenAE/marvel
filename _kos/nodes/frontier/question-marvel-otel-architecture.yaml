@@ -120,6 +120,47 @@ content: |
   `aae-orc-dc1j` (native OTEL is the first clean path for
   interactive/TUI context pressure, since OTEL is emitted regardless of
   UI mode).
+
+  BOTH OF THOSE CONSUMER CLAIMS ARE RETIRED, 2026-08-08. OTEL cannot
+  serve context pressure, and the reason is a type mismatch rather than
+  a defect in the channel.
+
+  Every harness token instrument that exists is a MONOTONIC CUMULATIVE
+  COUNTER. Verbatim from the Claude Code binary:
+  `tokenCounter=t("claude_code.token.usage",{description:"Number of
+  tokens used",unit:"tokens"})`. Occupancy is a per-request LEVEL that
+  RESETS at compaction. A counter cannot express a quantity that goes
+  down, so no amount of collector work recovers occupancy from it. This
+  is the same class of defect finding-007 measured when a cumulative
+  total was read as a level.
+
+  THE RULING IS NARROW AND MUST BE READ THAT WAY. OTEL is ruled out for
+  ONE quantity: the occupancy numerator and the window denominator
+  behind CTX% and the shift trigger. It is NOT ruled out for marvel,
+  and reading it broadly would deny functionality the agentic resource
+  matrix needs.
+
+  READ AFFIRMATIVELY, the same enumeration is an INVENTORY of
+  resource-matrix instruments, because the disqualifier for occupancy
+  is a QUALIFIER everywhere else: dollars spent do not reset at
+  compaction, and neither do tokens billed, tools invoked, subagents
+  spawned, or seconds consumed. Cumulative is the correct shape for all
+  of those. Mapped in
+  `probe-otel-affirmative-inventory.md`, which grades every row
+  MEASURED, INFERRED, or BINARY rather than asserting a uniform
+  confidence.
+
+  The highest-value row found is not a token metric at all:
+  `tool.blocked_on_user` maps to matrix row 13, HUMAN ATTENTION, which
+  the vision names as a gap with no owner and calls the scarcest
+  metered resource. If that counter measures what its name suggests,
+  Gap 1 has an instrument nobody had noticed. Worth its own check
+  before it is designed around.
+
+  Tracked: aae-orc-e06y (the affirmative inventory), aae-orc-24oy /
+  aae-orc-fkvv / aae-orc-tpda (the deferred OTEL studies, which still
+  carry the superseded framing and should be updated from the
+  inventory rather than from this node's older prose).
 edges:
   - target: question-stream-attachment
     type: derives
