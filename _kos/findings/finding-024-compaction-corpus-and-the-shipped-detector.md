@@ -229,6 +229,27 @@ every real sample away forever. 10 sessions do start that way, and all 10
 have a series of exactly one sample, so nothing followed to be routed. The
 mechanism is real and the corpus does not contain an instance.
 
+**How long marvel would hold the zero, and why the answer differs per
+harness.** The one record that enters the series is followed by a nonzero
+level 259.9 seconds later, so on Claude the exposure is bounded by
+time-to-next-request. The Crush arm measured the sharper version of the
+same thing (finding-020): Crush's zero is not a record at all but the
+current value of a mutable `sessions.prompt_tokens` column, which each
+request overwrites, so it persists from the compaction until the next
+request COMPLETES. Codex and Claude write a transient record a tailing
+reader can skip; Crush holds a state a poller sits on.
+
+The distinction that matters for the fold is narrower than transient
+versus durable, and it is not the one either of us started with.
+Discarding the zero is correct on all three. **Discarding plus holding the
+last good level only works when a last good level EXISTS.** A reader that
+attaches to a session already sitting in the post-compaction state, which
+is every marvel restart, every adopted pane, and every session that
+compacted while nothing was watching, has never seen a good reading and
+has nothing to hold. Its correct output is ABSENCE, which is already this
+package's stated discipline, and not zero, and not the level of whatever
+session it happened to observe first.
+
 ### File order is not chronological
 
 26 usage records across 2 of 423 sessions carry a timestamp earlier than
@@ -383,7 +404,10 @@ correction of a number rather than of a method.
 2. **Discard zero-occupancy samples explicitly**, on the token values, in
    the fold rather than incidentally in the model guard. The one record
    that names its session's real model is the case that already defeats
-   every existing guard.
+   every existing guard. A discard needs a companion rule: hold the last
+   good level where one exists, report absence where none does, and never
+   emit the zero. The second half is the one a poll-shaped reader needs
+   (finding-020) and the one a restarted daemon needs on any harness.
 3. **Re-latch on model change, or mark the reading stale.** Freezing is
    worse than the denominator error `aae-orc-sj34` was filed for, and it
    is silent.
