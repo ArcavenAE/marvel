@@ -194,10 +194,15 @@ On this harness the manifest is the more likely error, not the correction.
 **The same defect is in marvel's own shipped table, and it does NOT change
 the rung ask.** Stating that plainly because a new cross-reference inside a
 decision document invites the reader to assume it moves the decision. The
-router study reports `claude-opus-5` at 1000000 for anthropic against 264000
-for copilot, so `LimitFromTable` can resolve wrong by 3.8x with no signal
-(`aae-orc-eooi`; the copilot figure is that study's catalog measurement, not
-mine). I checked the marvel half directly: `defaultTable` in
+router study reports Crush's catalog ASSIGNING `claude-opus-5` a window of
+1000000 under anthropic against 264000 under copilot, so `LimitFromTable` can
+resolve wrong by 3.8x with no signal (`aae-orc-eooi`; that study's catalog
+measurement, not mine). Two precisions from that arm, both of which narrow
+the claim and are worth carrying: no live API was called, so the catalog
+assigns the number rather than a provider being observed to serve it; and
+marvel ships no copilot adapter, so the 3.8x is a demonstrated MECHANISM
+rather than a live defect anyone is currently hitting. I checked the marvel
+half directly: `defaultTable` in
 `internal/usage/limits.go` carries eleven keys over seven distinct model ids,
 every one keyed on the model id alone with no provider dimension, and
 `claude-opus-5` is 1_000_000 there. `table` already sits below `feed` in
@@ -260,10 +265,14 @@ second: 40 providers, 948 model ids, 249 of them offered by more than one
 provider, and **141 of those 249 disagree with themselves on
 `context_window`**, 52 by a factor of 1.5 or more. All seven model ids in
 marvel's shipped table are provider-variable at exact spelling.
-`claude-opus-5` is 1000000 at anthropic and 264000 at copilot, and marvel's
-table returns 1000000, so a `LimitFromTable` resolution would be wrong by
-3.8x with no signal that anything happened. (Measured by the router and
-backend study, aae-orc-eooi, not by me.)
+The catalog assigns `claude-opus-5` 1000000 under anthropic and 264000 under
+copilot, and marvel's table returns 1000000, so a `LimitFromTable` resolution
+would be wrong by 3.8x with no signal that anything happened. Two limits on
+that number: no live API was called, so this is the catalog's assignment
+rather than an observation of what a provider serves, and marvel ships no
+copilot adapter, so it is a demonstrated mechanism rather than a defect
+anyone is hitting today. (Measured by the router and backend study,
+aae-orc-eooi, not by me.)
 
 Combined with §8's result that the database carries no window at all, that
 closes the denominator question for this harness: the REST route or the
