@@ -143,28 +143,98 @@ model change, not per turn.
 Nothing here needs multiplying. Crush publishes one window term and
 applies its own compaction thresholds to it internally.
 
-**Settled with the codex arm, after I conceded this wrongly and had the
-concession refused.** The disagreement was whether a window reached by a
-separate REST call sits at rung 1 (`stream`, the channel the harness
-enforces compaction against) or rung 4 (`feed`, a side channel read
-opportunistically). I gave the rung up on the catalog evidence below,
-reasoning that a route reporting the workspace's CURRENT agent cannot say
-what window applied to a past message. That concession was wrong and the
-codex arm was right to decline it: CTX% is a live reading, so historical
-answerability is not a property of the quantity being resolved. The
-harness's own auto-summarize StopCondition actuates against the number this
-route returns, which is the rung-1 test, and transport was never the test.
+**The rung is NOT settled, and it should stop being settled between two
+arms.** The codex arm and I have now taken three positions across three
+exchanges: transport (theirs, withdrawn), governance (mine, conceded,
+concession declined), attributability (theirs, current). Each move was made
+by deferring to the other's evidence. That is not convergence, and one more
+round of it would produce a fourth position rather than an answer.
 
-Both harnesses therefore supply the window as `stream`. The real difference
-is LIFETIME and it produces a rule rather than a demotion: codex's window
-cannot go stale because it is re-read with every level, while a separately
-fetched window goes stale on model change with no signal on the stream. So
-a fetched window carries **refetch on model change, and a window fetched
-under a different model is unresolved rather than stale**.
+So I read `limitLadder` and `doc.go` rather than each other. Both texts are
+in `internal/usage/limits.go` and both are quoted here because the outcome
+turns on them.
 
-Recorded because two arms swapping positions is a worse outcome than either
-holding one, and the reasoning that decides it belongs where it can be
-checked.
+Rung 1 is defined by a sentence with two conjuncts: "the harness stating
+the window it is currently enforcing compaction against, **in the same
+channel as the token counts it is stating it about**." Crush satisfies the
+first (its auto-summarize StopCondition actuates against exactly this
+number) and fails the second (separate route). The codex arm is right that
+the second conjunct exists and right that I had been reading the
+paragraph's closing summary, "rung 1 is for the channel that governs the
+session," which states only the first.
+
+But rung 4 does not fit either, and this is the part neither of us checked.
+It is defined as "a side channel read opportunistically off a human-facing
+status hook, with no version handle and no statement of which of the six
+effective-window axes it reflects." Against Crush's route, measured:
+
+| rung-4 property | Crush `GET /v1/workspaces/{id}/agent` |
+|---|---|
+| side channel, read opportunistically | no: a documented first-class API route |
+| off a human-facing status hook | no: no hook involved, no human-facing string |
+| no version handle | no: `/v1` route prefix, and `GET /v1/version` returns `v0.88.1` with a build id |
+| names no effective-window axis | partial: it names the model, not the entitlement or threshold axes |
+
+Three of four fail outright. So the ladder's text was written with two
+channels in view, a harness stream and a statusline hook, and Crush's route
+is a third shape it does not describe. Forcing it onto either rung imports
+reasoning that does not apply, which is exactly what both of us did.
+
+**The consequence is decidable on evidence even though the rung is not.**
+Rung 4 sits below `LimitFromManifest`, so placing Crush there means an
+operator's hand-written `runtime.context_window` outranks the live route.
+The stated reason manifest outranks feed is that the feed's number varies
+on axes the operator may know about and the payload does not name. Here
+that argument runs backwards: the router study measured the window as a
+provider-plus-model property with 141 of 249 shared model ids disagreeing
+across providers, and an operator writing a window by hand will write the
+model's headline number, which is the value that is wrong by up to 3.8x.
+On this harness the manifest is the more likely error, not the correction.
+
+**This belongs to the operator.** It is a change to a ruled ladder, the
+ruling was the operator's on 2026-08-08, and the evidence for revisiting it
+did not exist then. What I would put in front of them: either Crush's route
+is rung 1 on the governance conjunct with the same-channel conjunct
+relaxed, or the ladder gains a rung between manifest and feed for a
+contracted, versioned, live query that is neither the stream nor a status
+hook. I am not choosing between those in a finding.
+
+**Both arms have since converged on the first candidate, and the reason it
+is not a fourth swap is that neither arm argued from the other.** The codex
+arm's case is from the ladder's own stated harm: overruling a rung-1
+declaration with a manifest value "would make marvel's denominator disagree
+with the one that actually governs the session's behavior", and Crush's
+auto-summarize actuates against the number this route returns, so a
+manifest override produces that harm here identically to codex. Set beside
+the rung-4 table above, both texts point the same way: rung 4's description
+does not fit, and rung 1's stated harm does apply.
+
+One overstatement in that case, and it does not change the conclusion. It
+says the rung decides "exactly one thing", whether the manifest outranks
+the channel. It decides two: rung 1 also sits above `LimitLearned`, so a
+rung-1 Crush window would outrank a learned one and a rung-4 window would
+lose to it. For this harness that is unlikely to bind, since anything
+learned for Crush would be learned from the same route, but "exactly one
+thing" is not the mechanism.
+
+So the operator ask narrows from "which rung" to "ratify relaxing the
+same-channel conjunct, or add the intermediate rung". The ladder is still
+theirs to amend, and two arms agreeing is not the same as it being ruled.
+
+**The two candidates differ in blast radius, which is a property of the
+options rather than an argument for either** (the codex arm's observation,
+and it is the one thing an operator needs that neither arm's evidence
+supplies). Relaxing the same-channel conjunct changes what rung 1 MEANS for
+every future channel, including ones nobody has surveyed. Adding a rung
+between manifest and feed changes only where one new shape sits. If the
+smaller commitment is wanted, the second is smaller. Neither arm states a
+preference.
+
+**One thing IS settled and it survives either answer.** A window not
+re-read with its level goes stale on model change with no signal, so a
+fetched window carries **refetch on model change, and a window fetched
+under a different model is unresolved rather than stale**. Both arms agree
+on this and it is the part that actually protects a reading.
 
 **The table is not a fallback here, and the router study measured why.**
 `~/.local/share/crush/providers.json` is keyed provider first and model
@@ -233,6 +303,16 @@ one record the no-prior-reading case is rare; on this one it is the
 ordinary startup path. (The branch was named by the compaction-mining arm
 against its own corpus, and it corrects what this section said in its first
 pass, which asserted the hold without its precondition.)
+
+**How the codex forwarder satisfies this, and why copying its shape is not
+the same as copying its property.** The codex arm verified absence two ways,
+in source and end to end: its reading path writes nothing when it has no
+usable sample, so a session that never had a good level keeps a zero
+`ContextAt` and the renderer's first switch arm leaves the cell at `-`. That
+is satisfied by DECLINING TO SEND rather than by holding correctly. A reader
+that instead holds a value in-process across fires loses the property, on
+either harness. Worth stating because the forwarder shape is the obvious
+thing to port and the property is not in the shape.
 
 **Discard on the token values, not on the companion field.** The
 compaction-mining arm measured the same artifact class on Claude Code (68
@@ -478,6 +558,19 @@ that served each persisted conversational turn, not every model call the
 session made, and no marker distinguishes the two. Anyone reading this
 database as a routing record should know that before they aggregate it.
 
+**And the record is arbitrarily partial, not partial along a boundary a
+consumer could reason about.** Both title generation and summarization run
+on the same `models.small` slot, and they persist differently: title
+generation adds no row at all (measured, `message_count` held at 2 while
+`sessions.title` changed), while summarization does add one, marked
+`is_summary_message=1` (measured, `message_count` went 2 to 3 with
+`summary_message_id` set). Same slot, same class of internal call, opposite
+persistence. So there is no property exposed by the harness from which a
+consumer could predict which model calls leave an artifact. That is a
+stronger caution than the two-provider question the router study opened,
+and it is the one that bears on a Crush adapter: any per-model or
+per-provider aggregate built from this table is over an unknown subset.
+
 Cost is stored rather than computed at render time (`sessions.cost REAL NOT
 NULL DEFAULT 0.0`, no per-message column), and reads a literal 0.0 for
 ollama because the provider catalog prices it at zero.
@@ -597,6 +690,26 @@ opposite of what this probe found.
   the same false reason. It now states the reason that holds.
 
 No behavior changes. No profile is added.
+
+## One assumption I inherited from myself
+
+Named because the compaction-mining arm asked for it and because the shape
+is worth more than the instance.
+
+I re-derived `prompt_tokens` as a level because the ticket told me to, and I
+settled `completion_tokens` because that gap was named as open. What I never
+questioned is the claim the whole §2 table rests on: that the SSE `session`
+frame is emitted once per model request. I inferred that from frame counts
+matching the request counts I expected, which is the same move as reading a
+field's meaning off an earlier finding's authority.
+
+It happens to be checkable after the fact and it held. The tool-calling turn
+produced exactly two usage-bearing frames and four messages, which is what a
+once-per-request emitter predicts and what a once-per-turn emitter does not.
+But I checked it because someone asked, not because I had treated it as a
+claim, and the reason it was hard to notice is that the evidence I already
+had was consistent with it. The failure mode has a name worth keeping:
+confirmed by data I did not collect for that purpose.
 
 ## What was not established
 
