@@ -407,6 +407,95 @@ discriminator does not survive a check. The rule bounds the blast radius of
 one tick instead of classifying it. Flapping still escalates, because
 flapping repeats across ticks.
 
+### 1f. A second daemon finds state it does not own: `reconcile.left`
+
+A daemon starting up reconciles the tmux namespace against its own records.
+When it finds marvel state it has no record of, it leaves it running and
+says so. That is the posture ratified 2026-08-07: accumulate orphans rather
+than destroy live work.
+
+This beat needs two daemons sharing one tmux server, which is exactly what
+the scratch layout in Prerequisites makes safe to arrange. Give each daemon
+its own state and socket, and point both at the same `MARVEL_TMUX_SOCKET`:
+
+```sh
+A=/tmp/mv-a; B=/tmp/mv-b; mkdir -p "$A" "$B"
+
+MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel daemon \
+  --socket "$A/m.sock" --state-bolt "$A/marvel.bolt" \
+  --log-file "$A/daemon.log" --pidfile "$A/daemon.pid" &
+sleep 3
+
+MARVEL_SOCKET="$A/m.sock" MARVEL_TMUX_SOCKET=mv-shared \
+  ./bin/marvel work examples/demo-act1-recovery.toml
+sleep 5
+```
+
+Now start a second daemon on the same tmux server with an empty store of its
+own. It comes up, sees a workspace it has never heard of, and leaves it
+alone:
+
+```sh
+MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel daemon \
+  --socket "$B/m.sock" --state-bolt "$B/marvel.bolt" \
+  --log-file "$B/daemon.log" --pidfile "$B/daemon.pid" &
+sleep 4
+
+MARVEL_SOCKET="$B/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel events
+```
+
+A verified run, 2026-08-09:
+
+```
+warning  reconcile.left  recover  left tmux session marvel-recover running:
+  workspace not in this daemon's records. Reclaim with `marvel reap` if it
+  is stale [by pid=78885 socket=/tmp/mv-b/m.sock]
+```
+
+Two things in that one line. It is **warning** severity, because an accepted
+failure nobody can see is just the other failure wearing a different hat.
+And it names the **actor**, `pid=` and `socket=`, because two daemons on one
+host otherwise interleave into the same log with nothing to tell them apart,
+and the daemon whose work is at stake records nothing itself.
+
+Confirm the first daemon's agents never noticed:
+
+```sh
+MARVEL_SOCKET="$A/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel get sessions
+```
+
+Both workers still `running` and `healthy`. Ask the second daemon what it is
+holding back from, and it lists rather than acts:
+
+```sh
+MARVEL_SOCKET="$B/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel reap
+```
+
+```
+  tmux session marvel-recover (whole workspace)
+
+1 unrecorded item(s), left running. Re-run with --confirm to destroy them.
+These may belong to another running daemon. Check before confirming.
+```
+
+Clean up both:
+
+```sh
+for d in "$B" "$A"; do
+  MARVEL_SOCKET="$d/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel stop --teardown
+done
+rm -rf "$A" "$B"
+```
+
+**This runbook does not demonstrate the destroying path,** and that is a
+deliberate omission rather than a gap. `marvel daemon --reclaim` and
+`marvel reap --confirm` turn this beat into one that destroys whatever the
+other daemon is running, and the events for it (`reconcile.killed`, same
+actor field) exist for the operator who has already decided. A runbook is a
+thing people paste from before they have finished reading it. The reasoning,
+and the ruling behind the leave-it-running default, is in
+`docs/design/daemon-isolation.md`.
+
 ---
 
 ## Act 2 — Observe
