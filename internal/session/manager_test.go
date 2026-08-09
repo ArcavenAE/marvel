@@ -745,3 +745,80 @@ func TestDaemonTempDirsAreLayoutScoped(t *testing.T) {
 		t.Errorf("projection and stream dirs are both %s, want distinct", alphaProjection)
 	}
 }
+
+// A second workspace's base pane is not %0, and that is what separates
+// the fence marvel shipped from the one it rejected.
+//
+// tmux allocates pane ids per server in creation order, so the base pane
+// of the first workspace is %0 and the base pane of the next is whatever
+// comes after that workspace's replicas. Every other test in this file
+// uses one workspace, so each of them would also pass against a guard
+// that simply skipped %0 — the shape finding-014 ruled out. Measured on a
+// live rig: two workspaces of two replicas each gave base panes at %0 and
+// %3.
+//
+// The test therefore asserts on the SECOND workspace, where an id guard
+// and a provenance guard disagree, and it fails loudly if the ids come
+// out such that they would agree.
+func TestReapReportsNothingWhenTheBasePaneIsNotPaneZero(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	workspaces := []string{"test-basepane-first", "test-basepane-second"}
+	for _, ws := range workspaces {
+		if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+			t.Fatalf("create workspace %s: %v", ws, err)
+		}
+		t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+		for i := range 2 {
+			sess := &api.Session{
+				Name:      fmt.Sprintf("t-r-g1-%d", i),
+				Workspace: ws,
+				Team:      "t",
+				Role:      "r",
+				Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			}
+			if err := mgr.Create(sess); err != nil {
+				t.Fatalf("create session %s/%s: %v", ws, sess.Name, err)
+			}
+		}
+	}
+
+	// Precondition: the later workspace really does carry an unmarked
+	// base pane whose id is not %0. Without it this test would pass
+	// against the id guard too, and prove nothing.
+	second := "marvel-" + workspaces[1]
+	panes, err := driver.ListPanes(second)
+	if err != nil {
+		t.Fatalf("list panes %s: %v", second, err)
+	}
+	var unmarked []string
+	for _, p := range panes {
+		if !p.Created {
+			unmarked = append(unmarked, p.ID)
+		}
+	}
+	if len(unmarked) == 0 {
+		t.Fatalf("%s has no unmarked base pane, so this test cannot tell the two fences apart (panes=%d)",
+			second, len(panes))
+	}
+	for _, id := range unmarked {
+		if id == "%0" {
+			t.Fatalf("%s base pane is %%0, so an id guard would agree here and the test proves nothing", second)
+		}
+	}
+
+	found, err := mgr.UnrecordedTmuxState()
+	if err != nil {
+		t.Fatalf("UnrecordedTmuxState: %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("healthy two-workspace fleet reports %d reap candidate(s), want 0: %v", len(found), found)
+	}
+}
