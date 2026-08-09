@@ -243,6 +243,19 @@ content: |
   denominator, so it does not replace the socket, but it is the only
   channel in this catalog with no measured side effect.
 
+  Five surfaces in total, three carrying a numerator and exactly one
+  carrying the denominator. `crush stats` is NOT one of the three: its
+  HTML sums `sessions.prompt_tokens` across sessions, which sums a
+  per-request LEVEL and so counts one request per session. Measured, a
+  three-turn session at 28672 / 28712 / 28782 contributed 28782,
+  undercounting by roughly 3x with the error growing in turn count.
+  Neither occupancy nor spend, so it is citable for session and message
+  counts and nothing token-shaped. The project database carries no
+  window field at all (grepped the schema for context, window and
+  max_token across all five tables), and its per-message `provider` and
+  `model` columns record only persisted conversational turns: title
+  generation runs on the `models.small` slot and persists no row.
+
   No Crush adapter was written and none should be yet: marvel has no
   Crush runtime adapter to declare the channel or construct the
   environment, and the transport is HTTP and SSE over a unix socket

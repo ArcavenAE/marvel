@@ -309,6 +309,75 @@ claim about a design that does not exist, which is the discipline
 finding-017 followed when it declined to add the `feed` rung. The adapter
 belongs to aae-orc-6c2r; this finding is its input.
 
+## 8. The other two surfaces, checked on a rebuilt rig
+
+Added 2026-08-09 after the first pass, on a rig rebuilt with
+`CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` from the start. Host-global state
+was byte-identical and mtime-identical before and after this run, which is
+also the control confirming §6's measurement C a second time.
+
+**`crush stats` is a fourth surface, and it sums a level.** The generated
+`.crush/stats/index.html` renders from an embedded `const stats` object
+whose `total_prompt_tokens` is exactly `SUM(sessions.prompt_tokens)`.
+Since `sessions.prompt_tokens` is a per-request level that each request
+overwrites, summing it across sessions counts one request per session and
+discards the rest.
+
+Measured against the database that produced the page: a three-turn session
+issued requests at 28672, 28712 and 28782, and contributed 28782 to the
+report. Its actual prompt tokens over the sequence were about 86k, so the
+page undercounts that session by roughly 3x, and the error grows with turn
+count.
+
+That is a different defect from the codex `turn.completed` class, and the
+distinction is worth keeping. A running total sums something real and
+merely answers a different question. A sum of levels answers no question:
+it is neither occupancy nor spend. So the surface can be cited for session
+and message counts, which are honest, and for nothing token-shaped.
+
+Two smaller facts from the same object. `usage_by_model` entries carry
+`{model, provider, message_count}` with no token fields, so per-model token
+attribution does not exist there. And generating the page writes 157KB into
+the operator's project tree, so it is not the zero-side-effect surface; that
+is `crush session last --json`.
+
+**The database carries no window, and its model attribution is partial.**
+Five tables (`sessions`, `messages`, `files`, `read_files`,
+`goose_db_version`) at `goose_db_version` 20260127000000. Grepping the full
+schema for `context`, `window` and `max_token` returns nothing. `provider`
+and `model` are two real nullable columns on `messages`, not one namespaced
+string, and they sit on the message rather than the session, so nothing
+structurally constrains a session to one provider.
+
+The negative is the useful part. Crush runs a `models.small` slot as well
+as `models.large`, and title generation uses the small model. With the two
+slots configured to different models, a TUI session that generated a title
+persisted **no row** for that call: the output lands in `sessions.title` and
+`messages` gains nothing. So `messages.provider`/`model` records the model
+that served each persisted conversational turn, not every model call the
+session made, and no marker distinguishes the two. Anyone reading this
+database as a routing record should know that before they aggregate it.
+
+Cost is stored rather than computed at render time (`sessions.cost REAL NOT
+NULL DEFAULT 0.0`, no per-message column), and reads a literal 0.0 for
+ollama because the provider catalog prices it at zero.
+
+**Consolidated inventory, all measured at v0.88.1:**
+
+| surface | needs `CRUSH_CLIENT_SERVER` | occupancy | denominator | measured side effect |
+|---|---|---|---|---|
+| SSE `/v1/workspaces/{id}/events` | yes | per-request level | no | keeps the workspace alive |
+| REST `/v1/workspaces/{id}/agent` | yes | no | `model.context_window` | none observed |
+| `crush session last/show --json` | no | level, plus a `total` | no | none observed |
+| `.crush/crush.db` direct | no | level | no | not exercised as a read path |
+| `crush stats` HTML | no | sum of levels, unusable | no | writes 157KB into the project |
+
+Three of the five carry a numerator. Exactly one carries the denominator,
+and it is the one that reports the workspace's CURRENT agent, so it cannot
+say which window applied to a historical message. The database has the
+per-message model and no window; the route has the window and no history.
+Neither surface joins them.
+
 ## What changed in the code
 
 Two shipped statements are now measured false, and both assert the
@@ -352,6 +421,9 @@ No behavior changes. No profile is added.
   for the same session at the same moment. Either a stale field on the
   event or a different denominator; I did not chase it, and a consumer
   should read the counter from REST rather than the frame.
+- **Whether one session can actually hold two providers.** The schema
+  permits it and nothing constrains it, but every assistant row on this rig
+  read `ollama`/`qwen3:0.6b`. Structural permission is not observation.
 - **Multi-workspace behavior.** One server served one workspace at a time
   throughout. The research notes that one socket sees every Crush agent on
   the host, which is the case where the `env` exposure above compounds,
