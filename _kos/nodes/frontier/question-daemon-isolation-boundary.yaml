@@ -152,6 +152,30 @@ content: |
   `aae-orc-kvcs` (tmux namespace and the unlogged kill),
   `aae-orc-by6j` (the layout-derived tmux server name),
   `aae-orc-sqh0` (the same uid question this does not answer).
+
+  HARVEST 2026-08-09 (finding-019), and it answers one thing this
+  question was circling.
+
+  Marvel CANNOT distinguish an external kill from an application exit at
+  the point ReapDead runs, and should not try. Both present as a pane id
+  tmux no longer lists. The tempting discriminator (whole tmux session
+  gone means external) fails a direct check: a single-pane session
+  collapses the server when its own process exits, so a harness finishing
+  its work leaves exactly the evidence a reclaim leaves. A classifier on
+  that signal must choose which way to be wrong, and wrong-toward-external
+  reopens marvel#11.
+
+  The repair is therefore cause-agnostic: bound the blast radius rather
+  than classify the cause. That is a general shape for this question, not
+  only for the crash-charging instance.
+
+  ALSO VERIFIED STILL LIVE, and not fixed: a store opened against a bolt
+  file holding only a team record spawns processes on the first tick.
+  With a claude or codex runtime that is live model spend against
+  whatever workspace the stale record names, and `marvel daemon` is the
+  entire trigger. The 2026-08-07 accumulation posture governs panes
+  marvel FINDS; it says nothing about desired state marvel REHYDRATES.
+  That gap is this question's, not the crash-charging ticket's.
 edges:
   - target: elem-data-directory-permissions
     type: derives
