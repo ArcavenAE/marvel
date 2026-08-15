@@ -1,0 +1,154 @@
+id: question-marvel-service-provider-shape
+type: question
+confidence: frontier
+title: "Marvel as a service provider — the plane, fabric, and resource shape"
+content: |
+  Speculative. Nothing here is proven; this node anchors a design session
+  (2026-08-14/15) whose full prose set lives at
+  docs/design/service-provider/ (README, 01-brief-prd, 02-architecture,
+  03-probes-and-roadmap). This is the AUTHORITATIVE home: marvel is the
+  subject. An orc copy under the same id exists as a mis-file from the
+  session and is marked relocation-pending there (see finding-131 id
+  collision, finding-132 move-with-forwarding, finding-133 cross-graph
+  awareness in aae-orc/_kos; the orc copy is retained as a pointer until the
+  move primitive exists).
+
+  THE QUESTION. How should marvel be structured so it can extend services
+  (message bus, vault, knowledge graph, code graph, inference routing,
+  retrieval, evaluation, task tracking) to agents and teams of agents in
+  workspaces, over the control plane and a service plane, easy to adapt as
+  the space evolves and easy to swap one provider for a better one tomorrow,
+  without marvel becoming a monolith that owns and trusts everything.
+
+  THE SHAPE (speculative). Marvel is a theater: it runs the house; agents are
+  the company; sideshow packs are the script; the work can be anything. The
+  analogy names rooms; it never wires them (function first, analogy as
+  annotation).
+
+  Planes (outward seams) vs fabrics (inward wiring):
+  - Planes: control (operator to marvel, exists), service (agent to marvel,
+    mostly unbuilt; Endpoint is name-only and waits on director), event
+    (push not poll; the ring exists, durable form is external NATS), trust
+    (identity minting and credential brokering, not a catalog service).
+  - Fabrics: the BACKPLANE (marvel's internal parts fabric — register,
+    route, supervise, meter — the floor under what marvel already built; the
+    reconciler, adapters, and event ring are its first citizens, hardcoded to
+    one part kind, a tmux session; bd aae-orc-b64o) and the MEASUREMENT
+    FABRIC (its dual: parts emit observations; the meter function is the
+    producer; the ring is a proto form). The service and event planes are
+    facades over the backplane.
+
+  Resource model (marvel already has most nouns; the work is naming and
+  decomposing):
+  - Split: the built Role struct is really a CASTING (slot cast with a
+    persona and identity, provisioned with runtime and tools, N replicas);
+    keep B14 Role as the job. Move BUDGET out to a QoS resource; policy to
+    Projection; permissions to a Sandbox profile. Rename plus extraction, not
+    a bedrock redefinition; touches B14 wording and forestage. Evolve, not
+    big-bang. (Naming relates to the built-resource-naming work; see the
+    marvel naming decisions.)
+  - Split: Endpoint (service registration and discovery, once) vs Binding
+    (scope attachment and resolution — route, trust exchange, projection,
+    policy — bound to many scopes).
+  - Merge: Policy projection is one MODE of a general PROJECTION primitive
+    (readonly, writeblock, inject, redirect, redact-and-mint); write
+    dispositions are a closed set (passthrough, redirect, block, capture).
+    Marvel describes writes; it does not become a filesystem. Shared vs
+    isolated working tree is a declared Volume mode; VFS stays study-first.
+  - Merge: internal / managed / external are three registration modes on the
+    one backplane, and one Service resource plus a provider field, not three
+    types.
+
+  Capability class (interface: coordination pattern plus delivery semantics)
+  vs provider (driver) vs service (configured instance). Swap the provider,
+  keep the class contract; provider extras are opt-in by name and forfeit
+  portability by design.
+
+  Catalog filed by lifecycle:
+  - Runtime services (agent requests via the dropbox): bd (task-graph), kos
+    (knowledge-graph, read surface is the vision Gap 0), flyloft (retrieval),
+    critic (evaluation), code-graph (missing; marvel is also a consumer for
+    reconciler invalidation), NATS (message-bus).
+  - Provisioning capabilities (shape the workspace before the agent):
+    sideshow (behavior packs), callbook (provider standup and identity
+    enrollment), curtain (sandbox profile). Conflating the two lifecycles is
+    a category error.
+
+  Credential boundary: marvel is not the long-term secret store, but it
+  brokers access, holds session state on the agent's behalf (for example the
+  OAuth or Claude-backend session), and connects agents to a vault that mints
+  short-lived scoped credentials. The one thing crossing the wall from the
+  agent side is its minted, attenuable identity; token exchange at the
+  binding boundary. Corrects SOUL section 3 (too narrow); bd aae-orc-dqhf.
+
+  Absence has two honest projections: unprovisioned (invisible in the agent's
+  world) vs bound-but-down (honest unavailable). Component-independence at the
+  agent's eye level.
+
+  Buy, do not build: the backplane transport (light, embeddable, portable Go
+  to Rust; embedded NATS a lead) and the measurement store (OTEL seam,
+  observability-pipeline family). Marvel emits, routes, consumes; never the
+  store.
+
+  Hard constraint (ADR-007): inference informs any plane; inference never
+  enforces on a plane. The caretaker (majordomo) proposes; a deterministic
+  gate executes. Verbs are deterministic and human-authored or
+  human-ratified; the learning loop terminates in a kos finding or a sideshow
+  pack, not in a marvel runtime that mines and mints macros.
+
+  THE PROVING VERTICAL. bd ready, through a minted identity, one Binding, the
+  task-graph provider, returning go/no-go plus a handle, result as a
+  completion event. Exercises every plane; nothing speculative in the parts.
+  bd aae-orc-166h (meter-and-admit) + aae-orc-aaj5 (coordinate).
+
+  PROBE TICKETS (the doing that produces findings): aae-orc-b64o (backplane),
+  aae-orc-1oaz (transport benchmark), aae-orc-zsd5 (push-vs-poll),
+  aae-orc-ytz6 (projection overhead), aae-orc-b56ja (capability-class swap);
+  token-savings delta folded into aae-orc-166h; reference work-unit folded
+  into aae-orc-hfc0.
+
+  OPEN SUB-QUESTIONS (detail in 03-probes-and-roadmap.md): A backplane
+  transport survey; B measurement one fabric or several; C reference
+  work-unit; D language direction (marvel is pure Go today, the "largely
+  Rust" statement contradicts the 2026-08-01 ruling); E resource-model slim
+  timing; F service-plane wire contract reconciled with the director
+  envelope; G capability-class contract boundary; H shared-tree write path.
+
+  DISSENTS PRESERVED: caretaker-with-authority (ruled against), value-per-seat
+  now (deferred), learned-verb-assembly by inference (ruled against),
+  one-bus-vs-two (open, A decides).
+
+  PROMOTION SIGNAL: the proving vertical runs end to end (bd ready through the
+  seam). Then the seam is evidence, not hypothesis.
+edges:
+  - target: elem-agentic-resource-matrix
+    type: derives
+    note: "The governing frame; the service plane and backplane meter feed the matrix."
+  - target: elem-k8s-resource-model
+    type: derives
+    note: "The resource model this extends (Casting, Binding, Projection, Service)."
+  - target: question-agent-communication-broker
+    type: supports
+    note: "The agent message bus is one part on the backplane."
+  - target: question-permission-model
+    type: supports
+    note: "Projection and sandbox modes are the enforcement surface."
+  - target: question-pack-integration
+    type: supports
+    note: "Provisioning-vs-runtime lifecycle cut; sideshow is a provisioning capability."
+provenance:
+  created_by: human
+  session: "2026-08-14-marvel-service-provider"
+  created_at: "2026-08-15"
+  reviewed_by: null
+tags:
+  - service-provider
+  - backplane
+  - architecture
+  - agent-contract
+notes: >
+  Authoritative home (marvel is the subject, per the corrected subject test in
+  aae-orc CLAUDE.md Multi-Repo Probes). Full prose: docs/design/service-provider/.
+  Related bd: aae-orc-dqhf, aae-orc-vxn8, aae-orc-b64o and the probe tickets
+  above. The aae-orc copy of this id is a mis-file, relocation-pending; this
+  copy is authoritative.
