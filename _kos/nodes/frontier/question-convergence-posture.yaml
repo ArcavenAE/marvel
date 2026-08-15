@@ -1,0 +1,121 @@
+id: question-convergence-posture
+type: question
+confidence: frontier
+title: "Convergence is configurable posture, not a fixed behavior: how do hold, the go-line, and resume-on-power compose, and what does the majordomo later operate?"
+tags:
+  - marvel
+  - convergence
+  - lifecycle
+  - majordomo
+content: |
+  **Speculative. Direction ruled by the operator 2026-08-15; nothing
+  here is tested.** Origin is aae-orc-cxdf: a bare `marvel daemon`
+  against a populated `~/.marvel` rehydrates durable desired state and
+  the reconciler spawns fresh replicas to reach it, spending real model
+  tokens from one unflagged command. Reproduced live 2026-08-09 (6
+  roles, 20 simulator sessions, real claude/codex/opencode calls in
+  ~3s).
+
+  **The precise mechanism (read before designing).** Two independent
+  things happen at start: `AdoptOrLeave` reconnects surviving tmux panes
+  (this is how detach and reexec keep agents), and *separately* the team
+  reconcile loop spawns replicas toward each Team's desired count. The
+  spend is the second one, and it fires only when a rehydrated Team has
+  **desired replicas > 0 and zero adoptable panes**. Every safe recovery
+  path (detach, reexec, SIGTERM) leaves panes alive, so adoption
+  satisfies desired and nothing spawns. The dangerous case is narrow and
+  nameable: cold convergence from zero.
+
+  **The fossil is durable, not a bug.** `marvel stop --teardown` deletes
+  sessions and kills tmux but never deletes Teams (`DeleteTeam` is only
+  reachable via `marvel delete team`). So a torn-down demo leaves its
+  desired-replica records in bolt: desired state that outlived its actual
+  state. This is legitimate, not a leak. It is the "defined state" a
+  cluster can later converge to.
+
+  **The reframe (operator ruling).** Convergence is not a fork we pick;
+  it is **configurable posture the user defines**, on a spectrum from 0
+  to hero. The mechanism stays converge-to-desired, but:
+
+  - **Default posture: hold at the start line.** Daemon up, listeners up,
+    bolt rehydrated, surviving panes adopted (everything *up*), but the
+    reconciler does not spawn toward desired. It waits at the start line
+    for the **go line**.
+  - **Dialable up to resume-on-power:** full auto-converge to the defined
+    state on start, as a setting the user turns on.
+  - Because the default holds, a fossil demo team simply sits held and
+    spends nothing until converged. The cxdf money-spend goes away
+    without deleting any intent.
+
+  **Rulings that scope this (operator, 2026-08-15):**
+
+  - **F1 is not a choice, it is configurable behavior.** Posture is a
+    user-defined setting, default hold + go-line, dialable to
+    resume-on-power. Do not hardwire either end.
+  - **F2 = no.** Teardown does not clear desired intent. Desired state
+    stays durable; the read-side posture (hold) is the answer, not a
+    write-side delete.
+  - **F3 = yes.** A plan / dry-run surface, for the operator and to
+    tighten our own dev/test cycle (run the decision without spawning
+    real processes).
+  - **F4 = not yet.** No staleness participation (age thresholds,
+    workspace-existence, expiry) for now.
+
+  **The (c) judgment layer is deferred; its control surface is not.** We
+  expose the **levers** now, to the operator, and later to the **marvel
+  majordomo**: a Lua-capable, control-plane-aware, marvel-native agent
+  responsible for assessments about the cluster's health, recovery,
+  status, update, state, and readiness. Marvel does not make the
+  converge-or-hold judgment automatically now. It exposes the controls a
+  future assessor pulls. Consequence for design: the go-line and posture
+  controls must be **control-plane operations (RPC verbs)** with the CLI
+  as one client, never convergence logic buried in `cmd/marvel`. The Lua
+  supervisor scripting already in the simulator is the shape the
+  majordomo will extend.
+
+  **The load-bearing open decision.** "Hold" must gate **cold
+  convergence toward desired** while never suppressing **steady-state
+  maintenance** of replicas that are actually alive. A team that came
+  back fully adopted after reexec and then loses a replica must still
+  restart it; that is health, not convergence. Get this line wrong and
+  hold breaks crash recovery for a running fleet.
+
+  **The keystone refactor.** Separating "what would I converge" (plan)
+  from "do it" (apply) in the team controller is the primitive that makes
+  hold implementable (hold = compute the plan, do not apply), delivers
+  F3's dry-run, and produces the startup delta report. One refactor,
+  three payoffs.
+
+  **Scope boundary.** This is the *forward* direction (start creates
+  unwanted work). It does not depend on namespace scoping (aae-orc-kvcs,
+  aae-orc-mh6g: whose state a daemon may touch) or on the *reverse*
+  direction (aae-orc-4bz2: a second daemon killing the first's fleet,
+  plus backoff-suppresses-recovery). Those are separate.
+
+  **Design work (filed 2026-08-15, sequenced by the keystone):**
+  - aae-orc-nf0w: plan/apply split in teamCtrl (keystone; blocks the
+    rest).
+  - aae-orc-nrk1: `marvel plan` / `--dry-run` convergence preview (F3).
+  - aae-orc-rwiw: convergence posture, hold-at-start-line default + the
+    go-line (converge) lever, incl. the load-bearing semantic line and
+    the majordomo control-surface constraint.
+  - aae-orc-tu2e: convergence configuration, resume-on-power (per-team +
+    daemon default) and precedence.
+
+  Origin bug: aae-orc-cxdf (kept open, blocked on rwiw: the hold default
+  is what discharges its defect).
+edges:
+  - target: question-marvel-transaction-log
+    type: derives
+    note: "durable desired state is the substrate posture governs: the transaction log is what a hold or a resume-on-power converges from"
+  - target: elem-mrvl-protocol-ssh
+    type: derives
+    note: "the go-line and posture controls are control-plane operations over this channel, so the majordomo can pull the same levers as the CLI"
+  - target: aae-orc::val-gradual-elaboration
+    type: supports
+    note: "expose the levers to the operator now, to the majordomo later: the judgment layer is deferred, its control surface is not"
+provenance:
+  created_by: human
+  session: cxdf-convergence-posture-2026-08-15
+  created_at: "2026-08-15"
+  extracted_from: "operator ruling on aae-orc-cxdf assessment (F1 configurable posture, F2 no, F3 yes, F4 not yet, majordomo levers)"
