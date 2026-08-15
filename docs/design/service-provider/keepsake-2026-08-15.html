@@ -1,0 +1,193 @@
+<title>Marvel Service-Provider Design, A Party Keepsake</title>
+<style>
+  :root{
+    --bg:#faf7f2; --ink:#1c1a17; --muted:#6a635a; --rule:#d9d0c2;
+    --card:#fffdf9; --accent:#8a5a2b; --gold:#b8862f; --stage:#efe7d8;
+  }
+  :root:not([data-theme="light"]){}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#141210; --ink:#ece5d8; --muted:#9c9284; --rule:#332d25;
+      --card:#1c1915; --accent:#d29a5a; --gold:#e0b567; --stage:#221d16;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#141210; --ink:#ece5d8; --muted:#9c9284; --rule:#332d25;
+    --card:#1c1915; --accent:#d29a5a; --gold:#e0b567; --stage:#221d16;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Iowan Old Style",Palatino,Georgia,serif;line-height:1.55;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:820px;margin:0 auto;padding:3.5rem 1.5rem 5rem}
+  .eyebrow{letter-spacing:.32em;text-transform:uppercase;font-size:.7rem;
+    color:var(--gold);font-family:ui-monospace,Menlo,monospace}
+  h1{font-size:2.4rem;line-height:1.1;margin:.4rem 0 .2rem;font-weight:600}
+  .sub{color:var(--muted);font-style:italic;margin:0 0 .2rem}
+  .date{color:var(--muted);font-size:.85rem;font-family:ui-monospace,Menlo,monospace}
+  .rule{height:1px;background:var(--rule);margin:2rem 0}
+  .lede{font-size:1.08rem}
+  h2{font-size:.8rem;letter-spacing:.28em;text-transform:uppercase;
+    color:var(--accent);font-family:ui-monospace,Menlo,monospace;margin:2.4rem 0 1rem}
+  .cast{display:grid;gap:.9rem}
+  .card{background:var(--card);border:1px solid var(--rule);border-radius:10px;
+    padding:1rem 1.15rem;display:grid;grid-template-columns:2.4rem 1fr;gap:.9rem;align-items:start}
+  .mask{font-size:1.5rem;line-height:1;margin-top:.15rem}
+  .who{font-weight:600}
+  .role{color:var(--muted);font-size:.82rem;font-family:ui-monospace,Menlo,monospace}
+  .said{margin:.35rem 0 0}
+  .walkon{border-style:dashed;opacity:.92}
+  .tag{display:inline-block;font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--gold);border:1px solid var(--rule);border-radius:999px;padding:.08rem .5rem;
+    margin-left:.4rem;vertical-align:middle;font-family:ui-monospace,Menlo,monospace}
+  .stage{background:var(--stage);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;
+    padding:1rem 1.2rem;margin:1rem 0}
+  .stage h3{margin:.1rem 0 .5rem;font-size:1rem}
+  ul{margin:.4rem 0 .2rem;padding-left:1.2rem}
+  li{margin:.25rem 0}
+  .foot{color:var(--muted);font-size:.85rem;margin-top:2.4rem;font-style:italic}
+  .curtain{text-align:center;color:var(--gold);letter-spacing:.5em;margin:2.6rem 0 0}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Dark Atelier &middot; a party keepsake</div>
+  <h1>Marvel as a Service Provider</h1>
+  <p class="sub">A design session, played out in the round.</p>
+  <p class="date">2026-08-14 / 2026-08-15 &middot; BMAD party-mode</p>
+
+  <div class="rule"></div>
+
+  <p class="lede">The house asked a single question: how can marvel hand
+  services to agents and teams of agents without becoming the monolith that
+  owns and trusts everything? What follows is who was in the room and what
+  each of them pushed the design toward. The long-form record lives in the
+  files beside this one; this page is the remembrance.</p>
+
+  <h2>The company</h2>
+  <div class="cast">
+
+    <div class="card">
+      <div class="mask">&#128202;</div>
+      <div>
+        <div class="who">Mary <span class="role">analyst</span></div>
+        <p class="said">Kept the value question honest. Named value-per-seat,
+        then ruled it too far for now and parked it behind a measurable unit
+        of work first. Pressed for buy-not-build on the message bus.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="mask">&#127917;</div>
+      <div>
+        <div class="who">Amelia <span class="role">systems design</span></div>
+        <p class="said">Worked the edges with Mary: what each area should be,
+        and just as hard, what it should not be. Held the line that the
+        analogy names rooms and never wires them.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="mask">&#127963;</div>
+      <div>
+        <div class="who">Winston <span class="role">architect</span></div>
+        <p class="said">Drew the planes-versus-fabrics distinction and the
+        backplane underneath what marvel already built: register, route,
+        supervise, meter. The one genuinely new concept of the session.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="mask">&#129504;</div>
+      <div>
+        <div class="who">Dr. Quinn <span class="role">root cause</span></div>
+        <p class="said">Insisted the missing bus is not NATS the product but a
+        structural seam in marvel. Reframed the bus as core, not an add-on.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="mask">&#9878;&#65039;</div>
+      <div>
+        <div class="who">Murat <span class="role">risk</span></div>
+        <p class="said">Priced the bootstrap cost of every abstraction and kept
+        the token-economics filter on the table: a service earns its place only
+        if it saves more than it costs to reach.</p>
+      </div>
+    </div>
+
+    <div class="card walkon">
+      <div class="mask">&#128273;</div>
+      <div>
+        <div class="who">Reese <span class="role">credentials</span> <span class="tag">walk-on</span></div>
+        <p class="said">Made the credential question subtle: marvel holds
+        session state on the agent's behalf and brokers scoped access, and the
+        one thing crossing the wall is a minted, attenuable identity. Sent
+        SOUL section 3 back for a rewrite.</p>
+      </div>
+    </div>
+
+    <div class="card walkon">
+      <div class="mask">&#128220;</div>
+      <div>
+        <div class="who">Frances <span class="role">documentation</span> <span class="tag">walk-on</span></div>
+        <p class="said">Called for the vision, overview, and readme docs to be
+        revisited so the design would not drift from the record.</p>
+      </div>
+    </div>
+
+    <div class="card walkon">
+      <div class="mask">&#128207;</div>
+      <div>
+        <div class="who">Imani <span class="role">measurement</span> <span class="tag">walk-on</span></div>
+        <p class="said">Asked for the official kilogram: a reference unit of
+        completed work, so velocity means something before anyone counts it.</p>
+      </div>
+    </div>
+
+    <div class="card walkon">
+      <div class="mask">&#127760;</div>
+      <div>
+        <div class="who">Rao <span class="role">distributed systems</span> <span class="tag">walk-on</span></div>
+        <p class="said">Stress-tested the plane contract for push-not-poll and
+        for what happens when a service is unprovisioned versus bound-but-down.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>What the room converged on</h2>
+  <div class="stage">
+    <h3>The shape, in one breath</h3>
+    <ul>
+      <li><strong>Planes</strong> are the outward seams (control, service,
+        event, trust); <strong>fabrics</strong> are the inward wiring
+        (the backplane, and its dual, the measurement fabric).</li>
+      <li>The <strong>backplane</strong> is the floor under what marvel already
+        shipped: register, route, supervise, meter. The reconciler and the
+        event ring are its first citizens.</li>
+      <li>The resource model splits and merges rather than grows:
+        <strong>Casting</strong>, <strong>Binding</strong>,
+        <strong>Projection</strong>, one <strong>Service</strong> with a
+        provider field.</li>
+      <li>Services divide by lifecycle: <strong>runtime</strong> (bd, kos,
+        flyloft, critic, code-graph, the bus) versus
+        <strong>provisioning</strong> (sideshow, callbook, curtain).</li>
+      <li>The <strong>credential boundary</strong>: marvel brokers, never
+        hoards; a minted attenuable identity is the one thing crossing the
+        wall.</li>
+      <li>The <strong>proving vertical</strong>: bd ready, through a minted
+        identity and one binding, returning go or no-go. Exercises every plane
+        with nothing speculative in the parts.</li>
+    </ul>
+    <p style="margin:.6rem 0 0;color:var(--muted)">Hard line, held all night:
+    inference informs a plane, it never enforces on one. The caretaker
+    proposes; a deterministic gate executes.</p>
+  </div>
+
+  <p class="foot">Speculative until proven. The design lives in
+  README.md, 01-brief-prd.md, 02-architecture.md, and 03-probes-and-roadmap.md
+  beside this page, and in the graph as question-marvel-service-provider-shape.
+  The walk-ons were thanked and released; the roster was left as it was.</p>
+
+  <div class="curtain">&#10022; &#10022; &#10022;</div>
+</div>
