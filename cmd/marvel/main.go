@@ -149,6 +149,7 @@ func main() {
 	root.AddCommand(stopCmd())
 	root.AddCommand(eventsCmd())
 	root.AddCommand(reapCmd())
+	root.AddCommand(orphansCmd())
 	root.AddCommand(newCtxForwardCmd())
 	root.AddCommand(newCodexCtxCmd())
 
@@ -694,15 +695,16 @@ func reapCmd() *cobra.Command {
 			}
 
 			var result struct {
-				Reaped     bool     `json:"reaped"`
-				Killed     int      `json:"killed"`
-				Candidates []string `json:"candidates"`
+				Reaped     bool                  `json:"reaped"`
+				Killed     int                   `json:"killed"`
+				Candidates []string              `json:"candidates"`
+				Orphans    []daemon.OrphanRecord `json:"orphans"`
 			}
 			if err := json.Unmarshal(resp.Result, &result); err != nil {
 				return fmt.Errorf("parse reap result: %w", err)
 			}
 
-			if len(result.Candidates) == 0 {
+			if len(result.Candidates) == 0 && len(result.Orphans) == 0 {
 				fmt.Println("Nothing to reap: every marvel tmux session is in the daemon's records.")
 				return nil
 			}
@@ -712,17 +714,111 @@ func reapCmd() *cobra.Command {
 			}
 			if result.Reaped {
 				fmt.Printf("\nReaped %d.\n", result.Killed)
-				return nil
+			} else if len(result.Candidates) > 0 {
+				fmt.Printf("\n%d unrecorded item(s), left running. Re-run with --confirm to destroy them.\n",
+					len(result.Candidates))
+				fmt.Println("These may belong to another running daemon. Check before confirming.")
 			}
-			fmt.Printf("\n%d unrecorded item(s), left running. Re-run with --confirm to destroy them.\n",
-				len(result.Candidates))
-			fmt.Println("These may belong to another running daemon. Check before confirming.")
+
+			// Orphans are reported, never reaped: a stale-token presenter is
+			// a process the operator owns (aae-orc-m4of). Naming it here so
+			// reap accounts for processes as well as panes.
+			if len(result.Orphans) > 0 {
+				fmt.Printf("\n%d orphaned agent(s) heartbeating against keys this daemon owns "+
+					"(reported, not reaped) — see 'marvel orphans'.\n", len(result.Orphans))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false,
 		"actually destroy the listed state (without this, reap only lists)")
 	return cmd
+}
+
+// orphansCmd reports the orphaned agents heartbeating against session keys
+// the daemon owns — a live process presenting a token minted for an
+// earlier incarnation of the key. It is the positive, self-announcing
+// counterpart to `reap`'s pane scan: the orphan names itself on the
+// daemon's own socket (aae-orc-m4of, k58k).
+//
+// Read-only by design. Marvel reports orphans and never kills them
+// (operator ruling 2026-08-09); an orphan is a process the operator owns,
+// and the never-destroy-what-marvel-did-not-create rule stands. Stop one
+// yourself, or clear its pane with `marvel reap --confirm` once no live
+// session depends on it.
+func orphansCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "orphans",
+		Short: "List agents heartbeating against session keys this daemon owns with a stale token",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := send(daemon.Request{Method: "orphans"})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+
+			var result struct {
+				Orphans []daemon.OrphanRecord `json:"orphans"`
+			}
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				return fmt.Errorf("parse orphans result: %w", err)
+			}
+
+			if len(result.Orphans) == 0 {
+				fmt.Println("No orphaned agents: every heartbeat is from a session this daemon minted.")
+				return nil
+			}
+
+			now := time.Now()
+			w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "SESSION\tWORKSPACE\tTEAM\tROLE\tFIRST SEEN\tLAST SEEN\tREFUSALS")
+			for _, o := range result.Orphans {
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
+					o.SessionKey,
+					orDash(o.Workspace), orDash(o.Team), orDash(o.Role),
+					relTime(now, o.FirstSeen), relTime(now, o.LastSeen), o.Count)
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			fmt.Printf("\n%d orphaned agent(s), reported not reaped. These are processes you own; "+
+				"stop them yourself, or clear a freed pane with 'marvel reap --confirm'.\n",
+				len(result.Orphans))
+			return nil
+		},
+	}
+}
+
+// orDash renders an empty coordinate as a dash so a column never collapses.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// relTime renders t as a short "Ns ago" relative to now, the form an
+// operator reads for freshness. A last-seen a few seconds old means the
+// orphan is still beating; minutes old means it has likely stopped.
+func relTime(now, t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
 }
 
 func workCmd() *cobra.Command {
