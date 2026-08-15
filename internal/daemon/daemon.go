@@ -156,6 +156,11 @@ type Daemon struct {
 	hbAuthMu sync.Mutex
 	hbAuth   map[string]*heartbeatAuthNotice
 
+	// orphans accumulates stale-token heartbeat refusals into queryable
+	// inventory: the positive, self-announcing orphan signal (aae-orc-m4of,
+	// k58k). Always non-nil. Marvel reports orphans, it never kills them.
+	orphans *orphanRegistry
+
 	// Per-session context and token accountant, fed by the adapter
 	// streams through the session manager. Always non-nil.
 	usage *usage.Accountant
@@ -286,6 +291,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		logs:     buf,
 		events:   evRing,
 		usage:    acct,
+		orphans:  newOrphanRegistry(),
 		reexec:   syscall.Exec,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
@@ -669,6 +675,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleLogs(req.Params)
 	case "events":
 		return d.handleEvents(req.Params)
+	case "orphans":
+		return d.handleOrphans()
 	default:
 		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -1082,7 +1090,12 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 			if p.SessionToken != "" {
 				cause, msg = "stale-token", "refused: token does not match the session claimed; an "+
 					"orphaned agent from an earlier daemon is still heartbeating for this key. "+
-					"Clear it with 'marvel reap --confirm', or start with 'marvel daemon --reclaim'"
+					"See 'marvel orphans'. Clear it with 'marvel reap --confirm', or start with "+
+					"'marvel daemon --reclaim'"
+				// A stale-token refusal is a positive orphan sighting: record
+				// it so the condition is queryable, not only a throttled log
+				// line that ages out of the ring (aae-orc-m4of).
+				d.orphans.observe(p.SessionKey, time.Now())
 			}
 			d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, p.SessionKey, msg)
 		}
@@ -1397,6 +1410,38 @@ func stopMode(params json.RawMessage) (teardown bool, mode string, err error) {
 // lose. Confirmation is the caller's explicit flag, never inferred, so
 // the destructive branch cannot be reached by a command that merely
 // looks like a query.
+type orphansResult struct {
+	Orphans []OrphanRecord `json:"orphans"`
+}
+
+// orphanRecords snapshots the orphan registry and decorates each key with
+// its workspace/team/role from the current session record, so the report
+// filters beside that session's other state. Resolving at read time keeps
+// the coordinates fresh across shifts that reuse a key.
+func (d *Daemon) orphanRecords() []OrphanRecord {
+	records := d.orphans.snapshot(time.Now())
+	for i := range records {
+		if sess, err := d.store.GetSession(records[i].SessionKey); err == nil {
+			records[i].Workspace = sess.Workspace
+			records[i].Team = sess.Team
+			records[i].Role = sess.Role
+		}
+	}
+	return records
+}
+
+// handleOrphans reports session keys with a live orphan presenter — a
+// process heartbeating with a token minted for an earlier incarnation of
+// the key. Read-only: marvel reports orphans and never kills them
+// (aae-orc-m4of; the never-destroy rule from PRs #123, #132 stands).
+func (d *Daemon) handleOrphans() Response {
+	data, err := json.Marshal(orphansResult{Orphans: d.orphanRecords()})
+	if err != nil {
+		return Response{Error: fmt.Sprintf("marshal orphans: %v", err)}
+	}
+	return Response{Result: data}
+}
+
 func (d *Daemon) handleReap(params json.RawMessage) Response {
 	var p struct {
 		Confirm bool `json:"confirm"`
@@ -1412,10 +1457,17 @@ func (d *Daemon) handleReap(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
+	// Orphans ride along as evidence, not as reap targets: a stale-token
+	// presenter is a process marvel will not kill (aae-orc-m4of), distinct
+	// from the unrecorded panes reap destroys. Naming both is candidate 1
+	// of m4of — reap names processes as well as panes.
+	orphans := d.orphanRecords()
+
 	if !p.Confirm {
 		result, _ := json.Marshal(map[string]any{
 			"reaped":     false,
 			"candidates": found,
+			"orphans":    orphans,
 		})
 		return Response{Result: result}
 	}
@@ -1428,6 +1480,7 @@ func (d *Daemon) handleReap(params json.RawMessage) Response {
 		"reaped":     true,
 		"killed":     killed,
 		"candidates": found,
+		"orphans":    orphans,
 	})
 	return Response{Result: result}
 }
