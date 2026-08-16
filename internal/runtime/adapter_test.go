@@ -433,6 +433,53 @@ func TestNewStreamParserRejectsUnknownFormat(t *testing.T) {
 // agent can prove about itself is what marvel put there. An adapter that
 // forwards MARVEL_SOCKET without the token hands its agent a channel it
 // cannot authenticate on, and the daemon refuses every beat.
+func TestBaseEnvStampsBeadsActor(t *testing.T) {
+	t.Parallel()
+
+	env := baseEnv(testContext())
+	want := "marvel/acme/squad-worker-g1-0"
+	if got := env["BEADS_ACTOR"]; got != want {
+		t.Errorf("BEADS_ACTOR = %q, want %q", got, want)
+	}
+}
+
+func TestAdaptersStampBeadsActor(t *testing.T) {
+	t.Parallel()
+
+	const want = "marvel/acme/squad-worker-g1-0"
+
+	for _, a := range []Adapter{&Forestage{}, &Claude{}, &Codex{}, &OpenCode{}, &Simulator{}, &Generic{}} {
+		t.Run(a.Name(), func(t *testing.T) {
+			t.Parallel()
+
+			ctx := testContext()
+			ctx.Session.Runtime.Name = a.Name()
+			ctx.Session.Runtime.Command = "/usr/local/bin/" + a.Name()
+
+			result, err := a.Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if got := result.Env["BEADS_ACTOR"]; got != want {
+				t.Errorf("BEADS_ACTOR = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestBaseEnvBeadsActorOverrideSeam(t *testing.T) {
+	t.Parallel()
+
+	// The returned map is the override seam: an adapter, or a future
+	// manifest env surface, that writes its own value after baseEnv
+	// returns must win over the composed default.
+	env := baseEnv(testContext())
+	env["BEADS_ACTOR"] = "operator/explicit"
+	if got := env["BEADS_ACTOR"]; got != "operator/explicit" {
+		t.Errorf("override lost: %q", got)
+	}
+}
+
 func TestAdaptersInjectHeartbeatToken(t *testing.T) {
 	t.Parallel()
 

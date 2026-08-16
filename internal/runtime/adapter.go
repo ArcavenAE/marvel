@@ -23,6 +23,15 @@
 // directory's .crushrc as bash at config load, ahead of any permission
 // list, and marvel workspaces are checkouts of arbitrary repositories.
 // Measured firing on `crush run` with no trust prompt (finding-020 §9).
+//
+// Identity stamping: baseEnv sets BEADS_ACTOR for every session, so a
+// marvel-managed agent writes the beads tracker as itself rather than
+// as the human default. The spawner stamps attribution because a
+// harness cannot derive its own identity from inside the pane (orc
+// finding-123; callbook findings 005 and 006). The per-session value
+// also beats any machine-global BEADS_ACTOR the pane would inherit
+// from the operator's shell, which is the point: per-agent identity
+// over one shared name.
 package runtime
 
 import (
@@ -182,6 +191,14 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 		"MARVEL_ROLE":      ctx.Role.Name,
 		"MARVEL_TEAM":      ctx.Team.Name,
 		"MARVEL_WORKSPACE": ctx.Workspace.Name,
+		// The same identity, stamped for the beads tracker. Session
+		// names are <team>-<role>-g<generation>-<index>, so the value
+		// is deterministic and unique per agent session. The map is
+		// the override seam: an adapter, or a future manifest env
+		// surface, that sets its own value after baseEnv returns wins.
+		// The rig column is deliberately not set here; its semantics
+		// are gated on the bd HEAD survey (aae-orc-usohe).
+		"BEADS_ACTOR": "marvel/" + ctx.Workspace.Name + "/" + ctx.Session.Name,
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
