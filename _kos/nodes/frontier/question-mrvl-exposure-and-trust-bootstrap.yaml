@@ -1,0 +1,171 @@
+id: question-mrvl-exposure-and-trust-bootstrap
+type: question
+confidence: frontier
+title: "Should mrvl:// default to all interfaces, and can the client-side trust bootstrap work as documented?"
+tags:
+  - marvel
+  - mrvl
+  - security
+  - remote
+content: |
+  The mrvl:// remote path was unexercised until 2026-08-25. Measuring
+  first use turned up three things: a bind default with an undocumented
+  blast radius, a trust handshake whose two commands each point at the
+  other, and a confirmation that authorization is binary and total.
+
+  MEASURED 2026-08-25 (finding-029, brew binary 0.1.0-alpha...2f76ccf,
+  $0.00 spend, setup only). Pre-state genuinely virgin: no keys/, no
+  known_hosts, no config.yaml, no authorized_keys, no host key.
+
+  THE BIND DEFAULT IS ALL INTERFACES, AND IT IS UNDOCUMENTED.
+  `marvel daemon --mrvl` with no argument listens on `*:6785`, not
+  loopback:
+
+      lsof: marvel 51098 skippy 8u IPv6 TCP *:6785 (LISTEN)
+      nc -z -w2 192.168.100.196 6785 -> succeeded
+
+  The flag's help text ("use --mrvl=:<port> for a custom port") is
+  about the PORT. Neither it nor docs/keys.md states the interface.
+  docs/keys.md's daemon-side step is `marvel daemon --mrvl  # start
+  daemon + SSH listener`.
+
+  The first-use consequence: the natural first move for a new operator
+  is "remote administration, let me try it on this machine first," and
+  that opens an administrative port to the whole local network on the
+  first documented command. That is exposure of an AUTHENTICATING port
+  rather than an open door — see the fail-closed results below — so the
+  finding is that the default's blast radius is undocumented, not that
+  it is unguarded.
+
+  FAIL-CLOSED, VERIFIED THREE WAYS, and this is the reassuring half:
+
+  1. Empty authorized_keys rejects everything. The state after a first
+     --mrvl start is no authorized_keys file at all, and a valid but
+     unauthorized key is refused ("unable to authenticate, attempted
+     methods [none publickey]"). Empty is NOT fail-open, which is worth
+     stating because the opposite convention exists in the wild.
+  2. TOFU refuses non-interactively exactly as docs/keys.md promises,
+     naming the fingerprint and the remedy. Correct behavior for an
+     unattended operator: it neither hangs on a prompt nor silently
+     accepts. The docs called this right.
+  3. Host trust does not confer client authorization. A second keypair,
+     with the host key already in known_hosts, is still refused. The
+     two trust directions are properly independent.
+
+  Rejections are logged daemon-side WITH the offending fingerprint,
+  which is more telemetry than the local socket path produces.
+
+  THE TRUST BOOTSTRAP IS CIRCULAR AS DOCUMENTED. docs/keys.md's TL;DR
+  gives a client-side-first sequence (generate, show, add-cluster,
+  "it just works") with `keys trust <cluster>` as the non-interactive
+  escape. But `keys trust` requires authentication to SUCCEED first:
+
+      $ marvel keys trust lan
+      Error: ssh: unable to authenticate, attempted methods [none publickey]
+
+  So the connection error says "run keys trust", and keys trust fails
+  for lack of authorization. Two commands each pointing at the other.
+  The way out is daemon-side `keys authorize` FIRST, after which trust
+  succeeds and the connection works.
+
+  On one host, where the operator is both admin and client, this costs
+  a minute. On a real two-machine setup it is a genuine blocker in the
+  direction that matters: a client cannot pre-trust a host key before
+  the admin authorizes them, so the documented ordering is
+  unachievable and the error text sends them to a command that cannot
+  yet work.
+
+  Two observations that bound a fix without being one: the doc ordering
+  is the cheap correction (daemon-side authorize belongs before
+  client-side trust in the TL;DR); and `keys trust` demonstrably HAS
+  the host key before authorization completes, because the earlier
+  connection error printed its fingerprint. Whether recording it at
+  that point is acceptable is a trust-model question — it is the exact
+  moment TOFU is meant to be a decision — so it belongs to that
+  model's owner rather than here.
+
+  AUTHORIZATION IS BINARY AND TOTAL, which measures the current state
+  of what question-permission-model already anticipates.
+  sshserver.go:50 sets `PublicKeyCallback: s.authorizeKey`, and
+  authorizeKey (:147) is a membership test against
+  ~/.marvel/authorized_keys. No scopes, no roles, no read-only mode,
+  no per-method checks. One check gates 26 RPC methods:
+
+      apply budgets capture delete describe endpoint endpoints events
+      get heartbeat inject logs orphans policies reap reexec run scale
+      session sessions shift stop team teams workspace workspaces
+
+  Confirmed by executing a MUTATING verb over the wire (`reap`), not by
+  reading the code alone. So any authorized key can inject keystrokes
+  into any agent's pane, stop the daemon, delete resources, scale,
+  shift, and reexec the binary. The README calls inject "executive
+  privilege"; over mrvl:// that privilege shares its single gate with
+  `get sessions`.
+
+  This is a coherent v1 posture for a single operator and the roadmap
+  already places multi-user work at M1, so it is not an oversight. It
+  is recorded because it is the measured starting point for
+  question-permission-model's layer 2 ("role-based RPC authorization
+  on daemon methods. Workers get heartbeat + query. Supervisors get
+  inject + scale + shift + capture"), which does not exist yet.
+
+  THE COMPOSITION IS THE PART WORTH A POSITION. Each element is
+  defensible alone: unencrypted client keys are what make the path
+  headless (run-01b), an all-interfaces bind is what makes remote
+  administration work at all, binary auth is a reasonable v1. Together,
+  an unencrypted key at rest (0600, cipher none, kdf none) is a single
+  file whose compromise yields full administrative control of the fleet
+  from anywhere on the network. Three independent defaults, one
+  composed exposure.
+
+  WHAT DID NOT ASSUME A HUMAN, since that is the campaign's standing
+  question: keys generate (stdin closed), keys generate --name/--comment,
+  keys authorize, config add-cluster, keys trust (once authorized),
+  daemon --mrvl (auto-creates the host key), and TOFU — which REFUSES
+  rather than prompting, the correct headless behavior. Nothing on the
+  remote path assumed an interactive human. The campaign's predicted
+  failure class now fails to appear across both the local install path
+  (run-01b) and the remote path.
+
+  ACCURATE DOCS WORTH CREDITING: every mode in docs/keys.md's
+  permission table matched reality exactly (0700 dirs, 0600 private
+  keys and authorized_keys, 0644 pubkeys and known_hosts), including
+  the OpenSSH-style 0600 enforcement and the exact chmod remedy in its
+  error text. Also `config add-cluster` does NOT switch
+  current_cluster, so adding a cluster cannot hijack later unqualified
+  commands.
+
+  OPEN:
+
+  - Should the bind default be loopback with opt-in widening, or all
+    interfaces with the blast radius documented? Either is defensible;
+    silence is the thing that is not.
+  - Can the trust bootstrap be made non-circular without weakening
+    TOFU? The fingerprint is available at the failing handshake, which
+    is either the fix or precisely the wrong moment to record it.
+  - Does binary authorization need a read-only grade before M1's full
+    principal model? A monitoring client that only needs `get` and
+    `events` currently gets `inject` and `stop` too.
+  - Whether an all-interfaces default composes acceptably with
+    multi-host (question-multi-host), where more daemons mean more
+    exposed ports rather than one.
+
+  Provenance note: evidence from an agent-operated recon campaign (orc
+  issues #239, #243) rather than a marvel session. Measurement only; no
+  fix proposed and the trust-model and bus questions left to their
+  owners.
+edges:
+  - target: elem-mrvl-protocol-ssh
+    type: supports
+    note: "first measured exercise of that element's TOFU and client-key machinery; confirms the documented off-TTY refusal and permission table, and finds the bind default and bootstrap ordering it does not specify"
+  - target: question-permission-model
+    type: supports
+    note: "measures the current state of layer 2: authorization is one membership test gating all 26 RPC methods, so the role-based capability split that node proposes has no implementation yet"
+  - target: elem-data-directory-permissions
+    type: supports
+    note: "every mode in the documented ~/.marvel table verified against reality on a virgin host, including the 0600 private-key enforcement"
+provenance:
+  created_by: agent
+  session: marvel-recon-243-mrvl-first-use-2026-08-25
+  created_at: "2026-08-25"
+  discovered_from: finding-029-mrvl-remote-first-use
