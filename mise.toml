@@ -15,4 +15,4 @@
 # Additive on purpose: go and gofumpt keep resolving the way they do
 # today (global mise config, or CI's own install step). See issue #119.
 [tools]
-golangci-lint = "2.12.2"
+golangci-lint = "2.13.1"
