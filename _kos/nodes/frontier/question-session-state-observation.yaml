@@ -1,0 +1,139 @@
+id: question-session-state-observation
+type: question
+confidence: frontier
+title: "What should a session's state be derived FROM, when pane liveness cannot distinguish finished from dead from blocked?"
+tags:
+  - marvel
+  - observability
+  - lifecycle
+  - session
+content: |
+  Marvel infers a session's state from whether its tmux pane exists.
+  That one signal is asked to answer three different questions, and it
+  can only answer one of them.
+
+  MEASURED 2026-08-24 (finding-027, status truth table, tree build
+  0c59baa). Three cells, each with marvel's reported state beside
+  ground truth sampled from outside marvel (ps, tmux, pane capture):
+
+  | cell | reported | real process | real work | spend |
+  |---|---|---|---|---|
+  | dies (SIGKILL) | failed/unhealthy | dead | never finished | n/a |
+  | one-shot completes | crashed/unhealthy | exited 0 (end_turn) | DONE | RE-PAYS |
+  | blocked on modal dialog | RUNNING/unknown | alive, idle, CPU 0.0% | NEVER STARTED | none |
+
+  THE DEFECT IS ONE MISSING INPUT, NOT THREE BUGS. Cells 1 and 3 emit
+  the same event from the same signal with opposite underlying truth:
+
+      cell 3 (died):      session.crashed  "pane %1 gone"
+      cell 1 (succeeded): session.crashed  "pane %1 gone"
+
+  Nothing downstream can recover the distinction because it was
+  discarded at the point of observation. Cell 2 is the same defect
+  inverted: pane PRESENCE read as work happening.
+
+  THE CONTROL IS WHAT MAKES THIS PRECISE. Cell 3 reports truth in ~2
+  seconds, so the inference mechanism is sound and the reap path is
+  correct for the case it was written for. What fails is that pane
+  liveness is the ONLY input. This is why the finding refuses to be
+  three tickets: fixing the crashed-vs-succeeded label without adding
+  an input leaves cell 2 exactly as wrong as before.
+
+  `succeeded` NEVER FIRES. Grepped the whole event ring across an
+  8-minute window: zero occurrences. The state is in the documented
+  lifecycle (pending → running → succeeded/failed, CLAUDE.md Resource
+  Model) and no code path reaches it. A satisfied one-shot role
+  therefore never terminates — the reconciler's desired-vs-actual
+  comparison cannot be satisfied by a process whose correct end state
+  is "not running."
+
+  THE RESPAWN FLOOR MATTERS INDEPENDENTLY OF THE DOLLAR, and this is
+  the part a spend fix would leave standing. Measured free with
+  /usr/bin/true (same reap path, no model): 4 spawns in 8 minutes,
+  backoff 60s → 1m → 3m → 4m toward the documented 5-minute ceiling.
+  It does not converge; it settles at ~12 respawns/hour indefinitely.
+  Even at zero model cost that is a role that never finishes.
+
+  EACH RESPAWN RE-PAYS IN FULL. Three cycles of a 7-token prompt,
+  identical in=3 out=4 every time, three separate charges: $0.2076 +
+  $0.1377 + $0.1377. Steady state $0.1377/cycle → $1.65/hour →
+  $39.66/day, and that is the FLOOR for seven tokens. Not a cached
+  retry. (Measured against Bedrock haiku; the cold-cache first turn
+  costs more than the steady state, which is the only variance.)
+
+  A BLOCKED SESSION IS HEALTHY UNDER EVERY HEALTHCHECK MARVEL HAS,
+  which closes off the obvious cheap answer. `process-alive` cannot
+  catch cell 2 — internal/team/controller.go:636, "process-alive is
+  handled by ReapDead. Pane exists → healthy" — because the pane IS
+  alive. `heartbeat` does not help either: an interactive claude
+  session emits none unless `context_feed` is configured, so the
+  staleness path never engages for the default interactive role.
+
+  TWO DIFFERENT SIZES OF GAP, and they should not be conflated:
+
+  1. Cell 1's information EXISTS AND IS UNROUTED. The stream-fed
+     adapter puts `agent.session.ended  exit 0 (end_turn)` on marvel's
+     own ring ~2 seconds BEFORE the reap. The state machine does not
+     consult it. This is a wiring question.
+  2. Cell 2's information DOES NOT EXIST anywhere in marvel. No
+     channel reports "this harness is waiting on a human." This is a
+     new-channel question, and it is the harder half.
+
+  THE REQUIREMENT, stated without naming an implementation: a
+  session's state should derive from what the agent reports about its
+  own work, with pane liveness as a FALLBACK rather than the primary
+  signal. Cell 3 shows the fallback is sound; cells 1 and 2 show it is
+  insufficient alone.
+
+  OPEN:
+
+  - Whether `replicas` on a headless role is a CONCURRENCY target or a
+    COMPLETION target. Marvel has Deployment semantics only; a
+    satisfied one-shot wants Job semantics. This is a resource-model
+    decision, not a bug fix, and it gates any terminal-state work.
+  - What reports cell 2. A first-turn readiness signal, a pane
+    quiescence heuristic (fragile), or treating harness consent
+    surfaces as a spawn-time provisioning obligation marvel
+    pre-satisfies. Only the last scales to unattended fleets and it is
+    the most invasive.
+  - Whether stale metrics on a dead session are the same disease.
+    Reproduced twice (run-01 22:52:36, finding-027 cell 3): RSS and
+    CPU outliving the process by one or more ticks. Metrics outliving
+    the process is state outliving the truth in a second place.
+  - Whether the non-stream adapters can participate at all. The
+    generic and interactive paths have no structured output, so
+    whatever channel answers cell 2 cannot assume a parseable stream.
+
+  METHOD HAZARD WORTH KEEPING, because it will recur on any consent
+  surface: first-run gates are ONE-SHOT PER SCOPE. Cell 2's first
+  attempt was a false negative — run-01's own `marvel inject "" -e`
+  had permanently set `hasTrustDialogAccepted` for the aae-orc path,
+  disarming the gate under test. Marvel reported `running` and the
+  pane sat at an empty prompt: genuinely idle, not blocked, so the row
+  would have been wrong. Reproduced in a directory verified absent
+  from ~/.claude.json first. A prior run can silently disarm what a
+  later run measures.
+
+  Provenance note: this node's evidence comes from an agent-operated
+  recon campaign (orc issue #239) rather than from a marvel session.
+  The runs it descends from are orc docs/runs/marvel-run-01/run-01.md
+  and run-01b.md; the defects filed from them are ArcavenAE/marvel#201
+  (re-pay), #202 (inject submit), #203 (papercuts, item 2 is cell 2's
+  reported-running gap). Scope was recon only: no fix was proposed and
+  the campaign explicitly reserved the comms/bus layer to the
+  conductor.
+edges:
+  - target: elem-agentic-resource-matrix
+    type: supports
+    note: "spend is a matrix row, and a role that re-buys finished work meters against it wrongly; enforcement locus 2 (runtime admission/metering) is the locus this lands on"
+  - target: question-agent-communication-broker
+    type: derives
+    note: "cell 2's missing channel is a state-observation channel; the bus question owns where such a report would travel, and finding-027 deliberately stops short of proposing it"
+  - target: question-channel-observation-cost
+    type: supports
+    note: "sibling shape: that node asks what a reading COSTS, this one asks what the state should be derived FROM; both find pane/harness signals answering questions they were not measuring"
+provenance:
+  created_by: agent
+  session: marvel-run-01-truth-table-2026-08-24
+  created_at: "2026-08-24"
+  discovered_from: finding-027-status-truth-table
