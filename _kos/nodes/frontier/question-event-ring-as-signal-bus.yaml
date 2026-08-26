@@ -1,0 +1,149 @@
+id: question-event-ring-as-signal-bus
+type: question
+confidence: frontier
+title: "Should the event ring carry structure and be readable by the control plane, or stay a display log with a separate signal path?"
+tags:
+  - marvel
+  - observability
+  - events
+  - lifecycle
+content: |
+  Marvel's event ring is a well-populated, well-typed ledger that no
+  decision in marvel reads. This node holds the question of whether
+  that is the defect or the design.
+
+  MEASURED 2026-08-25 (finding-028, event-ring inventory, brew binary
+  0.1.0-alpha...2f76ccf; $0.00 spend). Three separable facts:
+
+  1. THE VOCABULARY IS LARGER AND HEALTHIER THAN EXPECTED. 35 kinds
+     (23 control-plane, 12 agent-stream), every one with a live
+     non-test emit site. No dead vocabulary. This is a ledger that is
+     actually written.
+
+  2. THE RING CANNOT HOLD STRUCTURE. `events.Event`
+     (internal/events/events.go:227) has exactly Seq, Timestamp, Kind,
+     Severity, Workspace, Team, Role, Session, Actor, Generation,
+     Message. No payload field — no Fields, Attrs, Data, Detail, or
+     map. Every kind-specific fact (exit code, tokens, cost, tool
+     name, pane id, backoff) survives only as prose inside Message,
+     capped at 160 chars (maxRingMessage) so one event renders on one
+     terminal line.
+
+  3. NOTHING READS IT. The one non-test caller of Ring.Snapshot
+     (events.go:367) is the `events` RPC at daemon.go:746, which
+     marshals to the CLI. internal/team and internal/session call
+     Emit and never read. Path: adapter → typed payload → prose string
+     → ring → RPC → human terminal, with no branch into any decision.
+
+  THE UPSTREAM TYPING IS GOOD, WHICH IS WHAT MAKES THE LOSS SHARP.
+  internal/runtime/events defines ten payload structs.
+  SessionEndedData{Reason, ExitCode, Usage, Metering} is exactly the
+  discrimination finding-027 needed, and its doc comment says so
+  ("ExitCode 0 = success"). Metering even distinguishes "not reported"
+  from "zero" via a nil pointer, deliberately.
+
+  It dies at one assignment, bridge.go:36, `Message: summarize(ev)`.
+  And twelve lines earlier, at :48, the bridge READS ExitCode — to
+  choose info vs warning severity. So marvel inspects the field that
+  answers "succeeded or died," uses it for colour, and discards it.
+  Severity is the only surviving trace and the reap path does not
+  consult severity.
+
+  THE MEASURED PAIR, generic adapter, one team, $0.00:
+
+      13:33:21  warning  session.crashed  ring/led-done-g1-0    pane %1 gone   <- /usr/bin/true, SUCCEEDED
+      13:33:37  warning  session.crashed  ring/led-victim-g1-0  pane %2 gone   <- sleep, SIGKILLED
+
+  Same kind, same severity, same message shape, opposite truth. Only
+  the pane number differs.
+
+  THIS REFRAMES finding-027's CELL-1 GAP. That finding called the
+  completion signal "present but unrouted," which implied wiring one
+  field. The inventory says otherwise: there is nowhere on
+  events.Event to put structure AND no reader to route it to. Adding
+  ExitCode to the prose would change nothing, because no code reads
+  the prose either.
+
+  DIED-VS-COMPLETED IS ALREADY DECIDABLE FROM THE RING AS IT STANDS,
+  which is the most actionable thing here. The question "did an
+  agent.session.ended arrive for this session before its pane
+  vanished?" is answerable from two events that both already exist,
+  both timestamped, both sequenced (Seq exists precisely to order
+  them). Nothing joins them — not because the join is hard, but
+  because nothing reads the ring at all.
+
+  BLOCKED-ON-A-HUMAN IS HALF-BUILT ALREADY. agent.permission.requested
+  and agent.auth.required both exist, both warning severity, both
+  meaning the harness is waiting on a person. They fire only for
+  stream-capable launches, so an interactive TUI's first-run consent
+  dialog (finding-027 cell 2) fires neither. The concept ships on the
+  side of the fence that has a stream; only the interactive path lacks
+  it. That is a narrower gap than "no vocabulary for blocked."
+
+  THE INSTRUMENT HAS NO MACHINE INTERFACE, and this binds the rest of
+  the recon campaign. `marvel events` has no --output json / -o flag
+  (only --follow, --kind, --lines, --list-kinds, --role, --session,
+  --team, --warnings, --workspace). The daemon marshals Event to JSON
+  over the RPC and the CLI renders a fixed-width table, so an external
+  consumer scrapes padded columns, and Seq/Actor/Generation are not
+  all rendered — unreachable from outside without writing a client.
+  Every measurement in this campaign so far has come from grep against
+  that table.
+
+  THE QUESTION, and it is genuinely open rather than rhetorical. The
+  ring's 160-char cap and one-line-per-event discipline are coherent
+  design for operator scanning. A log that is good at being a log is
+  not a bug. So which of these is right:
+
+  (a) The ring grows a typed payload field and gains readers, becoming
+      the control plane's signal path as well as its display log. Risk:
+      one structure serving two consumers with opposite requirements
+      (humans want one scannable line, state machines want complete
+      structure), which is how the Message field came to carry
+      everything in the first place.
+  (b) The ring stays a display log, and state observation gets its own
+      path from adapter to state machine that never round-trips
+      through prose. Risk: two parallel channels emitting from the same
+      call sites, which drift.
+  (c) The adapter's typed events become the primary artifact, with the
+      ring as one subscriber and the state machine as another. Neither
+      derives from the other's rendering.
+
+  Not proposing one. (c) is where the shape of internal/runtime/events
+  already points, since the typed payloads exist before either
+  consumer, but the decision belongs with whoever owns the director/bus
+  boundary — and per the campaign's standing rule, the bus is the
+  conductor's, not this probe's.
+
+  OPEN, beyond the (a)/(b)/(c) choice:
+
+  - Whether a payload field would breach the ring's bounded-memory
+    contract. The ring is fixed-size by design; arbitrary structure per
+    event is unbounded where a 160-char string is not.
+  - Whether non-stream adapters can participate at all. Generic and
+    interactive launches produce no typed payloads, so any
+    structure-carrying design has a permanent second class of session
+    that supplies nothing. This is the same constraint
+    question-session-state-observation raises from the state side.
+  - Whether --output json should exist independently of all of the
+    above. It is a small, separable change that would unblock external
+    metering without touching the ring's shape.
+
+  Provenance note: this node's evidence comes from an agent-operated
+  recon campaign (orc issues #239, #242) rather than a marvel session.
+  Scope was measurement only; no fix or schema was proposed.
+edges:
+  - target: question-session-state-observation
+    type: supports
+    note: "that node asks what state should derive FROM; this one inventories what is already emitted and finds the ledger unreadable, which sharpens its cell-1 gap from 'unrouted field' to 'no destination and no reader'"
+  - target: question-agent-communication-broker
+    type: derives
+    note: "the (a)/(b)/(c) choice is a bus-boundary question; recorded, deliberately not answered, since the comms layer is the conductor's"
+  - target: elem-agentic-resource-matrix
+    type: supports
+    note: "Metering payloads (cost, tokens, ttft, cache accounting) are matrix-row data that reaches a prose string and stops, so enforcement locus 2 has no structured feed today"
+provenance:
+  created_by: agent
+  session: marvel-recon-242-event-ring-2026-08-25
+  created_at: "2026-08-25"
+  discovered_from: finding-028-event-ring-inventory
