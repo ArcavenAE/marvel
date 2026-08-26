@@ -104,6 +104,69 @@ content: |
 
   Origin bug: aae-orc-cxdf (kept open, blocked on rwiw: the hold default
   is what discharges its defect).
+
+  **FIRST EMPIRICAL TEST, 2026-08-25 (finding-030, orc #244 + #245, $0.06).**
+  This node opened "Speculative ... nothing here is tested." It is now
+  tested on the forward path, and **the mechanism above is confirmed
+  exactly as written, including its own narrowing.**
+
+  Measured against a live 3-agent interactive team (alpha ×2, beta ×1,
+  haiku), positive control first, ground truth from tmux/ps/capture:
+
+  - **Restart with panes alive → adoption, no spawn, no spend.** Three
+    `reconcile.adopted` events; pane IDs (%1/%4/%3), PIDs
+    (53639/55932/53663) and per-agent spend ($0.04/$0.00/$0.02) all
+    **identical** across the restart. Verified three ways rather than
+    trusting the event. This is the node's "every safe recovery path
+    leaves panes alive, so adoption satisfies desired and nothing
+    spawns," measured.
+  - **Restart with zero adoptable panes → whole-team respawn, and still
+    no re-pay.** Killed the tmux server so desired=3 / actual=0, then
+    restarted: three `session.crashed`, then the full team back in ~2
+    minutes. Spend after the wave: **$0.00 on all three, reset not
+    re-paid.** Each respawned agent sat idle at an empty prompt.
+
+  **The discriminator is a manifest field, not the restart.** The
+  interactive roles declare no `prompt`, and `api.Runtime.Prompt`
+  (types.go:112) is documented as required *only* in headless mode. So
+  cold convergence from zero spawns processes; whether that **costs**
+  depends on whether the respawned session carries declared work:
+
+  | role kind | carries work | respawn outcome | per cycle |
+  |---|---|---|---|
+  | headless (`mode`+`prompt`) | yes, by requirement | re-executes the prompt | full re-pay ($0.1377 measured, finding-027) |
+  | interactive (no prompt) | no | idle agent at a prompt | $0.00 |
+
+  So cxdf's blast radius is **team-size × per-cycle cost for headless
+  roles only**, and a headless role is by construction a one-shot —
+  which makes cxdf finding-027's re-pay loop at larger N rather than an
+  independent defect. The dangerous manifest is a **headless role with
+  `replicas > 1`**: at finding-027's measured floor a 3-replica headless
+  role is ~$0.41/cycle → ~$5/hour → ~$119/day, and real prompts cost more
+  than seven tokens. That figure is arithmetic over a measured per-cycle
+  cost; the configuration was NOT run.
+
+  **Consequence for the hold default (rwiw).** Hold still discharges
+  cxdf, and this measurement sharpens what it must gate. The costly event
+  is not "spawn on cold convergence" in general — it is spawning a
+  session that carries declared work. An interactive team converging cold
+  from zero is nearly free. That is a reason hold's semantic line
+  ("gate cold convergence, never suppress steady-state maintenance")
+  might also want a cost dimension: the same posture is cheap for one
+  role kind and expensive for the other, and the operator cannot see
+  which from `get teams`.
+
+  **Also measured, and it is the more serious finding of that run.** The
+  reconciler converged perfectly over a team that was **100% non-working**:
+  desired 3 = actual 3 = panes 3, `running`/`unknown` on every row, while
+  all three agents sat blocked on the harness's first-run consent dialog
+  with $0.00 spend and a ring holding only three `session.created` lines.
+  A converged team is not a working team, and no reconciliation invariant
+  distinguishes them. See question-session-state-observation; the
+  blocked-pane hazard is first-launch-only per directory (trust persists
+  in ~/.claude.json), so reconciler-driven replacements come up clean —
+  which means the failure is worst exactly where it is least visible, at
+  first launch of a new workspace, unattended.
 edges:
   - target: question-marvel-transaction-log
     type: derives
@@ -114,8 +177,14 @@ edges:
   - target: aae-orc::val-gradual-elaboration
     type: supports
     note: "expose the levers to the operator now, to the majordomo later: the judgment layer is deferred, its control surface is not"
+  - target: question-session-state-observation
+    type: supports
+    note: "finding-030: the reconciler converged perfectly over a 100%-blocked team, so convergence invariants cannot detect a non-working fleet; posture governs whether to spawn, not whether what spawned works"
 provenance:
   created_by: human
   session: cxdf-convergence-posture-2026-08-15
   created_at: "2026-08-15"
   extracted_from: "operator ruling on aae-orc-cxdf assessment (F1 configurable posture, F2 no, F3 yes, F4 not yet, majordomo levers)"
+  tested_by: finding-030-reconciler-convergence-and-restart-repay
+  tested_at: "2026-08-25"
+  tested_session: marvel-recon-244-245-convergence-repay-2026-08-25
