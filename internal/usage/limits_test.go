@@ -252,9 +252,10 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 				if got == "" {
 					t.Fatal("learned window overrode the manifest silently; expected a warning naming which won")
 				}
-				// Names both numbers (winner and loser) and the model, in
-				// the shape of the neighbouring stream and feed warnings.
-				for _, want := range []string{"222222", "111111", "claude-haiku-4-5"} {
+				// Names the winner (learned) and the manifest as the value
+				// being overridden — the role, not just the presence, so an
+				// argument swap cannot pass — plus the model.
+				for _, want := range []string{"222222", "overriding the manifest's 111111", "claude-haiku-4-5"} {
 					if !strings.Contains(got, want) {
 						t.Errorf("warning %q does not contain %q", got, want)
 					}
