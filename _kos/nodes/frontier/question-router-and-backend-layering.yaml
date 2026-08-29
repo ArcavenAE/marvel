@@ -496,6 +496,9 @@ edges:
   - target: elem-agentic-resource-matrix
     type: supports
     note: "a router changes the values and attribution of the cache-locality and token-spend rows without adding a row"
+  - target: finding-031-window-key-narrower-than-fact
+    type: derives
+    note: "the l8v1 sub-probe: the same key-narrowness bites inside internal/usage on two rungs (table rung 5, learned rung 2); repair tasked out (provenance grade + refuse-on-ambiguous riding a spawn-time discriminator), no new primitive; harvests up to orc question-silent-success-instruments"
 provenance:
   created_by: agent
   session: marvel-eooi-router-backend-2026-08-09
