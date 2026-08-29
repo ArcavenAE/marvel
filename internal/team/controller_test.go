@@ -2341,3 +2341,103 @@ func TestShiftRepairBeforeTurnDoesNotCountAsLaunch(t *testing.T) {
 		}
 	}
 }
+
+// seedSession inserts a session directly into the store without spawning a
+// tmux pane. PaneID stays empty, so ReapDead skips it (it treats an empty
+// pane as "already reaped or never had one") and evaluateHealth skips it
+// unless it is Running. This lets a counting test construct a precise mix of
+// live and terminal new-generation rows without racing the session
+// lifecycle. Runtime and CreatedAt default to a sleeper / now when unset.
+func seedSession(t *testing.T, store *api.Store, s api.Session) {
+	t.Helper()
+	if s.Runtime.Command == "" {
+		s.Runtime = api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	}
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = time.Now().UTC()
+	}
+	if err := store.CreateSession(&s); err != nil {
+		t.Fatalf("seed session %s: %v", s.Key(), err)
+	}
+}
+
+// enterLaunchingShift puts an already-created team into a shift's launching
+// phase over a single role, as InitiateShift would, but without driving the
+// reconciler — the counting tests seed the generation rows themselves.
+func enterLaunchingShift(t *testing.T, store *api.Store, teamKey, role string) {
+	t.Helper()
+	if err := store.UpdateTeam(teamKey, func(live *api.Team) error {
+		live.Generation = 2
+		live.Shift = api.ShiftState{
+			Phase:         api.ShiftLaunching,
+			OldGeneration: 1,
+			Roles:         []string{role},
+			RoleIndex:     0,
+			StartedAt:     time.Now().UTC(),
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("enter launching shift: %v", err)
+	}
+}
+
+// TestShiftLaunchDoesNotCountFailedNewGenTowardLaunch is the create-gate half
+// of aae-orc-6kgq. shiftLaunch counted new-generation rows in any state
+// against the replica count, so a Failed successor satisfied the launch and
+// suppressed the live replacement that should have taken its place. The gate
+// must count only live rows (api.SessionState.CountsAsAlive), exactly as
+// reconcileRoleAt already does on the non-generation query.
+func TestShiftLaunchDoesNotCountFailedNewGenTowardLaunch(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-6kgq-create", "squad", []api.Role{
+		{Name: "worker", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-6kgq-create/squad"
+
+	// A single dead new-generation row, no live successor. Before the fix
+	// len(newGen)==1 satisfies replicas=1 and nothing is spawned.
+	enterLaunchingShift(t, store, teamKey, "worker")
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-0", Workspace: "test-6kgq-create", Team: "squad", Role: "worker", Generation: 2, State: api.SessionFailed})
+
+	ctrl.ReconcileOnce()
+
+	gen2 := store.ListSessionsByTeamRoleGeneration("test-6kgq-create", "squad", "worker", 2)
+	if api.CountAlive(gen2) < 1 {
+		t.Fatalf("no live gen-2 successor spawned: the Failed row suppressed the replacement (alive=%d of %d rows)",
+			api.CountAlive(gen2), len(gen2))
+	}
+}
+
+// TestShiftLaunchDeadNewGenRowDoesNotBlockDrainGate is the ready-gate half of
+// aae-orc-6kgq. With the live successors already at replica count, a leftover
+// dead new-generation row must not keep the launch from advancing to drain.
+// Feeding allReady the unfiltered slice let the Failed row fail the readiness
+// check and hold the shift in launching forever.
+func TestShiftLaunchDeadNewGenRowDoesNotBlockDrainGate(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-6kgq-drain", "squad", []api.Role{
+		{Name: "worker", Replicas: 2, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-6kgq-drain/squad"
+
+	enterLaunchingShift(t, store, teamKey, "worker")
+	// Two live successors satisfy replicas=2; one extra dead row must not
+	// block the gate.
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-0", Workspace: "test-6kgq-drain", Team: "squad", Role: "worker", Generation: 2, State: api.SessionRunning})
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-1", Workspace: "test-6kgq-drain", Team: "squad", Role: "worker", Generation: 2, State: api.SessionRunning})
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-2", Workspace: "test-6kgq-drain", Team: "squad", Role: "worker", Generation: 2, State: api.SessionFailed})
+
+	ctrl.ReconcileOnce()
+
+	team, _ := store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftDraining {
+		t.Fatalf("phase = %s, want draining: two live successors are ready, the dead row must not block the gate",
+			team.Shift.Phase)
+	}
+}

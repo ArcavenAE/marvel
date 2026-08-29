@@ -1070,12 +1070,20 @@ func (c *Controller) abortStuckShift(t *api.Team) {
 }
 
 func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
-	newGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
+	// Count only LIVE new-gen rows against the replica count, the same
+	// predicate reconcileRoleAt uses. The store query stays all-states
+	// (three of its five callers depend on that; see nextIndex, shiftDrain,
+	// abortStuckShift), so the live filter belongs at this call site: a
+	// Failed or Crashed successor must not satisfy the launch and suppress
+	// the live replacement that should take its place. See aae-orc-6kgq.
+	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
 	desired := role.Replicas
 
-	if len(newGen) < desired {
-		// Create remaining new-gen sessions.
-		for i := len(newGen); i < desired; i++ {
+	if len(live) < desired {
+		// Create remaining new-gen sessions. nextIndex counts all states,
+		// so a dead row keeps its index and the replacement gets a fresh,
+		// non-colliding one.
+		for i := len(live); i < desired; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
 			sess := &api.Session{
 				Name:       name,
@@ -1092,8 +1100,12 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 		}
 	}
 
-	// All new-gen sessions created — check readiness, then transition to draining.
-	newGen = c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
+	// All new-gen sessions created — check readiness, then transition to
+	// draining. Filter to live rows again so a leftover dead row neither
+	// counts toward "launched" nor fails allReady and holds the shift in
+	// launching forever.
+	live = aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	newGen := live
 	if len(newGen) >= desired {
 		if c.allReady(newGen, role) {
 			log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
@@ -1139,6 +1151,21 @@ func readinessGate(role *api.Role) string {
 		return "running"
 	}
 	return string(role.HealthCheck.Type)
+}
+
+// aliveSessions returns the subset of sessions the reconciler counts as
+// alive (pending, running, crashloop-backoff), preserving order. It is the
+// shift path's slice-shaped companion to api.CountAlive: shiftLaunch needs
+// both the count and the filtered slice (to feed allReady), so it filters
+// once here rather than counting and filtering separately.
+func aliveSessions(sessions []api.Session) []api.Session {
+	out := make([]api.Session, 0, len(sessions))
+	for i := range sessions {
+		if sessions[i].State.CountsAsAlive() {
+			out = append(out, sessions[i])
+		}
+	}
+	return out
 }
 
 // sessionKeys returns the session keys in order, for event messages.
