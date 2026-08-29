@@ -2549,3 +2549,67 @@ func TestShiftDrainEmptyOldGenerationEmitsDistinctEvent(t *testing.T) {
 		t.Errorf("RoleIndex = %d, want 1 (the shift must still advance)", got.Shift.RoleIndex)
 	}
 }
+
+// TestProjectHeldRoleRowsSynthesizesCrashloopRow is aae-orc-prhx (and closes
+// aae-orc-83m9). A single-replica restart_policy=always role crash-looping in
+// its backoff window has no live session row — restartSession deletes it
+// before setting the backoff — so it is absent from get sessions for the
+// whole window and reads as never-declared. The read-path join synthesizes a
+// crashloop-backoff row for such a held-down role, while roles that keep a
+// real row (saturated/frozen) and gaps RoleHealth cannot explain get nothing.
+func TestProjectHeldRoleRowsSynthesizesCrashloopRow(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-prhx", "squad", []api.Role{
+		{Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "boss", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "runner", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	// worker: crash-looping, in its backoff window, zero live rows → held.
+	rh := ctrl.getRoleHealth("test-prhx/squad/worker")
+	rh.RestartCount = 2
+	rh.BackoffUntil = clock.Now().Add(90 * time.Second)
+
+	// boss: has RoleHealth but keeps a real (failed) row → representation
+	// already present, must NOT be synthesized (the 83m9 saturated case).
+	bh := ctrl.getRoleHealth("test-prhx/squad/boss")
+	bh.RestartCount = 1
+	bh.BackoffUntil = saturationFreezeUntil
+	seedSession(t, store, api.Session{Name: "squad-boss-g1-0", Workspace: "test-prhx", Team: "squad", Role: "boss", Generation: 1, State: api.SessionFailed})
+
+	// runner: below replicas with NO RoleHealth → a mid-flight spawn gap,
+	// must NOT be synthesized.
+
+	rows := ctrl.ProjectHeldRoleRows(store)
+
+	byRole := map[string][]api.Session{}
+	for _, r := range rows {
+		byRole[r.Role] = append(byRole[r.Role], r)
+	}
+	if len(byRole["boss"]) != 0 {
+		t.Errorf("boss synthesized %d row(s), want 0 (it keeps its real failed row)", len(byRole["boss"]))
+	}
+	if len(byRole["runner"]) != 0 {
+		t.Errorf("runner synthesized %d row(s), want 0 (unexplained gap, reconciler will fill)", len(byRole["runner"]))
+	}
+	w := byRole["worker"]
+	if len(w) != 1 {
+		t.Fatalf("worker synthesized %d row(s), want 1 (held down in backoff, no live row)", len(w))
+	}
+	if w[0].State != api.SessionCrashLoopBackOff {
+		t.Errorf("worker synthetic state = %s, want %s", w[0].State, api.SessionCrashLoopBackOff)
+	}
+	if w[0].Workspace != "test-prhx" || w[0].Team != "squad" {
+		t.Errorf("worker synthetic scope = %s/%s, want test-prhx/squad", w[0].Workspace, w[0].Team)
+	}
+	if w[0].RestartCount != 2 {
+		t.Errorf("worker synthetic RestartCount = %d, want 2", w[0].RestartCount)
+	}
+	if !strings.Contains(w[0].Reason, "backoff until") {
+		t.Errorf("worker synthetic Reason = %q, want it to carry the backoff-until deadline", w[0].Reason)
+	}
+}

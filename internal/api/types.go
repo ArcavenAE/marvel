@@ -153,6 +153,13 @@ type Session struct {
 	RestartCount    int          `toml:"-"`
 	LastHealthCheck time.Time    `toml:"-"`
 	CreatedAt       time.Time    `toml:"-"`
+	// Reason is a projection-only annotation: empty on every real session
+	// row, filled by the read-path join (team.Controller.ProjectHeldRoleRows)
+	// on the synthetic rows it invents for a role held down with no live
+	// session — e.g. "restart #N, backoff until T". json omitempty keeps it
+	// out of every persisted and real-row payload (so no bolt schema bump),
+	// and toml:"-" keeps it out of manifests. See aae-orc-prhx.
+	Reason string `json:"reason,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,

@@ -213,6 +213,86 @@ func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHeal
 	}, true
 }
 
+// SnapshotRoleHealth returns a value copy of every role's crash-loop state,
+// keyed workspace/team/role. RoleHealth is flat (ints and timestamps), so a
+// struct copy is a full deep copy; the result is decoupled from the live map
+// and safe to read without holding c.mu (go.md rule 12).
+func (c *Controller) SnapshotRoleHealth() map[string]RoleHealth {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]RoleHealth, len(c.roleHealth))
+	for k, rh := range c.roleHealth {
+		out[k] = *rh
+	}
+	return out
+}
+
+// ProjectHeldRoleRows joins the two truths marvel keeps about a role — its
+// live session rows (store.sessions) and its crash-loop state (RoleHealth) —
+// into the synthetic rows `get sessions` needs so a held-down role reads as
+// held rather than absent. restartSession deletes a crash-looping session's
+// row before setting the backoff, so a single-replica restart_policy=always
+// role is missing from the session table for the whole (growing) backoff
+// window; the absence is indistinguishable from "never declared" or
+// "deleted".
+//
+// For each declared role whose live row count is below its replica count AND
+// whose gap RoleHealth explains, it returns Replicas-rowCount synthetic rows
+// carrying the derived crash-loop state. Roles at or above their replica
+// count get nothing — a saturated or restart_policy=never role keeps its
+// terminal SessionFailed row, which is why aae-orc-83m9's "saturated role is
+// absent" premise is refuted here: that row never left. A gap with no
+// RoleHealth also gets nothing — that is a mid-flight spawn the reconciler
+// is about to fill, and inventing a row there would be noise.
+//
+// This is read-model composition only: the reconciler, its counting, its
+// tests, and RoleHealth persistence are untouched. SnapshotRoleHealth is
+// taken under c.mu and released before the store reads, so c.mu and the
+// store lock are never held together. See aae-orc-prhx, aae-orc-83m9.
+func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
+	health := c.SnapshotRoleHealth()
+	var out []api.Session
+	for _, t := range store.ListTeams() {
+		for i := range t.Roles {
+			role := &t.Roles[i]
+			rh, ok := health[t.Workspace+"/"+t.Name+"/"+role.Name]
+			if !ok {
+				continue
+			}
+			// Row count across any state and any generation: a Failed or
+			// Crashed row IS representation the operator sees, so a role
+			// that kept one is not synthesized.
+			rowCount := len(store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name))
+			gap := role.Replicas - rowCount
+			if gap <= 0 {
+				continue
+			}
+			reason := fmt.Sprintf("restart #%d, backoff until %s", rh.RestartCount, rh.BackoffUntil.Format(time.RFC3339))
+			for n := 0; n < gap; n++ {
+				out = append(out, api.Session{
+					Name:       fmt.Sprintf("%s-%s-g%d-held-%d", t.Name, role.Name, t.Generation, n),
+					Workspace:  t.Workspace,
+					Team:       t.Name,
+					Role:       role.Name,
+					Generation: t.Generation,
+					// Only case that fires: a role cooling down inside its
+					// backoff window. Saturated / restart_policy=never roles
+					// keep their real SessionFailed row (rowCount==Replicas)
+					// and are never synthesized. Any gap that reaches here is
+					// rendered crashloop-backoff rather than a new
+					// SessionState the reconciler's CountsAsAlive does not
+					// know; frozen/saturated enrichment rides Reason, not the
+					// enum. See §2.2 of the listing-join design.
+					State:        api.SessionCrashLoopBackOff,
+					RestartCount: rh.RestartCount,
+					Reason:       reason,
+				})
+			}
+		}
+	}
+	return out
+}
+
 // ClearRoleHealthForTeam deletes crash-loop state for every role under
 // the given (workspace, team). Called from the cascade delete path in
 // daemon.handleDelete so that a subsequent re-apply of the same manifest

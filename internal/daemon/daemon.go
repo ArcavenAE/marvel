@@ -845,7 +845,12 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 	var result any
 	switch p.ResourceType {
 	case "sessions", "session":
-		result = d.store.ListSessions()
+		// Join the two truths marvel keeps about a role: live session rows
+		// plus synthetic rows for any declared role held down with no live
+		// session (crash-looping in its backoff window). Without the join a
+		// restart_policy=always role is absent from the table for the whole
+		// backoff window rather than shown as held. See aae-orc-prhx.
+		result = append(d.store.ListSessions(), d.teamCtrl.ProjectHeldRoleRows(d.store)...)
 	case "teams", "team":
 		result = d.store.ListTeams()
 	case "workspaces", "workspace":
