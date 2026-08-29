@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -22,7 +23,7 @@ import (
 // working session: a write failure is logged and the session launches
 // unprojected rather than being refused.
 func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) {
-	target, wrote, _, err := m.projectPolicy(lctx, adapter)
+	target, wrote, _, shadowed, err := m.projectPolicy(lctx, adapter)
 	if err != nil {
 		log.Printf("session %s: policy projection failed, launching unprojected: %v", lctx.Session.Key(), err)
 		return
@@ -31,7 +32,7 @@ func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.
 		return
 	}
 	lctx.PolicyProjectionPath = target.Path
-	m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "projected at spawn")
+	m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "projected at spawn", shadowed)
 }
 
 // Reproject rewrites the projected settings file for every live session
@@ -56,14 +57,14 @@ func (m *Manager) Reproject() int {
 		if !ok {
 			continue
 		}
-		target, wrote, changed, err := m.projectPolicy(lctx, adapter)
+		target, wrote, changed, shadowed, err := m.projectPolicy(lctx, adapter)
 		if err != nil {
 			log.Printf("session %s: re-projection failed: %v", sess.Key(), err)
 			continue
 		}
 		if wrote && changed {
 			changedCount++
-			m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "re-projected after manifest change")
+			m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "re-projected after manifest change", shadowed)
 		}
 	}
 	return changedCount
@@ -109,8 +110,9 @@ func (m *Manager) reprojectContext(sess api.Session) (*runtime.LaunchContext, ru
 // projectPolicy is the shared spawn/re-projection core. It resolves the
 // role's policy, asks the adapter where the file goes, and writes it when
 // the adapter has a settings surface. Returns the projection target, whether
-// a file was written, and whether the written content differed from what
-// was already on disk.
+// a file was written, whether the written content differed from what was
+// already on disk, and the feed keys the policy shadowed (empty unless a
+// policy declared a key the context feed also wanted).
 //
 // A role with no policy and no context feed yields wrote=false, no error.
 // An adapter with no settings surface logs the policy as advisory and
@@ -122,24 +124,26 @@ func (m *Manager) reprojectContext(sess api.Session) (*runtime.LaunchContext, ru
 // Policy content is still written unmodified — marvel never edits a key
 // the policy declares. When the runtime opts into context_feed =
 // "statusline", marvel ADDS the feed keys the adapter renders, and only
-// where the policy does not define them (policy wins). See finding-011.
-func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Adapter) (runtime.ProjectionTarget, bool, bool, error) {
+// where the policy does not define them (policy wins). A key the policy
+// shadows is reported to the caller so the merge is not silent. See
+// finding-011 and aae-orc-g698.
+func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Adapter) (runtime.ProjectionTarget, bool, bool, []string, error) {
 	feed := lctx.Session.Runtime.ContextFeed == api.ContextFeedStatusline
 	if m.ProjectionDir == "" || (lctx.Role.Policy == "" && !feed) {
-		return runtime.ProjectionTarget{}, false, false, nil
+		return runtime.ProjectionTarget{}, false, false, nil, nil
 	}
 
 	target := adapter.ProjectionFor(lctx, m.ProjectionDir)
 	if !target.Supported {
 		log.Printf("session %s: runtime %q has no settings surface; policy %q / context feed are advisory, not projected",
 			lctx.Session.Key(), adapter.Name(), lctx.Role.Policy)
-		return target, false, false, nil
+		return target, false, false, nil, nil
 	}
 	// The dir is marvel's to write in; anywhere else is the user's. An
 	// adapter that answers with a path outside it would have marvel
 	// editing a config file it does not own, so refuse rather than write.
 	if !withinDir(m.ProjectionDir, target.Path) {
-		return target, false, false, fmt.Errorf("runtime %q projection path %s is outside projection dir %s",
+		return target, false, false, nil, fmt.Errorf("runtime %q projection path %s is outside projection dir %s",
 			adapter.Name(), target.Path, m.ProjectionDir)
 	}
 
@@ -148,21 +152,22 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 		key := fmt.Sprintf("%s/%s", lctx.Workspace.Name, lctx.Role.Policy)
 		policy, err := m.store.GetPolicy(key)
 		if err != nil {
-			return target, false, false, fmt.Errorf("resolve policy %s: %w", key, err)
+			return target, false, false, nil, fmt.Errorf("resolve policy %s: %w", key, err)
 		}
 		for k, v := range policy.Settings {
 			settings[k] = v
 		}
 	}
+	var shadowed []string
 	if feed {
-		injectStatuslineFeed(settings, adapter, lctx.Session.Key())
+		shadowed = injectStatuslineFeed(settings, adapter, lctx.Session.Key(), lctx.Role.Policy)
 	}
 
 	changed, err := writeProjectionFile(target.Path, settings)
 	if err != nil {
-		return target, false, false, err
+		return target, false, false, nil, err
 	}
-	return target, true, changed, nil
+	return target, true, changed, shadowed, nil
 }
 
 // injectStatuslineFeed adds the hooks that forward the harness's own
@@ -177,23 +182,39 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 // StatuslineFeeder gets no feed rather than someone else's keys, and says
 // so: an operator who asked for context_feed and got nothing needs a
 // reason in the log, not silence.
-func injectStatuslineFeed(settings map[string]any, adapter runtime.Adapter, sessionKey string) {
+//
+// A key the policy already declares is left to the policy (policy wins),
+// and that too is reported rather than silent: it is returned as a shadowed
+// key and logged here, because the same operator who asked for context_feed
+// and got it only on subagent turns needs the reason in the log, not a feed
+// that reads as flakiness (aae-orc-g698). The shadowed keys are returned
+// sorted so the caller's event message and the log are deterministic.
+func injectStatuslineFeed(settings map[string]any, adapter runtime.Adapter, sessionKey, policyName string) []string {
 	feeder, ok := adapter.(runtime.StatuslineFeeder)
 	if !ok {
 		log.Printf("session %s: runtime %q reads a settings file but declares no context-feed schema; feed not projected",
 			sessionKey, adapter.Name())
-		return
+		return nil
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		log.Printf("context feed: cannot resolve marvel binary path, feed not injected: %v", err)
-		return
+		return nil
 	}
+	var shadowed []string
 	for key, value := range feeder.StatuslineFeed(exe + " ctx-forward") {
-		if _, exists := settings[key]; !exists {
-			settings[key] = value
+		if _, exists := settings[key]; exists {
+			shadowed = append(shadowed, key)
+			continue
 		}
+		settings[key] = value
 	}
+	if len(shadowed) > 0 {
+		sort.Strings(shadowed)
+		log.Printf("session %s: policy %q shadows context-feed key(s) %s; policy wins, so CTX%% is not fed on those turns",
+			sessionKey, policyName, strings.Join(shadowed, ", "))
+	}
+	return shadowed
 }
 
 // withinDir reports whether path lies inside dir. Used to hold adapters to
@@ -242,13 +263,23 @@ func writeProjectionFile(path string, settings map[string]any) (bool, error) {
 	return true, nil
 }
 
-func (m *Manager) emitProjected(sess *api.Session, policyName, path, detail string) {
+// emitProjected records a policy.projected event. When the context feed
+// wanted keys the policy already declared, shadowed names them in the
+// message: policy-wins is correct, but a half-fed CTX% reads as flakiness,
+// so the operator needs the reason on the ring, not just in the log
+// (aae-orc-g698). shadowed is expected sorted by the caller.
+func (m *Manager) emitProjected(sess *api.Session, policyName, path, detail string, shadowed []string) {
+	msg := fmt.Sprintf("policy %q %s: %s", policyName, detail, path)
+	if len(shadowed) > 0 {
+		msg += fmt.Sprintf("; context feed key(s) %s shadowed by policy (policy wins, CTX%% unfed on those turns)",
+			strings.Join(shadowed, ", "))
+	}
 	events.Emit(m.Events, events.Event{
 		Kind:      events.KindPolicyProjected,
 		Workspace: sess.Workspace,
 		Team:      sess.Team,
 		Role:      sess.Role,
 		Session:   sess.Key(),
-		Message:   fmt.Sprintf("policy %q %s: %s", policyName, detail, path),
+		Message:   msg,
 	})
 }
