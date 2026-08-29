@@ -153,6 +153,13 @@ type Session struct {
 	RestartCount    int          `toml:"-"`
 	LastHealthCheck time.Time    `toml:"-"`
 	CreatedAt       time.Time    `toml:"-"`
+	// Reason is a projection-only annotation: empty on every real session
+	// row, filled by the read-path join (team.Controller.ProjectHeldRoleRows)
+	// on the synthetic rows it invents for a role held down with no live
+	// session — e.g. "restart #N, backoff until T". json omitempty keeps it
+	// out of every persisted and real-row payload (so no bolt schema bump),
+	// and toml:"-" keeps it out of manifests. See aae-orc-prhx.
+	Reason string `json:"reason,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
@@ -324,6 +331,15 @@ type ShiftState struct {
 	RoleIndex     int      // index into Roles (shift order)
 	Roles         []string // role names in shift order (supervisor last)
 	StartedAt     time.Time
+	// Drained counts, per role name, the old-generation sessions this shift
+	// actually deleted while draining that role. It lets shiftDrain tell a
+	// completed drain (Drained[role] > 0) from advancing through a role
+	// whose old generation was already empty (Drained[role] == 0), which
+	// len(oldGen)==0 alone cannot. Status, not spec — same treatment as the
+	// rest of ShiftState (the whole field is toml:"-" on Team); it persists
+	// to bolt with the shift and resets to nil when the shift clears. See
+	// aae-orc-094e.
+	Drained map[string]int
 }
 
 // Team declares desired state: a cohesive unit of agents with heterogeneous roles.

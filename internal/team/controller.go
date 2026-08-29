@@ -213,6 +213,99 @@ func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHeal
 	}, true
 }
 
+// SnapshotRoleHealth returns a value copy of every role's crash-loop state,
+// keyed workspace/team/role. RoleHealth is flat (ints and timestamps), so a
+// struct copy is a full deep copy; the result is decoupled from the live map
+// and safe to read without holding c.mu (go.md rule 12).
+func (c *Controller) SnapshotRoleHealth() map[string]RoleHealth {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]RoleHealth, len(c.roleHealth))
+	for k, rh := range c.roleHealth {
+		out[k] = *rh
+	}
+	return out
+}
+
+// ProjectHeldRoleRows joins the two truths marvel keeps about a role — its
+// live session rows (store.sessions) and its crash-loop state (RoleHealth) —
+// into the synthetic rows `get sessions` needs so a held-down role reads as
+// held rather than absent. restartSession deletes a crash-looping session's
+// row before setting the backoff, so a single-replica restart_policy=always
+// role is missing from the session table for the whole (growing) backoff
+// window; the absence is indistinguishable from "never declared" or
+// "deleted".
+//
+// For each declared role whose live row count is below its replica count AND
+// whose gap RoleHealth explains, it returns Replicas-rowCount synthetic rows
+// carrying the derived crash-loop state. Roles at or above their replica
+// count get nothing — a saturated or restart_policy=never role keeps its
+// terminal SessionFailed row, which is why aae-orc-83m9's "saturated role is
+// absent" premise is refuted here: that row never left. A gap with no
+// RoleHealth also gets nothing — that is a mid-flight spawn the reconciler
+// is about to fill, and inventing a row there would be noise.
+//
+// This is read-model composition only: the reconciler, its counting, its
+// tests, and RoleHealth persistence are untouched. SnapshotRoleHealth is
+// taken under c.mu and released before the store reads, so c.mu and the
+// store lock are never held together. See aae-orc-prhx, aae-orc-83m9.
+func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
+	health := c.SnapshotRoleHealth()
+	now := c.nowUTC()
+	var out []api.Session
+	for _, t := range store.ListTeams() {
+		for i := range t.Roles {
+			role := &t.Roles[i]
+			rh, ok := health[t.Workspace+"/"+t.Name+"/"+role.Name]
+			if !ok {
+				continue
+			}
+			// Only a role still inside its backoff window is genuinely held
+			// down. RestartCount does not decay until fv3h, so a recovered
+			// role can carry stale RoleHealth with an elapsed backoff; a
+			// benign dip below replicas (mid-spawn, scale-up) must not
+			// synthesize a crashloop-backoff row with a past deadline. The
+			// saturation sentinel is far in the future, so a frozen role that
+			// somehow presented a gap still reads as held. During real
+			// backoff the row is deleted and BackoffUntil is in the future,
+			// so nothing legitimate is hidden.
+			if !rh.BackoffUntil.After(now) {
+				continue
+			}
+			// Row count across any state and any generation: a Failed or
+			// Crashed row IS representation the operator sees, so a role
+			// that kept one is not synthesized.
+			rowCount := len(store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name))
+			gap := role.Replicas - rowCount
+			if gap <= 0 {
+				continue
+			}
+			reason := fmt.Sprintf("restart #%d, backoff until %s", rh.RestartCount, rh.BackoffUntil.Format(time.RFC3339))
+			for n := 0; n < gap; n++ {
+				out = append(out, api.Session{
+					Name:       fmt.Sprintf("%s-%s-g%d-held-%d", t.Name, role.Name, t.Generation, n),
+					Workspace:  t.Workspace,
+					Team:       t.Name,
+					Role:       role.Name,
+					Generation: t.Generation,
+					// Only case that fires: a role cooling down inside its
+					// backoff window. Saturated / restart_policy=never roles
+					// keep their real SessionFailed row (rowCount==Replicas)
+					// and are never synthesized. Any gap that reaches here is
+					// rendered crashloop-backoff rather than a new
+					// SessionState the reconciler's CountsAsAlive does not
+					// know; frozen/saturated enrichment rides Reason, not the
+					// enum. See §2.2 of the listing-join design.
+					State:        api.SessionCrashLoopBackOff,
+					RestartCount: rh.RestartCount,
+					Reason:       reason,
+				})
+			}
+		}
+	}
+	return out
+}
+
 // ClearRoleHealthForTeam deletes crash-loop state for every role under
 // the given (workspace, team). Called from the cascade delete path in
 // daemon.handleDelete so that a subsequent re-apply of the same manifest
@@ -268,10 +361,11 @@ func (c *Controller) ReconcileOnce() {
 	//
 	// The charge is per role per tick, not per lost replica: see
 	// noteReapedCrash.
-	charged := make(map[string]bool)
+	charged := make(map[string]*reapCharge)
 	for _, r := range c.sessMgr.ReapDead() {
 		c.noteReapedCrash(r, charged)
 	}
+	c.emitReapAccounting(charged)
 	c.evaluateHealth()
 
 	teams := c.store.ListTeams()
@@ -299,7 +393,21 @@ func (c *Controller) ReconcileOnce() {
 // cause-agnostic: bound the blast radius of one event instead of guessing
 // at its cause. Flapping still escalates, because flapping repeats across
 // ticks. See aae-orc-4bz2.
-func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string]bool) {
+// reapCharge accumulates one role's crash accounting across a single tick's
+// reap loop, so the tick can emit ONE accounting event per role rather than
+// one per lost replica (or none, as when the accounting was log-only). See
+// emitReapAccounting and aae-orc-m8n0.
+type reapCharge struct {
+	workspace, team, role string
+	charges               int       // reaps that actually charged (0 or 1: only the first non-saturated reap charges)
+	suppressed            int       // reaps NOT charged — folded into the one charge, or refused because the role was already saturated
+	saturated             bool      // the charge attempt hit max_restarts (noteCrashAndBackoff == false)
+	restartCount          int       // RestartCount after the charge
+	backoffUntil          time.Time // BackoffUntil after the charge
+	maxRestarts           int
+}
+
+func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string]*reapCharge) {
 	t, err := c.store.GetTeam(r.Workspace + "/" + r.Team)
 	if err != nil {
 		return
@@ -339,19 +447,62 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string
 		})
 		return
 	}
-	if charged[roleKey] {
+	if acc, ok := charged[roleKey]; ok {
+		acc.suppressed++
 		log.Printf("reap: session %s crashed with the rest of role %s in one tick; already charged",
 			r.Key, roleKey)
 		return
 	}
-	charged[roleKey] = true
+	acc := &reapCharge{workspace: r.Workspace, team: r.Team, role: r.Role, maxRestarts: role.MaxRestarts}
+	charged[roleKey] = acc
 	if c.noteCrashAndBackoff(r.Workspace, r.Team, r.Role, role.MaxRestarts) {
 		rh := c.roleHealth[roleKey]
+		acc.charges = 1
+		acc.restartCount = rh.RestartCount
+		acc.backoffUntil = rh.BackoffUntil
 		log.Printf("reap: session %s crashed (role %s restart #%d, next backoff=%s)",
 			r.Key, roleKey, rh.RestartCount, time.Until(rh.BackoffUntil))
 	} else {
+		// Saturated: this reap charged nothing (RestartCount unchanged). It
+		// still counts as a non-charged reap so charges+suppressed equals the
+		// tick's total reaps for the role.
+		acc.saturated = true
+		acc.suppressed = 1
+		acc.restartCount = c.roleHealth[roleKey].RestartCount
 		log.Printf("reap: session %s crashed but role %s already at max_restarts=%d",
 			r.Key, roleKey, role.MaxRestarts)
+	}
+}
+
+// emitReapAccounting brings the reap path to event parity with the health
+// path: after a tick's reap loop has folded a role's lost replicas into one
+// charge, it emits a single accounting event per charged role so the charge,
+// the suppression count, and the resulting backoff are visible on
+// `marvel events` instead of inferable only from the daemon log (and from
+// the absence of any event at all). No new event kind — it reuses the health
+// path's KindCrashLoopBackoff / KindRoleSaturated. See aae-orc-m8n0.
+func (c *Controller) emitReapAccounting(charged map[string]*reapCharge) {
+	for _, acc := range charged {
+		if acc.saturated {
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindRoleSaturated,
+				Severity:  events.SeverityWarning,
+				Workspace: acc.workspace,
+				Team:      acc.team,
+				Role:      acc.role,
+				Message:   fmt.Sprintf("max_restarts=%d reached (charged %d, suppressed %d)", acc.maxRestarts, acc.charges, acc.suppressed),
+			})
+			continue
+		}
+		events.Emit(c.Events, events.Event{
+			Kind:      events.KindCrashLoopBackoff,
+			Severity:  events.SeverityWarning,
+			Workspace: acc.workspace,
+			Team:      acc.team,
+			Role:      acc.role,
+			Message: fmt.Sprintf("charged %d, suppressed %d; restart #%d, backoff until %s",
+				acc.charges, acc.suppressed, acc.restartCount, acc.backoffUntil.Format(time.RFC3339)),
+		})
 	}
 }
 
@@ -1070,12 +1221,20 @@ func (c *Controller) abortStuckShift(t *api.Team) {
 }
 
 func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
-	newGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
+	// Count only LIVE new-gen rows against the replica count, the same
+	// predicate reconcileRoleAt uses. The store query stays all-states
+	// (three of its five callers depend on that; see nextIndex, shiftDrain,
+	// abortStuckShift), so the live filter belongs at this call site: a
+	// Failed or Crashed successor must not satisfy the launch and suppress
+	// the live replacement that should take its place. See aae-orc-6kgq.
+	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
 	desired := role.Replicas
 
-	if len(newGen) < desired {
-		// Create remaining new-gen sessions.
-		for i := len(newGen); i < desired; i++ {
+	if len(live) < desired {
+		// Create remaining new-gen sessions. nextIndex counts all states,
+		// so a dead row keeps its index and the replacement gets a fresh,
+		// non-colliding one.
+		for i := len(live); i < desired; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, t.Generation, c.nextIndex(t, role, t.Generation))
 			sess := &api.Session{
 				Name:       name,
@@ -1092,8 +1251,12 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 		}
 	}
 
-	// All new-gen sessions created — check readiness, then transition to draining.
-	newGen = c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)
+	// All new-gen sessions created — check readiness, then transition to
+	// draining. Filter to live rows again so a leftover dead row neither
+	// counts toward "launched" nor fails allReady and holds the shift in
+	// launching forever.
+	live = aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	newGen := live
 	if len(newGen) >= desired {
 		if c.allReady(newGen, role) {
 			log.Printf("shift: %s/%s role %s — %d new sessions ready, draining old gen %d",
@@ -1141,6 +1304,21 @@ func readinessGate(role *api.Role) string {
 	return string(role.HealthCheck.Type)
 }
 
+// aliveSessions returns the subset of sessions the reconciler counts as
+// alive (pending, running, crashloop-backoff), preserving order. It is the
+// shift path's slice-shaped companion to api.CountAlive: shiftLaunch needs
+// both the count and the filtered slice (to feed allReady), so it filters
+// once here rather than counting and filtering separately.
+func aliveSessions(sessions []api.Session) []api.Session {
+	out := make([]api.Session, 0, len(sessions))
+	for i := range sessions {
+		if sessions[i].State.CountsAsAlive() {
+			out = append(out, sessions[i])
+		}
+	}
+	return out
+}
+
 // sessionKeys returns the session keys in order, for event messages.
 func sessionKeys(sessions []api.Session) []string {
 	keys := make([]string, 0, len(sessions))
@@ -1178,8 +1356,27 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 	oldGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Shift.OldGeneration)
 
 	if len(oldGen) == 0 {
-		// All old-gen drained for this role — advance to next role.
-		log.Printf("shift: %s/%s role %s — old gen drained", t.Workspace, t.Name, role.Name)
+		// Old generation empty — advance to the next role. Drained tells a
+		// completed drain from an advance through a role nothing was ever
+		// moved for; both advance, but the empty-and-undrained case earns a
+		// distinct event so it is not silently indistinguishable from a real
+		// drain. See aae-orc-094e.
+		if t.Shift.Drained[role.Name] > 0 {
+			log.Printf("shift: %s/%s role %s — old gen drained (%d session(s))",
+				t.Workspace, t.Name, role.Name, t.Shift.Drained[role.Name])
+		} else {
+			log.Printf("shift: %s/%s role %s — old gen empty, nothing drained; advancing",
+				t.Workspace, t.Name, role.Name)
+			events.Emit(c.Events, events.Event{
+				Kind:       events.KindShiftDrainedEmpty,
+				Severity:   events.SeverityWarning,
+				Workspace:  t.Workspace,
+				Team:       t.Name,
+				Role:       role.Name,
+				Generation: t.Shift.OldGeneration,
+				Message:    fmt.Sprintf("old gen %d for role %s was empty, nothing drained", t.Shift.OldGeneration, role.Name),
+			})
+		}
 		_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 			live.Shift.RoleIndex++
 			if live.Shift.RoleIndex < len(live.Shift.Roles) {
@@ -1194,11 +1391,24 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 		return
 	}
 
-	// Rolling drain: delete one old-gen session per reconcile tick.
+	// Rolling drain: delete one old-gen session per reconcile tick, and
+	// record the progress so the empty-generation branch above can tell a
+	// finished drain from one that never moved anything.
 	sess := oldGen[0]
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {
 		log.Printf("shift: drain session %s: %v", sess.Key(), err)
+		return
 	}
+	// Persist the drain progress through the store — the empty-generation
+	// branch reads it from a fresh snapshot on a later tick, so mutating this
+	// tick's discarded snapshot would be a dead write.
+	_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+		if live.Shift.Drained == nil {
+			live.Shift.Drained = make(map[string]int)
+		}
+		live.Shift.Drained[role.Name]++
+		return nil
+	})
 }
 
 // nextIndex finds the next available index for a role's sessions within a generation.

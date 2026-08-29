@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -88,6 +89,9 @@ func cloneTeam(t *Team) Team {
 	}
 	if len(t.Shift.Roles) > 0 {
 		out.Shift.Roles = slices.Clone(t.Shift.Roles)
+	}
+	if len(t.Shift.Drained) > 0 {
+		out.Shift.Drained = maps.Clone(t.Shift.Drained)
 	}
 	return out
 }

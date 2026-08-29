@@ -2341,3 +2341,370 @@ func TestShiftRepairBeforeTurnDoesNotCountAsLaunch(t *testing.T) {
 		}
 	}
 }
+
+// seedSession inserts a session directly into the store without spawning a
+// tmux pane. PaneID stays empty, so ReapDead skips it (it treats an empty
+// pane as "already reaped or never had one") and evaluateHealth skips it
+// unless it is Running. This lets a counting test construct a precise mix of
+// live and terminal new-generation rows without racing the session
+// lifecycle. Runtime and CreatedAt default to a sleeper / now when unset.
+func seedSession(t *testing.T, store *api.Store, s api.Session) {
+	t.Helper()
+	if s.Runtime.Command == "" {
+		s.Runtime = api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	}
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = time.Now().UTC()
+	}
+	if err := store.CreateSession(&s); err != nil {
+		t.Fatalf("seed session %s: %v", s.Key(), err)
+	}
+}
+
+// enterLaunchingShift puts an already-created team into a shift's launching
+// phase over a single role, as InitiateShift would, but without driving the
+// reconciler — the counting tests seed the generation rows themselves.
+func enterLaunchingShift(t *testing.T, store *api.Store, teamKey, role string) {
+	t.Helper()
+	if err := store.UpdateTeam(teamKey, func(live *api.Team) error {
+		live.Generation = 2
+		live.Shift = api.ShiftState{
+			Phase:         api.ShiftLaunching,
+			OldGeneration: 1,
+			Roles:         []string{role},
+			RoleIndex:     0,
+			StartedAt:     time.Now().UTC(),
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("enter launching shift: %v", err)
+	}
+}
+
+// TestShiftLaunchDoesNotCountFailedNewGenTowardLaunch is the create-gate half
+// of aae-orc-6kgq. shiftLaunch counted new-generation rows in any state
+// against the replica count, so a Failed successor satisfied the launch and
+// suppressed the live replacement that should have taken its place. The gate
+// must count only live rows (api.SessionState.CountsAsAlive), exactly as
+// reconcileRoleAt already does on the non-generation query.
+func TestShiftLaunchDoesNotCountFailedNewGenTowardLaunch(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-6kgq-create", "squad", []api.Role{
+		{Name: "worker", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-6kgq-create/squad"
+
+	// A single dead new-generation row, no live successor. Before the fix
+	// len(newGen)==1 satisfies replicas=1 and nothing is spawned.
+	enterLaunchingShift(t, store, teamKey, "worker")
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-0", Workspace: "test-6kgq-create", Team: "squad", Role: "worker", Generation: 2, State: api.SessionFailed})
+
+	ctrl.ReconcileOnce()
+
+	gen2 := store.ListSessionsByTeamRoleGeneration("test-6kgq-create", "squad", "worker", 2)
+	if api.CountAlive(gen2) < 1 {
+		t.Fatalf("no live gen-2 successor spawned: the Failed row suppressed the replacement (alive=%d of %d rows)",
+			api.CountAlive(gen2), len(gen2))
+	}
+}
+
+// TestShiftLaunchDeadNewGenRowDoesNotBlockDrainGate is the ready-gate half of
+// aae-orc-6kgq. With the live successors already at replica count, a leftover
+// dead new-generation row must not keep the launch from advancing to drain.
+// Feeding allReady the unfiltered slice let the Failed row fail the readiness
+// check and hold the shift in launching forever.
+func TestShiftLaunchDeadNewGenRowDoesNotBlockDrainGate(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-6kgq-drain", "squad", []api.Role{
+		{Name: "worker", Replicas: 2, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-6kgq-drain/squad"
+
+	enterLaunchingShift(t, store, teamKey, "worker")
+	// Two live successors satisfy replicas=2; one extra dead row must not
+	// block the gate.
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-0", Workspace: "test-6kgq-drain", Team: "squad", Role: "worker", Generation: 2, State: api.SessionRunning})
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-1", Workspace: "test-6kgq-drain", Team: "squad", Role: "worker", Generation: 2, State: api.SessionRunning})
+	seedSession(t, store, api.Session{Name: "squad-worker-g2-2", Workspace: "test-6kgq-drain", Team: "squad", Role: "worker", Generation: 2, State: api.SessionFailed})
+
+	ctrl.ReconcileOnce()
+
+	team, _ := store.GetTeam(teamKey)
+	if team.Shift.Phase != api.ShiftDraining {
+		t.Fatalf("phase = %s, want draining: two live successors are ready, the dead row must not block the gate",
+			team.Shift.Phase)
+	}
+}
+
+// TestReapAccountingEmitsOneEventPerRolePerTick is aae-orc-m8n0. The reap
+// path charges a role once per tick however many replicas it lost, but that
+// accounting was log-only: killing a three-replica role's tmux session put
+// three session.crashed on the ring and nothing explaining that they were
+// charged once, suppressed twice, and cooled into a backoff window. The reap
+// path must reach event parity with the health path — one KindCrashLoopBackoff
+// per charged role per tick, carrying the charge/suppress counts.
+func TestReapAccountingEmitsOneEventPerRolePerTick(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	// Both producers share one ring, as the daemon wires them: ReapDead
+	// emits session.crashed through the manager, the accounting through the
+	// controller.
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	sessMgr.Events = ring
+
+	clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	ws := "test-m8n0"
+	createTeamFixture(t, store, ws, "squad", []api.Role{
+		{Name: "worker", Replicas: 3, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	ctrl.ReconcileOnce()
+	if got := len(store.ListSessionsByTeamRole(ws, "squad", "worker")); got != 3 {
+		t.Fatalf("expected 3 sessions, got %d", got)
+	}
+
+	// Take all three panes down together, then reap them in one tick.
+	killWorkspaceAndWait(t, ws)
+	ctrl.ReconcileOnce()
+
+	crashed := ring.Snapshot(events.Filter{Kind: events.KindSessionCrashed}, 0)
+	if len(crashed) != 3 {
+		t.Fatalf("session.crashed events = %d, want 3 (one per lost replica)", len(crashed))
+	}
+
+	accounting := ring.Snapshot(events.Filter{Kind: events.KindCrashLoopBackoff}, 0)
+	if len(accounting) != 1 {
+		t.Fatalf("crash-accounting events = %d, want exactly 1 for the role (charged once, suppressed twice)", len(accounting))
+	}
+	ev := accounting[0]
+	if ev.Workspace != ws || ev.Team != "squad" || ev.Role != "worker" {
+		t.Errorf("event scope = %s/%s role %s, want %s/squad role worker", ev.Workspace, ev.Team, ev.Role, ws)
+	}
+	if ev.Severity != events.SeverityWarning {
+		t.Errorf("severity = %s, want %s", ev.Severity, events.SeverityWarning)
+	}
+	if !strings.Contains(ev.Message, "charged 1") || !strings.Contains(ev.Message, "suppressed 2") {
+		t.Errorf("message %q does not report charged 1 / suppressed 2", ev.Message)
+	}
+}
+
+// TestReapAccountingSaturatedTickReportsZeroCharge is the accuracy half of
+// aae-orc-m8n0. A tick that reaps an already-saturated role charges NOTHING —
+// noteCrashAndBackoff returns early without incrementing RestartCount — so the
+// KindRoleSaturated accounting event must report charged 0, not a hardcoded 1.
+// A crash-accounting fix whose number is wrong defeats its own purpose.
+func TestReapAccountingSaturatedTickReportsZeroCharge(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	sessMgr.Events = ring
+
+	clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	ws := "test-m8n0-sat"
+	createTeamFixture(t, store, ws, "squad", []api.Role{
+		{Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways, MaxRestarts: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	// Cycle 1 consumes the single restart (RestartCount 0 → 1 = MaxRestarts).
+	ctrl.ReconcileOnce()
+	got := store.ListSessionsByTeamRole(ws, "squad", "worker")
+	if len(got) == 0 {
+		t.Fatal("expected a running session before cycle 1")
+	}
+	killPaneAndWait(t, got[0].PaneID)
+	ctrl.ReconcileOnce() // reap → charges 1
+	clock.Advance(10 * time.Minute)
+
+	// Cycle 2: respawn, kill, reap → the role is at MaxRestarts, so this tick
+	// saturates and charges nothing.
+	ctrl.ReconcileOnce()
+	got = store.ListSessionsByTeamRole(ws, "squad", "worker")
+	if len(got) == 0 {
+		t.Fatal("expected a respawned session before the saturating cycle")
+	}
+	killPaneAndWait(t, got[0].PaneID)
+	ctrl.ReconcileOnce() // reap → saturates, charges 0
+
+	sat := ring.Snapshot(events.Filter{Kind: events.KindRoleSaturated}, 0)
+	if len(sat) != 1 {
+		t.Fatalf("KindRoleSaturated accounting events = %d, want 1", len(sat))
+	}
+	if !strings.Contains(sat[0].Message, "charged 0") {
+		t.Errorf("saturated accounting message %q must report charged 0 (the tick charged nothing)", sat[0].Message)
+	}
+	if strings.Contains(sat[0].Message, "charged 1") {
+		t.Errorf("saturated accounting message %q reports charged 1, but a saturated tick charges nothing", sat[0].Message)
+	}
+}
+
+// TestShiftDrainEmptyOldGenerationEmitsDistinctEvent is aae-orc-094e.
+// shiftDrain read an empty old generation as a successful drain and advanced
+// silently, unable to tell "finished draining N sessions" from "advanced
+// through a role it never moved" (a mis-tag, an early delete, or an
+// intentional scale-up). A per-role drained counter distinguishes the two:
+// when the shift reaches an empty old generation having drained nothing, it
+// emits KindShiftDrainedEmpty and still advances.
+func TestShiftDrainEmptyOldGenerationEmitsDistinctEvent(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+
+	createTeamFixture(t, store, "test-094e", "squad", []api.Role{
+		{Name: "worker", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-094e/squad"
+
+	// A shift already draining worker, with zero old-generation rows: the
+	// old generation is empty from the start, so nothing is drained.
+	if err := store.UpdateTeam(teamKey, func(live *api.Team) error {
+		live.Generation = 2
+		live.Shift = api.ShiftState{
+			Phase:         api.ShiftDraining,
+			OldGeneration: 1,
+			Roles:         []string{"worker"},
+			RoleIndex:     0,
+			StartedAt:     time.Now().UTC(),
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed draining shift: %v", err)
+	}
+
+	team, _ := store.GetTeam(teamKey)
+	ctrl.reconcileShift(&team)
+
+	evs := ring.Snapshot(events.Filter{Kind: events.KindShiftDrainedEmpty}, 0)
+	if len(evs) != 1 {
+		t.Fatalf("KindShiftDrainedEmpty events = %d, want 1: the shift advanced through a role it never drained", len(evs))
+	}
+	if evs[0].Role != "worker" || evs[0].Workspace != "test-094e" || evs[0].Team != "squad" {
+		t.Errorf("event scope = %s/%s role %s, want test-094e/squad role worker", evs[0].Workspace, evs[0].Team, evs[0].Role)
+	}
+
+	// Surface, don't judge: the shift still advances past the role.
+	got, _ := store.GetTeam(teamKey)
+	if got.Shift.RoleIndex != 1 {
+		t.Errorf("RoleIndex = %d, want 1 (the shift must still advance)", got.Shift.RoleIndex)
+	}
+}
+
+// TestProjectHeldRoleRowsSynthesizesCrashloopRow is aae-orc-prhx (and closes
+// aae-orc-83m9). A single-replica restart_policy=always role crash-looping in
+// its backoff window has no live session row — restartSession deletes it
+// before setting the backoff — so it is absent from get sessions for the
+// whole window and reads as never-declared. The read-path join synthesizes a
+// crashloop-backoff row for such a held-down role, while roles that keep a
+// real row (saturated/frozen) and gaps RoleHealth cannot explain get nothing.
+func TestProjectHeldRoleRowsSynthesizesCrashloopRow(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-prhx", "squad", []api.Role{
+		{Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "boss", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "runner", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	// worker: crash-looping, in its backoff window, zero live rows → held.
+	rh := ctrl.getRoleHealth("test-prhx/squad/worker")
+	rh.RestartCount = 2
+	rh.BackoffUntil = clock.Now().Add(90 * time.Second)
+
+	// boss: has RoleHealth but keeps a real (failed) row → representation
+	// already present, must NOT be synthesized (the 83m9 saturated case).
+	bh := ctrl.getRoleHealth("test-prhx/squad/boss")
+	bh.RestartCount = 1
+	bh.BackoffUntil = saturationFreezeUntil
+	seedSession(t, store, api.Session{Name: "squad-boss-g1-0", Workspace: "test-prhx", Team: "squad", Role: "boss", Generation: 1, State: api.SessionFailed})
+
+	// runner: below replicas with NO RoleHealth → a mid-flight spawn gap,
+	// must NOT be synthesized.
+
+	rows := ctrl.ProjectHeldRoleRows(store)
+
+	byRole := map[string][]api.Session{}
+	for _, r := range rows {
+		byRole[r.Role] = append(byRole[r.Role], r)
+	}
+	if len(byRole["boss"]) != 0 {
+		t.Errorf("boss synthesized %d row(s), want 0 (it keeps its real failed row)", len(byRole["boss"]))
+	}
+	if len(byRole["runner"]) != 0 {
+		t.Errorf("runner synthesized %d row(s), want 0 (unexplained gap, reconciler will fill)", len(byRole["runner"]))
+	}
+	w := byRole["worker"]
+	if len(w) != 1 {
+		t.Fatalf("worker synthesized %d row(s), want 1 (held down in backoff, no live row)", len(w))
+	}
+	if w[0].State != api.SessionCrashLoopBackOff {
+		t.Errorf("worker synthetic state = %s, want %s", w[0].State, api.SessionCrashLoopBackOff)
+	}
+	if w[0].Workspace != "test-prhx" || w[0].Team != "squad" {
+		t.Errorf("worker synthetic scope = %s/%s, want test-prhx/squad", w[0].Workspace, w[0].Team)
+	}
+	if w[0].RestartCount != 2 {
+		t.Errorf("worker synthetic RestartCount = %d, want 2", w[0].RestartCount)
+	}
+	if !strings.Contains(w[0].Reason, "backoff until") {
+		t.Errorf("worker synthetic Reason = %q, want it to carry the backoff-until deadline", w[0].Reason)
+	}
+}
+
+// TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff guards the
+// synthesis gate. RestartCount does not decay until fv3h, so a recovered role
+// can carry stale RoleHealth with a backoff window already in the past. If it
+// dips below replicas for a benign reason (mid-spawn, scale-up), synthesizing
+// a crashloop-backoff row with a past "backoff until" would be a lie. Only a
+// role whose backoff is still in the future is genuinely held down.
+func TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-prhx-past", "squad", []api.Role{
+		{Name: "recovered", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "held", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	// recovered: stale RoleHealth, backoff already elapsed, transiently below
+	// replicas → must NOT be synthesized.
+	rec := ctrl.getRoleHealth("test-prhx-past/squad/recovered")
+	rec.RestartCount = 3
+	rec.BackoffUntil = clock.Now().Add(-30 * time.Second)
+
+	// held: genuinely cooling down, backoff in the future → still synthesized.
+	held := ctrl.getRoleHealth("test-prhx-past/squad/held")
+	held.RestartCount = 2
+	held.BackoffUntil = clock.Now().Add(45 * time.Second)
+
+	rows := ctrl.ProjectHeldRoleRows(store)
+
+	byRole := map[string][]api.Session{}
+	for _, r := range rows {
+		byRole[r.Role] = append(byRole[r.Role], r)
+	}
+	if len(byRole["recovered"]) != 0 {
+		t.Errorf("recovered synthesized %d row(s), want 0 (its backoff is in the past — not held down)", len(byRole["recovered"]))
+	}
+	if len(byRole["held"]) != 1 {
+		t.Errorf("held synthesized %d row(s), want 1 (backoff in the future — genuinely held down)", len(byRole["held"]))
+	}
+}
