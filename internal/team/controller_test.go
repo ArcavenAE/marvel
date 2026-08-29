@@ -1011,6 +1011,93 @@ func TestClearRoleHealthForTeamEmpty(t *testing.T) {
 	}
 }
 
+// TestClearRoleHealthForRole is the operator reset-health verb at the
+// controller seam (aae-orc-fv3h). A role that crashed and carries a nonzero
+// RestartCount + backoff — or a saturation/never freeze — is cleared to
+// nothing without deleting the team, which was the only prior route. Sibling
+// roles under the same team are untouched, and the method reports whether a
+// record existed so the CLI can say "nothing to reset".
+func TestClearRoleHealthForRole(t *testing.T) {
+	t.Parallel()
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	// worker: crashed twice, cooling down in a backoff window.
+	ctrl.roleHealth["ws1/squad/worker"] = &RoleHealth{RestartCount: 2, BackoffUntil: clock.Now().Add(90 * time.Second)}
+	// boss: saturated/frozen far in the future — the case a team delete was
+	// previously the only way to thaw.
+	ctrl.roleHealth["ws1/squad/boss"] = &RoleHealth{RestartCount: 5, BackoffUntil: saturationFreezeUntil}
+	// reviewer: a sibling under the same team that must NOT be touched.
+	ctrl.roleHealth["ws1/squad/reviewer"] = &RoleHealth{RestartCount: 1, BackoffUntil: clock.Now().Add(30 * time.Second)}
+
+	if cleared := ctrl.ClearRoleHealthForRole("ws1", "squad", "worker"); !cleared {
+		t.Fatal("ClearRoleHealthForRole(worker) = false, want true (a record existed)")
+	}
+	// RestartCount 0 and no backoff: the record is gone entirely, so a
+	// subsequent crash starts a fresh count and a 30s window, not a
+	// lifetime-sized one.
+	if rh, ok := ctrl.RoleHealthSnapshot("ws1", "squad", "worker"); ok {
+		t.Fatalf("worker still has health after reset: %+v", rh)
+	}
+
+	// The frozen role thaws through the same verb — no team delete required.
+	if cleared := ctrl.ClearRoleHealthForRole("ws1", "squad", "boss"); !cleared {
+		t.Fatal("ClearRoleHealthForRole(boss) = false, want true (frozen record existed)")
+	}
+	if _, ok := ctrl.RoleHealthSnapshot("ws1", "squad", "boss"); ok {
+		t.Error("frozen boss still has health after reset")
+	}
+
+	// The sibling is untouched.
+	rh, ok := ctrl.RoleHealthSnapshot("ws1", "squad", "reviewer")
+	if !ok || rh.RestartCount != 1 {
+		t.Errorf("reviewer health = (%+v, %v), want RestartCount=1 untouched", rh, ok)
+	}
+
+	// Clearing a role with no record is a no-op that reports false.
+	if cleared := ctrl.ClearRoleHealthForRole("ws1", "squad", "worker"); cleared {
+		t.Error("second ClearRoleHealthForRole(worker) = true, want false (nothing to clear)")
+	}
+}
+
+// TestRoleHealthSnapshotSurfacesHealthySince guards LOW-4 from the fv3h review:
+// the observability accessor (used by `marvel describe team`) must carry
+// HealthySince, or an operator seeing RestartCount cannot tell a role about to
+// decay from one that just began its window. It also confirms the returned
+// struct is a decoupled copy (go.md rule 12).
+func TestRoleHealthSnapshotSurfacesHealthySince(t *testing.T) {
+	t.Parallel()
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	since := clock.Now().Add(-3 * time.Minute)
+	ctrl.roleHealth["ws/t/worker"] = &RoleHealth{
+		RestartCount: 2,
+		BackoffUntil: clock.Now().Add(-time.Second),
+		HealthySince: since,
+	}
+
+	got, ok := ctrl.RoleHealthSnapshot("ws", "t", "worker")
+	if !ok {
+		t.Fatal("RoleHealthSnapshot(worker) = (_, false), want the recorded health")
+	}
+	if !got.HealthySince.Equal(since) {
+		t.Errorf("HealthySince = %v, want %v (the accessor dropped it)", got.HealthySince, since)
+	}
+
+	// A returned copy that leaks into the map would let a reader corrupt the
+	// controller's state; mutating it must not be observable on the next read.
+	got.HealthySince = time.Time{}
+	got.RestartCount = 99
+	if again, _ := ctrl.RoleHealthSnapshot("ws", "t", "worker"); !again.HealthySince.Equal(since) || again.RestartCount != 2 {
+		t.Errorf("mutating the snapshot leaked into the store: got HealthySince=%v RestartCount=%d", again.HealthySince, again.RestartCount)
+	}
+}
+
 func TestComputeBackoff(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -2668,11 +2755,13 @@ func TestProjectHeldRoleRowsSynthesizesCrashloopRow(t *testing.T) {
 }
 
 // TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff guards the
-// synthesis gate. RestartCount does not decay until fv3h, so a recovered role
-// can carry stale RoleHealth with a backoff window already in the past. If it
-// dips below replicas for a benign reason (mid-spawn, scale-up), synthesizing
-// a crashloop-backoff row with a past "backoff until" would be a lie. Only a
-// role whose backoff is still in the future is genuinely held down.
+// synthesis gate. Success-based decay (fv3h) only clears a recovered role's
+// RoleHealth after restartCountDecayWindow of health, so in the interval
+// before decay a recovered role can carry RoleHealth with a backoff window
+// already in the past. If it dips below replicas for a benign reason
+// (mid-spawn, scale-up), synthesizing a crashloop-backoff row with a past
+// "backoff until" would be a lie. Only a role whose backoff is still in the
+// future is genuinely held down.
 func TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff(t *testing.T) {
 	store := api.NewStore()
 	ctrl := NewController(store, nil)
@@ -2706,5 +2795,189 @@ func TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff(t *testing.T) {
 	}
 	if len(byRole["held"]) != 1 {
 		t.Errorf("held synthesized %d row(s), want 1 (backoff in the future — genuinely held down)", len(byRole["held"]))
+	}
+}
+
+// TestRestartCountDecaysAfterHealthyWindow is the success-based decay half of
+// aae-orc-fv3h. A role that crashed a few times and has since run healthy
+// should not carry those restarts forever: after it has been continuously
+// healthy for restartCountDecayWindow, its RestartCount resets to 0 and its
+// backoff clears, so its next crash earns a fresh 30s window rather than a
+// lifetime-sized one. Healthy for less than the window changes nothing.
+func TestRestartCountDecaysAfterHealthyWindow(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-decay", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 30 * time.Second, FailureThreshold: 3},
+		},
+	})
+
+	// A role that crashed three times, now recovered: RestartCount>0, backoff
+	// already elapsed. Without decay it would carry these restarts forever.
+	rh := ctrl.getRoleHealth("test-decay/squad/worker")
+	rh.RestartCount = 3
+	rh.BackoffUntil = clock.Now().Add(-time.Minute)
+
+	// A running session with a fresh heartbeat reads healthy. The heartbeat
+	// staleness check uses wall-clock time, so one fresh stamp stays healthy
+	// for the whole sub-second test regardless of the injected clock, which
+	// drives only the decay window.
+	seedSession(t, store, api.Session{
+		Name: "squad-worker-g1-0", Workspace: "test-decay", Team: "squad", Role: "worker",
+		Generation: 1, State: api.SessionRunning, LastHeartbeat: time.Now().UTC(),
+	})
+
+	// First eval: healthy → the streak starts (HealthySince at T0), count held.
+	ctrl.evaluateHealth()
+	if got, _ := ctrl.RoleHealthSnapshot("test-decay", "squad", "worker"); got.RestartCount != 3 {
+		t.Fatalf("RestartCount after first healthy eval = %d, want 3 (streak just started)", got.RestartCount)
+	}
+
+	// Still inside the window: no decay.
+	clock.Advance(restartCountDecayWindow - time.Minute)
+	ctrl.evaluateHealth()
+	if got, _ := ctrl.RoleHealthSnapshot("test-decay", "squad", "worker"); got.RestartCount != 3 {
+		t.Fatalf("RestartCount before the window elapses = %d, want 3 (still cooling in)", got.RestartCount)
+	}
+
+	// Past the window: RestartCount decays to 0 and the backoff clears.
+	clock.Advance(2 * time.Minute)
+	ctrl.evaluateHealth()
+	got, ok := ctrl.RoleHealthSnapshot("test-decay", "squad", "worker")
+	if !ok {
+		t.Fatal("role health vanished after decay, want a zeroed record")
+	}
+	if got.RestartCount != 0 {
+		t.Errorf("RestartCount after a full healthy window = %d, want 0 (decayed)", got.RestartCount)
+	}
+	if !got.BackoffUntil.IsZero() {
+		t.Errorf("BackoffUntil after decay = %v, want zero", got.BackoffUntil)
+	}
+}
+
+// TestDecayHealthyRoles pins the decay decision and its guards directly
+// (aae-orc-fv3h): a healthy role past its window decays, a saturation/never
+// freeze is never auto-thawed (that is the operator's reset-health verb), a
+// role that flapped this tick has its streak reset instead of decaying, and a
+// role with nothing to decay is left alone.
+func TestDecayHealthyRoles(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	past := clock.Now().Add(-restartCountDecayWindow - time.Minute)
+	ctrl.roleHealth["ws/t/decays"] = &RoleHealth{RestartCount: 3, BackoffUntil: clock.Now().Add(-time.Second), HealthySince: past}
+	ctrl.roleHealth["ws/t/frozen"] = &RoleHealth{RestartCount: 5, BackoffUntil: saturationFreezeUntil, HealthySince: past}
+	ctrl.roleHealth["ws/t/wobbled"] = &RoleHealth{RestartCount: 2, BackoffUntil: clock.Now().Add(-time.Second), HealthySince: past}
+	ctrl.roleHealth["ws/t/clean"] = &RoleHealth{RestartCount: 0}
+
+	obs := map[string]roleObs{
+		"ws/t/decays":  {healthy: true},                  // healthy past the window → decays
+		"ws/t/frozen":  {healthy: true},                  // healthy but frozen → must NOT decay
+		"ws/t/wobbled": {healthy: true, unhealthy: true}, // a replica flapped → streak resets, no decay
+		"ws/t/clean":   {healthy: true},                  // RestartCount 0 → nothing to do
+	}
+
+	ctrl.decayHealthyRoles(obs, clock.Now())
+
+	if rh := ctrl.roleHealth["ws/t/decays"]; rh.RestartCount != 0 || !rh.BackoffUntil.IsZero() || !rh.HealthySince.IsZero() {
+		t.Errorf("decays: got count=%d backoff=%v since=%v, want all cleared", rh.RestartCount, rh.BackoffUntil, rh.HealthySince)
+	}
+	if rh := ctrl.roleHealth["ws/t/frozen"]; rh.RestartCount != 5 || !rh.BackoffUntil.Equal(saturationFreezeUntil) {
+		t.Errorf("frozen: got count=%d backoff=%v, want untouched (saturation freeze is operator-cleared)", rh.RestartCount, rh.BackoffUntil)
+	}
+	if rh := ctrl.roleHealth["ws/t/wobbled"]; rh.RestartCount != 2 || !rh.HealthySince.IsZero() {
+		t.Errorf("wobbled: got count=%d since=%v, want count untouched and streak reset", rh.RestartCount, rh.HealthySince)
+	}
+	if rh := ctrl.roleHealth["ws/t/clean"]; rh.RestartCount != 0 {
+		t.Errorf("clean: got count=%d, want 0 untouched", rh.RestartCount)
+	}
+}
+
+// TestCrashClearsHealthyStreak guards the single clear point: every charge
+// (health path via restartSession, reap path via noteReapedCrash) runs through
+// noteCrashAndBackoff, which must reset HealthySince so a role that crashes
+// after a partial healthy streak starts its decay window over. See aae-orc-fv3h.
+func TestCrashClearsHealthyStreak(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	rh := ctrl.getRoleHealth("ws/t/worker")
+	rh.RestartCount = 1
+	rh.HealthySince = clock.Now()
+
+	if charged := ctrl.noteCrashAndBackoff("ws", "t", "worker", 0); !charged {
+		t.Fatal("noteCrashAndBackoff returned false, want true (not saturated)")
+	}
+	got := ctrl.roleHealth["ws/t/worker"]
+	if !got.HealthySince.IsZero() {
+		t.Errorf("HealthySince after a charge = %v, want zero (crash breaks the streak)", got.HealthySince)
+	}
+	if got.RestartCount != 2 {
+		t.Errorf("RestartCount after charge = %d, want 2", got.RestartCount)
+	}
+}
+
+// TestDecayStopsJoinSynthesizingRecoveredRole is the join-interaction guard
+// (aae-orc-fv3h × aae-orc-prhx). A crash-looping role in its backoff window is
+// synthesized as a held "crashloop-backoff" row by ProjectHeldRoleRows. Once
+// the role recovers and stays healthy past the decay window, decay clears its
+// RestartCount and backoff — and the join must then STOP representing it as
+// held, even if the role transiently dips below its replica count again.
+func TestDecayStopsJoinSynthesizingRecoveredRole(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-decay-join", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways,
+			Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 30 * time.Second, FailureThreshold: 3},
+		},
+	})
+
+	// Phase 1 — crash-looping in the backoff window, no live row: held.
+	rh := ctrl.getRoleHealth("test-decay-join/squad/worker")
+	rh.RestartCount = 2
+	rh.BackoffUntil = clock.Now().Add(90 * time.Second)
+	if rows := ctrl.ProjectHeldRoleRows(store); len(rows) != 1 {
+		t.Fatalf("phase 1: join synthesized %d rows, want 1 (role held in backoff)", len(rows))
+	}
+
+	// Phase 2 — recovery: the reconciler respawned a session that runs healthy.
+	seedSession(t, store, api.Session{
+		Name: "squad-worker-g1-0", Workspace: "test-decay-join", Team: "squad", Role: "worker",
+		Generation: 1, State: api.SessionRunning, LastHeartbeat: time.Now().UTC(),
+	})
+
+	// Stays healthy across the decay window.
+	ctrl.evaluateHealth() // stamps HealthySince at T0
+	clock.Advance(restartCountDecayWindow + time.Minute)
+	ctrl.evaluateHealth() // past the window → decay fires
+
+	if got, _ := ctrl.RoleHealthSnapshot("test-decay-join", "squad", "worker"); got.RestartCount != 0 {
+		t.Fatalf("RestartCount after the recovery window = %d, want 0 (decayed)", got.RestartCount)
+	}
+
+	// Drop the live row to force the join through its backoff gate rather than
+	// its replica-count gate: decay has cleared BackoffUntil, so a benign dip
+	// below replicas can no longer be read as held. Before decay, the future
+	// backoff (phase 1) synthesized a row here.
+	if err := store.DeleteSession("test-decay-join/squad-worker-g1-0"); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+	if rows := ctrl.ProjectHeldRoleRows(store); len(rows) != 0 {
+		t.Fatalf("phase 2: join synthesized %d rows after decay, want 0 (role recovered)", len(rows))
 	}
 }

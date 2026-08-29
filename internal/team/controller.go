@@ -83,6 +83,15 @@ type RoleHealth struct {
 	// marked SessionCrashLoopBackOff and left alive (not deleted) so
 	// operators see the condition and the reconciler doesn't respawn.
 	BackoffUntil time.Time
+	// HealthySince stamps when the role began an unbroken healthy streak
+	// after its most recent charge; the zero value means no active streak
+	// (never healthy, or a crash/flap cleared it). Once the streak reaches
+	// restartCountDecayWindow, evaluateHealth resets RestartCount so a role
+	// that has run clean for a while does not carry a lifetime-sized backoff
+	// into its next crash. In-memory only (not persisted): a daemon restart
+	// conservatively restarts the streak rather than granting decay early.
+	// See decayHealthyRoles and aae-orc-fv3h.
+	HealthySince time.Time
 }
 
 // Restart backoff configuration. Exponential with a 5-minute cap — the
@@ -90,6 +99,15 @@ type RoleHealth struct {
 const (
 	restartBackoffInitial = 30 * time.Second
 	restartBackoffMax     = 5 * time.Minute
+	// restartCountDecayWindow is how long a role must run continuously
+	// healthy before its accumulated RestartCount decays back to zero
+	// (success-based decay, kubelet's model — a container that has run
+	// successfully for a stability period resets its crash-loop backoff).
+	// Ten minutes is long enough that a genuinely flapping role never
+	// reaches it (its next crash resets the streak) yet short enough that a
+	// role which recovered does not carry old restarts for hours. See
+	// decayHealthyRoles and aae-orc-fv3h.
+	restartCountDecayWindow = 10 * time.Minute
 	// defaultShiftTimeout bounds how long a shift may run before the
 	// reconciler treats it as stuck. A launch whose new generation never
 	// reaches readiness (e.g. a heartbeat-checked role that never beats)
@@ -198,6 +216,11 @@ func (c *Controller) forgetRoleHealth(key string) {
 // RoleHealthSnapshot returns the current restart state for a role,
 // useful for tests and for `marvel describe team` observability.
 // Returns (nil, false) if the role has no recorded crash-loop history.
+// The result is a full value copy of RoleHealth (flat ints and timestamps,
+// so a struct copy is a deep copy — go.md rule 12), including HealthySince:
+// an operator needs it to tell a role about to decay from one that just
+// started its window, and copying the whole struct means a future field
+// cannot be silently dropped here the way HealthySince once was.
 func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHealth, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -206,11 +229,8 @@ func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHeal
 	if !ok {
 		return nil, false
 	}
-	return &RoleHealth{
-		RestartCount:  rh.RestartCount,
-		LastRestartAt: rh.LastRestartAt,
-		BackoffUntil:  rh.BackoffUntil,
-	}, true
+	rhCopy := *rh
+	return &rhCopy, true
 }
 
 // SnapshotRoleHealth returns a value copy of every role's crash-loop state,
@@ -261,14 +281,16 @@ func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
 				continue
 			}
 			// Only a role still inside its backoff window is genuinely held
-			// down. RestartCount does not decay until fv3h, so a recovered
-			// role can carry stale RoleHealth with an elapsed backoff; a
-			// benign dip below replicas (mid-spawn, scale-up) must not
-			// synthesize a crashloop-backoff row with a past deadline. The
-			// saturation sentinel is far in the future, so a frozen role that
-			// somehow presented a gap still reads as held. During real
-			// backoff the row is deleted and BackoffUntil is in the future,
-			// so nothing legitimate is hidden.
+			// down. Success-based decay (fv3h) eventually clears a recovered
+			// role's RoleHealth, but only after restartCountDecayWindow of
+			// health; in the interval between recovery and decay a role can
+			// still carry RoleHealth with an elapsed backoff, so a benign dip
+			// below replicas (mid-spawn, scale-up) must not synthesize a
+			// crashloop-backoff row with a past deadline. The saturation
+			// sentinel is far in the future, so a frozen role that somehow
+			// presented a gap still reads as held. During real backoff the row
+			// is deleted and BackoffUntil is in the future, so nothing
+			// legitimate is hidden.
 			if !rh.BackoffUntil.After(now) {
 				continue
 			}
@@ -343,6 +365,28 @@ func (c *Controller) ClearRoleHealthForWorkspace(workspace string) {
 		}
 	}
 	c.dropAdmissionHolds(prefix)
+}
+
+// ClearRoleHealthForRole deletes crash-loop state for a single role — the
+// operator's "this role is fine now" verb, exposed as `marvel reset-health`.
+// It is the single-role sibling of ClearRoleHealthForTeam: it removes one
+// role's accumulated RestartCount and backoff (including a saturation or
+// restart_policy=never freeze) without deleting the whole team, which was the
+// only prior route to clearing a role's restart history. Returns whether a
+// record existed, so the caller can distinguish a reset from a no-op. Success-
+// based decay (see decayHealthyRoles) is the automatic counterpart; this verb
+// is the manual override, and the only sanctioned way to thaw a frozen role
+// short of a team delete. See aae-orc-fv3h.
+func (c *Controller) ClearRoleHealthForRole(workspace, team, role string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := workspace + "/" + team + "/" + role
+	if _, ok := c.roleHealth[key]; !ok {
+		return false
+	}
+	delete(c.roleHealth, key)
+	c.forgetRoleHealth(key)
+	return true
 }
 
 // ReconcileOnce runs one reconciliation pass for all teams.
@@ -522,6 +566,10 @@ var saturationFreezeUntil = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestarts int) bool {
 	roleKey := workspace + "/" + team + "/" + role
 	rh := c.getRoleHealth(roleKey)
+	// Any charge — from the health path or the reap path, both of which land
+	// here — ends the role's healthy streak, so success-based decay starts
+	// over the next time it recovers. See decayHealthyRoles (aae-orc-fv3h).
+	rh.HealthySince = time.Time{}
 	if maxRestarts > 0 && rh.RestartCount >= maxRestarts {
 		rh.BackoffUntil = saturationFreezeUntil
 		c.persistRoleHealth(roleKey, rh)
@@ -752,6 +800,12 @@ func (c *Controller) evaluateHealth() {
 		teamCache[t.Key()] = t
 	}
 
+	// Per-role health observed this tick, for success-based RestartCount decay
+	// (aae-orc-fv3h). Collected across the whole session loop and applied once
+	// after it, so a role with any unhealthy replica breaks its streak
+	// regardless of the order its replicas are visited.
+	obs := make(map[string]roleObs)
+
 	for _, sess := range sessions {
 		if sess.State != api.SessionRunning {
 			continue
@@ -829,6 +883,21 @@ func (c *Controller) evaluateHealth() {
 			continue
 		}
 
+		// Record this session's health against its role for decay. Unknown
+		// (no healthcheck, or inside the first-heartbeat grace period) counts
+		// as neither: a role marvel cannot assert is healthy does not decay.
+		key := updated.Workspace + "/" + updated.Team + "/" + updated.Role
+		switch updated.HealthState {
+		case api.HealthHealthy:
+			o := obs[key]
+			o.healthy = true
+			obs[key] = o
+		case api.HealthUnhealthy:
+			o := obs[key]
+			o.unhealthy = true
+			obs[key] = o
+		}
+
 		if transitionedToUnhealthy {
 			events.Emit(c.Events, events.Event{
 				Kind:      events.KindHealthCheckFailed,
@@ -842,6 +911,77 @@ func (c *Controller) evaluateHealth() {
 		}
 		if shouldApplyRestart {
 			c.applyRestartPolicy(&updated, &t, role)
+		}
+	}
+
+	c.decayHealthyRoles(obs, c.nowUTC())
+}
+
+// roleObs is the health a role showed across one evaluateHealth tick: whether
+// any RUNNING replica read healthy and whether any read unhealthy. It is
+// populated only from SessionRunning sessions classified this tick, so a
+// declared replica with no running session (not yet spawned, drained, or gone
+// without a crash) contributes nothing, and a session that read HealthUnknown
+// (no healthcheck, or inside the first-heartbeat grace) contributes nothing
+// either. Both fields can be true for a multi-replica role mid-wobble.
+type roleObs struct {
+	healthy   bool
+	unhealthy bool
+}
+
+// decayHealthyRoles advances success-based RestartCount decay (aae-orc-fv3h).
+// A role observed continuously healthy — at least one healthy running replica
+// and no unhealthy one — for restartCountDecayWindow has its RestartCount reset
+// to zero and its backoff cleared, so a long-lived role that crashed a few
+// times long ago does not carry a lifetime-sized backoff into its next crash.
+//
+// It ranges only over roles with an observation this tick (see roleObs), so two
+// boundaries are consciously accepted:
+//
+//   - The streak breaks only on an unhealthy RUNNING replica. A replica that is
+//     down but not crashing (scaled away, pending spawn) leaves no observation
+//     and does not break the streak; a replica that is down BECAUSE it crashed
+//     already reset the streak at charge time (noteCrashAndBackoff), so this is
+//     not a hole through which a crash-looper decays.
+//   - A tick with no classified observation for a role (all its sessions
+//     HealthUnknown, or none running) neither advances nor resets the streak —
+//     the role is simply not visited, and its HealthySince stands. The window
+//     is therefore wall-clock, not consecutive-healthy-ticks; a role cannot ride
+//     an Unknown gap to a full window while actually failing, because a real
+//     crash-looper re-crashes within restartBackoffMax (5m) < the window (10m)
+//     and each crash resets the streak.
+//
+// A saturation or restart_policy=never freeze is deliberately never auto-thawed:
+// that is a terminal verdict cleared only by the operator (reset-health) or a
+// team delete, and auto-thawing it would re-introduce the uncapped-respawn leak
+// the freeze exists to stop. Caller holds c.mu.
+func (c *Controller) decayHealthyRoles(obs map[string]roleObs, now time.Time) {
+	for key, o := range obs {
+		rh, ok := c.roleHealth[key]
+		if !ok || rh.RestartCount == 0 {
+			// Nothing accumulated to decay.
+			continue
+		}
+		if rh.BackoffUntil.Equal(saturationFreezeUntil) {
+			// Frozen: operator-cleared only.
+			continue
+		}
+		if o.unhealthy || !o.healthy {
+			// A flap (or no healthy replica) breaks the streak; start over.
+			rh.HealthySince = time.Time{}
+			continue
+		}
+		if rh.HealthySince.IsZero() {
+			rh.HealthySince = now
+			continue
+		}
+		if now.Sub(rh.HealthySince) >= restartCountDecayWindow {
+			log.Printf("health: role %s ran healthy for %s, decaying restart count %d→0",
+				key, restartCountDecayWindow, rh.RestartCount)
+			rh.RestartCount = 0
+			rh.BackoffUntil = time.Time{}
+			rh.HealthySince = time.Time{}
+			c.persistRoleHealth(key, rh)
 		}
 	}
 }

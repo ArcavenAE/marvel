@@ -663,6 +663,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleRun(req.Params)
 	case "shift":
 		return d.handleShift(req.Params)
+	case "reset-health":
+		return d.handleResetHealth(req.Params)
 	case "inject":
 		return d.handleInject(req.Params)
 	case "capture":
@@ -1276,6 +1278,57 @@ func (d *Daemon) handleShift(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]string{
 		"status": "shift_initiated",
 		"team":   p.TeamKey,
+	})
+	return Response{Result: result}
+}
+
+// Reset-health params — clear one role's crash-loop state (RestartCount +
+// backoff) without deleting the team. See aae-orc-fv3h.
+type resetHealthParams struct {
+	TeamKey string `json:"team_key"` // workspace/team
+	Role    string `json:"role"`
+}
+
+// handleResetHealth clears a single role's accumulated restart count and
+// backoff — the operator override for a role that has recovered, and the only
+// route to thaw a saturated or restart_policy=never freeze short of deleting
+// the team. It resolves the team so it can validate the role and derive the
+// canonical workspace/team, then reconciles so a role no longer held back can
+// spawn its replacement immediately.
+func (d *Daemon) handleResetHealth(params json.RawMessage) Response {
+	var p resetHealthParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	if p.Role == "" {
+		return Response{Error: "reset-health requires --role"}
+	}
+	t, err := d.store.GetTeam(p.TeamKey)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("team %s: %v", p.TeamKey, err)}
+	}
+	found := false
+	for i := range t.Roles {
+		if t.Roles[i].Name == p.Role {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+	}
+
+	cleared := d.teamCtrl.ClearRoleHealthForRole(t.Workspace, t.Name, p.Role)
+	// A cleared freeze or elapsed backoff means the reconciler can now spawn
+	// the role's missing replicas; run one pass so the effect is immediate
+	// rather than waiting for the next tick.
+	d.teamCtrl.ReconcileOnce()
+
+	result, _ := json.Marshal(map[string]any{
+		"status":  "health_reset",
+		"cleared": cleared,
+		"team":    p.TeamKey,
+		"role":    p.Role,
 	})
 	return Response{Result: result}
 }

@@ -140,6 +140,7 @@ func main() {
 	root.AddCommand(runCmd())
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
+	root.AddCommand(resetHealthCmd())
 	root.AddCommand(injectCmd())
 	root.AddCommand(captureCmd())
 	root.AddCommand(versionCmd())
@@ -1101,6 +1102,54 @@ func shiftCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "", "shift only this role (default: all roles)")
+	return cmd
+}
+
+func resetHealthCmd() *cobra.Command {
+	var role string
+	cmd := &cobra.Command{
+		Use:   "reset-health <workspace/team>",
+		Short: "Clear a role's crash-loop restart count and backoff without deleting the team",
+		Long: `Clear a role's accumulated crash-loop state.
+
+A role's RestartCount only ever climbs and drives the backoff window for its
+next crash, so a long-lived healthy role that crashed a few times long ago
+still gets a lifetime-sized backoff the next time it fails. Success-based decay
+resets the count automatically after a role has run healthy for a while; this
+verb is the operator override for when you know a role is fine now.
+
+It is also the only way to thaw a role frozen by max_restarts saturation or
+restart_policy=never, short of deleting and re-applying the whole team.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]any{
+				"team_key": args[0],
+				"role":     role,
+			})
+			resp, err := send(daemon.Request{
+				Method: "reset-health",
+				Params: params,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var res struct {
+				Cleared bool `json:"cleared"`
+			}
+			_ = json.Unmarshal(resp.Result, &res)
+			if res.Cleared {
+				fmt.Printf("reset health for team/%s role/%s\n", args[0], role)
+			} else {
+				fmt.Printf("no crash-loop state for team/%s role/%s (nothing to reset)\n", args[0], role)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&role, "role", "", "role to reset (required)")
+	_ = cmd.MarkFlagRequired("role")
 	return cmd
 }
 
