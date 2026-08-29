@@ -208,8 +208,15 @@ Recovery behavior, all shipped:
   reclaiming the prefix) is one event, and marvel cannot see which of
   those it was. See finding-019.
 - **`Role.MaxRestarts`** caps restarts per replica slot; on saturation the
-  session is left `failed` rather than respawned. Zero means unlimited.
-  The count never decays, and clearing it means deleting the team.
+  session is left `failed` rather than respawned. Zero means unlimited. The
+  count is a within-window cap, not a lifetime tally: after a role runs
+  continuously healthy for `restartCountDecayWindow` (10m), `RestartCount` and
+  the backoff reset to zero (success-based decay, kubelet's model; fv3h), so
+  `max_restarts` caps crashes *within* that window and a role that crashes less
+  often than the window resets between crashes and never freezes. The one thing
+  decay never auto-thaws is a saturation freeze (or the `restart_policy=never`
+  freeze) — that terminal verdict is cleared only by
+  `marvel reset-health <ws/team> --role <r>` or by deleting the team.
 - **`crashed`** is the transition state `ReapDead` sets when a pane is
   gone, distinguishing a dead process from a drained one. It carries
   `health=unhealthy`: the pane's absence is the process-alive verdict.

@@ -216,6 +216,11 @@ func (c *Controller) forgetRoleHealth(key string) {
 // RoleHealthSnapshot returns the current restart state for a role,
 // useful for tests and for `marvel describe team` observability.
 // Returns (nil, false) if the role has no recorded crash-loop history.
+// The result is a full value copy of RoleHealth (flat ints and timestamps,
+// so a struct copy is a deep copy — go.md rule 12), including HealthySince:
+// an operator needs it to tell a role about to decay from one that just
+// started its window, and copying the whole struct means a future field
+// cannot be silently dropped here the way HealthySince once was.
 func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHealth, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -224,11 +229,8 @@ func (c *Controller) RoleHealthSnapshot(workspace, team, role string) (*RoleHeal
 	if !ok {
 		return nil, false
 	}
-	return &RoleHealth{
-		RestartCount:  rh.RestartCount,
-		LastRestartAt: rh.LastRestartAt,
-		BackoffUntil:  rh.BackoffUntil,
-	}, true
+	rhCopy := *rh
+	return &rhCopy, true
 }
 
 // SnapshotRoleHealth returns a value copy of every role's crash-loop state,
@@ -916,23 +918,43 @@ func (c *Controller) evaluateHealth() {
 }
 
 // roleObs is the health a role showed across one evaluateHealth tick: whether
-// any replica read healthy and whether any read unhealthy. Both can be true
-// for a multi-replica role mid-wobble.
+// any RUNNING replica read healthy and whether any read unhealthy. It is
+// populated only from SessionRunning sessions classified this tick, so a
+// declared replica with no running session (not yet spawned, drained, or gone
+// without a crash) contributes nothing, and a session that read HealthUnknown
+// (no healthcheck, or inside the first-heartbeat grace) contributes nothing
+// either. Both fields can be true for a multi-replica role mid-wobble.
 type roleObs struct {
 	healthy   bool
 	unhealthy bool
 }
 
 // decayHealthyRoles advances success-based RestartCount decay (aae-orc-fv3h).
-// A role that has run continuously healthy — at least one healthy replica and
-// no unhealthy one — for restartCountDecayWindow has its RestartCount reset to
-// zero and its backoff cleared, so a long-lived role that crashed a few times
-// long ago does not carry a lifetime-sized backoff into its next crash. Any
-// unhealthy replica this tick resets the streak instead. A saturation or
-// restart_policy=never freeze is deliberately never auto-thawed: that is a
-// terminal verdict cleared only by the operator (reset-health) or a team
-// delete, and auto-thawing it would re-introduce the uncapped-respawn leak the
-// freeze exists to stop. Caller holds c.mu.
+// A role observed continuously healthy — at least one healthy running replica
+// and no unhealthy one — for restartCountDecayWindow has its RestartCount reset
+// to zero and its backoff cleared, so a long-lived role that crashed a few
+// times long ago does not carry a lifetime-sized backoff into its next crash.
+//
+// It ranges only over roles with an observation this tick (see roleObs), so two
+// boundaries are consciously accepted:
+//
+//   - The streak breaks only on an unhealthy RUNNING replica. A replica that is
+//     down but not crashing (scaled away, pending spawn) leaves no observation
+//     and does not break the streak; a replica that is down BECAUSE it crashed
+//     already reset the streak at charge time (noteCrashAndBackoff), so this is
+//     not a hole through which a crash-looper decays.
+//   - A tick with no classified observation for a role (all its sessions
+//     HealthUnknown, or none running) neither advances nor resets the streak —
+//     the role is simply not visited, and its HealthySince stands. The window
+//     is therefore wall-clock, not consecutive-healthy-ticks; a role cannot ride
+//     an Unknown gap to a full window while actually failing, because a real
+//     crash-looper re-crashes within restartBackoffMax (5m) < the window (10m)
+//     and each crash resets the streak.
+//
+// A saturation or restart_policy=never freeze is deliberately never auto-thawed:
+// that is a terminal verdict cleared only by the operator (reset-health) or a
+// team delete, and auto-thawing it would re-introduce the uncapped-respawn leak
+// the freeze exists to stop. Caller holds c.mu.
 func (c *Controller) decayHealthyRoles(obs map[string]roleObs, now time.Time) {
 	for key, o := range obs {
 		rh, ok := c.roleHealth[key]

@@ -1062,6 +1062,42 @@ func TestClearRoleHealthForRole(t *testing.T) {
 	}
 }
 
+// TestRoleHealthSnapshotSurfacesHealthySince guards LOW-4 from the fv3h review:
+// the observability accessor (used by `marvel describe team`) must carry
+// HealthySince, or an operator seeing RestartCount cannot tell a role about to
+// decay from one that just began its window. It also confirms the returned
+// struct is a decoupled copy (go.md rule 12).
+func TestRoleHealthSnapshotSurfacesHealthySince(t *testing.T) {
+	t.Parallel()
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	since := clock.Now().Add(-3 * time.Minute)
+	ctrl.roleHealth["ws/t/worker"] = &RoleHealth{
+		RestartCount: 2,
+		BackoffUntil: clock.Now().Add(-time.Second),
+		HealthySince: since,
+	}
+
+	got, ok := ctrl.RoleHealthSnapshot("ws", "t", "worker")
+	if !ok {
+		t.Fatal("RoleHealthSnapshot(worker) = (_, false), want the recorded health")
+	}
+	if !got.HealthySince.Equal(since) {
+		t.Errorf("HealthySince = %v, want %v (the accessor dropped it)", got.HealthySince, since)
+	}
+
+	// A returned copy that leaks into the map would let a reader corrupt the
+	// controller's state; mutating it must not be observable on the next read.
+	got.HealthySince = time.Time{}
+	got.RestartCount = 99
+	if again, _ := ctrl.RoleHealthSnapshot("ws", "t", "worker"); !again.HealthySince.Equal(since) || again.RestartCount != 2 {
+		t.Errorf("mutating the snapshot leaked into the store: got HealthySince=%v RestartCount=%d", again.HealthySince, again.RestartCount)
+	}
+}
+
 func TestComputeBackoff(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
