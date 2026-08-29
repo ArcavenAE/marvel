@@ -474,3 +474,49 @@ func TestProjectionPolicyWinsOverFeed(t *testing.T) {
 		t.Error("subagentStatusLine absent: feed should add keys the policy does not define")
 	}
 }
+
+// TestProjectionReportsShadowedFeedKey covers aae-orc-g698: when a policy
+// declares a key the context feed also wants, policy-wins is correct AND the
+// shadowing must be reported, so an operator can tell a working feed from one
+// that populates only on subagent turns. Falsification: before the fix the
+// merge is silent — the policy.projected event names the path and policy but
+// says nothing about the feed key the policy shadowed, so this assertion
+// fails. Deliberately separate from TestProjectionPolicyWinsOverFeed, which
+// asserts the half-and-half merge state and must keep passing either way.
+func TestProjectionReportsShadowedFeedKey(t *testing.T) {
+	t.Parallel()
+	mgr, ring := projectionManager(t)
+
+	m, err := api.ParseManifestBytes([]byte(feedWithPolicyManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	key := seedFeedSession(t, mgr, "acme", "squad", "watcher", "squad-watcher-g1-0")
+
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("Reproject changed = %d, want 1", n)
+	}
+
+	evs := ring.Snapshot(events.Filter{Kind: events.KindPolicyProjected, Session: key}, 0)
+	if len(evs) != 1 {
+		t.Fatalf("policy.projected events = %d, want 1", len(evs))
+	}
+	msg := evs[0].Message
+	// "statusLine" (capital L) is the shadowed feed key. The policy name
+	// "own-statusline" is all lowercase, so this substring matches the key
+	// the report names, not the policy.
+	if !strings.Contains(msg, "statusLine") {
+		t.Errorf("event message %q does not name the shadowed feed key statusLine", msg)
+	}
+	if !strings.Contains(strings.ToLower(msg), "shadow") {
+		t.Errorf("event message %q does not report the feed key as shadowed by the policy", msg)
+	}
+	// subagentStatusLine was NOT declared by the policy, so it is fed, not
+	// shadowed; the report must not name it.
+	if strings.Contains(msg, "subagentStatusLine") {
+		t.Errorf("event message %q names subagentStatusLine, which the policy did not shadow", msg)
+	}
+}
