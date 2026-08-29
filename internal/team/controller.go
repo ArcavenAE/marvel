@@ -268,10 +268,11 @@ func (c *Controller) ReconcileOnce() {
 	//
 	// The charge is per role per tick, not per lost replica: see
 	// noteReapedCrash.
-	charged := make(map[string]bool)
+	charged := make(map[string]*reapCharge)
 	for _, r := range c.sessMgr.ReapDead() {
 		c.noteReapedCrash(r, charged)
 	}
+	c.emitReapAccounting(charged)
 	c.evaluateHealth()
 
 	teams := c.store.ListTeams()
@@ -299,7 +300,20 @@ func (c *Controller) ReconcileOnce() {
 // cause-agnostic: bound the blast radius of one event instead of guessing
 // at its cause. Flapping still escalates, because flapping repeats across
 // ticks. See aae-orc-4bz2.
-func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string]bool) {
+// reapCharge accumulates one role's crash accounting across a single tick's
+// reap loop, so the tick can emit ONE accounting event per role rather than
+// one per lost replica (or none, as when the accounting was log-only). See
+// emitReapAccounting and aae-orc-m8n0.
+type reapCharge struct {
+	workspace, team, role string
+	suppressed            int       // same-role reaps folded into the one charge
+	saturated             bool      // the charge hit max_restarts (noteCrashAndBackoff == false)
+	restartCount          int       // RestartCount after the charge
+	backoffUntil          time.Time // BackoffUntil after the charge
+	maxRestarts           int
+}
+
+func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string]*reapCharge) {
 	t, err := c.store.GetTeam(r.Workspace + "/" + r.Team)
 	if err != nil {
 		return
@@ -339,19 +353,57 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string
 		})
 		return
 	}
-	if charged[roleKey] {
+	if acc, ok := charged[roleKey]; ok {
+		acc.suppressed++
 		log.Printf("reap: session %s crashed with the rest of role %s in one tick; already charged",
 			r.Key, roleKey)
 		return
 	}
-	charged[roleKey] = true
+	acc := &reapCharge{workspace: r.Workspace, team: r.Team, role: r.Role, maxRestarts: role.MaxRestarts}
+	charged[roleKey] = acc
 	if c.noteCrashAndBackoff(r.Workspace, r.Team, r.Role, role.MaxRestarts) {
 		rh := c.roleHealth[roleKey]
+		acc.restartCount = rh.RestartCount
+		acc.backoffUntil = rh.BackoffUntil
 		log.Printf("reap: session %s crashed (role %s restart #%d, next backoff=%s)",
 			r.Key, roleKey, rh.RestartCount, time.Until(rh.BackoffUntil))
 	} else {
+		acc.saturated = true
+		acc.restartCount = c.roleHealth[roleKey].RestartCount
 		log.Printf("reap: session %s crashed but role %s already at max_restarts=%d",
 			r.Key, roleKey, role.MaxRestarts)
+	}
+}
+
+// emitReapAccounting brings the reap path to event parity with the health
+// path: after a tick's reap loop has folded a role's lost replicas into one
+// charge, it emits a single accounting event per charged role so the charge,
+// the suppression count, and the resulting backoff are visible on
+// `marvel events` instead of inferable only from the daemon log (and from
+// the absence of any event at all). No new event kind — it reuses the health
+// path's KindCrashLoopBackoff / KindRoleSaturated. See aae-orc-m8n0.
+func (c *Controller) emitReapAccounting(charged map[string]*reapCharge) {
+	for _, acc := range charged {
+		if acc.saturated {
+			events.Emit(c.Events, events.Event{
+				Kind:      events.KindRoleSaturated,
+				Severity:  events.SeverityWarning,
+				Workspace: acc.workspace,
+				Team:      acc.team,
+				Role:      acc.role,
+				Message:   fmt.Sprintf("max_restarts=%d reached (charged 1, suppressed %d)", acc.maxRestarts, acc.suppressed),
+			})
+			continue
+		}
+		events.Emit(c.Events, events.Event{
+			Kind:      events.KindCrashLoopBackoff,
+			Severity:  events.SeverityWarning,
+			Workspace: acc.workspace,
+			Team:      acc.team,
+			Role:      acc.role,
+			Message: fmt.Sprintf("charged 1, suppressed %d; restart #%d, backoff until %s",
+				acc.suppressed, acc.restartCount, acc.backoffUntil.Format(time.RFC3339)),
+		})
 	}
 }
 

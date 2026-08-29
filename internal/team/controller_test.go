@@ -2441,3 +2441,59 @@ func TestShiftLaunchDeadNewGenRowDoesNotBlockDrainGate(t *testing.T) {
 			team.Shift.Phase)
 	}
 }
+
+// TestReapAccountingEmitsOneEventPerRolePerTick is aae-orc-m8n0. The reap
+// path charges a role once per tick however many replicas it lost, but that
+// accounting was log-only: killing a three-replica role's tmux session put
+// three session.crashed on the ring and nothing explaining that they were
+// charged once, suppressed twice, and cooled into a backoff window. The reap
+// path must reach event parity with the health path — one KindCrashLoopBackoff
+// per charged role per tick, carrying the charge/suppress counts.
+func TestReapAccountingEmitsOneEventPerRolePerTick(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	// Both producers share one ring, as the daemon wires them: ReapDead
+	// emits session.crashed through the manager, the accounting through the
+	// controller.
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	sessMgr.Events = ring
+
+	clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	ws := "test-m8n0"
+	createTeamFixture(t, store, ws, "squad", []api.Role{
+		{Name: "worker", Replicas: 3, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	ctrl.ReconcileOnce()
+	if got := len(store.ListSessionsByTeamRole(ws, "squad", "worker")); got != 3 {
+		t.Fatalf("expected 3 sessions, got %d", got)
+	}
+
+	// Take all three panes down together, then reap them in one tick.
+	killWorkspaceAndWait(t, ws)
+	ctrl.ReconcileOnce()
+
+	crashed := ring.Snapshot(events.Filter{Kind: events.KindSessionCrashed}, 0)
+	if len(crashed) != 3 {
+		t.Fatalf("session.crashed events = %d, want 3 (one per lost replica)", len(crashed))
+	}
+
+	accounting := ring.Snapshot(events.Filter{Kind: events.KindCrashLoopBackoff}, 0)
+	if len(accounting) != 1 {
+		t.Fatalf("crash-accounting events = %d, want exactly 1 for the role (charged once, suppressed twice)", len(accounting))
+	}
+	ev := accounting[0]
+	if ev.Workspace != ws || ev.Team != "squad" || ev.Role != "worker" {
+		t.Errorf("event scope = %s/%s role %s, want %s/squad role worker", ev.Workspace, ev.Team, ev.Role, ws)
+	}
+	if ev.Severity != events.SeverityWarning {
+		t.Errorf("severity = %s, want %s", ev.Severity, events.SeverityWarning)
+	}
+	if !strings.Contains(ev.Message, "charged 1") || !strings.Contains(ev.Message, "suppressed 2") {
+		t.Errorf("message %q does not report charged 1 / suppressed 2", ev.Message)
+	}
+}
