@@ -1,6 +1,11 @@
 package usage
 
-import "testing"
+import (
+	"bytes"
+	"log"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeModel(t *testing.T) {
 	t.Parallel()
@@ -197,6 +202,68 @@ func TestResolveReadsModelFromArgsWhenStreamNamesNone(t *testing.T) {
 	}
 	if limit != 200_000 || src != LimitFromTable {
 		t.Errorf("limit = %d source = %q, want 200000/table", limit, src)
+	}
+}
+
+// A learned window outranks the operator's manifest (rung 2 over rung 3),
+// the same asymmetry the stream rung has at rung 1. The ordering is not in
+// dispute here; the SILENCE is. Both neighbouring rungs log when they
+// contradict the manifest (stream over manifest, and manifest over feed),
+// so the one rung that can silently beat the operator must say so too.
+// Regression for aae-orc-yfn2 / marvel#181.
+//
+// Not parallel: it redirects the standard logger's output, which is global.
+// Non-parallel tests run to completion before the parallel ones resume, so
+// the redirection is isolated.
+func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
+	cases := []struct {
+		name          string
+		manifestLimit int
+		learnValue    int
+		wantWarn      bool
+	}{
+		{"learned overrides manifest → warns", 111_111, 222_222, true},
+		{"learned equals manifest → silent", 222_222, 222_222, false},
+		{"no manifest → silent", 0, 222_222, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			restore := log.Writer()
+			log.SetOutput(&buf)
+			defer log.SetOutput(restore)
+
+			r := NewResolver(Table{})
+			r.Learn("claude-haiku-4-5", c.learnValue)
+			limit, src, _ := r.Resolve(Request{
+				Harness:       "claude",
+				StreamModel:   "claude-haiku-4-5",
+				ManifestLimit: c.manifestLimit,
+			})
+
+			// The learned rung still wins — this ticket disputes the
+			// silence, not the ordering.
+			if limit != c.learnValue || src != LimitLearned {
+				t.Fatalf("resolution changed: limit = %d source = %q, want %d/learned", limit, src, c.learnValue)
+			}
+
+			got := buf.String()
+			if c.wantWarn {
+				if got == "" {
+					t.Fatal("learned window overrode the manifest silently; expected a warning naming which won")
+				}
+				// Names the winner (learned) and the manifest as the value
+				// being overridden — the role, not just the presence, so an
+				// argument swap cannot pass — plus the model.
+				for _, want := range []string{"222222", "overriding the manifest's 111111", "claude-haiku-4-5"} {
+					if !strings.Contains(got, want) {
+						t.Errorf("warning %q does not contain %q", got, want)
+					}
+				}
+			} else if got != "" {
+				t.Errorf("expected silence, got warning %q", got)
+			}
+		})
 	}
 }
 

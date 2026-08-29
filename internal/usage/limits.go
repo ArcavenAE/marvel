@@ -325,9 +325,9 @@ func NewResolver(t Table) *Resolver {
 // TestResolveAgreesWithTheLadder. In short: an in-STREAM declaration
 // outranks the operator override because it is what enforces compaction,
 // while a declaration on the statusline FEED ranks under it because a
-// side channel describes the session rather than governing it. Either one
-// contradicting the manifest is logged once, naming both and naming which
-// won.
+// side channel describes the session rather than governing it. Any rung
+// that contradicts the manifest is logged once, naming both and naming
+// which won.
 func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 	model := req.StreamModel
 	if model == "" {
@@ -347,6 +347,10 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 		w, ok := r.learned[NormalizeModel(model)]
 		r.mu.RUnlock()
 		if ok {
+			if req.ManifestLimit > 0 && req.ManifestLimit != w {
+				r.warnOnce("learned-override:"+model, "context window: %s declared %d for %q in a prior session, overriding the manifest's %d",
+					req.Harness, w, model, req.ManifestLimit)
+			}
 			return w, LimitLearned, model
 		}
 	}
