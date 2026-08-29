@@ -36,7 +36,25 @@ content: |
   saturation), and the only path to clear it is `marvel delete team`,
   which destroys sessions to reset a counter. Operator ruling wanted
   before either is built.
+
+  HARVEST 2026-08-29 (fv3h, PR #216). Both STILL-OPEN items above are now
+  resolved and the operator ruling was made. RestartCount now decays: a
+  role continuously healthy for restartCountDecayWindow (10m, kubelet's
+  stability model) resets its count and clears its backoff
+  (RoleHealth.HealthySince tracks the streak; any charge, or an unhealthy
+  running replica in a tick, breaks it). And `marvel reset-health
+  <ws/team> --role <r>` clears one role's count without deleting the team.
+  OPERATOR RULING (2026-08-29): the decay makes max_restarts a
+  within-window cap, not a lifetime cap — a role crashing less often than
+  the window resets between crashes and never freezes. Ratified
+  deliberately as kubelet semantics; a saturation / restart_policy=never
+  freeze is the one thing decay never auto-thaws (cleared only by
+  reset-health or team-delete). See finding-032 step 5 and marvel
+  CLAUDE.md "Recovery behavior".
 edges:
+  - target: finding-032-session-listing-generation-join
+    type: derives
+    note: "fv3h (step 5 of the join arc) resolved both STILL-OPEN MaxRestarts properties: RestartCount success-based decay + the reset-health verb; operator ratified windowed max_restarts semantics 2026-08-29"
   - target: aae-orc::question-marvel-beyond-mvp
     type: derives
     note: "Cross-repo projection from orchestrator F5"
