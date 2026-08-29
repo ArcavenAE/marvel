@@ -324,6 +324,15 @@ type ShiftState struct {
 	RoleIndex     int      // index into Roles (shift order)
 	Roles         []string // role names in shift order (supervisor last)
 	StartedAt     time.Time
+	// Drained counts, per role name, the old-generation sessions this shift
+	// actually deleted while draining that role. It lets shiftDrain tell a
+	// completed drain (Drained[role] > 0) from advancing through a role
+	// whose old generation was already empty (Drained[role] == 0), which
+	// len(oldGen)==0 alone cannot. Status, not spec — same treatment as the
+	// rest of ShiftState (the whole field is toml:"-" on Team); it persists
+	// to bolt with the shift and resets to nil when the shift clears. See
+	// aae-orc-094e.
+	Drained map[string]int
 }
 
 // Team declares desired state: a cohesive unit of agents with heterogeneous roles.

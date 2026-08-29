@@ -2497,3 +2497,55 @@ func TestReapAccountingEmitsOneEventPerRolePerTick(t *testing.T) {
 		t.Errorf("message %q does not report charged 1 / suppressed 2", ev.Message)
 	}
 }
+
+// TestShiftDrainEmptyOldGenerationEmitsDistinctEvent is aae-orc-094e.
+// shiftDrain read an empty old generation as a successful drain and advanced
+// silently, unable to tell "finished draining N sessions" from "advanced
+// through a role it never moved" (a mis-tag, an early delete, or an
+// intentional scale-up). A per-role drained counter distinguishes the two:
+// when the shift reaches an empty old generation having drained nothing, it
+// emits KindShiftDrainedEmpty and still advances.
+func TestShiftDrainEmptyOldGenerationEmitsDistinctEvent(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+
+	createTeamFixture(t, store, "test-094e", "squad", []api.Role{
+		{Name: "worker", Replicas: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+	teamKey := "test-094e/squad"
+
+	// A shift already draining worker, with zero old-generation rows: the
+	// old generation is empty from the start, so nothing is drained.
+	if err := store.UpdateTeam(teamKey, func(live *api.Team) error {
+		live.Generation = 2
+		live.Shift = api.ShiftState{
+			Phase:         api.ShiftDraining,
+			OldGeneration: 1,
+			Roles:         []string{"worker"},
+			RoleIndex:     0,
+			StartedAt:     time.Now().UTC(),
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed draining shift: %v", err)
+	}
+
+	team, _ := store.GetTeam(teamKey)
+	ctrl.reconcileShift(&team)
+
+	evs := ring.Snapshot(events.Filter{Kind: events.KindShiftDrainedEmpty}, 0)
+	if len(evs) != 1 {
+		t.Fatalf("KindShiftDrainedEmpty events = %d, want 1: the shift advanced through a role it never drained", len(evs))
+	}
+	if evs[0].Role != "worker" || evs[0].Workspace != "test-094e" || evs[0].Team != "squad" {
+		t.Errorf("event scope = %s/%s role %s, want test-094e/squad role worker", evs[0].Workspace, evs[0].Team, evs[0].Role)
+	}
+
+	// Surface, don't judge: the shift still advances past the role.
+	got, _ := store.GetTeam(teamKey)
+	if got.Shift.RoleIndex != 1 {
+		t.Errorf("RoleIndex = %d, want 1 (the shift must still advance)", got.Shift.RoleIndex)
+	}
+}

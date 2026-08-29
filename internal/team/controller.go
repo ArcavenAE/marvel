@@ -1257,8 +1257,27 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 	oldGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Shift.OldGeneration)
 
 	if len(oldGen) == 0 {
-		// All old-gen drained for this role — advance to next role.
-		log.Printf("shift: %s/%s role %s — old gen drained", t.Workspace, t.Name, role.Name)
+		// Old generation empty — advance to the next role. Drained tells a
+		// completed drain from an advance through a role nothing was ever
+		// moved for; both advance, but the empty-and-undrained case earns a
+		// distinct event so it is not silently indistinguishable from a real
+		// drain. See aae-orc-094e.
+		if t.Shift.Drained[role.Name] > 0 {
+			log.Printf("shift: %s/%s role %s — old gen drained (%d session(s))",
+				t.Workspace, t.Name, role.Name, t.Shift.Drained[role.Name])
+		} else {
+			log.Printf("shift: %s/%s role %s — old gen empty, nothing drained; advancing",
+				t.Workspace, t.Name, role.Name)
+			events.Emit(c.Events, events.Event{
+				Kind:       events.KindShiftDrainedEmpty,
+				Severity:   events.SeverityWarning,
+				Workspace:  t.Workspace,
+				Team:       t.Name,
+				Role:       role.Name,
+				Generation: t.Shift.OldGeneration,
+				Message:    fmt.Sprintf("old gen %d for role %s was empty, nothing drained", t.Shift.OldGeneration, role.Name),
+			})
+		}
 		_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 			live.Shift.RoleIndex++
 			if live.Shift.RoleIndex < len(live.Shift.Roles) {
@@ -1273,11 +1292,25 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 		return
 	}
 
-	// Rolling drain: delete one old-gen session per reconcile tick.
+	// Rolling drain: delete one old-gen session per reconcile tick, and
+	// record the progress so the empty-generation branch above can tell a
+	// finished drain from one that never moved anything.
 	sess := oldGen[0]
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {
 		log.Printf("shift: drain session %s: %v", sess.Key(), err)
+		return
 	}
+	_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+		if live.Shift.Drained == nil {
+			live.Shift.Drained = make(map[string]int)
+		}
+		live.Shift.Drained[role.Name]++
+		return nil
+	})
+	if t.Shift.Drained == nil {
+		t.Shift.Drained = make(map[string]int)
+	}
+	t.Shift.Drained[role.Name]++
 }
 
 // nextIndex finds the next available index for a role's sessions within a generation.

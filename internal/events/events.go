@@ -51,8 +51,17 @@ const (
 	// orc finding-018, which had to poll the session table at 50 Hz to
 	// timestamp this instant because the ring did not carry it.
 	KindShiftRoleReady Kind = "team.shift-role-ready"
-	KindRoleSaturated  Kind = "role.saturated"
-	KindRoleRemoved    Kind = "role.removed"
+	// KindShiftDrainedEmpty records that a shift advanced past a role whose
+	// old generation was already empty when draining began — it drained
+	// nothing. An empty old generation is ambiguous: it is both the state
+	// after every predecessor has drained and the state when there was
+	// never anything to drain (a mis-tagged or early-deleted generation, or
+	// an intentional 0→N scale-up). The shift advances either way — this is
+	// surface, not judge — but the event lets an operator or a test tell the
+	// two apart, which len(oldGen)==0 alone could not. See aae-orc-094e.
+	KindShiftDrainedEmpty Kind = "team.shift-drained-empty"
+	KindRoleSaturated     Kind = "role.saturated"
+	KindRoleRemoved       Kind = "role.removed"
 	// KindPolicyProjected records that marvel wrote (or rewrote) a
 	// session's projected Claude Code settings file — the observable
 	// signal of a policy landing at spawn and of live re-projection after
@@ -163,6 +172,7 @@ var allKinds = []Kind{
 	KindShiftCompleted,
 	KindShiftTimedOut,
 	KindShiftRoleReady,
+	KindShiftDrainedEmpty,
 	KindRoleSaturated,
 	KindRoleRemoved,
 	KindPolicyProjected,
