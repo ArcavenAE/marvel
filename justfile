@@ -72,6 +72,18 @@ _wait-ready:
     echo "marvel daemon did not answer within 10s; see ${HOME}/.marvel/log/daemon.log" >&2
     exit 1
 
+# Fail with the instruction, not a raw dial error, when no daemon is running.
+# The demo acts need a daemon but must NOT start one: a daemon reconciles
+# whatever the durable store already records, spawning live agent sessions
+# (see _store-warn and aae-orc-9uzk). Refuse and point at start-bg instead.
+_require-daemon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! ./bin/marvel get workspaces >/dev/null 2>&1; then
+        echo "No marvel daemon is running. Start one first:  just start-bg" >&2
+        exit 1
+    fi
+
 # Stop the daemon and clean up all tmux sessions
 stop:
     ./bin/marvel stop --teardown || true
@@ -180,7 +192,7 @@ clean:
 # Each recipe assumes a running daemon (`just start-bg` first).
 
 # Act 1 — Recover: set up the pane-loss recovery team, print the next steps
-demo-act1: build
+demo-act1: build _require-daemon
     @echo "==> Act 1 (Recover). Loading the recovery team..."
     ./bin/marvel work examples/demo-act1-recovery.toml
     @sleep 5
@@ -204,7 +216,7 @@ demo-act1: build
     @echo "  ./bin/marvel events --kind role.removed"
 
 # Act 2 — Observe: run the harness matrix (-p headless + -t TUI), print the event-watch commands
-demo-act2: build
+demo-act2: build _require-daemon
     @echo "==> Act 2 (Observe). Loading the {claude, codex, opencode} matrix + a TUI claude..."
     @echo "    Role names carry the mode: -p = print/headless, -t = TUI (interactive)."
     @echo "    Needs the harness binaries and working auth for the agent stream."
@@ -222,7 +234,7 @@ demo-act2: build
     @echo "  ./bin/marvel get sessions   # -p rows: stream accountant · -t row: statusline feed"
 
 # Act 3 — Control plane: project a policy, then re-project live with no restart
-demo-act3: build
+demo-act3: build _require-daemon
     @echo "==> Act 3 (Control plane). Projecting reviewer-contract v1..."
     @echo "    Needs the claude binary on PATH (auth not required for the projection events)."
     ./bin/marvel work examples/policy-projection.toml
