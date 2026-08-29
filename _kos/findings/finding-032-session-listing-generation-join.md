@@ -1,4 +1,4 @@
-# finding-031 — the session listing and the generation count are two truths read as one; join in the read path, count at the caller, and 83m9's premise does not hold
+# finding-032 — the session listing and the generation count are two truths read as one; join in the read path, count at the caller, and 83m9's premise does not hold
 
 Probe: Lane-2 architecture design over the session-listing / generation-counting
 defect cluster — aae-orc-6kgq, 094e, prhx, 83m9, fv3h, m8n0.
@@ -172,7 +172,7 @@ appends. Lock order `c.mu` → `store.mu` matches `ReconcileOnce` — no inversi
 cannot distinguish "absent" from "held-down" from "saturated" is a status surface
 reporting a silent success (the role looks gone / fine) over a live failure — the
 same family as finding-030's converged-but-frozen team and finding-027's truth
-table. Harvest pointer recorded there.
+table. The cross-graph edge to that node is owed and recorded in §9.
 
 ## 6. The counting axes — 6kgq (state) and 094e (provenance) are different questions
 
@@ -249,3 +249,26 @@ step.
 
 Disposition: 6kgq→step 1, m8n0→step 2, 094e→step 3, prhx→step 4,
 **83m9→restate/close in step 4 (premise refuted, §4)**, fv3h→step 5.
+
+## 9. Harvest pointers
+
+- **`question-silent-success-instruments`** (orc — cross-cutting family): a new
+  instance. A `get sessions` that cannot distinguish "absent" from "held-down"
+  from "saturated" is an instrument whose failure reads exactly like its healthy
+  answer at the point of use — the same shape as this node's other instances
+  (finding-027, finding-030, and l8v1's finding-031). **A cross-graph harvest is
+  owed:** an orc-side change should add an edge from
+  `question-silent-success-instruments` to this finding (marvel/finding-032).
+  Recorded here — and flagged OWED — because a marvel PR cannot edit the orc
+  node. (Tracked as orc-side harvest debt alongside the same edge owed by
+  finding-031.)
+- **`question-fanout-composition-safety`** / bd **`aae-orc-2l26`** (orc): this
+  cluster is a worked instance of the hazard. The store query
+  `ListSessionsByTeamRoleGeneration` is read by five callers with two opposite
+  intents (§3); a State predicate added to satisfy one caller silently breaks
+  three others. That is why the six tickets stay a single-owner arc rather than
+  six parallel PRs. No orc edit is made from here; the reference is the durable
+  record of the reasoning.
+- **finding-019** (one-loss-event-charged-per-replica): m8n0 (§7) makes that
+  per-tick charge visible on the event ring; this finding is its observability
+  counterpart.
