@@ -251,12 +251,25 @@ func (c *Controller) SnapshotRoleHealth() map[string]RoleHealth {
 // store lock are never held together. See aae-orc-prhx, aae-orc-83m9.
 func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
 	health := c.SnapshotRoleHealth()
+	now := c.nowUTC()
 	var out []api.Session
 	for _, t := range store.ListTeams() {
 		for i := range t.Roles {
 			role := &t.Roles[i]
 			rh, ok := health[t.Workspace+"/"+t.Name+"/"+role.Name]
 			if !ok {
+				continue
+			}
+			// Only a role still inside its backoff window is genuinely held
+			// down. RestartCount does not decay until fv3h, so a recovered
+			// role can carry stale RoleHealth with an elapsed backoff; a
+			// benign dip below replicas (mid-spawn, scale-up) must not
+			// synthesize a crashloop-backoff row with a past deadline. The
+			// saturation sentinel is far in the future, so a frozen role that
+			// somehow presented a gap still reads as held. During real
+			// backoff the row is deleted and BackoffUntil is in the future,
+			// so nothing legitimate is hidden.
+			if !rh.BackoffUntil.After(now) {
 				continue
 			}
 			// Row count across any state and any generation: a Failed or
@@ -386,8 +399,9 @@ func (c *Controller) ReconcileOnce() {
 // emitReapAccounting and aae-orc-m8n0.
 type reapCharge struct {
 	workspace, team, role string
-	suppressed            int       // same-role reaps folded into the one charge
-	saturated             bool      // the charge hit max_restarts (noteCrashAndBackoff == false)
+	charges               int       // reaps that actually charged (0 or 1: only the first non-saturated reap charges)
+	suppressed            int       // reaps NOT charged — folded into the one charge, or refused because the role was already saturated
+	saturated             bool      // the charge attempt hit max_restarts (noteCrashAndBackoff == false)
 	restartCount          int       // RestartCount after the charge
 	backoffUntil          time.Time // BackoffUntil after the charge
 	maxRestarts           int
@@ -443,12 +457,17 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string
 	charged[roleKey] = acc
 	if c.noteCrashAndBackoff(r.Workspace, r.Team, r.Role, role.MaxRestarts) {
 		rh := c.roleHealth[roleKey]
+		acc.charges = 1
 		acc.restartCount = rh.RestartCount
 		acc.backoffUntil = rh.BackoffUntil
 		log.Printf("reap: session %s crashed (role %s restart #%d, next backoff=%s)",
 			r.Key, roleKey, rh.RestartCount, time.Until(rh.BackoffUntil))
 	} else {
+		// Saturated: this reap charged nothing (RestartCount unchanged). It
+		// still counts as a non-charged reap so charges+suppressed equals the
+		// tick's total reaps for the role.
 		acc.saturated = true
+		acc.suppressed = 1
 		acc.restartCount = c.roleHealth[roleKey].RestartCount
 		log.Printf("reap: session %s crashed but role %s already at max_restarts=%d",
 			r.Key, roleKey, role.MaxRestarts)
@@ -471,7 +490,7 @@ func (c *Controller) emitReapAccounting(charged map[string]*reapCharge) {
 				Workspace: acc.workspace,
 				Team:      acc.team,
 				Role:      acc.role,
-				Message:   fmt.Sprintf("max_restarts=%d reached (charged 1, suppressed %d)", acc.maxRestarts, acc.suppressed),
+				Message:   fmt.Sprintf("max_restarts=%d reached (charged %d, suppressed %d)", acc.maxRestarts, acc.charges, acc.suppressed),
 			})
 			continue
 		}
@@ -481,8 +500,8 @@ func (c *Controller) emitReapAccounting(charged map[string]*reapCharge) {
 			Workspace: acc.workspace,
 			Team:      acc.team,
 			Role:      acc.role,
-			Message: fmt.Sprintf("charged 1, suppressed %d; restart #%d, backoff until %s",
-				acc.suppressed, acc.restartCount, acc.backoffUntil.Format(time.RFC3339)),
+			Message: fmt.Sprintf("charged %d, suppressed %d; restart #%d, backoff until %s",
+				acc.charges, acc.suppressed, acc.restartCount, acc.backoffUntil.Format(time.RFC3339)),
 		})
 	}
 }
@@ -1380,6 +1399,9 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 		log.Printf("shift: drain session %s: %v", sess.Key(), err)
 		return
 	}
+	// Persist the drain progress through the store — the empty-generation
+	// branch reads it from a fresh snapshot on a later tick, so mutating this
+	// tick's discarded snapshot would be a dead write.
 	_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		if live.Shift.Drained == nil {
 			live.Shift.Drained = make(map[string]int)
@@ -1387,10 +1409,6 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 		live.Shift.Drained[role.Name]++
 		return nil
 	})
-	if t.Shift.Drained == nil {
-		t.Shift.Drained = make(map[string]int)
-	}
-	t.Shift.Drained[role.Name]++
 }
 
 // nextIndex finds the next available index for a role's sessions within a generation.

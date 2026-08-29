@@ -2498,6 +2498,59 @@ func TestReapAccountingEmitsOneEventPerRolePerTick(t *testing.T) {
 	}
 }
 
+// TestReapAccountingSaturatedTickReportsZeroCharge is the accuracy half of
+// aae-orc-m8n0. A tick that reaps an already-saturated role charges NOTHING —
+// noteCrashAndBackoff returns early without incrementing RestartCount — so the
+// KindRoleSaturated accounting event must report charged 0, not a hardcoded 1.
+// A crash-accounting fix whose number is wrong defeats its own purpose.
+func TestReapAccountingSaturatedTickReportsZeroCharge(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	sessMgr.Events = ring
+
+	clock := newTestClock(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	ws := "test-m8n0-sat"
+	createTeamFixture(t, store, ws, "squad", []api.Role{
+		{Name: "worker", Replicas: 1, RestartPolicy: api.RestartAlways, MaxRestarts: 1, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	// Cycle 1 consumes the single restart (RestartCount 0 → 1 = MaxRestarts).
+	ctrl.ReconcileOnce()
+	got := store.ListSessionsByTeamRole(ws, "squad", "worker")
+	if len(got) == 0 {
+		t.Fatal("expected a running session before cycle 1")
+	}
+	killPaneAndWait(t, got[0].PaneID)
+	ctrl.ReconcileOnce() // reap → charges 1
+	clock.Advance(10 * time.Minute)
+
+	// Cycle 2: respawn, kill, reap → the role is at MaxRestarts, so this tick
+	// saturates and charges nothing.
+	ctrl.ReconcileOnce()
+	got = store.ListSessionsByTeamRole(ws, "squad", "worker")
+	if len(got) == 0 {
+		t.Fatal("expected a respawned session before the saturating cycle")
+	}
+	killPaneAndWait(t, got[0].PaneID)
+	ctrl.ReconcileOnce() // reap → saturates, charges 0
+
+	sat := ring.Snapshot(events.Filter{Kind: events.KindRoleSaturated}, 0)
+	if len(sat) != 1 {
+		t.Fatalf("KindRoleSaturated accounting events = %d, want 1", len(sat))
+	}
+	if !strings.Contains(sat[0].Message, "charged 0") {
+		t.Errorf("saturated accounting message %q must report charged 0 (the tick charged nothing)", sat[0].Message)
+	}
+	if strings.Contains(sat[0].Message, "charged 1") {
+		t.Errorf("saturated accounting message %q reports charged 1, but a saturated tick charges nothing", sat[0].Message)
+	}
+}
+
 // TestShiftDrainEmptyOldGenerationEmitsDistinctEvent is aae-orc-094e.
 // shiftDrain read an empty old generation as a successful drain and advanced
 // silently, unable to tell "finished draining N sessions" from "advanced
@@ -2611,5 +2664,47 @@ func TestProjectHeldRoleRowsSynthesizesCrashloopRow(t *testing.T) {
 	}
 	if !strings.Contains(w[0].Reason, "backoff until") {
 		t.Errorf("worker synthetic Reason = %q, want it to carry the backoff-until deadline", w[0].Reason)
+	}
+}
+
+// TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff guards the
+// synthesis gate. RestartCount does not decay until fv3h, so a recovered role
+// can carry stale RoleHealth with a backoff window already in the past. If it
+// dips below replicas for a benign reason (mid-spawn, scale-up), synthesizing
+// a crashloop-backoff row with a past "backoff until" would be a lie. Only a
+// role whose backoff is still in the future is genuinely held down.
+func TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-prhx-past", "squad", []api.Role{
+		{Name: "recovered", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+		{Name: "held", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}},
+	})
+
+	// recovered: stale RoleHealth, backoff already elapsed, transiently below
+	// replicas → must NOT be synthesized.
+	rec := ctrl.getRoleHealth("test-prhx-past/squad/recovered")
+	rec.RestartCount = 3
+	rec.BackoffUntil = clock.Now().Add(-30 * time.Second)
+
+	// held: genuinely cooling down, backoff in the future → still synthesized.
+	held := ctrl.getRoleHealth("test-prhx-past/squad/held")
+	held.RestartCount = 2
+	held.BackoffUntil = clock.Now().Add(45 * time.Second)
+
+	rows := ctrl.ProjectHeldRoleRows(store)
+
+	byRole := map[string][]api.Session{}
+	for _, r := range rows {
+		byRole[r.Role] = append(byRole[r.Role], r)
+	}
+	if len(byRole["recovered"]) != 0 {
+		t.Errorf("recovered synthesized %d row(s), want 0 (its backoff is in the past — not held down)", len(byRole["recovered"]))
+	}
+	if len(byRole["held"]) != 1 {
+		t.Errorf("held synthesized %d row(s), want 1 (backoff in the future — genuinely held down)", len(byRole["held"]))
 	}
 }
