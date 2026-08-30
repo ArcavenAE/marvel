@@ -87,9 +87,10 @@ func TestModelFromArgs(t *testing.T) {
 	}
 }
 
-// TestResolveLadderPrecedence walks every rung, asserting both the value
-// and the grade. The grade is load-bearing: a consumer must be able to
-// refuse on low confidence without refusing on measurement.
+// TestResolveLadderPrecedence walks every rung, asserting the value and the
+// LimitSource. The KeyConfidence grade is asserted separately in
+// TestResolveGradedGradesEachRung and TestResolveGradedOverDefaultTable,
+// which call ResolveGraded; this one exercises the legacy Resolve signature.
 func TestResolveLadderPrecedence(t *testing.T) {
 	t.Parallel()
 	table := Table{"claude-haiku-4-5": 200_000, "claude-opus-4-8": 200_000}
@@ -363,6 +364,329 @@ func TestEveryAliasResolvesToARealEntry(t *testing.T) {
 	for alias, canon := range aliases {
 		if _, ok := tbl.Lookup(canon); !ok {
 			t.Errorf("alias %q points at %q, which is not a table key", alias, canon)
+		}
+	}
+}
+
+// Only KeyExact is a hard fact; everything else, including the zero value
+// and any grade a later writer adds, must read as soft. A consumer that
+// forgets to set the grade then defaults to soft rather than silently
+// presenting a narrow value as exact.
+func TestKeyConfidenceSoft(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		c        KeyConfidence
+		wantSoft bool
+	}{
+		{KeyExact, false},
+		{KeyNarrow, true},
+		{KeyRedirected, true},
+		{KeyUndeterminable, true},
+		{KeyConfidence(""), true}, // zero value defaults to soft
+	}
+	for _, c := range cases {
+		if got := c.c.Soft(); got != c.wantSoft {
+			t.Errorf("KeyConfidence(%q).Soft() = %v, want %v", c.c, got, c.wantSoft)
+		}
+	}
+}
+
+// Every DefaultTable entry's entitlement grade, pinned. This documents the
+// default-versus-maximum convention as data (aae-orc-wyza): a bare split key
+// is narrow, a [1m] key and a single-window model are exact. A new table
+// entry must add its expected grade here, so shipping one is a decision
+// about its key confidence, not an accident — the same discipline
+// TestDefaultTableShipsNoGuessedEntries enforces for the values.
+func TestDefaultTableEntryGrades(t *testing.T) {
+	t.Parallel()
+	tbl := DefaultTable()
+	want := map[string]KeyConfidence{
+		"claude-haiku-4-5":      KeyExact,  // no [1m] sibling: single window
+		"claude-fable-5[1m]":    KeyExact,  // [1m] key names the entitlement
+		"claude-sonnet-4-6":     KeyNarrow, // default half of a 200k/1M split
+		"claude-sonnet-4-6[1m]": KeyExact,
+		"claude-sonnet-5":       KeyExact, // no 200k variant
+		"claude-opus-4-7":       KeyNarrow,
+		"claude-opus-4-7[1m]":   KeyExact,
+		"claude-opus-4-8":       KeyNarrow,
+		"claude-opus-4-8[1m]":   KeyExact,
+		"claude-opus-5":         KeyExact, // 1M under both spellings: spelling split, not default/max
+		"claude-opus-5[1m]":     KeyExact,
+	}
+	for key := range tbl {
+		if _, named := want[key]; !named {
+			t.Errorf("table key %q has no pinned key-confidence grade; add it to this test", key)
+		}
+	}
+	for key, wantKey := range want {
+		if _, ok := tbl.Lookup(key); !ok {
+			t.Errorf("pinned grade names %q, which is not a table key", key)
+			continue
+		}
+		if got := tbl.keyConfidence(key, tbl[key]); got != wantKey {
+			t.Errorf("keyConfidence(%q) = %q, want %q", key, got, wantKey)
+		}
+	}
+}
+
+// keyConfidence must react to the STRUCTURE of the table it is called on,
+// not to hard-coded names: a bare key is narrow only when its [1m] sibling
+// carries a DIFFERENT window. This is what keeps opus-5 (1M under both
+// spellings) exact while sonnet-4-6 (200k/1M) is narrow.
+func TestKeyConfidenceReadsTheTableStructure(t *testing.T) {
+	t.Parallel()
+	// A split the caller invented: bare differs from [1m], so bare is narrow.
+	split := Table{"mdl": 200_000, "mdl[1m]": 1_000_000}
+	if got := split.keyConfidence("mdl", split["mdl"]); got != KeyNarrow {
+		t.Errorf("split bare key: keyConfidence = %q, want KeyNarrow", got)
+	}
+	if got := split.keyConfidence("mdl[1m]", split["mdl[1m]"]); got != KeyExact {
+		t.Errorf("split [1m] key: keyConfidence = %q, want KeyExact", got)
+	}
+	// Same number under both spellings: a spelling split, not a default/max
+	// split, so the bare key is exact.
+	same := Table{"mdl": 1_000_000, "mdl[1m]": 1_000_000}
+	if got := same.keyConfidence("mdl", same["mdl"]); got != KeyExact {
+		t.Errorf("same-value bare key: keyConfidence = %q, want KeyExact", got)
+	}
+	// No sibling at all: single window, exact.
+	solo := Table{"mdl": 200_000}
+	if got := solo.keyConfidence("mdl", solo["mdl"]); got != KeyExact {
+		t.Errorf("solo key: keyConfidence = %q, want KeyExact", got)
+	}
+	// Off-contract: a bare key absent from the table, whose [1m] sibling IS
+	// present, must not misgrade as narrow. An absent key carries no window,
+	// so the caller passes 0, and the window > 0 guard reports KeyExact. This
+	// pins the re-read hole closed: without the guard, 0 != sibling would
+	// wrongly report KeyNarrow.
+	orphanSibling := Table{"mdl[1m]": 1_000_000}
+	if got := orphanSibling.keyConfidence("mdl", 0); got != KeyExact {
+		t.Errorf("absent bare key with a live sibling: keyConfidence = %q, want KeyExact", got)
+	}
+}
+
+// TestResolveGradedGradesEachRung walks every rung and asserts the
+// KeyConfidence beside the value and source. The grade is orthogonal to the
+// source: a directly declared value (stream, learned, manifest, feed) is
+// KeyExact whatever its rung, a table hit carries the entry's entitlement
+// grade, an alias hit is always narrow, and a miss is undeterminable.
+func TestResolveGradedGradesEachRung(t *testing.T) {
+	t.Parallel()
+	// opus-4-8 has a differently-valued [1m] sibling → its bare key is narrow.
+	table := Table{
+		"claude-haiku-4-5":    200_000,
+		"claude-opus-4-8":     200_000,
+		"claude-opus-4-8[1m]": 1_000_000,
+	}
+	cases := []struct {
+		name       string
+		req        Request
+		learn      string
+		learnValue int
+		wantLimit  int
+		wantSource LimitSource
+		wantKey    KeyConfidence
+	}{
+		{
+			name:       "stream is exact",
+			req:        Request{StreamModel: "claude-haiku-4-5", SampleLimit: 999_999},
+			wantLimit:  999_999,
+			wantSource: LimitFromStream,
+			wantKey:    KeyExact,
+		},
+		{
+			// No ManifestLimit: a learned hit alone exercises the grade, and
+			// avoids the learned-over-manifest warnOnce writing to the global
+			// logger under t.Parallel().
+			name:       "learned is exact",
+			req:        Request{StreamModel: "claude-haiku-4-5"},
+			learn:      "claude-haiku-4-5",
+			learnValue: 222_222,
+			wantLimit:  222_222,
+			wantSource: LimitLearned,
+			wantKey:    KeyExact,
+		},
+		{
+			name:       "manifest is exact",
+			req:        Request{StreamModel: "claude-haiku-4-5", ManifestLimit: 111_111},
+			wantLimit:  111_111,
+			wantSource: LimitFromManifest,
+			wantKey:    KeyExact,
+		},
+		{
+			name:       "feed is exact",
+			req:        Request{StreamModel: "claude-haiku-4-5", FeedLimit: 444_444},
+			wantLimit:  444_444,
+			wantSource: LimitFromFeed,
+			wantKey:    KeyExact,
+		},
+		{
+			name:       "table hit on a single-window model is exact",
+			req:        Request{StreamModel: "claude-haiku-4-5"},
+			wantLimit:  200_000,
+			wantSource: LimitFromTable,
+			wantKey:    KeyExact,
+		},
+		{
+			name:       "table hit on a split default key is narrow",
+			req:        Request{StreamModel: "claude-opus-4-8"},
+			wantLimit:  200_000,
+			wantSource: LimitFromTable,
+			wantKey:    KeyNarrow,
+		},
+		{
+			name:       "table hit on the [1m] key is exact",
+			req:        Request{StreamModel: "claude-opus-4-8[1m]"},
+			wantLimit:  1_000_000,
+			wantSource: LimitFromTable,
+			wantKey:    KeyExact,
+		},
+		{
+			name:       "alias hit is narrow even pointing at an exact entry",
+			req:        Request{RuntimeArgs: []string{"--model", "haiku"}},
+			wantLimit:  200_000,
+			wantSource: LimitFromTableAlias,
+			wantKey:    KeyNarrow,
+		},
+		{
+			name:       "unknown model is undeterminable",
+			req:        Request{StreamModel: "some-model-nobody-shipped"},
+			wantLimit:  0,
+			wantSource: LimitUnresolved,
+			wantKey:    KeyUndeterminable,
+		},
+		{
+			name:       "no model at all is undeterminable",
+			req:        Request{Harness: "codex"},
+			wantLimit:  0,
+			wantSource: LimitUnresolved,
+			wantKey:    KeyUndeterminable,
+		},
+	}
+	for _, c := range cases {
+		r := NewResolver(table)
+		if c.learn != "" {
+			r.Learn(c.learn, c.learnValue)
+		}
+		limit, src, key, _ := r.ResolveGraded(c.req)
+		if limit != c.wantLimit {
+			t.Errorf("%s: limit = %d, want %d", c.name, limit, c.wantLimit)
+		}
+		if src != c.wantSource {
+			t.Errorf("%s: source = %q, want %q", c.name, src, c.wantSource)
+		}
+		if key != c.wantKey {
+			t.Errorf("%s: key confidence = %q, want %q", c.name, key, c.wantKey)
+		}
+	}
+}
+
+// An unresolved resolution always carries KeyUndeterminable: marvel cannot
+// vouch for a window it did not find. This is the invariant the refuse-guard
+// (aae-orc-bv7m) will preserve when it resolves LimitUnresolved for a narrow
+// redirected key.
+func TestUnresolvedIsUndeterminable(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(Table{"claude-haiku-4-5": 200_000})
+	for _, req := range []Request{
+		{StreamModel: "some-model-nobody-shipped"},
+		{Harness: "codex"},
+	} {
+		limit, src, key, _ := r.ResolveGraded(req)
+		if limit != 0 || src != LimitUnresolved {
+			t.Fatalf("expected an unresolved resolution, got %d/%q", limit, src)
+		}
+		if key != KeyUndeterminable {
+			t.Errorf("unresolved key confidence = %q, want KeyUndeterminable", key)
+		}
+		if !key.Soft() {
+			t.Error("an unresolved resolution must be soft")
+		}
+	}
+}
+
+// Resolve is ResolveGraded minus the grade. It must agree on the other
+// three returns for every rung, so the legacy signature stays a faithful
+// projection and callers that have not adopted the grade are unaffected.
+func TestResolveDelegatesToResolveGraded(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(DefaultTable())
+	reqs := []Request{
+		{StreamModel: "claude-haiku-4-5", SampleLimit: 999_999},
+		{StreamModel: "claude-opus-4-8"},                // narrow table hit
+		{StreamModel: "claude-opus-4-8[1m]"},            // exact table hit
+		{RuntimeArgs: []string{"--model", "haiku"}},     // alias
+		{StreamModel: "some-model-nobody-shipped"},      // unresolved
+		{StreamModel: "claude-haiku-4-5", FeedLimit: 5}, // feed
+	}
+	for _, req := range reqs {
+		gLimit, gSrc, _, gModel := r.ResolveGraded(req)
+		limit, src, model := r.Resolve(req)
+		if limit != gLimit || src != gSrc || model != gModel {
+			t.Errorf("Resolve(%+v) = (%d,%q,%q); ResolveGraded = (%d,%q,%q)", req, limit, src, model, gLimit, gSrc, gModel)
+		}
+	}
+}
+
+// The unit tests grade keyConfidence and grade ResolveGraded over ad-hoc
+// tables; this one closes the loop by driving ResolveGraded over the SHIPPED
+// DefaultTable, so table structure, aliases, and the ladder are asserted
+// together against the real data — including that an alias floors to
+// KeyNarrow even when it points at an entitlement-exact entry.
+func TestResolveGradedOverDefaultTable(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(DefaultTable())
+	cases := []struct {
+		name       string
+		req        Request
+		wantLimit  int
+		wantSource LimitSource
+		wantKey    KeyConfidence
+	}{
+		{
+			name:       "shipped split default key is narrow",
+			req:        Request{StreamModel: "claude-opus-4-8"},
+			wantLimit:  200_000,
+			wantSource: LimitFromTable,
+			wantKey:    KeyNarrow,
+		},
+		{
+			name:       "shipped [1m] key is exact",
+			req:        Request{StreamModel: "claude-opus-4-8[1m]"},
+			wantLimit:  1_000_000,
+			wantSource: LimitFromTable,
+			wantKey:    KeyExact,
+		},
+		{
+			name:       "shipped single-window model is exact",
+			req:        Request{StreamModel: "claude-opus-5"},
+			wantLimit:  1_000_000,
+			wantSource: LimitFromTable,
+			wantKey:    KeyExact,
+		},
+		{
+			// opus → claude-opus-4-8, a narrow entry: narrow either way.
+			name:       "alias onto a narrow entry is narrow",
+			req:        Request{RuntimeArgs: []string{"--model", "opus"}},
+			wantLimit:  200_000,
+			wantSource: LimitFromTableAlias,
+			wantKey:    KeyNarrow,
+		},
+		{
+			// haiku → claude-haiku-4-5, an EXACT entry, yet the alias floors
+			// it to narrow: an alias is not a keyed fact.
+			name:       "alias onto an exact entry still floors to narrow",
+			req:        Request{RuntimeArgs: []string{"--model", "haiku"}},
+			wantLimit:  200_000,
+			wantSource: LimitFromTableAlias,
+			wantKey:    KeyNarrow,
+		},
+	}
+	for _, c := range cases {
+		limit, src, key, _ := r.ResolveGraded(c.req)
+		if limit != c.wantLimit || src != c.wantSource || key != c.wantKey {
+			t.Errorf("%s: got (%d, %q, %q), want (%d, %q, %q)",
+				c.name, limit, src, key, c.wantLimit, c.wantSource, c.wantKey)
 		}
 	}
 }
