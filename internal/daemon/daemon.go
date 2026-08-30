@@ -800,7 +800,12 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 
 	m, err := api.ParseManifestBytes(p.ManifestData)
 	if err != nil {
-		return Response{Error: fmt.Sprintf("parse manifest: %v", err)}
+		// ParseManifestBytes already prefixes its errors ("parse manifest:"
+		// for a validation failure, "parse yaml/toml manifest:" for a syntax
+		// one), so return it as-is. Re-wrapping with "parse manifest: %v"
+		// doubled the prefix. Matches the ValidateRuntimes/ValidateBudgets
+		// pre-flight siblings below, which also surface err.Error() directly.
+		return Response{Error: err.Error()}
 	}
 
 	// Pre-flight: refuse to apply if any role's runtime command/script
