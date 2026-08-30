@@ -220,7 +220,8 @@ func DefaultTable() Table {
 		"claude-fable-5[1m]":    1_000_000, // fixture-verified, max output 64000
 		"claude-sonnet-4-6":     200_000,
 		"claude-sonnet-4-6[1m]": 1_000_000,
-		"claude-sonnet-5":       1_000_000, // no 200k variant on the API
+		"claude-sonnet-5":       1_000_000, // no 200k variant on the API; both spellings, same window (see opus-5 below)
+		"claude-sonnet-5[1m]":   1_000_000,
 		"claude-opus-4-7":       200_000,
 		"claude-opus-4-7[1m]":   1_000_000,
 		"claude-opus-4-8":       200_000,
