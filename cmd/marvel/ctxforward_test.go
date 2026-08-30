@@ -54,7 +54,7 @@ func TestRateLimitsSurviveParsing(t *testing.T) {
 	if got := formatRateLimits(p.RateLimits, now); got != "acct 5h 41% (3h0m) 7d 63% (4d18h)" {
 		t.Errorf("formatRateLimits = %q", got)
 	}
-	line, _, _, _, send := renderForward(raw)
+	line, _, _, _, _, send := renderForward(raw)
 	if !send {
 		t.Errorf("send = false, want true: the context reading is sound")
 	}
@@ -111,7 +111,7 @@ func TestRateLimitsDoNotBreakTheContextFeed(t *testing.T) {
 		"cost":{"total_cost_usd":0.5},
 		"context_window":{"used_percentage":17},
 		"rate_limits":{"five_hour":{"used_percentage":41,"resets_at":{"epoch":1786000000}}}}`
-	line, pct, model, window, send := renderForward([]byte(payload))
+	line, pct, model, tokens, window, send := renderForward([]byte(payload))
 	if !send {
 		t.Fatalf("send = false, want true; line = %q", line)
 	}
@@ -120,6 +120,9 @@ func TestRateLimitsDoNotBreakTheContextFeed(t *testing.T) {
 	}
 	if window != 0 {
 		t.Errorf("window = %d, want 0: this payload declares none", window)
+	}
+	if tokens != 0 {
+		t.Errorf("tokens = %d, want 0: this payload carries no current_usage", tokens)
 	}
 	if !strings.Contains(line, "acct 5h 41% (resets ?)") {
 		t.Errorf("line = %q, want the level kept and the instant marked absent", line)
@@ -154,7 +157,7 @@ func TestRenderForwardWindow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, _, _, window, send := renderForward([]byte(tt.payload))
+			_, _, _, _, window, send := renderForward([]byte(tt.payload))
 			if !send {
 				t.Fatal("send = false, want true")
 			}
@@ -259,7 +262,7 @@ func TestRenderForwardLiveCapture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	line, _, _, _, send := renderForward(raw)
+	line, _, _, _, _, send := renderForward(raw)
 	if send {
 		t.Errorf("send = true, want false: a null used_percentage is not a reading")
 	}
@@ -419,7 +422,7 @@ func TestRenderForward(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			line, pct, model, _, send := renderForward([]byte(tt.payload))
+			line, pct, model, _, _, send := renderForward([]byte(tt.payload))
 			if send != tt.wantSend {
 				t.Fatalf("send = %v, want %v", send, tt.wantSend)
 			}

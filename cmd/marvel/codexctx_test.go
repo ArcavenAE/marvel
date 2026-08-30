@@ -55,30 +55,33 @@ func TestCodexReading(t *testing.T) {
 	absent := filepath.Join(t.TempDir(), "never-written.jsonl")
 
 	tests := []struct {
-		name      string
-		payload   string
-		wantSend  bool
-		wantPct   float64
-		wantModel string
-		wantWin   int
+		name       string
+		payload    string
+		wantSend   bool
+		wantPct    float64
+		wantModel  string
+		wantWin    int
+		wantTokens int
 	}{
 		{
-			name:      "a live rollout forwards the level over its own window",
-			payload:   hookPayload(good),
-			wantSend:  true,
-			wantPct:   50,
-			wantModel: "gpt-5.6-sol",
-			wantWin:   258400,
+			name:       "a live rollout forwards the level over its own window",
+			payload:    hookPayload(good),
+			wantSend:   true,
+			wantPct:    50,
+			wantModel:  "gpt-5.6-sol",
+			wantWin:    258400,
+			wantTokens: 129200,
 		},
 		{
 			name: "the compaction sentinel does not become a zero reading",
 			// The sentinel is the newest record; the answer is the
 			// sample before it, at 50% rather than 0%.
-			payload:   hookPayload(afterCompaction),
-			wantSend:  true,
-			wantPct:   50,
-			wantModel: "gpt-5.6-sol",
-			wantWin:   258400,
+			payload:    hookPayload(afterCompaction),
+			wantSend:   true,
+			wantPct:    50,
+			wantModel:  "gpt-5.6-sol",
+			wantWin:    258400,
+			wantTokens: 129200,
 		},
 		{
 			name:     "a rollout carrying only a sentinel holds",
@@ -126,7 +129,7 @@ func TestCodexReading(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			pct, model, window, send := codexReading([]byte(tt.payload))
+			pct, model, tokens, window, send := codexReading([]byte(tt.payload))
 			if send != tt.wantSend {
 				t.Fatalf("send = %v, want %v (pct %v window %d)", send, tt.wantSend, pct, window)
 			}
@@ -134,8 +137,8 @@ func TestCodexReading(t *testing.T) {
 				t.Errorf("model = %q, want %q", model, tt.wantModel)
 			}
 			if !send {
-				if pct != 0 || window != 0 {
-					t.Errorf("held reading carried pct %v window %d, want both zero", pct, window)
+				if pct != 0 || window != 0 || tokens != 0 {
+					t.Errorf("held reading carried pct %v tokens %d window %d, want all zero", pct, tokens, window)
 				}
 				return
 			}
@@ -144,6 +147,9 @@ func TestCodexReading(t *testing.T) {
 			}
 			if window != tt.wantWin {
 				t.Errorf("window = %d, want %d", window, tt.wantWin)
+			}
+			if tokens != tt.wantTokens {
+				t.Errorf("tokens = %d, want %d (the numerator, Reading.Level)", tokens, tt.wantTokens)
 			}
 		})
 	}
@@ -157,7 +163,7 @@ func TestCodexReading(t *testing.T) {
 // most wrong.
 func TestCodexReadingIgnoresTheCumulativeTotal(t *testing.T) {
 	t.Parallel()
-	pct, _, _, send := codexReading([]byte(hookPayload(writeRollout(t, sampleRecord))))
+	pct, _, _, _, send := codexReading([]byte(hookPayload(writeRollout(t, sampleRecord))))
 	if !send {
 		t.Fatal("send = false, want a forwardable reading")
 	}
@@ -198,7 +204,7 @@ func TestCodexHeartbeatParamsCarriesTheSessionToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := codexHeartbeatParams("ws", "sess", tt.token, "gpt-5.6-sol", 94.0, 258400)
+			p := codexHeartbeatParams("ws", "sess", tt.token, "gpt-5.6-sol", 94.0, 242696, 258400)
 
 			raw, err := json.Marshal(p)
 			if err != nil {

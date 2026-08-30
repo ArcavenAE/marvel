@@ -38,18 +38,24 @@ func TestEveryProducerShapeIsAdmitted(t *testing.T) {
 		build func() api.HeartbeatRequest
 	}{
 		{
-			// cmd/marvel/ctxforward.go, the claude statusline feed.
+			// cmd/marvel/ctxforward.go, the claude statusline feed, now
+			// carrying the numerator and denominator (aae-orc-38yr).
 			name: "ctx-forward reads the token from the environment",
 			build: func() api.HeartbeatRequest {
-				return api.NewHeartbeatRequest(boundKey, 61, "claude-opus-5")
+				p := api.NewHeartbeatRequest(boundKey, 61, "claude-opus-5")
+				p.ContextTokens = 122_000
+				p.ContextWindow = 200_000
+				return p
 			},
 		},
 		{
 			// cmd/marvel/codexctx.go, the codex rollout hook. This is the
-			// producer that was refused on the merge commit.
+			// producer that was refused on the merge commit; it now carries
+			// occupancy alongside the window and the token.
 			name: "codex-ctx carries a window alongside the token",
 			build: func() api.HeartbeatRequest {
 				p := api.NewHeartbeatRequest(boundKey, 93.85, "gpt-5.6-sol")
+				p.ContextTokens = 242_696
 				p.ContextWindow = 258400
 				return p
 			},

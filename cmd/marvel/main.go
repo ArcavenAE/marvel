@@ -1941,8 +1941,9 @@ func renderSessionTable(sessions []api.Session) string {
 			llm = "-"
 		}
 		// CTX% has two producers: the cooperative heartbeat RPC (the
-		// simulator) and the usage accountant fed by adapter streams.
-		// Both stamp ContextAt, so that is the single "measured" sentinel.
+		// statusline/codex feeds and the simulator) and the usage
+		// accountant fed by adapter streams. Both stamp ContextAt, so that
+		// is the single "measured" sentinel.
 		//
 		// Three states, not two. "-" means marvel never measured this
 		// session's context: no stream, so an interactive launch, a pane
@@ -1962,10 +1963,13 @@ func renderSessionTable(sessions []api.Session) string {
 		case s.ContextAt.IsZero():
 		case s.ContextLimit == 0 && s.ContextSource != api.ContextSourceHeartbeat:
 			// No window resolved, so a percentage would be a fiction.
-			// The heartbeat is the one legitimate exception: it reports a
-			// percentage the agent computed itself and never needed a
-			// window to do it. Stating the exception explicitly is what
-			// stops a real cooperative reading being rendered absent.
+			// The heartbeat is the one legitimate exception: a feed that
+			// carries a window now resolves one (aae-orc-38yr) and lands in
+			// the default branch like any measured reading, but a
+			// percentage-only heartbeat (the simulator, a feed too young to
+			// have classes) reports a figure the agent computed itself and
+			// never needed a window to do. Stating the exception explicitly
+			// is what stops that reading being rendered absent.
 			ctx = "?"
 		default:
 			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)

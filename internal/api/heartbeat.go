@@ -101,13 +101,29 @@ type HeartbeatRequest struct {
 	// does not know (the simulator). The statusline feed sends the
 	// harness's display name.
 	Model string `json:"model,omitempty"`
-	// ContextWindow is carried and NOT consumed. It is the producer half
-	// of a seam whose consumer does not exist: the daemon parses it into
-	// this field and never reads it, exactly as it did when this was a
-	// stray map key. Typing it changes nothing about that contract
-	// decision, which is still the one named in ctxforward.go: whether
-	// UpdateSessionHeartbeat should take a window narrows the
-	// discriminator that tells the two context producers apart.
+	// ContextTokens is the NUMERATOR: the occupancy the harness measured,
+	// in tokens, 0 when the producer ships only a percentage. A producer
+	// that ships it turns this RPC from a bare percentage into a graded
+	// reading — see the pair with ContextWindow below and aae-orc-38yr.
+	//
+	// It is the harness's own occupancy figure (input + cache classes,
+	// output excluded, mirroring the harness's own arithmetic), NOT
+	// re-derived here. Zero is "not reported", never "empty context".
+	ContextTokens int `json:"context_tokens,omitempty"`
+	// ContextWindow is the DENOMINATOR: the window the harness declared on
+	// its cooperative feed, 0 when the payload declared none. When it
+	// arrives WITH a numerator, UpdateSessionHeartbeat routes it and the
+	// session's manifest limit through usage.Resolve as a usage.LimitFromFeed
+	// rung (below an operator's manifest override, above the shipped table),
+	// and derives the percentage against the window that resolves.
+	//
+	// A numerator is required: a window with no ContextTokens is left
+	// unconsumed (the reading stays percentage-only), because there is
+	// nothing to divide by it. Paired with ContextTokens it lets a consumer
+	// DERIVE the percentage against the denominator marvel trusts, rather
+	// than accept a bare figure the harness computed against its own window.
+	// It was the producer half of a seam whose consumer did not exist
+	// (finding-023); aae-orc-38yr built the consumer.
 	ContextWindow int `json:"context_window,omitempty"`
 }
 
