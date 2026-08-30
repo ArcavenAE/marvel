@@ -216,21 +216,34 @@ type contextWindow struct {
 // redefinition cannot hide inside it.
 const harnessPercentTolerance = 1.0
 
+// occupancyTokens is the NUMERATOR: input plus cache-creation plus
+// cache-read, with output tokens excluded. Excluding output is not an
+// oversight — it is what the harness does, and it is the same sum
+// recomputeUsedPercent divides, so the token count marvel forwards on the
+// heartbeat is exactly the one it checked the harness's percentage
+// against. ok is false when the payload carries no classes to sum, the
+// normal state of a session that has not called the API yet.
+func occupancyTokens(w *contextWindow) (tokens int, ok bool) {
+	if w == nil || w.CurrentUsage == nil {
+		return 0, false
+	}
+	u := w.CurrentUsage
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens, true
+}
+
 // recomputeUsedPercent derives occupancy from the classes the payload
 // shipped, mirroring the harness's own arithmetic: input plus
 // cache-creation plus cache-read over the window, rounded then clamped,
-// with output tokens excluded. Excluding output is not an oversight: it
-// is what the harness does, and summing it in would put every reading a
+// with output tokens excluded. Summing output in would put every reading a
 // little over and make the cross-check fire on healthy sessions.
 //
 // ok is false when the payload carries nothing to compute from, which is
 // the normal state of a session that has not called the API yet.
 func recomputeUsedPercent(w *contextWindow) (pct float64, ok bool) {
-	if w == nil || w.CurrentUsage == nil || w.ContextWindowSize <= 0 {
+	occupancy, ok := occupancyTokens(w)
+	if !ok || w.ContextWindowSize <= 0 {
 		return 0, false
 	}
-	u := w.CurrentUsage
-	occupancy := u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 	raw := math.Round(float64(occupancy) / float64(w.ContextWindowSize) * 100)
 	return math.Min(100, math.Max(0, raw)), true
 }
@@ -306,16 +319,18 @@ func untilReset(r resetInstant, now time.Time) string {
 }
 
 // renderForward parses one statusline payload and returns the status text
-// to print, plus the context percentage, model name, and harness-declared
-// window to forward (send=false when the payload carries no forwardable
-// figure). window is 0 when the payload declares none.
+// to print, plus the context percentage, model name, the harness-measured
+// occupancy (the NUMERATOR) and the harness-declared window (the
+// DENOMINATOR) to forward (send=false when the payload carries no
+// forwardable figure). tokens and window are 0 when the payload declares
+// none — the daemon then keeps the percentage-only reading.
 //
 // Pure apart from the clock formatRateLimits needs, so it stays
 // table-testable.
-func renderForward(raw []byte) (line string, pct float64, model string, window int, send bool) {
+func renderForward(raw []byte) (line string, pct float64, model string, tokens int, window int, send bool) {
 	var p statuslinePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "marvel ctx-forward: unreadable payload", 0, "", 0, false
+		return "marvel ctx-forward: unreadable payload", 0, "", 0, 0, false
 	}
 
 	// Subagent shape: summarize the task rows. No RPC — the daemon has
@@ -343,13 +358,13 @@ func renderForward(raw []byte) (line string, pct float64, model string, window i
 				}
 			}
 		}
-		return fmt.Sprintf("agents %d/%d running · max CTX %.0f%%", running, len(p.Tasks), maxPct), 0, "", 0, false
+		return fmt.Sprintf("agents %d/%d running · max CTX %.0f%%", running, len(p.Tasks), maxPct), 0, "", 0, 0, false
 	}
 
 	if p.ContextWindow == nil || p.ContextWindow.UsedPercentage == nil {
 		// Session too young to have a measurement. Show something
 		// stable rather than flickering an error.
-		return withAcct(fmt.Sprintf("%s · CTX –", orUnknown(p.Model.DisplayName))), 0, "", 0, false
+		return withAcct(fmt.Sprintf("%s · CTX –", orUnknown(p.Model.DisplayName))), 0, "", 0, 0, false
 	}
 	pct = *p.ContextWindow.UsedPercentage
 
@@ -372,7 +387,7 @@ func renderForward(raw []byte) (line string, pct float64, model string, window i
 	// silent blank would look like an ordinary gap in the feed.
 	if mine, ok := recomputeUsedPercent(p.ContextWindow); ok && math.Abs(mine-pct) > harnessPercentTolerance {
 		return withAcct(fmt.Sprintf("%s · CTX ? harness %.0f%% vs recomputed %.0f%% · $%.2f",
-			orUnknown(p.Model.DisplayName), pct, mine, p.Cost.TotalCostUSD)), 0, "", 0, false
+			orUnknown(p.Model.DisplayName), pct, mine, p.Cost.TotalCostUSD)), 0, "", 0, 0, false
 	}
 	// A payload with no classes to check against is unverified, not
 	// suspect. Older harnesses, and any other producer pointed at this
@@ -381,7 +396,13 @@ func renderForward(raw []byte) (line string, pct float64, model string, window i
 	// predates the classes rather than catch anything.
 
 	line = withAcct(fmt.Sprintf("%s · CTX %.0f%% · $%.2f", orUnknown(p.Model.DisplayName), pct, p.Cost.TotalCostUSD))
-	return line, pct, p.Model.DisplayName, p.ContextWindow.ContextWindowSize, true
+	// The numerator rides out only when the payload carried the classes to
+	// sum; a payload with a percentage but no current_usage forwards a bare
+	// percentage still (occupancyTokens ok=false), which the daemon keeps
+	// as a percentage-only reading. tokens is 0 in that case, never a
+	// declared-empty-context zero.
+	tokens, _ = occupancyTokens(p.ContextWindow)
+	return line, pct, p.Model.DisplayName, tokens, p.ContextWindow.ContextWindowSize, true
 }
 
 func orUnknown(s string) string {
@@ -402,7 +423,7 @@ func newCtxForwardCmd() *cobra.Command {
 				fmt.Println("marvel ctx-forward")
 				return nil
 			}
-			line, pct, model, window, send := renderForward(raw)
+			line, pct, model, tokens, window, send := renderForward(raw)
 			fmt.Println(line)
 
 			socket := os.Getenv("MARVEL_SOCKET")
@@ -423,38 +444,24 @@ func newCtxForwardCmd() *cobra.Command {
 			// tokens existed) the daemon admits the beat and says so on
 			// the ring.
 			p := api.NewHeartbeatRequest(workspace+"/"+session, pct, model)
-			// context_window is the harness's own declared window for this
-			// session. It is emitted as the PRODUCER half of a seam whose
-			// consumer does not exist yet: internal/daemon's heartbeatParams
-			// has no field for it, so today the daemon drops it exactly the
-			// way this file used to drop rate_limits. That is deliberate and
-			// documented rather than accidental, but it is not a shipped
-			// feature, and nothing renders differently because of it.
+			// The numerator and the denominator behind the harness's own
+			// percentage. Forwarding both turns this into a GRADED reading:
+			// UpdateSessionHeartbeat routes the window through usage.Resolve
+			// (as a LimitFromFeed rung, below an operator's manifest
+			// override) and derives the percentage from occupancy over the
+			// window it resolves — so an operator's runtime.context_window
+			// wins over the harness's own, and CTX% is against the
+			// denominator marvel trusts. The bare percentage above stands
+			// only as the fallback when there is nothing to derive from.
+			// This was the seam ctxforward opened and aae-orc-38yr closed;
+			// the daemon no longer drops these fields.
 			//
-			// Two edits complete it, both outside cmd/marvel and both
-			// deliberately not made here: a window field on the wire type,
-			// and a window argument on
-			// internal/api.Store.UpdateSessionHeartbeat.
-			//
-			// The first of those is now made and the second is not, which
-			// is why this window still goes nowhere. api.HeartbeatRequest
-			// carries ContextWindow, so the daemon parses it into a field
-			// instead of dropping an untyped map key; it still reads it
-			// nowhere. Typing a value is not consuming it.
-			//
-			// Whoever makes them should read the comment already standing in
-			// UpdateSessionHeartbeat first. It states that a percentage is
-			// ALL this path produces, "no token count, no window, and no
-			// request count", and that this shape is what tells the two
-			// context producers apart downstream. Adding a window narrows
-			// that discriminator, so it is a contract decision rather than
-			// plumbing, and stamping a limit source without routing both
-			// this window and the session's manifest limit through
-			// usage.Resolve would label a rung of the ladder without
-			// climbing it.
-			//
-			// Zero means the payload declared no window, and an undeclared
-			// window must not arrive as a declared zero.
+			// Zero means the payload declared none, and an undeclared figure
+			// must not arrive as a declared zero: tokens omitted keeps the
+			// percentage-only reading, a window of zero resolves to nothing.
+			if tokens > 0 {
+				p.ContextTokens = tokens
+			}
 			if window > 0 {
 				p.ContextWindow = window
 			}

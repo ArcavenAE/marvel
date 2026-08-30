@@ -103,7 +103,7 @@ func TestUpdateSessionHeartbeatAuthenticates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			before, _ := s.GetSession(tt.key)
-			auth, err := s.UpdateSessionHeartbeat(tt.key, tt.token, 42.5, "")
+			auth, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: tt.key, SessionToken: tt.token, ContextPercent: 42.5})
 
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
@@ -148,7 +148,7 @@ func TestUpdateSessionHeartbeatAuthenticates(t *testing.T) {
 
 	// The peer's own beat still works: the refusal above is about binding,
 	// not about a session poisoned by someone else's attempt.
-	if _, err := s.UpdateSessionHeartbeat(peerKey, peerToken, 10, ""); err != nil {
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: peerKey, SessionToken: peerToken, ContextPercent: 10}); err != nil {
 		t.Fatalf("peer heartbeat with its own token: %v", err)
 	}
 }

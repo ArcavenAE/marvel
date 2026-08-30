@@ -268,8 +268,24 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	if limits == nil {
 		limits = usage.DefaultTable()
 	}
-	acct := usage.New(store, usage.NewResolver(limits), usage.WithEvents(evRing))
+	// One resolver, shared between the accountant and the heartbeat path,
+	// so a window learned on either (Claude declares its own in-stream) is
+	// visible to the other. The heartbeat path reaches it through the
+	// store's injected ContextLimitResolveFunc, whose usage-free signature
+	// keeps internal/api from importing internal/usage. See aae-orc-38yr.
+	resolver := usage.NewResolver(limits)
+	acct := usage.New(store, resolver, usage.WithEvents(evRing))
 	sessMgr.Usage = acct
+	store.SetContextLimitResolver(func(harness, model string, args []string, manifestLimit, feedLimit int) (int, string) {
+		limit, src, _ := resolver.Resolve(usage.Request{
+			Harness:       harness,
+			StreamModel:   model,
+			RuntimeArgs:   args,
+			ManifestLimit: manifestLimit,
+			FeedLimit:     feedLimit,
+		})
+		return limit, string(src)
+	})
 
 	// Resolved once at construction rather than per response: the home
 	// cannot change under a running daemon, and a failure here is not
@@ -1081,7 +1097,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
-	auth, err := d.store.UpdateSessionHeartbeat(p.SessionKey, p.SessionToken, p.ContextPercent, p.Model)
+	auth, err := d.store.UpdateSessionHeartbeat(p)
 	if err != nil {
 		if errors.Is(err, api.ErrHeartbeatUnauthorized) {
 			// Two different faults reach this branch and they have

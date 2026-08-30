@@ -34,6 +34,44 @@ type Store struct {
 	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
 	bolt     *bolt.DB
 	boltPath string
+
+	// contextResolver walks the context-window ladder for the heartbeat
+	// path. Nil means no resolution: a heartbeat carrying a window is
+	// recorded as a percentage-only reading, exactly as before this field
+	// existed. It is injected rather than owned because the ladder lives in
+	// internal/usage, which imports this package; the daemon shares its one
+	// resolver with the accountant so a window learned on either path is
+	// visible to the other. See SetContextLimitResolver and aae-orc-38yr.
+	contextResolver ContextLimitResolveFunc
+}
+
+// ContextLimitResolveFunc resolves a context-window denominator from a
+// feed-declared window and the session's manifest override, returning the
+// window and the ladder rung that produced it (a usage.LimitSource,
+// stringified). A zero window means unresolved; the caller records absence
+// rather than a guess.
+//
+// The signature is deliberately usage-free — harness, model, args, two
+// ints — so internal/api need not import internal/usage (which imports
+// internal/api). The daemon adapts its usage.Resolver to this shape in
+// SetContextLimitResolver's call site.
+type ContextLimitResolveFunc func(harness, model string, args []string, manifestLimit, feedLimit int) (limit int, source string)
+
+// SetContextLimitResolver injects the ladder the heartbeat path consults.
+// Called once at daemon construction with a closure over the same
+// usage.Resolver the accountant holds. A store with none (every store
+// outside the daemon) resolves no windows and keeps the pre-aae-orc-38yr
+// percentage-only behavior.
+//
+// The func is invoked by UpdateSessionHeartbeat while the store's write
+// lock is held, so it MUST NOT call back into the store (GetSession,
+// any Update*): the store mutex is not reentrant and would self-deadlock.
+// The daemon's closure only calls usage.Resolver, which takes its own
+// lock and never reaches back here.
+func (s *Store) SetContextLimitResolver(fn ContextLimitResolveFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.contextResolver = fn
 }
 
 // NewStore creates an empty in-memory store.
@@ -514,16 +552,16 @@ func (s *Store) UpdatePolicy(key string, fn func(*Policy) error) error {
 // dominant write rate for marvel's bbolt usage; if it surfaces as a
 // performance issue, batch by waiting N heartbeats before persisting
 // (or move heartbeat state into a separate in-memory-only path).
-func (s *Store) UpdateSessionHeartbeat(key, token string, contextPercent float64, model string) (HeartbeatAuth, error) {
+func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess, ok := s.sessions[key]
+	sess, ok := s.sessions[r.SessionKey]
 	if !ok {
-		return "", fmt.Errorf("session %s: %w", key, ErrNotFound)
+		return "", fmt.Errorf("session %s: %w", r.SessionKey, ErrNotFound)
 	}
-	auth, err := authenticateHeartbeat(sess, token)
+	auth, err := authenticateHeartbeat(sess, r.SessionToken)
 	if err != nil {
-		return "", fmt.Errorf("session %s: %w", key, err)
+		return "", fmt.Errorf("session %s: %w", r.SessionKey, err)
 	}
 	// A heartbeat is a COMPLETE reading of its own shape, not a partial
 	// update layered over whatever the accountant left behind. Writing
@@ -537,27 +575,71 @@ func (s *Store) UpdateSessionHeartbeat(key, token string, contextPercent float64
 	// is a high-water mark against a resolved window, and a heartbeat
 	// percentage is the agent's own figure against its own denominator.
 	// Carrying it would reintroduce the cross-producer mixing this fixes.
-	sess.SessionContext = SessionContext{
+	reading := SessionContext{
 		ContextSource:  ContextSourceHeartbeat,
-		ContextPercent: contextPercent,
+		ContextPercent: r.ContextPercent,
 		ContextModel:   sess.ContextModel,
 	}
+	// The heartbeat used to produce a bare percentage and nothing else,
+	// and that shape WAS the discriminator telling the two CTX% producers
+	// apart. It no longer has to be: marvel#153 made ContextSource a
+	// DECLARED field, so bolt rehydrate and the renderer key on the
+	// producer, not on which fields happen to be populated (see the
+	// comments there). That is what makes it safe for this path to carry a
+	// window for the first time (aae-orc-38yr).
+	//
+	// A cooperative feed that ships the numerator AND a denominator gets a
+	// GRADED reading: the window is resolved through the SAME ladder the
+	// accountant uses, so an operator's runtime.context_window override
+	// outranks the feed's own window (usage.LimitFromManifest above
+	// LimitFromFeed). Routing BOTH the feed window and the manifest limit
+	// through Resolve is the whole point — stamping "feed" without the
+	// manifest in hand would label a rung without climbing the ladder.
+	//
+	// The percentage is then DERIVED from occupancy over the resolved
+	// window, not taken from the wire: a harness percentage is against the
+	// harness's own denominator, and once marvel has resolved its own, its
+	// own division is the reading it can explain. The wire's percentage
+	// stands only as the fallback when there is nothing to derive from (an
+	// unresolved window, or a producer that ships no numerator — the
+	// simulator, an older harness).
+	if r.ContextTokens > 0 {
+		reading.ContextTokens = r.ContextTokens
+		if s.contextResolver != nil {
+			limit, src := s.contextResolver(
+				sess.Runtime.Name, r.Model, sess.Runtime.Args,
+				sess.Runtime.ContextWindow, r.ContextWindow,
+			)
+			if limit > 0 {
+				reading.ContextLimit = limit
+				reading.ContextLimitSource = src
+				// Deliberately NOT clamped to 100, to match the accountant's
+				// own derive (see accountant.go's reading()). ContextPercent
+				// is a >100-capable figure system-wide, and a graded
+				// heartbeat that exceeds it is a real signal, not an error:
+				// an operator whose runtime.context_window is smaller than
+				// the window the harness measured against will see occupancy
+				// run past the budget they set, and "40% over" must not
+				// render as "at the limit". Capping here would also make the
+				// renderer treat a cooperative reading differently from an
+				// accountant one, which is the exact symmetry this ticket
+				// exists to establish (aae-orc-38yr).
+				reading.ContextPercent = 100 * float64(r.ContextTokens) / float64(limit)
+			}
+		}
+	}
+	sess.SessionContext = reading
 	sess.LastHeartbeat = time.Now().UTC()
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any
-	// prior reading stands.
-	if model != "" {
-		sess.ContextModel = model
+	// prior reading stands. ContextModel is promoted from the embedded
+	// SessionContext, so this updates the reading just written above.
+	if r.Model != "" {
+		sess.ContextModel = r.Model
 	}
 	// ContextAt is the single "measured" sentinel for the context column,
 	// shared with the usage accountant's path below. A cooperative
 	// heartbeat is a measurement too, so it stamps it.
-	//
-	// A percentage is ALL this path produces: the agent computed it
-	// itself, so there is no token count, no window, and no request count
-	// to record. That shape is what tells the two producers apart
-	// downstream (bolt rehydrate keeps this one, the renderer prints it as
-	// a percentage rather than as an unresolved window).
 	sess.ContextAt = sess.LastHeartbeat
 	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
 		return "", err

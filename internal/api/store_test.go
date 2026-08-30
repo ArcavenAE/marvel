@@ -167,7 +167,7 @@ func TestUpdateSessionHeartbeat(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	if _, err := s.UpdateSessionHeartbeat("test-ws/agent-0", "", 42.5, ""); err != nil {
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: "test-ws/agent-0", ContextPercent: 42.5}); err != nil {
 		t.Fatalf("update heartbeat: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestUpdateSessionHeartbeat(t *testing.T) {
 	}
 
 	// Not found case
-	if _, err := s.UpdateSessionHeartbeat("test-ws/nonexistent", "", 10, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: "test-ws/nonexistent", ContextPercent: 10}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -361,7 +361,7 @@ func TestUpdateSessionHeartbeatStampsContextAt(t *testing.T) {
 	if err := s.CreateSession(sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := s.UpdateSessionHeartbeat("test-ws/agent-0", "", 42.5, ""); err != nil {
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: "test-ws/agent-0", ContextPercent: 42.5}); err != nil {
 		t.Fatalf("update heartbeat: %v", err)
 	}
 	got, _ := s.GetSession("test-ws/agent-0")
@@ -472,7 +472,7 @@ func TestHeartbeatAfterUnresolvedAccountantReadingIsNotSuppressed(t *testing.T) 
 	})
 
 	// The agent then reports a percentage it computed itself.
-	if _, err := s.UpdateSessionHeartbeat("test-ws/agent-0", "", 61.0, "claude-opus-5"); err != nil {
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: "test-ws/agent-0", ContextPercent: 61.0, Model: "claude-opus-5"}); err != nil {
 		t.Fatalf("update heartbeat: %v", err)
 	}
 

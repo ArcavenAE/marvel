@@ -73,14 +73,19 @@ type codexHookPayload struct {
 // monotone within a compaction generation; reporting zero is not, and
 // zero is what every one of these cases would otherwise produce.
 //
+// tokens is the NUMERATOR (codex's own occupancy, Reading.Level) and
+// window is the DENOMINATOR (Reading.Window); forwarding both lets the
+// daemon derive the percentage against the window it resolves rather than
+// take codex's own. See codexHeartbeatParams and aae-orc-38yr.
+//
 // Pure, so the decision table is testable without a daemon or a hook.
-func codexReading(raw []byte) (pct float64, model string, window int, send bool) {
+func codexReading(raw []byte) (pct float64, model string, tokens int, window int, send bool) {
 	var p codexHookPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return 0, "", 0, false
+		return 0, "", 0, 0, false
 	}
 	if p.TranscriptPath == nil || *p.TranscriptPath == "" {
-		return 0, "", 0, false
+		return 0, "", 0, 0, false
 	}
 	reading, err := codex.ReadOccupancy(*p.TranscriptPath)
 	if err != nil {
@@ -89,11 +94,11 @@ func codexReading(raw []byte) (pct float64, model string, window int, send bool)
 		// a fault (a multi-megabyte tool-output record can sit between
 		// the newest sample and EOF); an unopenable path is a real
 		// fault; neither may become a zero.
-		return 0, "", 0, false
+		return 0, "", 0, 0, false
 	}
 	pct, ok := reading.Percent()
 	if !ok {
-		return 0, "", 0, false
+		return 0, "", 0, 0, false
 	}
 	// The model rides out only with a reading. A hold sends nothing at
 	// all, so returning an identity for a figure that will not be sent
@@ -101,7 +106,7 @@ func codexReading(raw []byte) (pct float64, model string, window int, send bool)
 	if p.Model != nil {
 		model = *p.Model
 	}
-	return pct, model, reading.Window, true
+	return pct, model, reading.Level, reading.Window, true
 }
 
 func newCodexCtxCmd() *cobra.Command {
@@ -114,7 +119,7 @@ func newCodexCtxCmd() *cobra.Command {
 			if err != nil {
 				return nil
 			}
-			pct, model, window, send := codexReading(raw)
+			pct, model, tokens, window, send := codexReading(raw)
 
 			socket := os.Getenv("MARVEL_SOCKET")
 			workspace := os.Getenv("MARVEL_WORKSPACE")
@@ -122,7 +127,7 @@ func newCodexCtxCmd() *cobra.Command {
 			if !send || socket == "" || workspace == "" || session == "" {
 				return nil
 			}
-			p := codexHeartbeatParams(workspace, session, os.Getenv(api.HeartbeatTokenEnv), model, pct, window)
+			p := codexHeartbeatParams(workspace, session, os.Getenv(api.HeartbeatTokenEnv), model, pct, tokens, window)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemon.SendRequest(socket, daemon.Request{
@@ -139,7 +144,7 @@ func newCodexCtxCmd() *cobra.Command {
 // standing up a daemon; the pair of keys below is exactly what the
 // merge of #170 and #168 got wrong, and an inline literal inside a
 // cobra closure is not reachable by any test that would have caught it.
-func codexHeartbeatParams(workspace, session, token, model string, pct float64, window int) api.HeartbeatRequest {
+func codexHeartbeatParams(workspace, session, token, model string, pct float64, tokens, window int) api.HeartbeatRequest {
 	// The token marvel minted for this session at spawn. Without it the
 	// daemon refuses the beat: authenticateHeartbeat fails open only when
 	// the record carries no hash, and Manager.Create now mints one before
@@ -153,28 +158,30 @@ func codexHeartbeatParams(workspace, session, token, model string, pct float64, 
 	// builds, so the next field added to the contract breaks this line at
 	// compile time rather than at runtime. See finding-023.
 	p := api.NewHeartbeatRequestWithToken(workspace+"/"+session, token, pct, model)
-	// context_window is the producer half of a seam whose consumer does
-	// not exist: the daemon parses it and never reads it. See the long
-	// comment in ctxforward.go, which names the edit that would finish it.
+	// The numerator (codex's occupancy) and the denominator (its declared
+	// window). The daemon now consumes both: it routes the window through
+	// usage.Resolve and derives the percentage from occupancy over what it
+	// resolves. See aae-orc-38yr, which built the consumer this seam waited
+	// for.
 	//
-	// Codex sharpens that open decision rather than settling it. This
-	// window is a `stream` declaration (rung 1), and codex is the clean
-	// case: limitLadder's rung-1 sentence has two conjuncts, the harness
-	// enforcing compaction against the window AND stating it "in the same
-	// channel as the token counts it is stating it about", and
-	// model_context_window satisfies both by riding the level's own record.
+	// The rung is the deliberately conservative part. aae-orc-38yr routes
+	// EVERY heartbeat window as usage.LimitFromFeed (rung 4, below an
+	// operator's manifest override). codex arguably deserves rung 1: its
+	// model_context_window rides the level's own record, satisfying
+	// limitLadder's rung-1 conjuncts (the harness enforces compaction
+	// against the window AND states it in the same channel as the counts).
+	// That promotion is NOT taken here. It needs the SampleLimit route
+	// (rung 1, LimitFromStream) and is the open decision reserved to the
+	// operator in marvel PR #172; taking it as a side effect of this wiring
+	// would settle a question this ticket does not own. Until then feed is
+	// the honest floor — below the operator, above the (empty) codex table.
+	// See finding-023 and finding-020.
 	//
-	// Do NOT generalize the rung from this comment. A window the harness
-	// serves over a separate contracted query satisfies the first conjunct
-	// and not the second, and rung 4's text (a human-facing status hook,
-	// no version handle) does not describe it either. That case is open
-	// with the operator, marvel PR #172; see finding-023 and finding-020.
-	// Whatever rung it lands on, it needs a refetch rule codex does not:
-	// fetched under a different model, a window is unresolved rather than
-	// stale.
-	//
-	// Zero means the payload declared no window, and an undeclared window
-	// must not arrive as a declared zero.
+	// Zero means the payload declared none, and an undeclared figure must
+	// not arrive as a declared zero.
+	if tokens > 0 {
+		p.ContextTokens = tokens
+	}
 	if window > 0 {
 		p.ContextWindow = window
 	}
