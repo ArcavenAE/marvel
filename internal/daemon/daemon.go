@@ -391,6 +391,19 @@ func (d *Daemon) Start(socketPath string) error {
 		log.Printf("%s on startup: %v", what, err)
 	}
 
+	// Decide the convergence posture from what adoption actually reclaimed,
+	// then hold anything cold at the start line. RefreshLiveness reaps records
+	// whose panes did not survive (a host reboot leaves stale Running rows), so
+	// InitConvergencePosture reads true live presence: a team with surviving
+	// panes converges (its fleet is running — maintain it), a team with none
+	// holds until `marvel converge`. This runs BEFORE the reconcile loop so a
+	// stale bolt can never cold-spawn a fleet on start. See aae-orc-cxdf/rwiw.
+	d.teamCtrl.RefreshLiveness()
+	if perr := d.teamCtrl.InitConvergencePosture(); perr != nil {
+		log.Printf("init convergence posture: %v", perr)
+	}
+	d.logConvergencePosture()
+
 	// Announced from Start, not from the constructor. cmd/marvel installs
 	// log.SetOutput (log ring plus the optional --log-file) only after
 	// NewWithOptions returns, so a line written during construction reaches
@@ -672,6 +685,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleDelete(req.Params)
 	case "scale":
 		return d.handleScale(req.Params)
+	case "converge":
+		return d.handleConverge(req.Params)
 	case "reap":
 		return d.handleReap(req.Params)
 	case "heartbeat":
@@ -831,6 +846,21 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
+	}
+
+	// Apply is an explicit "make it so": the operator named these teams and
+	// their replica counts, so they converge. This is distinct from a daemon
+	// start rehydrating stale desired state (aae-orc-cxdf), which holds at the
+	// start line. Setting the posture here — not relying on the store default —
+	// keeps apply's spawn-on-apply behavior while the start path stays held.
+	for _, mt := range m.Teams {
+		teamKey := m.Workspace.Name + "/" + mt.Name
+		if err := d.store.UpdateTeam(teamKey, func(live *api.Team) error {
+			live.ConvergencePosture = api.PostureConverge
+			return nil
+		}); err != nil {
+			log.Printf("apply: set convergence posture for %s: %v", teamKey, err)
+		}
 	}
 
 	// Re-project policies for already-running sessions before reconciling.
@@ -1104,6 +1134,106 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		"replicas": p.Replicas,
 	})
 	return Response{Result: result}
+}
+
+// convergeParams selects which team(s) to move and which way. An empty TeamKey
+// targets every team (the daemon-wide go-line). Hold flips the posture the
+// other way — back to the start line — for a future majordomo or an operator
+// re-arming a team; the CLI exposes only the converge direction.
+type convergeParams struct {
+	TeamKey string `json:"team_key,omitempty"`
+	Hold    bool   `json:"hold,omitempty"`
+}
+
+// convergeRoleReport is one role's line in the converge result: what the
+// reconcile the daemon is about to drive will do for it.
+type convergeRoleReport struct {
+	Team    string `json:"team"`
+	Role    string `json:"role"`
+	Action  string `json:"action"`
+	Spawn   int    `json:"spawn,omitempty"`
+	Desired int    `json:"desired"`
+	Actual  int    `json:"actual"`
+}
+
+type convergeResult struct {
+	Posture string               `json:"posture"`
+	Teams   []string             `json:"teams"`
+	Roles   []convergeRoleReport `json:"roles"`
+}
+
+// handleConverge sets the convergence posture (the aae-orc-rwiw go-line) and
+// then reconciles once so the change takes effect immediately. The posture flip
+// lives in the team controller (SetConvergencePosture), not here, so the same
+// control-plane lever is available to a future in-process majordomo; the CLI
+// `marvel converge` is one client of this RPC.
+func (d *Daemon) handleConverge(params json.RawMessage) Response {
+	var p convergeParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
+
+	posture := api.PostureConverge
+	if p.Hold {
+		posture = api.PostureHold
+	}
+
+	plans, err := d.teamCtrl.SetConvergencePosture(p.TeamKey, posture)
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	// Enact the new posture. On a converge this spawns toward desired; on a
+	// hold it changes nothing this tick (the gate withholds cold spawns) but is
+	// recorded for the next reconcile and for `describe`.
+	d.teamCtrl.ReconcileOnce()
+
+	res := convergeResult{Posture: string(posture)}
+	seen := make(map[string]struct{})
+	for _, pl := range plans {
+		key := pl.Workspace + "/" + pl.Team
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			res.Teams = append(res.Teams, key)
+		}
+		res.Roles = append(res.Roles, convergeRoleReport{
+			Team:    key,
+			Role:    pl.Role,
+			Action:  string(pl.Action),
+			Spawn:   pl.Spawn,
+			Desired: pl.Desired,
+			Actual:  pl.Actual,
+		})
+	}
+
+	out, _ := json.Marshal(res)
+	return Response{Result: out}
+}
+
+// logConvergencePosture writes a one-line-per-team start summary of which teams
+// are held at the start line with cold work waiting, so an operator reading the
+// daemon log after start knows a `marvel converge` is available and what it
+// would spawn. Silent when nothing is held. Called once from Start after the
+// posture is initialized.
+func (d *Daemon) logConvergencePosture() {
+	plans := d.teamCtrl.PlanConvergence()
+	held := make(map[string]int) // team key -> sessions a converge would spawn
+	for _, pl := range plans {
+		if pl.Action != team.RoleSpawn {
+			continue
+		}
+		t, err := d.store.GetTeam(pl.Workspace + "/" + pl.Team)
+		if err != nil || t.Posture() != api.PostureHold {
+			continue
+		}
+		held[t.Key()] += pl.Spawn
+	}
+	for key, n := range held {
+		log.Printf("convergence: team %s held at the start line; `marvel converge %s` would spawn %d session(s)",
+			key, key, n)
+	}
 }
 
 // heartbeatParams is an alias, not a copy: producers build the same type

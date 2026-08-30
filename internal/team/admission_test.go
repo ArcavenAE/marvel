@@ -34,7 +34,10 @@ func createBudgetTeamFixture(t *testing.T, store *api.Store, wsName, teamName st
 		Roles:      roles,
 		Budget:     budget,
 		Generation: 1,
-		CreatedAt:  time.Now().UTC(),
+		// Represents a team meant to run (see createTeamFixture); the hold
+		// posture is set explicitly by the tests that exercise it.
+		ConvergencePosture: api.PostureConverge,
+		CreatedAt:          time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
