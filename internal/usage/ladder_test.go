@@ -5,6 +5,8 @@ import (
 	"go/parser"
 	"go/token"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // The resolution ladder is a ruled ordering, not an implementation
@@ -159,7 +161,9 @@ func TestResolveAgreesWithTheLadder(t *testing.T) {
 				model = aliasModel
 			}
 
-			req := Request{StreamModel: model}
+			// The ladder is exercised on the vendor default, so the keyed
+			// rungs resolve rather than being refused by the backend guard.
+			req := Request{StreamModel: model, Redirection: api.BackendDefault}
 			for _, r := range []rung{hi, lo} {
 				if r.apply != nil {
 					r.apply(&req)
@@ -172,7 +176,7 @@ func TestResolveAgreesWithTheLadder(t *testing.T) {
 				if lo.learn {
 					w = lo.limit
 				}
-				res.Learn(model, w)
+				res.Learn(model, w, api.BackendDefault)
 			}
 
 			limit, src, _ := res.Resolve(req)

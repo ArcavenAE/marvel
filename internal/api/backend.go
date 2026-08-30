@@ -42,6 +42,19 @@ const (
 	BackendRedirected BackendRedirection = "redirected"
 )
 
+// String renders the verdict for logs and diagnostics, giving the zero
+// value a name rather than an empty string.
+func (b BackendRedirection) String() string {
+	switch b {
+	case BackendDefault:
+		return "default"
+	case BackendRedirected:
+		return "redirected"
+	default:
+		return "cannot-tell"
+	}
+}
+
 // backendFlagVars are the boolean backend switches Claude Code reads
 // (measured in the 2.1.226 binary, finding-016 axis 4). Any one set to a
 // truthy value redirects the session off the vendor default. This is a

@@ -276,13 +276,14 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	resolver := usage.NewResolver(limits)
 	acct := usage.New(store, resolver, usage.WithEvents(evRing))
 	sessMgr.Usage = acct
-	store.SetContextLimitResolver(func(harness, model string, args []string, manifestLimit, feedLimit int) (int, string) {
+	store.SetContextLimitResolver(func(harness, model string, args []string, manifestLimit, feedLimit int, redirection api.BackendRedirection) (int, string) {
 		limit, src, _ := resolver.Resolve(usage.Request{
 			Harness:       harness,
 			StreamModel:   model,
 			RuntimeArgs:   args,
 			ManifestLimit: manifestLimit,
 			FeedLimit:     feedLimit,
+			Redirection:   redirection,
 		})
 		return limit, string(src)
 	})

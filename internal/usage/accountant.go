@@ -200,7 +200,10 @@ type foldResult struct {
 	unresolved  bool
 	learnModel  string
 	learnWindow int
-	warnings    []string
+	// learnVerdict is the session's backend verdict, so a learned window is
+	// cached under the backend it was measured on (D-key, aae-orc-bv7m).
+	learnVerdict api.BackendRedirection
+	warnings     []string
 }
 
 // Bind records launch-time knowledge for a session and resolves its
@@ -266,7 +269,7 @@ func (a *Accountant) Observe(c Coords, ev rtevents.Event) {
 		log.Print(w)
 	}
 	if res.learnWindow > 0 {
-		a.limits.Learn(res.learnModel, res.learnWindow)
+		a.limits.Learn(res.learnModel, res.learnWindow, res.learnVerdict)
 	}
 	if res.unresolved {
 		events.Emit(a.ev, events.Event{
@@ -447,7 +450,7 @@ func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult 
 	if s.DeclaredLimit > 0 && st.limit != s.DeclaredLimit {
 		st.limit = s.DeclaredLimit
 		st.limitSrc = LimitFromStream
-		res.learnModel, res.learnWindow = st.rawModel, s.DeclaredLimit
+		res.learnModel, res.learnWindow, res.learnVerdict = st.rawModel, s.DeclaredLimit, st.redirection
 	}
 
 	if st.limit > 0 {
@@ -472,7 +475,7 @@ func (a *Accountant) foldTerminalLocked(st *sessionState, s Sample, res *foldRes
 	if s.DeclaredLimit > 0 {
 		st.limit = s.DeclaredLimit
 		st.limitSrc = LimitFromStream
-		res.learnModel, res.learnWindow = st.rawModel, s.DeclaredLimit
+		res.learnModel, res.learnWindow, res.learnVerdict = st.rawModel, s.DeclaredLimit, st.redirection
 		if st.tokens > 0 {
 			if pct := 100 * float64(st.tokens) / float64(st.limit); pct > st.peak {
 				st.peak = pct

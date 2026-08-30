@@ -51,11 +51,14 @@ type Store struct {
 // stringified). A zero window means unresolved; the caller records absence
 // rather than a guess.
 //
-// The signature is deliberately usage-free — harness, model, args, two
-// ints — so internal/api need not import internal/usage (which imports
-// internal/api). The daemon adapts its usage.Resolver to this shape in
+// The signature is deliberately usage-free — harness, model, args, two ints,
+// and the session's backend verdict (an api type, not a usage one) — so
+// internal/api need not import internal/usage (which imports internal/api).
+// The verdict lets the heartbeat path refuse a redirected or unobserved table
+// window exactly as the accountant path does (finding-031 / aae-orc-bv7m).
+// The daemon adapts its usage.Resolver to this shape in
 // SetContextLimitResolver's call site.
-type ContextLimitResolveFunc func(harness, model string, args []string, manifestLimit, feedLimit int) (limit int, source string)
+type ContextLimitResolveFunc func(harness, model string, args []string, manifestLimit, feedLimit int, redirection BackendRedirection) (limit int, source string)
 
 // SetContextLimitResolver injects the ladder the heartbeat path consults.
 // Called once at daemon construction with a closure over the same
@@ -609,6 +612,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 			limit, src := s.contextResolver(
 				sess.Runtime.Name, r.Model, sess.Runtime.Args,
 				sess.Runtime.ContextWindow, r.ContextWindow,
+				sess.BackendRedirection,
 			)
 			if limit > 0 {
 				reading.ContextLimit = limit
