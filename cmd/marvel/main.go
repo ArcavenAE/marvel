@@ -137,6 +137,7 @@ func main() {
 	root.AddCommand(describeCmd())
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())
+	root.AddCommand(convergeCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
@@ -1005,6 +1006,59 @@ func scaleCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&replicas, "replicas", 1, "desired replica count")
 	cmd.Flags().StringVar(&role, "role", "", "role to scale (required)")
+	return cmd
+}
+
+func convergeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "converge [workspace/team]",
+		Short: "Release a team (or all teams) from the start-line hold and converge to desired",
+		Long: "By default a daemon holds each team at the start line: it adopts surviving\n" +
+			"panes but does not spawn toward a team's desired replica count until told to.\n" +
+			"converge is that go-line. With no argument it converges every team; with a\n" +
+			"workspace/team it converges just that one.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var teamKey string
+			if len(args) == 1 {
+				teamKey = args[0]
+			}
+			params, _ := json.Marshal(map[string]any{"team_key": teamKey})
+			resp, err := send(daemon.Request{Method: "converge", Params: params})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var result struct {
+				Posture string `json:"posture"`
+				Teams   []string
+				Roles   []struct {
+					Team    string
+					Role    string
+					Action  string
+					Spawn   int
+					Desired int
+					Actual  int
+				}
+			}
+			_ = json.Unmarshal(resp.Result, &result)
+			if len(result.Teams) == 0 {
+				fmt.Println("no teams to converge")
+				return nil
+			}
+			fmt.Printf("posture set to %q for %d team(s)\n", result.Posture, len(result.Teams))
+			for _, r := range result.Roles {
+				if r.Spawn > 0 {
+					fmt.Printf("  %s role/%s: spawning %d (%d/%d)\n", r.Team, r.Role, r.Spawn, r.Actual, r.Desired)
+				} else {
+					fmt.Printf("  %s role/%s: %s (%d/%d)\n", r.Team, r.Role, r.Action, r.Actual, r.Desired)
+				}
+			}
+			return nil
+		},
+	}
 	return cmd
 }
 

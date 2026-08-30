@@ -405,17 +405,132 @@ func (c *Controller) ReconcileOnce() {
 	//
 	// The charge is per role per tick, not per lost replica: see
 	// noteReapedCrash.
-	charged := make(map[string]*reapCharge)
-	for _, r := range c.sessMgr.ReapDead() {
-		c.noteReapedCrash(r, charged)
-	}
-	c.emitReapAccounting(charged)
+	c.reapDeadLocked()
 	c.evaluateHealth()
 
 	teams := c.store.ListTeams()
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}
+}
+
+// reapDeadLocked reaps sessions whose panes have vanished, charging each role's
+// crash accounting once per tick and emitting it. It is the pane-liveness
+// prefix shared by ReconcileOnce and RefreshLiveness — factored out so the
+// daemon can establish a truthful live-session count at start without also
+// running a spawning reconcile. Caller holds c.mu.
+func (c *Controller) reapDeadLocked() {
+	charged := make(map[string]*reapCharge)
+	for _, r := range c.sessMgr.ReapDead() {
+		c.noteReapedCrash(r, charged)
+	}
+	c.emitReapAccounting(charged)
+}
+
+// RefreshLiveness reaps sessions whose panes have vanished so the store's
+// alive-count reflects the panes that actually survived, WITHOUT reconciling
+// desired state (no spawns). The daemon calls it at start after adoption and
+// before InitConvergencePosture: a team whose panes did not survive (a host
+// reboot leaves stale Running records with dead panes) must be counted as the
+// cold team it is, not read as alive and given the converge posture. Takes
+// c.mu; must not be called by a caller already holding it.
+func (c *Controller) RefreshLiveness() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reapDeadLocked()
+}
+
+// InitConvergencePosture sets each team's convergence posture from the ground
+// truth left by adoption (and RefreshLiveness's reap): a team with any live
+// session is PostureConverge — a daemon restarted under an operator, its fleet
+// still running, is maintained, crash-loop restarts and top-ups included; a
+// team with none is PostureHold — a fresh or stale start holds at the start
+// line and waits for `marvel converge`.
+//
+// This is the money-safety guarantee for aae-orc-cxdf. It OVERRIDES whatever
+// posture the store rehydrated, so a stale bolt that persisted PostureConverge
+// cannot cold-spawn a fleet nobody asked for: only surviving panes yield
+// converge. It answers the ticket's central question (a daemon restarted under
+// an operator vs one started fresh) with a fact the daemon can observe — the
+// panes — rather than a guess.
+//
+// Called once from daemon Start after adoption + RefreshLiveness, before the
+// reconcile loop. tu2e (resume-on-power) will let an operator opt a team out of
+// the hold default. Takes c.mu; must not be called by a caller already holding
+// it.
+func (c *Controller) InitConvergencePosture() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, t := range c.store.ListTeams() {
+		want := api.PostureHold
+		if api.CountAlive(c.store.ListSessionsByTeam(t.Workspace, t.Name)) > 0 {
+			want = api.PostureConverge
+		}
+		if t.Posture() == want {
+			continue // already correct (incl. a pre-field "" record that reads hold)
+		}
+		key := t.Key()
+		if err := c.store.UpdateTeam(key, func(live *api.Team) error {
+			live.ConvergencePosture = want
+			return nil
+		}); err != nil {
+			return fmt.Errorf("init convergence posture for %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// SetConvergencePosture sets the convergence posture for one team, or for every
+// team when teamKey is empty, persisting it, and returns the steady-state plans
+// the posture now permits so a caller can report what a converge will do. It
+// does NOT reconcile — the caller drives that (the converge RPC reconciles
+// immediately; a future majordomo may batch). This is the control-plane lever
+// behind `marvel converge`; the CLI is one client of it, so the same lever is
+// available to an in-process assessor. Takes c.mu; must not be called by a
+// caller already holding it.
+func (c *Controller) SetConvergencePosture(teamKey string, posture api.ConvergencePosture) ([]RolePlan, error) {
+	if posture != api.PostureConverge && posture != api.PostureHold {
+		return nil, fmt.Errorf("unknown convergence posture %q", posture)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var targets []api.Team
+	if teamKey == "" {
+		targets = c.store.ListTeams()
+	} else {
+		t, err := c.store.GetTeam(teamKey)
+		if err != nil {
+			return nil, err
+		}
+		targets = []api.Team{t}
+	}
+
+	var plans []RolePlan
+	for i := range targets {
+		key := targets[i].Key()
+		if err := c.store.UpdateTeam(key, func(live *api.Team) error {
+			live.ConvergencePosture = posture
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("set convergence posture for %s: %w", key, err)
+		}
+		// Report the plan against fresh state so the caller can tell the
+		// operator what the reconcile it is about to drive will spawn. A team
+		// mid-shift is deferred to the shift path, so skip it here as
+		// PlanConvergence does.
+		t, err := c.store.GetTeam(key)
+		if err != nil {
+			return nil, err
+		}
+		if t.Shift.Phase != api.ShiftNone {
+			continue
+		}
+		for j := range t.Roles {
+			plans = append(plans, c.planRole(&t, &t.Roles[j], t.Generation))
+		}
+	}
+	return plans, nil
 }
 
 // noteReapedCrash attributes a reaped session to its role and records a
@@ -661,12 +776,40 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 	}
 }
 
-// reconcileRole repairs a role at the team's current generation. Outside a
-// shift that is the only generation in play; reconcileShift calls
-// reconcileRoleAt instead, because mid-shift the team generation is
-// aspirational.
+// reconcileRole repairs a role at the team's current generation, subject to the
+// team's convergence posture. Outside a shift this is the only generation in
+// play; reconcileShift calls reconcileRoleAt directly, so the posture gate here
+// governs steady-state convergence only and never interferes with a rotation
+// (a shifting team is alive by definition, so it would not be withheld anyway).
+//
+// The gate is the fix for aae-orc-cxdf: a team that holds at the start line
+// with no live presence does NOT spawn toward desired — the cold, from-nothing
+// convergence that spent real tokens against a stale bolt. Every other outcome
+// proceeds untouched: steady state, scale-down, a crash-loop hold, an admission
+// hold, and — the load-bearing exception (question-convergence-posture) — a
+// spawn for a team that has live replicas, so steady-state maintenance and the
+// crash-loop restart of a still-alive fleet are never suppressed. `marvel
+// converge` flips the posture and lets the cold spawn proceed.
 func (c *Controller) reconcileRole(t *api.Team, role *api.Role) {
-	c.reconcileRoleAt(t, role, t.Generation)
+	plan := c.planRole(t, role, t.Generation)
+	if plan.Action == RoleSpawn && c.postureWithholds(t) {
+		return
+	}
+	c.applyRolePlan(t, role, plan)
+}
+
+// postureWithholds reports whether the team's convergence posture withholds a
+// COLD spawn this tick: the team holds at the start line AND has no live
+// session anywhere in it. The zero-live check is what keeps hold from ever
+// suppressing steady-state maintenance — a team with even one live replica is
+// being maintained, not cold-started, so its top-ups and crash-loop restarts
+// proceed regardless of posture. A team the operator converged is PostureConverge
+// and is never withheld. Caller holds c.mu.
+func (c *Controller) postureWithholds(t *api.Team) bool {
+	if t.Posture() != api.PostureHold {
+		return false
+	}
+	return api.CountAlive(c.store.ListSessionsByTeam(t.Workspace, t.Name)) == 0
 }
 
 // shiftRepairGeneration returns the generation a mid-shift repair of role

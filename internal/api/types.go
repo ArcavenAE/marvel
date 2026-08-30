@@ -356,7 +356,52 @@ type Team struct {
 	// Admission is the standing admission condition the reconciler
 	// recomputes each tick. Status, not spec — same treatment as Shift.
 	Admission AdmissionState `toml:"-"`
-	CreatedAt time.Time
+	// ConvergencePosture is the team's runtime stance on COLD convergence
+	// toward desired. Status, not spec (toml:"-", same as Shift/Admission):
+	// an operator never declares it in a manifest; the daemon sets it at start
+	// from what adoption found, and `marvel converge` flips it. Read it through
+	// Posture(), which normalizes the zero value to the safe default.
+	// See question-convergence-posture, aae-orc-rwiw / cxdf.
+	ConvergencePosture ConvergencePosture `toml:"-"`
+	CreatedAt          time.Time
+}
+
+// ConvergencePosture is a team's runtime stance on cold convergence toward its
+// desired replica count (question-convergence-posture, aae-orc-rwiw). It is
+// status, not spec: an operator never declares it in a manifest, the daemon
+// sets it at start from what adoption found, and `marvel converge` flips it. It
+// is JSON-persisted with the rest of the Team so `describe` can report it, but
+// the daemon re-derives it from live presence on every start (see
+// team.Controller.InitConvergencePosture), so a persisted value never
+// authorizes a cold spawn on its own — the money-safety guarantee for
+// aae-orc-cxdf, where a daemon start rehydrated stale desired state and spawned
+// a fleet nobody asked for.
+type ConvergencePosture string
+
+const (
+	// PostureHold withholds COLD convergence: a team with no live presence
+	// does not spawn toward desired until an explicit converge. This is the
+	// default — "hold at the start line" — and the zero value ("") normalizes
+	// to it via Team.Posture, so a team record written before this field
+	// existed reads as held.
+	PostureHold ConvergencePosture = "hold"
+	// PostureConverge spawns toward desired: the operator's go-line, and the
+	// stance a team with surviving panes is given at start so its steady-state
+	// maintenance (crash-loop restarts, replica top-ups) is never suppressed.
+	PostureConverge ConvergencePosture = "converge"
+)
+
+// Posture returns the team's convergence posture, normalizing the zero value
+// (an unset field — a team record written before the field existed, or one the
+// daemon has not yet initialized) to the safe default PostureHold. Only an
+// explicit PostureConverge reads as converge; anything else holds. This
+// asymmetry is deliberate: a garbled or absent value must never authorize a
+// cold spawn.
+func (t *Team) Posture() ConvergencePosture {
+	if t.ConvergencePosture == PostureConverge {
+		return PostureConverge
+	}
+	return PostureHold
 }
 
 // Endpoint is a stable name for a session role (service equivalent).

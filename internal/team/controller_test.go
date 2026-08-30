@@ -51,7 +51,13 @@ func createTeamFixture(t *testing.T, store *api.Store, wsName, teamName string, 
 		Workspace:  wsName,
 		Roles:      roles,
 		Generation: 1,
-		CreatedAt:  time.Now().UTC(),
+		// A fixture that expects the reconciler to converge represents a team
+		// meant to run — an applied or explicitly-converged team, not one held
+		// at the start line. The daemon's own start path decides posture from
+		// adoption (InitConvergencePosture); tests that exercise the hold
+		// posture set it explicitly. See question-convergence-posture.
+		ConvergencePosture: api.PostureConverge,
+		CreatedAt:          time.Now().UTC(),
 	}
 	if err := store.CreateTeam(team); err != nil {
 		t.Fatal(err)
