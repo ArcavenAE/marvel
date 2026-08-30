@@ -156,6 +156,7 @@ func TestSpendAccumulatesWhileOccupancyDoesNot(t *testing.T) {
 func TestTerminalSampleNeverEntersOccupancy(t *testing.T) {
 	t.Parallel()
 	a, _, _ := newTestAccountant(t, Table{"claude-fable-5[1m]": 1_000_000})
+	a.Bind(testCoords, Bind{Harness: claudecode.Harness, Redirection: api.BackendDefault})
 	a.Observe(testCoords, startedEvent("claude-fable-5[1m]"))
 
 	for _, r := range []rtevents.RequestUsage{
@@ -300,6 +301,7 @@ func TestCompactionNotDetectedWithinHysteresis(t *testing.T) {
 func TestNonPrimaryModelRoutedToSpendOnly(t *testing.T) {
 	t.Parallel()
 	a, _, _ := newTestAccountant(t, Table{"claude-fable-5[1m]": 1_000_000})
+	a.Bind(testCoords, Bind{Harness: claudecode.Harness, Redirection: api.BackendDefault})
 	a.Observe(testCoords, startedEvent("claude-fable-5[1m]"))
 
 	a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
@@ -664,7 +666,7 @@ func TestSessionStartUpgradesDenominator(t *testing.T) {
 		"claude-fable-5[1m]": 1_000_000,
 	})
 
-	a.Bind(testCoords, Bind{Harness: claudecode.Harness, Args: []string{"--model", "haiku"}})
+	a.Bind(testCoords, Bind{Harness: claudecode.Harness, Args: []string{"--model", "haiku"}, Redirection: api.BackendDefault})
 	a.Observe(testCoords, startedEvent("claude-fable-5[1m]"))
 	a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
 		Layout: rtevents.LayoutAdditive, Model: "claude-fable-5", In: 100_000,
@@ -695,6 +697,7 @@ func TestSiblingWindowsDoNotCollideAtSessionStart(t *testing.T) {
 		{"claude-sonnet-4-6[1m]", 1_000_000},
 	} {
 		a, sink, _ := newTestAccountant(t, table)
+		a.Bind(testCoords, Bind{Harness: claudecode.Harness, Redirection: api.BackendDefault})
 		a.Observe(testCoords, startedEvent(c.start))
 		a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
 			Layout: rtevents.LayoutAdditive, Model: "claude-sonnet-4-6", In: 100_000,
@@ -723,6 +726,7 @@ func TestTerminalDeclarationLearnsWindow(t *testing.T) {
 	res := NewResolver(Table{})
 	a := New(sink, res, WithClock(fixedClock()))
 
+	a.Bind(testCoords, Bind{Harness: claudecode.Harness, Redirection: api.BackendDefault})
 	a.Observe(testCoords, startedEvent("claude-fable-5[1m]"))
 	a.Observe(testCoords, turnEvent(claudecode.Harness, rtevents.RequestUsage{
 		Layout: rtevents.LayoutAdditive, Model: "claude-fable-5", In: 34_136,
@@ -739,17 +743,19 @@ func TestTerminalDeclarationLearnsWindow(t *testing.T) {
 		}},
 	))
 
-	if w, ok := res.Learned("claude-fable-5[1m]"); !ok || w != 1_000_000 {
+	// Learned under the session's backend verdict (default here).
+	if w, ok := res.Learned("claude-fable-5[1m]", api.BackendDefault); !ok || w != 1_000_000 {
 		t.Errorf("learned window = %d (%v), want 1000000", w, ok)
 	}
 	// The [1m] suffix must survive into the cache key: it changes the
 	// window 5x, so a key that strips it collapses two models into one.
-	if _, ok := res.Learned("claude-fable-5"); ok {
+	if _, ok := res.Learned("claude-fable-5", api.BackendDefault); ok {
 		t.Error("the learned key dropped the [1m] suffix, which changes the window 5x")
 	}
 
 	// A second session on the same daemon resolves live.
 	next := Coords{AgentID: "ws/agent-1", Workspace: "ws", Team: "squad", Role: "worker"}
+	a.Bind(next, Bind{Harness: claudecode.Harness, Redirection: api.BackendDefault})
 	a.Observe(next, startedEvent("claude-fable-5[1m]"))
 	a.Observe(next, turnEvent(claudecode.Harness, rtevents.RequestUsage{
 		Layout: rtevents.LayoutAdditive, Model: "claude-fable-5", In: 50_000,

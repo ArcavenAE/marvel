@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 func TestNormalizeModel(t *testing.T) {
@@ -179,8 +181,11 @@ func TestResolveLadderPrecedence(t *testing.T) {
 	for _, c := range cases {
 		r := NewResolver(table)
 		if c.learn != "" {
-			r.Learn(c.learn, c.learnValue)
+			r.Learn(c.learn, c.learnValue, api.BackendDefault)
 		}
+		// Precedence is exercised on the vendor default, so the keyed rungs
+		// resolve rather than being refused by the backend guard.
+		c.req.Redirection = api.BackendDefault
 		limit, src, _ := r.Resolve(c.req)
 		if limit != c.wantLimit {
 			t.Errorf("%s: limit = %d, want %d", c.name, limit, c.wantLimit)
@@ -197,6 +202,7 @@ func TestResolveReadsModelFromArgsWhenStreamNamesNone(t *testing.T) {
 	limit, src, model := r.Resolve(Request{
 		Harness:     "codex",
 		RuntimeArgs: []string{"--json", "--model", "claude-haiku-4-5"},
+		Redirection: api.BackendDefault,
 	})
 	if model != "claude-haiku-4-5" {
 		t.Errorf("model = %q, want claude-haiku-4-5", model)
@@ -235,11 +241,12 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 			defer log.SetOutput(restore)
 
 			r := NewResolver(Table{})
-			r.Learn("claude-haiku-4-5", c.learnValue)
+			r.Learn("claude-haiku-4-5", c.learnValue, api.BackendDefault)
 			limit, src, _ := r.Resolve(Request{
 				Harness:       "claude",
 				StreamModel:   "claude-haiku-4-5",
 				ManifestLimit: c.manifestLimit,
+				Redirection:   api.BackendDefault,
 			})
 
 			// The learned rung still wins — this ticket disputes the
@@ -271,24 +278,46 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 func TestLearnKeepsTheSuffixInItsKey(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(Table{})
-	r.Learn("claude-sonnet-4-6[1m]", 1_000_000)
+	r.Learn("claude-sonnet-4-6[1m]", 1_000_000, api.BackendDefault)
 
-	if w, ok := r.Learned("claude-sonnet-4-6[1m]"); !ok || w != 1_000_000 {
+	if w, ok := r.Learned("claude-sonnet-4-6[1m]", api.BackendDefault); !ok || w != 1_000_000 {
 		t.Errorf("learned[1m] = %d (%v), want 1000000", w, ok)
 	}
 	// The 200k sibling must not inherit the 1M window.
-	if _, ok := r.Learned("claude-sonnet-4-6"); ok {
+	if _, ok := r.Learned("claude-sonnet-4-6", api.BackendDefault); ok {
 		t.Error("the 200k sibling inherited the 1M window; the learned key must keep [1m]")
+	}
+}
+
+// The learned cache is segregated by backend verdict (D-key, aae-orc-bv7m):
+// a window measured under one backend is invisible under another, so a
+// value learned on the vendor default is never served to a redirected
+// session and vice versa.
+func TestLearnedIsSegregatedByBackend(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(Table{})
+	r.Learn("claude-haiku-4-5", 200_000, api.BackendDefault)
+	r.Learn("claude-haiku-4-5", 180_000, api.BackendRedirected)
+
+	if w, ok := r.Learned("claude-haiku-4-5", api.BackendDefault); !ok || w != 200_000 {
+		t.Errorf("default-backend learned = %d (%v), want 200000", w, ok)
+	}
+	if w, ok := r.Learned("claude-haiku-4-5", api.BackendRedirected); !ok || w != 180_000 {
+		t.Errorf("redirected-backend learned = %d (%v), want 180000", w, ok)
+	}
+	// A verdict nobody learned under sees nothing, even for a known model.
+	if _, ok := r.Learned("claude-haiku-4-5", api.BackendUnknown); ok {
+		t.Error("a window leaked across backend verdicts; the learned key must carry the verdict")
 	}
 }
 
 func TestLearnIgnoresNonsense(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(Table{})
-	r.Learn("", 200_000)
-	r.Learn("claude-haiku-4-5", 0)
-	r.Learn("claude-haiku-4-5", -1)
-	if _, ok := r.Learned("claude-haiku-4-5"); ok {
+	r.Learn("", 200_000, api.BackendDefault)
+	r.Learn("claude-haiku-4-5", 0, api.BackendDefault)
+	r.Learn("claude-haiku-4-5", -1, api.BackendDefault)
+	if _, ok := r.Learned("claude-haiku-4-5", api.BackendDefault); ok {
 		t.Error("a zero or negative window was cached")
 	}
 }
@@ -325,7 +354,7 @@ func TestEveryDefaultTableEntryResolves(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(DefaultTable())
 	for key, want := range DefaultTable() {
-		limit, src, _ := r.Resolve(Request{StreamModel: key})
+		limit, src, _ := r.Resolve(Request{StreamModel: key, Redirection: api.BackendDefault})
 		if limit != want {
 			t.Errorf("%s: limit = %d, want %d", key, limit, want)
 		}
@@ -344,7 +373,7 @@ func TestOpus5ResolvesUnderBothSpellings(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(DefaultTable())
 	for _, model := range []string{"claude-opus-5", "claude-opus-5[1m]"} {
-		limit, src, _ := r.Resolve(Request{StreamModel: model})
+		limit, src, _ := r.Resolve(Request{StreamModel: model, Redirection: api.BackendDefault})
 		if limit != 1_000_000 {
 			t.Errorf("%s: limit = %d, want 1000000", model, limit)
 		}
@@ -353,7 +382,7 @@ func TestOpus5ResolvesUnderBothSpellings(t *testing.T) {
 		}
 	}
 	// A dated snapshot must land on the bare key, not fall off the table.
-	if limit, src, _ := r.Resolve(Request{StreamModel: "claude-opus-5-20260801"}); limit != 1_000_000 || src != LimitFromTable {
+	if limit, src, _ := r.Resolve(Request{StreamModel: "claude-opus-5-20260801", Redirection: api.BackendDefault}); limit != 1_000_000 || src != LimitFromTable {
 		t.Errorf("dated snapshot: limit = %d, source = %q; want 1000000 from %q", limit, src, LimitFromTable)
 	}
 }
@@ -566,8 +595,12 @@ func TestResolveGradedGradesEachRung(t *testing.T) {
 	for _, c := range cases {
 		r := NewResolver(table)
 		if c.learn != "" {
-			r.Learn(c.learn, c.learnValue)
+			r.Learn(c.learn, c.learnValue, api.BackendDefault)
 		}
+		// These pin the per-rung grade on the vendor default, where the
+		// entitlement axis stands alone. The backend axis is exercised
+		// separately in TestResolveGradedBackendVerdictGradesKeyedRungs.
+		c.req.Redirection = api.BackendDefault
 		limit, src, key, _ := r.ResolveGraded(c.req)
 		if limit != c.wantLimit {
 			t.Errorf("%s: limit = %d, want %d", c.name, limit, c.wantLimit)
@@ -581,10 +614,168 @@ func TestResolveGradedGradesEachRung(t *testing.T) {
 	}
 }
 
+// TestResolveGradedBackendVerdictOnKeyedRungs pins the cases the verdict does
+// NOT refuse (the refuse itself is TestResolveRefusesKeyedRungOnBackendDeparture):
+// a default-backend table hit keeps its entitlement grade, a learned hit under
+// a matching backend is trusted (KeyExact — the D-key made the lookup
+// backend-matched), and a directly-declared window is right on any backend.
+func TestResolveGradedBackendVerdictOnKeyedRungs(t *testing.T) {
+	t.Parallel()
+	table := Table{
+		"claude-haiku-4-5":    200_000, // single window: entitlement-exact
+		"claude-opus-4-8":     200_000, // split default: entitlement-narrow
+		"claude-opus-4-8[1m]": 1_000_000,
+	}
+	cases := []struct {
+		name        string
+		req         Request
+		learn       string
+		learnValue  int
+		redirection api.BackendRedirection
+		wantSource  LimitSource
+		wantKey     KeyConfidence
+	}{
+		{
+			name:        "default backend keeps an exact table hit exact",
+			req:         Request{StreamModel: "claude-haiku-4-5"},
+			redirection: api.BackendDefault,
+			wantSource:  LimitFromTable,
+			wantKey:     KeyExact,
+		},
+		{
+			name:        "default backend keeps a split table hit narrow",
+			req:         Request{StreamModel: "claude-opus-4-8"},
+			redirection: api.BackendDefault,
+			wantSource:  LimitFromTable,
+			wantKey:     KeyNarrow,
+		},
+		{
+			// The learned rung is backend-matched by its key, so a redirected
+			// session's learned hit is trusted rather than refused.
+			name:        "learned hit under a matching redirected backend is exact",
+			req:         Request{StreamModel: "claude-haiku-4-5"},
+			learn:       "claude-haiku-4-5",
+			learnValue:  333_333,
+			redirection: api.BackendRedirected,
+			wantSource:  LimitLearned,
+			wantKey:     KeyExact,
+		},
+		{
+			// A directly-declared window is right on any backend.
+			name:        "redirected backend does not touch a manifest window",
+			req:         Request{StreamModel: "claude-haiku-4-5", ManifestLimit: 111_111},
+			redirection: api.BackendRedirected,
+			wantSource:  LimitFromManifest,
+			wantKey:     KeyExact,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := NewResolver(table)
+			if c.learn != "" {
+				// Learn under the same verdict the request carries, so the
+				// D-key lookup matches and the case exercises a learned hit.
+				r.Learn(c.learn, c.learnValue, c.redirection)
+			}
+			c.req.Redirection = c.redirection
+			_, src, key, _ := r.ResolveGraded(c.req)
+			if src != c.wantSource {
+				t.Errorf("source = %q, want %q", src, c.wantSource)
+			}
+			if key != c.wantKey {
+				t.Errorf("key confidence = %q, want %q", key, c.wantKey)
+			}
+		})
+	}
+}
+
+// The refuse-guard (aae-orc-bv7m): a table or alias hit under a redirected or
+// unobserved backend resolves to absence rather than the direct-API window.
+// It refuses WITHIN the rung (never falling through to a lower one) and keeps
+// the LimitUnresolved ⇒ KeyUndeterminable invariant. The refuse propagates
+// through Resolve too, so the legacy signature and the heartbeat path that
+// calls it are covered without plumbing the grade.
+func TestResolveRefusesKeyedRungOnBackendDeparture(t *testing.T) {
+	t.Parallel()
+	table := Table{"claude-haiku-4-5": 200_000}
+	cases := []struct {
+		name        string
+		req         Request
+		redirection api.BackendRedirection
+	}{
+		{"redirected table hit refuses", Request{StreamModel: "claude-haiku-4-5"}, api.BackendRedirected},
+		{"cannot-tell table hit refuses", Request{StreamModel: "claude-haiku-4-5"}, api.BackendUnknown},
+		{"redirected alias hit refuses", Request{RuntimeArgs: []string{"--model", "haiku"}}, api.BackendRedirected},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := NewResolver(table)
+			c.req.Redirection = c.redirection
+			limit, src, key, _ := r.ResolveGraded(c.req)
+			if limit != 0 || src != LimitUnresolved {
+				t.Fatalf("got (%d, %q), want an unresolved resolution", limit, src)
+			}
+			if key != KeyUndeterminable {
+				t.Errorf("key confidence = %q, want KeyUndeterminable", key)
+			}
+			// Resolve must agree — the refuse is what the heartbeat path sees.
+			if l, s, _ := r.Resolve(c.req); l != 0 || s != LimitUnresolved {
+				t.Errorf("Resolve = (%d, %q), want unresolved", l, s)
+			}
+		})
+	}
+}
+
+// A directly-declared window is correct on any backend, so the guard leaves
+// it alone: a redirected session with a manifest override still resolves it.
+func TestResolveDoesNotRefuseDeclaredWindowsUnderRedirection(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(Table{"claude-haiku-4-5": 200_000})
+	limit, src, _ := r.Resolve(Request{
+		StreamModel:   "claude-haiku-4-5",
+		ManifestLimit: 500_000,
+		Redirection:   api.BackendRedirected,
+	})
+	if limit != 500_000 || src != LimitFromManifest {
+		t.Errorf("got (%d, %q), want 500000/manifest — a stated window is right on any backend", limit, src)
+	}
+}
+
+// The finding's "one session teaches the window" behavior: a redirected
+// session refuses the table at cold start, but once a session has taught the
+// window under that backend, the learned rung answers and is trusted.
+func TestRedirectedSessionResolvesOnceLearned(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(Table{"claude-haiku-4-5": 200_000})
+	req := Request{StreamModel: "claude-haiku-4-5", Redirection: api.BackendRedirected}
+
+	// Cold start: the table refuses, so CTX% renders absent.
+	if limit, src, _ := r.Resolve(req); limit != 0 || src != LimitUnresolved {
+		t.Fatalf("cold start = (%d, %q), want unresolved", limit, src)
+	}
+
+	// The harness declares its window under this backend.
+	r.Learn("claude-haiku-4-5", 180_000, api.BackendRedirected)
+
+	limit, src, key, _ := r.ResolveGraded(req)
+	if limit != 180_000 || src != LimitLearned {
+		t.Fatalf("after learning = (%d, %q), want 180000/learned", limit, src)
+	}
+	if key != KeyExact {
+		t.Errorf("learned key confidence = %q, want KeyExact (backend-matched by the key)", key)
+	}
+	// A default-backend session must NOT see the redirected learned window.
+	if limit, src, _ := r.Resolve(Request{StreamModel: "claude-haiku-4-5", Redirection: api.BackendDefault}); limit != 200_000 || src != LimitFromTable {
+		t.Errorf("default session = (%d, %q), want the table's 200000, not the redirected 180000", limit, src)
+	}
+}
+
 // An unresolved resolution always carries KeyUndeterminable: marvel cannot
 // vouch for a window it did not find. This is the invariant the refuse-guard
-// (aae-orc-bv7m) will preserve when it resolves LimitUnresolved for a narrow
-// redirected key.
+// (aae-orc-bv7m) preserves when it resolves LimitUnresolved for a redirected
+// or unobserved keyed hit.
 func TestUnresolvedIsUndeterminable(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(Table{"claude-haiku-4-5": 200_000})
@@ -620,6 +811,7 @@ func TestResolveDelegatesToResolveGraded(t *testing.T) {
 		{StreamModel: "claude-haiku-4-5", FeedLimit: 5}, // feed
 	}
 	for _, req := range reqs {
+		req.Redirection = api.BackendDefault // Resolve/ResolveGraded must agree on any backend; default keeps the keyed rungs resolving
 		gLimit, gSrc, _, gModel := r.ResolveGraded(req)
 		limit, src, model := r.Resolve(req)
 		if limit != gLimit || src != gSrc || model != gModel {
@@ -683,6 +875,7 @@ func TestResolveGradedOverDefaultTable(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
+		c.req.Redirection = api.BackendDefault // grades over the shipped table on the vendor default
 		limit, src, key, _ := r.ResolveGraded(c.req)
 		if limit != c.wantLimit || src != c.wantSource || key != c.wantKey {
 			t.Errorf("%s: got (%d, %q, %q), want (%d, %q, %q)",

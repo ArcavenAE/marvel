@@ -101,6 +101,39 @@ func TestGradedHeartbeatResolvesThroughTheRealLadder(t *testing.T) {
 		}
 	})
 
+	t.Run("a redirected session refuses the table window end to end", func(t *testing.T) {
+		// No manifest, no feed window on the wire: the only rung left is the
+		// shipped table, which holds the vendor's DIRECT-API window. The
+		// session's backend is redirected, so the real resolver withholds it
+		// (finding-031 / aae-orc-bv7m) and CTX% renders absent rather than a
+		// confident wrong number.
+		key, token := registerGradedSession(t, d, "agent-redirected", "claude", 0)
+		if err := d.store.UpdateSession(key, func(live *api.Session) error {
+			live.BackendRedirection = api.BackendRedirected
+			return nil
+		}); err != nil {
+			t.Fatalf("set verdict: %v", err)
+		}
+		req := api.HeartbeatRequest{
+			SessionKey:    key,
+			SessionToken:  token,
+			ContextTokens: 120_000,
+			Model:         "claude-opus-4-8", // a real DefaultTable key
+		}
+		raw, _ := json.Marshal(req)
+		if resp := d.handleHeartbeat(raw); resp.Error != "" {
+			t.Fatalf("handleHeartbeat: %q", resp.Error)
+		}
+		got, _ := d.store.GetSession(key)
+		if got.ContextLimit != 0 || got.ContextLimitSource != "" {
+			t.Fatalf("limit=%d source=%q, want the table window withheld under redirection",
+				got.ContextLimit, got.ContextLimitSource)
+		}
+		if got.ContextTokens != 120_000 {
+			t.Errorf("ContextTokens = %d, want 120000 recorded even with no denominator", got.ContextTokens)
+		}
+	})
+
 	t.Run("a windowless simulator beat stays a percentage-only reading", func(t *testing.T) {
 		key, token := registerGradedSession(t, d, "agent-sim", "simulator", 0)
 		// The simulator's exact shape: percentage, no model, no numerator,

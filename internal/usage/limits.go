@@ -4,6 +4,8 @@ import (
 	"log"
 	"strings"
 	"sync"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // LimitSource records which rung of the resolution ladder produced a
@@ -117,14 +119,15 @@ func (s LimitSource) Rank() int {
 //     DEFAULT half of a default/max split does not carry the entitlement
 //     that decides which half a session gets. See the default-versus-maximum
 //     convention on DefaultTable and Table.keyConfidence.
-//   - PROVIDER (dynamic, not graded yet). The same id can name different
-//     windows under different backends (finding-031: the catalog assigns
-//     claude-opus-5 1000000 under anthropic and 264000 under copilot), and
-//     marvel cannot observe which backend served a request. The
-//     discriminator that answers "on the vendor default, or redirected?" is
-//     a spawn-time environment read that does not exist yet (aae-orc-b2d0p);
-//     until it lands, ResolveGraded assumes the default backend and never
-//     emits KeyRedirected. See the seam in ResolveGraded.
+//   - PROVIDER (dynamic, graded via req.Redirection). The same id can name
+//     different windows under different backends (finding-031: the catalog
+//     assigns claude-opus-5 1000000 under anthropic and 264000 under
+//     copilot), and marvel cannot observe which backend served a request —
+//     but it observes at spawn whether the backend-selecting environment
+//     departs from the vendor default (api.ClassifyBackendRedirection). That
+//     verdict rides in on Request.Redirection and downgrades a keyed hit to
+//     KeyRedirected or KeyUndeterminable (aae-orc-b2d0p). See applyRedirection
+//     and the discriminator note in ResolveGraded.
 type KeyConfidence string
 
 const (
@@ -140,16 +143,15 @@ const (
 	// at, so a hit that happens to be right is not a keyed fact).
 	KeyNarrow KeyConfidence = "narrow"
 	// KeyRedirected means the discriminator found the session redirected off
-	// the vendor default, so a table value keyed on the direct-API window
-	// does not apply. RESERVED: produced only once the spawn-time
-	// discriminator lands (aae-orc-b2d0p); ResolveGraded never returns it
-	// today. Declared now because it is the vocabulary the refuse-guard
-	// (aae-orc-bv7m) speaks.
+	// the vendor default (req.Redirection == api.BackendRedirected), so a
+	// table or alias value keyed on the direct-API window does not apply.
+	// Produced by applyRedirection; the refuse-guard (aae-orc-bv7m) turns it
+	// into LimitUnresolved on those rungs.
 	KeyRedirected KeyConfidence = "redirected"
-	// KeyUndeterminable means marvel cannot vouch for the window. Today it
-	// marks an unresolved resolution (no rung produced a window). Once the
-	// discriminator lands it will also mark a session whose backend cannot
-	// be determined, which the guard treats as departure from default
+	// KeyUndeterminable means marvel cannot vouch for the window. It marks
+	// an unresolved resolution (no rung produced a window) and a keyed hit
+	// under an unobserved backend (req.Redirection == api.BackendUnknown,
+	// "cannot tell"), which the guard treats as departure from default
 	// (finding-031). Either way: not a number to trust.
 	KeyUndeterminable KeyConfidence = "undeterminable"
 )
@@ -418,6 +420,33 @@ type Request struct {
 	// which ranks BELOW ManifestLimit; SampleLimit ranks above it. That is
 	// the deliberate asymmetry documented at limitLadder.
 	FeedLimit int
+	// Redirection is the spawn-time backend verdict for this session (the
+	// discriminator of finding-031). It grades a keyed rung: the table and
+	// alias rungs hold the vendor's DIRECT-API windows, so a redirected or
+	// unobserved backend downgrades a hit off KeyExact/KeyNarrow. The
+	// directly-declared rungs (stream, manifest, feed) are unaffected — a
+	// number the harness or operator stated is correct on any backend. The
+	// zero value is BackendUnknown ("cannot tell"), treated as departure
+	// from default. See ResolveGraded and api.ClassifyBackendRedirection.
+	Redirection api.BackendRedirection
+}
+
+// learnedKey identifies a learned window by model AND the backend verdict
+// the learning session ran under (the D-key of finding-031 §5). One Resolver
+// is shared across a daemon's sessions, so keying on the model alone lets a
+// window measured under one backend be served to a session on another. The
+// verdict segregates the cache: a hit is backend-matched by construction, so
+// it is a measurement that applies to this session, not a cross-backend
+// guess — which is why the learned rung is trusted (KeyExact) rather than
+// downgraded the way the model-only table rung must be.
+//
+// The segregation is coarse: BackendRedirected does not name WHICH backend,
+// so two different redirected backends share a bucket. That residue is
+// accepted (finding-031 §5, "smaller than today's, not zero"); putting the
+// provider in the key is option B, deferred behind the eooi standing trigger.
+type learnedKey struct {
+	model   string
+	backend api.BackendRedirection
 }
 
 // Resolver walks the denominator ladder and caches windows a harness has
@@ -425,7 +454,7 @@ type Request struct {
 type Resolver struct {
 	mu      sync.RWMutex
 	table   Table
-	learned map[string]int
+	learned map[learnedKey]int
 	warned  map[string]struct{}
 }
 
@@ -437,7 +466,7 @@ func NewResolver(t Table) *Resolver {
 	}
 	return &Resolver{
 		table:   t,
-		learned: make(map[string]int),
+		learned: make(map[learnedKey]int),
 		warned:  make(map[string]struct{}),
 	}
 }
@@ -467,31 +496,41 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 // naming which won.
 //
 // Grades, today: stream, manifest and feed declare a number directly (no
-// keyed lookup narrowed it) and are KeyExact. Learned is KeyExact too — it
-// is a harness measurement matched on its own [1m]-preserving key — but note
-// its narrowness is real on the PROVIDER axis, not the entitlement one: the
-// cache is one Resolver per daemon, so a value learned under one backend can
-// be served to a session on another. Grading that away is the discriminator's
-// job (aae-orc-b2d0p / aae-orc-bv7m), not A-static's; the learned KEY fix is
-// sequenced there, not here. A table hit inherits the entry's entitlement
-// grade (Table.keyConfidence); an alias hit is always KeyNarrow (an alias
-// names whatever the harness points it at, so a hit is not a keyed fact); an
-// unresolved resolution is KeyUndeterminable — marvel cannot vouch for a
-// window it did not find.
+// keyed lookup narrowed it) and are KeyExact. Learned is KeyExact too — it is
+// a harness measurement matched on its own [1m]-preserving key AND on the
+// backend verdict (learnedKey), so its old provider narrowness — a value
+// learned under one backend served to a session on another — is now closed by
+// the key rather than the grade (aae-orc-bv7m D-key). A table hit inherits the
+// entry's entitlement grade (Table.keyConfidence) on the vendor default and is
+// graded/refused by the backend verdict otherwise (see below); an alias hit is
+// always KeyNarrow on the default (an alias names whatever the harness points
+// it at, so a hit is not a keyed fact); an unresolved resolution is
+// KeyUndeterminable — marvel cannot vouch for a window it did not find.
 //
-// THE DISCRIMINATOR SEAM (aae-orc-b2d0p, not built here): a redirected
-// backend can serve a different window under the same id, and marvel cannot
-// see the backend today (finding-031). When the spawn-time environment read
-// lands, its verdict enters here — most naturally a field on Request — and
-// downgrades the table (and learned) branch: a redirected KeyExact hit
-// becomes KeyRedirected, and the refuse-guard (aae-orc-bv7m) resolves
-// LimitUnresolved for KeyNarrow ∧ (redirected ∨ undeterminable). How a hit
-// that is BOTH entitlement-narrow and redirected is represented — a
-// precedence over this single enum, or a second field beside it — is that
-// work's design call, deliberately left open here; A-static only fixes the
-// entitlement axis and reserves the vocabulary. Whatever the shape, the guard
-// must refuse WITHIN a rung, never reorder rungs, so it belongs in the table
-// branch below, not before it. Until then this assumes the vendor default.
+// THE DISCRIMINATOR (aae-orc-b2d0p, landed here): a redirected backend can
+// serve a different window under the same id, and marvel cannot see WHICH
+// backend served a request (finding-031). What it can see is the spawn-time
+// backend-selecting environment, carried in as req.Redirection. It grades
+// the KEYED rungs — table and alias — through applyRedirection: a hit under
+// a redirected backend becomes KeyRedirected, and one under an unobserved
+// backend (the zero value, "cannot tell") becomes KeyUndeterminable. The
+// verdict DOMINATES the entitlement grade in this single enum, because a
+// direct-API table value does not apply under redirection whether or not
+// the entitlement was also ambiguous; the entitlement grade stands only on
+// the vendor default. The directly-declared rungs (stream, manifest, feed)
+// are NOT graded by the backend — a number the harness or operator stated
+// is correct on any backend. The learned rung's provider narrowness is a
+// KEY problem, not a grade one, and is fixed by keying it on the same
+// verdict (aae-orc-bv7m / finding-031 §5 D-key), sequenced there.
+//
+// The refuse-guard (aae-orc-bv7m, landed) then turns
+// KeyRedirected/KeyUndeterminable on the table and alias rungs into
+// LimitUnresolved via refuseKeyed — WITHIN the rung and never reordering the
+// ladder (TestResolveAgreesWithTheLadder constrains this) — so a redirected or
+// unobserved table window renders absent rather than a confident wrong number.
+// The refuse flows through Resolve too, so the heartbeat path that calls the
+// ungraded signature refuses identically. On the vendor default nothing is
+// refused, which is the common case and unchanged.
 func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, string) {
 	model := req.StreamModel
 	if model == "" {
@@ -508,13 +547,19 @@ func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, 
 
 	if model != "" {
 		r.mu.RLock()
-		w, ok := r.learned[NormalizeModel(model)]
+		w, ok := r.learned[learnedKey{NormalizeModel(model), req.Redirection}]
 		r.mu.RUnlock()
 		if ok {
 			if req.ManifestLimit > 0 && req.ManifestLimit != w {
 				r.warnOnce("learned-override:"+model, "context window: %s declared %d for %q in a prior session, overriding the manifest's %d",
 					req.Harness, w, model, req.ManifestLimit)
 			}
+			// KeyExact, not graded by the verdict: the learnedKey already
+			// carries it, so a hit was measured under this session's backend
+			// (aae-orc-bv7m / finding-031 §5 D-key). A cold-start redirected
+			// session misses here and falls through to the table, which
+			// refuses — until one session teaches the window under this
+			// backend, at which point this rung answers.
 			return w, LimitLearned, KeyExact, model
 		}
 	}
@@ -548,14 +593,66 @@ func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, 
 		}
 		r.mu.RUnlock()
 		if ok {
-			return w, LimitFromTable, key, model
+			grade := applyRedirection(key, req.Redirection)
+			if refuseOnBackend(grade) {
+				return r.refuseKeyed(model, req.Redirection)
+			}
+			return w, LimitFromTable, grade, model
 		}
 		if aok {
-			return aw, LimitFromTableAlias, KeyNarrow, model
+			grade := applyRedirection(KeyNarrow, req.Redirection)
+			if refuseOnBackend(grade) {
+				return r.refuseKeyed(model, req.Redirection)
+			}
+			return aw, LimitFromTableAlias, grade, model
 		}
 	}
 
 	return 0, LimitUnresolved, KeyUndeterminable, model
+}
+
+// refuseOnBackend reports whether a keyed-rung grade is one the refuse-guard
+// withholds: a table value keyed on the vendor's direct-API window cannot be
+// vouched for once the backend is redirected or unobserved.
+func refuseOnBackend(grade KeyConfidence) bool {
+	return grade == KeyRedirected || grade == KeyUndeterminable
+}
+
+// refuseKeyed is the guard of aae-orc-bv7m: a table or alias hit under a
+// redirected or unobserved backend resolves to absence rather than the
+// direct-API window, so CTX% renders "?" (loud) instead of a confident wrong
+// number (silent). It refuses WITHIN the rung — it does not fall through to a
+// lower one, because a lower rung is a worse guess, not a better one — and it
+// returns KeyUndeterminable to keep the ladder invariant that an unresolved
+// resolution is always undeterminable (TestUnresolvedIsUndeterminable). The
+// warning distinguishes this from a plain table miss: the model IS known, its
+// backend is not the default.
+func (r *Resolver) refuseKeyed(model string, redir api.BackendRedirection) (int, LimitSource, KeyConfidence, string) {
+	r.warnOnce("backend-refuse:"+model, "context window: %q has a shipped table window, but this session's backend is %s, so the direct-API value is withheld and CTX%% renders absent",
+		model, redir)
+	return 0, LimitUnresolved, KeyUndeterminable, model
+}
+
+// applyRedirection folds the spawn-time backend verdict into the entitlement
+// grade of a KEYED rung (table or alias — the rungs holding the vendor's
+// direct-API windows). The verdict dominates: a redirected backend
+// invalidates the direct-API value regardless of entitlement, and an
+// unobserved backend cannot be vouched for, so both override KeyExact and
+// KeyNarrow alike. On the vendor default the entitlement grade stands.
+//
+// It is deliberately NOT applied to the directly-declared rungs (a stated
+// number is right on any backend) nor to the learned rung (whose provider
+// narrowness is fixed by keying it on the verdict — aae-orc-bv7m — not by
+// grading it here).
+func applyRedirection(entitlement KeyConfidence, r api.BackendRedirection) KeyConfidence {
+	switch r {
+	case api.BackendRedirected:
+		return KeyRedirected
+	case api.BackendUnknown:
+		return KeyUndeterminable
+	default: // api.BackendDefault
+		return entitlement
+	}
 }
 
 // Learn records a window a harness declared, keyed on NormalizeModel so
@@ -578,33 +675,42 @@ func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, 
 //
 // A declaration that contradicts the shipped table logs once per model:
 // that is the drift detector for a vendor window change.
-func (r *Resolver) Learn(model string, window int) {
+//
+// backend is the verdict the learning session ran under; it segregates the
+// cache so a window is only served back to a session on the same backend
+// (aae-orc-bv7m / finding-031 §5 D-key). The drift check against the shipped
+// table stays keyed on the model alone — the table is the direct-API window,
+// and a redirected declaration disagreeing with it is expected, not drift —
+// so drift is only flagged for a default-backend declaration.
+func (r *Resolver) Learn(model string, window int, backend api.BackendRedirection) {
 	if model == "" || window <= 0 {
 		return
 	}
-	key := NormalizeModel(model)
+	mkey := NormalizeModel(model)
+	lk := learnedKey{mkey, backend}
 
 	r.mu.Lock()
-	prev, had := r.learned[key]
-	r.learned[key] = window
-	shipped, inTable := r.table.Lookup(key)
+	prev, had := r.learned[lk]
+	r.learned[lk] = window
+	shipped, inTable := r.table.Lookup(mkey)
 	r.mu.Unlock()
 
-	if inTable && shipped != window {
-		r.warnOnce("drift:"+key, "context window: harness declares %d for %q; the shipped table says %d, so the table is stale",
-			window, key, shipped)
+	if inTable && backend == api.BackendDefault && shipped != window {
+		r.warnOnce("drift:"+mkey, "context window: harness declares %d for %q; the shipped table says %d, so the table is stale",
+			window, mkey, shipped)
 	}
 	if had && prev != window {
-		r.warnOnce("changed:"+key, "context window for %q changed from %d to %d", key, prev, window)
+		r.warnOnce("changed:"+mkey+":"+string(backend), "context window for %q changed from %d to %d", mkey, prev, window)
 	}
 }
 
-// Learned reports the cached window for a model, for tests and
-// diagnostics.
-func (r *Resolver) Learned(model string) (int, bool) {
+// Learned reports the cached window for a model under a backend verdict, for
+// tests and diagnostics. The backend is part of the key (see learnedKey), so
+// a window learned under one backend is invisible under another.
+func (r *Resolver) Learned(model string, backend api.BackendRedirection) (int, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	w, ok := r.learned[NormalizeModel(model)]
+	w, ok := r.learned[learnedKey{NormalizeModel(model), backend}]
 	return w, ok
 }
 

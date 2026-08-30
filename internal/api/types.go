@@ -187,6 +187,21 @@ type Session struct {
 	// Empty means the record predates this field, which is the one case
 	// AuthenticateHeartbeat admits unbound. See its comment.
 	HeartbeatTokenHash string `toml:"-"`
+	// BackendRedirection is the spawn-time verdict on whether this session
+	// reaches the model vendor's direct API or has been redirected off it
+	// (Bedrock, Vertex, a proxy — finding-016 axis 4). The window resolver
+	// consumes it to grade a table hit: the shipped table holds direct-API
+	// windows, so a redirected session's table value does not apply. Set at
+	// Create by classifying the constructed spawn environment; the zero
+	// value (BackendUnknown, "cannot tell") is honest for a session marvel
+	// never spawned or a record predating this field. See finding-031 and
+	// usage.Request.Redirection.
+	//
+	// Status, not spec (toml:"-"), and it persists to bolt via json so an
+	// adopted session keeps the verdict observed at its spawn across a
+	// daemon restart — the pane still runs under the environment it was
+	// launched with.
+	BackendRedirection BackendRedirection `toml:"-"`
 	SessionMetrics     `toml:"-"`
 	SessionContext     `toml:"-"`
 }

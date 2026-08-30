@@ -45,6 +45,7 @@ type resolverCall struct {
 	args          []string
 	manifestLimit int
 	feedLimit     int
+	redirection   BackendRedirection
 }
 
 // ladderResolver is a fake standing in for usage.Resolver's feed/manifest
@@ -54,8 +55,8 @@ type resolverCall struct {
 // makes that contribution assertable in isolation; the daemon package
 // tests the real usage.Resolver end to end.
 func ladderResolver(rec *resolverCall) ContextLimitResolveFunc {
-	return func(harness, model string, args []string, manifestLimit, feedLimit int) (int, string) {
-		*rec = resolverCall{harness, model, args, manifestLimit, feedLimit}
+	return func(harness, model string, args []string, manifestLimit, feedLimit int, redirection BackendRedirection) (int, string) {
+		*rec = resolverCall{harness, model, args, manifestLimit, feedLimit, redirection}
 		// The real ladder: an operator's manifest override outranks a
 		// side-channel feed (limitLadder in internal/usage).
 		if manifestLimit > 0 {
@@ -330,5 +331,38 @@ func TestHeartbeatDerivedPercentIsNotClamped(t *testing.T) {
 	}
 	if got.ContextPercent != 120 {
 		t.Fatalf("ContextPercent = %.2f, want 120 (unclamped, over the operator's budget)", got.ContextPercent)
+	}
+}
+
+// The store must route the session's backend verdict to the injected
+// resolver, or the heartbeat path cannot refuse a redirected table window the
+// way the accountant path does (finding-031 / aae-orc-bv7m). MUST NOT MISS:
+// the verdict is read from the session record, not the wire.
+func TestHeartbeatRoutesBackendVerdictToResolver(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	var rec resolverCall
+	s.SetContextLimitResolver(ladderResolver(&rec))
+
+	token := gradedSession(t, s, 0)
+	if err := s.UpdateSession(gradedSessionKey, func(live *Session) error {
+		live.BackendRedirection = BackendRedirected
+		return nil
+	}); err != nil {
+		t.Fatalf("set verdict: %v", err)
+	}
+
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{
+		SessionKey:    gradedSessionKey,
+		SessionToken:  token,
+		ContextTokens: 120_000,
+		ContextWindow: 200_000,
+		Model:         "claude-opus-4-8",
+	}); err != nil {
+		t.Fatalf("update heartbeat: %v", err)
+	}
+
+	if rec.redirection != BackendRedirected {
+		t.Errorf("resolver redirection = %q, want %q routed from the session record", rec.redirection, BackendRedirected)
 	}
 }
