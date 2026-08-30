@@ -387,6 +387,25 @@ func TestOpus5ResolvesUnderBothSpellings(t *testing.T) {
 	}
 }
 
+// sonnet-5 is the same case as opus-5: no 200k variant, so Claude Code's
+// [1m] stamp on the init model and modelUsage key is a spelling split, not
+// a default/max split. Both spellings must resolve to the one 1M window;
+// before the [1m] key was added, a real claude-sonnet-5[1m] session fell
+// off the table and rendered "?".
+func TestSonnet5ResolvesUnderBothSpellings(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(DefaultTable())
+	for _, model := range []string{"claude-sonnet-5", "claude-sonnet-5[1m]"} {
+		limit, src, _ := r.Resolve(Request{StreamModel: model, Redirection: api.BackendDefault})
+		if limit != 1_000_000 {
+			t.Errorf("%s: limit = %d, want 1000000", model, limit)
+		}
+		if src != LimitFromTable {
+			t.Errorf("%s: source = %q, want %q", model, src, LimitFromTable)
+		}
+	}
+}
+
 func TestEveryAliasResolvesToARealEntry(t *testing.T) {
 	t.Parallel()
 	tbl := DefaultTable()
@@ -434,7 +453,8 @@ func TestDefaultTableEntryGrades(t *testing.T) {
 		"claude-fable-5[1m]":    KeyExact,  // [1m] key names the entitlement
 		"claude-sonnet-4-6":     KeyNarrow, // default half of a 200k/1M split
 		"claude-sonnet-4-6[1m]": KeyExact,
-		"claude-sonnet-5":       KeyExact, // no 200k variant
+		"claude-sonnet-5":       KeyExact, // 1M under both spellings: spelling split, not default/max
+		"claude-sonnet-5[1m]":   KeyExact,
 		"claude-opus-4-7":       KeyNarrow,
 		"claude-opus-4-7[1m]":   KeyExact,
 		"claude-opus-4-8":       KeyNarrow,
