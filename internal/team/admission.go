@@ -10,9 +10,11 @@ import (
 	"github.com/arcavenae/marvel/internal/events"
 )
 
-// admit evaluates the count clause for one role and returns how many of
-// the requested spawns may proceed. Emitting and latching are side effects,
-// so the caller only has to read the number.
+// admissionVerdict evaluates the count clause for one role and returns the
+// verdict — the pure half of the reconcile admission check. It latches nothing,
+// emits nothing, and writes no store record, so planRole can fold admission
+// into a RolePlan without enacting anything. The effect half is
+// latchAdmissionHold / clearAdmissionHold, run only by applyRolePlan.
 //
 // Never touches RoleHealth in either direction. A refusal is not a crash,
 // and routing one through noteCrashAndBackoff would climb RestartCount
@@ -20,12 +22,12 @@ import (
 // 9999 — durably, in the bolt role_health bucket, surviving restarts. A
 // role held by admission accrues no restart count, so a hold cannot age
 // into a saturation freeze. Caller holds c.mu. See aae-orc-qiay.
-func (c *Controller) admit(t *api.Team, role *api.Role, want int) int {
+func (c *Controller) admissionVerdict(t *api.Team, role *api.Role, want int) admission.Verdict {
 	live := api.CountAlive(c.store.ListSessionsByTeam(t.Workspace, t.Name))
 	// Recomputed per role rather than once per team: spawning for an earlier
 	// role changes the count a later role must be evaluated against, and
 	// computing it once would over-admit within a single tick.
-	v := admission.CheckSessions(t.Budget, live, c.declaredSessions(t), admission.Request{
+	return admission.CheckSessions(t.Budget, live, c.declaredSessions(t), admission.Request{
 		Role: role.Name,
 		Want: want,
 		// The reconciler only ever converges toward an already-declared
@@ -36,36 +38,37 @@ func (c *Controller) admit(t *api.Team, role *api.Role, want int) int {
 		// operator than 0 of 5. The synchronous verbs do the opposite.
 		AllowPartial: true,
 	})
-	if !v.Refused() {
-		c.clearAdmissionHold(t, role.Name)
-		return v.Granted
-	}
+}
 
-	roleKey := t.Workspace + "/" + t.Name + "/" + role.Name
-	key := v.Key()
+// latchAdmissionHold records a standing admission refusal for a role and
+// announces it once. It is the effect half of the reconcile admission check:
+// planRole computes the verdict (admissionVerdict) and stores its Key and
+// Reason on the RolePlan, and applyRolePlan calls this to latch and emit.
+// Emitting only on a change of latched key keeps a standing refusal to one
+// event per transition rather than one per reconcile tick. Caller holds c.mu.
+func (c *Controller) latchAdmissionHold(t *api.Team, role, key, reason string) {
+	roleKey := t.Workspace + "/" + t.Name + "/" + role
 	if c.admissionHolds[roleKey] == key {
-		return v.Granted
+		return
 	}
 	c.admissionHolds[roleKey] = key
-	reason := v.Reason(admission.TriggerReconcile)
 	// Tee to the log ring as well as the event ring: the event ring is
 	// bounded and in-memory, and `marvel daemon logs` works over mrvl://.
-	log.Printf("admission: %s role %s refused: %s", t.Key(), role.Name, reason)
+	log.Printf("admission: %s role %s refused: %s", t.Key(), role, reason)
 	events.Emit(c.Events, events.Event{
 		Kind:      events.KindAdmissionRefused,
 		Severity:  events.SeverityWarning,
 		Workspace: t.Workspace,
 		Team:      t.Name,
-		Role:      role.Name,
+		Role:      role,
 		Message:   reason,
 	})
 	c.setAdmissionState(t, api.AdmissionState{
 		Held:   true,
-		Role:   role.Name,
+		Role:   role,
 		Reason: reason,
 		Since:  c.nowUTC(),
 	})
-	return v.Granted
 }
 
 // clearAdmissionHold drops a role's latch and says so once. A hold

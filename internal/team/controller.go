@@ -690,96 +690,328 @@ func shiftRepairGeneration(t *api.Team, role string) int64 {
 	return t.Shift.OldGeneration
 }
 
+// reconcileRoleAt repairs a role at a given generation by computing its
+// convergence plan and enacting it. The split is the point of this function:
+// planRole decides (pure — no spawns, no store writes, no events) and
+// applyRolePlan acts, so reconcileRoleAt == applyRolePlan(planRole(...)). It is
+// the keystone for the convergence-posture arc — the dry-run surface
+// (aae-orc-nrk1) computes the plan and prints it, the hold posture
+// (aae-orc-rwiw) computes the plan and declines to apply it, and the startup
+// report is the plan at boot. See planRole for the decision, applyRolePlan for
+// the effects, and PlanConvergence for the read-only entry point.
 func (c *Controller) reconcileRoleAt(t *api.Team, role *api.Role, generation int64) {
-	// Counting uses all generations — generation scoping is only
-	// for shift logic (shiftLaunch/shiftDrain). This ensures non-shifting roles
-	// aren't disrupted when only one role shifts and the team generation advances.
+	c.applyRolePlan(t, role, c.planRole(t, role, generation))
+}
+
+// RoleAction is the convergence verb planRole chose for a role this tick. It
+// summarizes the RolePlan for a reader — a dry-run print, a startup report;
+// the payload fields (Spawn, Delete, Hold) carry the detail.
+type RoleAction string
+
+const (
+	// RoleSteady means the alive replica count already matches desired —
+	// nothing to do.
+	RoleSteady RoleAction = "steady"
+	// RoleSpawn means the plan creates Spawn new sessions. On a partial
+	// admission grant, Action is RoleSpawn with Spawn < Desired-Actual and Hold
+	// set to HoldAdmission — so a reader must consult Hold even when the action
+	// is a spawn.
+	RoleSpawn RoleAction = "spawn"
+	// RoleScaleDown means the plan deletes the sessions in Delete.
+	RoleScaleDown RoleAction = "scale_down"
+	// RoleHold means actual is below desired but nothing is spawned this tick —
+	// withheld by crash-loop backoff or a full admission refusal. Hold names
+	// which.
+	RoleHold RoleAction = "hold"
+)
+
+// HoldReason names why a would-be spawn is withheld, in whole or in part. It is
+// set whenever the plan spawns fewer sessions than (Desired-Actual): on a full
+// hold (Action==RoleHold) and on a partial admission grant (Action==RoleSpawn
+// with Spawn < Desired-Actual).
+type HoldReason string
+
+const (
+	// HoldNone means nothing is withheld.
+	HoldNone HoldReason = ""
+	// HoldBackoff means the role is inside its crash-loop backoff window (or
+	// frozen at MaxRestarts / restart_policy=never saturation).
+	HoldBackoff HoldReason = "crash_loop_backoff"
+	// HoldAdmission means a team budget refused some or all of the spawn.
+	HoldAdmission HoldReason = "admission"
+)
+
+// RolePlan is the convergence decision for one role at one generation: what the
+// reconciler would change, computed without changing anything. planRole
+// produces it (pure — it reads state but mutates none), and applyRolePlan
+// enacts exactly it. Exposing the decision as an inspectable value is the
+// keystone for the convergence-posture arc (question-convergence-posture,
+// aae-orc-nf0w): the dry-run surface prints it, the hold posture computes it
+// and declines to apply, and the startup report is the plan at boot.
+type RolePlan struct {
+	Workspace  string
+	Team       string
+	Role       string
+	Generation int64
+	// Desired is the role's declared replica count.
+	Desired int
+	// Actual is the number of the role's sessions that count as alive now.
+	Actual int
+	// Action is the convergence verb — a summary of the fields below.
+	Action RoleAction
+	// Spawn is how many new sessions applyRolePlan would create. Zero unless
+	// Action is RoleSpawn.
+	Spawn int
+	// Delete is the exact set of sessions applyRolePlan would remove, in the
+	// order it removes them (newest first). Non-empty only when Action is
+	// RoleScaleDown.
+	Delete []api.Session
+	// Hold names why the plan spawns fewer than Desired-Actual sessions, when
+	// it does; HoldNone otherwise.
+	Hold HoldReason
+	// HoldDetail is the human-readable reason behind Hold, for a dry-run or
+	// startup report. It is plan metadata only — never emitted as an event, so
+	// it changes no reconcile behavior.
+	HoldDetail string
+
+	// admission is the admission bookkeeping applyRolePlan must perform — clear
+	// a stale hold, or latch and announce a refusal. Computed purely here,
+	// enacted only in apply. Unexported: it is apply plumbing, not part of the
+	// inspectable decision.
+	admission admissionIntent
+}
+
+// admissionOp is the admission bookkeeping applyRolePlan performs for a role.
+type admissionOp int
+
+const (
+	// admissionNoop leaves the role's admission latch untouched — the gate was
+	// not reached this tick, so a role cooling down in backoff keeps whatever
+	// hold it had.
+	admissionNoop admissionOp = iota
+	// admissionClear drops any standing hold: the gate was satisfied or never
+	// applied this tick.
+	admissionClear
+	// admissionLatch records a standing refusal and announces it once.
+	admissionLatch
+)
+
+// admissionIntent carries what applyRolePlan needs to enact the admission
+// bookkeeping planRole decided, without re-running the check.
+type admissionIntent struct {
+	op     admissionOp
+	key    string // verdict key to latch (admissionLatch)
+	reason string // human reason for the event and AdmissionState (admissionLatch)
+}
+
+// planRole computes the convergence decision for a role at a generation without
+// enacting it: no session is spawned or deleted, no store record is written, no
+// event is emitted, and the admission-latch and RoleHealth maps are read but
+// never mutated. Every effect the decision implies is recorded on the returned
+// RolePlan for applyRolePlan to enact.
+//
+// Counting uses all generations — generation scoping is only for shift logic
+// (shiftLaunch/shiftDrain), so non-shifting roles aren't disrupted when one
+// role shifts and the team generation advances. Caller holds c.mu.
+func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) RolePlan {
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
 	desired := role.Replicas
-	actual := 0
-	for _, sess := range current {
-		if sess.State.CountsAsAlive() {
-			actual++
-		}
+	actual := api.CountAlive(current)
+
+	plan := RolePlan{
+		Workspace:  t.Workspace,
+		Team:       t.Name,
+		Role:       role.Name,
+		Generation: generation,
+		Desired:    desired,
+		Actual:     actual,
+		Action:     RoleSteady,
 	}
 
-	// An admission hold describes a refusal that is still happening. Drop it
-	// as soon as the gate below is not reached at all — the role is
-	// satisfied, the budget was removed from the manifest, or a shift took
-	// over — so `admission.cleared` fires and Team.Admission stops naming a
-	// condition that has passed.
+	// An admission hold describes a refusal that is still happening. Drop it as
+	// soon as the gate below is not reached at all — the role is satisfied, the
+	// budget was removed from the manifest, or a shift took over — so
+	// applyRolePlan fires admission.cleared and Team.Admission stops naming a
+	// condition that has passed. This is the old top-of-function clear; a role
+	// that instead reaches the admission gate below overrides it there.
 	if actual >= desired || !t.Budget.Declared() || t.Shift.Phase != api.ShiftNone {
-		c.clearAdmissionHold(t, role.Name)
+		plan.admission = admissionIntent{op: admissionClear}
 	}
 
-	if actual < desired {
-		// Respect crash-loop backoff. If the role is cooling down from
-		// a recent restart, hold off on spawning replacements until the
-		// backoff window elapses. Without this the reconciler would
-		// immediately recreate a session we just deleted and defeat
-		// the whole backoff. Reap-path saturation (MaxRestarts) is
-		// also honored here: noteCrashAndBackoff freezes BackoffUntil
-		// to the far future on saturation, so this same gate refuses
-		// respawns once a role has exhausted its budget. See
-		// ArcavenAE/marvel#11.
+	switch {
+	case actual < desired:
+		// Respect crash-loop backoff. If the role is cooling down from a recent
+		// restart, spawn nothing until the backoff window elapses; without this
+		// the reconciler would immediately recreate a session we just deleted
+		// and defeat the whole backoff. Reap-path saturation (MaxRestarts) is
+		// honored here too: noteCrashAndBackoff freezes BackoffUntil to the far
+		// future on saturation, so this same gate withholds respawns once a role
+		// has exhausted its budget. Read-only — the hold is recorded on the
+		// plan, not enacted. See ArcavenAE/marvel#11.
 		roleKey := t.Workspace + "/" + t.Name + "/" + role.Name
 		if rh, ok := c.roleHealth[roleKey]; ok && c.nowUTC().Before(rh.BackoffUntil) {
-			return
+			plan.Action = RoleHold
+			plan.Hold = HoldBackoff
+			// A MaxRestarts / restart_policy=never freeze parks BackoffUntil at
+			// the year-9999 sentinel; render it as a freeze rather than a finite
+			// window so a dry-run reader is not told a permanent hold expires in
+			// 9999. HoldDetail is plan metadata only — never emitted — so this
+			// distinction changes no reconcile behavior.
+			if rh.BackoffUntil.Equal(saturationFreezeUntil) {
+				plan.HoldDetail = fmt.Sprintf("frozen at max_restarts (restart #%d)", rh.RestartCount)
+			} else {
+				plan.HoldDetail = fmt.Sprintf("crash-loop backoff until %s", rh.BackoffUntil.Format(time.RFC3339))
+			}
+			return plan
 		}
+
 		// Admission backstop against a team-declared budget (aae-orc-qiay,
-		// resource-matrix enforcement locus 2). The primary refusal point is
-		// the operator's verb, where nothing has been committed yet; this
-		// catches the state a manifest declaration cannot see, chiefly a
-		// declared count that is itself over the ceiling after an
-		// out-of-band write or two racing scale calls.
+		// resource-matrix enforcement locus 2). The primary refusal point is the
+		// operator's verb, where nothing has been committed yet; this catches
+		// the state a manifest declaration cannot see, chiefly a declared count
+		// that is itself over the ceiling after an out-of-band write or two
+		// racing scale calls.
 		//
 		// Session-count only: the token clause is monotonic within a daemon
 		// lifetime, so gating repair on it would make an over-budget team
-		// permanently unrepairable (R2). Placed AFTER the backoff gate so a
-		// cooling role emits no admission event (backoff is the older,
-		// stronger condition), and BEFORE ClearCrashedForRole because that
-		// call mutates store state: refusing after it would delete this
-		// role's Crashed markers every tick while never spawning.
-		//
-		// Skipped entirely while a shift is in progress, so a launching
-		// generation's transient double count cannot refuse a non-shifting
-		// role's legitimate repair (R5).
+		// permanently unrepairable (R2). Evaluated AFTER the backoff gate so a
+		// cooling role records no admission bookkeeping (backoff is the older,
+		// stronger condition). Skipped entirely while a shift is in progress, so
+		// a launching generation's transient double count cannot refuse a
+		// non-shifting role's legitimate repair (R5).
 		if t.Budget.Declared() && t.Shift.Phase == api.ShiftNone {
-			granted := c.admit(t, role, desired-actual)
-			if granted <= 0 {
-				return
+			v := c.admissionVerdict(t, role, desired-actual)
+			if v.Refused() {
+				reason := v.Reason(admission.TriggerReconcile)
+				plan.admission = admissionIntent{op: admissionLatch, key: v.Key(), reason: reason}
+				plan.Hold = HoldAdmission
+				plan.HoldDetail = reason
+				if v.Granted <= 0 {
+					plan.Action = RoleHold
+					return plan
+				}
+				// Partial grant: spawn what was granted; the hold names the rest.
+				plan.Spawn = v.Granted
+				plan.Action = RoleSpawn
+				return plan
 			}
-			desired = actual + granted
+			// Fully granted — the gate is satisfied, so any standing hold clears.
+			plan.admission = admissionIntent{op: admissionClear}
+			plan.Spawn = v.Granted
+			plan.Action = RoleSpawn
+			return plan
 		}
-		// Crash markers from the reap path have done their observability
-		// job by now (operators saw them during the backoff window). The
-		// fresh session is the new truth — clear stale Crashed markers
-		// for this role so nextIndex computes against live sessions only
-		// and `marvel get sessions` doesn't carry the ghost forward.
-		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, role.Name)
-		for i := actual; i < desired; i++ {
-			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, role.Name, generation, c.nextIndex(t, role, generation))
+
+		// No budget (or mid-shift): converge the whole deficit.
+		plan.Spawn = desired - actual
+		plan.Action = RoleSpawn
+		return plan
+
+	case actual > desired:
+		// Shed the excess, newest first — the same sessions and order the old
+		// reconcileRoleAt deleted (current[len-1-i]).
+		excess := actual - desired
+		plan.Delete = make([]api.Session, 0, excess)
+		for i := 0; i < excess; i++ {
+			plan.Delete = append(plan.Delete, current[len(current)-1-i])
+		}
+		plan.Action = RoleScaleDown
+		return plan
+	}
+
+	return plan
+}
+
+// applyRolePlan enacts a RolePlan: the admission bookkeeping planRole decided,
+// then the spawns or the deletes. This is the only side-effecting half of the
+// per-role reconcile decision — the dry-run surface and the hold posture reach
+// the same RolePlan and stop short of calling this.
+//
+// role must be the same role plan.Role names: apply reads role.Runtime for new
+// sessions and role.Name via nextIndex (which must see live store state to pick
+// a non-colliding index, so it is deliberately not precomputed on the plan).
+// reconcileRoleAt builds the plan from this same role, keeping them coupled.
+// Caller holds c.mu.
+func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
+	switch plan.admission.op {
+	case admissionNoop:
+		// Gate not reached this tick (e.g. a role cooling down in backoff);
+		// leave the role's admission latch as it stands.
+	case admissionClear:
+		c.clearAdmissionHold(t, plan.Role)
+	case admissionLatch:
+		c.latchAdmissionHold(t, plan.Role, plan.admission.key, plan.admission.reason)
+	}
+
+	if plan.Spawn > 0 {
+		// Crash markers from the reap path have done their observability job by
+		// now (operators saw them during the backoff window). The fresh session
+		// is the new truth — clear stale Crashed markers for this role, in the
+		// same order as the old reconcileRoleAt (clear, then create), so
+		// nextIndex computes against live sessions only and `marvel get
+		// sessions` doesn't carry the ghost forward.
+		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, plan.Role)
+		for i := 0; i < plan.Spawn; i++ {
+			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, plan.Role, plan.Generation, c.nextIndex(t, role, plan.Generation))
 			sess := &api.Session{
 				Name:       name,
 				Workspace:  t.Workspace,
 				Team:       t.Name,
-				Role:       role.Name,
-				Generation: generation,
+				Role:       plan.Role,
+				Generation: plan.Generation,
 				Runtime:    role.Runtime,
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
-	} else if actual > desired {
-		excess := actual - desired
-		for i := 0; i < excess; i++ {
-			sess := current[len(current)-1-i]
-			if err := c.sessMgr.Delete(sess.Key()); err != nil {
-				log.Printf("reconcile: delete session %s: %v", sess.Key(), err)
-			}
+	}
+
+	for _, sess := range plan.Delete {
+		if err := c.sessMgr.Delete(sess.Key()); err != nil {
+			log.Printf("reconcile: delete session %s: %v", sess.Key(), err)
 		}
 	}
+}
+
+// PlanConvergence returns the steady-state convergence plan for every team not
+// mid-shift — the sessions the next reconcile tick would spawn or scale down,
+// computed without enacting anything. It is the read-only companion to
+// ReconcileOnce's role loop and the inspection seam the dry-run surface
+// (aae-orc-nrk1), the hold posture (aae-orc-rwiw), and the startup report build
+// on. It takes c.mu and must NOT be called by a caller already holding it (the
+// mutex is not reentrant).
+//
+// Two fidelity limits a consumer must account for; both are properties of this
+// aggregate view, not of any single RolePlan, and neither affects the live
+// reconciler (which never calls this):
+//
+//   - Budgeted multi-role teams are evaluated per role against CURRENT live
+//     state, because no plan is applied between roles here. A real tick applies
+//     each role before planning the next (that is why admissionVerdict recounts
+//     per role), so when several roles share one MaxSessions the summed Spawn
+//     across the returned plans can exceed the headroom a real sequence of ticks
+//     would grant. A consumer that needs a budget-accurate multi-role preview
+//     must simulate sequential application itself.
+//   - A team mid-shift contributes nothing. reconcileTeam defers such a team to
+//     reconcileShift, which reconciles roles at shift-aware generations; that
+//     path is out of scope for this steady-state view, so a dry-run built on it
+//     under-reports repairs that happen during a rotation.
+func (c *Controller) PlanConvergence() []RolePlan {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	teams := c.store.ListTeams()
+	var plans []RolePlan
+	for i := range teams {
+		t := &teams[i]
+		if t.Shift.Phase != api.ShiftNone {
+			continue
+		}
+		for j := range t.Roles {
+			plans = append(plans, c.planRole(t, &t.Roles[j], t.Generation))
+		}
+	}
+	return plans
 }
 
 // evaluateHealth checks heartbeat staleness for all sessions and applies
