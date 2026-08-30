@@ -196,6 +196,34 @@ under a new index.
 
 Restart policies: `always`, `on-failure`, `never`.
 
+**Health is LIVENESS, not productivity.** The HEALTH column answers one
+question: is the process alive and does its pane exist? It does NOT mean the
+agent can do anything. A harness sitting at a login prompt (unauthenticated,
+expired credentials, a revoked token, a model the account cannot reach) is a
+live process in a live pane, so health calls it healthy while it does no work
+(aae-orc-9box, finding-025). Read the column as liveness and nothing more.
+
+**Activity advisory (opt-in, restart-neutral).** A separate, orthogonal axis
+answers "has marvel recently seen this harness do work?" — surfaced as a
+`(stalled)` suffix on the HEALTH cell. It is deliberately NOT a health state:
+it never triggers a restart or any destructive path.
+
+- Signal: `SessionContext.ContextAt`, the timestamp both of marvel's activity
+  producers already stamp — the usage accountant on each token-bearing stream
+  sample (headless) and the cooperative heartbeat RPC (interactive
+  `statusline` context feed and the simulator). No harness output is scraped
+  for meaning; marvel does not look for login prompts.
+- Opt-in per role via `activity_timeout` (a duration; `0`/unset disables it).
+  It is opt-in because a signal that over-fires is worse than none: a fixed
+  default would eventually flag a session in a long model call or tool
+  execution. Set the window generous relative to the role's longest legitimate
+  quiet stretch.
+- Only assessed where marvel has an activity channel. A working interactive
+  session with no context feed and no heartbeat healthcheck produces nothing
+  marvel observes, so it stays `unknown`, never `stalled`. Closing that
+  residual would need an adapter `Ready`/`Blocked` verdict (a richer
+  alternative, deferred).
+
 Recovery behavior, all shipped:
 
 - **Crash-loop backoff.** Repeated restarts move the session to

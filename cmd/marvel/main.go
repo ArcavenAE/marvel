@@ -2165,6 +2165,15 @@ func renderSessionTable(sessions []api.Session) string {
 		if health == "" {
 			health = "unknown"
 		}
+		// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
+		// HEALTH is LIVENESS — the process is alive and its pane exists — so a
+		// stalled session still reads healthy/unknown here; the "(stalled)"
+		// suffix says marvel has not observed it do work within its role's
+		// activity_timeout, which liveness cannot tell you. Running sessions
+		// only: a terminated session's last advisory is not news.
+		if s.State == api.SessionRunning && s.ActivityState == api.ActivityStalled {
+			health += " (stalled)"
+		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, cpu, rss, desk, runtimeName, llm)
 	}
@@ -2186,6 +2195,10 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "    c  context        d  desk          r  runtime\n")
 		fmt.Fprintf(&buf, "    l  llm            h  health\n")
 		fmt.Fprintf(&buf, "    p  cpu            m  memory (rss)\n")
+		fmt.Fprintf(&buf, "\n")
+		fmt.Fprintf(&buf, "  HEALTH is liveness (process + pane), not productivity. A live\n")
+		fmt.Fprintf(&buf, "  process at a login prompt still reads healthy. \"(stalled)\" marks a\n")
+		fmt.Fprintf(&buf, "  session marvel has not seen do work within its role's activity_timeout.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")

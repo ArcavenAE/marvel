@@ -1207,6 +1207,11 @@ func (c *Controller) evaluateHealth() {
 		var updated api.Session
 
 		err := c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			// Activity is an orthogonal, restart-neutral axis computed from
+			// the same snapshot. It is set first and read by no branch
+			// below, so it rides out on every early return with whatever
+			// HealthState that branch decides — the two axes never touch.
+			live.ActivityState = evaluateActivity(live, role, now)
 			if role == nil || role.HealthCheck == nil {
 				live.HealthState = api.HealthUnknown
 				updated = *live
@@ -1290,6 +1295,101 @@ func (c *Controller) evaluateHealth() {
 	}
 
 	c.decayHealthyRoles(obs, c.nowUTC())
+}
+
+// evaluateActivity is the restart-neutral staleness advisory (aae-orc-9box).
+// It is a pure function of the session snapshot, its role, and the clock: it
+// returns an ActivityState and NOTHING else — it never touches FailureCount,
+// HealthState, or any restart trigger, and no caller routes its result into
+// the restart path. That structural separation is the "a stalled session is
+// never restarted" guarantee.
+//
+// It answers "has marvel recently seen this harness do work?" without parsing
+// harness output for meaning. The signal is SessionContext.ContextAt, the
+// single "measured" sentinel both of marvel's activity producers already
+// stamp: the usage accountant on each token-bearing stream sample (headless),
+// and the cooperative heartbeat RPC (interactive statusline/codex feeds and
+// the simulator; see api.Store.UpdateSessionContext / UpdateSessionHeartbeat).
+// No stream scraping is added here.
+//
+// Two false-positive guards are the reason this is careful rather than a bare
+// timeout:
+//
+//   - Opt-in per role. ActivityTimeout == 0 disables the signal entirely, so a
+//     role whose workload has long legitimate quiet stretches (a long model
+//     call, a multi-minute tool execution) is never flagged unless its
+//     operator sets a window sized to that workload.
+//   - Channel-gated for the never-observed case. A working interactive session
+//     with no cooperative context feed and no heartbeat healthcheck produces
+//     nothing marvel observes, so a zero ContextAt on such a session means
+//     "marvel cannot see it", not "it is idle" — it stays Unknown. Only a
+//     session with a declared activity channel (activityObservable) is a
+//     candidate for "stalled from birth", and only past the startup grace.
+//
+// Once ContextAt is non-zero marvel has demonstrably observed this session
+// work, so staleness is assessable regardless of declared channel — this is
+// the expired-credentials / hung-harness case (worked, then went silent).
+//
+// One accepted transient: a headless session's stream-sourced ContextAt is
+// not persisted (UpdateSessionContext does not persist), so a session adopted
+// across a daemon restart reads ContextAt zero until its next sample. If its
+// role opted in and its (persisted) CreatedAt is older than the window, it can
+// read Stalled for the gap between restart and that next sample. The verdict
+// is advisory, self-corrects on the next sample, and is bounded by the window;
+// the alternative — never seeing the real defect — is worse.
+func evaluateActivity(s *api.Session, role *api.Role, now time.Time) api.ActivityState {
+	if role == nil || role.ActivityTimeout <= 0 {
+		return api.ActivityUnknown
+	}
+	if !s.ContextAt.IsZero() {
+		if now.Sub(s.ContextAt) > role.ActivityTimeout {
+			return api.ActivityStalled
+		}
+		return api.ActivityActive
+	}
+	// Never observed. Without a declared activity channel marvel cannot tell
+	// a dead-at-login session from a healthy one it simply cannot see, so it
+	// stays silent — the residual only an adapter Ready/Blocked verdict
+	// (option 2, deferred) could close.
+	if !activityObservable(s, role) {
+		return api.ActivityUnknown
+	}
+	// Startup grace, measured from creation and sized to the same window, so
+	// a session that has not yet had time to emit its first signal is not
+	// flagged. Mirrors the first-heartbeat grace in evaluateHealth.
+	if now.Sub(s.CreatedAt) > role.ActivityTimeout {
+		return api.ActivityStalled
+	}
+	return api.ActivityUnknown
+}
+
+// activityObservable reports whether marvel has an activity channel it can
+// observe for this session — i.e. whether a working session is EXPECTED to
+// produce a signal marvel already collects. It gates only the never-observed
+// (ContextAt zero) branch of evaluateActivity, where a false positive would
+// otherwise flag a healthy-but-unobservable interactive session.
+//
+//   - Headless sessions redirect their structured output to the usage
+//     accountant, which stamps ContextAt on every token-bearing sample.
+//   - An interactive session with runtime.context_feed = "statusline"
+//     forwards its context figures over the heartbeat RPC, which stamps
+//     ContextAt.
+//   - A role with a heartbeat healthcheck expects cooperative heartbeats,
+//     which stamp ContextAt.
+//
+// An interactive session with none of these produces nothing marvel sees, so
+// it is not a candidate for the never-observed stalled verdict.
+func activityObservable(s *api.Session, role *api.Role) bool {
+	if s.Runtime.Mode == api.RuntimeModeHeadless {
+		return true
+	}
+	if s.Runtime.ContextFeed == api.ContextFeedStatusline {
+		return true
+	}
+	if role != nil && role.HealthCheck != nil && role.HealthCheck.Type == api.HealthCheckHeartbeat {
+		return true
+	}
+	return false
 }
 
 // roleObs is the health a role showed across one evaluateHealth tick: whether

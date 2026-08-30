@@ -208,6 +208,94 @@ name = "squad"
 	}
 }
 
+func TestParseManifestWithActivityTimeout(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(`
+[workspace]
+name = "test"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+  activity_timeout = "10m"
+
+    [team.role.runtime]
+    command = "bash"
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	if got := team.Roles[0].ActivityTimeout; got != 10*time.Minute {
+		t.Fatalf("expected 10m activity_timeout, got %v", got)
+	}
+}
+
+func TestParseManifestActivityTimeoutDefaultsDisabled(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(`
+[workspace]
+name = "test"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "bash"
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	if got := team.Roles[0].ActivityTimeout; got != 0 {
+		t.Fatalf("unset activity_timeout must default to 0 (disabled), got %v", got)
+	}
+}
+
+func TestParseManifestBadActivityTimeout(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(`
+[workspace]
+name = "test"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+  activity_timeout = "soon"
+
+    [team.role.runtime]
+    command = "bash"
+`))
+	if err != nil {
+		t.Fatalf("parse should succeed (the duration is validated at apply): %v", err)
+	}
+	err = m.Apply(NewStore())
+	if err == nil {
+		t.Fatal("expected an error for an unparseable activity_timeout")
+	}
+	if !strings.Contains(err.Error(), "activity_timeout") {
+		t.Fatalf("error should name activity_timeout, got %v", err)
+	}
+}
+
 // --- YAML format tests ---
 
 const validYAMLManifest = `

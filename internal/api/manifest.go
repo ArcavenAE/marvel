@@ -124,6 +124,11 @@ type ManifestRole struct {
 	Identity             string               `toml:"identity,omitempty"            yaml:"identity,omitempty"`
 	Policy               string               `toml:"policy,omitempty"              yaml:"policy,omitempty"`
 	HealthCheck          *ManifestHealthCheck `toml:"healthcheck,omitempty"         yaml:"healthcheck,omitempty"`
+	// ActivityTimeout is a duration string ("10m") opting this role into the
+	// activity-staleness advisory (aae-orc-9box). Empty/unset disables it.
+	// Parsed into Role.ActivityTimeout, the same string→duration shape as
+	// healthcheck.timeout.
+	ActivityTimeout string `toml:"activity_timeout,omitempty"    yaml:"activity_timeout,omitempty"`
 }
 
 // ManifestHealthCheck is the healthcheck section within a role.
@@ -551,6 +556,13 @@ func (m *Manifest) Apply(store *Store) error {
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)
+			}
+			if mr.ActivityTimeout != "" {
+				d, err := time.ParseDuration(mr.ActivityTimeout)
+				if err != nil {
+					return fmt.Errorf("parse role %q activity_timeout %q: %w", mr.Name, mr.ActivityTimeout, err)
+				}
+				role.ActivityTimeout = d
 			}
 			if mr.HealthCheck != nil {
 				timeout := 30 * time.Second
