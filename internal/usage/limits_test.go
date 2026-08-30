@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 func TestNormalizeModel(t *testing.T) {
@@ -568,6 +570,10 @@ func TestResolveGradedGradesEachRung(t *testing.T) {
 		if c.learn != "" {
 			r.Learn(c.learn, c.learnValue)
 		}
+		// These pin the per-rung grade on the vendor default, where the
+		// entitlement axis stands alone. The backend axis is exercised
+		// separately in TestResolveGradedBackendVerdictGradesKeyedRungs.
+		c.req.Redirection = api.BackendDefault
 		limit, src, key, _ := r.ResolveGraded(c.req)
 		if limit != c.wantLimit {
 			t.Errorf("%s: limit = %d, want %d", c.name, limit, c.wantLimit)
@@ -578,6 +584,104 @@ func TestResolveGradedGradesEachRung(t *testing.T) {
 		if key != c.wantKey {
 			t.Errorf("%s: key confidence = %q, want %q", c.name, key, c.wantKey)
 		}
+	}
+}
+
+// TestResolveGradedBackendVerdictGradesKeyedRungs is the backend axis of the
+// grade, orthogonal to the entitlement axis TestResolveGradedGradesEachRung
+// pins. The verdict downgrades ONLY the keyed rungs (table, alias): a
+// directly-declared window is correct on any backend, and the learned rung's
+// provider fix is its key, not its grade (aae-orc-bv7m). The verdict
+// dominates the entitlement grade — a redirected [1m] key (entitlement-exact)
+// is still KeyRedirected, because the direct-API window does not apply under
+// redirection.
+func TestResolveGradedBackendVerdictGradesKeyedRungs(t *testing.T) {
+	t.Parallel()
+	table := Table{
+		"claude-haiku-4-5":    200_000, // single window: entitlement-exact
+		"claude-opus-4-8":     200_000, // split default: entitlement-narrow
+		"claude-opus-4-8[1m]": 1_000_000,
+	}
+	cases := []struct {
+		name        string
+		req         Request
+		learn       string
+		learnValue  int
+		redirection api.BackendRedirection
+		wantSource  LimitSource
+		wantKey     KeyConfidence
+	}{
+		{
+			name:        "default backend leaves the exact table hit exact",
+			req:         Request{StreamModel: "claude-haiku-4-5"},
+			redirection: api.BackendDefault,
+			wantSource:  LimitFromTable,
+			wantKey:     KeyExact,
+		},
+		{
+			name:        "redirected backend downgrades an exact table hit",
+			req:         Request{StreamModel: "claude-haiku-4-5"},
+			redirection: api.BackendRedirected,
+			wantSource:  LimitFromTable,
+			wantKey:     KeyRedirected,
+		},
+		{
+			name:        "redirected backend dominates the [1m] entitlement-exact key",
+			req:         Request{StreamModel: "claude-opus-4-8[1m]"},
+			redirection: api.BackendRedirected,
+			wantSource:  LimitFromTable,
+			wantKey:     KeyRedirected,
+		},
+		{
+			name:        "cannot-tell backend makes a table hit undeterminable",
+			req:         Request{StreamModel: "claude-opus-4-8"},
+			redirection: api.BackendUnknown,
+			wantSource:  LimitFromTable,
+			wantKey:     KeyUndeterminable,
+		},
+		{
+			name:        "redirected backend downgrades an alias hit",
+			req:         Request{RuntimeArgs: []string{"--model", "haiku"}},
+			redirection: api.BackendRedirected,
+			wantSource:  LimitFromTableAlias,
+			wantKey:     KeyRedirected,
+		},
+		{
+			// b2d0p does NOT grade the learned rung by the verdict; that is
+			// the D-key's job (aae-orc-bv7m). A learned hit stays exact here.
+			name:        "learned rung is untouched by the verdict in b2d0p",
+			req:         Request{StreamModel: "claude-haiku-4-5"},
+			learn:       "claude-haiku-4-5",
+			learnValue:  333_333,
+			redirection: api.BackendRedirected,
+			wantSource:  LimitLearned,
+			wantKey:     KeyExact,
+		},
+		{
+			// A directly-declared window is right on any backend.
+			name:        "redirected backend does not downgrade a manifest window",
+			req:         Request{StreamModel: "claude-haiku-4-5", ManifestLimit: 111_111},
+			redirection: api.BackendRedirected,
+			wantSource:  LimitFromManifest,
+			wantKey:     KeyExact,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := NewResolver(table)
+			if c.learn != "" {
+				r.Learn(c.learn, c.learnValue)
+			}
+			c.req.Redirection = c.redirection
+			_, src, key, _ := r.ResolveGraded(c.req)
+			if src != c.wantSource {
+				t.Errorf("source = %q, want %q", src, c.wantSource)
+			}
+			if key != c.wantKey {
+				t.Errorf("key confidence = %q, want %q", key, c.wantKey)
+			}
+		})
 	}
 }
 
@@ -683,6 +787,7 @@ func TestResolveGradedOverDefaultTable(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
+		c.req.Redirection = api.BackendDefault // grades over the shipped table on the vendor default
 		limit, src, key, _ := r.ResolveGraded(c.req)
 		if limit != c.wantLimit || src != c.wantSource || key != c.wantKey {
 			t.Errorf("%s: got (%d, %q, %q), want (%d, %q, %q)",

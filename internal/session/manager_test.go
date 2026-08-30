@@ -952,3 +952,61 @@ func TestCreateMintsHeartbeatToken(t *testing.T) {
 		t.Errorf("%s = %q in the ad-hoc environment, want the minted token", api.HeartbeatTokenEnv, got)
 	}
 }
+
+// Create classifies the backend-selecting environment at spawn and records
+// the verdict on the session, both on the caller's pointer and in the store
+// (aae-orc-b2d0p). The window resolver reads it to tell a direct-API window
+// from a redirected one.
+func TestCreateRecordsBackendRedirection(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates process-wide state.
+	skipIfNoTmux(t)
+
+	cases := []struct {
+		name   string
+		envKey string
+		envVal string
+		want   api.BackendRedirection
+	}{
+		{"no backend variable set is the vendor default", "", "", api.BackendDefault},
+		{"a bedrock switch is a redirect", "CLAUDE_CODE_USE_BEDROCK", "1", api.BackendRedirected},
+		{"a proxy base URL is a redirect", "ANTHROPIC_BASE_URL", "https://proxy.internal/v1", api.BackendRedirected},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.envKey != "" {
+				t.Setenv(c.envKey, c.envVal)
+			}
+			store := api.NewStore()
+			driver, err := tmux.NewDriver()
+			if err != nil {
+				t.Fatalf("new driver: %v", err)
+			}
+			mgr := NewManager(store, driver)
+			mgr.SocketPath = t.TempDir() + "/marvel.sock"
+
+			ws := "test-sess-backend"
+			t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+			sess := &api.Session{
+				Name:      "agent-0",
+				Workspace: ws,
+				Team:      "agents",
+				Role:      "worker",
+				Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			}
+			if err := mgr.Create(sess); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if sess.BackendRedirection != c.want {
+				t.Errorf("caller session verdict = %q, want %q", sess.BackendRedirection, c.want)
+			}
+			stored, err := store.GetSession(sess.Key())
+			if err != nil {
+				t.Fatalf("get from store: %v", err)
+			}
+			if stored.BackendRedirection != c.want {
+				t.Errorf("stored session verdict = %q, want %q", stored.BackendRedirection, c.want)
+			}
+		})
+	}
+}

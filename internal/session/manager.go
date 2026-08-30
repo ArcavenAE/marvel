@@ -454,6 +454,14 @@ func (m *Manager) Create(sess *api.Session) error {
 
 	plan := m.planLaunch(sess)
 
+	// Classify the backend-selecting environment this session is launched
+	// into (finding-031 / aae-orc-b2d0p). The pane inherits marvel's process
+	// environment and layers the per-pane env map over it, so the effective
+	// value of a backend switch is the constructed override when present and
+	// os.Getenv otherwise. Recorded on the session so the window resolver can
+	// tell a direct-API window from a redirected one.
+	sess.BackendRedirection = api.ClassifyBackendRedirection(backendEnvLookup(plan.env))
+
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
 	// tmux new-window was actually running when a pane died quickly.
@@ -492,6 +500,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.PaneID = paneID
 		live.PID = pid
 		live.State = api.SessionRunning
+		live.BackendRedirection = sess.BackendRedirection
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -751,9 +760,10 @@ func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) 
 	// launch args on the first fold, not after a round trip.
 	if m.Usage != nil {
 		m.Usage.Bind(uc, usage.Bind{
-			Harness: sess.Runtime.Name,
-			Args:    sess.Runtime.Args,
-			Window:  sess.Runtime.ContextWindow,
+			Harness:     sess.Runtime.Name,
+			Args:        sess.Runtime.Args,
+			Window:      sess.Runtime.ContextWindow,
+			Redirection: sess.BackendRedirection,
 		})
 	}
 	go func() {
@@ -851,6 +861,21 @@ func (m *Manager) detachInstance(key string) {
 	defer cancel()
 	inst.Detach(ctx)
 	m.forgetUsage(key, drain)
+}
+
+// backendEnvLookup resolves an environment variable name against the
+// constructed spawn environment: a key the adapter placed in the pane's env
+// map wins, and everything else falls back to marvel's own process
+// environment, which the tmux pane inherits. That union is the environment
+// the harness actually launches into, so it is what the backend classifier
+// must read.
+func backendEnvLookup(env map[string]string) func(string) string {
+	return func(k string) string {
+		if v, ok := env[k]; ok {
+			return v
+		}
+		return os.Getenv(k)
+	}
 }
 
 // directPlan builds the command string directly — the pre-adapter path

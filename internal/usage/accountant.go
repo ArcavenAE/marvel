@@ -53,6 +53,13 @@ type Bind struct {
 	Model string
 	// Window is a manifest override, 0 when unset.
 	Window int
+	// Redirection is the spawn-time backend verdict marvel classified for
+	// this session (api.ClassifyBackendRedirection over the constructed
+	// environment). It rides every denominator resolution for the session
+	// so a redirected or unobserved backend is graded, and eventually
+	// refused, on the keyed rungs. The zero value is BackendUnknown
+	// ("cannot tell").
+	Redirection api.BackendRedirection
 }
 
 // Sink receives computed readings. *api.Store satisfies it.
@@ -154,6 +161,7 @@ type sessionState struct {
 	primaryModel  string
 	args          []string
 	manifestLimit int
+	redirection   api.BackendRedirection
 
 	limit    int
 	limitSrc LimitSource
@@ -207,6 +215,7 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		StreamModel:   b.Model,
 		RuntimeArgs:   b.Args,
 		ManifestLimit: b.Window,
+		Redirection:   b.Redirection,
 	})
 
 	a.mu.Lock()
@@ -221,6 +230,7 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		primaryModel:  IdentityKey(model),
 		args:          b.Args,
 		manifestLimit: b.Window,
+		redirection:   b.Redirection,
 		limit:         limit,
 		limitSrc:      src,
 	}
@@ -286,7 +296,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 
 	a.mu.Lock()
 	st := a.stateLocked(c, ev.Harness, prof)
-	args, manifest := st.args, st.manifestLimit
+	args, manifest, redirection := st.args, st.manifestLimit, st.redirection
 	a.mu.Unlock()
 
 	limit, src, model := a.limits.Resolve(Request{
@@ -294,6 +304,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 		StreamModel:   d.Model,
 		RuntimeArgs:   args,
 		ManifestLimit: manifest,
+		Redirection:   redirection,
 	})
 
 	a.mu.Lock()
