@@ -25,6 +25,7 @@ import (
 	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/rlog"
+	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/upgrade"
 	"github.com/spf13/cobra"
@@ -153,6 +154,7 @@ func main() {
 	root.AddCommand(orphansCmd())
 	root.AddCommand(newCtxForwardCmd())
 	root.AddCommand(newCodexCtxCmd())
+	root.AddCommand(planCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -917,6 +919,127 @@ func getResources(resourceType string) error {
 		fmt.Println(string(resp.Result))
 	}
 	return nil
+}
+
+// planCmd is the read-only preview surface (aae-orc-nrk1): it prints the
+// convergence delta the next reconcile tick would enact without spawning or
+// deleting anything. It is both an operator preview and a spawn-free way to
+// exercise the convergence decision in dev/test.
+func planCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "plan [workspace/team]",
+		Short: "Preview the convergence delta per team without spawning (dry run)",
+		Long: `Print the plan the next reconcile tick would enact — desired vs alive
+replica counts, sessions that would spawn, sessions that would scale down, and
+any hold (crash-loop backoff or admission refusal) — computed without applying
+it. No session is spawned or deleted, so this is a spawn-free way to inspect
+what the daemon is about to do.
+
+With no argument every team is shown. An optional workspace/team narrows the
+preview; a bare name matches that workspace or that team.
+
+Teams mid-shift are omitted: their convergence runs at shift-aware
+generations, which this steady-state preview does not model.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			filter := ""
+			if len(args) == 1 {
+				filter = args[0]
+			}
+			return planConvergence(filter)
+		},
+	}
+}
+
+func planConvergence(filter string) error {
+	resp, err := send(daemon.Request{Method: "plan"})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	var result struct {
+		Plans []team.RolePlan `json:"plans"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return fmt.Errorf("parse plan: %w", err)
+	}
+	plans := result.Plans
+	if filter != "" {
+		plans = filterPlans(plans, filter)
+	}
+	fmt.Print(renderPlanTable(plans))
+	return nil
+}
+
+// filterPlans narrows a preview to a single workspace/team key. A key with a
+// slash matches workspace and team exactly (the form Team.Key() prints); a
+// bare token matches either the workspace or the team, so `marvel plan api`
+// finds team api in any workspace.
+func filterPlans(plans []team.RolePlan, filter string) []team.RolePlan {
+	ws, tm, hasSlash := strings.Cut(filter, "/")
+	var out []team.RolePlan
+	for _, p := range plans {
+		match := p.Workspace == filter || p.Team == filter
+		if hasSlash {
+			match = p.Workspace == ws && p.Team == tm
+		}
+		if match {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// renderPlanTable is the pure renderer for `marvel plan`, split out for the
+// same reason renderSessionTable and renderBudgetTable are: the table's
+// content and its empty-case wording are worth asserting without a daemon.
+// Rows are sorted workspace, team, role for a deterministic preview, and a
+// summary footer counts the verbs.
+func renderPlanTable(plans []team.RolePlan) string {
+	if len(plans) == 0 {
+		return "no teams to plan (none declared, or all mid-shift)\n"
+	}
+	sorted := make([]team.RolePlan, len(plans))
+	copy(sorted, plans)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Workspace != sorted[j].Workspace {
+			return sorted[i].Workspace < sorted[j].Workspace
+		}
+		if sorted[i].Team != sorted[j].Team {
+			return sorted[i].Team < sorted[j].Team
+		}
+		return sorted[i].Role < sorted[j].Role
+	})
+
+	var spawn, scaleDown, hold, steady int
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tDESIRED\tACTUAL\tACTION\tSPAWN\tSCALE-DOWN\tHOLD\n")
+	for _, p := range sorted {
+		holdCell := p.HoldDetail
+		if holdCell == "" {
+			holdCell = "-"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%s\n",
+			p.Workspace, p.Team, p.Role, p.Generation, p.Desired, p.Actual,
+			p.Action, p.Spawn, len(p.Delete), holdCell)
+		switch p.Action {
+		case team.RoleSpawn:
+			spawn++
+		case team.RoleScaleDown:
+			scaleDown++
+		case team.RoleHold:
+			hold++
+		default:
+			steady++
+		}
+	}
+	_ = w.Flush()
+	_, _ = fmt.Fprintf(&buf, "\n%d role(s): %d spawn, %d scale-down, %d hold, %d steady\n",
+		len(sorted), spawn, scaleDown, hold, steady)
+	return buf.String()
 }
 
 func describeCmd() *cobra.Command {

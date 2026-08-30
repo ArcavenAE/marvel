@@ -695,6 +695,8 @@ func (d *Daemon) dispatch(req Request) Response {
 		return d.handleEvents(req.Params)
 	case "orphans":
 		return d.handleOrphans()
+	case "plan":
+		return d.handlePlan()
 	default:
 		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -886,6 +888,29 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return Response{Error: fmt.Sprintf("marshal result: %v", err)}
+	}
+	return Response{Result: data}
+}
+
+// planResult carries the convergence preview returned by the plan RPC: the
+// RolePlans the next reconcile tick would enact, computed without enacting
+// anything. Named-struct result, like logsResult and eventsResult, so the
+// wire shape is self-describing and can gain aggregate fields later without
+// breaking the CLI decode.
+type planResult struct {
+	Plans []team.RolePlan `json:"plans"`
+}
+
+// handlePlan returns the steady-state convergence plan for every team not
+// mid-shift — the read-only preview surface for `marvel plan` (aae-orc-nrk1).
+// It calls Controller.PlanConvergence, which is pure: no session is spawned
+// or deleted and no store record is written, so this RPC never changes
+// cluster state. Teams mid-shift are omitted by PlanConvergence; see its doc
+// comment for the two fidelity limits a consumer must account for.
+func (d *Daemon) handlePlan() Response {
+	data, err := json.Marshal(planResult{Plans: d.teamCtrl.PlanConvergence()})
+	if err != nil {
+		return Response{Error: fmt.Sprintf("marshal plan: %v", err)}
 	}
 	return Response{Result: data}
 }
