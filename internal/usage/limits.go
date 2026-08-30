@@ -96,6 +96,79 @@ func (s LimitSource) Rank() int {
 	return len(limitLadder) + 1
 }
 
+// KeyConfidence grades how well the key that resolved a window determines
+// the window itself. It rides BESIDE LimitSource, not instead of it: the
+// two axes are orthogonal. LimitSource says which rung of the ladder
+// produced the number; KeyConfidence says whether the key that rung used
+// was as wide as the fact it stored.
+//
+// The distinction exists because a miss is loud and a wrong hit is silent
+// (finding-031). A window that misses renders absence and emits
+// context.limit-unresolved; a window resolved on a key too narrow to be
+// right renders a number that reads exactly like a correct one. Grading the
+// key is how a consumer tells the two apart: a renderer marks a soft value
+// low-confidence rather than presenting it as an exact fact (see Soft), and
+// an admission gate can refuse on a narrow key without refusing on a
+// measurement.
+//
+// Two axes make a key narrow, and they resolve at different times:
+//
+//   - ENTITLEMENT (static, graded here today). A bare model id naming the
+//     DEFAULT half of a default/max split does not carry the entitlement
+//     that decides which half a session gets. See the default-versus-maximum
+//     convention on DefaultTable and Table.keyConfidence.
+//   - PROVIDER (dynamic, not graded yet). The same id can name different
+//     windows under different backends (finding-031: the catalog assigns
+//     claude-opus-5 1000000 under anthropic and 264000 under copilot), and
+//     marvel cannot observe which backend served a request. The
+//     discriminator that answers "on the vendor default, or redirected?" is
+//     a spawn-time environment read that does not exist yet (aae-orc-b2d0p);
+//     until it lands, ResolveGraded assumes the default backend and never
+//     emits KeyRedirected. See the seam in ResolveGraded.
+type KeyConfidence string
+
+const (
+	// KeyExact means the key fully determined the window: a value declared
+	// directly (stream, learned, manifest, feed — no keyed lookup), or a
+	// table hit whose id leaves no entitlement ambiguity. The only grade
+	// that is NOT soft.
+	KeyExact KeyConfidence = "exact"
+	// KeyNarrow means the key was narrower than the fact it stored, so the
+	// number may be wrong and must be presented soft. Today it arises two
+	// ways: an entitlement-split table entry resolved on its default-half
+	// key, and any alias hit (an alias names whatever the harness points it
+	// at, so a hit that happens to be right is not a keyed fact).
+	KeyNarrow KeyConfidence = "narrow"
+	// KeyRedirected means the discriminator found the session redirected off
+	// the vendor default, so a table value keyed on the direct-API window
+	// does not apply. RESERVED: produced only once the spawn-time
+	// discriminator lands (aae-orc-b2d0p); ResolveGraded never returns it
+	// today. Declared now because it is the vocabulary the refuse-guard
+	// (aae-orc-bv7m) speaks.
+	KeyRedirected KeyConfidence = "redirected"
+	// KeyUndeterminable means marvel cannot vouch for the window. Today it
+	// marks an unresolved resolution (no rung produced a window). Once the
+	// discriminator lands it will also mark a session whose backend cannot
+	// be determined, which the guard treats as departure from default
+	// (finding-031). Either way: not a number to trust.
+	KeyUndeterminable KeyConfidence = "undeterminable"
+)
+
+// Soft reports whether a resolution should be presented as low-confidence
+// rather than as an exact fact. Everything but KeyExact is soft, so the
+// zero value and any grade a later writer adds default to soft rather than
+// silently reading as exact.
+//
+// Soft is the KEY axis only — whether the key was as wide as the fact. It is
+// not the whole trustworthiness of a number: how far the producing CHANNEL
+// can be trusted is the other axis, carried by LimitSource.Rank (a feed, for
+// instance, is KeyExact here because it declares a number directly, yet ranks
+// low because a side channel can change meaning without a version handle). A
+// consumer that wants full confidence must consult both.
+func (c KeyConfidence) Soft() bool {
+	return c != KeyExact
+}
+
 // Table maps a normalized model id to its context window in tokens.
 type Table map[string]int
 
@@ -110,6 +183,29 @@ type Table map[string]int
 // runtime.context_window without waiting for a marvel release. The
 // learned rung helps only where a harness declares its own window, which
 // today is Claude alone (see Learn).
+//
+// # The default-versus-maximum convention
+//
+// A model with an extended-context beta appears under two keys: the bare id
+// carries the DEFAULT window and the [1m]-suffixed id the MAXIMUM. The
+// vendor's models-overview page lists a single context-window figure (the
+// maximum) for such a model, with no default/max split shown, so the table
+// and the page do not disagree about a number — they disagree about what the
+// number MEANS. That gap has cost a re-verification round before: reading 1M
+// on the page and 200000 in the code looks like staleness (aae-orc-wyza, the
+// gh-144 review, 2026-08-08). Stated so it need not be rediscovered:
+//
+//   - bare = the default window, [1m] = the extended window Claude Code
+//     opted into (NormalizeModel keeps the suffix, so the two never collapse);
+//   - a model whose only window is 1M carries the same number under both
+//     spellings (claude-opus-5) or under [1m] alone (claude-fable-5[1m]),
+//     which is a spelling split, not a default/max split.
+//
+// A bare split key is therefore entitlement-NARROW (see Table.keyConfidence):
+// it names a default whose applicability to a given session the id cannot
+// confirm. Whether a bare-keyed session actually receives the default is
+// empirically open (aae-orc-wyza) and a fixture would settle it, as
+// claude-fable-5[1m] settled the suffix convention.
 func DefaultTable() Table {
 	return Table{
 		// The first two are fixture-verified in this repo (the
@@ -187,6 +283,37 @@ func DefaultTable() Table {
 func (t Table) Lookup(model string) (int, bool) {
 	w, ok := t[model]
 	return w, ok
+}
+
+// keyConfidence grades an EXACT table hit on the ENTITLEMENT axis (see the
+// default-versus-maximum convention on DefaultTable). A bare key whose [1m]
+// sibling carries a DIFFERENT window is the default half of a default/max
+// split, and a bare-keyed session's true window turns on an entitlement the
+// id does not carry, so the hit is KeyNarrow. Every other hit is
+// entitlement-exact: a [1m] key names the extended entitlement outright, and
+// a single-window model (no sibling, or a sibling carrying the same number,
+// as claude-opus-5) has no split to be wrong about.
+//
+// This grades entitlement only. The provider axis (a redirected backend
+// serving a different window under the same id) is not visible here; the
+// discriminator downgrades a redirected hit at Resolve time (aae-orc-b2d0p).
+// See the seam in ResolveGraded.
+//
+// normalizedKey must already be NormalizeModel'd, and window is the hit value
+// Lookup returned for it. The method takes the value rather than re-reading
+// the map so its result depends only on what the caller confirmed. The
+// window > 0 guard makes an off-contract call safe: no entry in this system
+// carries a 0 window (DefaultTable has none and Learn rejects them), so a
+// window of 0 means "not a real hit" and the method reports KeyExact rather
+// than misgrading an absent bare key as narrow against a live [1m] sibling.
+func (t Table) keyConfidence(normalizedKey string, window int) KeyConfidence {
+	if strings.HasSuffix(normalizedKey, "[1m]") {
+		return KeyExact
+	}
+	if sib, ok := t[normalizedKey+"[1m]"]; ok && window > 0 && window != sib {
+		return KeyNarrow
+	}
+	return KeyExact
 }
 
 // aliases map the short forms an operator passes to --model onto table
@@ -315,20 +442,57 @@ func NewResolver(t Table) *Resolver {
 	}
 }
 
-// Resolve walks the ladder and returns the window, the rung that
-// produced it, and the resolved model id ("" when none could be found).
-// A zero window means unresolved; callers must report absence rather than
+// Resolve walks the ladder and returns the window, the rung that produced
+// it, and the resolved model id ("" when none could be found). A zero
+// window means unresolved; callers must report absence rather than
 // substituting a default.
 //
-// The branch order below must match limitLadder, which carries the
-// reasoning and is asserted against this function in
-// TestResolveAgreesWithTheLadder. In short: an in-STREAM declaration
-// outranks the operator override because it is what enforces compaction,
-// while a declaration on the statusline FEED ranks under it because a
-// side channel describes the session rather than governing it. Any rung
-// that contradicts the manifest is logged once, naming both and naming
-// which won.
+// Resolve is ResolveGraded without the key-confidence grade, kept so
+// callers that do not yet plumb the grade are unaffected. A new consumer
+// that renders or gates on confidence should call ResolveGraded.
 func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
+	limit, src, _, model := r.ResolveGraded(req)
+	return limit, src, model
+}
+
+// ResolveGraded is Resolve plus a KeyConfidence grade beside the
+// LimitSource (see KeyConfidence). The branch order must match limitLadder,
+// which carries the reasoning; Resolve delegates here, so the ladder order
+// is covered through Resolve by TestResolveAgreesWithTheLadder, and
+// TestResolveDelegatesToResolveGraded pins that the two agree. In short: an
+// in-STREAM declaration outranks the operator override because it is what
+// enforces compaction, while a declaration on the statusline FEED ranks
+// under it because a side channel describes the session rather than governing
+// it. Any rung that contradicts the manifest is logged once, naming both and
+// naming which won.
+//
+// Grades, today: stream, manifest and feed declare a number directly (no
+// keyed lookup narrowed it) and are KeyExact. Learned is KeyExact too — it
+// is a harness measurement matched on its own [1m]-preserving key — but note
+// its narrowness is real on the PROVIDER axis, not the entitlement one: the
+// cache is one Resolver per daemon, so a value learned under one backend can
+// be served to a session on another. Grading that away is the discriminator's
+// job (aae-orc-b2d0p / aae-orc-bv7m), not A-static's; the learned KEY fix is
+// sequenced there, not here. A table hit inherits the entry's entitlement
+// grade (Table.keyConfidence); an alias hit is always KeyNarrow (an alias
+// names whatever the harness points it at, so a hit is not a keyed fact); an
+// unresolved resolution is KeyUndeterminable — marvel cannot vouch for a
+// window it did not find.
+//
+// THE DISCRIMINATOR SEAM (aae-orc-b2d0p, not built here): a redirected
+// backend can serve a different window under the same id, and marvel cannot
+// see the backend today (finding-031). When the spawn-time environment read
+// lands, its verdict enters here — most naturally a field on Request — and
+// downgrades the table (and learned) branch: a redirected KeyExact hit
+// becomes KeyRedirected, and the refuse-guard (aae-orc-bv7m) resolves
+// LimitUnresolved for KeyNarrow ∧ (redirected ∨ undeterminable). How a hit
+// that is BOTH entitlement-narrow and redirected is represented — a
+// precedence over this single enum, or a second field beside it — is that
+// work's design call, deliberately left open here; A-static only fixes the
+// entitlement axis and reserves the vocabulary. Whatever the shape, the guard
+// must refuse WITHIN a rung, never reorder rungs, so it belongs in the table
+// branch below, not before it. Until then this assumes the vendor default.
+func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, string) {
 	model := req.StreamModel
 	if model == "" {
 		model = ModelFromArgs(req.RuntimeArgs)
@@ -339,7 +503,7 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 			r.warnOnce("override:"+model, "context window: %s declared %d for %q, overriding the manifest's %d",
 				req.Harness, req.SampleLimit, model, req.ManifestLimit)
 		}
-		return req.SampleLimit, LimitFromStream, model
+		return req.SampleLimit, LimitFromStream, KeyExact, model
 	}
 
 	if model != "" {
@@ -351,7 +515,7 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 				r.warnOnce("learned-override:"+model, "context window: %s declared %d for %q in a prior session, overriding the manifest's %d",
 					req.Harness, w, model, req.ManifestLimit)
 			}
-			return w, LimitLearned, model
+			return w, LimitLearned, KeyExact, model
 		}
 	}
 
@@ -360,17 +524,21 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 			r.warnOnce("feed-override:"+model, "context window: %s feed declared %d for %q; the manifest's %d wins, because a side channel does not outrank an operator override",
 				req.Harness, req.FeedLimit, model, req.ManifestLimit)
 		}
-		return req.ManifestLimit, LimitFromManifest, model
+		return req.ManifestLimit, LimitFromManifest, KeyExact, model
 	}
 
 	if req.FeedLimit > 0 {
-		return req.FeedLimit, LimitFromFeed, model
+		return req.FeedLimit, LimitFromFeed, KeyExact, model
 	}
 
 	if model != "" {
 		n := NormalizeModel(model)
 		r.mu.RLock()
 		w, ok := r.table.Lookup(n)
+		var key KeyConfidence
+		if ok {
+			key = r.table.keyConfidence(n, w)
+		}
 		var aw int
 		var aok bool
 		if !ok {
@@ -380,14 +548,14 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 		}
 		r.mu.RUnlock()
 		if ok {
-			return w, LimitFromTable, model
+			return w, LimitFromTable, key, model
 		}
 		if aok {
-			return aw, LimitFromTableAlias, model
+			return aw, LimitFromTableAlias, KeyNarrow, model
 		}
 	}
 
-	return 0, LimitUnresolved, model
+	return 0, LimitUnresolved, KeyUndeterminable, model
 }
 
 // Learn records a window a harness declared, keyed on NormalizeModel so
