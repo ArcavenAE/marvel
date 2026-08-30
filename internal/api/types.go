@@ -56,6 +56,46 @@ const (
 	HealthUnhealthy HealthState = "unhealthy"
 )
 
+// ActivityState is a restart-neutral advisory read of whether marvel has
+// recently observed the harness do work. It is ORTHOGONAL to HealthState:
+// health is liveness (the process is alive and its pane exists), activity
+// is a staleness read over the timestamps marvel already collects.
+//
+// The two answer different questions, and this axis exists because a live
+// process is not a working one: a harness sitting at a login prompt, one
+// whose credentials expired, or one that started and immediately errored
+// is a live process in a live pane, so health calls it healthy while it
+// does nothing (aae-orc-9box, marvel finding-025). Activity is that
+// missing signal — and it is deliberately a SEPARATE field, not a fourth
+// HealthState, so that the restart path (which keys on HealthUnhealthy and
+// FailureCount) can never read it: a stalled session is never restarted.
+//
+// The reading reuses SessionContext.ContextAt, which both activity
+// producers marvel has already stamp — the usage accountant on each
+// token-bearing stream sample (headless) and the cooperative heartbeat RPC
+// (interactive statusline/codex feeds and the simulator). No stream
+// scraping is added. See team.evaluateActivity.
+type ActivityState string
+
+const (
+	// ActivityUnknown is the zero value: the role did not opt into the
+	// signal (Role.ActivityTimeout == 0), or marvel has no activity
+	// channel for this session (an interactive launch with no cooperative
+	// context feed and no heartbeat healthcheck, which produces nothing
+	// marvel observes even while working), or the session is inside its
+	// startup grace. Renders as absence, never as a problem.
+	ActivityUnknown ActivityState = ""
+	// ActivityActive: an activity signal landed within the role's
+	// ActivityTimeout.
+	ActivityActive ActivityState = "active"
+	// ActivityStalled: the role opted in, marvel has an activity channel,
+	// and no activity signal has landed within the window (either none
+	// ever, past the startup grace, or the last one is now older than the
+	// window). Advisory only — it never triggers a restart or any
+	// destructive path.
+	ActivityStalled ActivityState = "stalled"
+)
+
 // RestartPolicy controls what happens when a session becomes unhealthy.
 type RestartPolicy string
 
@@ -138,21 +178,26 @@ const ContextFeedStatusline = "statusline"
 // it exec'd. Resource readings are therefore a rollup over the pid's
 // subtree, not a read of the pid itself. See internal/procstat.
 type Session struct {
-	Name            string       `toml:"name"`
-	Workspace       string       `toml:"workspace"`
-	Team            string       `toml:"team"`
-	Role            string       `toml:"role"`
-	Generation      int64        `toml:"-"`
-	Runtime         Runtime      `toml:"runtime"`
-	State           SessionState `toml:"-"`
-	PaneID          string       `toml:"-"`
-	PID             int          `toml:"-"`
-	LastHeartbeat   time.Time    `toml:"-"`
-	HealthState     HealthState  `toml:"-"`
-	FailureCount    int          `toml:"-"`
-	RestartCount    int          `toml:"-"`
-	LastHealthCheck time.Time    `toml:"-"`
-	CreatedAt       time.Time    `toml:"-"`
+	Name          string       `toml:"name"`
+	Workspace     string       `toml:"workspace"`
+	Team          string       `toml:"team"`
+	Role          string       `toml:"role"`
+	Generation    int64        `toml:"-"`
+	Runtime       Runtime      `toml:"runtime"`
+	State         SessionState `toml:"-"`
+	PaneID        string       `toml:"-"`
+	PID           int          `toml:"-"`
+	LastHeartbeat time.Time    `toml:"-"`
+	HealthState   HealthState  `toml:"-"`
+	// ActivityState is the restart-neutral staleness advisory (aae-orc-9box).
+	// Recomputed every evaluateHealth tick from ContextAt/CreatedAt against
+	// the role's ActivityTimeout; orthogonal to HealthState and never read
+	// by the restart path. Status, not spec (toml:"-"), same as HealthState.
+	ActivityState   ActivityState `toml:"-"`
+	FailureCount    int           `toml:"-"`
+	RestartCount    int           `toml:"-"`
+	LastHealthCheck time.Time     `toml:"-"`
+	CreatedAt       time.Time     `toml:"-"`
 	// Reason is a projection-only annotation: empty on every real session
 	// row, filled by the read-path join (team.Controller.ProjectHeldRoleRows)
 	// on the synthetic rows it invents for a role held down with no live
@@ -328,6 +373,21 @@ type Role struct {
 	// session in SessionFailed. Zero means unlimited; negative values
 	// are clamped to zero. See ArcavenAE/marvel#11.
 	MaxRestarts int `toml:"max_restarts,omitempty"`
+	// ActivityTimeout, when > 0, opts this role's sessions into the
+	// activity-staleness advisory (aae-orc-9box). A running session for
+	// which marvel has an activity channel (headless stream, statusline
+	// context feed, or a heartbeat healthcheck) that has shown no activity
+	// within this window is surfaced as ActivityStalled — an advisory that
+	// NEVER triggers a restart or any destructive path.
+	//
+	// Zero (the default) disables the signal for the role. It is opt-in
+	// because a signal that over-fires is worse than none: a fixed default
+	// window would eventually flag a session in a long model call or a long
+	// tool execution as stalled while it is working. The operator sets a
+	// window generous relative to the role's longest legitimate quiet
+	// stretch. This is the "threshold is a role-level setting" the ticket
+	// names.
+	ActivityTimeout time.Duration `toml:"-"`
 }
 
 // ShiftPhase represents the current phase of a shift operation.

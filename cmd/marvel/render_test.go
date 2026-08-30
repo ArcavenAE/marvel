@@ -92,6 +92,46 @@ func TestRenderSessionTableMeasuredIdle(t *testing.T) {
 	}
 }
 
+// The activity-staleness advisory (aae-orc-9box) rides in the HEALTH column
+// as a parenthetical: HEALTH is liveness, so a stalled session still reads
+// healthy — the suffix is the "marvel has not seen it work" signal liveness
+// cannot carry.
+func TestRenderSessionTableStalledAdvisory(t *testing.T) {
+	table := renderSessionTable([]api.Session{{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy, ActivityState: api.ActivityStalled,
+	}})
+	if got := column(t, table, "HEALTH"); got != "healthy (stalled)" {
+		t.Errorf("HEALTH = %q for a stalled running session, want %q", got, "healthy (stalled)")
+	}
+}
+
+// Active and Unknown add nothing — the advisory is a stalled-only annotation.
+func TestRenderSessionTableActiveNoAdvisory(t *testing.T) {
+	table := renderSessionTable([]api.Session{{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy, ActivityState: api.ActivityActive,
+	}})
+	if got := column(t, table, "HEALTH"); got != "healthy" {
+		t.Errorf("HEALTH = %q for an active session, want plain %q", got, "healthy")
+	}
+}
+
+// A terminated session's last advisory is not news, so the annotation is
+// gated on running state: a stopped-but-stalled row reads plainly.
+func TestRenderSessionTableStalledButNotRunning(t *testing.T) {
+	table := renderSessionTable([]api.Session{{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionFailed, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy, ActivityState: api.ActivityStalled,
+	}})
+	if got := column(t, table, "HEALTH"); got != "healthy" {
+		t.Errorf("HEALTH = %q for a non-running stalled session, want plain %q", got, "healthy")
+	}
+}
+
 func TestRenderSessionTableMeasured(t *testing.T) {
 	table := renderSessionTable([]api.Session{{
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
