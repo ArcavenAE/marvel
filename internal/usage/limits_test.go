@@ -416,6 +416,44 @@ func TestEveryAliasResolvesToARealEntry(t *testing.T) {
 	}
 }
 
+// TestAliasesArePinnedToCurrentNamedModels locks the pin-to-named values
+// (aae-orc-ldq8). Pins are maintained by hand and bumped deliberately at a
+// model release; this is the tripwire that makes a bump an explicit,
+// reviewed edit rather than silent drift. Update it in the same change that
+// bumps an alias. TestEveryAliasResolvesToARealEntry guards that a pin never
+// dangles off the table.
+func TestAliasesArePinnedToCurrentNamedModels(t *testing.T) {
+	t.Parallel()
+	wantPin := map[string]string{
+		"haiku":     "claude-haiku-4-5",
+		"sonnet":    "claude-sonnet-5",
+		"opus":      "claude-opus-5",
+		"fable[1m]": "claude-fable-5[1m]",
+	}
+	for alias, canon := range aliases {
+		if wantPin[alias] != canon {
+			t.Errorf("alias %q pins to %q, want %q", alias, canon, wantPin[alias])
+		}
+	}
+	for alias := range wantPin {
+		if _, ok := aliases[alias]; !ok {
+			t.Errorf("expected alias %q is missing from the map", alias)
+		}
+	}
+	// The ldq8 fix: opus and sonnet now resolve to the 1M window of their
+	// -5 models, not the pre-5 defaults (claude-opus-4-8 was a 200k default).
+	tbl := DefaultTable()
+	for _, alias := range []string{"opus", "sonnet"} {
+		w, ok := tbl.Lookup(aliases[alias])
+		if !ok {
+			t.Fatalf("alias %q points at %q, which is missing from the table", alias, aliases[alias])
+		}
+		if w != 1_000_000 {
+			t.Errorf("alias %q resolves to %d, want 1000000 (the -5 window)", alias, w)
+		}
+	}
+}
+
 // Only KeyExact is a hard fact; everything else, including the zero value
 // and any grade a later writer adds, must read as soft. A consumer that
 // forgets to set the grade then defaults to soft rather than silently
@@ -877,10 +915,14 @@ func TestResolveGradedOverDefaultTable(t *testing.T) {
 			wantKey:    KeyExact,
 		},
 		{
-			// opus → claude-opus-4-8, a narrow entry: narrow either way.
-			name:       "alias onto a narrow entry is narrow",
+			// opus → claude-opus-5 after the aae-orc-ldq8 pin-to-named bump:
+			// a single-window 1M entry, still floored to narrow because an
+			// alias is never a keyed fact. No alias points at a split-default
+			// entry anymore; the alias-onto-a-narrow-default path is exercised
+			// directly by the "shipped split default key is narrow" case above.
+			name:       "alias onto a single-window entry floors to narrow",
 			req:        Request{RuntimeArgs: []string{"--model", "opus"}},
-			wantLimit:  200_000,
+			wantLimit:  1_000_000,
 			wantSource: LimitFromTableAlias,
 			wantKey:    KeyNarrow,
 		},

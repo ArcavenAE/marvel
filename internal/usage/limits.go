@@ -321,10 +321,20 @@ func (t Table) keyConfidence(normalizedKey string, window int) KeyConfidence {
 
 // aliases map the short forms an operator passes to --model onto table
 // keys. A hit here resolves as LimitFromTableAlias, never LimitFromTable.
+//
+// Pin-to-named convention (aae-orc-ldq8, ratified 2026-08-30): each alias
+// points at a SPECIFIC named model, NOT the newest of its family. That
+// trades staleness at each model release for a stable, surprise-free
+// denominator — a bare --model opus gets the window of the model named
+// here, never one that changed under it when a new model shipped. THE
+// MAINTENANCE COST is the point: bump these pins DELIBERATELY when a new
+// model lands. TestAliasesResolveToPinnedWindows locks the current pins so
+// a bump is an explicit, reviewed edit; the loop test below guards that no
+// pin dangles off the table.
 var aliases = map[string]string{
 	"haiku":     "claude-haiku-4-5",
-	"sonnet":    "claude-sonnet-4-6",
-	"opus":      "claude-opus-4-8",
+	"sonnet":    "claude-sonnet-5", // was claude-sonnet-4-6 (pre-5); bumped 2026-08-30
+	"opus":      "claude-opus-5",   // was claude-opus-4-8 (200k default); aae-orc-ldq8, 2026-08-30
 	"fable[1m]": "claude-fable-5[1m]",
 }
 
