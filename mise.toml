@@ -18,5 +18,5 @@
 # mise config, or CI's own setup-go step). See issues #119 (golangci-lint)
 # and the gofumpt follow-on.
 [tools]
-golangci-lint = "2.12.2"
-gofumpt = "0.7.0"
+golangci-lint = "2.13.2"
+gofumpt = "0.11.0"
