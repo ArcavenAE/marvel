@@ -1,0 +1,154 @@
+id: question-model-runtime-posture
+type: question
+confidence: frontier
+title: "Local model runtimes: adapter-class resources marvel manages, host capabilities it schedules against, or endpoints it merely points at?"
+tags:
+  - marvel
+  - resource-matrix
+  - placement
+  - model-runtime
+content: |
+  Are local model runtimes (Ollama, vLLM, LM Studio, llama.cpp servers,
+  MLX) resources marvel MANAGES — lifecycle, health, placement,
+  metering, the treatment a session gets — or external endpoints marvel
+  merely POINTS AT, with the operator owning the runtime?
+
+  Roadmap M6. Recorded in the Suite Composition Matrix under marvel's
+  "Needed, undescribed" column, the column defined as "no charter/node/
+  doc anywhere — the dangerous column". This node is the first
+  description; it is NOT a decision, and the framing below is itself
+  under test.
+
+  WHY IT MATTERS. The vision's bet (fleets on parallel-constrained
+  local hardware coordinating with cloud frontier models, horizon
+  ~2027-04) rests on placement across a cost/privacy/latency/
+  capability/cache-locality gradient. Marvel cannot schedule against a
+  resource it has no model of, so the gradient is inexpressible until
+  this posture is settled. The bet tripwire (review <= 2026-10) gates
+  M5/M6 PRIORITY; it does not gate DESCRIPTION, and treating it as
+  though it did is how the item stayed in the dangerous column.
+
+  MEASURED, 2026-09-04, so the starting point is not guessed:
+
+  - Marvel has no model client. Nothing in `internal/` or `cmd/` opens
+    a connection to any inference endpoint (measured 2026-08-07,
+    `_kos/ideas/local-llm-for-marvels-own-purposes.md`).
+  - What marvel has instead is a model-name-to-context-window TABLE
+    (`internal/usage/limits.go`). Marvel knows model NAMES and has
+    never called one.
+  - `Host` in `internal/api/types.go:490` is two fields, `Name` and
+    `Status`, with zero references. Everything M5 calls a "capability
+    inventory (GPU/memory/models)" is unwritten.
+  - No bd ticket and no node named a local runtime before this one; a
+    bd search for "vllm" returned zero rows across 1178 issues.
+
+  THE FRAMING IS BINARY AND PROBABLY SHOULDN'T BE. The ticket poses
+  adapter-class-vs-endpoint. A third option is visible from the
+  measured state above and should be tested against the other two
+  before either is adopted:
+
+  (a) ADAPTER-CLASS RESOURCE — marvel owns the runtime's lifecycle the
+      way it owns a session's: start, health, restart policy, teardown.
+  (b) EXTERNAL ENDPOINT — the operator owns the process; marvel holds
+      an address and, at most, a reachability check.
+  (c) HOST CAPABILITY — the runtime is neither a thing marvel runs nor
+      a thing it ignores, but an ATTRIBUTE of a host that placement
+      reads: this machine can serve these models, with this much VRAM,
+      at this concurrency, warm or cold. M5 already words its Host work
+      as "capability inventory (GPU/memory/models)", and agentic-
+      resource-matrix row 4 (Model/runtime capability) is written as a
+      placement axis rather than a managed object. (c) may be what both
+      documents already meant.
+
+  A CATEGORY DISTINCTION THAT (a) HAS TO SURVIVE. A managed agent
+  runtime hosts agent SESSIONS; a model runtime serves INFERENCE to a
+  harness that is already running somewhere else. `question-managed-
+  runtime-placement` is the nearest prior art and its 2026-08-09 peer
+  ruling is the closest thing to a precedent, but its disqualifier for
+  target-placement was mechanical (an agent inside AgentCore has no
+  primitive that creates a sibling session) and that mechanism has no
+  analogue here. What DOES transfer is the seam finding: the fit was
+  `Instance` (Spawn/Kill/Inject/Capture/Events), not `Adapter`
+  (`Prepare` returns a command string for `tmux new-window`). If (a) is
+  chosen, the same question arises — a model runtime is not launched
+  into a tmux pane either, so "adapter-class" may be a name for
+  something that would not live in the adapter framework.
+
+  WHAT (a) WOULD OBLIGE MARVEL TO KNOW. Cheapest scoping step: inventory
+  it and check it against what exists. Model set; VRAM and its
+  headroom; concurrency limits; warm-vs-cold state and load time;
+  eviction behaviour when a second model is requested; quantization
+  variants of the same model name. Nothing in that list has a marvel
+  surface today. If the answer is "nothing marvel has", that alone
+  scopes the ticket. Cheaper still, and the recommended first move: run
+  one Ollama endpoint against one adapter and see which side of the
+  line the friction actually lands on.
+
+  NOT THIS QUESTION — three neighbours it is repeatedly confused with:
+
+  - `aae-orc-2lfg` (per-agent model/provider selection in the team
+    manifest, adapter-resolved to native flags) is WHICH MODEL A ROLE
+    USES. This node is whether marvel manages the runtime that serves
+    it. The roadmap names the conflation explicitly as "the M-5 trap"
+    and warns that "model routing" references in older idea files
+    pointing at "M-5" mean 2lfg's territory, not M5/M6.
+  - `question-router-and-backend-layering` ruled 2026-08-09 that no
+    Router primitive is warranted and that what IS warranted is a
+    provenance grade on a reading's model identity. That question is
+    about ATTRIBUTING what served a request. This one is about whether
+    marvel operates the server. They can be answered independently, and
+    its ruling ("Pack, Vault, Volume, Schedule, Gateway and Readycheck
+    survive as model-only prose with no type and no code; a Router
+    resource today would be the seventh") is the standing argument
+    against answering this one with a new resource type by reflex.
+  - `_kos/ideas/local-llm-for-marvels-own-purposes.md` is marvel
+    CALLING a model for its own scripting, diagnosis and screening —
+    the control plane thinking, which lands on ADR-007. This node is
+    about runtimes serving the FLEET's agents. They share a gradient
+    and one likely mechanism (a multi-provider router, required by
+    value 10's no-single-vendor corollary), and that idea file is the
+    cheaper test of the bet because it needs no scheduler change.
+
+  OPEN SUB-QUESTIONS:
+
+  (a) Which of the three framings survives one real Ollama-plus-adapter
+      run? Run it before designing.
+  (b) If (c) host-capability: what is the minimum capability record
+      placement needs, and does it belong on `Host` or beside it?
+  (c) Does marvel ever need to CAUSE a model to be resident (pull,
+      warm, pin) to make a placement decision true, and does that alone
+      force (a) regardless of the rest?
+  (d) Custody and privacy: a local model means the prompt never leaves
+      the host. That is a real property to state, and it is silently
+      lost the first time a router falls back to a cloud provider.
+      Fallback policy is a custody decision, not a performance one.
+  (e) Metering: which resource-matrix rows does a local runtime move?
+      Row 2 (spend: near-zero marginal), row 3 (cache locality — KV
+      cache lives in the runtime, not the harness), row 12 (compute:
+      VRAM is a first-class scarcity a container orchestrator would
+      call memory and get wrong).
+  (f) Does the answer differ between a runtime on the SAME host as the
+      agent and one elsewhere on the LAN? If it does, this question is
+      entangled with M5 rather than merely adjacent to it.
+
+  NOT A COMMITMENT TO BUILD. Describing the posture is the deliverable;
+  whether any of it is worth building stays gated on M5 and the bet
+  tripwire.
+edges:
+  - target: elem-agentic-resource-matrix
+    type: derives
+    note: "row 4 (Model/runtime capability) is where this lives, and it is written as a placement axis — which is itself evidence for framing (c)"
+  - target: question-multi-host
+    type: supports
+    note: "non-blocking on purpose: the first probe is single-host. But M5's Host capability inventory (GPU/memory/models) cannot be specified until this posture is settled"
+  - target: question-managed-runtime-placement
+    type: supports
+    note: "nearest prior art — the same manage-vs-point-at shape for rented cloud capacity. Its Instance-not-Adapter seam finding transfers; its mechanical disqualifier does not, because a model runtime hosts no sessions"
+  - target: question-router-and-backend-layering
+    type: supports
+    note: "adjacent, deliberately not merged: that node attributes what served a request, this one asks who operates the server. Its no-seventh-resource ruling constrains any answer here"
+provenance:
+  created_by: agent:claude@opus-5
+  session: marvel-ywe8r-model-runtime-posture-2026-09-04
+  created_at: "2026-09-04"
+  reviewed_by: null
