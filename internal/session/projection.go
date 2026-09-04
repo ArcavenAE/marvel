@@ -170,6 +170,15 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 	return target, true, changed, shadowed, nil
 }
 
+// shellQuote wraps s for a POSIX shell. The statusline value is handed to
+// the harness as a "type": "command" string and is run through a shell, so
+// an install path containing a space silently breaks the feed on every
+// platform — and ctx-forward fails quietly by design, so the symptom is a
+// CTX% column that never lights up rather than an error. See aae-orc-d6sc.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // injectStatuslineFeed adds the hooks that forward the harness's own
 // context figures to the heartbeat RPC, keyed to this daemon's binary so
 // the pane needs no PATH assumption.
@@ -202,7 +211,7 @@ func injectStatuslineFeed(settings map[string]any, adapter runtime.Adapter, sess
 		return nil
 	}
 	var shadowed []string
-	for key, value := range feeder.StatuslineFeed(exe + " ctx-forward") {
+	for key, value := range feeder.StatuslineFeed(shellQuote(exe) + " ctx-forward") {
 		if _, exists := settings[key]; exists {
 			shadowed = append(shadowed, key)
 			continue

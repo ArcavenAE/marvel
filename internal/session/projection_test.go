@@ -305,6 +305,12 @@ func TestProjectionInjectsStatuslineFeed(t *testing.T) {
 	if !strings.HasSuffix(cmd, " ctx-forward") {
 		t.Errorf("statusLine.command = %q, want ctx-forward suffix", cmd)
 	}
+	// The value is run through a shell, so the binary path must be quoted
+	// or an install path containing a space breaks the feed silently
+	// (ctx-forward fails quietly by design). See aae-orc-d6sc.
+	if !strings.HasPrefix(cmd, "'") {
+		t.Errorf("statusLine.command = %q, want the binary path shell-quoted", cmd)
+	}
 	if ri, ok := sl["refreshInterval"].(float64); !ok || ri != 15 {
 		t.Errorf("statusLine.refreshInterval = %v, want 15", sl["refreshInterval"])
 	}
@@ -518,5 +524,31 @@ func TestProjectionReportsShadowedFeedKey(t *testing.T) {
 	// shadowed; the report must not name it.
 	if strings.Contains(msg, "subagentStatusLine") {
 		t.Errorf("event message %q names subagentStatusLine, which the policy did not shadow", msg)
+	}
+}
+
+// TestShellQuote covers the aae-orc-d6sc ride-along: the statusline value is
+// handed to the harness as a shell command, so a marvel installed at a path
+// containing a space produced a broken hook on every platform. The failure
+// was silent — ctx-forward exits quietly by design, so the only symptom was
+// a CTX% column that never lit up.
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"ordinary path", "/opt/homebrew/bin/marvel", "'/opt/homebrew/bin/marvel'"},
+		{"path with a space", "/Users/a b/bin/marvel", "'/Users/a b/bin/marvel'"},
+		{"mise version-pinned path", "/x/mise/installs/marvel/alpha-1/bin/marvel", "'/x/mise/installs/marvel/alpha-1/bin/marvel'"},
+		{"embedded single quote", "/tmp/it's/marvel", `'/tmp/it'\''s/marvel'`},
+		{"empty", "", "''"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shellQuote(tt.in); got != tt.want {
+				t.Errorf("shellQuote(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }

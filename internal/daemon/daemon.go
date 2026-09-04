@@ -404,6 +404,26 @@ func (d *Daemon) Start(socketPath string) error {
 	}
 	d.logConvergencePosture()
 
+	// Re-project policies for the sessions adoption just reclaimed. Until
+	// aae-orc-d6sc, Reproject had exactly ONE caller — the manifest-apply
+	// path below — so a daemon restart or `daemon reexec` left every adopted
+	// agent reading whatever settings file it was given at spawn. Two
+	// consequences, and the second is the one d6sc is about: an edited policy
+	// did not reach a running agent until someone re-applied a manifest
+	// (contradicting design principle 4), and a statusline hook baking a
+	// version-pinned binary path was never refreshed after an upgrade.
+	//
+	// This runs AFTER RefreshLiveness so the store reflects true live
+	// presence — Reproject skips sessions that are not alive, and a stale
+	// Running row would otherwise waste a projection attempt.
+	//
+	// It narrows the d6sc orphan window rather than closing it: nothing here
+	// helps between a package prune and the next daemon event. The stable
+	// indirection that would close it is daemon-side and still reserved.
+	if n := d.sessMgr.Reproject(); n > 0 {
+		log.Printf("startup: re-projected policy for %d adopted session(s)", n)
+	}
+
 	// Announced from Start, not from the constructor. cmd/marvel installs
 	// log.SetOutput (log ring plus the optional --log-file) only after
 	// NewWithOptions returns, so a line written during construction reaches
