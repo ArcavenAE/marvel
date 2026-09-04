@@ -408,6 +408,24 @@ Two things to take anyway, both free:
    Apache-2.0, a bespoke authorization DSL in marvel would have to justify
    itself against it.
 
+> **CORRECTED 2026-09-04 by task 7 — the paragraph below is WRONG, and it was
+> flagged as inference when written. Kept in place rather than deleted, because
+> the flag worked and that is worth showing.** `cedar-policy/cedar-go` is a
+> NATIVE PURE-GO implementation maintained in the same org as the Rust
+> reference (Apache-2.0, CNCF Sandbox, v1.8.0 2026-06-01). Verified by
+> building, not by reading: a module importing it compiles under
+> `CGO_ENABLED=0`, runs, cross-compiles clean to `linux/amd64` and
+> `linux/arm64`, and `go list -deps` reports **zero** cgo-using packages in the
+> closure. Adopting Cedar is `go get`, not an architecture decision, and the
+> zero-CGo posture does not collide with it. A trap for future readers:
+> `cedar-go` DOES contain Rust under `test/cedar-*-tool/` with dependabot cargo
+> PRs, and it has an internal package literally named `rust` — all test-fixture
+> and parser machinery, not runtime, which the cross-compile proves.
+>
+> The study's OTHER reason to defer Cedar survives and is the real one: marvel
+> has 19 methods in 3 buckets, which is a table, not a policy engine. Defer on
+> **need**, not on cost. Full detail: `biscuit-cedar-go-viability.md`.
+
 **A concrete, checkable reason to defer** rather than a preference: Cedar's
 implementation is Rust. A Go daemon adopting it means cgo or an out-of-process
 sidecar, and marvel holds a zero-CGo cross-compile posture. That collides
