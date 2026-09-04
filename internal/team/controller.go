@@ -269,10 +269,11 @@ func (c *Controller) SnapshotRoleHealth() map[string]RoleHealth {
 // tests, and RoleHealth persistence are untouched. SnapshotRoleHealth is
 // taken under c.mu and released before the store reads, so c.mu and the
 // store lock are never held together. See aae-orc-prhx, aae-orc-83m9.
-func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
+func (c *Controller) ProjectHeldRoleRows(store *api.Store) ([]api.Session, map[string]string) {
 	health := c.SnapshotRoleHealth()
 	now := c.nowUTC()
 	var out []api.Session
+	reasons := map[string]string{}
 	for _, t := range store.ListTeams() {
 		for i := range t.Roles {
 			role := &t.Roles[i]
@@ -297,9 +298,30 @@ func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
 			// Row count across any state and any generation: a Failed or
 			// Crashed row IS representation the operator sees, so a role
 			// that kept one is not synthesized.
-			rowCount := len(store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name))
-			gap := role.Replicas - rowCount
+			rows := store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
+			gap := role.Replicas - len(rows)
 			if gap <= 0 {
+				// The role kept its terminal rows, so there is nothing to
+				// synthesize — but a frozen or saturated role's row reads
+				// state=failed with Reason="", which is exactly what an
+				// ordinary failure about to be replaced looks like. The
+				// operator cannot tell "done trying" from "coming back".
+				//
+				// Annotate rather than synthesize. Only the sentinel means
+				// terminal; a real backoff window is a different condition
+				// and its rows are already gone. See aae-orc-kj5bq and
+				// finding-032 §5, whose "Reason empty for real rows" is a
+				// STORE invariant — the projection may set it on the copies
+				// it returns; the stored row keeps it empty forever.
+				if rh.BackoffUntil.Equal(saturationFreezeUntil) {
+					reason := terminalRoleReason(role, rh)
+					for i := range rows {
+						if rows[i].State.CountsAsAlive() {
+							continue
+						}
+						reasons[rows[i].Key()] = reason
+					}
+				}
 				continue
 			}
 			reason := fmt.Sprintf("restart #%d, backoff until %s", rh.RestartCount, rh.BackoffUntil.Format(time.RFC3339))
@@ -325,7 +347,19 @@ func (c *Controller) ProjectHeldRoleRows(store *api.Store) []api.Session {
 			}
 		}
 	}
-	return out
+	return out, reasons
+}
+
+// terminalRoleReason renders why a role will spawn no replacement. Two
+// distinct conditions share the saturation sentinel and an operator needs
+// them apart: restart_policy=never never intended to restart, while
+// saturation means it tried and gave up after max_restarts.
+func terminalRoleReason(role *api.Role, rh RoleHealth) string {
+	if role.RestartPolicy == api.RestartNever {
+		return "frozen: restart_policy=never, no replacement will be spawned"
+	}
+	return fmt.Sprintf("saturated: max_restarts=%d reached after %d restart(s), no replacement will be spawned; clear with `marvel reset-health`",
+		role.MaxRestarts, rh.RestartCount)
 }
 
 // ClearRoleHealthForTeam deletes crash-loop state for every role under

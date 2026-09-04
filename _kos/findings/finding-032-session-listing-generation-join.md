@@ -162,6 +162,26 @@ a projection-only `Reason string` on `Session` (empty for real rows); **do not**
 add values to `api.SessionState`, which `CountsAsAlive` and the counting paths
 consume. Ship the core with `crashloop-backoff` synthetic rows first.
 
+**Clarification, 2026-09-04 (`aae-orc-kj5bq`).** The parenthetical "(empty for
+real rows)" above is a **store invariant, not a projection invariant**. As
+written the three sentences around it cannot all hold: the polish is *for*
+saturated/frozen roles, those roles "keep their `SessionFailed` row," and a
+real row is exactly what would have to carry the text. Read strictly, the
+optional polish was impossible.
+
+The invariant that was actually meant, and that PR #215 was built to protect,
+is that **the write path never persists projection text**. `Reason` is absent
+from what reaches the store, bolt, and therefore every RPC client — which
+matters more than it looks, because `api.Session` reaches all three through
+the same encoder, so anything added to a stored resource is published by
+default (finding-022). Populating `Reason` on a *copy* of a real row as it
+passes through the read path violates nothing.
+
+So the shape is **annotate-and-synthesize**: the projection may set `Reason`
+on the rows it returns, real or synthetic; the stored row keeps `Reason` empty
+forever. The enum prohibition is unchanged — `api.SessionState` gains no
+values, because `CountsAsAlive` and the counting paths consume it.
+
 **Read source.** Snapshot RoleHealth from the controller's **in-memory map**
 (authoritative whether or not bolt is enabled), not `store.ListRoleHealth()`
 (empty when bolt is off). Home the composition on the controller

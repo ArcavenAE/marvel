@@ -245,6 +245,11 @@ Recovery behavior, all shipped:
   decay never auto-thaws is a saturation freeze (or the `restart_policy=never`
   freeze) — that terminal verdict is cleared only by
   `marvel reset-health <ws/team> --role <r>` or by deleting the team.
+  A frozen or saturated role keeps its terminal row, and `get sessions`
+  marks it `failed (frozen)` / `failed (saturated)` so "done trying"
+  reads differently from an ordinary `failed` the reconciler is about
+  to replace. The distinction is projection-only — the stored row
+  carries no reason text (aae-orc-kj5bq, finding-032 §5).
 - **`crashed`** is the transition state `ReapDead` sets when a pane is
   gone, distinguishing a dead process from a drained one. It carries
   `health=unhealthy`: the pane's absence is the process-alive verdict.

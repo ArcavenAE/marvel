@@ -2730,7 +2730,7 @@ func TestProjectHeldRoleRowsSynthesizesCrashloopRow(t *testing.T) {
 	// runner: below replicas with NO RoleHealth → a mid-flight spawn gap,
 	// must NOT be synthesized.
 
-	rows := ctrl.ProjectHeldRoleRows(store)
+	rows, _ := ctrl.ProjectHeldRoleRows(store)
 
 	byRole := map[string][]api.Session{}
 	for _, r := range rows {
@@ -2790,7 +2790,7 @@ func TestProjectHeldRoleRowsSkipsRecoveredRoleWithPastBackoff(t *testing.T) {
 	held.RestartCount = 2
 	held.BackoffUntil = clock.Now().Add(45 * time.Second)
 
-	rows := ctrl.ProjectHeldRoleRows(store)
+	rows, _ := ctrl.ProjectHeldRoleRows(store)
 
 	byRole := map[string][]api.Session{}
 	for _, r := range rows {
@@ -2957,7 +2957,7 @@ func TestDecayStopsJoinSynthesizingRecoveredRole(t *testing.T) {
 	rh := ctrl.getRoleHealth("test-decay-join/squad/worker")
 	rh.RestartCount = 2
 	rh.BackoffUntil = clock.Now().Add(90 * time.Second)
-	if rows := ctrl.ProjectHeldRoleRows(store); len(rows) != 1 {
+	if rows, _ := ctrl.ProjectHeldRoleRows(store); len(rows) != 1 {
 		t.Fatalf("phase 1: join synthesized %d rows, want 1 (role held in backoff)", len(rows))
 	}
 
@@ -2983,7 +2983,7 @@ func TestDecayStopsJoinSynthesizingRecoveredRole(t *testing.T) {
 	if err := store.DeleteSession("test-decay-join/squad-worker-g1-0"); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}
-	if rows := ctrl.ProjectHeldRoleRows(store); len(rows) != 0 {
+	if rows, _ := ctrl.ProjectHeldRoleRows(store); len(rows) != 0 {
 		t.Fatalf("phase 2: join synthesized %d rows after decay, want 0 (role recovered)", len(rows))
 	}
 }
@@ -2997,7 +2997,14 @@ func TestDecayStopsJoinSynthesizingRecoveredRole(t *testing.T) {
 // back here.
 func listingFor(ctrl *Controller, store *api.Store, workspace, team, role string) []api.Session {
 	var out []api.Session
-	for _, s := range append(store.ListSessions(), ctrl.ProjectHeldRoleRows(store)...) {
+	held, reasons := ctrl.ProjectHeldRoleRows(store)
+	live := store.ListSessions()
+	for i := range live {
+		if r, ok := reasons[live[i].Key()]; ok && live[i].Reason == "" {
+			live[i].Reason = r
+		}
+	}
+	for _, s := range append(live, held...) {
 		if s.Workspace == workspace && s.Team == team && s.Role == role {
 			out = append(out, s)
 		}
@@ -3181,5 +3188,81 @@ func TestGetSessionsListingHoldsFrozenFailstopRole(t *testing.T) {
 	}
 	if rows[0].State != api.SessionFailed {
 		t.Fatalf("frozen failstop listed state = %s, want %s", rows[0].State, api.SessionFailed)
+	}
+}
+
+// TestProjectHeldRoleRowsAnnotatesTerminalRoles is aae-orc-kj5bq. A saturated
+// or frozen role keeps its terminal row — that is why aae-orc-83m9's "absent"
+// premise was refuted — but the row it keeps reads state=failed with
+// Reason="", which is exactly what an ordinary failure about to be replaced by
+// the reconciler looks like. The operator cannot tell "this role is done
+// trying" from "this role just died and is coming back".
+//
+// The projection annotates those rows instead of synthesizing new ones. The
+// load-bearing assertion is the last one: the STORE row keeps Reason empty.
+// finding-032 §5's "Reason empty for real rows" is a store invariant, not a
+// projection invariant, and PR #215's clean write path depends on it.
+func TestProjectHeldRoleRowsAnnotatesTerminalRoles(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	clock := newTestClock(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	sleep := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	createTeamFixture(t, store, "test-kj5bq", "squad", []api.Role{
+		{Name: "saturated", Replicas: 1, RestartPolicy: api.RestartAlways, MaxRestarts: 3, Runtime: sleep},
+		{Name: "frozen", Replicas: 1, RestartPolicy: api.RestartNever, Runtime: sleep},
+		{Name: "cooling", Replicas: 1, RestartPolicy: api.RestartAlways, Runtime: sleep},
+	})
+
+	// saturated: tried and gave up after max_restarts.
+	sh := ctrl.getRoleHealth("test-kj5bq/squad/saturated")
+	sh.RestartCount = 3
+	sh.BackoffUntil = saturationFreezeUntil
+	seedSession(t, store, api.Session{Name: "squad-saturated-g1-0", Workspace: "test-kj5bq", Team: "squad", Role: "saturated", Generation: 1, State: api.SessionFailed})
+
+	// frozen: never intended to restart at all.
+	fh := ctrl.getRoleHealth("test-kj5bq/squad/frozen")
+	fh.RestartCount = 1
+	fh.BackoffUntil = saturationFreezeUntil
+	seedSession(t, store, api.Session{Name: "squad-frozen-g1-0", Workspace: "test-kj5bq", Team: "squad", Role: "frozen", Generation: 1, State: api.SessionFailed})
+
+	// cooling: an ORDINARY backoff window with a row still present. Not
+	// terminal — a replacement is coming — so it must NOT be annotated.
+	ch := ctrl.getRoleHealth("test-kj5bq/squad/cooling")
+	ch.RestartCount = 1
+	ch.BackoffUntil = clock.Now().Add(90 * time.Second)
+	seedSession(t, store, api.Session{Name: "squad-cooling-g1-0", Workspace: "test-kj5bq", Team: "squad", Role: "cooling", Generation: 1, State: api.SessionFailed})
+
+	rows, reasons := ctrl.ProjectHeldRoleRows(store)
+
+	if len(rows) != 0 {
+		t.Errorf("synthesized %d row(s), want 0 — every role here kept a real row", len(rows))
+	}
+
+	sat := reasons["test-kj5bq/squad-saturated-g1-0"]
+	if !strings.Contains(sat, "saturated") || !strings.Contains(sat, "max_restarts=3") {
+		t.Errorf("saturated reason = %q, want it to name saturation and the limit", sat)
+	}
+	frz := reasons["test-kj5bq/squad-frozen-g1-0"]
+	if !strings.Contains(frz, "frozen") || !strings.Contains(frz, "restart_policy=never") {
+		t.Errorf("frozen reason = %q, want it to name the never policy", frz)
+	}
+	if sat == frz {
+		t.Errorf("saturated and frozen produced identical text %q; an operator needs them apart", sat)
+	}
+	if r, ok := reasons["test-kj5bq/squad-cooling-g1-0"]; ok {
+		t.Errorf("cooling annotated %q, want none — an ordinary backoff is not terminal", r)
+	}
+
+	// The contract. Annotation happens on the projection's copies; the stored
+	// row never carries projection text, because api.Session reaches bolt and
+	// every RPC client through the same encoder (finding-022).
+	for _, role := range []string{"saturated", "frozen", "cooling"} {
+		for _, s := range store.ListSessionsByTeamRole("test-kj5bq", "squad", role) {
+			if s.Reason != "" {
+				t.Errorf("stored row %s carries Reason %q, want empty — projection text must not reach the store", s.Key(), s.Reason)
+			}
+		}
 	}
 }
