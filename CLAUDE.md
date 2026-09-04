@@ -373,7 +373,16 @@ marvel upgrade                                        # self-upgrade
 
 - **Language:** Go. Entire codebase.
 - **Config format:** TOML or YAML for manifests. Go flags/env for runtime.
-- **Auth:** Delegates to the harness → Claude Code. Marvel never stores credentials.
+- **Auth:** Delegates to the harness → Claude Code. **Custody boundary
+  (ADR-009):** marvel may hold an artifact it can itself revoke or re-mint
+  without a human at a third party's console; it must not hold an artifact
+  that is bearer authority at a third party. The test is audience, not
+  format — the per-session heartbeat token means nothing outside this daemon
+  (issuance, permitted); a backend OAuth refresh token is authority at the
+  vendor (custody, excluded). It applies to the most durable artifact held,
+  not the derived one. Brokering a vault-minted short-lived credential is
+  inside the line. This replaces the former "marvel never stores
+  credentials," which forbade issuance by accident.
   Auth boundary: one user running their own agents under their own credentials
   (Max, API key, Bedrock, Vertex) is permitted. Orchestrating agents that route
   other people's consumer credentials is not — multi-user distribution requires
