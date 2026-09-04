@@ -2987,3 +2987,199 @@ func TestDecayStopsJoinSynthesizingRecoveredRole(t *testing.T) {
 		t.Fatalf("phase 2: join synthesized %d rows after decay, want 0 (role recovered)", len(rows))
 	}
 }
+
+// listingFor mirrors daemon.handleGet's "sessions" branch — the live store
+// rows joined with the held-role projection — so a test can assert on what
+// `marvel get sessions` actually shows rather than on store.sessions alone.
+// It is copied rather than shared because internal/daemon imports this
+// package, not the other way round; if that join moves, these tests keep
+// passing while the surface regresses, so the join site carries a pointer
+// back here.
+func listingFor(ctrl *Controller, store *api.Store, workspace, team, role string) []api.Session {
+	var out []api.Session
+	for _, s := range append(store.ListSessions(), ctrl.ProjectHeldRoleRows(store)...) {
+		if s.Workspace == workspace && s.Team == team && s.Role == role {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// TestGetSessionsListingHoldsThroughCrashLoopToSaturation is the end-to-end
+// counterpart to TestProjectHeldRoleRowsSynthesizesCrashloopRow, and the
+// standing refutation of aae-orc-6njuj ("a restarting or MaxRestarts-saturated
+// role vanishes from get sessions, permanently since pyre").
+//
+// Those unit tests seed RoleHealth and a store and check the projection in
+// isolation; nothing drove the real reconciler through a whole crash-loop and
+// asserted on the composed listing. This does, at every stage of the arc a
+// single-replica restart_policy=always role walks:
+//
+//	spawn → restart (row deleted, finite backoff) → respawn → restart that
+//	reaches MaxRestarts (row deleted again) → respawn → saturating failure
+//	(row KEPT as failed, backoff frozen at the sentinel) → steady frozen
+//
+// The invariant: the role is never absent from the listing, and the row that
+// represents it always names why it is not running. The two windows where the
+// store genuinely holds zero rows are exactly the restart windows the
+// read-path join covers; the saturated role keeps its real failed row, which
+// is why 6njuj's "deleted first, then frozen, so permanently invisible"
+// reasoning does not hold — saturation never deletes.
+func TestGetSessionsListingHoldsThroughCrashLoopToSaturation(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	const ws, team, role = "test-6njuj", "squad", "worker"
+	createTeamFixture(t, store, ws, team, []api.Role{
+		{
+			Name: role, Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartAlways,
+			MaxRestarts:   2,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	// failNow makes the role's live session miss its heartbeat so the next
+	// reconcile tick runs it through applyRestartPolicy.
+	failNow := func(stage string) {
+		t.Helper()
+		got := store.ListSessionsByTeamRole(ws, team, role)
+		if len(got) != 1 {
+			t.Fatalf("%s: expected 1 live session to fail, got %d", stage, len(got))
+		}
+		if err := store.UpdateSession(got[0].Key(), func(live *api.Session) error {
+			live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+			return nil
+		}); err != nil {
+			t.Fatalf("%s: stale heartbeat: %v", stage, err)
+		}
+	}
+	// wantListed asserts the role is represented exactly once in the listing,
+	// in the given state, whether by a real row or a synthetic one.
+	wantListed := func(stage string, want api.SessionState) api.Session {
+		t.Helper()
+		rows := listingFor(ctrl, store, ws, team, role)
+		if len(rows) != 1 {
+			t.Fatalf("%s: get sessions shows %d row(s) for the role, want 1 — the role must never be absent", stage, len(rows))
+		}
+		if rows[0].State != want {
+			t.Fatalf("%s: listed state = %s, want %s", stage, rows[0].State, want)
+		}
+		return rows[0]
+	}
+
+	ctrl.ReconcileOnce()
+	wantListed("initial spawn", api.SessionRunning)
+
+	// Restart #1: restartSession deletes the row and holds the respawn, so
+	// the store is empty for the whole backoff window. The listing is not.
+	failNow("restart #1")
+	ctrl.ReconcileOnce()
+	if got := store.ListSessionsByTeamRole(ws, team, role); len(got) != 0 {
+		t.Fatalf("restart #1: expected the store row deleted for the restart, got %d", len(got))
+	}
+	held := wantListed("restart #1 backoff window", api.SessionCrashLoopBackOff)
+	if held.RestartCount != 1 {
+		t.Errorf("restart #1: listed RestartCount = %d, want 1", held.RestartCount)
+	}
+	if !strings.Contains(held.Reason, "backoff until") {
+		t.Errorf("restart #1: listed Reason = %q, want the backoff deadline", held.Reason)
+	}
+
+	clock.Advance(10 * time.Minute) // well past the 60s window
+	ctrl.ReconcileOnce()
+	wantListed("respawn after backoff #1", api.SessionRunning)
+
+	// Restart #2 is the tick that takes RestartCount to MaxRestarts. It is
+	// still the delete branch — saturation is only observed on the NEXT
+	// failure — so the listing must again fall back to the held row.
+	failNow("restart #2")
+	ctrl.ReconcileOnce()
+	if got := store.ListSessionsByTeamRole(ws, team, role); len(got) != 0 {
+		t.Fatalf("restart #2: expected the store row deleted for the restart, got %d", len(got))
+	}
+	held = wantListed("restart #2 backoff window", api.SessionCrashLoopBackOff)
+	if held.RestartCount != 2 {
+		t.Errorf("restart #2: listed RestartCount = %d, want 2", held.RestartCount)
+	}
+
+	clock.Advance(30 * time.Minute) // past the 120s window
+	ctrl.ReconcileOnce()
+	wantListed("respawn after backoff #2", api.SessionRunning)
+
+	// The saturating failure: noteCrashAndBackoff refuses the charge, so the
+	// row is KEPT as failed and BackoffUntil freezes at the sentinel. This is
+	// the case 6njuj claims disappears permanently.
+	failNow("saturation")
+	ctrl.ReconcileOnce()
+	rh, ok := ctrl.RoleHealthSnapshot(ws, team, role)
+	if !ok {
+		t.Fatal("saturation: expected RoleHealth")
+	}
+	if !rh.BackoffUntil.Equal(saturationFreezeUntil) {
+		t.Fatalf("saturation: BackoffUntil = %s, want the freeze sentinel", rh.BackoffUntil)
+	}
+	if got := store.ListSessionsByTeamRole(ws, team, role); len(got) != 1 {
+		t.Fatalf("saturation: expected the failed row KEPT (saturation never deletes), got %d rows", len(got))
+	}
+	wantListed("saturated", api.SessionFailed)
+
+	// And it stays listed: the freeze is permanent, the representation is too.
+	for i := 0; i < 3; i++ {
+		clock.Advance(10 * time.Minute)
+		ctrl.ReconcileOnce()
+	}
+	wantListed("saturated, 30 minutes of ticks later", api.SessionFailed)
+}
+
+// TestGetSessionsListingHoldsFrozenFailstopRole is the pyre half of
+// aae-orc-6njuj's premise. The ticket argues the freeze makes an absence
+// permanent; a restart_policy=never role is the freeze in its purest form, so
+// if any case vanished it would be this one. It does not: freezeRole never
+// deletes, and the failed row is the post-mortem the freeze exists to
+// preserve.
+func TestGetSessionsListingHoldsFrozenFailstopRole(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	const ws, team, role = "test-6njuj-never", "squad", "worker"
+	createTeamFixture(t, store, ws, team, []api.Role{
+		{
+			Name: role, Replicas: 1,
+			Runtime:       api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+			RestartPolicy: api.RestartNever,
+			HealthCheck:   &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: 1 * time.Millisecond, FailureThreshold: 1},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	sess := store.ListSessionsByTeamRole(ws, team, role)[0]
+	if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-1 * time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatalf("stale heartbeat: %v", err)
+	}
+
+	for i := 0; i < 4; i++ {
+		ctrl.ReconcileOnce()
+		clock.Advance(10 * time.Minute)
+	}
+
+	rows := listingFor(ctrl, store, ws, team, role)
+	if len(rows) != 1 {
+		t.Fatalf("frozen failstop role shows %d row(s) in get sessions, want 1", len(rows))
+	}
+	if rows[0].State != api.SessionFailed {
+		t.Fatalf("frozen failstop listed state = %s, want %s", rows[0].State, api.SessionFailed)
+	}
+}

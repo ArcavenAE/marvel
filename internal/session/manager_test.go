@@ -1,7 +1,9 @@
 package session
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -632,6 +634,119 @@ func TestReapDeadCapsCrashedMarkers(t *testing.T) {
 	}
 	if got.State != api.SessionCrashed {
 		t.Fatalf("fresh state=%s, want %s", got.State, api.SessionCrashed)
+	}
+}
+
+// TestReapDeadCapsCrashedMarkersAcrossOnePass is aae-orc-8vlz. Its sibling
+// above reaps ONE session per pass, which the pre-pass snapshot handles
+// correctly. This reaps TWO replicas of the same role in a single pass, where
+// the snapshot is stale in both directions: it still shows the marker the
+// first iteration deleted (a redundant delete, now silent) and it still shows
+// the first replica in its pre-reap state (invisible to a state check, so the
+// cap was breached).
+//
+// The breach did not heal on its own. Both rows end with PaneID == "", so
+// every later pass skips them and clearStaleCrashed is never called for the
+// role again; the duplicates persisted until an unrelated event cleared them.
+// Falsification: drop the marked set and the first assertion below finds two
+// Crashed markers, and finds two again after a second pass.
+func TestReapDeadCapsCrashedMarkersAcrossOnePass(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-reap-cap-pass"
+	t.Cleanup(func() {
+		_ = mgr.CleanupWorkspace(ws)
+	})
+
+	// A pre-existing Crashed marker: the row both iterations will try to
+	// delete, which is what produced the spurious not-found warning.
+	stale := &api.Session{
+		Name:      "agents-worker-g1-old",
+		Workspace: ws,
+		Team:      "agents",
+		Role:      "worker",
+		State:     api.SessionCrashed,
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := store.CreateSession(stale); err != nil {
+		t.Fatalf("seed stale crashed: %v", err)
+	}
+
+	// Two live replicas of the same role, both losing their panes before a
+	// single ReapDead pass runs.
+	var live []*api.Session
+	for i := 0; i < 2; i++ {
+		sess := &api.Session{
+			Name:      fmt.Sprintf("agents-worker-g1-%d", i),
+			Workspace: ws,
+			Team:      "agents",
+			Role:      "worker",
+			Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		}
+		if err := mgr.Create(sess); err != nil {
+			t.Fatalf("create %s: %v", sess.Key(), err)
+		}
+		live = append(live, sess)
+	}
+	for _, sess := range live {
+		if err := driver.KillPane(sess.PaneID); err != nil {
+			t.Fatalf("kill pane %s: %v", sess.PaneID, err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for _, sess := range live {
+		for driver.HasPane(sess.PaneID) && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	crashedForRole := func() []string {
+		var keys []string
+		for _, s := range store.ListSessions() {
+			if s.Workspace == ws && s.Role == "worker" && s.State == api.SessionCrashed {
+				keys = append(keys, s.Key())
+			}
+		}
+		return keys
+	}
+
+	// Capture the reap pass's own logging: the second consequence of the
+	// stale snapshot was a warning line describing normal operation, in a log
+	// an operator is meant to read. Installed here so setup noise stays out.
+	var logs bytes.Buffer
+	restore := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(restore) })
+
+	if reaped := mgr.ReapDead(); len(reaped) != 2 {
+		t.Fatalf("expected both replicas reaped in one pass, got %d", len(reaped))
+	}
+
+	if strings.Contains(logs.String(), "delete stale crashed") {
+		t.Errorf("the pass logged a stale-crashed warning for a delete the pass itself had already made:\n%s", logs.String())
+	}
+	if got := crashedForRole(); len(got) != 1 {
+		t.Fatalf("after one pass: %d Crashed markers for the role %v, want exactly 1", len(got), got)
+	}
+	if _, err := store.GetSession(stale.Key()); err == nil {
+		t.Error("expected the pre-existing stale marker to be cleared")
+	}
+
+	// A second pass changes nothing — which is the point. Both rows now have
+	// PaneID == "" so the reap loop skips them, so a cap not reached in the
+	// first pass would never be reached at all.
+	if reaped := mgr.ReapDead(); len(reaped) != 0 {
+		t.Fatalf("second pass reaped %d, want 0 (no panes left to lose)", len(reaped))
+	}
+	if got := crashedForRole(); len(got) != 1 {
+		t.Fatalf("after a second pass: %d Crashed markers for the role %v, want exactly 1", len(got), got)
 	}
 }
 
