@@ -43,11 +43,8 @@
 # 4. The declaration clause, before any daemon state is touched.
 #   # edit this file: replicas = 40, leave max_sessions = 6
 #   ./bin/marvel work examples/demo-act4-budget.toml
-#   # Error: parse manifest: parse manifest: team[0] declares 40 replicas
-#   # across 1 role(s) but budget.max_sessions is 6
-#   # (The prefix is doubled because handleApply re-wraps an error that is
-#   # already qualified. Pre-existing, and every manifest validation rule
-#   # prints it that way.)
+#   # Error: parse manifest: team[0] declares 40 replicas across 1 role(s)
+#   # but budget.max_sessions is 6
 #
 # 5. Recovery is one command.
 #   # edit this file: max_sessions = 40

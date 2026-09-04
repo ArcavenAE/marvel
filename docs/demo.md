@@ -1,28 +1,36 @@
-# Marvel three-act demo
+# Marvel four-act demo
 
 Marvel is a control plane for agent sessions. It keeps a declared team
 running, notices when a session dies, and repairs it; it observes what every
 session is doing, in one event vocabulary, across different agent harnesses;
-and it changes a running agent's permission contract by editing a manifest,
-with no restart. This runbook shows those three properties as copy-pasteable
-command sequences, each mapped to the exact events marvel emits.
+it changes a running agent's permission contract by editing a manifest, with
+no restart; and it refuses work that would carry a team past a budget the
+manifest declares, without leaving that team in a state it cannot reach. This
+runbook shows those four properties as copy-pasteable command sequences, each
+mapped to the exact events marvel emits.
 
-Every command below was run top to bottom against a live daemon on 2026-07-31.
-Where the code does not produce what an operator might expect, the runbook says
-so at that beat rather than papering over it.
+Every command below was run top to bottom against a live daemon on 2026-07-31,
+except where a later beat carries its own verification date. Where the code does
+not produce what an operator might expect, the runbook says so at that beat
+rather than papering over it.
 
 ## Prerequisites
 
 - macOS or Linux with `tmux` and `just` on PATH.
 - `just build` (produces `bin/marvel` and `bin/simulator`).
-- Act 1 and Act 3 need no model auth. Act 1 uses only `sleep`; Act 3 needs the
-  `claude` binary on PATH (the projection events fire whether or not claude is
-  authenticated, because marvel writes the settings file itself). The Act 3
-  extension is the exception: CTX% only appears once a session takes a real
+- Acts 1, 3, and 4 need no model auth. Acts 1 and 4 use only `sleep`; Act 3
+  needs the `claude` binary on PATH (the projection events fire whether or not
+  claude is authenticated, because marvel writes the settings file itself). The
+  Act 3 extension is the exception: CTX% only appears once a session takes a real
   turn, so that beat needs working claude auth and spends two short turns.
 - Act 2 needs the three harness binaries (`claude`, `codex`, `opencode`) and
   working auth for each. The per-session CPU and RSS columns populate without
-  auth; the `agent.*` token and cost events need a real model turn.
+  auth; the `agent.*` token and cost events need a real model turn. On a host
+  missing any of the three, Act 2 does not run at all: marvel refuses the whole
+  manifest at pre-flight, naming every unresolvable role and binary at once, and
+  spawns nothing — so there is no partial matrix and no quota spent. Act 4 is
+  the act with no such dependency, and the one to reach for when you need a beat
+  that runs anywhere.
 
 ### Run the acts on a scratch layout
 
@@ -714,13 +722,181 @@ empty `ContextLimitSource`, because the feed hands over a percentage the
 harness already computed rather than tokens for marvel to divide. A blank
 limit here is the feed working, not a resolution failure.
 
+---
+
+## Act 4 — Meter and Admit
+
+Marvel meters what a team is using and refuses work that would carry it past a
+ceiling the manifest declares. `demo-act4-budget` runs three crew under a
+six-session budget, and the act is the fan-out: ask for forty replicas, and the
+verb fails, the store keeps the number that is still true, and the event ring
+carries the arithmetic.
+
+The budget block is the operator's declaration that a metered value may refuse a
+spawn for this team. No budget block means no gate, and marvel behaves exactly
+as it did before the feature existed.
+
+This is the act that always runs. It needs `sleep` and nothing else — no harness
+binary, no auth, no quota — because a session ceiling is counted from the store
+rather than measured from a harness stream. Every beat below is deterministic.
+Verified end to end on 2026-09-04.
+
+### 4a. Declared and satisfied: no `admission.refused`
+
+```sh
+./bin/marvel work examples/demo-act4-budget.toml
+sleep 5
+./bin/marvel get sessions                      # three crew, STATE running
+./bin/marvel get budgets                       # limit 6, observed 3, headroom 3, ok
+./bin/marvel events --kind admission.refused   # "no events"
+```
+
+`get budgets` is the meter — one row per declared dimension:
+
+```
+WORKSPACE  TEAM  DIMENSION     LIMIT  OBSERVED  HEADROOM  STATE  WINDOW  NOTE
+fanout     crew  max_sessions  6      3         3         ok     -       -
+```
+
+The session rows read `HEALTH unknown`, not `healthy`. The role declares no
+healthcheck, so marvel has nothing to assert. That is unrelated to the budget,
+which counts the sessions the store holds regardless of their health.
+
+### 4b. The fan-out is refused at the verb: `admission.refused`
+
+Ask for forty:
+
+```sh
+./bin/marvel scale fanout/crew --role crew --replicas 40
+```
+
+The verb fails, and the error carries the whole arithmetic:
+
+```
+Error: fanout/crew: refused 37 of 37 spawn(s) for role crew: 3 live +
+37 requested sessions exceeds max_sessions=6 (trigger=scale). Nothing
+changed; raise the budget in the manifest or free headroom first
+```
+
+Marvel exits 1. Cobra prints its usage block underneath, as it does for any
+failed verb; the first line is the message.
+
+"Nothing changed" is the load-bearing half of that sentence, and it is worth
+checking rather than taking on trust:
+
+```sh
+./bin/marvel get teams        # REPLICAS still 3
+./bin/marvel get sessions     # still three; no partial fan-out, no retry storm
+```
+
+The refusal is all-or-nothing because all 37 spawns fail the same clause.
+Marvel does not admit as many as fit and leave the team short of a count it
+would then keep trying to reach: desired state stays at the number that is
+still true, so the reconcile loop has nothing to chase and no partially-granted
+request is left in a state that can never be satisfied.
+
+The arithmetic lands in the ring once, at warning severity:
+
+```
+TIME      SEV      KIND               SESSION      MESSAGE
+15:52:50  warning  admission.refused  fanout/crew  refused 37 of 37 spawn(s) for role crew: 3 live + 37 requested sessions exceeds max_sessions=6 (trigger=scale)
+```
+
+Once, not once per reconcile tick. `trigger=scale` names what asked, so a
+refusal from the scale verb is distinguishable in the ring from one raised on
+any other path.
+
+### 4c. Which dimension, and by how much
+
+Two reads answer "why was that refused" without going to the daemon log:
+
+```sh
+./bin/marvel get budgets                 # per-dimension limit / observed / headroom / state
+./bin/marvel describe team fanout/crew   # the declared budget, verbatim
+```
+
+`describe team` prints the team as marvel holds it, and the `Budget` block is
+the manifest's declaration echoed back:
+
+```json
+  "Budget": {
+    "max_sessions": 6
+  },
+```
+
+Its sibling `Admission` block stays zero-valued (`"since"` at the zero time)
+through this beat. A refusal at the verb is answered and over; that field
+carries a latched hold, which is the reconcile path rather than the scale path.
+
+### 4d. The declaration clause, before any daemon state is touched
+
+The ceiling also refuses a manifest that could never satisfy itself. Edit
+`examples/demo-act4-budget.toml` to ask for `replicas = 40` while leaving
+`max_sessions = 6`, and apply it:
+
+```sh
+./bin/marvel work examples/demo-act4-budget.toml
+```
+
+```
+Error: parse manifest: team[0] declares 40 replicas across 1 role(s) but budget.max_sessions is 6
+```
+
+This fires in the parser, before the daemon reaches its store, so there is no
+partially-applied team to undo: `get teams` and `get sessions` are unchanged.
+The two refusals are different gates on purpose. 4b catches a request the
+team's live count cannot absorb right now; 4d catches a declaration that is
+internally contradictory whatever the live count happens to be.
+
+This error printed a doubled `parse manifest: parse manifest:` prefix until
+`699fe8c` (#227) stopped the daemon re-wrapping an error the parser had already
+qualified; `internal/daemon/manifest_error_test.go` holds that line now. An
+older checkout, or any note promising the doubled form, is describing a bug that
+was fixed out from under it.
+
+### 4e. Recovery is one command
+
+Raise the ceiling and re-apply. There is nothing else to undo:
+
+```sh
+# edit examples/demo-act4-budget.toml: max_sessions = 40, replicas = 40
+./bin/marvel work examples/demo-act4-budget.toml
+sleep 25
+./bin/marvel get sessions    # forty crew
+./bin/marvel get budgets
+```
+
+```
+WORKSPACE  TEAM  DIMENSION     LIMIT  OBSERVED  HEADROOM  STATE       WINDOW  NOTE
+fanout     crew  max_sessions  40     40        0         at-ceiling  -       -
+```
+
+`at-ceiling` with zero headroom is a full team, not a refused one. Sitting
+exactly at the limit emits nothing: the ring still holds the single
+`admission.refused` from 4b. The state exists so an operator can see a team
+with no room left *before* the next request is the one that fails.
+
+### 4f. Token ceilings (auth-dependent, spends real quota)
+
+`max_sessions` is counted; `max_tokens` is measured, so it needs a headless role
+on a real model rather than `sleep`. Set a low `max_tokens` on
+`examples/mixed-adapters.toml` and watch `marvel get budgets` fill in the
+OBSERVED and WINDOW columns, then refuse.
+
+This beat was not verified in the run above, and it is the one part of Act 4
+that is neither deterministic nor free: it needs harness auth and spends quota.
+Note also that `max_tokens` counts from when accounting started — the meter is
+in-memory, so the window restarts with the daemon.
+
 ### Act 5 — Meter (PLANNED, not written)
 
 A dedicated metering act: `context-feed.toml` + injected turns + watching
-CTX% climb across the table, tied into budget admission (`max_tokens`
-clauses refusing over-budget work). Deferred until the per-subagent context
-surface and the OTEL topology decision (aae-orc-mqgf) land, so the act
-demonstrates a settled layer rather than a moving one.
+CTX% climb across the table. Act 4 landed the admission half against a counted
+dimension (`max_sessions`); what remains here is the measured half — CTX%
+across the table, and `max_tokens` clauses refusing over-budget work. Deferred
+until the per-subagent context surface and the OTEL topology decision
+(aae-orc-mqgf) land, so the act demonstrates a settled layer rather than a
+moving one.
 
 ---
 
