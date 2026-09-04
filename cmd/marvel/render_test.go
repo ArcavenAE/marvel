@@ -360,3 +360,56 @@ func TestFormatWindow(t *testing.T) {
 		t.Errorf("formatWindow(90s ago) = %q, want an elapsed duration", got)
 	}
 }
+
+// TestRenderSessionTableMarksTerminalRoles is the rendering half of
+// aae-orc-kj5bq. The projection annotates a saturated or frozen role's row
+// with a Reason, but until the table shows it the information dies one layer
+// short of the operator — which is the same defect the ticket describes,
+// moved rather than fixed. The STATE cell carries a short suffix, the same
+// idiom HEALTH already uses for "(stalled)".
+func TestRenderSessionTableMarksTerminalRoles(t *testing.T) {
+	tests := []struct {
+		name    string
+		session api.Session
+		want    string
+		notWant string
+	}{
+		{
+			name:    "saturated role is marked",
+			session: api.Session{Name: "a", State: api.SessionFailed, Reason: "saturated: max_restarts=3 reached after 3 restart(s), no replacement will be spawned"},
+			want:    "failed (saturated)",
+		},
+		{
+			name:    "frozen role is marked",
+			session: api.Session{Name: "b", State: api.SessionFailed, Reason: "frozen: restart_policy=never, no replacement will be spawned"},
+			want:    "failed (frozen)",
+		},
+		{
+			// The ordinary case, and the one that must not regress: a plain
+			// failure is being replaced by the reconciler and gets no suffix.
+			name:    "plain failure is unmarked",
+			session: api.Session{Name: "c", State: api.SessionFailed},
+			want:    "failed",
+			notWant: "failed (",
+		},
+		{
+			// A live row must never be suffixed even if it somehow carries
+			// Reason — terminal means terminal.
+			name:    "running row is never marked",
+			session: api.Session{Name: "d", State: api.SessionRunning, Reason: "saturated: ignore me"},
+			want:    "running",
+			notWant: "(saturated)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderSessionTable([]api.Session{tt.session})
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("table missing %q:\n%s", tt.want, got)
+			}
+			if tt.notWant != "" && strings.Contains(got, tt.notWant) {
+				t.Errorf("table unexpectedly contains %q:\n%s", tt.notWant, got)
+			}
+		})
+	}
+}

@@ -926,7 +926,24 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		// session (crash-looping in its backoff window). Without the join a
 		// restart_policy=always role is absent from the table for the whole
 		// backoff window rather than shown as held. See aae-orc-prhx.
-		result = append(d.store.ListSessions(), d.teamCtrl.ProjectHeldRoleRows(d.store)...)
+		// Annotate-and-synthesize (aae-orc-kj5bq): held roles with no live
+		// row are synthesized; roles that kept a terminal row are annotated
+		// in place so "done trying" reads differently from "coming back".
+		// ListSessions returns value snapshots, so this mutates copies and
+		// never the store — Reason stays out of persisted state.
+		//
+		// team.listingFor in controller_test.go mirrors this join so tests
+		// can assert on what `get sessions` actually shows. Keep them in
+		// step: if this moves, those tests keep passing while the surface
+		// regresses.
+		held, reasons := d.teamCtrl.ProjectHeldRoleRows(d.store)
+		live := d.store.ListSessions()
+		for i := range live {
+			if r, ok := reasons[live[i].Key()]; ok && live[i].Reason == "" {
+				live[i].Reason = r
+			}
+		}
+		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
 	case "workspaces", "workspace":

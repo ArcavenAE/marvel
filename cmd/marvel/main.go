@@ -2174,8 +2174,21 @@ func renderSessionTable(sessions []api.Session) string {
 		if s.State == api.SessionRunning && s.ActivityState == api.ActivityStalled {
 			health += " (stalled)"
 		}
+		// A failed row carrying a projection Reason is TERMINAL: the role
+		// will spawn no replacement. Without this suffix it is byte-identical
+		// to an ordinary failure the reconciler is about to replace, so the
+		// operator cannot tell "done trying" from "coming back" — the whole
+		// point of aae-orc-kj5bq. Same suffix idiom as HEALTH's "(stalled)",
+		// and no new column or SessionState value. The short tag is the
+		// Reason's own prefix; `describe session` carries the full text.
+		state := string(s.State)
+		if s.State == api.SessionFailed && s.Reason != "" {
+			if tag, _, found := strings.Cut(s.Reason, ":"); found {
+				state += " (" + tag + ")"
+			}
+		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Role, gen, s.Name, s.State, health, ctx, cpu, rss, desk, runtimeName, llm)
+			s.Workspace, s.Team, s.Role, gen, s.Name, state, health, ctx, cpu, rss, desk, runtimeName, llm)
 	}
 	_ = w.Flush()
 	return buf.String()
@@ -2195,6 +2208,11 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "    c  context        d  desk          r  runtime\n")
 		fmt.Fprintf(&buf, "    l  llm            h  health\n")
 		fmt.Fprintf(&buf, "    p  cpu            m  memory (rss)\n")
+		fmt.Fprintf(&buf, "\n")
+		fmt.Fprintf(&buf, "  STATE \"failed (saturated)\" or \"failed (frozen)\" means the role will\n")
+		fmt.Fprintf(&buf, "  spawn no replacement — saturated hit max_restarts, frozen is\n")
+		fmt.Fprintf(&buf, "  restart_policy=never. Plain \"failed\" is being replaced. Clear a\n")
+		fmt.Fprintf(&buf, "  saturation freeze with `marvel reset-health`.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  HEALTH is liveness (process + pane), not productivity. A live\n")
 		fmt.Fprintf(&buf, "  process at a login prompt still reads healthy. \"(stalled)\" marks a\n")
