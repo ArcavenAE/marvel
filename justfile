@@ -188,7 +188,7 @@ clean:
     rm -f "${HOME}/.marvel/run/marvel.sock" "${HOME}/.marvel/run/marvel.sock.lock"
     rm -rf bin/
 
-# Three-act runnable demo. Full runbook: docs/demo.md.
+# Four-act runnable demo. Full runbook: docs/demo.md.
 # Each recipe assumes a running daemon (`just start-bg` first).
 
 # Act 1 — Recover: set up the pane-loss recovery team, print the next steps
@@ -250,14 +250,36 @@ demo-act3: build _require-daemon
     @echo "  ./bin/marvel events --kind policy.projected  # second event: re-projected after manifest change"
     @echo "  ./bin/marvel get sessions                    # same session, same GEN, no restart"
 
-# Point at the full three-act runbook
+# Act 4 — Meter and Admit: three crew under a six-session budget, then refuse a fan-out
+demo-act4: build _require-daemon
+    @echo "==> Act 4 (Meter and Admit). Loading three crew under a six-session budget..."
+    @echo "    Needs only sleep: no harness binary, no auth, no quota."
+    ./bin/marvel work examples/demo-act4-budget.toml
+    @sleep 5
+    @echo ""
+    @echo "==> Sessions (three crew, running) and the meter:"
+    ./bin/marvel get sessions
+    ./bin/marvel get budgets
+    @echo ""
+    @echo "Now ask for forty replicas and watch the verb refuse it:"
+    @echo "  ./bin/marvel scale fanout/crew --role crew --replicas 40   # exits 1, nothing changed"
+    @echo "  ./bin/marvel get teams                       # REPLICAS still 3"
+    @echo "  ./bin/marvel get sessions                    # still three; no partial fan-out"
+    @echo "  ./bin/marvel events --kind admission.refused # the arithmetic, once"
+    @echo "  ./bin/marvel describe team fanout/crew       # the declared budget, verbatim"
+    @echo ""
+    @echo "Recovery is one manifest edit (max_sessions = 40, replicas = 40), then:"
+    @echo "  ./bin/marvel work examples/demo-act4-budget.toml   # forty crew"
+
+# Point at the full four-act runbook
 demo-all:
-    @echo "Marvel three-act demo. Full runbook: docs/demo.md"
+    @echo "Marvel four-act demo. Full runbook: docs/demo.md"
     @echo ""
     @echo "  just start-bg     # start the daemon first"
     @echo "  just demo-act1    # Recover"
     @echo "  just demo-act2    # Observe (needs harness auth)"
     @echo "  just demo-act3    # Control plane"
+    @echo "  just demo-act4    # Meter and Admit (no auth; runs anywhere)"
     @echo ""
     @echo "Between acts: just demo-reset"
 
