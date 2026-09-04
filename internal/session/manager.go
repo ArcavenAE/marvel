@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -966,6 +967,12 @@ type ReapedSession struct {
 func (m *Manager) ReapDead() []ReapedSession {
 	var reaped []ReapedSession
 	sessions := m.store.ListSessions()
+	// Keys this pass has already marked Crashed. The snapshot above still
+	// shows them in their pre-reap state, so clearStaleCrashed cannot see
+	// them by state alone; carrying them forward is what keeps the
+	// one-marker-per-role cap honest across a pass that reaps several
+	// replicas of the same role. See aae-orc-8vlz.
+	marked := make(map[string]bool)
 	for _, sess := range sessions {
 		if sess.PaneID == "" {
 			// Already reaped (Crashed) or never had a pane. Skip.
@@ -978,7 +985,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 			// Detaching here keeps a crashed session from leaving a pipe
 			// and a parked reader behind.
 			m.detachInstance(sess.Key())
-			m.clearStaleCrashed(sessions, sess.Workspace, sess.Team, sess.Role, sess.Key())
+			m.clearStaleCrashed(sessions, marked, sess.Workspace, sess.Team, sess.Role, sess.Key())
 			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
 				live.State = api.SessionCrashed
 				live.PaneID = ""
@@ -994,6 +1001,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 				log.Printf("warning: mark crashed %s: %v", sess.Key(), err)
 				continue
 			}
+			marked[sess.Key()] = true
 			reaped = append(reaped, ReapedSession{
 				Key:       sess.Key(),
 				Workspace: sess.Workspace,
@@ -1018,9 +1026,27 @@ func (m *Manager) ReapDead() []ReapedSession {
 // excluding the session about to be marked Crashed. Caps the store at
 // one Crashed marker per role so the reap path can't accumulate ghosts
 // across a saturated role's many crashes.
-func (m *Manager) clearStaleCrashed(snapshot []api.Session, workspace, team, role, exceptKey string) {
+//
+// snapshot is ReapDead's pre-pass view, and it is deliberately a snapshot:
+// the caller iterates it while this function deletes from the live store,
+// which is the aliasing a snapshot exists to avoid. But it is stale in two
+// directions, and each needs its own handling:
+//
+//   - Deletions this pass already made still appear in it, so a role reaped
+//     twice in one pass re-attempts a delete that has already happened. That
+//     returns ErrNotFound, which describes the design rather than a problem,
+//     so it is not logged; every other error still is.
+//   - Rows this pass already MARKED Crashed still appear with their old
+//     state, so a state check alone cannot see them. marked carries those
+//     keys forward. Without it, two replicas of one role reaped in the same
+//     pass both end Crashed and the cap is breached — and it does not heal:
+//     the next pass skips both (PaneID == "") and never calls this again, so
+//     the duplicates persist until an unrelated event clears them
+//     (ClearCrashedForRole on respawn, or a fresh crash for the role).
+//     See aae-orc-8vlz.
+func (m *Manager) clearStaleCrashed(snapshot []api.Session, marked map[string]bool, workspace, team, role, exceptKey string) {
 	for _, other := range snapshot {
-		if other.State != api.SessionCrashed {
+		if other.State != api.SessionCrashed && !marked[other.Key()] {
 			continue
 		}
 		if other.Workspace != workspace || other.Team != team || other.Role != role {
@@ -1029,7 +1055,7 @@ func (m *Manager) clearStaleCrashed(snapshot []api.Session, workspace, team, rol
 		if other.Key() == exceptKey {
 			continue
 		}
-		if err := m.store.DeleteSession(other.Key()); err != nil {
+		if err := m.store.DeleteSession(other.Key()); err != nil && !errors.Is(err, api.ErrNotFound) {
 			log.Printf("warning: delete stale crashed %s: %v", other.Key(), err)
 		}
 	}
