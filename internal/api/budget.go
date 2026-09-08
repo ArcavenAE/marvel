@@ -209,13 +209,61 @@ type AdmissionState struct {
 	Since  time.Time `json:"since,omitempty"`
 }
 
-// CountAlive returns how many of these sessions count toward replicas.
-// Shared by the reconciler and the daemon so both compute "live"
-// identically.
+// CountAlive returns how many of these sessions have a live process.
+// Shared by the daemon and the reconciler's non-replica paths (budget
+// admission, convergence posture, shift readiness) so all compute "live"
+// identically. NOT the replica count — see CountReplicaSlots.
 func CountAlive(sessions []Session) int {
 	n := 0
 	for i := range sessions {
 		if sessions[i].State.CountsAsAlive() {
+			n++
+		}
+	}
+	return n
+}
+
+// OccupiesReplicaSlot reports whether this session satisfies one of its
+// role's declared replicas, and therefore whether the reconciler should
+// refrain from spawning a replacement for it.
+//
+// For an interactive role this is just process liveness: a service-shaped
+// role wants N processes running, so a slot is occupied exactly while
+// something is alive in it.
+//
+// For a HEADLESS role it is not. A headless role is a job — one prompt,
+// one turn, exit — and per ADR-010 its Replicas is a COMPLETION target
+// rather than a concurrency target: a run that finished its work satisfies
+// its replica and the slot must not be refilled. Without this, `actual` is
+// permanently zero against a permanent `desired`, and the reconciler
+// re-executes (and re-bills) finished work forever on the crash-loop
+// backoff ladder. Measured: finding-036, and priced in finding-027.
+//
+// Deliberately NOT expressed by widening SessionState.CountsAsAlive: that
+// predicate also feeds budget admission, posture, shift readiness, metrics
+// and projection, where a completed job must continue to read as no
+// process at all. Conflating the two is the defect ADR-010 separates.
+//
+// NOTE: this is currently unreachable for headless roles, because nothing
+// writes SessionSucceeded — distinguishing a completed run from a harness
+// that died at startup needs the tmux dead-pane exit status
+// (aae-orc-bxeh). Until that lands the function is behaviour-identical to
+// CountAlive, which is deliberate: it establishes the seam the fix needs
+// without changing what the reconciler does today.
+func OccupiesReplicaSlot(s Session) bool {
+	if s.State.CountsAsAlive() {
+		return true
+	}
+	return s.Runtime.Mode == RuntimeModeHeadless && s.State == SessionSucceeded
+}
+
+// CountReplicaSlots returns how many of these sessions occupy a replica
+// slot. This is the count the reconciler's desired-vs-actual arithmetic
+// uses; see OccupiesReplicaSlot.
+func CountReplicaSlots(sessions []Session) int {
+	n := 0
+	for i := range sessions {
+		if OccupiesReplicaSlot(sessions[i]) {
 			n++
 		}
 	}

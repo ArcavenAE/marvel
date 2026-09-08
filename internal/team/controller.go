@@ -993,7 +993,10 @@ type admissionIntent struct {
 func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) RolePlan {
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
 	desired := role.Replicas
-	actual := api.CountAlive(current)
+	// Replica accounting, not process liveness: a completed headless run
+	// holds its slot (ADR-010). Every other CountAlive caller in the tree
+	// is asking the liveness question and must keep using CountAlive.
+	actual := api.CountReplicaSlots(current)
 
 	plan := RolePlan{
 		Workspace:  t.Workspace,
