@@ -114,6 +114,14 @@ content: |
   from ~/.claude.json first. A prior run can silently disarm what a
   later run measures.
 
+  CORROBORATED 2026-09-08 (finding-036, marvel d0c9f85, second host,
+  tmux 3.7c): the one-shot cell reproduces unchanged — three re-executions
+  of finished work in three minutes, 60s → 120s → 240s toward the ceiling.
+  Same finding records that `aae-orc-bxeh`, finding-015, and
+  `probe-headless-terminal-state.md` all still assert the cost is
+  DIAGNOSTIC, three weeks after finding-027 priced it. The graph was ahead
+  of the tickets and the tickets are what a worker is told to read.
+
   Provenance note: this node's evidence comes from an agent-operated
   recon campaign (orc issue #239) rather than from a marvel session.
   The runs it descends from are orc docs/runs/marvel-run-01/run-01.md

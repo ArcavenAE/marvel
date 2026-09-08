@@ -1,7 +1,18 @@
 # Probe brief: what a headless role's terminal state means, and whether tmux can carry it
 
-**Status:** OPEN (brief only; not started). Scheduled as bd `aae-orc-vsju`,
-which blocks `aae-orc-bxeh`.
+**Status:** PARTIAL (2026-09-08, finding-036). SP5 answered; SP1 partially
+measured (macOS/tmux 3.7c only — no Linux available); SP2/SP3/SP4 open.
+Scheduled as bd `aae-orc-vsju`, which blocks `aae-orc-bxeh`.
+
+> **CORRECTION, read before working this brief.** This brief inherits
+> "the cost is diagnostic" from `aae-orc-bxeh` and finding-015, and frames
+> SP3 around respawn-forever as a hazard of the PROPOSED fix. That is wrong.
+> finding-027 (2026-08-24) measured the finished role being re-executed and
+> re-billed indefinitely — ~12 respawns/hour, $39.66/day floor for a
+> seven-token prompt — and `question-session-state-observation` carries it.
+> Respawn-forever is CURRENT SHIPPED BEHAVIOUR, not a risk to be avoided.
+> Two further premises below are corrected by finding-036: the first backoff
+> is 60s (not 30s), and consequence 3 did not reproduce on tmux 3.7c.
 **Question:** `question-substrate` (the supervision half of the tmux boundary),
 bears on `question-runtime-adapter-framework`
 **Probe medium:** measurement (tmux on macOS and Linux) then code (the daemon)
