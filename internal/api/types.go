@@ -33,12 +33,21 @@ const (
 	SessionCrashed SessionState = "crashed"
 )
 
-// CountsAsAlive reports whether a session in this state should count
-// toward a role's replica total. Pending and Running are obviously alive;
+// CountsAsAlive reports whether a session in this state has a LIVE
+// PROCESS behind it. Pending and Running are obviously alive;
 // CrashLoopBackOff sessions still have a live pane (the reconciler is
 // deliberately not restarting them), so they are counted too. Succeeded,
 // Failed, and Crashed sessions are terminal markers kept for visibility
 // and do NOT count.
+//
+// This is process liveness, NOT replica-slot occupancy. The two were one
+// predicate until ADR-010 separated them, and every consumer except the
+// reconciler's desired-vs-actual arithmetic wants this one: budget
+// admission (a finished job consumes no budget), convergence posture and
+// shift readiness (did real processes survive), procstat sampling, and
+// policy re-projection. For "does this session satisfy one of the role's
+// declared replicas", use OccupiesReplicaSlot, which needs the session
+// rather than the state alone because the answer depends on runtime mode.
 func (s SessionState) CountsAsAlive() bool {
 	switch s {
 	case SessionPending, SessionRunning, SessionCrashLoopBackOff:

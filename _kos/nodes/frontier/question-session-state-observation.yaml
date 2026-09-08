@@ -87,10 +87,23 @@ content: |
 
   OPEN:
 
-  - Whether `replicas` on a headless role is a CONCURRENCY target or a
-    COMPLETION target. Marvel has Deployment semantics only; a
-    satisfied one-shot wants Job semantics. This is a resource-model
-    decision, not a bug fix, and it gates any terminal-state work.
+  - ~~Whether `replicas` on a headless role is a CONCURRENCY target or a
+    COMPLETION target.~~ **RULED 2026-09-08 by the operator: COMPLETION
+    target (Job semantics), recorded as ADR-010.** A run that finished
+    its work satisfies its replica and the slot is not refilled.
+    Implemented by separating the two meanings `CountsAsAlive`
+    conflated — replica-slot occupancy (one consumer: `planRole`) from
+    process liveness (every other consumer: budget admission x4,
+    convergence posture, shift readiness, procstat, projection).
+    `api.OccupiesReplicaSlot` / `CountReplicaSlots` are the seam; they
+    are behaviour-identical today and become live when
+    `SessionSucceeded` is first written (aae-orc-bxeh).
+    Two rejected alternatives are recorded in the ADR because both are
+    tempting and both are worse: freezing the role on completion
+    (the freeze is per-ROLE, thawed only by `marvel reset-health` or
+    delete-and-re-apply — a shift does not clear it), and widening
+    `CountsAsAlive` (which would make a finished job consume budget and
+    read as a live process). The gate this item named is now open.
   - What reports cell 2. A first-turn readiness signal, a pane
     quiescence heuristic (fragile), or treating harness consent
     surfaces as a spawn-time provisioning obligation marvel
