@@ -119,6 +119,54 @@ off` (`driver.go:271`); the default policy is still `RestartAlways`
 (`manifest.go:549`). `MaxRestarts` defaults to 0 and **zero means unlimited**
 (`types.go:373`), so the default path never freezes.
 
+## CORRECTION 2026-09-08 (same day, after the operator pressed on it)
+
+**The recommendation in the next section is wrong and is superseded by
+ADR-010.** It is left in place rather than edited, because the error is
+instructive and the reasoning that produced it is the thing to avoid.
+
+What it says: the restart-policy default is "separable from and more urgent
+than the exit-status plumbing," and `mode = "headless"` "wants a restart-policy
+default that is not `always`, and that stands on its own merit BEFORE any
+`remain-on-exit` work lands."
+
+Why that is wrong, established by reading the control flow rather than the
+tickets:
+
+1. **Marvel has exactly one mechanism for "stop refilling this slot":
+   `freezeRole`,** which parks `BackoffUntil` at a year-9999 sentinel. There is
+   no notion of a replica satisfied by completed work. Restart policy never
+   changes `desired`; it only decides whether and how fast to refill. So
+   "default to `never`" stops the churn only by triggering that freeze — and the
+   freeze is **per-role**, thawed only by `marvel reset-health` or
+   delete-and-re-apply. **A shift does not clear it** (verified). A completed
+   role strands its remaining replicas and reads `failed`.
+2. **`on-failure` is not merely unavailable for lack of an exit code — it is
+   not wired into the reap path at all.** `applyRestartPolicy`, which honours
+   never/on-failure/always, is reached only from the health path. The reap path
+   (`noteReapedCrash`) special-cases `never` alone, and a completed one-shot
+   goes down the reap path.
+3. **Exit status is necessary but NOT sufficient**, which is the specific thing
+   this finding got wrong by calling it "the proper fix, just bigger." It does
+   not change the desired-vs-actual arithmetic. Worse: the `never` branch of
+   `applyRestartPolicy` records that without a freeze, a terminal state that
+   drops out of `CountsAsAlive` makes the reconciler "replace the session every
+   tick, uncapped and with no backoff — one live pane leaked per cycle"
+   (marvel#107, `aae-orc-pyre`). Writing `succeeded` naively converts a
+   5-minute churn into a per-tick pane leak.
+
+The real decision was the one this finding listed third and treated as the slow
+option: **is `replicas` on a headless role a concurrency target or a completion
+target?** The operator ruled COMPLETION on 2026-09-08 (ADR-010). Underneath it,
+`CountsAsAlive` was conflating "occupies a replica slot" with "is a running
+process"; a completed job needs yes to the first and no to the second.
+`api.OccupiesReplicaSlot` / `CountReplicaSlots` now separate them.
+
+The method lesson, which is this finding's own subject pointed at itself: the
+section below reasoned from ticket and brief prose about what restart policy
+"means" instead of following `planRole`'s arithmetic to the one predicate that
+governs it. That is the same failure the finding documents one layer up.
+
 ## What this does to SP3 and SP4
 
 SP3's framing needs inverting. The respawn-forever behaviour is not a hazard to
