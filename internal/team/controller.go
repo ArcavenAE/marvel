@@ -316,7 +316,11 @@ func (c *Controller) ProjectHeldRoleRows(store *api.Store) ([]api.Session, map[s
 				if rh.BackoffUntil.Equal(saturationFreezeUntil) {
 					reason := terminalRoleReason(role, rh)
 					for i := range rows {
-						if rows[i].State.CountsAsAlive() {
+						// A completed headless run is not alive either, but
+						// it is not what the freeze is about: it holds its
+						// slot on its own merit (ADR-010) and reads
+						// succeeded, never failed.
+						if rows[i].State.CountsAsAlive() || rows[i].State == api.SessionSucceeded {
 							continue
 						}
 						reasons[rows[i].Key()] = reason

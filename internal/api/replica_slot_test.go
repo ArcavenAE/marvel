@@ -51,26 +51,27 @@ func TestHeadlessFailureModesDoNotHoldTheSlot(t *testing.T) {
 	}
 }
 
-// TestCountReplicaSlotsIsBehaviourIdenticalToday is the load-bearing
-// regression guard for landing the seam ahead of the fix. Nothing writes
-// SessionSucceeded yet (aae-orc-bxeh owns the exit-status work), so for every
-// session set reachable today CountReplicaSlots must equal CountAlive. If this
-// starts failing, the reconciler's arithmetic has changed and that change was
-// not supposed to arrive with this commit.
-func TestCountReplicaSlotsIsBehaviourIdenticalToday(t *testing.T) {
+// TestCountReplicaSlotsMatchesLivenessOutsideCompletion pins the seam's
+// reach. It was the "behaviour identical today" guard while the seam landed
+// ahead of the fix (marvel PR #244); now that the reap path writes
+// SessionSucceeded for a completed headless run (aae-orc-bxeh), the one
+// divergence is reachable and is pinned by the next test. Every OTHER
+// (mode, state) pair must still count the same under both predicates, so a
+// future state cannot start holding a slot by accident.
+func TestCountReplicaSlotsMatchesLivenessOutsideCompletion(t *testing.T) {
 	t.Parallel()
 	var reachable []Session
 	for _, mode := range []RuntimeMode{RuntimeModeInteractive, RuntimeModeHeadless, ""} {
 		for _, st := range allStates {
 			if st == SessionSucceeded {
-				continue // unreachable in production until bxeh lands
+				continue // the documented divergence; see the next test
 			}
 			reachable = append(reachable, Session{State: st, Runtime: Runtime{Mode: mode}})
 		}
 	}
 	if got, want := CountReplicaSlots(reachable), CountAlive(reachable); got != want {
-		t.Errorf("CountReplicaSlots = %d, CountAlive = %d; the seam must be a no-op "+
-			"until SessionSucceeded is written", got, want)
+		t.Errorf("CountReplicaSlots = %d, CountAlive = %d; only a completed headless "+
+			"run may hold a slot without a live process", got, want)
 	}
 	if got := CountReplicaSlots(nil); got != 0 {
 		t.Errorf("CountReplicaSlots(nil) = %d, want 0", got)

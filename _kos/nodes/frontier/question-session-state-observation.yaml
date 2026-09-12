@@ -135,6 +135,19 @@ content: |
   DIAGNOSTIC, three weeks after finding-027 priced it. The graph was ahead
   of the tickets and the tickets are what a worker is told to read.
 
+  ONE-SHOT CELL CLOSED 2026-09-12 (finding-038, aae-orc-bxeh): the reap
+  path reads tmux's dead-pane exit status (remain-on-exit as the
+  server-global default on marvel's own server; interactive windows
+  switched back per window) and writes `succeeded` for a headless run
+  that exits 0, which then holds its replica slot through the ADR-010
+  seam and is never refilled. Verified under the daemon across restart,
+  re-apply, scale and shift. The tmux floor is measured: pane_dead_status
+  exists from 3.0a but is lost for 10 to 30 percent of exits below 3.5,
+  so an empty status maps to UNKNOWN (crashed, retried once more), never
+  to completion. Still open from this cell: retry policy for a non-zero
+  exit (reported as crashed, ADR-010 left it), shift readiness treating
+  completion as ready, and a daemon advisory below tmux 3.5.
+
   Provenance note: this node's evidence comes from an agent-operated
   recon campaign (orc issue #239) rather than from a marvel session.
   The runs it descends from are orc docs/runs/marvel-run-01/run-01.md

@@ -269,7 +269,7 @@ func TestDaemonRestart_KillsUnrecordedPanes(t *testing.T) {
 
 	// Inject an unrecorded pane directly via the driver. No bbolt
 	// record exists for this pane.
-	unrecordedPaneID, err := driver.NewPane(tmuxSess, "sleep 300", "unrecorded", nil)
+	unrecordedPaneID, err := driver.NewPane(tmuxSess, "sleep 300", "unrecorded", nil, false)
 	if err != nil {
 		t.Fatalf("inject unrecorded pane: %v", err)
 	}

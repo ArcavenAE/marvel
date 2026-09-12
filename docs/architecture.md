@@ -116,9 +116,16 @@ belongs to curtain.
 
 The team controller runs a reconciliation loop every 2 seconds:
 
-1. **Reap dead sessions.** Remove sessions whose tmux panes no longer exist.
-   `ReapDead` marks the transition state `crashed` first, so a dead process
-   is distinguishable from a drained one.
+1. **Reap dead sessions.** Find sessions whose tmux pane's process is gone
+   and read its exit status. A headless role's window is kept after exit
+   (`remain-on-exit`, the default on marvel's own tmux server) so tmux can
+   report the code: exit 0 marks the session `succeeded`, and per ADR-010
+   that run holds its replica slot and is never re-run. Anything else
+   (non-zero, killed, unknown, or an interactive window that closed) is
+   marked `crashed` first, so a dead process is distinguishable from a
+   drained one, and is charged to the role's crash-loop bookkeeping. The
+   status is reliable from tmux 3.5; older servers lose it for a share of
+   exits, and a lost status reads as unknown, never as completion.
 2. **Evaluate health.** Check heartbeat staleness, apply restart policies.
    Repeated restarts move a session to `crashloop-backoff` with its pane
    left alive, so the state stays visible while the reconciler holds off.

@@ -1,8 +1,9 @@
 # Probe brief: what a headless role's terminal state means, and whether tmux can carry it
 
-**Status:** PARTIAL (2026-09-08, finding-036). SP5 answered; SP1 partially
-measured (macOS/tmux 3.7c only — no Linux available); SP2/SP3/SP4 open.
-Scheduled as bd `aae-orc-vsju`, which blocks `aae-orc-bxeh`.
+**Status:** SP1, SP2 and SP5 answered (2026-09-12, finding-038; 2026-09-08,
+finding-036). SP3 and SP4 were ruled by the operator in ADR-010 (completion
+target, state plus policy, no new kind) and the write path shipped under
+`aae-orc-bxeh`. Scheduled as bd `aae-orc-vsju`.
 
 > **CORRECTION, read before working this brief.** This brief inherits
 > "the cost is diagnostic" from `aae-orc-bxeh` and finding-015, and frames

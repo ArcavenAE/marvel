@@ -476,6 +476,10 @@ func (m *Manager) Create(sess *api.Session) error {
 		Command:     plan.command,
 		Env:         plan.env,
 		Stream:      plan.stream,
+		// A headless run's terminal state is its exit code (ADR-010), and
+		// tmux only carries that for a window it keeps. Interactive
+		// windows keep closing on exit, as before.
+		KeepOnExit: sess.Runtime.Mode == api.RuntimeModeHeadless,
 	})
 	if err := inst.Spawn(context.Background()); err != nil {
 		// Clean up store on failure.
@@ -975,51 +979,141 @@ func (m *Manager) ReapDead() []ReapedSession {
 	marked := make(map[string]bool)
 	for _, sess := range sessions {
 		if sess.PaneID == "" {
-			// Already reaped (Crashed) or never had a pane. Skip.
+			// Already reaped (Crashed or Succeeded) or never had a pane. Skip.
 			continue
 		}
-		if !m.driver.HasPane(sess.PaneID) {
-			log.Printf("session %s: pane %s gone, marking crashed", sess.Key(), sess.PaneID)
-			lostPane := sess.PaneID
-			// The harness is gone; its stream has nothing left to say.
-			// Detaching here keeps a crashed session from leaving a pipe
-			// and a parked reader behind.
-			m.detachInstance(sess.Key())
-			m.clearStaleCrashed(sessions, marked, sess.Workspace, sess.Team, sess.Role, sess.Key())
+		st, err := m.driver.PaneStatus(sess.PaneID)
+		if err != nil {
+			// A tmux outage is not a fleet of vanished panes. Leave the
+			// session as it stands and let the next pass read it again.
+			log.Printf("warning: session %s: pane status: %v", sess.Key(), err)
+			continue
+		}
+		if st.Exists && !st.Dead {
+			continue
+		}
+		lostPane := sess.PaneID
+		// The harness is gone; its stream has nothing left to say.
+		// Detaching here keeps a finished session from leaving a pipe
+		// and a parked reader behind.
+		m.detachInstance(sess.Key())
+		// A dead pane kept by remain-on-exit has given up its status;
+		// reclaim the window so the store, not tmux, carries the marker.
+		// Only for panes marvel made: the fence from finding-014 holds on
+		// this path too, and a foreign dead pane is left for its owner.
+		if st.Exists && st.Dead && st.Created {
+			if kerr := m.driver.KillPane(lostPane); kerr != nil {
+				log.Printf("warning: session %s: reclaim dead pane %s: %v", sess.Key(), lostPane, kerr)
+			}
+		}
+
+		if headlessCompleted(sess, st) {
+			log.Printf("session %s: pane %s exited 0, marking succeeded", sess.Key(), lostPane)
 			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
-				live.State = api.SessionCrashed
+				live.State = api.SessionSucceeded
 				live.PaneID = ""
-				// The absence of the pane IS the process-alive verdict
-				// (the health path defers to this one for that check), so
-				// the last reading taken while the pane was alive must
-				// not survive the transition. Without this a session
-				// killed out of band reported state=crashed alongside
-				// health=healthy. See aae-orc-4bz2.
-				live.HealthState = api.HealthUnhealthy
+				live.ExitStatus = st.ExitStatus
+				// No process, no liveness verdict: a finished job is
+				// neither healthy nor unhealthy, and the restart path keys
+				// on HealthUnhealthy, so this must not read as one.
+				live.HealthState = api.HealthUnknown
 				return nil
 			}); err != nil {
-				log.Printf("warning: mark crashed %s: %v", sess.Key(), err)
+				log.Printf("warning: mark succeeded %s: %v", sess.Key(), err)
 				continue
 			}
-			marked[sess.Key()] = true
-			reaped = append(reaped, ReapedSession{
-				Key:       sess.Key(),
-				Workspace: sess.Workspace,
-				Team:      sess.Team,
-				Role:      sess.Role,
-			})
 			events.Emit(m.Events, events.Event{
-				Kind:      events.KindSessionCrashed,
-				Severity:  events.SeverityWarning,
+				Kind:      events.KindSessionSucceeded,
+				Severity:  events.SeverityInfo,
 				Workspace: sess.Workspace,
 				Team:      sess.Team,
 				Role:      sess.Role,
 				Session:   sess.Key(),
-				Message:   fmt.Sprintf("pane %s gone", lostPane),
+				Message:   fmt.Sprintf("pane %s exited 0; replica satisfied", lostPane),
 			})
+			// Not appended to reaped: completion is not a crash and charges
+			// no backoff. The session stays in the store holding its slot.
+			continue
 		}
+
+		log.Printf("session %s: pane %s gone (%s), marking crashed", sess.Key(), lostPane, describeExit(st))
+		m.clearStaleCrashed(sessions, marked, sess.Workspace, sess.Team, sess.Role, sess.Key())
+		if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			live.State = api.SessionCrashed
+			live.PaneID = ""
+			live.ExitStatus = st.ExitStatus
+			// The absence of the pane IS the process-alive verdict
+			// (the health path defers to this one for that check), so
+			// the last reading taken while the pane was alive must
+			// not survive the transition. Without this a session
+			// killed out of band reported state=crashed alongside
+			// health=healthy. See aae-orc-4bz2.
+			live.HealthState = api.HealthUnhealthy
+			return nil
+		}); err != nil {
+			log.Printf("warning: mark crashed %s: %v", sess.Key(), err)
+			continue
+		}
+		marked[sess.Key()] = true
+		reaped = append(reaped, ReapedSession{
+			Key:       sess.Key(),
+			Workspace: sess.Workspace,
+			Team:      sess.Team,
+			Role:      sess.Role,
+		})
+		events.Emit(m.Events, events.Event{
+			Kind:      events.KindSessionCrashed,
+			Severity:  events.SeverityWarning,
+			Workspace: sess.Workspace,
+			Team:      sess.Team,
+			Role:      sess.Role,
+			Session:   sess.Key(),
+			Message:   fmt.Sprintf("pane %s gone (%s)", lostPane, describeExit(st)),
+		})
 	}
 	return reaped
+}
+
+// headlessCompleted is the one mapping from a dead pane to Succeeded, and
+// it is deliberately narrow: a HEADLESS role whose pane is still listed,
+// dead, with a literal exit status of "0".
+//
+// Everything else stays a crash, which is today's behaviour:
+//
+//   - An interactive role's pane vanishing means what it always meant.
+//     The window closes on exit, tmux keeps nothing, and a service-shaped
+//     role wants a process there.
+//   - A non-zero status is a failed run. It is reported as crashed rather
+//     than as a distinct Failed verdict because retry-on-failure for
+//     headless work is a policy question ADR-010 left open (on-failure is
+//     not wired on the reap path), so the restart path's existing
+//     behaviour is kept and the code is carried on ExitStatus.
+//   - An EMPTY status is UNKNOWN, not success: it is how tmux reports
+//     death by signal, and below tmux 3.5 it is also how a lost status
+//     reads (measured 2026-09-12, aae-orc-bxeh). Treating it as
+//     completion would let a killed job hold a replica slot forever, and
+//     the cost of the other error is one extra run under backoff.
+//   - A pane that is gone entirely (Exists false) has no status to read.
+//     On a tmux server started by an older build the global default may
+//     not yet be on; the run is re-charged as before and nothing is lost
+//     except the shortcut.
+func headlessCompleted(sess api.Session, st tmux.PaneStatus) bool {
+	return sess.Runtime.Mode == api.RuntimeModeHeadless &&
+		st.Exists && st.Dead && st.ExitStatus == "0"
+}
+
+// describeExit renders a dead pane's status for logs and events.
+func describeExit(st tmux.PaneStatus) string {
+	switch {
+	case !st.Exists:
+		return "window closed"
+	case st.ExitStatus != "":
+		return "exited " + st.ExitStatus
+	case st.Signal != "":
+		return "signal " + st.Signal
+	default:
+		return "exit status unknown"
+	}
 }
 
 // clearStaleCrashed removes any Crashed session for the given role,

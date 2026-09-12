@@ -16,7 +16,7 @@ import (
 // Declaring it here keeps package runtime free of a tmux dependency and
 // lets tests drive an instance without a tmux server.
 type PaneController interface {
-	NewPane(session, command, title string, envs map[string]string) (string, error)
+	NewPane(session, command, title string, envs map[string]string, keepOnExit bool) (string, error)
 	KillPane(paneID string) error
 	SendKeys(paneID, text string, literal, enter bool) error
 	CapturePane(paneID string) (string, error)
@@ -39,6 +39,11 @@ type TmuxConfig struct {
 	Command     string
 	Env         map[string]string
 	Stream      *StreamSource
+	// KeepOnExit asks the pane controller to leave the window in place
+	// after the command exits, so the exit status can be read back.
+	// Set for headless roles (a job's terminal state is its exit code,
+	// ADR-010); interactive roles keep the close-on-exit contract.
+	KeepOnExit bool
 	// EventBuffer bounds the channel Events returns. A full channel
 	// applies back-pressure to the parser, which applies it to the pipe,
 	// which applies it to the harness — the chain is intentional.
@@ -95,7 +100,7 @@ func (i *TmuxInstance) Spawn(_ context.Context) error {
 		i.closeEvents()
 	}
 
-	paneID, err := i.cfg.Panes.NewPane(i.cfg.TmuxSession, i.cfg.Command, i.cfg.Title, i.cfg.Env)
+	paneID, err := i.cfg.Panes.NewPane(i.cfg.TmuxSession, i.cfg.Command, i.cfg.Title, i.cfg.Env, i.cfg.KeepOnExit)
 	if err != nil {
 		i.state.Store(int32(StateFailed))
 		i.teardownStream()

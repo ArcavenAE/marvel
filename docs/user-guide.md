@@ -334,6 +334,19 @@ this session compacts".
 Per-process IO counters are read on Linux only; `marvel describe session`
 reports `IOAvailable: false` elsewhere.
 
+`STATE` carries the exit code on rows the reap path wrote. A headless role
+is a job (one prompt, one turn, exit), and a run that exits 0 reads
+`succeeded (exit 0)`: it holds its replica and marvel does not run it
+again, so `replicas: 3` on a headless role means three completed runs,
+not three processes at once (ADR-010). A non-zero exit reads
+`crashed (exit N)` and is retried under the usual crash-loop backoff; a
+run killed by a signal reads plain `crashed`, because tmux reports no
+code for it. Interactive roles are unchanged: their window closes on
+exit and the row reads plain `crashed`. The exit code comes from tmux and
+is reliable from tmux 3.5; an older server loses it for a share of exits,
+and a lost code is treated as unknown (the run is retried once more), never
+as completion.
+
 ### Interactive claude context pressure
 
 An interactive claude session emits no stream to parse, so the usage
