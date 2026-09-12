@@ -28,6 +28,21 @@ fmt:
 lint:
     golangci-lint run ./...
 
+# Validate the contract schemas and their fixtures (local; CI wiring lands with codegen)
+contracts-validate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    S=contracts/schema/director-envelope.schema.json
+    uvx check-jsonschema --check-metaschema "$S"
+    uvx check-jsonschema --schemafile "$S" contracts/schema/testdata/valid-*.json
+    for f in contracts/schema/testdata/invalid-*.json; do
+      if uvx check-jsonschema --schemafile "$S" "$f" >/dev/null 2>&1; then
+        echo "FAIL: $f validated but should have been rejected"; exit 1
+      fi
+      echo "ok (rejected): $f"
+    done
+    echo "contracts-validate: all checks passed"
+
 # Start the marvel daemon (foreground)
 start: build
     ./bin/marvel daemon
