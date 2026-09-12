@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.arcaven.ae/director/envelope/v1.json",
+  "$id": "https://director-envelope.invalid/v1.json",
+  "$comment": "PLACEHOLDER $id. The host is a reserved .invalid name (RFC 2606) on purpose: the production domain is a human decision, flagged to the operator, and this field is NOT frozen until they rule. A $id is an identifier and need not resolve, so the placeholder does not block validation. Evolution rule: additive optional fields only; reserved objects stay nullable; a breaking change bumps schema_version. Authority and identity are asserted, never inferred (R-02). No credential or secret ever appears in this envelope: the credential-to-subject binding (R-77, R-85) is transport level (a NATS user or NKey per session), so the envelope carries claims, never the thing that proves them. Do not add a token or credential field here.",
   "title": "Director Envelope",
-  "description": "Intentional agent speech carried over the bus, peer to peer including the human. This is an A2A v1.0 compatible profile: the fields here map onto A2A v1.0 message semantics (the FIPA-ACL performative subset maps to A2A message intent), and codegen emits Go and Rust types plus validators from this one schema so the bound consumers cannot drift. Bound consumers: marvel (Go) and beadle (Rust). See contracts/README.md for the A2A mapping and the codegen targets.",
-  "$comment": "Evolution rule: additive optional fields only; reserved objects stay nullable; a breaking change bumps schema_version. Authority and identity are asserted, never inferred (R-02). No credential or secret ever appears in this envelope: the credential-to-subject binding (R-77, R-85) is transport level (a NATS user or NKey per session), so the envelope carries claims, never the thing that proves them. Do not add a token or credential field here.",
+  "description": "Intentional agent speech carried over the bus, peer to peer including the human. This is an A2A v1.0 compatible profile: the fields here map onto A2A v1.0 message semantics (the FIPA-ACL performative subset maps to A2A message intent), and codegen emits Go and Rust types plus validators from this one schema so the bound consumers cannot drift. Bound consumers: marvel (Go) and beadle (Rust). See contracts/README.md for the A2A mapping and the codegen targets. Time and UUID fields carry both a format annotation and an always-enforced pattern, so validation does not depend on the validator running in format-assertion mode.",
   "type": "object",
   "required": ["schema_version", "message_id", "sender", "recipient", "performative", "authority", "content", "sent_at"],
   "additionalProperties": false,
@@ -52,7 +52,8 @@
         "session": {
           "type": ["string", "null"],
           "format": "uuid",
-          "description": "The current harness session UUID, the key (R-71). Nullable now; required once marvel sets it at spawn (R-73, R-84). Nothing derives from it yet."
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "The current harness session UUID, the key (R-71). Nullable now; required once marvel sets it at spawn (R-73, R-84). Nothing derives from it yet. The pattern applies only when the value is a string, so null still validates."
         },
         "principal": {
           "$comment": "RESERVED. The envelope MUST validate with principal null; nothing reads it yet. Its contents are deferred (R-53) until a principal writes the bus without a human launching it (the R-77 trigger). Do not freeze claim names: kind is an open string seeded with none and launcher, and the object stays extensible.",
@@ -119,7 +120,11 @@
               "required": ["role", "key", "epoch"],
               "additionalProperties": false,
               "properties": {
-                "role": { "type": "string" },
+                "role": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+                  "description": "The seat role, same closed class as an address role segment (R-76)."
+                },
                 "key": { "type": "string" },
                 "epoch": { "type": "integer" }
               }
@@ -151,16 +156,19 @@
     "reply_by": {
       "type": "string",
       "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
       "description": "Optional RFC3339 expectation; drives escalation."
     },
     "expires_at": {
       "type": "string",
       "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
       "description": "Optional RFC3339 queue TTL; a stale control message dies rather than acting late."
     },
     "sent_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
     },
     "trace": {
       "type": "object",

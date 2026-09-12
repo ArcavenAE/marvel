@@ -30,6 +30,21 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
 
 Validate locally with `just contracts-validate`.
 
+## Validation scope and a migration step
+
+The `authority` block is required, so the validator applies to emitters that
+generate from this schema. The live phase-0 shim (director-mcp) predates the
+schema and emits no `authority` block, so today's bus traffic does not validate
+against it yet. That is a known migration step, not a defect: the shim is being
+regenerated under the director#3 and director#4 work already in flight (director
+PRs #10 and #11), and the phase-0 envelope-v1 refresh is a later slice of this
+same b69n arc. Until a bus emitter is regenerated from this schema, validate
+regenerated emitters and fixtures, not the current live traffic.
+
+The `$id` host is a deliberate placeholder (a reserved `.invalid` name): the
+production schema domain is a human decision and is not frozen. A `$id` need not
+resolve, so this does not affect validation.
+
 ## Envelope shape (the frozen and the reserved)
 
 The identity and authority shape was set with the architect against the naming

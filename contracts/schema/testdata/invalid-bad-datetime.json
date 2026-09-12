@@ -1,0 +1,1 @@
+{"schema_version":1,"message_id":"01JZ0000000000000000000006","sender":{"agent_id":"planner","workspace":"aae-orc"},"recipient":{"address":"agent://ops/planner"},"performative":"INFORM","authority":{"strength":"none"},"content":{"type":"text"},"sent_at":"yesterday"}
