@@ -26,6 +26,7 @@ const (
 	KindSessionCrashed    Kind = "session.crashed"
 	KindSessionRestarted  Kind = "session.restarted"
 	KindSessionFailed     Kind = "session.failed"
+	KindSessionSucceeded  Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	KindHealthCheckFailed Kind = "health.failed"
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
@@ -166,6 +167,7 @@ var allKinds = []Kind{
 	KindSessionCrashed,
 	KindSessionRestarted,
 	KindSessionFailed,
+	KindSessionSucceeded,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
 	KindShiftStarted,

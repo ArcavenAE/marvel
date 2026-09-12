@@ -106,7 +106,7 @@ func TestSessionLifecycle(t *testing.T) {
 	paneID, err := d.NewPane(sessionName, "sleep 300", "test-agent", map[string]string{
 		"MARVEL_SESSION": "test-agent",
 		"MARVEL_SOCKET":  "/tmp/test.sock",
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestHasPane(t *testing.T) {
 		t.Fatalf("new session: %v", err)
 	}
 
-	paneID, err := d.NewPane(sessionName, "sleep 60", "haspane-test", nil)
+	paneID, err := d.NewPane(sessionName, "sleep 60", "haspane-test", nil, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestSendKeys(t *testing.T) {
 	}
 
 	// Create a pane running cat (will echo what we send)
-	paneID, err := d.NewPane(sessionName, "cat", "sendkeys-test", nil)
+	paneID, err := d.NewPane(sessionName, "cat", "sendkeys-test", nil, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestSendKeysConcurrentInjectNoInterleave(t *testing.T) {
 	if err := d.NewSession(sessionName); err != nil {
 		t.Fatalf("new session: %v", err)
 	}
-	paneID, err := d.NewPane(sessionName, "cat", "inject-race", nil)
+	paneID, err := d.NewPane(sessionName, "cat", "inject-race", nil, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestCapturePane(t *testing.T) {
 	}
 
 	// Create a pane with a shell that stays alive, then echo into it
-	paneID, err := d.NewPane(sessionName, "sh", "capture-test", nil)
+	paneID, err := d.NewPane(sessionName, "sh", "capture-test", nil, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestCapturePaneRange(t *testing.T) {
 		t.Fatalf("new session: %v", err)
 	}
 
-	paneID, err := d.NewPane(sessionName, "sh", "range-test", nil)
+	paneID, err := d.NewPane(sessionName, "sh", "range-test", nil, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestDriverConcurrentUse(t *testing.T) {
 			for op := 0; op < opsPerWorker; op++ {
 				paneID, err := d.NewPane(sessionName,
 					fmt.Sprintf("sleep %d", 30+op), // long-running so pane stays alive
-					fmt.Sprintf("worker-%d-op-%d", w, op), nil)
+					fmt.Sprintf("worker-%d-op-%d", w, op), nil, false)
 				if err != nil {
 					errCh <- fmt.Errorf("worker %d op %d new-pane: %w", w, op, err)
 					return
@@ -573,7 +573,7 @@ func TestPanePID(t *testing.T) {
 		t.Fatalf("new session: %v", err)
 	}
 
-	paneID, err := d.NewPane(sessionName, "sleep 300", "panepid-test", nil)
+	paneID, err := d.NewPane(sessionName, "sleep 300", "panepid-test", nil, false)
 	if err != nil {
 		t.Fatalf("new pane: %v", err)
 	}
@@ -606,5 +606,83 @@ func TestPanePID(t *testing.T) {
 	}
 	if _, err := d.PanePID(paneID); err == nil {
 		t.Error("PanePID succeeded for a killed pane, want error")
+	}
+}
+
+// A headless window is kept after its command exits so the exit status
+// can be read back; an interactive window closes as before. This is the
+// tmux half of aae-orc-bxeh (ADR-010): pane_dead_status through the same
+// new-window form marvel launches with. Measured on tmux 3.0a through
+// 3.7b; the status is reliable from 3.5 (0 of 50 lost) and lossy below
+// it, which is why an empty status is never read as a verdict.
+func TestPaneStatusCarriesExitStatusForKeptWindow(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	sessionName := "marvel-test-pane-status"
+	t.Cleanup(func() { _ = d.KillSession(sessionName) })
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	got, err := d.cmd("show-options", "-g", "-v", "remain-on-exit").Output()
+	if err != nil || strings.TrimSpace(string(got)) != "on" {
+		t.Fatalf("server-global remain-on-exit = %q (%v), want on", strings.TrimSpace(string(got)), err)
+	}
+
+	// Kept window, non-zero exit: still listed, dead, status carried.
+	kept, err := d.NewPane(sessionName, "sh -c 'exit 3' > /dev/null < /dev/null", "kept", nil, true)
+	if err != nil {
+		t.Fatalf("new pane (kept): %v", err)
+	}
+	st := waitPaneStatus(t, d, kept, func(s PaneStatus) bool { return s.Dead })
+	if !st.Exists || !st.Dead || st.ExitStatus != "3" || !st.Created {
+		t.Fatalf("kept pane status = %+v, want exists, dead, exit 3, created", st)
+	}
+	if d.HasPane(kept) {
+		t.Fatalf("HasPane(%s) = true for a dead pane; liveness must read pane_dead", kept)
+	}
+
+	// Closed window: gone entirely, no status to read. The window is
+	// switched back to close-on-exit after new-window returns, so an
+	// instant exit can land inside that gap and persist dead (consequence
+	// 4, benign direction); the sleep keeps this case on the closed path.
+	closed, err := d.NewPane(sessionName, "sh -c 'sleep 1; exit 3' > /dev/null < /dev/null", "closed", nil, false)
+	if err != nil {
+		t.Fatalf("new pane (closed): %v", err)
+	}
+	st = waitPaneStatus(t, d, closed, func(s PaneStatus) bool { return !s.Exists })
+	if st.Exists {
+		t.Fatalf("closed pane status = %+v, want gone", st)
+	}
+
+	// A live pane reads alive, not dead, and carries no status.
+	live, err := d.NewPane(sessionName, "sleep 60", "live", nil, true)
+	if err != nil {
+		t.Fatalf("new pane (live): %v", err)
+	}
+	st, err = d.PaneStatus(live)
+	if err != nil || !st.Exists || st.Dead || st.ExitStatus != "" {
+		t.Fatalf("live pane status = %+v (%v), want exists, not dead, no status", st, err)
+	}
+	if !d.HasPane(live) {
+		t.Fatalf("HasPane(%s) = false for a live pane", live)
+	}
+}
+
+func waitPaneStatus(t *testing.T, d *Driver, paneID string, done func(PaneStatus) bool) PaneStatus {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		st, err := d.PaneStatus(paneID)
+		if err != nil {
+			t.Fatalf("pane status %s: %v", paneID, err)
+		}
+		if done(st) || time.Now().After(deadline) {
+			return st
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

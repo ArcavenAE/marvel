@@ -23,9 +23,10 @@ const (
 	// state transitions to Failed.
 	SessionCrashLoopBackOff SessionState = "crashloop-backoff"
 	// SessionCrashed is the transition state set by ReapDead when the
-	// underlying tmux pane vanished (clean exit, manual kill, runtime
-	// binary crashed). The session is kept in the store — with PaneID
-	// cleared — so operators see the event via `marvel get sessions`
+	// underlying tmux pane's process is gone (a non-zero or unknown
+	// exit, manual kill, runtime binary crashed; a headless role's clean
+	// exit is SessionSucceeded instead). The session is kept in the store
+	// with PaneID cleared, so operators see the event via `marvel get sessions`
 	// during the backoff window. The reconciler does not count Crashed
 	// sessions toward replica totals, and clears any stale Crashed
 	// sessions for a role at the moment it spawns a replacement. See
@@ -207,6 +208,14 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+	// ExitStatus is what tmux reported when the pane's process ended, as
+	// pane_dead_status formats it: a decimal exit code, or empty when the
+	// process died by signal or tmux lost the status (indistinguishable
+	// below tmux 3.5). Set by the reap path on every session it marks
+	// Succeeded or Crashed; empty on live sessions and on sessions whose
+	// window closed on exit (interactive roles, where tmux keeps nothing).
+	// Status, not spec; json omitempty keeps it out of pre-existing rows.
+	ExitStatus string `json:"exit_status,omitempty" toml:"-"`
 	// Reason is a projection-only annotation: empty on every real session
 	// row, filled by the read-path join (team.Controller.ProjectHeldRoleRows)
 	// on the synthetic rows it invents for a role held down with no live

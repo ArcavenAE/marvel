@@ -2187,6 +2187,14 @@ func renderSessionTable(sessions []api.Session) string {
 				state += " (" + tag + ")"
 			}
 		}
+		// The exit code rides the same suffix idiom on the rows the reap
+		// path wrote it to. "succeeded (exit 0)" is a finished headless run
+		// holding its slot (ADR-010); "crashed (exit 3)" tells a failed run
+		// from a killed one, whose status tmux reports empty and which
+		// therefore shows no suffix.
+		if (s.State == api.SessionSucceeded || s.State == api.SessionCrashed) && s.ExitStatus != "" {
+			state += " (exit " + s.ExitStatus + ")"
+		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			s.Workspace, s.Team, s.Role, gen, s.Name, state, health, ctx, cpu, rss, desk, runtimeName, llm)
 	}
@@ -2213,6 +2221,8 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "  spawn no replacement — saturated hit max_restarts, frozen is\n")
 		fmt.Fprintf(&buf, "  restart_policy=never. Plain \"failed\" is being replaced. Clear a\n")
 		fmt.Fprintf(&buf, "  saturation freeze with `marvel reset-health`.\n")
+		fmt.Fprintf(&buf, "  \"succeeded (exit 0)\" is a headless run that finished; it holds its\n")
+		fmt.Fprintf(&buf, "  replica and is not re-run. \"crashed (exit N)\" carries the exit code.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  HEALTH is liveness (process + pane), not productivity. A live\n")
 		fmt.Fprintf(&buf, "  process at a login prompt still reads healthy. \"(stalled)\" marks a\n")

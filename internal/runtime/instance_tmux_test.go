@@ -34,7 +34,7 @@ type fakePanes struct {
 	wrote        chan struct{}
 }
 
-func (f *fakePanes) NewPane(session, command, title string, envs map[string]string) (string, error) {
+func (f *fakePanes) NewPane(session, command, title string, envs map[string]string, _ bool) (string, error) {
 	f.mu.Lock()
 	f.command = command
 	f.env = envs

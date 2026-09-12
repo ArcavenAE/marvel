@@ -35,3 +35,26 @@ into the lint recipe's preflight.
 
 Refs: `.claude/rules/tooling-friction.md` (capture before workaround);
 aae-orc-m4of (the change whose commit this blocked).
+
+## Second instance, 2026-09-12: phantom findings on files that DO exist
+
+The lefthook pre-commit `lint` step failed with six `staticcheck SA5011`
+(possible nil pointer dereference) findings against `internal/api/manifest_test.go:787`
+and `internal/runtime/claudecode/parser_test.go:425,582`. All three sites are
+`if x == nil { t.Fatal(...) }` followed by a use of `x`, which staticcheck
+only flags when it has lost the fact that `t.Fatal` does not return. The
+files are unchanged on main, main's CI lints clean with the same
+golangci-lint 2.12.2, and this checkout had touched none of them. Two
+consecutive runs reported the same six; `golangci-lint cache clean` and a
+rerun reported 0 issues.
+
+Same class, different shape: the first instance reported a file that was
+not in the tree, this one reported wrong facts about files that were. The
+likely carrier is the same machine-global cache with entries written by a
+concurrent session on a different toolchain (`go1.26.5` here against the
+module's `go 1.25.4` directive; four other marvel sessions were live on the
+host). The workaround is unchanged and is still cache maintenance, not a
+gate bypass. The durable-fix candidates above stand; this instance is the
+second vote for wiring `cache clean` into the lint preflight.
+
+Refs: aae-orc-bxeh (the commit this blocked).

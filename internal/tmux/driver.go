@@ -210,7 +210,29 @@ func (d *Driver) NewSession(name string) error {
 	// Best-effort, matching the driver's other set-option calls: a session
 	// that missed the raise still runs, it just scrapes less scrollback.
 	_ = d.cmd("set-option", "-t", name, "history-limit", strconv.Itoa(DefaultHistoryLimit)).Run()
+	d.ensureRemainOnExit()
 	return nil
+}
+
+// ensureRemainOnExit sets remain-on-exit on as the server-global window
+// default. It is the only global option marvel sets, and it is safe
+// because the driver always talks to marvel's own tmux server
+// (NewDriver), never the operator's.
+//
+// Why global rather than per window: a window option can only be set
+// after new-window returns, and a harness that exits before that
+// set-option lands has already vanished, taking its exit status with it
+// (probe-headless-terminal-state, consequence 4; measured on every tmux
+// from 3.0a to 3.7b). The global default is in force at creation, so an
+// instant exit is still caught. NewPane then turns the option back OFF
+// per window for interactive roles, which keeps today's behaviour for
+// them: their pane vanishes on exit and ReapDead sees it gone.
+//
+// Idempotent and best-effort, matching the driver's other set-option
+// calls. Called from NewSession so a daemon adopting a server started
+// by an older build also raises the default.
+func (d *Driver) ensureRemainOnExit() {
+	_ = d.cmd("set-option", "-g", "remain-on-exit", "on").Run()
 }
 
 // PaneInfo holds information about a tmux pane.
@@ -242,7 +264,17 @@ type PaneInfo struct {
 // NewPane creates a new window in the given session running the specified command.
 // Each agent gets its own window to avoid tmux "no space for new pane" errors.
 // envs sets environment variables. Returns the pane ID (e.g., "%5").
-func (d *Driver) NewPane(session, command, title string, envs map[string]string) (string, error) {
+//
+// keepOnExit selects what happens to the window when its command exits.
+// True leaves the window in place as a dead pane carrying pane_dead_status
+// (the exit code) and pane_dead_signal, which is how ReapDead tells a
+// completed headless run from a crash (ADR-010, aae-orc-bxeh). False is
+// the interactive contract: the window closes on exit and the pane simply
+// vanishes. The server-global default is on (see ensureRemainOnExit) so
+// the keep case has no race; the off case is applied per window after
+// creation, and a pane that exits inside that gap merely persists dead
+// until ReapDead kills it.
+func (d *Driver) NewPane(session, command, title string, envs map[string]string, keepOnExit bool) (string, error) {
 	args := []string{
 		"new-window", "-t", session,
 		"-d",
@@ -267,8 +299,12 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string)
 		_ = d.cmd("select-pane", "-t", paneID, "-T", title).Run()
 	}
 
-	// Ensure window closes when command exits (don't leave orphaned shells).
-	_ = d.cmd("set-option", "-t", paneID, "remain-on-exit", "off").Run()
+	if !keepOnExit {
+		// Interactive contract: the window closes when the command exits
+		// (no orphaned dead panes). Headless windows keep the global
+		// default so their exit status survives for ReapDead.
+		_ = d.cmd("set-option", "-t", paneID, "remain-on-exit", "off").Run()
+	}
 
 	// Mark the pane as marvel's. Every destructive path checks this, so a
 	// pane marvel did not create is never a candidate. The mark lives in
@@ -286,8 +322,75 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string)
 // validates the target against the live pane list and exits 1 for
 // unknown IDs. See ArcavenAE/marvel#10 — before this change ReapDead
 // never saw dead panes and sessions stayed 'running/unknown' forever.
+//
+// Since remain-on-exit is the server default, a pane whose command has
+// exited can still be listed. Such a pane has no live process, so HasPane
+// reports it as absent: the question every caller asks is "is something
+// running here", not "does tmux still hold a window". PaneStatus is the
+// read that distinguishes the two.
 func (d *Driver) HasPane(paneID string) bool {
-	return d.cmd("list-panes", "-t", paneID, "-F", "#{pane_id}").Run() == nil
+	st, err := d.PaneStatus(paneID)
+	return err == nil && st.Exists && !st.Dead
+}
+
+// PaneStatus is what tmux reports about a pane's process.
+//
+// ExitStatus is the exit code as tmux formats pane_dead_status: a decimal
+// string when the process exited, and EMPTY when it died by signal OR
+// when tmux lost the status. The two are indistinguishable below tmux
+// 3.5 (measured 2026-09-12: on 3.0a through 3.4 a finished pane's status
+// is lost for good in 10 to 30 percent of trials; 0 of 50 lost on 3.5a
+// and 3.7b), so callers must treat empty as UNKNOWN, never as a signal
+// verdict on its own. Signal is pane_dead_signal, which is absent before
+// 3.5, a number on 3.5a and a name on 3.7; informational only.
+type PaneStatus struct {
+	// Exists is false when tmux no longer lists the pane at all: the
+	// window closed on exit (interactive contract), was killed, or the
+	// server is gone.
+	Exists bool
+	// Dead is pane_dead: the window is still listed but its process has
+	// exited (remain-on-exit kept it).
+	Dead bool
+	// ExitStatus is pane_dead_status; see the type comment.
+	ExitStatus string
+	// Signal is pane_dead_signal; informational only.
+	Signal string
+	// Created is the PaneMarker read-back: marvel made this pane. Kept
+	// here so the reap path can kill a dead pane without a second query
+	// and without touching a pane it did not create (finding-014).
+	Created bool
+}
+
+// PaneStatus reads liveness and exit status for one pane in a single
+// list-panes call. A pane tmux does not know returns Exists=false and no
+// error; other failures (no server, malformed reply) return an error.
+func (d *Driver) PaneStatus(paneID string) (PaneStatus, error) {
+	out, err := d.cmd("list-panes", "-t", paneID,
+		"-F", "#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{"+PaneMarker+"}").CombinedOutput()
+	if err != nil {
+		text := string(out)
+		// list-panes validates the target and exits 1 for an unknown id;
+		// that is the "gone" answer, not a failure. Anything else (no
+		// server, bad socket) is reported so a caller does not read an
+		// outage as a fleet of vanished panes.
+		if strings.Contains(text, "can't find pane") || strings.Contains(text, "can't find window") ||
+			strings.Contains(text, "can't find session") || strings.Contains(text, "no server running") {
+			return PaneStatus{}, nil
+		}
+		return PaneStatus{}, fmt.Errorf("pane-status %s: %s: %w", paneID, text, err)
+	}
+	first := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+	parts := strings.Split(first, "\t")
+	if len(parts) < 4 {
+		return PaneStatus{}, fmt.Errorf("pane-status %s: unparseable %q", paneID, first)
+	}
+	return PaneStatus{
+		Exists:     true,
+		Dead:       parts[0] == "1",
+		ExitStatus: parts[1],
+		Signal:     parts[2],
+		Created:    parts[3] == paneMarkerValue,
+	}, nil
 }
 
 // PanePID returns the pid of the process tmux started in the pane. That

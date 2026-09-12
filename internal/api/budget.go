@@ -244,12 +244,11 @@ func CountAlive(sessions []Session) int {
 // and projection, where a completed job must continue to read as no
 // process at all. Conflating the two is the defect ADR-010 separates.
 //
-// NOTE: this is currently unreachable for headless roles, because nothing
-// writes SessionSucceeded — distinguishing a completed run from a harness
-// that died at startup needs the tmux dead-pane exit status
-// (aae-orc-bxeh). Until that lands the function is behaviour-identical to
-// CountAlive, which is deliberate: it establishes the seam the fix needs
-// without changing what the reconciler does today.
+// SessionSucceeded is written by the reap path (session.Manager.ReapDead)
+// when a headless role's window is kept after exit and tmux reports a
+// literal exit status of 0. A non-zero or empty status stays Crashed, so a
+// harness that died at startup, was killed, or ran on a tmux old enough to
+// lose the status (below 3.5) is still replaced rather than parked here.
 func OccupiesReplicaSlot(s Session) bool {
 	if s.State.CountsAsAlive() {
 		return true
