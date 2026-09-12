@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcaven.ae/director/envelope/v1.json",
+  "title": "Director Envelope",
+  "description": "Intentional agent speech carried over the bus, peer to peer including the human. This is an A2A v1.0 compatible profile: the fields here map onto A2A v1.0 message semantics (the FIPA-ACL performative subset maps to A2A message intent), and codegen emits Go and Rust types plus validators from this one schema so the bound consumers cannot drift. Bound consumers: marvel (Go) and beadle (Rust). See contracts/README.md for the A2A mapping and the codegen targets.",
+  "$comment": "Evolution rule: additive optional fields only; reserved objects stay nullable; a breaking change bumps schema_version. Authority and identity are asserted, never inferred (R-02). No credential or secret ever appears in this envelope: the credential-to-subject binding (R-77, R-85) is transport level (a NATS user or NKey per session), so the envelope carries claims, never the thing that proves them. Do not add a token or credential field here.",
+  "type": "object",
+  "required": ["schema_version", "message_id", "sender", "recipient", "performative", "authority", "content", "sent_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Envelope schema version. Integer per the session-029 rule."
+    },
+    "message_id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID: sortable, unique. Consumers dedupe on this (delivery is at least once)."
+    },
+    "correlation_id": {
+      "type": "string",
+      "description": "Work-item thread across many messages. The loop guard keys on it (correlation_id plus performative plus recipient within a cool-down)."
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "Reply chain. On the first message of a chain it equals message_id."
+    },
+    "in_reply_to": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Optional. The message_id this answers."
+    },
+    "sender": {
+      "type": "object",
+      "required": ["agent_id", "workspace"],
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+          "description": "The roster address, stable across restarts. Closed character class (R-76): no dot, star, angle bracket, or space, because it is interpolated into a NATS subject (director#3)."
+        },
+        "role": {
+          "type": "string",
+          "description": "Current role. Informational only, never a routing or authorization input (R-71, R-82)."
+        },
+        "workspace": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+        },
+        "session": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "The current harness session UUID, the key (R-71). Nullable now; required once marvel sets it at spawn (R-73, R-84). Nothing derives from it yet."
+        },
+        "principal": {
+          "$comment": "RESERVED. The envelope MUST validate with principal null; nothing reads it yet. Its contents are deferred (R-53) until a principal writes the bus without a human launching it (the R-77 trigger). Do not freeze claim names: kind is an open string seeded with none and launcher, and the object stays extensible.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["kind"],
+              "additionalProperties": true,
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "description": "Open. Seeded values: none, launcher."
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "recipient": {
+      "type": "object",
+      "required": ["address"],
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string",
+          "pattern": "^(agent://[a-z0-9][a-z0-9-]{0,31}/[a-z0-9][a-z0-9-]{0,31}|role://[a-z0-9][a-z0-9-]{0,31}/[a-z0-9][a-z0-9-]{0,31}|broadcast://[a-z0-9][a-z0-9-]{0,31}(/[a-z0-9][a-z0-9-]{0,31})?)$",
+          "$comment": "agent://{team}/{id}, role://{team}/{role}, broadcast://{workspace}[/{team}]. Every segment uses the agent_id character class (R-76), so a wildcard or separator cannot be smuggled into a subject.",
+          "description": "Where the message goes. role:// resolves to the current holder at delivery; an unresolvable address returns NOT-UNDERSTOOD to the sender."
+        },
+        "team": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+        }
+      }
+    },
+    "performative": {
+      "type": "string",
+      "enum": [
+        "INFORM", "REQUEST", "AGREE", "REFUSE", "FAILURE", "CFP",
+        "PROPOSE", "ACCEPT-PROPOSAL", "REJECT-PROPOSAL", "CANCEL",
+        "QUERY", "NOT-UNDERSTOOD"
+      ],
+      "$comment": "FIPA-ACL subset, the v1 cut (12 of 22). Add only on demonstrated need, which bumps schema_version. AGREE, REFUSE, FAILURE, and INFORM carry the partial-compliance distinction finding-151 asks for. NOT-UNDERSTOOD is the mandatory dead-letter behavior."
+    },
+    "authority": {
+      "type": "object",
+      "required": ["strength"],
+      "additionalProperties": false,
+      "$comment": "A sibling of sender, never inside content (R-58, R-67). Authority is stated, never inferred (R-02). epoch is a monotonic fencing token (R-55; a NATS KV revision serves). A receiver rejects a stale epoch loudly (R-69), which is receiver logic, not schema.",
+      "properties": {
+        "strength": {
+          "type": "string",
+          "enum": ["direct", "relayed", "none"],
+          "description": "Relayed authority is provably weaker than direct (finding-151). none carries no authority."
+        },
+        "seat": {
+          "description": "The authority-bearing seat, or null (the common case).",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["role", "key", "epoch"],
+              "additionalProperties": false,
+              "properties": {
+                "role": { "type": "string" },
+                "key": { "type": "string" },
+                "epoch": { "type": "integer" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "$comment": "content never carries authority; a body that asserts its own authority is data, not authority (R-67, R-68). Anything large goes by pointer in refs, never inline (envelope cap 64 KiB).",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["text", "task", "result", "signal", "pointer"]
+        },
+        "data": {
+          "description": "The payload for this content type. Bounded; use refs for anything large."
+        },
+        "refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Pointers, not payload: bd:, finding:, file:, url:, pr:."
+        }
+      }
+    },
+    "reply_by": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional RFC3339 expectation; drives escalation."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional RFC3339 queue TTL; a stale control message dies rather than acting late."
+    },
+    "sent_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "otel_traceparent": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
