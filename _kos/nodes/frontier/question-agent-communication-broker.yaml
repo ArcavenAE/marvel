@@ -41,6 +41,15 @@ content: |
   mise/brew, and marvel stays thin. The envelope starts from the orc
   draft `docs/design/director-envelope-and-adapter-events.md`;
   schema-first codegen per the language ruling.
+
+  **2026-09-12 addition (operator ruling via the director seat, after the
+  naming party):** the spawn half is now a forward requirement on marvel.
+  marvel knows how to start a director-enabled session and connect it to
+  the supervised bus (agent id, bus URL, per-session credential injected
+  at launch beside the heartbeat token), and the bus is two-tier: local
+  per marvel cluster, global for the director-supervisor channel across
+  hosts. Capture: `_kos/ideas/identity-at-launch-and-managed-nats.md`;
+  director register R-83 through R-86 (class FORWARD).
 edges:
   - target: aae-orc::val-gradual-elaboration
     type: derives
