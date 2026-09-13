@@ -43,6 +43,27 @@ contracts-validate:
     done
     echo "contracts-validate: all checks passed"
 
+# Regenerate the Go types + embedded schema copy from the canonical JSON Schema.
+# The Rust consumer (beadle) generates from the same schema; keep the two in step.
+contracts-gen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    S=contracts/schema/director-envelope.schema.json
+    OUT=contracts/go/envelope
+    go run github.com/atombender/go-jsonschema@v0.20.0 \
+      -p envelope --only-models --minimal-names --capitalization ID \
+      -o "$OUT/envelope.gen.go" "$S"
+    # The validator embeds the schema; go:embed cannot reach ../../schema, so keep
+    # a package-local copy. A test guards it against drift from the canonical.
+    cp "$S" "$OUT/schema.gen.json"
+    # Match the repo formatter (lefthook fmt-check runs gofumpt); fall back to gofmt.
+    if command -v gofumpt >/dev/null 2>&1; then
+      gofumpt -w "$OUT/envelope.gen.go"
+    else
+      gofmt -w "$OUT/envelope.gen.go"
+    fi
+    echo "contracts-gen: regenerated $OUT/envelope.gen.go + schema.gen.json"
+
 # Start the marvel daemon (foreground)
 start: build
     ./bin/marvel daemon

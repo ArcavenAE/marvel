@@ -74,15 +74,31 @@ Reserved, deliberately not frozen:
 - A signature field reserves nothing; when it arrives it wraps the envelope or
   rides the transport, additively.
 
-## A2A v1.0 mapping (recorded here, formalized with the codegen PR)
+## A2A v1.0 mapping
 
-| envelope field | A2A v1.0 |
-|---|---|
-| `performative` | message intent (FIPA-ACL subset over A2A message semantics) |
-| `content.type` / `content.data` | message parts |
-| `content.refs` | pointer parts / artifact references |
-| `sender`, `recipient`, `authority`, `principal` | profile extension metadata on the A2A message |
-| `message_id`, `correlation_id`, `conversation_id`, `in_reply_to` | message and task correlation |
+A2A v1.0's normative artifact is the proto (`specification/a2a.proto`; see
+`a2a/PINNED.md`), so the mapping is written by proto field name. The whole
+director profile rides in the A2A `Message.metadata` map under one namespaced
+profile key, declared as an A2A extension identified by a URI. Profile fields
+never go in `Message.parts`; only `content` maps to parts. (Architect ruling,
+2026-09-12.)
+
+- **Extension URI:** the profile is identified by its schema `$id`,
+  `https://schema.arcaven.com/director/envelope/v1`, declared as an A2A
+  extension.
+- **`Message.metadata["https://schema.arcaven.com/director/envelope/v1"]`**
+  carries the profile object: `schema_version`, `sender`, `recipient`,
+  `authority`, `principal`, `performative`, `message_id`, `correlation_id`,
+  `conversation_id`, `in_reply_to`, `reply_by`, `expires_at`, `sent_at`,
+  `trace`.
+- **`Message.parts`** carries `content` (the payload): `content.type` selects
+  the part kind, `content.data` is the part body, and `content.refs` are pointer
+  or artifact-reference parts.
+- **`Message.message_id` and task correlation** align with the profile's
+  `message_id`, `correlation_id`, `conversation_id`, and `in_reply_to`.
+
+Authority and identity live in metadata, never in parts, so a body (a part)
+cannot assert its own authority (R-67, R-68).
 
 ## Evolution
 
