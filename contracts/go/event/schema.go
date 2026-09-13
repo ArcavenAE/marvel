@@ -18,7 +18,7 @@ var SchemaJSON []byte
 
 // schemaID matches the $id in the schema, so the compiler resolves the document
 // against its own identifier rather than fetching the URL.
-const schemaID = "https://schema.arcaven.com/director/event/v1"
+const schemaID = "https://schema.arcaven.com/marvel/adapter-event/v1"
 
 var compiled = mustCompile()
 

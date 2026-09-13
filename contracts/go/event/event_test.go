@@ -4,11 +4,24 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/runtime/events"
 )
+
+// asMap normalizes JSON to a comparable value: numbers become float64 on both
+// sides, so a compare-equal after a typed round-trip is order- and
+// representation-independent.
+func asMap(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	return m
+}
 
 const (
 	canonicalSchema = "../../schema/director-event.schema.json"
@@ -60,10 +73,12 @@ func TestKindEnumMatchesGoConstants(t *testing.T) {
 	}
 }
 
-// Every valid fixture validates, decodes into the Go events.Event source type,
-// and re-validates after a marshal round-trip. The per-kind fixtures plus the
-// 64 KiB truncation-boundary frame exercise the whole vocabulary through the
-// same type the adapters emit.
+// Every valid fixture round-trips per the freeze condition: validate against
+// the schema, unmarshal into the Go events.Event source type, marshal back,
+// re-validate, and compare equal to the original. The compare-equal step is
+// what proves the typed Go frame loses nothing on the wire. The per-kind
+// fixtures plus the 64 KiB truncation-boundary frame exercise the whole
+// vocabulary through the same type the adapters emit.
 func TestValidFixturesRoundTrip(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(fixturesDir, "valid-*.json"))
 	if err != nil || len(files) == 0 {
@@ -91,6 +106,10 @@ func TestValidFixturesRoundTrip(t *testing.T) {
 		}
 		if err := Validate(out); err != nil {
 			t.Errorf("%s: re-validate after round-trip: %v", name, err)
+			continue
+		}
+		if !reflect.DeepEqual(asMap(t, data), asMap(t, out)) {
+			t.Errorf("%s: round-trip through events.Event was lossy:\n in:  %s\n out: %s", name, data, out)
 		}
 	}
 }
