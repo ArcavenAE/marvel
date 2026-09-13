@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.arcaven.com/director/event/v1",
+  "$comment": "SOURCE OF TRUTH IS GO, NOT THIS SCHEMA. internal/runtime/events/events.go is authoritative for the marvel runtime adapter event vocabulary; this schema is its wire twin, so a Rust consumer (beadle) generates from one shape and cannot drift from the Go emitter (finding-034). Per the architect ruling 2026-09-13 the source of truth flips to schema-first only on a second PRODUCER of these events, never a consumer. Behaviors events.go carries that a schema cannot express, and which stay hand-written in Go: Occupancy() and the additive/subsumptive Layout, TotalMismatch(), AdditiveConfirmed(), the SeqAssigner, and the 64 KiB Truncate/MaxSummaryBytes summary discipline. The $id base is https://schema.arcaven.com (operator ruling D8) and need not resolve. This is the adapter event seam; it is DISTINCT from the director envelope (agent speech) and from the daemon control-plane ring. The lift from an event to an envelope is the seam: this twin invents no envelope field. Evolution: the frame is closed and a breaking change to it bumps schema_version; per-kind data payloads grow additively (data objects are lenient) and additive growth does NOT bump schema_version.",
+  "title": "Director Adapter Event",
+  "description": "The normalized event frame every marvel runtime adapter emits after digesting a harness-specific telemetry stream. The v1 vocabulary is closed to twelve kinds; an unknown vendor event maps to the error kind with data.kind = unmapped rather than being dropped.",
+  "type": "object",
+  "required": ["schema_version", "event", "seq", "ts", "harness"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Event-frame schema version. Bumped only for breaking changes to this top-level frame; additive changes to per-kind data do not bump it. Integer per the session-029 rule."
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "session.started",
+        "session.ended",
+        "turn.started",
+        "turn.completed",
+        "message.delta",
+        "message.completed",
+        "tool.call",
+        "tool.result",
+        "permission.requested",
+        "auth.required",
+        "health.heartbeat",
+        "error"
+      ],
+      "$comment": "Closed v1 vocabulary. This enum MUST equal the events.Kind constant set in events.go both ways; a drift-guard test fails on either-direction divergence.",
+      "description": "The event kind. Selects the shape of data."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per-stream sequence, starting at 1. Consumers detect gaps on it."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+      "description": "Event time. RFC3339; the pattern enforces it without format-assertion mode."
+    },
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+      "description": "The roster address, same closed class as the envelope sender.agent_id (R-76). Optional on an event; present once marvel names the session."
+    },
+    "workspace": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+      "description": "The workspace, same closed class as the envelope. Optional."
+    },
+    "harness": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "Open string, not an enum: a new adapter must not require a schema bump. Known values: claude, codex, opencode, forestage, simulator, generic.",
+      "description": "The harness the emitting adapter fronts."
+    },
+    "harness_session_id": {
+      "type": "string",
+      "description": "The harness's own session id, when it exposes one. Optional."
+    },
+    "data": {
+      "type": "object",
+      "description": "The per-kind payload. Its shape is selected by event (see the allOf below). Lenient by design: per-kind fields grow additively without bumping schema_version."
+    },
+    "raw": {
+      "$comment": "The unparsed vendor event (json.RawMessage in Go). Any JSON value; retained for diagnostics and re-derivation. Optional.",
+      "description": "The original vendor event payload, verbatim."
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "otel_traceparent": {
+          "type": "string",
+          "description": "W3C Trace Context traceparent (00-<trace-id>-<span-id>-<flags>). Empty or absent when not tracing."
+        }
+      },
+      "description": "Out-of-band correlation. Optional."
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "event": { "const": "session.started" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/sessionStartedData" } } } },
+    { "if": { "properties": { "event": { "const": "session.ended" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/sessionEndedData" } } } },
+    { "if": { "properties": { "event": { "const": "turn.started" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/turnData" } } } },
+    { "if": { "properties": { "event": { "const": "turn.completed" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/turnData" } } } },
+    { "if": { "properties": { "event": { "const": "message.delta" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/messageData" } } } },
+    { "if": { "properties": { "event": { "const": "message.completed" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/messageData" } } } },
+    { "if": { "properties": { "event": { "const": "tool.call" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/toolCallData" } } } },
+    { "if": { "properties": { "event": { "const": "tool.result" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/toolResultData" } } } },
+    { "if": { "properties": { "event": { "const": "permission.requested" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/permissionRequestedData" } } } },
+    { "if": { "properties": { "event": { "const": "auth.required" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/authRequiredData" } } } },
+    { "if": { "properties": { "event": { "const": "health.heartbeat" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/healthHeartbeatData" } } } },
+    { "if": { "properties": { "event": { "const": "error" } }, "required": ["event"] },
+      "then": { "properties": { "data": { "$ref": "#/$defs/errorData" } } } }
+  ],
+  "$defs": {
+    "usage": {
+      "type": "object",
+      "$comment": "The shared token/cost shape on turn and session events. Do not sum token classes to get occupancy; that is Occupancy() in Go, which applies Layout.",
+      "properties": {
+        "in": { "type": "integer" },
+        "out": { "type": "integer" },
+        "cost": { "type": ["number", "null"] }
+      }
+    },
+    "requestUsage": {
+      "type": "object",
+      "$comment": "One API request's token accounting as the harness reported it. Fields are carried as the harness names them and are not pre-interpreted; Occupancy()/Layout, TotalMismatch(), and AdditiveConfirmed() in Go interpret them. Lenient.",
+      "properties": {
+        "request_id": { "type": "string" },
+        "model": { "type": "string" },
+        "layout": { "type": "string", "enum": ["additive", "subsumptive"] },
+        "in": { "type": "integer" },
+        "out": { "type": "integer" },
+        "cache_read_in": { "type": "integer" },
+        "cache_creation_in": { "type": "integer" },
+        "reasoning_out": { "type": "integer" },
+        "total": { "type": "integer" },
+        "total_excludes_cache": { "type": "boolean" },
+        "cost": { "type": ["number", "null"] },
+        "context_window": { "type": "integer" },
+        "parent_tool_use_id": { "type": "string" }
+      }
+    },
+    "modelUsage": {
+      "type": "object",
+      "properties": {
+        "in": { "type": "integer" },
+        "out": { "type": "integer" },
+        "cache_read_in": { "type": "integer" },
+        "cache_creation_in": { "type": "integer" },
+        "web_search_requests": { "type": "integer" },
+        "cost": { "type": ["number", "null"] },
+        "context_window": { "type": "integer" },
+        "max_output_tokens": { "type": "integer" }
+      }
+    },
+    "permissionDenial": {
+      "type": "object",
+      "properties": {
+        "tool": { "type": "string" },
+        "call_id": { "type": "string" }
+      }
+    },
+    "metering": {
+      "type": "object",
+      "$comment": "Accounting a harness reports at session end. Every field optional; a harness reporting none leaves metering absent so a consumer can tell not-reported from zero.",
+      "properties": {
+        "duration_ms": { "type": "integer" },
+        "duration_api_ms": { "type": "integer" },
+        "ttft_ms": { "type": "integer" },
+        "ttft_stream_ms": { "type": "integer" },
+        "num_turns": { "type": "integer" },
+        "cache_read_in": { "type": "integer" },
+        "cache_creation_in": { "type": "integer" },
+        "model_usage": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/modelUsage" }
+        },
+        "permission_denials": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/permissionDenial" }
+        }
+      }
+    },
+    "sessionStartedData": {
+      "type": "object",
+      "properties": {
+        "model": { "type": "string" },
+        "cwd": { "type": "string" },
+        "resumed": { "type": "boolean" },
+        "tools": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "sessionEndedData": {
+      "type": "object",
+      "$comment": "exit_code 0 is success; non-zero lifts to an alert per the lift contract.",
+      "properties": {
+        "reason": { "type": "string" },
+        "exit_code": { "type": "integer" },
+        "usage": { "$ref": "#/$defs/usage" },
+        "metering": { "$ref": "#/$defs/metering" }
+      }
+    },
+    "turnData": {
+      "type": "object",
+      "properties": {
+        "usage_delta": { "$ref": "#/$defs/usage" },
+        "request": { "$ref": "#/$defs/requestUsage" }
+      }
+    },
+    "messageData": {
+      "type": "object",
+      "$comment": "text is bounded by the 64 KiB Truncate discipline in Go.",
+      "properties": {
+        "role": { "type": "string" },
+        "text": { "type": "string" }
+      }
+    },
+    "toolCallData": {
+      "type": "object",
+      "$comment": "call_id correlates with the matching tool.result. input is a bounded summary of any JSON shape.",
+      "properties": {
+        "tool": { "type": "string" },
+        "call_id": { "type": "string" },
+        "input": true
+      }
+    },
+    "toolResultData": {
+      "type": "object",
+      "$comment": "ok is !is_error in the vendor stream. output is a bounded summary of any JSON shape.",
+      "properties": {
+        "call_id": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "output": true
+      }
+    },
+    "permissionRequestedData": {
+      "type": "object",
+      "$comment": "The escalation event: marvel surfaces it to a supervisor per the lift contract.",
+      "properties": {
+        "action": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    },
+    "authRequiredData": {
+      "type": "object",
+      "properties": {
+        "hint": { "type": "string" }
+      }
+    },
+    "healthHeartbeatData": {
+      "type": "object",
+      "properties": {
+        "rss": { "type": ["integer", "null"] },
+        "state": { "type": "string" }
+      }
+    },
+    "errorData": {
+      "type": "object",
+      "$comment": "Vendor error or adapter-internal problem. kind is one of unmapped, parse, transport, or a harness-specific tag.",
+      "properties": {
+        "kind": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"schema_version":1,"event":"tool.result","seq":8,"ts":"2026-09-13T01:40:00Z","harness":"claude","agent_id":"marvel-b8","workspace":"aae-orc","data":{"call_id":"c1","ok":true,"output":"file1\nfile2"}}

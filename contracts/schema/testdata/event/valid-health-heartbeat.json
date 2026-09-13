@@ -1,0 +1,1 @@
+{"schema_version":1,"event":"health.heartbeat","seq":11,"ts":"2026-09-13T01:40:00Z","harness":"claude","agent_id":"marvel-b8","workspace":"aae-orc","data":{"rss":123456789,"state":"running"}}
