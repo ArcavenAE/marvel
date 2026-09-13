@@ -70,7 +70,10 @@ Reserved, deliberately not frozen:
 - `sender.principal` is a nullable, extensible container (`null | {kind, ...}`,
   `kind` open, seeded `none` and `launcher`). The envelope validates with it
   null; nothing reads it yet. Contents are deferred (R-53) until a principal
-  writes the bus without a human (the R-77 trigger).
+  writes the bus without a human (the R-77 trigger). The first non-null
+  `principal` kind arrives with the identity-lane study's golden-path PR, not
+  before, and gets its own register check then; nothing lands in `principal`
+  until that ratifies.
 - A signature field reserves nothing; when it arrives it wraps the envelope or
   rides the transport, additively.
 
