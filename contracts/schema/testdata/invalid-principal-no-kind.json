@@ -1,0 +1,1 @@
+{"schema_version":1,"message_id":"01JZ000000000000000000000A","sender":{"agent_id":"marvel-builder","workspace":"aae-orc","principal":{"launcher":"human"}},"recipient":{"address":"agent://ops/planner"},"performative":"INFORM","authority":{"strength":"none"},"content":{"type":"text","data":"hello"},"sent_at":"2026-09-12T23:40:00Z"}
