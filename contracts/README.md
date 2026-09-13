@@ -41,6 +41,16 @@ PRs #10 and #11), and the phase-0 envelope-v1 refresh is a later slice of this
 same b69n arc. Until a bus emitter is regenerated from this schema, validate
 regenerated emitters and fixtures, not the current live traffic.
 
+Validation is necessary, not sufficient, for a usable body. `content.data` is
+optional by design (a `signal` carries no body; a `pointer` carries refs, not
+data), so `Validate()` passing does not mean a `text`, `task`, or `result`
+body is present. An emitter must enforce non-empty `data` for those content
+types on the emit path (R-87), before any ack; the director-mcp shim does this
+in `publish()` and validates emit-only (receive stays lenient so a migrated
+emitter never rejects un-migrated in-flight traffic). Any future marvel
+producer inherits the same emit-path policy when the M2 bus arc gives marvel
+one.
+
 The `$id` base is `https://schema.arcaven.com` (operator ruling D8). A `$id`
 need not resolve; the `schema` subdomain stays isolated from the apex site and
 nothing need be hosted there now. The event-vocabulary twin uses the same base.
