@@ -83,9 +83,10 @@ profile key, declared as an A2A extension identified by a URI. Profile fields
 never go in `Message.parts`; only `content` maps to parts. (Architect ruling,
 2026-09-12.)
 
-- **Extension URI:** the profile is identified by its schema `$id`,
-  `https://schema.arcaven.com/director/envelope/v1`, declared as an A2A
-  extension.
+- **`Message.extensions`** declares the profile: the extension URI is the
+  schema `$id`, `https://schema.arcaven.com/director/envelope/v1`. A plain A2A
+  receiver ignores the metadata block; a profile receiver keys on this URI to
+  validate it.
 - **`Message.metadata["https://schema.arcaven.com/director/envelope/v1"]`**
   carries the profile object: `schema_version`, `sender`, `recipient`,
   `authority`, `principal`, `performative`, `message_id`, `correlation_id`,
