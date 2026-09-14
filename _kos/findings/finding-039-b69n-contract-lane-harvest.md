@@ -11,12 +11,16 @@ would otherwise lose. Four of them lived only in coordination messages until
 now (sections 1, 2, 3, 4).
 
 **Placement.** Contract-lane mechanics live here in marvel/_kos. Three items
-are shared-envelope semantics whose canonical home is the director register
-(`director/sim/requirements.md`) and director/_kos: sections 5, 6, and the
-naming principle in 7. They are captured here because the schema and its
-implementation live in the marvel repo (`contracts/`), but the register-side
-node is the director's to place; those sections are marked CANONICAL HOME:
-DIRECTOR so the mirror is not forgotten.
+are shared-envelope semantics whose canonical home is director's requirements
+register and design corpus (`director/sim/requirements.md`, and
+`director/sim/design/` brief 5, which already carries R-87 and the
+import-not-vendor pattern): sections 3, 5, and the naming principle in 7.
+Director has no `_kos` (confirmed 2026-09-13), so the register-side home is
+that corpus, not a director/_kos node, and it is the director's to place. They
+are captured here because the schema and its implementation live in the marvel
+repo (`contracts/`); those sections are marked CANONICAL HOME: DIRECTOR so the
+mirror is not forgotten. This finding-039 is the durable marvel-side record
+regardless.
 
 ---
 
