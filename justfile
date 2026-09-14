@@ -41,6 +41,15 @@ contracts-validate:
       fi
       echo "ok (rejected): $f"
     done
+    E=contracts/schema/director-event.schema.json
+    uvx check-jsonschema --check-metaschema "$E"
+    uvx check-jsonschema --schemafile "$E" contracts/schema/testdata/event/valid-*.json
+    for f in contracts/schema/testdata/event/invalid-*.json; do
+      if uvx check-jsonschema --schemafile "$E" "$f" >/dev/null 2>&1; then
+        echo "FAIL: $f validated but should have been rejected"; exit 1
+      fi
+      echo "ok (rejected): $f"
+    done
     echo "contracts-validate: all checks passed"
 
 # Regenerate the Go types + embedded schema copy from the canonical JSON Schema.
@@ -62,7 +71,10 @@ contracts-gen:
     else
       gofmt -w "$OUT/envelope.gen.go"
     fi
-    echo "contracts-gen: regenerated $OUT/envelope.gen.go + schema.gen.json"
+    # Event twin: schema-as-wire-twin, NO Go regen (events.go stays source of
+    # truth); refresh only the embedded schema copy the validator compiles.
+    cp contracts/schema/director-event.schema.json contracts/go/event/schema.gen.json
+    echo "contracts-gen: regenerated $OUT/envelope.gen.go + envelope/schema.gen.json + event/schema.gen.json"
 
 # Start the marvel daemon (foreground)
 start: build

@@ -27,6 +27,15 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
 - `schema/testdata/valid-*.json`, `invalid-*.json`: fixtures the validation
   recipe checks; the invalid set pins each guard (bad `agent_id`, missing
   `authority`, a smuggled credential field).
+- `schema/director-event.schema.json`: the wire twin of the marvel runtime
+  adapter event vocabulary (the twelve kinds `internal/runtime/events/events.go`
+  emits), draft 2020-12. See "Event vocabulary twin" below.
+- `schema/testdata/event/valid-*.json`, `event/invalid-*.json`: one valid
+  round-trip fixture per kind plus a 64 KiB truncation-boundary frame; the
+  invalid set pins the frame guards (unknown kind, wrong data shape, wrong
+  `schema_version`).
+- `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
+  validator only for the event twin, whose Go source of truth is `events.go`).
 
 Validate locally with `just contracts-validate`.
 
@@ -113,6 +122,35 @@ never go in `Message.parts`; only `content` maps to parts. (Architect ruling,
 
 Authority and identity live in metadata, never in parts, so a body (a part)
 cannot assert its own authority (R-67, R-68).
+
+## Event vocabulary twin
+
+The envelope is agent speech. The event vocabulary is something else: the
+normalized frame every marvel runtime adapter emits after digesting a
+harness-specific telemetry stream (session, turn, message, tool, permission,
+auth, health, error). The two are distinct seams, and the lift from an event to
+an envelope is the boundary between them; the twin invents no envelope field.
+
+Unlike the envelope, the event vocabulary is not schema-first. Its source of
+truth is `internal/runtime/events/events.go`, mature Go carrying behavior a
+schema cannot express (`Occupancy()` and the additive/subsumptive `Layout`,
+`TotalMismatch()`, `AdditiveConfirmed()`, the `SeqAssigner`, the 64 KiB
+`Truncate` discipline). So `director-event.schema.json` is a wire twin: it
+models the serializable frame and per-kind `data` only, and a Rust consumer
+(beadle) generates from it, so the Go emitter and the Rust reader cannot drift
+(finding-034) without regenerating the tuned Go. Per the architect ruling
+(2026-09-13) the source of truth flips to schema-first only on a second
+producer of these events, never a consumer.
+
+Four conditions hold the twin honest, all enforced by `go/event`'s tests:
+- the `event` enum equals `events.AllKinds` both ways (a kind in one but not the
+  other fails the guard);
+- there is a valid round-trip fixture per kind, plus a frame at the 64 KiB
+  truncation boundary, each decoded through `events.Event` and re-validated;
+- a schema `$comment` names `events.go` as source of truth and lists the
+  Go-only behaviors;
+- the frame is closed and bumps `schema_version` on a breaking change, while
+  per-kind `data` is lenient so additive growth does not bump it.
 
 ## Evolution
 

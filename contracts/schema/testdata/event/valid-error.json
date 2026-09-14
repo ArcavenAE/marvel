@@ -1,0 +1,1 @@
+{"schema_version":1,"event":"error","seq":12,"ts":"2026-09-13T01:40:00Z","harness":"claude","agent_id":"marvel-b8","workspace":"aae-orc","data":{"kind":"unmapped","message":"unknown vendor event xyz"}}

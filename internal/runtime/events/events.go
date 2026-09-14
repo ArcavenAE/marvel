@@ -59,6 +59,26 @@ const (
 	KindError Kind = "error"
 )
 
+// AllKinds is the closed v1 vocabulary, in emission order. It is the
+// authoritative list the wire twin's drift guard checks its enum against
+// (contracts/schema/director-event.schema.json), so the schema and these
+// constants cannot diverge. Adding a kind means adding it here and to the
+// schema enum in the same change; the guard fails otherwise.
+var AllKinds = []Kind{
+	KindSessionStarted,
+	KindSessionEnded,
+	KindTurnStarted,
+	KindTurnCompleted,
+	KindMessageDelta,
+	KindMessageCompleted,
+	KindToolCall,
+	KindToolResult,
+	KindPermissionRequested,
+	KindAuthRequired,
+	KindHealthHeartbeat,
+	KindError,
+}
+
 // Event is the normalized frame every adapter emits. JSON tags match the
 // spec in aae-orc/docs/design/director-envelope-and-adapter-events.md §3.1
 // verbatim (snake_case). `data` is a typed value per Kind; callers
