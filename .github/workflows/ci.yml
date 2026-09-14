@@ -29,7 +29,12 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Install gofumpt
-        run: go install mvdan.cc/gofumpt@v0.7.0
+        # Pinned here and in mise.toml; internal/toolchain/pin_test.go asserts
+        # they match, and the renovate annotation below keeps both bumping.
+        env:
+          # renovate: datasource=go depName=mvdan.cc/gofumpt
+          GOFUMPT_VERSION: v0.7.0
+        run: go install "mvdan.cc/gofumpt@${GOFUMPT_VERSION}"
 
       - name: Check formatting (gofumpt)
         run: |
@@ -46,6 +51,7 @@ jobs:
       - name: Run golangci-lint
         uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93 # v9.3.0
         with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.12.2
 
       - name: Run tests with race detector
