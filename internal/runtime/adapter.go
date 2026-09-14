@@ -191,6 +191,15 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 		"MARVEL_ROLE":      ctx.Role.Name,
 		"MARVEL_TEAM":      ctx.Team.Name,
 		"MARVEL_WORKSPACE": ctx.Workspace.Name,
+		// DIRECTOR_AGENT_ID is the bus id the director-mcp shim reads. This
+		// is the R-84 S0 fallback: the computed session name is deterministic
+		// and unique per session, so a session reaches the bus with a working
+		// id and no manifest surface. A declared name is the FORWARD identity,
+		// and it wins here through the same override seam BEADS_ACTOR uses
+		// below. The value tracks the session across an index change, so a
+		// shift or restart mints a new id by design; a stable operator-chosen
+		// id belongs to the FORWARD declared-name path.
+		"DIRECTOR_AGENT_ID": ctx.Session.Name,
 		// The same identity, stamped for the beads tracker. Session
 		// names are <team>-<role>-g<generation>-<index>, so the value
 		// is deterministic and unique per agent session. The map is
