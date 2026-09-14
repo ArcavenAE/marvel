@@ -22,6 +22,24 @@ content: |
   `question-daemon-isolation-boundary` also decides what a Host
   resource is actually a boundary around, so that question is worth
   settling before the scheduling algorithm is designed on top of it.
+
+  **Second precondition, answered in part 2026-09-14.** The first
+  cross-host channel is not switchboard and not scheduling. It is the
+  director-supervisor bus: a global NATS tier that each host's local
+  broker joins as a leaf node under its own NKey (director R-86, brief
+  8, mechanism proven on one laptop with two throwaway leaves). Hosts
+  are named by cluster name, a subject token, and the only things that
+  cross are the supervisor and director inboxes plus a presence KV. So
+  the multi-host question splits: the coordination channel across hosts
+  now has a shape, and what remains here is placement (which host runs
+  which team) and the unreachable-host case. The unreachable case has a
+  measured partial: a leaf outage strands nothing, because JetStream on
+  each side is its own domain and messages to the hub replay when the
+  leaf reconnects. Discovery has a partial too: marvel's existing key
+  exchange between clusters is the enrollment plane for the bus
+  credential (R-94, brief 9), which means a host marvel knows is a host
+  the bus can admit. Scheduling across hosts stays open and still waits
+  on the daemon-isolation boundary above.
 edges:
   - target: elem-mvp-complete
     type: discovered_from
@@ -33,3 +51,6 @@ provenance:
   created_by: human
   session: session-008
   created_at: "2026-03-30"
+  updated_by: agent
+  updated_session: "architect session, global tier MVP"
+  updated_at: "2026-09-14"
