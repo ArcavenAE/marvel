@@ -28,6 +28,10 @@ type Store struct {
 	teams      map[string]*Team
 	endpoints  map[string]*Endpoint
 	policies   map[string]*Policy
+	// credentials are transient (Credential.Persist is always false): they
+	// live only in this map, are never written to bolt, and are dropped on a
+	// daemon restart. See the credential CRUD below and brief 9 S1.
+	credentials map[string]*Credential
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by
@@ -80,11 +84,12 @@ func (s *Store) SetContextLimitResolver(fn ContextLimitResolveFunc) {
 // NewStore creates an empty in-memory store.
 func NewStore() *Store {
 	return &Store{
-		workspaces: make(map[string]*Workspace),
-		sessions:   make(map[string]*Session),
-		teams:      make(map[string]*Team),
-		endpoints:  make(map[string]*Endpoint),
-		policies:   make(map[string]*Policy),
+		workspaces:  make(map[string]*Workspace),
+		sessions:    make(map[string]*Session),
+		teams:       make(map[string]*Team),
+		endpoints:   make(map[string]*Endpoint),
+		policies:    make(map[string]*Policy),
+		credentials: make(map[string]*Credential),
 	}
 }
 
@@ -140,6 +145,26 @@ func cloneTeam(t *Team) Team {
 func clonePolicy(p *Policy) Policy {
 	out := *p
 	out.Settings = cloneSettings(p.Settings)
+	return out
+}
+
+// cloneCredential copies a credential, deep-copying the Value bytes so a
+// snapshot never aliases the store's live secret.
+func cloneCredential(c *Credential) Credential {
+	out := *c
+	if c.Value != nil {
+		out.Value = slices.Clone(c.Value)
+	}
+	return out
+}
+
+// cloneCredentialMeta copies a credential without its Value. It is the
+// snapshot the read surface returns, so a credential value never leaves the
+// store through get, describe, or list; reveal is a separate local-socket-only
+// path (brief 9 S3).
+func cloneCredentialMeta(c *Credential) Credential {
+	out := *c
+	out.Value = nil
 	return out
 }
 
@@ -533,6 +558,71 @@ func (s *Store) UpdatePolicy(key string, fn func(*Policy) error) error {
 		return err
 	}
 	return s.persistPut(bucketPolicies, p.Key(), p)
+}
+
+// Credential operations
+//
+// Credentials are transient: these methods never call persistPut or
+// persistDelete, and bolt has no credential bucket, so Credential.Persist stays
+// false. The read surface (Get, List) strips the Value, so a value never leaves
+// the store through get, describe, or list; the store holds it only until a
+// delete or a daemon restart.
+
+// CreateCredential clones the input into the store, Value included. It fails if
+// a credential with the same name already exists or the kind is unknown.
+func (s *Store) CreateCredential(c *Credential) error {
+	if !ValidCredentialKind(c.Kind) {
+		return fmt.Errorf("credential %s: unknown kind %q", c.Name, c.Kind)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.credentials[c.Key()]; ok {
+		return fmt.Errorf("credential %s: %w", c.Key(), ErrAlreadyExists)
+	}
+	stored := cloneCredential(c)
+	stored.Persist = false // invariant: credentials are never persisted
+	s.credentials[c.Key()] = &stored
+	return nil
+}
+
+// GetCredential returns a metadata snapshot of the named credential, without
+// its Value. The value is never returned through this path (brief 9 S3).
+func (s *Store) GetCredential(key string) (Credential, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.credentials[key]
+	if !ok {
+		return Credential{}, fmt.Errorf("credential %s: %w", key, ErrNotFound)
+	}
+	return cloneCredentialMeta(c), nil
+}
+
+// ListCredentials returns metadata snapshots of all credentials, without their
+// values.
+func (s *Store) ListCredentials() []Credential {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Credential, 0, len(s.credentials))
+	for _, c := range s.credentials {
+		result = append(result, cloneCredentialMeta(c))
+	}
+	return result
+}
+
+// DeleteCredential zeroes the stored Value before removing the credential, so
+// the secret does not linger in freed memory.
+func (s *Store) DeleteCredential(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.credentials[key]
+	if !ok {
+		return fmt.Errorf("credential %s: %w", key, ErrNotFound)
+	}
+	for i := range c.Value {
+		c.Value[i] = 0
+	}
+	delete(s.credentials, key)
+	return nil
 }
 
 // UpdateSessionHeartbeat authenticates a heartbeat and, if it holds,

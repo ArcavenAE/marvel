@@ -952,6 +952,8 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		result = d.store.ListEndpoints()
 	case "policies", "policy":
 		result = d.store.ListPolicies()
+	case "credentials", "credential":
+		result = d.store.ListCredentials()
 	case "budgets", "budget":
 		result = d.budgetRows()
 	default:
@@ -1011,6 +1013,10 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 		result, err = d.store.GetWorkspace(p.Name)
 	case "endpoint":
 		result, err = d.store.GetEndpoint(p.Name)
+	case "credential":
+		// GetCredential returns metadata only; the Value is json:"-" and
+		// never crosses the wire. Reveal is a separate local-socket path (S3).
+		result, err = d.store.GetCredential(p.Name)
 	default:
 		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}

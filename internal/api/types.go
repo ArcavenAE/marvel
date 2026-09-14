@@ -535,9 +535,56 @@ type Policy struct {
 	CreatedAt time.Time      `toml:"-"`
 }
 
+// CredentialKind is the closed set of credential kinds marvel can hold.
+type CredentialKind string
+
+const (
+	// CredentialNATSNKeySeed is a NATS NKey seed for the bus. It is the first
+	// and, today, only kind.
+	CredentialNATSNKeySeed CredentialKind = "nats-nkey-seed"
+)
+
+// ValidCredentialKind reports whether k is a known credential kind.
+func ValidCredentialKind(k CredentialKind) bool {
+	return k == CredentialNATSNKeySeed
+}
+
+// Credential is a bus credential the daemon holds for a broker or agent to
+// consume, never for a session. It is transient: Persist is always false, so
+// the bolt layer never writes it and a daemon restart drops it (the enroller
+// pushes it again, brief 9 S4). Value is memory-only: it is never serialized
+// (json:"-"), never logged, and is zeroed on delete, and revealing it over the
+// wire is a separate local-socket-only path (brief 9 S3), never the
+// get/describe surface. Custody stays inside the ADR-009 boundary, since the
+// daemon can drop and re-request it: this is issuance, not third-party bearer
+// custody.
+type Credential struct {
+	// Name is the credential's key, daemon-global (not workspace-scoped).
+	Name string `json:"name"`
+	// Kind is a closed set; nats-nkey-seed is the first and only today.
+	Kind CredentialKind `json:"kind"`
+	// Audience names who the credential is for, such as the hub or a cluster.
+	Audience string `json:"audience,omitempty"`
+	// Binding is a display of the hub grant this credential carries, for the
+	// operator to read; marvel does not interpret it.
+	Binding string `json:"binding,omitempty"`
+	// IssuedAt is when the credential was put (UTC).
+	IssuedAt time.Time `json:"issued_at"`
+	// IssuedBy is the fingerprint of the key that pushed it.
+	IssuedBy string `json:"issued_by,omitempty"`
+	// Persist is always false: credentials are transient and never written to
+	// bolt. The field records the invariant beside the data it governs.
+	Persist bool `json:"persist"`
+	// Value is the secret material, held in memory only. It is never
+	// serialized (json:"-"), never logged, and is zeroed on delete. Reveal is
+	// a separate local-socket-only path (brief 9 S3).
+	Value []byte `json:"-"`
+}
+
 // Key returns the namespaced key for a resource.
-func (w *Workspace) Key() string { return w.Name }
-func (s *Session) Key() string   { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
-func (t *Team) Key() string      { return fmt.Sprintf("%s/%s", t.Workspace, t.Name) }
-func (e *Endpoint) Key() string  { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }
-func (p *Policy) Key() string    { return fmt.Sprintf("%s/%s", p.Workspace, p.Name) }
+func (w *Workspace) Key() string  { return w.Name }
+func (s *Session) Key() string    { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
+func (t *Team) Key() string       { return fmt.Sprintf("%s/%s", t.Workspace, t.Name) }
+func (e *Endpoint) Key() string   { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }
+func (p *Policy) Key() string     { return fmt.Sprintf("%s/%s", p.Workspace, p.Name) }
+func (c *Credential) Key() string { return c.Name }

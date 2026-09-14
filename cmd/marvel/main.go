@@ -860,7 +860,7 @@ func getCmd() *cobra.Command {
 	var watchSec string
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
-		Short: "List resources (sessions, teams, workspaces, endpoints, policies, budgets)",
+		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("watch") {
@@ -914,6 +914,8 @@ func getResources(resourceType string) error {
 		return printEndpoints(resp.Result)
 	case "policies", "policy":
 		return printPolicies(resp.Result)
+	case "credentials", "credential":
+		return printCredentials(resp.Result)
 	case "budgets", "budget":
 		return printBudgets(resp.Result)
 	default:
@@ -2435,6 +2437,35 @@ func printPolicies(data json.RawMessage) error {
 // "which dimension tripped and by how much" — the event says a refusal
 // happened, this says where the team stands. at-ceiling and refusing are
 // deliberately separate: a team sized at its ceiling refuses nothing.
+// printCredentials renders `marvel get credentials`: one row per credential,
+// metadata only. The value is never on the wire (Credential.Value is json:"-")
+// and never printed here; revealing it is a separate local-socket path (S3).
+func printCredentials(data json.RawMessage) error {
+	var creds []api.Credential
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintf(w, "NAME\tKIND\tAUDIENCE\tISSUED\tISSUED-BY\tBINDING\n")
+	for _, c := range creds {
+		issued := "-"
+		if !c.IssuedAt.IsZero() {
+			issued = c.IssuedAt.UTC().Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			c.Name, c.Kind, dashIfEmpty(c.Audience), issued, dashIfEmpty(c.IssuedBy), dashIfEmpty(c.Binding))
+	}
+	return w.Flush()
+}
+
+// dashIfEmpty renders an empty optional field as a dash for table legibility.
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 func printBudgets(data json.RawMessage) error {
 	var rows []admission.Row
 	if err := json.Unmarshal(data, &rows); err != nil {
