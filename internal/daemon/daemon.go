@@ -665,12 +665,20 @@ func checkPidFileFree(path string) error {
 
 func (d *Daemon) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
-	d.handleRWC(conn)
+	// The local unix socket is the daemon owner, so it is admin.
+	d.handleRWCAs(conn, localCaller())
 }
 
-// handleRWC processes a single JSON-RPC request/response on any
-// io.ReadWriteCloser — used by both Unix socket and SSH channels.
+// handleRWC processes one request on rwc as the local admin caller. The SSH
+// transport uses handleRWCAs with the authenticated key's scope instead.
 func (d *Daemon) handleRWC(rwc io.ReadWriteCloser) {
+	d.handleRWCAs(rwc, localCaller())
+}
+
+// handleRWCAs processes a single JSON-RPC request/response on any
+// io.ReadWriteCloser as the given caller. Both the Unix socket (local admin)
+// and SSH channels (the authenticated key's scope) reach it.
+func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 	defer func() { _ = rwc.Close() }()
 
 	var req Request
@@ -680,7 +688,7 @@ func (d *Daemon) handleRWC(rwc io.ReadWriteCloser) {
 		return
 	}
 
-	resp := d.dispatch(req)
+	resp := d.dispatchAs(req, c)
 	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 }
 
@@ -693,7 +701,24 @@ func (d *Daemon) stamp(resp Response) Response {
 	return resp
 }
 
+// dispatch routes a request as the local admin caller. The local socket path
+// and the daemon's own tests use it; the SSH transport uses dispatchAs with
+// the authenticated key's scope.
 func (d *Daemon) dispatch(req Request) Response {
+	return d.dispatchAs(req, localCaller())
+}
+
+// dispatchAs enforces the caller's scope, then routes the request. A method
+// the scope does not permit is refused before any handler runs.
+func (d *Daemon) dispatchAs(req Request, c caller) Response {
+	if !methodAllowedForScope(req.Method, c.scope) {
+		who := c.fingerprint
+		if who == "" {
+			who = "local"
+		}
+		log.Printf("scope refused: method %q not permitted for %s key %s", req.Method, c.scope, who)
+		return Response{Error: fmt.Sprintf("method %q is not permitted for a %s key", req.Method, c.scope)}
+	}
 	switch req.Method {
 	case "apply":
 		return d.handleApply(req.Params)

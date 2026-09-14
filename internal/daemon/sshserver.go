@@ -103,9 +103,15 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 	defer func() { _ = sshConn.Close() }()
 
 	fp := ""
+	// The scope is the string authorizeKey recorded; an empty or unrecognized
+	// value permits nothing (methodAllowedForScope fails closed), so a caller
+	// only reaches methods its key was explicitly scoped for.
+	var scope Scope
 	if sshConn.Permissions != nil {
 		fp = sshConn.Permissions.Extensions["pubkey-fp"]
+		scope = Scope(sshConn.Permissions.Extensions["marvel-scope"])
 	}
+	clientCaller := caller{scope: scope, fingerprint: fp}
 	host := conn.RemoteAddr().String()
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -138,24 +144,28 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 			}
 		}()
 
-		// Handle the RPC on this channel — same as a Unix socket connection.
-		s.daemon.handleRWC(ch)
+		// Handle the RPC on this channel as the authenticated caller. The
+		// local unix socket is admin; this path carries the key's scope.
+		s.daemon.handleRWCAs(ch, clientCaller)
 	}
 }
 
-// authorizeKey checks if the client's public key is in authorized_keys.
+// authorizeKey checks if the client's public key is in authorized_keys and
+// carries the key's recorded scope into the connection permissions, where the
+// SSH server reads it to build the caller for dispatch.
 func (s *SSHServer) authorizeKey(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-	authorizedKeys, err := loadAuthorizedKeys(s.layout)
+	entries, err := loadAuthorizedKeys(s.layout)
 	if err != nil {
 		return nil, fmt.Errorf("load authorized keys: %w", err)
 	}
 
-	for _, ak := range authorizedKeys {
-		if keysEqual(ak, key) {
+	for _, e := range entries {
+		if keysEqual(e.key, key) {
 			return &ssh.Permissions{
 				Extensions: map[string]string{
-					"user":      conn.User(),
-					"pubkey-fp": ssh.FingerprintSHA256(key),
+					"user":         conn.User(),
+					"pubkey-fp":    ssh.FingerprintSHA256(key),
+					"marvel-scope": string(e.scope),
 				},
 			}, nil
 		}
@@ -164,8 +174,18 @@ func (s *SSHServer) authorizeKey(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh
 	return nil, fmt.Errorf("unknown key for user %s: %s", conn.User(), ssh.FingerprintSHA256(key))
 }
 
-// loadAuthorizedKeys reads ~/.marvel/authorized_keys (OpenSSH format).
-func loadAuthorizedKeys(layout paths.Layout) ([]ssh.PublicKey, error) {
+// authorizedEntry is an authorized public key with the scope recorded beside
+// it in authorized_keys (the marvel-scope option).
+type authorizedEntry struct {
+	key   ssh.PublicKey
+	scope Scope
+}
+
+// loadAuthorizedKeys reads ~/.marvel/authorized_keys (OpenSSH format) and the
+// marvel-scope option beside each key. A line whose scope option is malformed
+// is skipped rather than admitted, so a typo fails closed instead of granting
+// a default.
+func loadAuthorizedKeys(layout paths.Layout) ([]authorizedEntry, error) {
 	path := layout.AuthorizedKeys()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -175,15 +195,20 @@ func loadAuthorizedKeys(layout paths.Layout) ([]ssh.PublicKey, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	var result []ssh.PublicKey
+	var result []authorizedEntry
 	rest := data
 	for len(rest) > 0 {
-		key, _, _, r, err := ssh.ParseAuthorizedKey(rest)
+		key, _, options, r, err := ssh.ParseAuthorizedKey(rest)
 		if err != nil {
 			break
 		}
-		result = append(result, key)
 		rest = r
+		scope, serr := scopeFromOptions(options)
+		if serr != nil {
+			log.Printf("authorized_keys: skipping key %s: %v", ssh.FingerprintSHA256(key), serr)
+			continue
+		}
+		result = append(result, authorizedEntry{key: key, scope: scope})
 	}
 	return result, nil
 }
@@ -197,8 +222,10 @@ func addrPort(addr string) string {
 	return port
 }
 
-// AddAuthorizedKey appends a public key to ~/.marvel/authorized_keys.
-func AddAuthorizedKey(pubKeyData []byte, comment string) error {
+// AddAuthorizedKey appends a public key to ~/.marvel/authorized_keys with the
+// given scope recorded as a marvel-scope option, so one file carries both the
+// key and the authority it grants.
+func AddAuthorizedKey(pubKeyData []byte, comment string, scope Scope) error {
 	layout, err := paths.Default()
 	if err != nil {
 		return err
@@ -229,7 +256,8 @@ func AddAuthorizedKey(pubKeyData []byte, comment string) error {
 		}
 	}
 
-	line := strings.TrimSpace(string(pubKeyData))
+	// Record the scope as an authorized_keys option ahead of the key line.
+	line := fmt.Sprintf("%s=%q %s", scopeOption, string(scope), strings.TrimSpace(string(pubKeyData)))
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.ModeAuthorized)
 	if err != nil {
@@ -243,7 +271,7 @@ func AddAuthorizedKey(pubKeyData []byte, comment string) error {
 	// Enforce mode in case the file existed with different perms.
 	_ = os.Chmod(path, paths.ModeAuthorized)
 
-	log.Printf("authorized key added: %s (%s)", ssh.FingerprintSHA256(key), comment)
+	log.Printf("authorized key added: %s scope=%s (%s)", ssh.FingerprintSHA256(key), scope, comment)
 	return nil
 }
 
@@ -266,16 +294,22 @@ func ListAuthorizedKeys() ([]KeyInfo, error) {
 	var result []KeyInfo
 	rest := data
 	for len(rest) > 0 {
-		key, comment, _, r, err := ssh.ParseAuthorizedKey(rest)
+		key, comment, options, r, err := ssh.ParseAuthorizedKey(rest)
 		if err != nil {
 			break
+		}
+		rest = r
+		scope, serr := scopeFromOptions(options)
+		scopeStr := string(scope)
+		if serr != nil {
+			scopeStr = "invalid"
 		}
 		result = append(result, KeyInfo{
 			Fingerprint: ssh.FingerprintSHA256(key),
 			Type:        key.Type(),
 			Comment:     comment,
+			Scope:       scopeStr,
 		})
-		rest = r
 	}
 	return result, nil
 }
@@ -329,6 +363,7 @@ type KeyInfo struct {
 	Fingerprint string
 	Type        string
 	Comment     string
+	Scope       string
 }
 
 // HostKeyFingerprint returns the daemon's host key fingerprint for display.

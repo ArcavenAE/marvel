@@ -443,6 +443,18 @@ func TestBaseEnvStampsBeadsActor(t *testing.T) {
 	}
 }
 
+func TestBaseEnvStampsDirectorAgentID(t *testing.T) {
+	t.Parallel()
+
+	// R-84 S0 fallback: the bus id is the computed session name, so a
+	// session reaches the director bus with no manifest surface.
+	env := baseEnv(testContext())
+	want := "squad-worker-g1-0"
+	if got := env["DIRECTOR_AGENT_ID"]; got != want {
+		t.Errorf("DIRECTOR_AGENT_ID = %q, want %q", got, want)
+	}
+}
+
 func TestAdaptersStampBeadsActor(t *testing.T) {
 	t.Parallel()
 

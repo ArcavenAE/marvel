@@ -1644,8 +1644,8 @@ Client-side (on your machine, for connecting to a daemon):
   marvel keys doctor            # audit and fix ~/.marvel/ permissions
 
 Daemon-side (on the machine running marvel daemon):
-  marvel keys authorize <file>  # add a client's pubkey to authorized_keys
-  marvel keys authorized        # list authorized clients
+  marvel keys authorize <file>  # add a client's pubkey (--scope admin|credential-push)
+  marvel keys authorized        # list authorized clients and their scope
   marvel keys revoke <fp>       # remove a client by fingerprint
   marvel keys host-fingerprint  # print this daemon's host key fingerprint`,
 	}
@@ -1785,20 +1785,27 @@ Daemon-side (on the machine running marvel daemon):
 	cmd.AddCommand(doctor)
 
 	// Daemon-side: keys authorize (formerly: add)
+	var authScope string
 	authorize := &cobra.Command{
 		Use:     "authorize <public-key-file>",
 		Aliases: []string{"add"},
 		Short:   "Authorize a client's public key on this daemon",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			scope, err := daemon.ParseScope(authScope)
+			if err != nil {
+				return err
+			}
 			data, err := os.ReadFile(args[0])
 			if err != nil {
 				return fmt.Errorf("read key file: %w", err)
 			}
 			comment := args[0]
-			return daemon.AddAuthorizedKey(data, comment)
+			return daemon.AddAuthorizedKey(data, comment, scope)
 		},
 	}
+	authorize.Flags().StringVar(&authScope, "scope", string(daemon.ScopeAdmin),
+		"authority for this key: admin (every method) or credential-push (push, list, delete credentials only)")
 	cmd.AddCommand(authorize)
 
 	// Daemon-side: keys authorized (formerly: list)
@@ -1816,13 +1823,17 @@ Daemon-side (on the machine running marvel daemon):
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "FINGERPRINT\tTYPE\tCOMMENT")
+			_, _ = fmt.Fprintln(w, "FINGERPRINT\tTYPE\tSCOPE\tCOMMENT")
 			for _, k := range authed {
 				comment := k.Comment
 				if comment == "" {
 					comment = "(no comment)"
 				}
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", k.Fingerprint, k.Type, comment)
+				scope := k.Scope
+				if scope == "" {
+					scope = string(daemon.ScopeAdmin)
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", k.Fingerprint, k.Type, scope, comment)
 			}
 			return w.Flush()
 		},

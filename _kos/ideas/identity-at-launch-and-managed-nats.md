@@ -118,3 +118,16 @@ director `sim/requirements.md` R-71 through R-86 and `sim/design/identity-at-spa
 `docs/design/daemon-isolation.md`; finding-020, finding-022, finding-025;
 orc `docs/design/director-envelope-and-adapter-events.md`;
 ArcavenAE/director issues #3 and #4.
+
+## 2026-09-14: the global tier is designed and its hub is running
+
+The two-tier bus (item 4 above) now has its global half: director design
+brief 8, `director/sim/design/global-bus-tier.md`, with the hub on kinu,
+leaf nodes into one hub domain, per-cluster NKey binding at the hub (R-77),
+and the proof script. The open question above on the global credential
+story is answered there: the leaf credential is per cluster, held by the
+broker process, never injected into a session; R-85's per-session credential
+stays local-broker-scoped. marvel's build items from that brief, section 7:
+aae-orc-e9g8i (bus section on Cluster, conf rendering), aae-orc-z37ux
+(Cluster.Name as a subject token), aae-orc-xy1dh (the local broker as a
+non-agent workload, leaf-link state on the events ring).
