@@ -41,6 +41,16 @@ PRs #10 and #11), and the phase-0 envelope-v1 refresh is a later slice of this
 same b69n arc. Until a bus emitter is regenerated from this schema, validate
 regenerated emitters and fixtures, not the current live traffic.
 
+Validation is necessary, not sufficient, for a usable body. `content.data` is
+optional by design (a `signal` carries no body; a `pointer` carries refs, not
+data), so `Validate()` passing does not mean a `text`, `task`, or `result`
+body is present. An emitter must enforce non-empty `data` for those content
+types on the emit path (R-87), before any ack; the director-mcp shim does this
+in `publish()` and validates emit-only (receive stays lenient so a migrated
+emitter never rejects un-migrated in-flight traffic). Any future marvel
+producer inherits the same emit-path policy when the M2 bus arc gives marvel
+one.
+
 The `$id` base is `https://schema.arcaven.com` (operator ruling D8). A `$id`
 need not resolve; the `schema` subdomain stays isolated from the apex site and
 nothing need be hosted there now. The event-vocabulary twin uses the same base.
@@ -70,19 +80,39 @@ Reserved, deliberately not frozen:
 - `sender.principal` is a nullable, extensible container (`null | {kind, ...}`,
   `kind` open, seeded `none` and `launcher`). The envelope validates with it
   null; nothing reads it yet. Contents are deferred (R-53) until a principal
-  writes the bus without a human (the R-77 trigger).
+  writes the bus without a human (the R-77 trigger). The first non-null
+  `principal` kind arrives with the identity-lane study's golden-path PR, not
+  before, and gets its own register check then; nothing lands in `principal`
+  until that ratifies.
 - A signature field reserves nothing; when it arrives it wraps the envelope or
   rides the transport, additively.
 
-## A2A v1.0 mapping (recorded here, formalized with the codegen PR)
+## A2A v1.0 mapping
 
-| envelope field | A2A v1.0 |
-|---|---|
-| `performative` | message intent (FIPA-ACL subset over A2A message semantics) |
-| `content.type` / `content.data` | message parts |
-| `content.refs` | pointer parts / artifact references |
-| `sender`, `recipient`, `authority`, `principal` | profile extension metadata on the A2A message |
-| `message_id`, `correlation_id`, `conversation_id`, `in_reply_to` | message and task correlation |
+A2A v1.0's normative artifact is the proto (`specification/a2a.proto`; see
+`a2a/PINNED.md`), so the mapping is written by proto field name. The whole
+director profile rides in the A2A `Message.metadata` map under one namespaced
+profile key, declared as an A2A extension identified by a URI. Profile fields
+never go in `Message.parts`; only `content` maps to parts. (Architect ruling,
+2026-09-12.)
+
+- **`Message.extensions`** declares the profile: the extension URI is the
+  schema `$id`, `https://schema.arcaven.com/director/envelope/v1`. A plain A2A
+  receiver ignores the metadata block; a profile receiver keys on this URI to
+  validate it.
+- **`Message.metadata["https://schema.arcaven.com/director/envelope/v1"]`**
+  carries the profile object: `schema_version`, `sender`, `recipient`,
+  `authority`, `principal`, `performative`, `message_id`, `correlation_id`,
+  `conversation_id`, `in_reply_to`, `reply_by`, `expires_at`, `sent_at`,
+  `trace`.
+- **`Message.parts`** carries `content` (the payload): `content.type` selects
+  the part kind, `content.data` is the part body, and `content.refs` are pointer
+  or artifact-reference parts.
+- **`Message.message_id` and task correlation** align with the profile's
+  `message_id`, `correlation_id`, `conversation_id`, and `in_reply_to`.
+
+Authority and identity live in metadata, never in parts, so a body (a part)
+cannot assert its own authority (R-67, R-68).
 
 ## Evolution
 
