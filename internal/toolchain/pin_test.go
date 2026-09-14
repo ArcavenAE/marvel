@@ -116,10 +116,11 @@ func ciLintVersion(t *testing.T, path string) string {
 }
 
 // ciGofumptVersion returns the gofumpt version the CI workflow installs,
-// without any leading "v". Unlike golangci-lint (a pinned action with a
-// `version:` input), gofumpt is installed by a plain run step,
-// `go install mvdan.cc/gofumpt@<version>`, so the version is parsed out of
-// the step's command rather than a structured field.
+// without any leading "v". The version is carried in a GOFUMPT_VERSION step
+// env var (a KEY: value line renovate's shared customManager can bump), and
+// the install step interpolates it: `go install mvdan.cc/gofumpt@${GOFUMPT_VERSION}`.
+// It is read from the structured env field, the same shape as the
+// golangci-lint `version:` input.
 func ciGofumptVersion(t *testing.T, path string) string {
 	t.Helper()
 
@@ -130,27 +131,26 @@ func ciGofumptVersion(t *testing.T, path string) string {
 	var wf struct {
 		Jobs map[string]struct {
 			Steps []struct {
-				Run string `yaml:"run"`
+				Env map[string]string `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
-	const marker = "mvdan.cc/gofumpt@"
+	const envKey = "GOFUMPT_VERSION"
 	for _, job := range wf.Jobs {
 		for _, step := range job.Steps {
-			idx := strings.Index(step.Run, marker)
-			if idx < 0 {
+			version, ok := step.Env[envKey]
+			if !ok {
 				continue
 			}
-			fields := strings.Fields(step.Run[idx+len(marker):])
-			if len(fields) == 0 {
-				t.Fatalf("%s installs gofumpt without a version", path)
+			if version == "" {
+				t.Fatalf("%s sets %s to an empty value", path, envKey)
 			}
-			return strings.TrimPrefix(fields[0], "v")
+			return strings.TrimPrefix(version, "v")
 		}
 	}
-	t.Fatalf("%s has no `go install %s<version>` step", path, marker)
+	t.Fatalf("%s has no step setting %s", path, envKey)
 	return ""
 }
