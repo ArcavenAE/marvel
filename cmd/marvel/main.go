@@ -136,6 +136,7 @@ func main() {
 	root.AddCommand(workCmd())
 	root.AddCommand(getCmd())
 	root.AddCommand(describeCmd())
+	root.AddCommand(credentialCmd())
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())
 	root.AddCommand(convergeCmd())
@@ -1074,6 +1075,125 @@ func describeCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// credentialCmd is the operator surface for bus credentials (brief 9 S2). put,
+// list, and delete are reachable by a credential-push key; get is admin only,
+// and no verb here reveals a value (reveal is a later local-socket-only seam).
+func credentialCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "credential",
+		Short: "Manage bus credentials the daemon holds (transient, never persisted)",
+	}
+
+	var kind, audience, binding, valueFile string
+	put := &cobra.Command{
+		Use:   "put <name>",
+		Short: "Push a bus credential to the daemon (value from --value-file, or - for stdin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if valueFile == "" {
+				return fmt.Errorf("--value-file is required (use - to read the value from stdin)")
+			}
+			var value []byte
+			var err error
+			if valueFile == "-" {
+				value, err = io.ReadAll(os.Stdin)
+			} else {
+				value, err = os.ReadFile(valueFile)
+			}
+			if err != nil {
+				return fmt.Errorf("read value: %w", err)
+			}
+			// A seed file usually ends in a newline; trim surrounding whitespace.
+			value = bytes.TrimSpace(value)
+			if len(value) == 0 {
+				return fmt.Errorf("credential value is empty")
+			}
+			params, _ := json.Marshal(map[string]any{
+				"name":     args[0],
+				"kind":     kind,
+				"audience": audience,
+				"binding":  binding,
+				"value":    value,
+			})
+			resp, err := send(daemon.Request{Method: "credential.put", Params: params})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			fmt.Printf("credential %q stored\n", args[0])
+			return nil
+		},
+	}
+	put.Flags().StringVar(&kind, "kind", string(api.CredentialNATSNKeySeed), "credential kind")
+	put.Flags().StringVar(&audience, "audience", "", "who the credential is for (for example the hub or a cluster)")
+	put.Flags().StringVar(&binding, "binding", "", "display of the hub grant this credential carries")
+	put.Flags().StringVar(&valueFile, "value-file", "", "file holding the credential value, or - for stdin (required)")
+	cmd.AddCommand(put)
+
+	get := &cobra.Command{
+		Use:   "get <name>",
+		Short: "Show a credential's metadata (never its value)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]string{"name": args[0]})
+			resp, err := send(daemon.Request{Method: "credential.get", Params: params})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var v any
+			_ = json.Unmarshal(resp.Result, &v)
+			out, _ := json.MarshalIndent(v, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		},
+	}
+	cmd.AddCommand(get)
+
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List credentials (metadata only)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := send(daemon.Request{Method: "credential.list"})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			return printCredentials(resp.Result)
+		},
+	}
+	cmd.AddCommand(list)
+
+	del := &cobra.Command{
+		Use:     "delete <name>",
+		Aliases: []string{"rm"},
+		Short:   "Delete a credential (its value is zeroed)",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, _ := json.Marshal(map[string]string{"name": args[0]})
+			resp, err := send(daemon.Request{Method: "credential.delete", Params: params})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			fmt.Printf("credential %q deleted\n", args[0])
+			return nil
+		},
+	}
+	cmd.AddCommand(del)
+
+	return cmd
 }
 
 func deleteCmd() *cobra.Command {

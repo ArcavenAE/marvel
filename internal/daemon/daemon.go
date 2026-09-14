@@ -746,6 +746,14 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleInject(req.Params)
 	case "capture":
 		return d.handleCapture(req.Params)
+	case "credential.put":
+		return d.handleCredentialPut(req.Params, c)
+	case "credential.get":
+		return d.handleCredentialGet(req.Params)
+	case "credential.list":
+		return d.handleCredentialList()
+	case "credential.delete":
+		return d.handleCredentialDelete(req.Params, c)
 	case "stop":
 		return d.handleStop(req.Params)
 	case "reexec":

@@ -197,15 +197,18 @@ func TestDispatchAsScopeEnforcement(t *testing.T) {
 		t.Errorf("admin on logs: unexpected scope refusal %q", resp.Error)
 	}
 
-	// A credential-push method passes the scope gate today; it fails only as an
-	// unknown method until the credential.* handlers land (aae-orc-gdum6), never
-	// as a scope refusal.
+	// A credential-push method passes the scope gate and reaches its handler
+	// (gdum6 landed the credential.* handlers). With no params it fails as a
+	// bad request, never as a scope refusal and no longer as an unknown method.
 	resp = d.dispatchAs(Request{Method: "credential.put"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:test"})
 	if strings.Contains(resp.Error, refusal) {
 		t.Errorf("credential-push on credential.put: unexpected scope refusal %q", resp.Error)
 	}
-	if !strings.Contains(resp.Error, "unknown method") {
-		t.Errorf("credential.put before its handler exists: error = %q, want unknown method", resp.Error)
+	if strings.Contains(resp.Error, "unknown method") {
+		t.Errorf("credential.put reached no handler: %q", resp.Error)
+	}
+	if resp.Error == "" {
+		t.Errorf("credential.put with no params: want a bad-request error, got success")
 	}
 
 	// An empty or unrecognized scope permits nothing.
