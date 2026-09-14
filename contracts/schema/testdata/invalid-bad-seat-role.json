@@ -1,0 +1,1 @@
+{"schema_version":1,"message_id":"01JZ0000000000000000000007","sender":{"agent_id":"envoy","workspace":"aae-orc"},"recipient":{"address":"agent://ops/planner"},"performative":"INFORM","authority":{"strength":"relayed","seat":{"role":"super.visor","key":"k","epoch":1}},"content":{"type":"signal"},"sent_at":"2026-09-12T23:40:00Z"}
