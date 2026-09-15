@@ -20,6 +20,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/events"
@@ -142,6 +143,7 @@ func main() {
 	root.AddCommand(getCmd())
 	root.AddCommand(describeCmd())
 	root.AddCommand(credentialCmd())
+	root.AddCommand(busCmd())
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())
 	root.AddCommand(convergeCmd())
@@ -2082,7 +2084,7 @@ func nameArg(name string) string {
 }
 
 func stopCmd() *cobra.Command {
-	var teardown bool
+	var teardown, keepBus bool
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the marvel daemon, leaving agents running",
@@ -2100,9 +2102,10 @@ marvel-* tmux state it never recorded is reported rather than
 destroyed; 'marvel daemon --reclaim' and 'marvel reap --confirm' are
 the acts that destroy that.`,
 		Example: `  marvel stop              # detach, agents keep running
+  marvel stop --keep-bus   # detach and leave a managed nats-server up for the next daemon
   marvel stop --teardown   # end every agent, then stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			params, _ := json.Marshal(map[string]bool{"teardown": teardown})
+			params, _ := json.Marshal(map[string]bool{"teardown": teardown, "keep_bus": keepBus})
 			resp, err := send(daemon.Request{Method: "stop", Params: params})
 			if err != nil {
 				return err
@@ -2111,7 +2114,11 @@ the acts that destroy that.`,
 				return fmt.Errorf("%s", resp.Error)
 			}
 			if !teardown {
-				fmt.Println("marvel daemon detaching, agents keep running")
+				if keepBus {
+					fmt.Println("marvel daemon detaching, agents keep running, bus left up for the next daemon")
+				} else {
+					fmt.Println("marvel daemon detaching, agents keep running")
+				}
 				return nil
 			}
 			fmt.Println("marvel daemon stopping, agents torn down")
@@ -2133,7 +2140,67 @@ the acts that destroy that.`,
 	}
 	cmd.Flags().BoolVar(&teardown, "teardown", false,
 		"delete every session and kill its tmux session before stopping")
+	cmd.Flags().BoolVar(&keepBus, "keep-bus", false,
+		"leave a managed nats-server running for the next daemon to adopt (ignored with --teardown)")
 	return cmd
+}
+
+func busCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "bus",
+		Short: "Inspect the cluster's message bus",
+		Long: `Inspect the cluster's message bus.
+
+A cluster with 'bus.managed: true' in the client config runs nats-server
+as a child of the daemon. The daemon starts it, restarts it under the
+same crash-loop backoff roles get, reloads its authorization when teams
+change, and holds new sessions while it is down. A cluster with
+'bus.managed: false' only hands sessions the configured URL.`,
+	}
+	status := &cobra.Command{
+		Use:   "status",
+		Short: "Show the broker: pid, listener, readiness, hub leaf link",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := send(daemon.Request{Method: "bus.status"})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var st bus.Status
+			if err := json.Unmarshal(resp.Result, &st); err != nil {
+				return fmt.Errorf("decode bus status: %w", err)
+			}
+			printBusStatus(os.Stdout, st)
+			return nil
+		},
+	}
+	cmd.AddCommand(status)
+	return cmd
+}
+
+// printBusStatus renders the status as aligned key/value lines; the fields
+// a reader acts on (ready, leaf, backoff) sit where the eye lands first.
+func printBusStatus(w io.Writer, st bus.Status) {
+	if !st.Managed {
+		_, _ = fmt.Fprintf(w, "managed:  false\nurl:      %s\n", st.URL)
+		return
+	}
+	ready := "no"
+	if st.Ready {
+		ready = "yes"
+	}
+	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\nurl:      %s\nlisten:   %s\ndomain:   %s\npid:      %d", ready, st.Leaf, st.URL, st.Listen, st.Domain, st.PID)
+	if st.Adopted {
+		_, _ = fmt.Fprint(w, " (adopted)")
+	}
+	_, _ = fmt.Fprintf(w, "\nrestarts: %d\n", st.Restarts)
+	if st.BackoffUntil != "" {
+		_, _ = fmt.Fprintf(w, "backoff:  until %s\n", st.BackoffUntil)
+	}
+	_, _ = fmt.Fprintf(w, "conf:     %s\n", st.ConfPath)
 }
 
 // stopWarning renders what a teardown leaves standing. Returns an empty

@@ -148,6 +148,23 @@ const (
 	// when the files changed; warning when rendering failed, with the reason.
 	// Never carries a password.
 	KindBusRendered Kind = "bus.rendered"
+	// Bus supervision kinds (brief 10 section 6, aae-orc-xy1dh). The broker
+	// is a daemon-owned child, not a session, so these are control-plane
+	// kinds with no session key. bus.started and bus.stopped bracket a
+	// managed broker's life; bus.crashed is a pid exit marvel did not ask
+	// for, restarted under backoff; bus.unavailable is the per-role hold
+	// (R-93: no session spawns against a bus that is down); bus.reloaded is
+	// a SIGHUP after the authorization file changed. The leaf kinds report
+	// the hub link from /leafz and are never a health state: a down hub
+	// restarts nothing. bus.leaf.unenrolled is a hub.url with no seed.
+	KindBusStarted        Kind = "bus.started"
+	KindBusStopped        Kind = "bus.stopped"
+	KindBusCrashed        Kind = "bus.crashed"
+	KindBusUnavailable    Kind = "bus.unavailable"
+	KindBusReloaded       Kind = "bus.reloaded"
+	KindBusLeafUp         Kind = "bus.leaf.up"
+	KindBusLeafDown       Kind = "bus.leaf.down"
+	KindBusLeafUnenrolled Kind = "bus.leaf.unenrolled"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -213,6 +230,14 @@ var allKinds = []Kind{
 	KindCredentialRevealed,
 	KindCredentialTransientDropped,
 	KindBusRendered,
+	KindBusStarted,
+	KindBusStopped,
+	KindBusCrashed,
+	KindBusUnavailable,
+	KindBusReloaded,
+	KindBusLeafUp,
+	KindBusLeafDown,
+	KindBusLeafUnenrolled,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,
