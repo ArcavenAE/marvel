@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nkeys"
+
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
@@ -269,5 +271,92 @@ func TestNewSupervisorNamesMissingBinary(t *testing.T) {
 	_, err = NewSupervisor(m, t.TempDir(), t.TempDir(), nil)
 	if err == nil || !strings.Contains(err.Error(), "nats-server not found") || !strings.Contains(err.Error(), "bus.managed: false") {
 		t.Fatalf("err = %v, want a missing-binary error naming the way out", err)
+	}
+}
+
+// TestRestartCarriesTheSeedIntoTheChildEnvironment: a broker started with
+// no seed runs local-only; the seed arrives (credential put), the conf gains
+// the leaf remote, and Restart starts a new process with the seed in its
+// environment. The seed is in that environment and nowhere on disk.
+func TestRestartCarriesTheSeedIntoTheChildEnvironment(t *testing.T) {
+	s, m, ring := newTestSupervisor(t, "nats-leaf://127.0.0.1:1")
+	kp, err := nkeys.CreateUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := kp.Seed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := false
+	m.hasLeafSeed = func() bool { return have }
+	s.Env = func() []string {
+		if !have {
+			return nil
+		}
+		return []string{LeafSeedEnv + "=" + string(seed)}
+	}
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first := s.Status().PID
+	if !hasKind(ring, events.KindBusLeafUnenrolled) {
+		t.Fatal("no bus.leaf.unenrolled before the seed")
+	}
+
+	have = true
+	if changed, err := m.Regenerate(); err != nil || !changed {
+		t.Fatalf("regenerate with seed: changed=%v err=%v", changed, err)
+	}
+	if err := s.Restart("credential.put bus/leaf"); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	st := s.Status()
+	if !st.Ready || st.PID == first || st.Restarts != 0 {
+		t.Fatalf("after restart: %+v (first pid %d); want ready, new pid, restarts uncounted", st, first)
+	}
+	if st.Leaf == "unenrolled" {
+		t.Error("leaf still reads unenrolled after the seed arrived")
+	}
+	// The new process has the variable; the old one did not. Read the
+	// child's environment from the kernel rather than trusting our own env.
+	out, err := exec.Command("ps", "-E", "-o", "command=", "-p", strconv.Itoa(st.PID)).Output()
+	if err == nil && !strings.Contains(string(out), LeafSeedEnv+"=") {
+		t.Errorf("child environment lacks %s:\n%s", LeafSeedEnv, out)
+	}
+	// Nothing on disk carries the seed.
+	for _, f := range []string{s.mgr.ConfPath(), filepath.Join(s.mgr.Dir(), AuthName), s.logPath} {
+		b, _ := os.ReadFile(f)
+		if strings.Contains(string(b), string(seed)) {
+			t.Errorf("seed found in %s", f)
+		}
+	}
+	if syscall.Kill(first, 0) == nil {
+		t.Error("previous broker still alive after restart")
+	}
+}
+
+// TestRestartWhileDownIsAStart: a restart asked for during a crash outage
+// does not wait out the backoff; it starts the broker now.
+func TestRestartWhileDownIsAStart(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	s.backoff = func(int) time.Duration { return time.Hour }
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pid := s.Status().PID
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && s.Ready() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if s.Ready() {
+		t.Fatal("still ready after SIGKILL")
+	}
+	if err := s.Restart("test"); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.Status(); !st.Ready || st.PID == pid {
+		t.Fatalf("after restart during outage: %+v", st)
 	}
 }
