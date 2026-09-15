@@ -2375,6 +2375,16 @@ func (d *Daemon) attachBus(socketPath string) error {
 	// Render before start so the child reads a current conf; wire the
 	// reloader after, so this first render is not asked to SIGHUP a broker
 	// that is not running yet.
+	// The leaf seed: Store memory to the child's environment, read at each
+	// spawn so a restart after `credential put bus/leaf` carries it. Nothing
+	// else sees it: not the conf, not the log, not a session.
+	sup.Env = func() []string {
+		seed, err := d.store.RevealCredentialValue(busLeafCredential)
+		if err != nil {
+			return nil
+		}
+		return []string{bus.LeafSeedEnv + "=" + string(seed)}
+	}
 	d.regenerateBus("start")
 	mgr.Reloader = sup
 	// The moment after the listener answers and before any session may
@@ -2432,9 +2442,9 @@ func (d *Daemon) handleBusStatus() Response {
 // regenerateBus re-renders the managed broker's files from the applied
 // teams and the leaf seed's presence. It is a no-op without a managed bus
 // and quiet when nothing changed; a change or a failure lands on the ring.
-func (d *Daemon) regenerateBus(reason string) {
+func (d *Daemon) regenerateBus(reason string) bool {
 	if d.bus == nil {
-		return
+		return false
 	}
 	changed, err := d.bus.Regenerate()
 	switch {
@@ -2446,5 +2456,22 @@ func (d *Daemon) regenerateBus(reason string) {
 		msg := fmt.Sprintf("bus config rendered (%s): %s", reason, d.bus.ConfPath())
 		events.Emit(d.events, events.Event{Kind: events.KindBusRendered, Severity: events.SeverityInfo, Message: msg})
 		log.Printf("%s: %s", events.KindBusRendered, msg)
+	}
+	return changed && err == nil
+}
+
+// restartBus restarts the supervised broker so a change that only a new
+// process can pick up (the leaf seed in its environment) takes effect. A
+// failure is logged and surfaced as bus.crashed-shaped warning text on the
+// ring; the controller's hold covers the gap until the next successful
+// start.
+func (d *Daemon) restartBus(reason string) {
+	if d.busSup == nil {
+		return
+	}
+	if err := d.busSup.Restart(reason); err != nil {
+		msg := fmt.Sprintf("bus restart (%s) failed: %v", reason, err)
+		events.Emit(d.events, events.Event{Kind: events.KindBusCrashed, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindBusCrashed, msg)
 	}
 }

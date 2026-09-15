@@ -34,10 +34,11 @@ type Supervisor struct {
 	logPath string
 	ring    *events.Ring
 
-	// Env supplies extra environment for the child, beyond the daemon's own.
-	// The leaf seed rides here as DIRECTOR_LEAF_NKEY (aae-orc-vqq2c); until
-	// that lands, a conf whose leaf block needs the variable is refused at
-	// start rather than handed to a broker that cannot resolve it.
+	// Env supplies extra environment for the child, beyond the daemon's own,
+	// read fresh at every spawn. The leaf seed rides here as DIRECTOR_LEAF_NKEY
+	// (aae-orc-vqq2c): daemon memory to broker environment, nothing else. A
+	// conf whose leaf block needs the variable while Env yields none is
+	// refused at spawn rather than handed to a broker that cannot resolve it.
 	Env func() []string
 	// AfterReady runs once the listener answers and before the bus is marked
 	// ready: provisioning (aae-orc-apeoc). Nil means ready at listener-up.
@@ -50,6 +51,7 @@ type Supervisor struct {
 	leafPoll time.Duration
 
 	mu          sync.Mutex
+	parent      context.Context
 	cmd         *exec.Cmd
 	pid         int
 	adopted     bool
@@ -128,6 +130,7 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.parent = ctx
 	ctx, s.cancel = context.WithCancel(ctx)
 
 	if pid, alive := s.pidFileAlive(); alive {
@@ -195,7 +198,7 @@ func (s *Supervisor) spawnLocked() error {
 		env = append(env, s.Env()...)
 	}
 	if strings.Contains(string(body), "$"+LeafSeedEnv) && !hasEnv(env, LeafSeedEnv) {
-		return fmt.Errorf("bus: %s references $%s but the supervisor has no seed source; the broker would refuse to start (aae-orc-vqq2c supplies it)", conf, LeafSeedEnv)
+		return fmt.Errorf("bus: %s references $%s but no %s credential is in the store; the broker would refuse to start", conf, LeafSeedEnv, "bus/leaf")
 	}
 	if err := os.MkdirAll(filepath.Dir(s.logPath), 0o700); err != nil {
 		return fmt.Errorf("bus: create log dir: %w", err)
@@ -311,6 +314,56 @@ func (s *Supervisor) onCrash(ctx context.Context, err error) {
 	}
 }
 
+// Restart ends the running broker and starts a fresh one from the current
+// conf and environment. Reload cannot do this: the leaf seed rides in the
+// child's environment, which the server reads once at start, so a later
+// `credential put bus/leaf` (aae-orc-vqq2c) needs a new process. Clients
+// reconnect; the restart is counted separately from crashes and is not
+// subject to backoff. Safe while the broker is down: it becomes the start.
+func (s *Supervisor) Restart(reason string) error {
+	s.mu.Lock()
+	if s.parent == nil {
+		s.mu.Unlock()
+		return errors.New("bus: restart before start")
+	}
+	s.stopping = true // the watcher must not read this exit as a crash
+	if s.cancel != nil {
+		s.cancel()
+	}
+	pid, done := s.pid, s.watchDone
+	s.ready, s.pid, s.cmd, s.watchDone = false, 0, nil, nil
+	s.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+	if pid != 0 {
+		s.terminate(pid)
+		log.Printf("bus: nats-server pid %d stopped to restart (%s)", pid, reason)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopping = false
+	var ctx context.Context
+	ctx, s.cancel = context.WithCancel(s.parent)
+	if err := s.spawnLocked(); err != nil {
+		return err
+	}
+	return s.becomeReady(ctx, "restarted ("+reason+")")
+}
+
+// terminate ends a broker process group with a bounded grace period.
+func (s *Supervisor) terminate(pid int) {
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	deadline := time.Now().Add(stopGrace)
+	for time.Now().Before(deadline) && syscall.Kill(pid, 0) == nil {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}
+}
+
 // Reload sends SIGHUP so the broker re-reads authorization without dropping
 // unaffected clients. The Manager calls it after a rewrite. With no broker
 // running (not started yet, or down in backoff) there is nothing to signal
@@ -356,14 +409,7 @@ func (s *Supervisor) Stop(keep bool) {
 	}
 	// Our own child was already reaped by cmd.Wait inside watch; an adopted
 	// process is not ours to wait on, so both are given the grace by polling.
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
-	deadline := time.Now().Add(stopGrace)
-	for time.Now().Before(deadline) && syscall.Kill(pid, 0) == nil {
-		time.Sleep(100 * time.Millisecond)
-	}
-	if syscall.Kill(pid, 0) == nil {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-	}
+	s.terminate(pid)
 	_ = os.Remove(s.pidFile)
 	s.emit(events.KindBusStopped, events.SeverityInfo, fmt.Sprintf("nats-server pid %d stopped with the daemon", pid))
 }
