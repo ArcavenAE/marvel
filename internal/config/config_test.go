@@ -1,6 +1,10 @@
 package config
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -133,5 +137,93 @@ func TestIsLocalSocket(t *testing.T) {
 				t.Errorf("isLocalSocket(%q) = %v, want %v", tt.addr, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateClusterName(t *testing.T) {
+	t.Parallel()
+	accepted := []string{"local", "kinu-1", "ops_2", "A-Z09_", "-", "_"}
+	for _, name := range accepted {
+		if err := ValidateClusterName(name); err != nil {
+			t.Errorf("ValidateClusterName(%q) = %v, want accepted", name, err)
+		}
+	}
+	rejected := map[string]struct{ name, byte_ string }{
+		"dot separator":  {"my.cluster", "."},
+		"space":          {"my cluster", " "},
+		"star":           {"ops*", "*"},
+		"trailing gt":    {"ops>", ">"},
+		"tab":            {"op\ts", "\t"},
+		"unicode letter": {"plannér", "é"},
+		"slash":          {"a/b", "/"},
+	}
+	for label, tc := range rejected {
+		err := ValidateClusterName(tc.name)
+		if err == nil {
+			t.Errorf("%s: ValidateClusterName(%q) = nil, want rejection", label, tc.name)
+			continue
+		}
+		if !errors.Is(err, ErrInvalidClusterName) {
+			t.Errorf("%s: error %v is not ErrInvalidClusterName", label, err)
+		}
+		if !strings.Contains(err.Error(), strconv.Quote(tc.byte_)) {
+			t.Errorf("%s: error %q does not name the offending byte %q", label, err, tc.byte_)
+		}
+	}
+	if err := ValidateClusterName(""); !errors.Is(err, ErrInvalidClusterName) {
+		t.Errorf("empty name: got %v, want ErrInvalidClusterName", err)
+	}
+}
+
+func TestAddClusterRefusesBadNameWithoutWriting(t *testing.T) {
+	t.Parallel()
+	cfg := defaultConfig()
+	before := len(cfg.Clusters)
+	err := cfg.AddCluster("my.cluster", "mrvl://u@h", "")
+	if !errors.Is(err, ErrInvalidClusterName) {
+		t.Fatalf("AddCluster(my.cluster) = %v, want ErrInvalidClusterName", err)
+	}
+	if len(cfg.Clusters) != before {
+		t.Errorf("a refused name was still added: %+v", cfg.Clusters)
+	}
+	if err := cfg.AddCluster("remote-1", "mrvl://u@h", ""); err != nil {
+		t.Fatalf("AddCluster(remote-1) = %v, want nil", err)
+	}
+	if len(cfg.Clusters) != before+1 {
+		t.Errorf("valid name not added: %+v", cfg.Clusters)
+	}
+}
+
+func TestLoadReportsEveryBadNameAndStillReturnsConfig(t *testing.T) {
+	// Not parallel: overrides HOME so configPath resolves into a temp dir.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".marvel"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	yamlBody := "clusters:\n  - name: good\n  - name: bad.one\n    server: mrvl://u@h\n  - name: \"bad two\"\ncurrent_cluster: good\n"
+	if err := os.WriteFile(filepath.Join(dir, ".marvel", "config.yaml"), []byte(yamlBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if !errors.Is(err, ErrInvalidClusterName) {
+		t.Fatalf("Load() error = %v, want ErrInvalidClusterName", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load() returned a nil config beside the validation error; callers that proceed per cluster need it")
+	}
+	// Every offender is named in one report, and the byte for each.
+	for _, want := range []string{`"bad.one"`, `"."`, `"bad two"`, `" "`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() error does not mention %s:\n%v", want, err)
+		}
+	}
+	// Nothing was rewritten and the unaffected cluster is intact.
+	if len(cfg.Clusters) != 3 || cfg.Clusters[1].Name != "bad.one" {
+		t.Errorf("Load() rewrote or dropped clusters: %+v", cfg.Clusters)
+	}
+	if addr, err := cfg.ResolveCluster("good"); err != nil || addr == "" {
+		t.Errorf("unaffected cluster does not resolve: addr=%q err=%v", addr, err)
 	}
 }

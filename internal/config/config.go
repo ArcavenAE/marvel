@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -206,7 +207,51 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	// A bad cluster name is reported, not repaired, and the parsed config
+	// still comes back beside the error: a caller that can proceed per
+	// cluster (listing, removing the offender, resolving an unaffected
+	// cluster) checks errors.Is(err, ErrInvalidClusterName) and carries on;
+	// every other caller treats it as the failure it is.
+	if err := cfg.Validate(); err != nil {
+		return &cfg, err
+	}
 	return &cfg, nil
+}
+
+// ErrInvalidClusterName marks a cluster whose name is outside the subject
+// token class. Callers match it with errors.Is.
+var ErrInvalidClusterName = errors.New("invalid cluster name")
+
+// ValidateClusterName checks a cluster name against the closed class
+// [A-Za-z0-9_-]. The name is the subject token for the cluster's JetStream
+// domain, its global inbox, and its presence keys (R-94), so a dot, star,
+// right angle bracket, or space would build a subject that is not the
+// cluster's. It rejects, naming the offending byte, and never rewrites
+// (the R-76 validToken shape from the director shim).
+func ValidateClusterName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%w: name is empty", ErrInvalidClusterName)
+	}
+	for _, r := range name {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-'
+		if !ok {
+			return fmt.Errorf("%w: %q contains %q; the class is [A-Za-z0-9_-] and a name is rejected, not rewritten, because a dot, star or right angle bracket would build a subject that is not this cluster's (R-94)", ErrInvalidClusterName, name, string(r))
+		}
+	}
+	return nil
+}
+
+// Validate checks every cluster name. It reports all offenders at once,
+// joined, so one load names every entry the operator has to fix.
+func (c *Config) Validate() error {
+	var errs []error
+	for _, cl := range c.Clusters {
+		if err := ValidateClusterName(cl.Name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Save writes the config to ~/.marvel/config.yaml.
@@ -284,8 +329,13 @@ func (c *Config) GetCluster(name string) (*Cluster, error) {
 }
 
 // AddCluster adds or updates a cluster in the config. identity is
-// optional and is preserved or updated when provided.
-func (c *Config) AddCluster(name, addr, identity string) {
+// optional and is preserved or updated when provided. The name must be in
+// the subject token class (ValidateClusterName); a bad name is refused
+// before anything is written.
+func (c *Config) AddCluster(name, addr, identity string) error {
+	if err := ValidateClusterName(name); err != nil {
+		return err
+	}
 	for i, cl := range c.Clusters {
 		if cl.Name == name {
 			if isMRVL(addr) || isSSH(addr) {
@@ -298,7 +348,7 @@ func (c *Config) AddCluster(name, addr, identity string) {
 			if identity != "" {
 				c.Clusters[i].Identity = identity
 			}
-			return
+			return nil
 		}
 	}
 
@@ -309,6 +359,7 @@ func (c *Config) AddCluster(name, addr, identity string) {
 		cl.Socket = addr
 	}
 	c.Clusters = append(c.Clusters, cl)
+	return nil
 }
 
 // RemoveCluster removes a cluster from the config.
