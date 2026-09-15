@@ -131,9 +131,12 @@ const (
 	// daemon, and KindCredentialDeleted that one was removed. The Message
 	// carries the credential name and the caller key fingerprint; the value
 	// is never in the event, the log, or anywhere but the in-memory store
-	// (brief 9 S2, aae-orc-gdum6).
-	KindCredentialPut     Kind = "credential.put"
-	KindCredentialDeleted Kind = "credential.deleted"
+	// (brief 9 S2, aae-orc-gdum6). KindCredentialRevealed records that a value
+	// was read back over the local socket (brief 9 S3, aae-orc-sl9q2); it too
+	// names the credential and never the value.
+	KindCredentialPut      Kind = "credential.put"
+	KindCredentialDeleted  Kind = "credential.deleted"
+	KindCredentialRevealed Kind = "credential.revealed"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -196,6 +199,7 @@ var allKinds = []Kind{
 	KindReconcileLeft,
 	KindCredentialPut,
 	KindCredentialDeleted,
+	KindCredentialRevealed,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,

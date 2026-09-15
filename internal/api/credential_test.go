@@ -85,6 +85,40 @@ func TestCredentialValueClonedAndZeroedOnDelete(t *testing.T) {
 	}
 }
 
+func TestRevealCredentialValueReturnsCloneAndNotFound(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	// A slashed name, the shape the operator ruling uses (bus/leaf).
+	const name = "bus/leaf"
+	if err := s.CreateCredential(newCred(name, "seed-material")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := s.RevealCredentialValue(name)
+	if err != nil {
+		t.Fatalf("reveal: %v", err)
+	}
+	if string(got) != "seed-material" {
+		t.Errorf("revealed value = %q, want the stored secret", got)
+	}
+
+	// The returned bytes are a clone: mutating them must not touch the store.
+	for i := range got {
+		got[i] = 0
+	}
+	again, err := s.RevealCredentialValue(name)
+	if err != nil {
+		t.Fatalf("reveal again: %v", err)
+	}
+	if string(again) != "seed-material" {
+		t.Errorf("store value changed after mutating a revealed copy: %q", again)
+	}
+
+	if _, err := s.RevealCredentialValue("absent"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reveal absent: got %v, want ErrNotFound", err)
+	}
+}
+
 func TestCredentialValueNeverSerialized(t *testing.T) {
 	t.Parallel()
 	c := Credential{Name: "bus", Kind: CredentialNATSNKeySeed, Value: []byte("SEEDSECRET")}

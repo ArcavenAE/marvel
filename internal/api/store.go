@@ -597,6 +597,21 @@ func (s *Store) GetCredential(key string) (Credential, error) {
 	return cloneCredentialMeta(c), nil
 }
 
+// RevealCredentialValue returns a clone of the named credential's secret Value.
+// It is the one read path that returns the value, and it exists only for the
+// local-socket reveal seam (brief 9 S3); the daemon gates it to the local unix
+// socket. The returned bytes are a copy, so the caller never holds a pointer
+// into the store's live secret.
+func (s *Store) RevealCredentialValue(key string) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.credentials[key]
+	if !ok {
+		return nil, fmt.Errorf("credential %s: %w", key, ErrNotFound)
+	}
+	return slices.Clone(c.Value), nil
+}
+
 // ListCredentials returns metadata snapshots of all credentials, without their
 // values.
 func (s *Store) ListCredentials() []Credential {

@@ -1077,9 +1077,10 @@ func describeCmd() *cobra.Command {
 	}
 }
 
-// credentialCmd is the operator surface for bus credentials (brief 9 S2). put,
-// list, and delete are reachable by a credential-push key; get is admin only,
-// and no verb here reveals a value (reveal is a later local-socket-only seam).
+// credentialCmd is the operator surface for bus credentials (brief 9 S2, S3).
+// put, list, and delete are reachable by a credential-push key; get is admin
+// only. get --reveal returns the value, and the daemon serves it only on the
+// local unix socket, never through the mrvl:// tunnel (brief 9 S3).
 func credentialCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "credential",
@@ -1134,12 +1135,32 @@ func credentialCmd() *cobra.Command {
 	put.Flags().StringVar(&valueFile, "value-file", "", "file holding the credential value, or - for stdin (required)")
 	cmd.AddCommand(put)
 
+	var reveal bool
 	get := &cobra.Command{
 		Use:   "get <name>",
-		Short: "Show a credential's metadata (never its value)",
+		Short: "Show a credential's metadata, or its value with --reveal (local socket only)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]string{"name": args[0]})
+			if reveal {
+				resp, err := send(daemon.Request{Method: "credential.reveal", Params: params})
+				if err != nil {
+					return err
+				}
+				if resp.Error != "" {
+					return fmt.Errorf("%s", resp.Error)
+				}
+				var rv struct {
+					Value []byte `json:"value"`
+				}
+				if err := json.Unmarshal(resp.Result, &rv); err != nil {
+					return fmt.Errorf("decode reveal: %w", err)
+				}
+				// Raw bytes, no added newline, so `$(marvel credential get x
+				// --reveal)` captures the value exactly.
+				_, err = os.Stdout.Write(rv.Value)
+				return err
+			}
 			resp, err := send(daemon.Request{Method: "credential.get", Params: params})
 			if err != nil {
 				return err
@@ -1154,6 +1175,7 @@ func credentialCmd() *cobra.Command {
 			return nil
 		},
 	}
+	get.Flags().BoolVar(&reveal, "reveal", false, "print the secret value to stdout (served only on the local unix socket)")
 	cmd.AddCommand(get)
 
 	list := &cobra.Command{

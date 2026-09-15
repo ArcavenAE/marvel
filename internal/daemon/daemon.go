@@ -719,6 +719,10 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		log.Printf("scope refused: method %q not permitted for %s key %s", req.Method, c.scope, who)
 		return Response{Error: fmt.Sprintf("method %q is not permitted for a %s key", req.Method, c.scope)}
 	}
+	if methodRequiresLocal(req.Method) && !c.local {
+		log.Printf("local-only refused: method %q attempted over mrvl:// by key %s", req.Method, c.fingerprint)
+		return Response{Error: fmt.Sprintf("method %q is only available on the local unix socket", req.Method)}
+	}
 	switch req.Method {
 	case "apply":
 		return d.handleApply(req.Params)
@@ -750,6 +754,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleCredentialPut(req.Params, c)
 	case "credential.get":
 		return d.handleCredentialGet(req.Params)
+	case "credential.reveal":
+		return d.handleCredentialReveal(req.Params, c)
 	case "credential.list":
 		return d.handleCredentialList()
 	case "credential.delete":
