@@ -287,3 +287,43 @@ func TestRenderedConfPassesNatsServerCheck(t *testing.T) {
 		t.Errorf("nats-server -t accepted the conf with %s unset; it should refuse:\n%s", LeafSeedEnv, out)
 	}
 }
+
+func TestAdoptedGivesURLAndNoCredential(t *testing.T) {
+	t.Parallel()
+	a := NewAdopted("nats://127.0.0.1:4222")
+	if a.URL() != "nats://127.0.0.1:4222" {
+		t.Errorf("URL = %q", a.URL())
+	}
+	if _, _, ok := a.TeamCredential("ops"); ok {
+		t.Error("adopted broker handed out a credential")
+	}
+}
+
+func TestManagerTeamCredentialIsTeamNameAndMintedPassword(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", URL: "nats://127.0.0.1:4222", StoreDir: dir}
+	m, err := NewManager(dir, "kinu", rb, teams{{Name: "ops", Workspace: "acme"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.URL() != "nats://127.0.0.1:4222" {
+		t.Errorf("URL = %q", m.URL())
+	}
+	if _, _, ok := m.TeamCredential("ops"); ok {
+		t.Error("credential available before the team was rendered")
+	}
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	user, pw, ok := m.TeamCredential("ops")
+	if !ok || user != "ops" || pw == "" {
+		t.Fatalf("TeamCredential(ops) = %q %q %v", user, pw, ok)
+	}
+	if got, _ := m.TeamPassword("ops"); got != pw {
+		t.Error("TeamCredential password differs from TeamPassword")
+	}
+	if _, _, ok := m.TeamCredential("nobody"); ok {
+		t.Error("credential for an unapplied team")
+	}
+}

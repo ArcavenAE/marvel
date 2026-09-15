@@ -2316,7 +2316,9 @@ func (d *Daemon) attachBus(socketPath string) {
 	}
 	rb := cl.Bus.Resolve(layout.StateDir())
 	if !rb.Managed {
-		log.Printf("bus: cluster %s adopts an existing broker at %s (managed: false); nothing rendered", cl.Name, rb.URL)
+		// Sessions still learn the URL; there is no authorization to hand out.
+		d.sessMgr.Bus = bus.NewAdopted(rb.URL)
+		log.Printf("bus: cluster %s adopts an existing broker at %s (managed: false); sessions receive NATS_URL, nothing rendered", cl.Name, rb.URL)
 		return
 	}
 	mgr, merr := bus.NewManager(filepath.Join(layout.StateDir(), "nats"), cl.Name, rb, d.store, func() bool {
@@ -2328,6 +2330,7 @@ func (d *Daemon) attachBus(socketPath string) {
 		return
 	}
 	d.bus = mgr
+	d.sessMgr.Bus = mgr
 	d.regenerateBus("start")
 }
 

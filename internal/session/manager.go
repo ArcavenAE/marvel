@@ -29,6 +29,10 @@ type Manager struct {
 	driver     *tmux.Driver
 	adapters   *runtime.Registry
 	SocketPath string
+	// Bus supplies the cluster's bus URL and, for a managed broker, each
+	// team's credential for the session environment. Set by daemon.Start
+	// from the cluster's bus section; nil when the cluster has none.
+	Bus BusEnv
 	// Events receives structured state-transition events. Nil is safe
 	// (all emission sites use events.Emit which no-ops on nil) so tests
 	// and callers that don't care about the event stream don't need to
@@ -573,6 +577,12 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+	}
+	if m.Bus != nil {
+		lctx.BusURL = m.Bus.URL()
+		if user, pass, ok := m.Bus.TeamCredential(team.Name); ok {
+			lctx.BusUser, lctx.BusPassword = user, pass
+		}
 	}
 
 	// Project the role's policy (finding-024 contract half) before Prepare
@@ -1189,4 +1199,13 @@ func (m *Manager) DeleteAllInWorkspace(workspace string) {
 func (m *Manager) CleanupWorkspace(workspace string) error {
 	m.DeleteAllInWorkspace(workspace)
 	return m.driver.KillSession(tmuxSessionName(workspace))
+}
+
+// BusEnv is what the session environment needs from a cluster's bus: the
+// URL sessions connect to, and the team credential when the broker carries
+// authorization. An adopted anonymous broker returns ok=false for every
+// team and sessions connect as they do today (brief 10 section 4).
+type BusEnv interface {
+	URL() string
+	TeamCredential(team string) (user, password string, ok bool)
 }

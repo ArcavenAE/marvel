@@ -114,3 +114,46 @@ func TestBusLeafBlockFollowsTheSeedCredential(t *testing.T) {
 		t.Error("leaf block still rendered after the seed was deleted")
 	}
 }
+
+// attachBus reads the client config from HOME and binds by socket. With
+// managed: false the daemon renders nothing but sessions still learn the URL
+// (brief 10 section 4: this lands before supervision exists).
+func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
+	d := newHandlerDaemon(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MARVEL_SOCKET", "")
+	sock := filepath.Join(home, ".marvel", "run", "marvel.sock")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "clusters:\n  - name: kinu\n    socket: " + sock + "\n    bus:\n      managed: false\n      url: nats://127.0.0.1:4222\ncurrent_cluster: kinu\n"
+	if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d.attachBus(sock)
+
+	if d.bus != nil {
+		t.Error("an adopted broker got a render manager; nothing should be rendered")
+	}
+	if d.sessMgr.Bus == nil {
+		t.Fatal("sessions have no bus provider for an adopted broker")
+	}
+	if d.sessMgr.Bus.URL() != "nats://127.0.0.1:4222" {
+		t.Errorf("session bus URL = %q", d.sessMgr.Bus.URL())
+	}
+	if _, _, ok := d.sessMgr.Bus.TeamCredential("ops"); ok {
+		t.Error("adopted broker handed a team credential to sessions")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".marvel", "state", "nats")); !os.IsNotExist(err) {
+		t.Errorf("adopted broker rendered files: stat err = %v", err)
+	}
+
+	// A socket that matches no cluster attaches nothing.
+	d2 := newHandlerDaemon(t)
+	d2.attachBus(filepath.Join(home, "other.sock"))
+	if d2.sessMgr.Bus != nil || d2.bus != nil {
+		t.Error("unmatched socket attached a bus")
+	}
+}

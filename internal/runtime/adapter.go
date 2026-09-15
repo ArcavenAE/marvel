@@ -51,6 +51,15 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// BusURL, BusUser, and BusPassword come from the cluster's bus section
+	// (brief 10 section 4, aae-orc-1qyo3). BusURL alone means an adopted
+	// broker with no authorization; the shim then connects anonymously, as
+	// it does today. User and password are the team credential the daemon
+	// minted into the broker's authorization file; per-session users are a
+	// follow-on on the same seam.
+	BusURL      string
+	BusUser     string
+	BusPassword string
 	// StreamPath is a sink the session manager created for this launch —
 	// a FIFO the harness's structured output can be redirected into.
 	// Empty means marvel is not observing this session's stream, either
@@ -208,6 +217,15 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 		// The rig column is deliberately not set here; its semantics
 		// are gated on the bd HEAD survey (aae-orc-usohe).
 		"BEADS_ACTOR": "marvel/" + ctx.Workspace.Name + "/" + ctx.Session.Name,
+	}
+	if ctx.BusURL != "" {
+		// The bus is cluster topology, so it rides from the cluster config
+		// the way MARVEL_SOCKET does, and a manifest names no broker.
+		env["NATS_URL"] = ctx.BusURL
+		if ctx.BusUser != "" {
+			env["DIRECTOR_NATS_USER"] = ctx.BusUser
+			env["DIRECTOR_NATS_PASS"] = ctx.BusPassword
+		}
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath

@@ -70,6 +70,19 @@ func (m *Manager) Dir() string { return m.dir }
 // ConfPath is the path a broker is started with (-c).
 func (m *Manager) ConfPath() string { return filepath.Join(m.dir, ConfName) }
 
+// URL is what sessions receive as NATS_URL.
+func (m *Manager) URL() string { return m.bus.URL }
+
+// TeamCredential is the broker user and password for an applied team, the
+// session.BusEnv contract. The user is the team name (section 4).
+func (m *Manager) TeamCredential(team string) (string, string, bool) {
+	pw, ok := m.TeamPassword(team)
+	if !ok {
+		return "", "", false
+	}
+	return team, pw, true
+}
+
 // Domain is the cluster name the broker serves as its JetStream domain.
 func (m *Manager) Domain() string { return m.domain }
 
@@ -161,3 +174,18 @@ func hasSupervisorRole(t api.Team) bool {
 	}
 	return false
 }
+
+// Adopted is the session.BusEnv for a cluster whose bus is managed: false,
+// an existing broker marvel did not configure (the phase-0 path). Sessions
+// get the URL and no credential; the broker's own authorization, if any,
+// is outside marvel's knowledge.
+type Adopted struct{ url string }
+
+// NewAdopted returns the provider for an adopted broker at url.
+func NewAdopted(url string) Adopted { return Adopted{url: url} }
+
+// URL is what sessions receive as NATS_URL.
+func (a Adopted) URL() string { return a.url }
+
+// TeamCredential is never available for an adopted broker.
+func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", false }
