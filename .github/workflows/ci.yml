@@ -33,7 +33,7 @@ jobs:
         # they match, and the renovate annotation below keeps both bumping.
         env:
           # renovate: datasource=go depName=mvdan.cc/gofumpt
-          GOFUMPT_VERSION: v0.7.0
+          GOFUMPT_VERSION: v0.12.0
         run: go install "mvdan.cc/gofumpt@${GOFUMPT_VERSION}"
 
       - name: Check formatting (gofumpt)
@@ -52,7 +52,7 @@ jobs:
         uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93 # v9.3.0
         with:
           # renovate: datasource=github-releases depName=golangci/golangci-lint
-          version: v2.12.2
+          version: v2.13.2
 
       - name: Run tests with race detector
         run: go test ./... -v -count=1 -race -coverprofile=coverage.out -covermode=atomic
