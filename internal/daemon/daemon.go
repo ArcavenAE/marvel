@@ -574,6 +574,20 @@ func cleanExecPath(p string) string {
 }
 
 func (d *Daemon) shutdown(teardown bool) {
+	// Transient credentials live only in memory, so a detach, reexec, or
+	// teardown drops them (brief 9 S4). The successor starts empty and cannot
+	// know what was lost, so name it here, in the departing process that still
+	// holds them. The log line is durable; the event serves a live watcher.
+	if n := len(d.store.ListCredentials()); n > 0 {
+		msg := fmt.Sprintf("%d transient credential(s) dropped; push them again once the daemon is back", n)
+		events.Emit(d.events, events.Event{
+			Kind:     events.KindCredentialTransientDropped,
+			Severity: events.SeverityWarning,
+			Message:  msg,
+		})
+		log.Printf("%s: %s", events.KindCredentialTransientDropped, msg)
+	}
+
 	if d.cancel != nil {
 		d.cancel()
 	}
