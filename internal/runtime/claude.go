@@ -1,6 +1,10 @@
 package runtime
 
-import "github.com/arcavenae/marvel/internal/api"
+import (
+	"strings"
+
+	"github.com/arcavenae/marvel/internal/api"
+)
 
 // Claude is the adapter for the bare Claude Code CLI. Medium integration:
 // permission mode injection via CLI flag, environment-based identity,
@@ -59,6 +63,28 @@ func claudeStatuslineFeed(command string) map[string]any {
 	}
 }
 
+// AssignsSessionID reports that Claude Code takes a caller-chosen session
+// id, so marvel names this session instead of discovering it later.
+//
+// Verified against 2.1.271 on 2026-09-15 (the ticket's snapshot was
+// 2.1.226 and says explicitly that it decays): --session-id <uuid> is
+// accepted, and the transcript is then written to
+// ~/.claude/projects/<cwd slug>/<uuid>.jsonl. That is the binding
+// aae-orc-ca7y is about, and it is the one an lsof probe cannot recover,
+// because the live harness holds no descriptor on the JSONL.
+//
+// It declines a launch whose own args already steer session identity.
+// A manifest that passes --session-id has named the session itself and
+// wins, the same precedence --append-system-prompt already has below; and
+// --resume, -r, --continue or -c ask the harness to adopt an EXISTING
+// session, which a freshly minted id contradicts. In both cases marvel
+// mints nothing, so Session.HarnessSessionID stays empty rather than
+// recording an id the harness was never given.
+func (c *Claude) AssignsSessionID(ctx *LaunchContext) bool {
+	return !hasAnyFlag(ctx.Session.Runtime.Args,
+		"--session-id", "--resume", "-r", "--continue", "-c")
+}
+
 func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {
@@ -83,6 +109,13 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		// --verbose is not optional here: claude refuses stream-json
 		// output under --print without it.
 		args = append(args, "--print", "--output-format", "stream-json", "--verbose")
+	}
+
+	// Name the session marvel is starting. AssignsSessionID has already
+	// refused the launches where this would fight the caller's own args,
+	// so an id present here is one marvel minted and recorded.
+	if ctx.HarnessSessionID != "" {
+		args = append(args, "--session-id", ctx.HarnessSessionID)
 	}
 
 	// Inject permission mode — claude CLI accepts this directly.
@@ -126,7 +159,24 @@ func hasFlag(args []string, flag string) bool {
 	return false
 }
 
+// hasAnyFlag reports whether args carry any of the named flags, in either
+// the separate-value form (--flag value) or the joined form (--flag=value).
+// The joined form matters here: a manifest writing --session-id=<uuid> has
+// named the session just as surely as --session-id <uuid>, and missing it
+// would put two of the flag on one command line.
+func hasAnyFlag(args []string, flags ...string) bool {
+	for _, a := range args {
+		for _, f := range flags {
+			if a == f || strings.HasPrefix(a, f+"=") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func init() {
 	var _ Adapter = (*Claude)(nil)
 	var _ StreamCapable = (*Claude)(nil)
+	var _ SessionIDAssigner = (*Claude)(nil)
 }

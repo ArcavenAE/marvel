@@ -67,6 +67,17 @@ type LaunchContext struct {
 	// has no sink directory. An adapter that finds it empty must produce
 	// a working command anyway.
 	StreamPath string
+	// HarnessSessionID is the session id marvel assigned this launch, for
+	// an adapter that implements SessionIDAssigner. The session manager
+	// mints it per launch and records it on the session before Prepare, so
+	// the value the harness is told is the value marvel kept.
+	//
+	// Empty means this launch carries no assigned id, either because the
+	// adapter does not implement SessionIDAssigner, or because it declined
+	// for this launch, or because minting failed. An adapter that finds it
+	// empty must produce a working command anyway, exactly as it does for
+	// StreamPath.
+	HarnessSessionID string
 	// PolicyProjectionPath is the file the session manager wrote this
 	// session's projected Claude Code settings fragment to (see
 	// finding-024). It is non-empty only when the role references a policy
@@ -99,6 +110,33 @@ type ProjectionTarget struct {
 	// Set only when Supported, and it must be inside the dir passed to
 	// ProjectionFor; the session manager refuses a path outside it.
 	Path string
+}
+
+// SessionIDAssigner is the optional identity contract. An adapter
+// implements it when its harness accepts a session identifier chosen by
+// the caller, which lets marvel NAME the session it is about to start
+// rather than hunt for it afterwards (aae-orc-ca7y).
+//
+// It is an optional interface rather than a flag on Adapter for the same
+// reason StreamCapable and StatuslineFeeder are: most of the roster offers
+// no id pin, and a field every adapter had to answer would invite marvel
+// to mint an id no harness is ever told, recording on the session an
+// identity that does not exist anywhere else. Not implementing it is the
+// correct answer for a harness that cannot be named, and it leaves that
+// session exactly as it is today.
+//
+// The bar is "accepts an id as a launch argument and uses it", not "has a
+// session id". codex mints its own and exposes CODEX_THREAD_ID to
+// children, which reads like a pin and is not one: it is a value codex
+// SETS, not one it reads (aae-orc-ca7y, measured twice). An adapter for a
+// harness like that belongs on the container-assignment path instead, and
+// must not implement this.
+type SessionIDAssigner interface {
+	// AssignsSessionID reports whether this launch can carry a
+	// marvel-assigned session id. It is asked per launch, not once per
+	// adapter, so a harness whose pin depends on mode or on the caller's
+	// own args can decline the launches it cannot name.
+	AssignsSessionID(ctx *LaunchContext) bool
 }
 
 // StatuslineFeeder is the optional half of the projection contract. An

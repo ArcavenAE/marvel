@@ -223,6 +223,21 @@ type Session struct {
 	// out of every persisted and real-row payload (so no bolt schema bump),
 	// and toml:"-" keeps it out of manifests. See aae-orc-prhx.
 	Reason string `json:"reason,omitempty" toml:"-"`
+	// HarnessSessionID is the session identifier marvel ASSIGNED to this
+	// launch, for a harness that accepts one (Claude Code's --session-id).
+	// It is the spawn-time alternative to discovering the binding
+	// afterwards: marvel names the session, so it already knows which
+	// transcript belongs to which pane and needs no per-pid probe to find
+	// out (aae-orc-ca7y).
+	//
+	// Empty for a runtime with no id pin, and for records written before
+	// this field existed. Re-minted on every launch rather than held for
+	// the session's life, because the harness refuses a reused id; see
+	// NewHarnessSessionID for the measurement.
+	//
+	// Status, not spec. Additive on the json path, so pre-field records
+	// rehydrate with it empty and no bolt schema move is needed.
+	HarnessSessionID string `json:"harness_session_id,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
