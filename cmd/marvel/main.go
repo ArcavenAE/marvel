@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -67,8 +68,12 @@ func resolveDaemonAddr() (string, daemon.DialOptions) {
 		return env, daemon.DialOptions{Identity: identityPath}
 	}
 	cfg, err := config.Load()
-	if err != nil {
+	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
 		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
+	}
+	if err != nil {
+		// Another cluster's bad name does not stop this one from resolving.
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
@@ -1638,8 +1643,12 @@ MARVEL_TMUX_SOCKET overrides the derived name and is reported as-is.`,
 		Short: "List configured clusters",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
-			if err != nil {
+			if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
 				return err
+			}
+			if err != nil {
+				// List anyway: the operator needs to see the offender to fix it.
+				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "   \tNAME\tADDRESS\tIDENTITY")
@@ -1701,7 +1710,9 @@ or ~/.ssh/ keys.`,
 					}
 				}
 			}
-			cfg.AddCluster(args[0], args[1], identity)
+			if err := cfg.AddCluster(args[0], args[1], identity); err != nil {
+				return err
+			}
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
@@ -1723,9 +1734,10 @@ or ~/.ssh/ keys.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
-			if err != nil {
+			if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
 				return err
 			}
+			// A bad name is exactly what remove-cluster is for; proceed.
 			if err := cfg.RemoveCluster(args[0]); err != nil {
 				return err
 			}
