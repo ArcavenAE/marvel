@@ -127,6 +127,13 @@ const (
 	// is the event that keeps "leave it alone" from being as silent as
 	// the kill it replaced.
 	KindReconcileLeft Kind = "reconcile.left"
+	// KindCredentialPut records that a bus credential was pushed to this
+	// daemon, and KindCredentialDeleted that one was removed. The Message
+	// carries the credential name and the caller key fingerprint; the value
+	// is never in the event, the log, or anywhere but the in-memory store
+	// (brief 9 S2, aae-orc-gdum6).
+	KindCredentialPut     Kind = "credential.put"
+	KindCredentialDeleted Kind = "credential.deleted"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -187,6 +194,8 @@ var allKinds = []Kind{
 	KindHeartbeatRefused,
 	KindHeartbeatUnbound,
 	KindReconcileLeft,
+	KindCredentialPut,
+	KindCredentialDeleted,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,
