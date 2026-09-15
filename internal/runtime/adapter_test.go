@@ -531,3 +531,45 @@ func TestAdaptersInjectHeartbeatToken(t *testing.T) {
 		})
 	}
 }
+
+func TestBaseEnvBusVarsFollowTheClusterBusSection(t *testing.T) {
+	t.Parallel()
+	mk := func() *LaunchContext {
+		return &LaunchContext{
+			Session:   &api.Session{Name: "ops-worker-g1-0"},
+			Role:      &api.Role{Name: "worker"},
+			Team:      &api.Team{Name: "ops"},
+			Workspace: &api.Workspace{Name: "acme"},
+		}
+	}
+	// No bus section: none of the three variables, and the shim behaves as today.
+	env := baseEnv(mk())
+	for _, k := range []string{"NATS_URL", "DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS"} {
+		if _, ok := env[k]; ok {
+			t.Errorf("%s set with no bus section", k)
+		}
+	}
+	// Adopted anonymous broker: URL only.
+	ctx := mk()
+	ctx.BusURL = "nats://127.0.0.1:4222"
+	env = baseEnv(ctx)
+	if env["NATS_URL"] != "nats://127.0.0.1:4222" {
+		t.Errorf("NATS_URL = %q", env["NATS_URL"])
+	}
+	if _, ok := env["DIRECTOR_NATS_USER"]; ok {
+		t.Error("DIRECTOR_NATS_USER set for an adopted broker with no credential")
+	}
+	// Managed broker: the team credential rides with the URL.
+	ctx.BusUser, ctx.BusPassword = "ops", "pw-minted"
+	env = baseEnv(ctx)
+	if env["DIRECTOR_NATS_USER"] != "ops" || env["DIRECTOR_NATS_PASS"] != "pw-minted" {
+		t.Errorf("team credential not in env: user=%q pass=%q", env["DIRECTOR_NATS_USER"], env["DIRECTOR_NATS_PASS"])
+	}
+	// A credential without a URL is meaningless and must not leak into the env.
+	ctx = mk()
+	ctx.BusUser, ctx.BusPassword = "ops", "pw"
+	env = baseEnv(ctx)
+	if _, ok := env["DIRECTOR_NATS_PASS"]; ok {
+		t.Error("password set with no bus URL")
+	}
+}
