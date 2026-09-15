@@ -88,6 +88,32 @@ func (d *Daemon) handleCredentialGet(params json.RawMessage) Response {
 	return Response{Result: data}
 }
 
+// credentialRevealResult carries a revealed secret value back to the local
+// caller. Value marshals as base64 (encoding/json's []byte behavior), so it is
+// binary-safe; the CLI decodes it and writes the raw bytes to stdout.
+type credentialRevealResult struct {
+	Value []byte `json:"value"`
+}
+
+// handleCredentialReveal returns a credential's secret value. It is the one
+// path that returns a value, and the daemon reaches it only for a local-socket
+// caller (dispatchAs gates credential.reveal to the local socket; brief 9 S3).
+// The reveal is recorded on the event ring and the log, naming the credential
+// and never the value.
+func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) Response {
+	var p credentialNameParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	value, err := d.store.RevealCredentialValue(p.Name)
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+	d.emitCredentialEvent(events.KindCredentialRevealed, p.Name, "", c)
+	data, _ := json.Marshal(credentialRevealResult{Value: value})
+	return Response{Result: data}
+}
+
 // handleCredentialList returns metadata for every credential.
 func (d *Daemon) handleCredentialList() Response {
 	data, err := json.Marshal(d.store.ListCredentials())

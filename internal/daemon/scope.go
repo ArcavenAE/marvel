@@ -88,7 +88,27 @@ func scopeFromOptions(options []string) (Scope, error) {
 type caller struct {
 	scope       Scope
 	fingerprint string
+	// local is true only for the daemon's own unix socket. An SSH caller is
+	// never local, even one holding an admin key. It gates the reveal path
+	// (brief 9 S3): a credential value leaves the daemon only to the operator
+	// at the local socket, never back out through the mrvl:// tunnel.
+	local bool
 }
 
 // localCaller is the implicit admin caller for the local unix socket.
-func localCaller() caller { return caller{scope: ScopeAdmin} }
+func localCaller() caller { return caller{scope: ScopeAdmin, local: true} }
+
+// localOnlyMethods may be called only from the local unix socket, never
+// through the mrvl:// tunnel, whatever scope a tunnelled key carries. Keeping
+// the set here, beside credentialPushMethods, keeps the authorization policy
+// in one place. credential.reveal returns a secret value, so it is confined to
+// the operator at the daemon's own socket (brief 9 S3).
+var localOnlyMethods = map[string]bool{
+	"credential.reveal": true,
+}
+
+// methodRequiresLocal reports whether method may be called only from the local
+// unix socket.
+func methodRequiresLocal(method string) bool {
+	return localOnlyMethods[method]
+}
