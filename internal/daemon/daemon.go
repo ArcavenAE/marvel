@@ -24,6 +24,8 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
 	"github.com/arcavenae/marvel/internal/logbuf"
@@ -138,6 +140,10 @@ type Daemon struct {
 	// in the layout works either; the field is then simply absent from
 	// the wire and the client has nothing to compare.
 	home string
+	// bus keeps a managed local broker's rendered configuration current
+	// with the applied teams (brief 10, aae-orc-e9g8i). Nil when this
+	// daemon's cluster has no managed bus section.
+	bus *bus.Manager
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -363,6 +369,7 @@ func (d *Daemon) Start(socketPath string) error {
 		return fmt.Errorf("listen %s (%s): %w", socketPath, network, err)
 	}
 	d.listener = ln
+	d.attachBus(socketPath)
 	d.sessMgr.SocketPath = socketPath
 	d.teamCtrl.SocketPath = socketPath
 
@@ -949,6 +956,8 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if n := d.sessMgr.Reproject(); n > 0 {
 		log.Printf("apply: re-projected policy for %d running session(s)", n)
 	}
+	// A newly applied team needs its broker user before its sessions spawn.
+	d.regenerateBus("apply")
 
 	// Trigger immediate reconciliation.
 	d.teamCtrl.ReconcileOnce()
@@ -1112,6 +1121,8 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 		// Clear accumulated crash-loop state for this team's roles so a
 		// subsequent re-apply starts fresh. See ArcavenAE/marvel#29.
 		d.teamCtrl.ClearRoleHealthForTeam(t.Workspace, t.Name)
+		// The team's broker user goes with it; rewrite and reload is revocation.
+		d.regenerateBus("delete team " + p.Name)
 	case "workspace":
 		ws, getErr := d.store.GetWorkspace(p.Name)
 		if getErr != nil {
@@ -2263,4 +2274,79 @@ func loadKeyFile(path string, strictPerms bool) (ssh.Signer, error) {
 		return nil, err
 	}
 	return ssh.ParsePrivateKey(data)
+}
+
+// busLeafCredential is the Store credential whose presence turns on the
+// leaf remote in the rendered broker conf (brief 9 S3 names it; S6 consumes
+// it through the broker environment).
+const busLeafCredential = "bus/leaf"
+
+// attachBus binds this daemon to its cluster's bus section and renders the
+// broker configuration once. The client config names clusters by how to
+// reach them, and the daemon is reached at exactly one socket path, so the
+// entry whose socket is ours is ours. A cluster with no bus section, or an
+// adopted (managed: false) one, leaves d.bus nil: nothing to render. A bad
+// section is logged and skipped rather than refusing the daemon; sessions
+// still run, they just get no managed broker.
+func (d *Daemon) attachBus(socketPath string) {
+	cfg, err := config.Load()
+	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidBus) {
+		log.Printf("bus: client config unreadable, no managed broker: %v", err)
+		return
+	}
+	if cfg == nil {
+		return
+	}
+	cl := cfg.ClusterForSocket(socketPath)
+	if cl == nil || cl.Bus == nil {
+		return
+	}
+	if verr := config.ValidateBus(cl.Name, cl.Bus); verr != nil {
+		log.Printf("bus: cluster %s has an invalid bus section, no managed broker: %v", cl.Name, verr)
+		return
+	}
+	if nerr := config.ValidateClusterName(cl.Name); nerr != nil {
+		log.Printf("bus: %v; no managed broker", nerr)
+		return
+	}
+	layout, lerr := paths.Default()
+	if lerr != nil {
+		log.Printf("bus: resolve layout: %v", lerr)
+		return
+	}
+	rb := cl.Bus.Resolve(layout.StateDir())
+	if !rb.Managed {
+		log.Printf("bus: cluster %s adopts an existing broker at %s (managed: false); nothing rendered", cl.Name, rb.URL)
+		return
+	}
+	mgr, merr := bus.NewManager(filepath.Join(layout.StateDir(), "nats"), cl.Name, rb, d.store, func() bool {
+		_, gerr := d.store.GetCredential(busLeafCredential)
+		return gerr == nil
+	})
+	if merr != nil {
+		log.Printf("bus: %v", merr)
+		return
+	}
+	d.bus = mgr
+	d.regenerateBus("start")
+}
+
+// regenerateBus re-renders the managed broker's files from the applied
+// teams and the leaf seed's presence. It is a no-op without a managed bus
+// and quiet when nothing changed; a change or a failure lands on the ring.
+func (d *Daemon) regenerateBus(reason string) {
+	if d.bus == nil {
+		return
+	}
+	changed, err := d.bus.Regenerate()
+	switch {
+	case err != nil:
+		msg := fmt.Sprintf("bus config not rendered (%s): %v", reason, err)
+		events.Emit(d.events, events.Event{Kind: events.KindBusRendered, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindBusRendered, msg)
+	case changed:
+		msg := fmt.Sprintf("bus config rendered (%s): %s", reason, d.bus.ConfPath())
+		events.Emit(d.events, events.Event{Kind: events.KindBusRendered, Severity: events.SeverityInfo, Message: msg})
+		log.Printf("%s: %s", events.KindBusRendered, msg)
+	}
 }
