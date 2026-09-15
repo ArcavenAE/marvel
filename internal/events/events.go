@@ -137,6 +137,12 @@ const (
 	KindCredentialPut      Kind = "credential.put"
 	KindCredentialDeleted  Kind = "credential.deleted"
 	KindCredentialRevealed Kind = "credential.revealed"
+	// KindCredentialTransientDropped records that the daemon went away
+	// (restart or `daemon reexec`) holding transient credentials, which do
+	// not survive: the operator pushes them again once the daemon is back
+	// (brief 9 S4, aae-orc-8br8d). Warning severity; it names the count, never
+	// a value.
+	KindCredentialTransientDropped Kind = "credential.transient-dropped"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -200,6 +206,7 @@ var allKinds = []Kind{
 	KindCredentialPut,
 	KindCredentialDeleted,
 	KindCredentialRevealed,
+	KindCredentialTransientDropped,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,

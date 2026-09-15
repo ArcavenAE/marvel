@@ -2608,7 +2608,14 @@ func printCredentials(data json.RawMessage) error {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			c.Name, c.Kind, dashIfEmpty(c.Audience), issued, dashIfEmpty(c.IssuedBy), dashIfEmpty(c.Binding))
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	// The note goes to stderr so stdout stays parseable. Transient credentials
+	// live only in memory (brief 9 S4): a daemon restart or reexec empties
+	// them, and the operator pushes them again.
+	fmt.Fprintln(os.Stderr, "note: credentials are transient; a daemon restart or reexec empties them, so push again if the daemon has restarted")
+	return nil
 }
 
 // dashIfEmpty renders an empty optional field as a dash for table legibility.
