@@ -510,6 +510,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.PID = pid
 		live.State = api.SessionRunning
 		live.BackendRedirection = sess.BackendRedirection
+		// What marvel named this launch, kept so the binding survives a
+		// daemon restart. Empty when the runtime has no id pin.
+		live.HarnessSessionID = sess.HarnessSessionID
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -536,6 +539,28 @@ type launchPlan struct {
 	command string
 	env     map[string]string
 	stream  *runtime.StreamSource
+}
+
+// assignSessionID mints this launch's harness session id and records it on
+// the session, for an adapter whose harness accepts one.
+//
+// A mint failure is logged and not fatal. The session still runs; it costs
+// only the binding, which is where every session is today, and refusing to
+// spawn an agent because a UUID could not be generated would trade a
+// missing convenience for an outage.
+func (m *Manager) assignSessionID(lctx *runtime.LaunchContext, adapter runtime.Adapter) {
+	assigner, ok := adapter.(runtime.SessionIDAssigner)
+	if !ok || !assigner.AssignsSessionID(lctx) {
+		return
+	}
+	id, err := api.NewHarnessSessionID()
+	if err != nil {
+		log.Printf("session %s: harness session id unavailable, launching unnamed: %v",
+			lctx.Session.Key(), err)
+		return
+	}
+	lctx.HarnessSessionID = id
+	lctx.Session.HarnessSessionID = id
 }
 
 // planLaunch uses the adapter registry when team/role context is
@@ -590,6 +615,13 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// lctx.PolicyProjectionPath when the adapter supports projection and a
 	// policy resolves; a no-op otherwise.
 	m.projectForLaunch(lctx, adapter)
+
+	// Name the session before Prepare builds the command line, so the id
+	// the harness is told is the id marvel recorded (aae-orc-ca7y). Minted
+	// here rather than at session creation because this runs on every
+	// launch: a restart or a shift must carry a fresh value, since the
+	// harness refuses a reused one.
+	m.assignSessionID(lctx, adapter)
 
 	// Ask before building: an adapter that never streams (or one asked
 	// for an interactive launch) should cost no filesystem work.
