@@ -265,6 +265,11 @@ jobs:
     name: Create Release
     needs: [build-binaries, sign-and-notarize]
     if: github.event_name == 'push' && !cancelled() && needs.build-binaries.result == 'success'
+    # Release jobs for successive pushes queue rather than interleave: two of
+    # them racing on the tap push left the tap behind head (finding-039).
+    concurrency:
+      group: release-tap-push
+      cancel-in-progress: false
     permissions:
       contents: write
     environment: release
@@ -412,7 +417,21 @@ jobs:
             echo "Formula unchanged, skipping push"
           else
             git commit -m "chore(formula): update marvel to ${TAG}"
-            git push origin main
+            # Another release run, or another formula's bump, may have pushed
+            # the tap since the clone. This is the bot's own fresh checkout, so
+            # rebasing it rewrites nothing anyone holds; give up only after a
+            # bounded number of attempts (finding-039).
+            pushed=""
+            for attempt in 1 2 3 4 5; do
+              if git push origin main; then
+                pushed=yes
+                break
+              fi
+              echo "tap push attempt ${attempt} rejected; rebasing onto the tap's current main"
+              git fetch origin main
+              git rebase origin/main
+            done
+            [ -n "$pushed" ] || { echo "tap push failed after 5 attempts"; exit 1; }
           fi
 
       - name: Clean up old alpha releases
