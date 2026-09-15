@@ -189,3 +189,9 @@ func (a Adopted) URL() string { return a.url }
 
 // TeamCredential is never available for an adopted broker.
 func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", false }
+
+// leafEnrolled reports whether a leaf seed is in the store, so a rendered hub
+// link can actually come up. Nil hasLeafSeed means never enrolled.
+func (m *Manager) leafEnrolled() bool {
+	return m.hasLeafSeed != nil && m.hasLeafSeed()
+}

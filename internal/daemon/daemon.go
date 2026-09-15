@@ -144,6 +144,11 @@ type Daemon struct {
 	// with the applied teams (brief 10, aae-orc-e9g8i). Nil when this
 	// daemon's cluster has no managed bus section.
 	bus *bus.Manager
+	// busSup supervises the managed broker as a child of this daemon; nil when
+	// the cluster has no managed bus. keepBus asks shutdown to leave it running
+	// for the next daemon to adopt (reexec, `marvel stop --keep-bus`).
+	busSup  *bus.Supervisor
+	keepBus bool
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -369,7 +374,6 @@ func (d *Daemon) Start(socketPath string) error {
 		return fmt.Errorf("listen %s (%s): %w", socketPath, network, err)
 	}
 	d.listener = ln
-	d.attachBus(socketPath)
 	d.sessMgr.SocketPath = socketPath
 	d.teamCtrl.SocketPath = socketPath
 
@@ -378,6 +382,19 @@ func (d *Daemon) Start(socketPath string) error {
 			_ = ln.Close()
 			return err
 		}
+	}
+
+	// The bus comes up after the pidfile guard and before the reconcile
+	// loop: a daemon that lost the pidfile race must never reach another
+	// daemon's broker, and no session may spawn before there is a bus to
+	// hand it. A managed bus that cannot start is a start failure, the
+	// tmux posture.
+	if err := d.attachBus(socketPath); err != nil {
+		_ = ln.Close()
+		if d.pidFile != "" {
+			_ = os.Remove(d.pidFile)
+		}
+		return err
 	}
 
 	// Reconcile marvel-* tmux state against recorded intent. Panes that
@@ -556,7 +573,9 @@ func (d *Daemon) Reexec() error {
 	}
 	// Detach checkpoints durable state, releases the bolt file, and stops
 	// serving without touching a pane. Its own doc names this as the first
-	// half of self-update.
+	// half of self-update. The broker stays up too: the successor adopts it
+	// by pidfile and listener, and the agents' shims never see a drop.
+	d.keepBus = true
 	d.Detach()
 	return d.reexec(exe, os.Args, os.Environ())
 }
@@ -616,6 +635,14 @@ func (d *Daemon) shutdown(teardown bool) {
 				log.Printf("cleanup workspace %s: %v", ws.Name, err)
 			}
 		}
+	}
+
+	// The broker's lifetime is the daemon's unless the departing daemon is
+	// handing over (reexec, --keep-bus). Teardown always takes it down.
+	// After wg.Wait so no reconcile tick can spawn against a bus that is
+	// on its way out.
+	if d.busSup != nil {
+		d.busSup.Stop(d.keepBus && !teardown)
 	}
 
 	// Flush before releasing the file handle: on the detach path the
@@ -777,6 +804,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleCredentialGet(req.Params)
 	case "credential.reveal":
 		return d.handleCredentialReveal(req.Params, c)
+	case "bus.status":
+		return d.handleBusStatus()
 	case "credential.list":
 		return d.handleCredentialList()
 	case "credential.delete":
@@ -1725,6 +1754,10 @@ type stopParams struct {
 	// Default (false) detaches: agents keep running and the next
 	// daemon start adopts them.
 	Teardown bool `json:"teardown,omitempty"`
+	// KeepBus leaves a managed nats-server running when the daemon exits,
+	// so the next daemon adopts it and the agents' bus connections hold.
+	// Ignored with Teardown, which ends the bus with everything else.
+	KeepBus bool `json:"keep_bus,omitempty"`
 }
 
 // stopMode decodes the stop params into the shutdown mode. Absent or
@@ -1874,6 +1907,11 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 	teardown, mode, err := stopMode(params)
 	if err != nil {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	if len(params) > 0 {
+		var p stopParams
+		_ = json.Unmarshal(params, &p) // stopMode already validated the shape
+		d.keepBus = p.KeepBus
 	}
 	// Survey before the shutdown goroutine starts, so the answer is
 	// computed while the process is still alive to send it.
@@ -2288,50 +2326,92 @@ const busLeafCredential = "bus/leaf"
 // adopted (managed: false) one, leaves d.bus nil: nothing to render. A bad
 // section is logged and skipped rather than refusing the daemon; sessions
 // still run, they just get no managed broker.
-func (d *Daemon) attachBus(socketPath string) {
+func (d *Daemon) attachBus(socketPath string) error {
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidBus) {
 		log.Printf("bus: client config unreadable, no managed broker: %v", err)
-		return
+		return nil
 	}
 	if cfg == nil {
-		return
+		return nil
 	}
 	cl := cfg.ClusterForSocket(socketPath)
 	if cl == nil || cl.Bus == nil {
-		return
+		return nil
 	}
 	if verr := config.ValidateBus(cl.Name, cl.Bus); verr != nil {
 		log.Printf("bus: cluster %s has an invalid bus section, no managed broker: %v", cl.Name, verr)
-		return
+		return nil
 	}
 	if nerr := config.ValidateClusterName(cl.Name); nerr != nil {
 		log.Printf("bus: %v; no managed broker", nerr)
-		return
+		return nil
 	}
 	layout, lerr := paths.Default()
 	if lerr != nil {
 		log.Printf("bus: resolve layout: %v", lerr)
-		return
+		return nil
 	}
 	rb := cl.Bus.Resolve(layout.StateDir())
 	if !rb.Managed {
 		// Sessions still learn the URL; there is no authorization to hand out.
 		d.sessMgr.Bus = bus.NewAdopted(rb.URL)
 		log.Printf("bus: cluster %s adopts an existing broker at %s (managed: false); sessions receive NATS_URL, nothing rendered", cl.Name, rb.URL)
-		return
+		return nil
 	}
 	mgr, merr := bus.NewManager(filepath.Join(layout.StateDir(), "nats"), cl.Name, rb, d.store, func() bool {
 		_, gerr := d.store.GetCredential(busLeafCredential)
 		return gerr == nil
 	})
 	if merr != nil {
-		log.Printf("bus: %v", merr)
-		return
+		return merr
+	}
+	sup, serr := bus.NewSupervisor(mgr, layout.RunDir(), layout.LogDir(), d.events)
+	if serr != nil {
+		return serr
 	}
 	d.bus = mgr
 	d.sessMgr.Bus = mgr
+	// Render before start so the child reads a current conf; wire the
+	// reloader after, so this first render is not asked to SIGHUP a broker
+	// that is not running yet.
 	d.regenerateBus("start")
+	mgr.Reloader = sup
+	if err := sup.Start(context.Background()); err != nil {
+		return err
+	}
+	d.busSup = sup
+	d.teamCtrl.BusGate = func() (bool, string) {
+		if sup.Ready() {
+			return true, ""
+		}
+		st := sup.Status()
+		if st.BackoffUntil != "" {
+			return false, fmt.Sprintf("bus %s is down; restart #%d waits until %s", rb.Listen, st.Restarts, st.BackoffUntil)
+		}
+		return false, fmt.Sprintf("bus %s is not ready", rb.Listen)
+	}
+	return nil
+}
+
+// handleBusStatus serves `marvel bus status`: the supervised broker when
+// there is one, the adopted URL when the cluster only points at a bus, and
+// a plain "no bus" otherwise.
+func (d *Daemon) handleBusStatus() Response {
+	var st bus.Status
+	switch {
+	case d.busSup != nil:
+		st = d.busSup.Status()
+	case d.sessMgr.Bus != nil:
+		st = bus.Status{Managed: false, URL: d.sessMgr.Bus.URL(), Leaf: "n/a"}
+	default:
+		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
+	}
+	data, err := json.Marshal(st)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
+	}
+	return Response{Result: data}
 }
 
 // regenerateBus re-renders the managed broker's files from the applied

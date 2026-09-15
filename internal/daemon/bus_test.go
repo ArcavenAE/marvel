@@ -132,7 +132,9 @@ func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d.attachBus(sock)
+	if err := d.attachBus(sock); err != nil {
+		t.Fatal(err)
+	}
 
 	if d.bus != nil {
 		t.Error("an adopted broker got a render manager; nothing should be rendered")
@@ -152,7 +154,9 @@ func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
 
 	// A socket that matches no cluster attaches nothing.
 	d2 := newHandlerDaemon(t)
-	d2.attachBus(filepath.Join(home, "other.sock"))
+	if err := d2.attachBus(filepath.Join(home, "other.sock")); err != nil {
+		t.Fatal(err)
+	}
 	if d2.sessMgr.Bus != nil || d2.bus != nil {
 		t.Error("unmatched socket attached a bus")
 	}

@@ -50,6 +50,14 @@ type Controller struct {
 	// once after a restart is correct: the operator restarted the daemon and
 	// the condition is still true. See aae-orc-qiay.
 	admissionHolds map[string]string
+	// BusGate reports whether the cluster bus can take new sessions and, when
+	// it cannot, why. Nil means no managed bus, so no gate. A spawn withheld
+	// by the gate is RoleHold with HoldBus and one bus.unavailable per role
+	// per transition, the admission-latch shape (aae-orc-xy1dh).
+	BusGate func() (ready bool, reason string)
+	// busHolds latches the roles currently held for the bus, so a standing
+	// outage announces itself once per role rather than once per tick.
+	busHolds map[string]bool
 
 	// ShiftTimeout bounds how long a single shift may run before the
 	// reconciler declares it stuck and aborts it. Zero uses
@@ -125,6 +133,7 @@ func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
 		sessMgr:        sessMgr,
 		roleHealth:     make(map[string]*RoleHealth),
 		admissionHolds: make(map[string]string),
+		busHolds:       make(map[string]bool),
 	}
 }
 
@@ -802,6 +811,7 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 		delete(c.roleHealth, roleKey)
 		c.forgetRoleHealth(roleKey)
 		delete(c.admissionHolds, roleKey)
+		delete(c.busHolds, roleKey)
 		log.Printf("reconcile: role %s removed from team %s, drained %d session(s)", role, t.Key(), n)
 		events.Emit(c.Events, events.Event{
 			Kind:      events.KindRoleRemoved,
@@ -920,6 +930,10 @@ const (
 	HoldBackoff HoldReason = "crash_loop_backoff"
 	// HoldAdmission means a team budget refused some or all of the spawn.
 	HoldAdmission HoldReason = "admission"
+	// HoldBus means the cluster's managed bus is not ready: down, restarting
+	// under backoff, or not yet started. Spawning would hand a session a
+	// NATS_URL nothing answers on.
+	HoldBus HoldReason = "bus_unavailable"
 )
 
 // RolePlan is the convergence decision for one role at one generation: what the
@@ -960,6 +974,8 @@ type RolePlan struct {
 	// enacted only in apply. Unexported: it is apply plumbing, not part of the
 	// inspectable decision.
 	admission admissionIntent
+	// bus is the bus-gate intent: hold, clear, or leave the latch alone.
+	bus busIntent
 }
 
 // admissionOp is the admission bookkeeping applyRolePlan performs for a role.
@@ -1024,6 +1040,20 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 
 	switch {
 	case actual < desired:
+		// The bus gate comes first: a broker outage is not the role's fault,
+		// so it neither charges a crash nor reaches admission. The hold is
+		// recorded on the plan; applyRolePlan latches and announces it.
+		if c.BusGate != nil {
+			if ready, reason := c.BusGate(); !ready {
+				plan.Action = RoleHold
+				plan.Hold = HoldBus
+				plan.HoldDetail = reason
+				plan.bus = busHold
+				return plan
+			}
+			plan.bus = busClear
+		}
+
 		// Respect crash-loop backoff. If the role is cooling down from a recent
 		// restart, spawn nothing until the backoff window elapses; without this
 		// the reconciler would immediately recreate a session we just deleted
@@ -1117,6 +1147,14 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 // reconcileRoleAt builds the plan from this same role, keeping them coupled.
 // Caller holds c.mu.
 func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
+	switch plan.bus {
+	case busNoop:
+	case busClear:
+		c.clearBusHold(t, plan.Role)
+	case busHold:
+		c.latchBusHold(t, plan.Role, plan.HoldDetail)
+	}
+
 	switch plan.admission.op {
 	case admissionNoop:
 		// Gate not reached this tick (e.g. a role cooling down in backoff);
