@@ -134,6 +134,13 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		if s.listenerAnswers(time.Second) {
 			s.pid, s.adopted = pid, true
 			log.Printf("bus: adopted running nats-server pid %d on %s", pid, s.mgr.bus.Listen)
+			// The broker still holds the passwords the previous daemon minted;
+			// this daemon has just rendered fresh ones. Reload before anything
+			// connects, so the admin identity and the next session's credential
+			// are the ones the broker knows. Connected clients are kept.
+			if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+				log.Printf("bus: reload adopted nats-server pid %d: %v", pid, err)
+			}
 			return s.becomeReady(ctx, "adopted")
 		}
 		// Recorded pid is alive but not listening: it is ours and wedged.
