@@ -2377,6 +2377,21 @@ func (d *Daemon) attachBus(socketPath string) error {
 	// that is not running yet.
 	d.regenerateBus("start")
 	mgr.Reloader = sup
+	// The moment after the listener answers and before any session may
+	// spawn belongs to provisioning: a bare broker strands the shim
+	// (finding-166). Runs as the admin identity, idempotent, and a failure
+	// is a start failure rather than a fleet that looks running and is not.
+	sup.AfterReady = func() error {
+		admin := mgr.Admin()
+		got, perr := bus.Provision(context.Background(), mgr.URL(), admin.Name, admin.Password)
+		if perr != nil {
+			return perr
+		}
+		msg := fmt.Sprintf("broker %s provisioned: %s", rb.Listen, got)
+		log.Printf("%s: %s", events.KindBusProvisioned, msg)
+		events.Emit(d.events, events.Event{Kind: events.KindBusProvisioned, Severity: events.SeverityInfo, Message: msg})
+		return nil
+	}
 	if err := sup.Start(context.Background()); err != nil {
 		return err
 	}
