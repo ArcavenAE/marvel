@@ -374,7 +374,6 @@ func (d *Daemon) Start(socketPath string) error {
 		return fmt.Errorf("listen %s (%s): %w", socketPath, network, err)
 	}
 	d.listener = ln
-	d.attachBus(socketPath)
 	d.sessMgr.SocketPath = socketPath
 	d.teamCtrl.SocketPath = socketPath
 
