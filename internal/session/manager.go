@@ -50,6 +50,16 @@ type Manager struct {
 	// file it was launched with, and re-projection has to land on that
 	// same path to reach it.
 	ProjectionDir string
+	// HarnessHomeDir holds the per-session private harness state homes
+	// (aae-orc-ca7y). Defaults to a per-layout temp directory, for the
+	// same reason ProjectionDir does and more strongly: codex holds its
+	// home open for the whole session, so the path must stay stable across
+	// a daemon restart or an adopted agent's state would be orphaned.
+	//
+	// Temp is the right tier because the content here is a harness's own
+	// working state, not marvel's record. Anything that must outlive the
+	// session is the harness's to write elsewhere.
+	HarnessHomeDir string
 	// Usage receives adapter events for token and context accounting.
 	// Nil is safe, matching Events.
 	Usage UsageObserver
@@ -66,13 +76,14 @@ type Manager struct {
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	return &Manager{
-		store:         store,
-		driver:        driver,
-		adapters:      runtime.NewRegistry(),
-		StreamDir:     defaultStreamDir(),
-		ProjectionDir: defaultProjectionDir(),
-		instances:     make(map[string]*runtime.TmuxInstance),
-		drains:        make(map[string]*usageDrain),
+		store:          store,
+		driver:         driver,
+		adapters:       runtime.NewRegistry(),
+		StreamDir:      defaultStreamDir(),
+		ProjectionDir:  defaultProjectionDir(),
+		HarnessHomeDir: defaultHarnessHomeDir(),
+		instances:      make(map[string]*runtime.TmuxInstance),
+		drains:         make(map[string]*usageDrain),
 	}
 }
 
@@ -85,6 +96,12 @@ func defaultStreamDir() string {
 // from another's.
 func defaultProjectionDir() string {
 	return daemonTempDir("marvel-policies")
+}
+
+// defaultHarnessHomeDir keeps one daemon's private harness homes away from
+// another's.
+func defaultHarnessHomeDir() string {
+	return daemonTempDir("marvel-harness-homes")
 }
 
 // daemonTempDir names a daemon-owned scratch directory that is unique per
@@ -513,6 +530,10 @@ func (m *Manager) Create(sess *api.Session) error {
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID
+		// Where this session's harness state lives, kept so the binding
+		// survives a daemon restart. Empty when the runtime shares the
+		// operator's own home.
+		live.HarnessHome = sess.HarnessHome
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -539,6 +560,57 @@ type launchPlan struct {
 	command string
 	env     map[string]string
 	stream  *runtime.StreamSource
+}
+
+// prepareSessionHome gives this launch a private harness state home, for an
+// adapter whose harness keeps all of its state under one relocatable
+// directory.
+//
+// The directory is per session KEY, not per launch, so a restart lands back
+// in the same place: the point is to separate this agent's state from every
+// other agent's, not to discard it between respawns.
+//
+// Seeding is symlink-only and best-effort. A missing source entry is skipped
+// rather than fatal, and any failure downgrades to the shared home the
+// session would have used anyway, because a harness that cannot be
+// containerised should still run.
+func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtime.Adapter) {
+	assigner, ok := adapter.(runtime.SessionHomeAssigner)
+	if !ok || m.HarnessHomeDir == "" {
+		return
+	}
+	spec, want := assigner.SessionHome(lctx)
+	if !want || spec.EnvVar == "" {
+		return
+	}
+	dir := filepath.Join(m.HarnessHomeDir, strings.ReplaceAll(lctx.Session.Key(), "/", "-"))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("session %s: private %s unavailable, sharing the operator's home: %v",
+			lctx.Session.Key(), spec.EnvVar, err)
+		return
+	}
+	for _, name := range spec.LinkIn {
+		if spec.Source == "" {
+			break
+		}
+		src := filepath.Join(spec.Source, name)
+		if _, err := os.Stat(src); err != nil {
+			// Not logged in yet, or this harness does not keep that file.
+			// The session reports its own auth state; marvel does not
+			// refuse a spawn over it.
+			continue
+		}
+		dst := filepath.Join(dir, name)
+		if _, err := os.Lstat(dst); err == nil {
+			continue
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			log.Printf("session %s: could not link %s into the private %s: %v",
+				lctx.Session.Key(), name, spec.EnvVar, err)
+		}
+	}
+	lctx.HarnessHomePath = dir
+	lctx.Session.HarnessHome = dir
 }
 
 // assignSessionID mints this launch's harness session id and records it on
@@ -622,6 +694,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// launch: a restart or a shift must carry a fresh value, since the
 	// harness refuses a reused one.
 	m.assignSessionID(lctx, adapter)
+
+	// The container half, for a harness that offers no id pin: give the
+	// session a private state home so its own artifacts are the only ones
+	// in it (aae-orc-ca7y).
+	m.prepareSessionHome(lctx, adapter)
 
 	// Ask before building: an adapter that never streams (or one asked
 	// for an interactive launch) should cost no filesystem work.

@@ -238,6 +238,19 @@ type Session struct {
 	// Status, not spec. Additive on the json path, so pre-field records
 	// rehydrate with it empty and no bolt schema move is needed.
 	HarnessSessionID string `json:"harness_session_id,omitempty" toml:"-"`
+	// HarnessHome is the private harness state directory marvel created
+	// for this session, for a runtime whose whole state tree one
+	// environment variable relocates (codex's CODEX_HOME). It is the
+	// container half of assigning identity rather than discovering it
+	// (aae-orc-ca7y): a harness with no session-id pin still lands its
+	// artifacts somewhere marvel chose, so the binding is a lookup rather
+	// than a probe.
+	//
+	// Empty for a runtime that shares the operator's own home, which is
+	// every runtime's behavior before this field existed, and for records
+	// written before it. Stable across restarts of the same session key.
+	// Status, not spec; additive on the json path.
+	HarnessHome string `json:"harness_home,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
