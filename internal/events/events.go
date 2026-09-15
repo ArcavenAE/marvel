@@ -157,7 +157,10 @@ const (
 	// a SIGHUP after the authorization file changed. The leaf kinds report
 	// the hub link from /leafz and are never a health state: a down hub
 	// restarts nothing. bus.leaf.unenrolled is a hub.url with no seed.
-	KindBusStarted        Kind = "bus.started"
+	KindBusStarted Kind = "bus.started"
+	// KindBusProvisioned reports the streams and bucket the daemon ensured on
+	// the managed broker after it came up (aae-orc-apeoc).
+	KindBusProvisioned    Kind = "bus.provisioned"
 	KindBusStopped        Kind = "bus.stopped"
 	KindBusCrashed        Kind = "bus.crashed"
 	KindBusUnavailable    Kind = "bus.unavailable"
@@ -230,7 +233,7 @@ var allKinds = []Kind{
 	KindCredentialRevealed,
 	KindCredentialTransientDropped,
 	KindBusRendered,
-	KindBusStarted,
+	KindBusStarted, KindBusProvisioned,
 	KindBusStopped,
 	KindBusCrashed,
 	KindBusUnavailable,
