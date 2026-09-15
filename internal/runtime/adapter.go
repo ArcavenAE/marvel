@@ -78,6 +78,13 @@ type LaunchContext struct {
 	// empty must produce a working command anyway, exactly as it does for
 	// StreamPath.
 	HarnessSessionID string
+	// HarnessHomePath is the private state directory the session manager
+	// created for this launch, for an adapter that implements
+	// SessionHomeAssigner. Empty means this launch shares the operator's
+	// own harness home, which is the behavior every session had before.
+	// An adapter that finds it empty must produce a working command
+	// anyway, exactly as it does for StreamPath.
+	HarnessHomePath string
 	// PolicyProjectionPath is the file the session manager wrote this
 	// session's projected Claude Code settings fragment to (see
 	// finding-024). It is non-empty only when the role references a policy
@@ -110,6 +117,56 @@ type ProjectionTarget struct {
 	// Set only when Supported, and it must be inside the dir passed to
 	// ProjectionFor; the session manager refuses a path outside it.
 	Path string
+}
+
+// SessionHomeSpec is an adapter's answer to "does this harness keep its
+// whole mutable state under one relocatable directory, and what is needed
+// in a private one for the harness to work?".
+type SessionHomeSpec struct {
+	// EnvVar is the environment variable that relocates the state tree,
+	// e.g. CODEX_HOME. The adapter sets it in Prepare; naming it here lets
+	// the manager report which lever it is honouring.
+	EnvVar string
+	// Source is the operator's own harness home, which a private home is
+	// seeded from. Empty means nothing is seeded.
+	Source string
+	// LinkIn names entries under Source that the private home cannot work
+	// without, and that are SYMLINKED rather than copied. Credentials are
+	// the reason that distinction is written into the type: codex keeps
+	// auth.json under its home, so a private home with no link to it is a
+	// session that cannot authenticate. A symlink leaves the credential
+	// the operator's, in their file, under their permissions, revoked by
+	// deleting the original; a copy would make marvel a second holder of
+	// bearer authority at a third party, which SOUL section 3 and ADR-009
+	// place outside the custody boundary.
+	//
+	// A named entry that does not exist under Source is skipped, not an
+	// error: an operator who has not logged that harness in yet is not a
+	// spawn failure, they are a session that will report it themselves.
+	LinkIn []string
+}
+
+// SessionHomeAssigner is the optional containment contract. An adapter
+// implements it when its harness keeps its entire mutable state under one
+// directory that an environment variable relocates, so marvel can give a
+// session a private one.
+//
+// This is the container half of "marvel assigns identity rather than
+// discovering it" (aae-orc-ca7y), and it is the answer for a harness that
+// offers no session-id pin. It does not name the session; it names the
+// PLACE, which makes the session's own artifacts the only ones there.
+// Measured on codex 0.153.4: a private CODEX_HOME holds exactly one
+// rollout for the session that ran under it, so the pane-to-rollout
+// binding is a path marvel chose rather than a file it has to hunt for.
+//
+// Optional for the same reason SessionIDAssigner is: a harness that
+// scatters state, or that has no such lever, must not be handed a private
+// directory it will half-use.
+type SessionHomeAssigner interface {
+	// SessionHome reports how to give this launch a private state home.
+	// ok is false when this launch should share the operator's own home,
+	// which is the pre-existing behavior for every runtime.
+	SessionHome(ctx *LaunchContext) (spec SessionHomeSpec, ok bool)
 }
 
 // SessionIDAssigner is the optional identity contract. An adapter

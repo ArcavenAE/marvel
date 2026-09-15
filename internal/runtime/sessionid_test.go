@@ -160,3 +160,78 @@ func TestNewHarnessSessionIDShapeAndUniqueness(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestCodexDeclaresARelocatableHomeAndOthersDoNot(t *testing.T) {
+	t.Parallel()
+	// codex is the roster's case for containment rather than an id pin:
+	// one variable relocates its whole state tree.
+	c := &Codex{}
+	assigner, ok := Adapter(c).(SessionHomeAssigner)
+	if !ok {
+		t.Fatal("codex should declare a relocatable session home")
+	}
+	spec, want := assigner.SessionHome(testContext())
+	if !want {
+		t.Fatal("codex should want a private home")
+	}
+	if spec.EnvVar != "CODEX_HOME" {
+		t.Errorf("expected CODEX_HOME as the lever, got %q", spec.EnvVar)
+	}
+	// Measured: a private home with no auth.json is a 401 on the first
+	// model call, so the credential link is not optional decoration.
+	found := false
+	for _, n := range spec.LinkIn {
+		if n == "auth.json" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("codex must link auth.json into a private home, got LinkIn %v", spec.LinkIn)
+	}
+
+	// claude scatters state across ~/.claude and per-project directories
+	// with no single relocatable root, so it must not claim one.
+	for _, a := range []Adapter{&Claude{}, &OpenCode{}, &Generic{}} {
+		if _, claims := a.(SessionHomeAssigner); claims {
+			t.Errorf("adapter %s claims a relocatable session home", a.Name())
+		}
+	}
+}
+
+func TestCodexPreparePutsThePrivateHomeInTheEnvironment(t *testing.T) {
+	t.Parallel()
+	c := &Codex{}
+	ctx := testContext()
+	ctx.Session.Runtime.Name = "codex"
+	ctx.Session.Runtime.Command = "codex"
+	ctx.HarnessHomePath = "/tmp/marvel-harness-homes/acme-squad-coder-g1-0"
+
+	result, err := c.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if result.Env["CODEX_HOME"] != ctx.HarnessHomePath {
+		t.Errorf("CODEX_HOME should be the assigned home, got %q", result.Env["CODEX_HOME"])
+	}
+	// Identity still rides the environment, which the hook subprocess
+	// inherits (measured on 0.153.4).
+	if result.Env["MARVEL_SESSION"] == "" {
+		t.Error("the private home must not displace the identity stamp")
+	}
+}
+
+func TestCodexPrepareWithoutAPrivateHomeIsUnchanged(t *testing.T) {
+	t.Parallel()
+	c := &Codex{}
+	ctx := testContext()
+	ctx.Session.Runtime.Name = "codex"
+	ctx.Session.Runtime.Command = "codex"
+
+	result, err := c.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if _, set := result.Env["CODEX_HOME"]; set {
+		t.Errorf("no home assigned, so CODEX_HOME should be unset, got %q", result.Env["CODEX_HOME"])
+	}
+}

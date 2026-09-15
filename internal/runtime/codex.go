@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
@@ -39,6 +40,52 @@ func (c *Codex) ProjectionFor(_ *LaunchContext, _ string) ProjectionTarget {
 	return ProjectionTarget{Supported: false}
 }
 
+// codexHomeEnv is the lever that relocates codex's entire state tree.
+const codexHomeEnv = "CODEX_HOME"
+
+// codexAuthFile is the credential codex keeps under its home. A private
+// home without it is a session that cannot authenticate, which is the
+// failure mode a naive per-pane home walks into: measured on 0.153.4, a
+// fresh CODEX_HOME produces `401 Unauthorized` on the first model call
+// even for an operator who is logged in.
+const codexAuthFile = "auth.json"
+
+// SessionHome gives this launch a private CODEX_HOME.
+//
+// codex offers no session-id pin, so marvel assigns the container instead
+// (aae-orc-ca7y). Measured on codex 0.153.4, a private home holds the
+// whole state tree and nothing of anyone else's: sessions/, state_5.sqlite,
+// logs_2.sqlite, thread_history_1.sqlite, memories_1.sqlite, queue_1.sqlite,
+// goals_1.sqlite, skills/, installation_id, shell_snapshots/ and tmp/ all
+// land under it, and ~/.codex is untouched. One session run under a fresh
+// home left exactly one rollout in it,
+// sessions/<YYYY>/<MM>/<DD>/rollout-<timestamp>-<thread id>.jsonl, so the
+// pane-to-rollout binding is a directory marvel chose.
+//
+// The ticket's file list is from 0.146.0 and has partly decayed:
+// state_5.sqlite still exists, history.jsonl does not, and the sqlite set
+// is larger. The claim that survives, and the only one this depends on, is
+// that the lever relocates ALL of it.
+//
+// The operator's own home is the seed source, and auth.json is symlinked
+// rather than copied; see SessionHomeSpec.LinkIn for why that distinction
+// is load-bearing here.
+func (c *Codex) SessionHome(_ *LaunchContext) (SessionHomeSpec, bool) {
+	// An operator who set CODEX_HOME for the daemon has named the home
+	// they want seeded from; otherwise it is codex's own default.
+	source := os.Getenv(codexHomeEnv)
+	if source == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			source = filepath.Join(home, ".codex")
+		}
+	}
+	return SessionHomeSpec{
+		EnvVar: codexHomeEnv,
+		Source: source,
+		LinkIn: []string{codexAuthFile},
+	}, true
+}
+
 func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {
@@ -52,7 +99,7 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		// Interactive: launch codex as-is; the TUI owns the pane.
 		return &LaunchResult{
 			Command: buildCommand(binary, args),
-			Env:     baseEnv(ctx),
+			Env:     codexEnv(ctx),
 		}, nil
 	}
 
@@ -73,7 +120,7 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 
 	result := &LaunchResult{
 		Command: cmd,
-		Env:     baseEnv(ctx),
+		Env:     codexEnv(ctx),
 	}
 	if ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)
@@ -85,7 +132,20 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	return result, nil
 }
 
+// codexEnv is baseEnv plus the private state home when the manager made
+// one. Set here rather than in baseEnv because the variable is this
+// harness's, and a generic stamp would hand CODEX_HOME to runtimes that do
+// not read it.
+func codexEnv(ctx *LaunchContext) map[string]string {
+	env := baseEnv(ctx)
+	if ctx.HarnessHomePath != "" {
+		env[codexHomeEnv] = ctx.HarnessHomePath
+	}
+	return env
+}
+
 func init() {
 	var _ Adapter = (*Codex)(nil)
 	var _ StreamCapable = (*Codex)(nil)
+	var _ SessionHomeAssigner = (*Codex)(nil)
 }
