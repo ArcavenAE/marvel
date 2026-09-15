@@ -143,6 +143,11 @@ const (
 	// (brief 9 S4, aae-orc-8br8d). Warning severity; it names the count, never
 	// a value.
 	KindCredentialTransientDropped Kind = "credential.transient-dropped"
+	// KindBusRendered records that the daemon rendered its managed broker's
+	// nats-server.conf and authorization.conf (brief 10, aae-orc-e9g8i). Info
+	// when the files changed; warning when rendering failed, with the reason.
+	// Never carries a password.
+	KindBusRendered Kind = "bus.rendered"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -207,6 +212,7 @@ var allKinds = []Kind{
 	KindCredentialDeleted,
 	KindCredentialRevealed,
 	KindCredentialTransientDropped,
+	KindBusRendered,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,

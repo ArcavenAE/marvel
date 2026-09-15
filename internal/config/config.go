@@ -5,8 +5,11 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -176,6 +179,153 @@ type Cluster struct {
 	Socket   string `yaml:"socket,omitempty"`   // Unix socket path (local)
 	Server   string `yaml:"server,omitempty"`   // mrvl://user@host[:port] (remote)
 	Identity string `yaml:"identity,omitempty"` // client private key for this cluster
+	// Bus is the cluster's local NATS broker, when it has one. Topology and
+	// credentials live here on the daemon's host, never in a workspace
+	// manifest (brief 10 section 3, candidate R-96).
+	Bus *Bus `yaml:"bus,omitempty"`
+}
+
+// Bus describes a cluster's local broker. There is no credential path (the
+// leaf seed is the Store's transient bus/leaf credential and reaches the
+// broker through its environment) and no CA field yet (TLS is deferred under
+// the interim LAN posture); both are added when their feature is.
+type Bus struct {
+	// Managed true means marvel renders the conf and supervises the broker;
+	// false adopts an existing broker at URL (the phase-0 path).
+	Managed bool `yaml:"managed"`
+	// Listen is the explicit host:port the broker binds. It is never derived
+	// from the HOME tag: two daemons in one HOME would derive the same port.
+	Listen string `yaml:"listen,omitempty"`
+	// URL is what sessions receive as NATS_URL. Defaults to nats://<listen>.
+	URL string `yaml:"url,omitempty"`
+	// StoreDir is the JetStream store root. Defaults to <StateDir>/nats.
+	StoreDir string `yaml:"store_dir,omitempty"`
+	// Hub, when set, makes the broker a leaf of the global tier.
+	Hub *Hub `yaml:"hub,omitempty"`
+}
+
+// Hub names the global tier a managed broker joins as a leaf.
+type Hub struct {
+	URL string `yaml:"url"`
+}
+
+// ErrInvalidBus marks a cluster whose bus section is unusable. Callers
+// match it with errors.Is; like ErrInvalidClusterName it rides beside the
+// parsed config so tolerant callers can proceed.
+var ErrInvalidBus = errors.New("invalid bus section")
+
+// ValidateBus checks a bus section. A managed broker needs an explicit
+// listen host:port; a url or hub url must parse with a nats scheme.
+func ValidateBus(cluster string, b *Bus) error {
+	if b == nil {
+		return nil
+	}
+	var errs []error
+	if b.Managed && b.Listen == "" {
+		errs = append(errs, fmt.Errorf("%w: cluster %q: managed bus needs an explicit listen host:port (no derivation from the socket or HOME)", ErrInvalidBus, cluster))
+	}
+	if b.Listen != "" {
+		host, port, err := net.SplitHostPort(b.Listen)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: listen %q is not host:port: %v", ErrInvalidBus, cluster, b.Listen, err))
+		} else {
+			if host == "" {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: listen %q needs an explicit host", ErrInvalidBus, cluster, b.Listen))
+			}
+			if n, perr := strconv.Atoi(port); perr != nil || n < 1 || n > 65535 {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: listen %q has a bad port", ErrInvalidBus, cluster, b.Listen))
+			}
+		}
+	}
+	if !b.Managed && b.Listen == "" && b.URL == "" {
+		errs = append(errs, fmt.Errorf("%w: cluster %q: an adopted (managed: false) bus needs url", ErrInvalidBus, cluster))
+	}
+	if b.URL != "" {
+		if err := checkNATSURL(b.URL, "nats", "tls"); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: url: %v", ErrInvalidBus, cluster, err))
+		}
+	}
+	if b.Hub != nil {
+		if err := checkNATSURL(b.Hub.URL, "nats-leaf", "nats", "tls"); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.url: %v", ErrInvalidBus, cluster, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func checkNATSURL(raw string, schemes ...string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q does not parse: %v", raw, err)
+	}
+	for _, sch := range schemes {
+		if u.Scheme == sch {
+			if u.Host == "" {
+				return fmt.Errorf("%q has no host", raw)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%q scheme %q is not one of %v", raw, u.Scheme, schemes)
+}
+
+// ResolvedBus is a bus section with its defaults filled in. Defaults are
+// applied here, at read time, never written back into the config file.
+type ResolvedBus struct {
+	Managed  bool
+	Listen   string
+	URL      string
+	StoreDir string
+	HubURL   string
+}
+
+// Resolve fills the bus defaults: url from listen, store_dir under
+// stateDir/nats. stateDir is the daemon's Layout.StateDir().
+func (b *Bus) Resolve(stateDir string) ResolvedBus {
+	r := ResolvedBus{Managed: b.Managed, Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir}
+	if r.URL == "" && r.Listen != "" {
+		r.URL = "nats://" + r.Listen
+	}
+	if r.StoreDir == "" {
+		r.StoreDir = filepath.Join(stateDir, "nats")
+	}
+	if b.Hub != nil {
+		r.HubURL = b.Hub.URL
+	}
+	return r
+}
+
+// ClusterForSocket returns the cluster entry whose socket is the daemon's
+// own listen path, or nil. A cluster with neither socket nor server is the
+// default local socket. Paths are ~-expanded and cleaned before comparing;
+// nothing is rewritten. This is how a daemon finds its bus section: the
+// client config names clusters by how to reach them, and the daemon is
+// reached at exactly one path.
+func (c *Config) ClusterForSocket(socket string) *Cluster {
+	want := cleanPath(socket)
+	for i := range c.Clusters {
+		cl := &c.Clusters[i]
+		if cl.Server != "" {
+			continue
+		}
+		have := cl.Socket
+		if have == "" {
+			have = ResolveSocket()
+		}
+		if cleanPath(have) == want {
+			return cl
+		}
+	}
+	return nil
+}
+
+func cleanPath(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, p[2:])
+		}
+	}
+	return filepath.Clean(p)
 }
 
 // configPath returns ~/.marvel/config.yaml.
@@ -242,12 +392,16 @@ func ValidateClusterName(name string) error {
 	return nil
 }
 
-// Validate checks every cluster name. It reports all offenders at once,
-// joined, so one load names every entry the operator has to fix.
+// Validate checks every cluster name and bus section. It reports all
+// offenders at once, joined, so one load names every entry the operator has
+// to fix.
 func (c *Config) Validate() error {
 	var errs []error
 	for _, cl := range c.Clusters {
 		if err := ValidateClusterName(cl.Name); err != nil {
+			errs = append(errs, err)
+		}
+		if err := ValidateBus(cl.Name, cl.Bus); err != nil {
 			errs = append(errs, err)
 		}
 	}

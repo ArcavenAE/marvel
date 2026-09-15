@@ -63,6 +63,10 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response 
 		p.Value[i] = 0
 	}
 	d.emitCredentialEvent(events.KindCredentialPut, cred.Name, cred.Kind, c)
+	if cred.Name == busLeafCredential {
+		// The leaf remote renders only while a seed exists (brief 10 s.3).
+		d.regenerateBus("credential.put " + busLeafCredential)
+	}
 
 	meta, err := d.store.GetCredential(cred.Name) // metadata only (value stripped)
 	if err != nil {
@@ -134,6 +138,9 @@ func (d *Daemon) handleCredentialDelete(params json.RawMessage, c caller) Respon
 		return Response{Error: err.Error()}
 	}
 	d.emitCredentialEvent(events.KindCredentialDeleted, p.Name, "", c)
+	if p.Name == busLeafCredential {
+		d.regenerateBus("credential.delete " + busLeafCredential)
+	}
 	data, _ := json.Marshal(map[string]string{"deleted": p.Name})
 	return Response{Result: data}
 }

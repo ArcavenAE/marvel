@@ -227,3 +227,108 @@ func TestLoadReportsEveryBadNameAndStillReturnsConfig(t *testing.T) {
 		t.Errorf("unaffected cluster does not resolve: addr=%q err=%v", addr, err)
 	}
 }
+
+func TestValidateBus(t *testing.T) {
+	t.Parallel()
+	hub := &Hub{URL: "nats-leaf://192.168.100.110:7442"}
+	cases := []struct {
+		name string
+		bus  *Bus
+		ok   bool
+		want string // substring the error must carry when !ok
+	}{
+		{"nil section", nil, true, ""},
+		{"managed explicit", &Bus{Managed: true, Listen: "127.0.0.1:4222"}, true, ""},
+		{"managed with hub", &Bus{Managed: true, Listen: "127.0.0.1:4222", Hub: hub}, true, ""},
+		{"adopted by url", &Bus{URL: "nats://127.0.0.1:4222"}, true, ""},
+		{"managed needs listen", &Bus{Managed: true}, false, "explicit listen"},
+		{"listen not host:port", &Bus{Managed: true, Listen: "4222"}, false, "not host:port"},
+		{"listen no host", &Bus{Managed: true, Listen: ":4222"}, false, "explicit host"},
+		{"listen bad port", &Bus{Managed: true, Listen: "127.0.0.1:99999"}, false, "bad port"},
+		{"adopted needs url", &Bus{}, false, "needs url"},
+		{"url wrong scheme", &Bus{URL: "http://127.0.0.1:4222"}, false, "scheme"},
+		{"hub wrong scheme", &Bus{Managed: true, Listen: "127.0.0.1:4222", Hub: &Hub{URL: "http://h:1"}}, false, "hub.url"},
+		{"hub no host", &Bus{Managed: true, Listen: "127.0.0.1:4222", Hub: &Hub{URL: "nats-leaf://"}}, false, "no host"},
+	}
+	for _, tc := range cases {
+		err := ValidateBus("kinu", tc.bus)
+		if tc.ok && err != nil {
+			t.Errorf("%s: unexpected error %v", tc.name, err)
+		}
+		if !tc.ok {
+			if err == nil {
+				t.Errorf("%s: want error, got nil", tc.name)
+				continue
+			}
+			if !errors.Is(err, ErrInvalidBus) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("%s: error %v does not carry ErrInvalidBus and %q", tc.name, err, tc.want)
+			}
+		}
+	}
+}
+
+func TestBusResolveDefaultsWithoutRewriting(t *testing.T) {
+	t.Parallel()
+	b := &Bus{Managed: true, Listen: "127.0.0.1:4222", Hub: &Hub{URL: "nats-leaf://h:7442"}}
+	r := b.Resolve("/state")
+	if r.URL != "nats://127.0.0.1:4222" {
+		t.Errorf("URL default = %q, want nats://<listen>", r.URL)
+	}
+	if r.StoreDir != filepath.Join("/state", "nats") {
+		t.Errorf("StoreDir default = %q, want <state>/nats", r.StoreDir)
+	}
+	if r.HubURL != "nats-leaf://h:7442" || !r.Managed {
+		t.Errorf("resolved = %+v, want hub and managed carried", r)
+	}
+	if b.URL != "" || b.StoreDir != "" {
+		t.Errorf("Resolve wrote defaults back into the section: %+v", b)
+	}
+	explicit := &Bus{Managed: true, Listen: "0.0.0.0:4300", URL: "nats://kinu.local:4300", StoreDir: "/var/nats"}
+	if r := explicit.Resolve("/state"); r.URL != "nats://kinu.local:4300" || r.StoreDir != "/var/nats" {
+		t.Errorf("explicit values not preserved: %+v", r)
+	}
+}
+
+func TestClusterForSocketMatchesOwnPathOnly(t *testing.T) {
+	// Not parallel: ~ expansion and ResolveSocket read HOME.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv(SocketEnv, "")
+	cfg := &Config{Clusters: []Cluster{
+		{Name: "remote", Server: "mrvl://u@h", Bus: &Bus{URL: "nats://x:1"}},
+		{Name: "twin", Socket: "~/.marvel/run/twin.sock", Bus: &Bus{Managed: true, Listen: "127.0.0.1:4223"}},
+		{Name: "local", Bus: &Bus{Managed: true, Listen: "127.0.0.1:4222"}},
+	}}
+	if cl := cfg.ClusterForSocket(filepath.Join(dir, ".marvel", "run", "twin.sock")); cl == nil || cl.Name != "twin" {
+		t.Errorf("twin socket resolved to %+v, want twin", cl)
+	}
+	if cl := cfg.ClusterForSocket(ResolveSocket()); cl == nil || cl.Name != "local" {
+		t.Errorf("default socket resolved to %+v, want local (no socket, no server)", cl)
+	}
+	if cl := cfg.ClusterForSocket(filepath.Join(dir, "elsewhere.sock")); cl != nil {
+		t.Errorf("unknown socket resolved to %+v, want nil", cl)
+	}
+}
+
+func TestLoadCarriesBusSectionAndReportsBadBus(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".marvel"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "clusters:\n  - name: kinu\n    bus:\n      managed: true\n      listen: 127.0.0.1:4222\n      hub:\n        url: nats-leaf://192.168.100.110:7442\n  - name: broken\n    bus:\n      managed: true\ncurrent_cluster: kinu\n"
+	if err := os.WriteFile(filepath.Join(dir, ".marvel", "config.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if !errors.Is(err, ErrInvalidBus) {
+		t.Fatalf("Load() error = %v, want ErrInvalidBus for the broken cluster", err)
+	}
+	if cfg == nil || len(cfg.Clusters) != 2 {
+		t.Fatalf("Load() did not return the parsed config beside the error: %+v", cfg)
+	}
+	b := cfg.Clusters[0].Bus
+	if b == nil || !b.Managed || b.Listen != "127.0.0.1:4222" || b.Hub == nil || b.Hub.URL != "nats-leaf://192.168.100.110:7442" {
+		t.Errorf("bus section not parsed intact: %+v", b)
+	}
+}
