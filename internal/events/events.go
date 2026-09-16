@@ -161,7 +161,13 @@ const (
 	KindBusStarted Kind = "bus.started"
 	// KindBusProvisioned reports the streams and bucket the daemon ensured on
 	// the managed broker after it came up (aae-orc-apeoc).
-	KindBusProvisioned    Kind = "bus.provisioned"
+	KindBusProvisioned Kind = "bus.provisioned"
+	// KindBusUnprovisioned is the structural-health miss (aae-orc-vy6k7):
+	// a declared service-scope object is absent from the running broker,
+	// or its authorization is not loaded. Emitted once per change in the
+	// missing set, not per tick. The daemon re-provisions and holds new
+	// spawns; it never restarts the broker for it.
+	KindBusUnprovisioned  Kind = "bus.unprovisioned"
 	KindBusStopped        Kind = "bus.stopped"
 	KindBusCrashed        Kind = "bus.crashed"
 	KindBusUnavailable    Kind = "bus.unavailable"
@@ -238,6 +244,7 @@ var allKinds = []Kind{
 	KindBusStopped,
 	KindBusCrashed,
 	KindBusUnavailable,
+	KindBusUnprovisioned,
 	KindBusReloaded,
 	KindBusLeafUp,
 	KindBusLeafDown,

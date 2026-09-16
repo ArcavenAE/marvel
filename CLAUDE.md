@@ -316,6 +316,12 @@ its password to `<StateDir>/nats/director.pass`; `hub.ca_file` trusts a TLS
 hub from the leaf remote. `NewManager` recovers every password from the
 `authorization.conf` it rendered last time, so a restart or reexec keeps
 running sessions' credentials valid (`docs/design/bus-as-service.md` 8.2).
+Ready on a managed broker is structural (`internal/bus/health.go`, design
+section 3): listener, pid, every declared service-scope object present,
+and `/varz` `auth_required`; read at start, after a reload, and on the 30s
+tick. A miss re-provisions, holds new spawns through `BusGate`, and emits
+`bus.unprovisioned` once per change; it never restarts the broker. TLS is
+reported and joins ready under aae-orc-5yqw3.
 
 ## Observability
 
