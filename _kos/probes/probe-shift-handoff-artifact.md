@@ -494,9 +494,10 @@ budget, which is the shipped surface for refusing over-budget work.
 ## 5. What the stage-rig discipline implies
 
 Orc charter F25 rules that backdrops are AUTHORED and never auto-summarized
-from props, and cites the measured basis: 97.5% recall with verbatim
-artifacts against 19% under recursive summarization (CogCanvas, arXiv
-2601.00821).
+from props, and cites the measured basis: on CogCanvas's synthetic retention
+benchmark, summarization kept 19.0% recall against 92 to 97.5% for any store
+that keeps the source text (An, arXiv 2601.00821, v1 Table 2, retained as
+Table 4 in v4; orc finding-174 records the version history).
 
 **A handoff is exactly a backdrop.** Shape preserved, detail absent,
 written so a successor can orient. Four things follow, and the third and
@@ -522,8 +523,8 @@ fourth are not obvious.
    holds.
 4. **The open risk F25 does not cover: chained authorship.** Each
    generation authors its backdrop from a context that already contained
-   the previous backdrop. The CogCanvas figure compares verbatim against
-   summarized once; it says nothing about drift across eight authored
+   the previous backdrop. The CogCanvas figure compares source-keeping
+   stores against a single summarization pass; it says nothing about drift across eight authored
    generations, where each author is faithful and the chain still walks
    away from the ground truth. This is a genuinely new sub-question raised
    by putting F25 and shift mechanics together, and section 7 pre-registers
