@@ -17,6 +17,15 @@
 # Additive on purpose: go keeps resolving the way it does today (global
 # mise config, or CI's own setup-go step). See issues #119 (golangci-lint)
 # and the gofumpt follow-on.
+#
+# nats-server is a runtime dependency, not a dev tool: the daemon resolves
+# a bare `nats-server` from PATH when a cluster declares a managed bus
+# (internal/bus/supervisor.go). CI does not install it, so pin_test.go
+# does not compare it; the pin exists so every host runs the same broker
+# the fleet was verified against. mise's registry has no nats-server
+# entry, hence the explicit github backend. Bump deliberately, with the
+# hub (roadmap M2, ticket aae-orc-k28s for the version story).
 [tools]
 golangci-lint = "2.12.2"
 gofumpt = "0.7.0"
+"github:nats-io/nats-server" = "2.14.6"
