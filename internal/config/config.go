@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/service"
 )
 
 const (
@@ -182,7 +183,196 @@ type Cluster struct {
 	// Bus is the cluster's local NATS broker, when it has one. Topology and
 	// credentials live here on the daemon's host, never in a workspace
 	// manifest (brief 10 section 3, candidate R-96).
+	//
+	// Bus is sugar: the cluster's services are the Services list, and a
+	// bus: block is read as the entry named "bus" of class message-bus and
+	// provider nats-server (docs/design/services-list.md section 1.3).
+	// Declaring both a bus: block and a services: entry of that class is
+	// ErrInvalidService, because the two spellings would name one broker
+	// twice. Neither spelling is rewritten into the other.
 	Bus *Bus `yaml:"bus,omitempty"`
+	// Services is the cluster-level list of services marvel runs, adopts,
+	// or reaches (docs/design/services-list.md). Each entry carries the
+	// four common fields and a provider body decoded by the driver.
+	Services []Service `yaml:"services,omitempty"`
+}
+
+// Service is one entry of a cluster's Services list. The four common
+// fields are validated against the registries in internal/service; the
+// rest of the mapping is the provider body, kept as parsed so the driver
+// decodes it (BusSpec for nats-server) and so Save writes it back as it
+// was read.
+type Service struct {
+	// Name is unique per cluster. The lifted bus: block is named "bus".
+	Name string `yaml:"name"`
+	// Class is the interface a consumer depends on; registered classes
+	// only (service.Class).
+	Class string `yaml:"class"`
+	// Provider is the driver of the class; registered providers only, and
+	// the provider must drive this class (service.Check).
+	Provider string `yaml:"provider"`
+	// Mode is managed, adopted, or external (service.Mode); "internal" is
+	// reserved and refused.
+	Mode string `yaml:"mode"`
+	// CallerIdentity is what a consumer presents, from the class
+	// contract's set. Parsed here; the structural check against the class
+	// set and the driver's Delivers, and single-value defaulting, land
+	// under aae-orc-chwhk.
+	CallerIdentity string `yaml:"caller_identity,omitempty"`
+	// URL is what consumers receive.
+	URL string `yaml:"url,omitempty"`
+	// CAFile trusts the service's own listener when it is TLS.
+	CAFile string `yaml:"ca_file,omitempty"`
+
+	// body is the whole mapping as parsed, for the provider to decode its
+	// own keys from and for Save to round-trip. Nil for an entry built in
+	// code, which then carries its provider body in bus.
+	body *yaml.Node
+	// bus is the provider body of a lifted bus: block.
+	bus *Bus
+}
+
+// UnmarshalYAML decodes the common fields and keeps the mapping, so the
+// provider body survives without a schema here for every driver's keys.
+func (s *Service) UnmarshalYAML(n *yaml.Node) error {
+	type plain Service
+	var p plain
+	if err := n.Decode(&p); err != nil {
+		return err
+	}
+	*s = Service(p)
+	s.body = n
+	return nil
+}
+
+// MarshalYAML writes the entry back as it was read when it came from a
+// file, so a Save after a cluster add does not strip the provider body.
+func (s Service) MarshalYAML() (any, error) {
+	if s.body != nil {
+		return s.body, nil
+	}
+	type plain Service
+	return plain(s), nil
+}
+
+// BusSpec is the nats-server provider's body: the Bus fields, decoded
+// from the entry's mapping (or carried whole from a lifted bus: block).
+// Callers check Provider first; a body decoded for the wrong driver is
+// meaningless, not an error.
+func (s *Service) BusSpec() (*Bus, error) {
+	if s.bus != nil {
+		return s.bus, nil
+	}
+	if s.body == nil {
+		return nil, fmt.Errorf("service %q has no provider body", s.Name)
+	}
+	var b Bus
+	if err := s.body.Decode(&b); err != nil {
+		return nil, fmt.Errorf("service %q: decode %s body: %w", s.Name, s.Provider, err)
+	}
+	// The entry's common fields are the record; a duplicate inside the
+	// body must agree with them.
+	if b.Mode == "" {
+		b.Mode = s.Mode
+	}
+	if b.Class == "" {
+		b.Class = s.Class
+	}
+	if b.Provider == "" {
+		b.Provider = s.Provider
+	}
+	return &b, nil
+}
+
+// BusServiceName is the name the lifted bus: block takes in the Services
+// list, and the name marvel bus status projects.
+const BusServiceName = "bus"
+
+// ErrInvalidService marks a Services entry the registries refuse or a list
+// that names one service twice. Callers match it with errors.Is; like
+// ErrInvalidBus it rides beside the parsed config.
+var ErrInvalidService = errors.New("invalid service entry")
+
+// AllServices returns the cluster's Services list with the bus: block
+// lifted in as the entry named "bus". The lift is a read-time view: the
+// config file keeps whichever spelling it had. A cluster declaring both a
+// bus: block and a message-bus entry is refused, since the two would name
+// one broker twice.
+func (c *Cluster) AllServices() ([]Service, error) {
+	out := append([]Service(nil), c.Services...)
+	if c.Bus == nil {
+		return out, nil
+	}
+	for _, s := range c.Services {
+		if s.Class == service.ClassMessageBus || s.Name == BusServiceName {
+			return nil, fmt.Errorf("%w: cluster %q declares both a bus: block and services entry %q of class %s; keep one spelling", ErrInvalidService, c.Name, s.Name, service.ClassMessageBus)
+		}
+	}
+	lifted, err := c.Bus.lift()
+	if err != nil {
+		return nil, fmt.Errorf("%w: cluster %q: bus: %w", ErrInvalidService, c.Name, err)
+	}
+	return append(out, lifted), nil
+}
+
+// BusService returns the cluster's message-bus entry, from either
+// spelling, or nil when the cluster has none.
+func (c *Cluster) BusService() (*Service, error) {
+	all, err := c.AllServices()
+	if err != nil {
+		return nil, err
+	}
+	for i := range all {
+		if all[i].Class == service.ClassMessageBus {
+			return &all[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// ValidateServices checks a cluster's Services list, both spellings: names
+// unique, class and provider registered and paired, mode one of the three,
+// and each nats-server body valid under ValidateBus. Every refusal is
+// structural (ADR-007 clause 3).
+func ValidateServices(c *Cluster) error {
+	all, err := c.AllServices()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	seen := map[string]bool{}
+	for i := range all {
+		s := &all[i]
+		if s.Name == "" {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: services[%d] has no name", ErrInvalidService, c.Name, i))
+			continue
+		}
+		if seen[s.Name] {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: service %q is declared twice", ErrInvalidService, c.Name, s.Name))
+			continue
+		}
+		seen[s.Name] = true
+		mode, merr := service.ParseMode(s.Mode)
+		if merr != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, merr))
+			continue
+		}
+		if _, _, cerr := service.Check(s.Class, s.Provider, mode); cerr != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, cerr))
+			continue
+		}
+		if s.Provider == service.ProviderNATSServer {
+			b, berr := s.BusSpec()
+			if berr != nil {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, berr))
+				continue
+			}
+			if verr := ValidateBus(c.Name, b); verr != nil {
+				errs = append(errs, verr)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Bus describes a cluster's local broker. There is no credential path (the
@@ -190,9 +380,26 @@ type Cluster struct {
 // broker through its environment) and no CA field yet (TLS is deferred under
 // the interim LAN posture); both are added when their feature is.
 type Bus struct {
+	// Class and Provider are the Services record's common fields, optional
+	// inside a bus: block where they can only be message-bus and
+	// nats-server; any other value is refused.
+	Class    string `yaml:"class,omitempty"`
+	Provider string `yaml:"provider,omitempty"`
+	// Mode is managed, adopted, or external (service.Mode). Empty derives
+	// from Managed: true is managed, false with a url is adopted. When both
+	// are present mode wins and a disagreement is refused. "internal" is
+	// reserved by comment in internal/service and refused.
+	Mode string `yaml:"mode,omitempty"`
+	// CallerIdentity is the Services record's field; see Service.
+	CallerIdentity string `yaml:"caller_identity,omitempty"`
 	// Managed true means marvel renders the conf and supervises the broker;
-	// false adopts an existing broker at URL (the phase-0 path).
+	// false adopts an existing broker at URL (the phase-0 path). It is the
+	// spelling brief 10's examples use and keeps parsing; Mode is the
+	// record.
 	Managed bool `yaml:"managed"`
+	// managedSet records whether the managed key was present, so a
+	// disagreement with mode can be told from an absent bool.
+	managedSet bool
 	// Listen is the explicit host:port the broker binds. It is never derived
 	// from the HOME tag: two daemons in one HOME would derive the same port.
 	Listen string `yaml:"listen,omitempty"`
@@ -209,6 +416,76 @@ type Hub struct {
 	URL string `yaml:"url"`
 }
 
+// UnmarshalYAML decodes the block and notes whether managed was written,
+// which the mode derivation needs and a bool cannot carry.
+func (b *Bus) UnmarshalYAML(n *yaml.Node) error {
+	type plain Bus
+	var p plain
+	if err := n.Decode(&p); err != nil {
+		return err
+	}
+	*b = Bus(p)
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "managed" {
+				b.managedSet = true
+			}
+		}
+	}
+	return nil
+}
+
+// EffectiveMode resolves mode from the two spellings: an explicit mode
+// wins; otherwise managed: true is managed and anything else is adopted.
+// An explicit mode that disagrees with a written managed bool is refused,
+// as is the reserved word or an unknown value.
+func (b *Bus) EffectiveMode() (service.Mode, error) {
+	if b.Mode == "" {
+		if b.Managed {
+			return service.ModeManaged, nil
+		}
+		return service.ModeAdopted, nil
+	}
+	mode, err := service.ParseMode(b.Mode)
+	if err != nil {
+		return "", err
+	}
+	if b.managedSet {
+		if b.Managed && mode != service.ModeManaged {
+			return "", fmt.Errorf("managed: true disagrees with mode: %s", mode)
+		}
+		if !b.Managed && mode == service.ModeManaged {
+			return "", fmt.Errorf("managed: false disagrees with mode: managed")
+		}
+	}
+	return mode, nil
+}
+
+// lift turns a bus: block into the Services entry named "bus". The class
+// and provider are implied by the spelling; a value written inside the
+// block must agree.
+func (b *Bus) lift() (Service, error) {
+	if b.Class != "" && b.Class != service.ClassMessageBus {
+		return Service{}, fmt.Errorf("class %q is not %s; a bus: block can only be the message bus", b.Class, service.ClassMessageBus)
+	}
+	if b.Provider != "" && b.Provider != service.ProviderNATSServer {
+		return Service{}, fmt.Errorf("provider %q is not %s; a bus: block can only be the nats-server driver", b.Provider, service.ProviderNATSServer)
+	}
+	mode, err := b.EffectiveMode()
+	if err != nil {
+		return Service{}, err
+	}
+	return Service{
+		Name:           BusServiceName,
+		Class:          service.ClassMessageBus,
+		Provider:       service.ProviderNATSServer,
+		Mode:           string(mode),
+		CallerIdentity: b.CallerIdentity,
+		URL:            b.URL,
+		bus:            b,
+	}, nil
+}
+
 // ErrInvalidBus marks a cluster whose bus section is unusable. Callers
 // match it with errors.Is; like ErrInvalidClusterName it rides beside the
 // parsed config so tolerant callers can proceed.
@@ -221,7 +498,18 @@ func ValidateBus(cluster string, b *Bus) error {
 		return nil
 	}
 	var errs []error
-	if b.Managed && b.Listen == "" {
+	mode, merr := b.EffectiveMode()
+	if merr != nil {
+		return fmt.Errorf("%w: cluster %q: %w", ErrInvalidBus, cluster, merr)
+	}
+	managed := mode == service.ModeManaged
+	if b.Class != "" && b.Class != service.ClassMessageBus {
+		errs = append(errs, fmt.Errorf("%w: cluster %q: class %q is not %s", ErrInvalidBus, cluster, b.Class, service.ClassMessageBus))
+	}
+	if b.Provider != "" && b.Provider != service.ProviderNATSServer {
+		errs = append(errs, fmt.Errorf("%w: cluster %q: provider %q is not %s", ErrInvalidBus, cluster, b.Provider, service.ProviderNATSServer))
+	}
+	if managed && b.Listen == "" {
 		errs = append(errs, fmt.Errorf("%w: cluster %q: managed bus needs an explicit listen host:port (no derivation from the socket or HOME)", ErrInvalidBus, cluster))
 	}
 	if b.Listen != "" {
@@ -237,8 +525,8 @@ func ValidateBus(cluster string, b *Bus) error {
 			}
 		}
 	}
-	if !b.Managed && b.Listen == "" && b.URL == "" {
-		errs = append(errs, fmt.Errorf("%w: cluster %q: an adopted (managed: false) bus needs url", ErrInvalidBus, cluster))
+	if !managed && b.Listen == "" && b.URL == "" {
+		errs = append(errs, fmt.Errorf("%w: cluster %q: an %s bus needs url", ErrInvalidBus, cluster, mode))
 	}
 	if b.URL != "" {
 		if err := checkNATSURL(b.URL, "nats", "tls"); err != nil {
@@ -272,6 +560,9 @@ func checkNATSURL(raw string, schemes ...string) error {
 // ResolvedBus is a bus section with its defaults filled in. Defaults are
 // applied here, at read time, never written back into the config file.
 type ResolvedBus struct {
+	// Mode is the effective service.Mode; Managed is true exactly when it
+	// is managed, kept for the callers that only ask that.
+	Mode     service.Mode
 	Managed  bool
 	Listen   string
 	URL      string
@@ -282,7 +573,13 @@ type ResolvedBus struct {
 // Resolve fills the bus defaults: url from listen, store_dir under
 // stateDir/nats. stateDir is the daemon's Layout.StateDir().
 func (b *Bus) Resolve(stateDir string) ResolvedBus {
-	r := ResolvedBus{Managed: b.Managed, Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir}
+	mode, err := b.EffectiveMode()
+	if err != nil {
+		// Resolve does not validate; a section ValidateBus refused resolves
+		// as adopted so callers that skipped validation still get a URL.
+		mode = service.ModeAdopted
+	}
+	r := ResolvedBus{Mode: mode, Managed: mode == service.ModeManaged, Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir}
 	if r.URL == "" && r.Listen != "" {
 		r.URL = "nats://" + r.Listen
 	}
@@ -401,7 +698,7 @@ func (c *Config) Validate() error {
 		if err := ValidateClusterName(cl.Name); err != nil {
 			errs = append(errs, err)
 		}
-		if err := ValidateBus(cl.Name, cl.Bus); err != nil {
+		if err := ValidateServices(&cl); err != nil {
 			errs = append(errs, err)
 		}
 	}
