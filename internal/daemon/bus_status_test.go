@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 func TestBusStatusWithoutABusSaysSo(t *testing.T) {
@@ -18,7 +19,7 @@ func TestBusStatusWithoutABusSaysSo(t *testing.T) {
 
 func TestBusStatusReportsAnAdoptedURL(t *testing.T) {
 	d := newHandlerDaemon(t)
-	d.sessMgr.Bus = bus.NewAdopted("nats://h:4222")
+	d.sessMgr.Bus = bus.NewAdopted(config.ResolvedBus{Mode: "adopted", Class: "message-bus", Provider: "nats-server", URL: "nats://h:4222"})
 	resp := d.dispatchAs(Request{Method: "bus.status"}, localCaller())
 	if resp.Error != "" {
 		t.Fatal(resp.Error)
@@ -29,6 +30,9 @@ func TestBusStatusReportsAnAdoptedURL(t *testing.T) {
 	}
 	if st.Managed || st.URL != "nats://h:4222" || st.Leaf != "n/a" {
 		t.Errorf("status = %+v", st)
+	}
+	if st.Class != "message-bus" || st.Provider != "nats-server" || st.Mode != "adopted" {
+		t.Errorf("adopted status lacks the record fields: %+v", st)
 	}
 }
 

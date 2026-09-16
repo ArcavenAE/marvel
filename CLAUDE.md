@@ -307,7 +307,15 @@ nats-server`, `mode: managed | adopted | external`, validated against the
 registries in `internal/service`. A `bus:` block is the same record under
 its older spelling, lifted at read time as the entry named `bus`; the two
 spellings together are refused. The daemon attaches entries in a loop by
-provider (`attachServices`); the nats-server arm is `attachBus`.
+provider (`attachServices`); the nats-server arm is `attachBus`. The
+managed broker's objects and principals come from one declared set
+(`internal/bus/declared.go`) that the renderer, the provisioner, and the
+structural health check all read. A `seat: {workspace, team}` block renders
+the human director seat's broker user (`director`, the R-95 row) and writes
+its password to `<StateDir>/nats/director.pass`; `hub.ca_file` trusts a TLS
+hub from the leaf remote. `NewManager` recovers every password from the
+`authorization.conf` it rendered last time, so a restart or reexec keeps
+running sessions' credentials valid (`docs/design/bus-as-service.md` 8.2).
 
 ## Observability
 

@@ -389,6 +389,18 @@ type Bus struct {
 	// from Managed: true is managed, false with a url is adopted. When both
 	// are present mode wins and a disagreement is refused. "internal" is
 	// reserved by comment in internal/service and refused.
+	//
+	// ADR-009 reads through this field. Marvel-held secrets for a bus are
+	// issuance only while the broker is marvel-supervised, which is mode
+	// managed: the daemon mints the admin, seat, and team passwords, can
+	// rewrite and reload them, and no third party's console is involved.
+	// An adopted or external record carries no marvel-minted secret, and
+	// has no field for a foreign one on purpose: holding a credential for
+	// a broker marvel did not configure would be custody. The one
+	// credential marvel holds for an external broker is the hub leaf
+	// seed, ruled separately (the hub operator mints, marvel distributes).
+	// Moving a managed broker out of marvel's supervision is the ADR-009
+	// tripwire; change the mode and the secrets go with it.
 	Mode string `yaml:"mode,omitempty"`
 	// CallerIdentity is the Services record's field; see Service.
 	CallerIdentity string `yaml:"caller_identity,omitempty"`
@@ -407,13 +419,54 @@ type Bus struct {
 	URL string `yaml:"url,omitempty"`
 	// StoreDir is the JetStream store root. Defaults to <StateDir>/nats.
 	StoreDir string `yaml:"store_dir,omitempty"`
+	// Seat is the human director seat's home subtree. The seat is not a
+	// marvel session, so marvel cannot know it; declaring it renders a
+	// broker user named director confined to that subtree (the R-95 seat
+	// row) and writes its password to <StateDir>/nats/director.pass.
+	// Absent, no director user renders. Only meaningful under mode
+	// managed.
+	Seat *Seat `yaml:"seat,omitempty"`
 	// Hub, when set, makes the broker a leaf of the global tier.
 	Hub *Hub `yaml:"hub,omitempty"`
 }
 
-// Hub names the global tier a managed broker joins as a leaf.
+// Seat names the workspace and team the director seat lives in, both
+// subject tokens (R-76). The team names the broker user's subtree, not a
+// user: the user is always director.
+type Seat struct {
+	Workspace string `yaml:"workspace"`
+	Team      string `yaml:"team"`
+}
+
+// Hub is the global tier a managed broker joins as a leaf: a Service
+// record of its own with mode external implied. Its health is the leaf
+// link, which the supervisor polls on /leafz every 30s and reports as
+// bus.leaf.up and bus.leaf.down.
 type Hub struct {
 	URL string `yaml:"url"`
+	// CAFile trusts the hub's TLS listener from the rendered leaf remote
+	// (aae-orc-i9i23). Empty for a plaintext hub.
+	CAFile string `yaml:"ca_file,omitempty"`
+}
+
+// ReservedBusUsers are broker user names the renderer owns; a team or
+// seat by either name is refused, never merged.
+var ReservedBusUsers = []string{"director", "marvel_admin"}
+
+// validSubjectToken checks a name against the R-76 class [A-Za-z0-9_-],
+// naming what the name is for in the error.
+func validSubjectToken(kind, s string) error {
+	if s == "" {
+		return fmt.Errorf("%s is empty", kind)
+	}
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-'
+		if !ok {
+			return fmt.Errorf("%s %q contains %q; the class is [A-Za-z0-9_-] and a name is rejected, not rewritten (R-76)", kind, s, string(r))
+		}
+	}
+	return nil
 }
 
 // UnmarshalYAML decodes the block and notes whether managed was written,
@@ -537,6 +590,25 @@ func ValidateBus(cluster string, b *Bus) error {
 		if err := checkNATSURL(b.Hub.URL, "nats-leaf", "nats", "tls"); err != nil {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.url: %v", ErrInvalidBus, cluster, err))
 		}
+		if b.Hub.CAFile != "" && !filepath.IsAbs(cleanPath(b.Hub.CAFile)) {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.ca_file %q must be an absolute path (or ~-relative); the broker resolves it, not the daemon", ErrInvalidBus, cluster, b.Hub.CAFile))
+		}
+	}
+	if b.Seat != nil {
+		if !managed {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: seat renders a director user, which only a managed bus can carry; this bus is %s", ErrInvalidBus, cluster, mode))
+		}
+		if err := validSubjectToken("seat.workspace", b.Seat.Workspace); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: %v", ErrInvalidBus, cluster, err))
+		}
+		if err := validSubjectToken("seat.team", b.Seat.Team); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: %v", ErrInvalidBus, cluster, err))
+		}
+		for _, r := range ReservedBusUsers {
+			if b.Seat.Team == r {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: seat.team %q is a reserved broker user name", ErrInvalidBus, cluster, r))
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -560,6 +632,12 @@ func checkNATSURL(raw string, schemes ...string) error {
 // ResolvedBus is a bus section with its defaults filled in. Defaults are
 // applied here, at read time, never written back into the config file.
 type ResolvedBus struct {
+	// Class and Provider are filled to the bus defaults when the block
+	// left them implicit; CallerIdentity is carried as declared (its
+	// defaulting is aae-orc-chwhk).
+	Class          string
+	Provider       string
+	CallerIdentity string
 	// Mode is the effective service.Mode; Managed is true exactly when it
 	// is managed, kept for the callers that only ask that.
 	Mode     service.Mode
@@ -568,6 +646,10 @@ type ResolvedBus struct {
 	URL      string
 	StoreDir string
 	HubURL   string
+	// HubCAFile is ~-expanded, since the broker process reads it.
+	HubCAFile string
+	// Seat is copied through when declared.
+	Seat *Seat
 }
 
 // Resolve fills the bus defaults: url from listen, store_dir under
@@ -579,7 +661,17 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 		// as adopted so callers that skipped validation still get a URL.
 		mode = service.ModeAdopted
 	}
-	r := ResolvedBus{Mode: mode, Managed: mode == service.ModeManaged, Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir}
+	r := ResolvedBus{
+		Class: b.Class, Provider: b.Provider, CallerIdentity: b.CallerIdentity,
+		Mode: mode, Managed: mode == service.ModeManaged,
+		Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir, Seat: b.Seat,
+	}
+	if r.Class == "" {
+		r.Class = service.ClassMessageBus
+	}
+	if r.Provider == "" {
+		r.Provider = service.ProviderNATSServer
+	}
 	if r.URL == "" && r.Listen != "" {
 		r.URL = "nats://" + r.Listen
 	}
@@ -588,6 +680,9 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 	}
 	if b.Hub != nil {
 		r.HubURL = b.Hub.URL
+		if b.Hub.CAFile != "" {
+			r.HubCAFile = cleanPath(b.Hub.CAFile)
+		}
 	}
 	return r
 }

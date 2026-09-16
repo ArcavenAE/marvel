@@ -2228,7 +2228,18 @@ change, and holds new sessions while it is down. A cluster with
 // printBusStatus renders the status as aligned key/value lines; the fields
 // a reader acts on (ready, leaf, backoff) sit where the eye lands first.
 func printBusStatus(w io.Writer, st bus.Status) {
+	record := func() {
+		// The Services record's common fields, first, so the operator
+		// reads what the entry declares before what the broker is doing.
+		if st.Class != "" {
+			_, _ = fmt.Fprintf(w, "class:    %s\nprovider: %s\nmode:     %s\n", st.Class, st.Provider, st.Mode)
+		}
+		if st.CallerIdentity != "" {
+			_, _ = fmt.Fprintf(w, "caller:   %s\n", st.CallerIdentity)
+		}
+	}
 	if !st.Managed {
+		record()
 		_, _ = fmt.Fprintf(w, "managed:  false\nurl:      %s\n", st.URL)
 		return
 	}
@@ -2236,7 +2247,15 @@ func printBusStatus(w io.Writer, st bus.Status) {
 	if st.Ready {
 		ready = "yes"
 	}
-	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\nurl:      %s\nlisten:   %s\ndomain:   %s\npid:      %d", ready, st.Leaf, st.URL, st.Listen, st.Domain, st.PID)
+	record()
+	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\nurl:      %s\nlisten:   %s\ndomain:   %s\n", ready, st.Leaf, st.URL, st.Listen, st.Domain)
+	if st.Version != "" {
+		_, _ = fmt.Fprintf(w, "version:  %s\n", st.Version)
+	}
+	if st.Seat != "" {
+		_, _ = fmt.Fprintf(w, "seat:     %s (user director, password at %s)\n", st.Seat, st.SeatPassFile)
+	}
+	_, _ = fmt.Fprintf(w, "pid:      %d", st.PID)
 	if st.Adopted {
 		_, _ = fmt.Fprint(w, " (adopted)")
 	}

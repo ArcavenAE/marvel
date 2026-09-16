@@ -27,3 +27,26 @@ func TestPrintBusStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintBusStatusRecordFields(t *testing.T) {
+	var b strings.Builder
+	printBusStatus(&b, bus.Status{
+		Managed: true, Ready: true, Leaf: "n/a", URL: "nats://127.0.0.1:4222", Listen: "127.0.0.1:4222", Domain: "kinu",
+		Class: "message-bus", Provider: "nats-server", Mode: "managed", CallerIdentity: "api-key",
+		Version: "v2.14.6", Seat: "aae-orc/ops", SeatPassFile: "/s/nats/director.pass", PID: 7, ConfPath: "/x",
+	})
+	got := b.String()
+	for _, want := range []string{"class:    message-bus\n", "provider: nats-server\n", "mode:     managed\n", "caller:   api-key\n", "version:  v2.14.6\n", "seat:     aae-orc/ops (user director, password at /s/nats/director.pass)\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "class:") > strings.Index(got, "managed:") {
+		t.Errorf("record fields should lead:\n%s", got)
+	}
+	b.Reset()
+	printBusStatus(&b, bus.Status{Managed: false, URL: "nats://h:1", Class: "message-bus", Provider: "nats-server", Mode: "external"})
+	if got := b.String(); !strings.Contains(got, "mode:     external\n") || strings.Contains(got, "version") || strings.Contains(got, "seat") {
+		t.Errorf("external render:\n%s", got)
+	}
+}

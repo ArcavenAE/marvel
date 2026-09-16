@@ -1,8 +1,13 @@
 package bus
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -28,6 +33,16 @@ type Reloader interface {
 // the 0600 authorization file (D3). They are marvel-issued, mean nothing
 // outside this broker, and are revoked by rewrite and reload: issuance under
 // ADR-009.
+//
+// Passwords survive a daemon restart or reexec. The authorization file
+// marvel renders is already the persisted form of every password it has
+// minted, at 0600 in its own state directory, so NewManager reads it back
+// instead of minting fresh: a running session's team credential stays
+// valid at its next reconnect, the adopted-broker reload after a reexec
+// is a no-op when nothing changed, and no material is at rest that was
+// not already (bus-as-service.md section 8.2; decided in aae-orc-wzexa).
+// A team no longer applied still loses its line at the first Regenerate,
+// which is the revocation path, unchanged.
 type Manager struct {
 	mu          sync.Mutex
 	dir         string
@@ -36,33 +51,83 @@ type Manager struct {
 	teams       TeamLister
 	hasLeafSeed func() bool
 	admin       User
+	seat        string            // the director seat's password; empty when no seat is declared
 	passwords   map[string]string // team name -> password
 
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
 }
 
-// NewManager builds a manager for a managed bus. dir is where the two files
-// live (Layout.StateDir()/nats); domain is the validated cluster name;
-// hasLeafSeed reports whether the Store holds the bus/leaf credential.
+// SeatPassName is the file beside the rendered conf that holds the director
+// seat's password, 0600, rewritten atomically on every render that mints
+// it. The operator's MCP env points DIRECTOR_NATS_PASS_FILE at it once and
+// rotation needs no re-paste.
+const SeatPassName = "director.pass"
+
+// NewManager builds a manager for a managed bus. dir is where the rendered
+// files live (Layout.StateDir()/nats); domain is the validated cluster
+// name; hasLeafSeed reports whether the Store holds the bus/leaf
+// credential. Passwords already in dir's authorization file are recovered;
+// only what is missing is minted.
 func NewManager(dir, domain string, rb config.ResolvedBus, teams TeamLister, hasLeafSeed func() bool) (*Manager, error) {
 	if !rb.Managed {
 		return nil, fmt.Errorf("cluster %s: bus is not managed; nothing to render", domain)
 	}
-	pw, err := NewPassword()
-	if err != nil {
-		return nil, err
-	}
-	return &Manager{
+	recovered := RecoverPasswords(filepath.Join(dir, AuthName))
+	m := &Manager{
 		dir:         dir,
 		domain:      domain,
 		bus:         rb,
 		teams:       teams,
 		hasLeafSeed: hasLeafSeed,
-		admin:       User{Name: AdminUser, Password: pw},
 		passwords:   map[string]string{},
-	}, nil
+	}
+	pw, ok := recovered[AdminUser]
+	if !ok {
+		var err error
+		if pw, err = NewPassword(); err != nil {
+			return nil, err
+		}
+	}
+	m.admin = User{Name: AdminUser, Password: pw}
+	if rb.Seat != nil {
+		m.seat, ok = recovered[SeatUserName]
+		if !ok {
+			var err error
+			if m.seat, err = NewPassword(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for name, pw := range recovered {
+		if name == AdminUser || name == SeatUserName {
+			continue
+		}
+		m.passwords[name] = pw
+	}
+	if n := len(recovered); n > 0 {
+		log.Printf("bus: recovered %d password(s) from %s; running sessions keep their credentials", n, filepath.Join(dir, AuthName))
+	}
+	return m, nil
 }
+
+// SeatCredential is the director seat's broker user and password, when the
+// cluster declares a seat. It is never injected into a session; it reaches
+// the seat through SeatPassPath.
+func (m *Manager) SeatCredential() (string, string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.seat == "" {
+		return "", "", false
+	}
+	return SeatUserName, m.seat, true
+}
+
+// SeatPassPath is where the seat password is written.
+func (m *Manager) SeatPassPath() string { return filepath.Join(m.dir, SeatPassName) }
+
+// Bus is the resolved section the manager renders from.
+func (m *Manager) Bus() config.ResolvedBus { return m.bus }
 
 // Dir is the directory holding the rendered files.
 func (m *Manager) Dir() string { return m.dir }
@@ -113,12 +178,16 @@ func (m *Manager) Regenerate() (bool, error) {
 	defer m.mu.Unlock()
 
 	spec := Spec{
-		Domain:   m.domain,
-		Listen:   m.bus.Listen,
-		StoreDir: m.bus.StoreDir,
-		HubURL:   m.bus.HubURL,
-		LeafSeed: m.hasLeafSeed != nil && m.hasLeafSeed(),
-		Admin:    m.admin,
+		Domain:    m.domain,
+		Listen:    m.bus.Listen,
+		StoreDir:  m.bus.StoreDir,
+		HubURL:    m.bus.HubURL,
+		HubCAFile: m.bus.HubCAFile,
+		LeafSeed:  m.hasLeafSeed != nil && m.hasLeafSeed(),
+		Admin:     m.admin,
+	}
+	if m.bus.Seat != nil && m.seat != "" {
+		spec.Seat = &SeatUser{Workspace: m.bus.Seat.Workspace, Team: m.bus.Seat.Team, Password: m.seat}
 	}
 	live := map[string]bool{}
 	for _, t := range m.teams.ListTeams() {
@@ -156,12 +225,90 @@ func (m *Manager) Regenerate() (bool, error) {
 	if err != nil {
 		return changed, err
 	}
+	// The seat file rides every render: written when a seat is declared,
+	// removed when none is, so a stale secret never outlives its user
+	// line. It does not count as a broker change; the broker reads
+	// authorization.conf, not this file.
+	if err := m.writeSeatPass(spec.Seat); err != nil {
+		return changed, err
+	}
 	if changed && m.Reloader != nil {
 		if err := m.Reloader.Reload(); err != nil {
 			return changed, fmt.Errorf("reload broker after rewrite: %w", err)
 		}
 	}
 	return changed, nil
+}
+
+// writeSeatPass keeps <dir>/director.pass equal to the seat password, or
+// absent when there is no seat. Atomic (temp plus rename) so a reader never
+// sees a partial value, 0600 because it is a credential.
+func (m *Manager) writeSeatPass(seat *SeatUser) error {
+	path := m.SeatPassPath()
+	if seat == nil {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+		return nil
+	}
+	want := []byte(seat.Password + "\n")
+	if have, err := os.ReadFile(path); err == nil && bytes.Equal(have, want) {
+		_ = os.Chmod(path, 0o600)
+		return nil
+	}
+	return writeFileAtomic(path, want, 0o600)
+}
+
+// writeFileAtomic writes data to a temp file beside path, sets mode, and
+// renames it into place.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("write %s: %w", tmpName, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("chmod %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close %s: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return fmt.Errorf("rename %s to %s: %w", tmpName, path, err)
+	}
+	return nil
+}
+
+// userLine matches one rendered user entry: `{ user: NAME, password: "PW",`.
+// The renderer writes exactly this shape and passwords are URL-safe base64,
+// so there is nothing to unescape.
+var userLine = regexp.MustCompile(`\{ user: ([A-Za-z0-9_-]+), password: "([^"]*)",`)
+
+// RecoverPasswords reads the passwords back from a rendered authorization
+// file, keyed by user. A missing or unreadable file recovers nothing, which
+// is the fresh-start case.
+func RecoverPasswords(authPath string) map[string]string {
+	out := map[string]string{}
+	body, err := os.ReadFile(authPath)
+	if err != nil {
+		return out
+	}
+	for _, m := range userLine.FindAllStringSubmatch(string(body), -1) {
+		if m[2] != "" {
+			out[m[1]] = m[2]
+		}
+	}
+	return out
 }
 
 // hasSupervisorRole reports whether a team declares the supervisor role, the
@@ -179,13 +326,19 @@ func hasSupervisorRole(t api.Team) bool {
 // an existing broker marvel did not configure (the phase-0 path). Sessions
 // get the URL and no credential; the broker's own authorization, if any,
 // is outside marvel's knowledge.
-type Adopted struct{ url string }
+type Adopted struct {
+	url string
+	bus config.ResolvedBus
+}
 
-// NewAdopted returns the provider for an adopted broker at url.
-func NewAdopted(url string) Adopted { return Adopted{url: url} }
+// NewAdopted returns the provider for an adopted or external broker.
+func NewAdopted(rb config.ResolvedBus) Adopted { return Adopted{url: rb.URL, bus: rb} }
 
 // URL is what sessions receive as NATS_URL.
 func (a Adopted) URL() string { return a.url }
+
+// Bus is the resolved section, for status.
+func (a Adopted) Bus() config.ResolvedBus { return a.bus }
 
 // TeamCredential is never available for an adopted broker.
 func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", false }
