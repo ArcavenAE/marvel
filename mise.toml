@@ -26,6 +26,6 @@
 # entry, hence the explicit github backend. Bump deliberately, with the
 # hub (roadmap M2, ticket aae-orc-k28s for the version story).
 [tools]
-golangci-lint = "2.12.2"
-gofumpt = "0.7.0"
+golangci-lint = "2.13.2"
+gofumpt = "0.12.0"
 "github:nats-io/nats-server" = "2.14.6"
