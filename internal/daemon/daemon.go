@@ -117,8 +117,14 @@ type Daemon struct {
 	driver    *tmux.Driver
 	listener  net.Listener
 	sshServer *SSHServer
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// ctx is the run context set by Start; cancel ends it. Long-lived
+	// connection handlers (events.watch) select on ctx.Done so a
+	// shutdown does not wait on a client that never hangs up. Nil until
+	// Start, which is the case for tests that call handlers directly;
+	// stopping() turns nil into a channel that never fires.
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	// Path of the pid file to create on Start and remove on Stop.
 	// Empty = no pid file.
@@ -457,7 +463,7 @@ func (d *Daemon) Start(socketPath string) error {
 	d.logTokenBudgetWindows()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	d.cancel = cancel
+	d.ctx, d.cancel = ctx, cancel
 
 	// Start team reconciliation loop.
 	d.wg.Add(1)
@@ -736,6 +742,19 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 		return
 	}
 
+	// events.watch is the one method that answers with many responses
+	// on the same connection, so it is routed here, where the handler
+	// can keep rwc, instead of through dispatchAs, which returns one
+	// Response. Scope is enforced the same way first.
+	if req.Method == MethodEventsWatch {
+		if resp, refused := d.scopeRefusal(req, c); refused {
+			_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
+			return
+		}
+		d.handleEventsWatch(rwc, req.Params)
+		return
+	}
+
 	resp := d.dispatchAs(req, c)
 	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 }
@@ -756,20 +775,31 @@ func (d *Daemon) dispatch(req Request) Response {
 	return d.dispatchAs(req, localCaller())
 }
 
-// dispatchAs enforces the caller's scope, then routes the request. A method
-// the scope does not permit is refused before any handler runs.
-func (d *Daemon) dispatchAs(req Request, c caller) Response {
+// scopeRefusal applies the caller's scope to a method. The returned
+// Response is the refusal to send when refused is true. Shared by
+// dispatchAs and the streaming path so no method can reach a handler
+// without passing it.
+func (d *Daemon) scopeRefusal(req Request, c caller) (Response, bool) {
 	if !methodAllowedForScope(req.Method, c.scope) {
 		who := c.fingerprint
 		if who == "" {
 			who = "local"
 		}
 		log.Printf("scope refused: method %q not permitted for %s key %s", req.Method, c.scope, who)
-		return Response{Error: fmt.Sprintf("method %q is not permitted for a %s key", req.Method, c.scope)}
+		return Response{Error: fmt.Sprintf("method %q is not permitted for a %s key", req.Method, c.scope)}, true
 	}
 	if methodRequiresLocal(req.Method) && !c.local {
 		log.Printf("local-only refused: method %q attempted over mrvl:// by key %s", req.Method, c.fingerprint)
-		return Response{Error: fmt.Sprintf("method %q is only available on the local unix socket", req.Method)}
+		return Response{Error: fmt.Sprintf("method %q is only available on the local unix socket", req.Method)}, true
+	}
+	return Response{}, false
+}
+
+// dispatchAs enforces the caller's scope, then routes the request. A method
+// the scope does not permit is refused before any handler runs.
+func (d *Daemon) dispatchAs(req Request, c caller) Response {
+	if resp, refused := d.scopeRefusal(req, c); refused {
+		return resp
 	}
 	switch req.Method {
 	case "apply":
@@ -818,6 +848,11 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleLogs(req.Params)
 	case "events":
 		return d.handleEvents(req.Params)
+	case MethodEventsWatch:
+		// Reachable only through dispatch(), which tests and the SSH
+		// path do not use for this method; handleRWCAs routes it to the
+		// streaming handler before dispatch.
+		return Response{Error: fmt.Sprintf("%s streams many responses on one connection; use daemon.WatchEventsWith", MethodEventsWatch)}
 	case "orphans":
 		return d.handleOrphans()
 	case "plan":
@@ -868,8 +903,27 @@ type eventsParams struct {
 	SinceSeq uint64 `json:"since_seq,omitempty"`
 }
 
-type eventsResult struct {
-	Events []events.Event `json:"events"`
+// EventsBatch is the result of the events method and one message on an
+// events.watch stream. Dropped and ResumeFrom are set only on a stream,
+// and only when the daemon-side watch overflowed since the last message:
+// Dropped events were never sent, and Snapshot with since_seq =
+// ResumeFrom returns them, subject to the ring's capacity.
+type EventsBatch struct {
+	Events     []events.Event `json:"events"`
+	Dropped    uint64         `json:"dropped,omitempty"`
+	ResumeFrom uint64         `json:"resume_from,omitempty"`
+}
+
+func (p eventsParams) filter() events.Filter {
+	return events.Filter{
+		Workspace:   p.Workspace,
+		Team:        p.Team,
+		Role:        p.Role,
+		Session:     p.Session,
+		Kind:        events.Kind(p.Kind),
+		MinSeverity: events.Severity(p.MinSeverity),
+		SinceSeq:    p.SinceSeq,
+	}
 }
 
 func (d *Daemon) handleEvents(params json.RawMessage) Response {
@@ -879,21 +933,121 @@ func (d *Daemon) handleEvents(params json.RawMessage) Response {
 			return Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
-	f := events.Filter{
-		Workspace:   p.Workspace,
-		Team:        p.Team,
-		Role:        p.Role,
-		Session:     p.Session,
-		Kind:        events.Kind(p.Kind),
-		MinSeverity: events.Severity(p.MinSeverity),
-		SinceSeq:    p.SinceSeq,
-	}
-	snap := d.events.Snapshot(f, p.N)
-	data, err := json.Marshal(eventsResult{Events: snap})
+	snap := d.events.Snapshot(p.filter(), p.N)
+	data, err := json.Marshal(EventsBatch{Events: snap})
 	if err != nil {
 		return Response{Error: fmt.Sprintf("marshal events: %v", err)}
 	}
 	return Response{Result: data}
+}
+
+// MethodEventsWatch is the streaming sibling of the events method. The
+// request carries the same params; the daemon answers with one
+// EventsBatch for the backlog (events after since_seq, or the last n
+// when there is no cursor) and then one per delivery for the life of
+// the connection. The client ends the stream by closing its side.
+const MethodEventsWatch = "events.watch"
+
+// eventsWatchKeepalive bounds how long a dead peer holds a watch open
+// when no event arrives to expose the broken write. Each tick sends an
+// empty batch, which clients ignore.
+const eventsWatchKeepalive = 30 * time.Second
+
+// eventsWatchBatchMax caps how many queued events one stream message
+// carries, so a burst is sent as a few messages rather than one large
+// one and a slow encoder does not starve the keepalive.
+const eventsWatchBatchMax = 256
+
+// stopping returns the run context's done channel, or a channel that
+// never fires when Start has not run.
+func (d *Daemon) stopping() <-chan struct{} {
+	if d.ctx == nil {
+		return nil
+	}
+	return d.ctx.Done()
+}
+
+// handleEventsWatch is the daemon side of `marvel events --follow`: the
+// first real subscriber of the internal bus (docs/design/internal-bus.md
+// section 3, aae-orc-5ltr3). It holds a Watch for the connection's life
+// and writes each delivery as it arrives. The Watch is registered
+// before the backlog Snapshot so the two are contiguous; deliveries the
+// snapshot already covered are skipped by Seq.
+func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessage) {
+	enc := json.NewEncoder(rwc)
+	var p eventsParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			_ = enc.Encode(d.stamp(Response{Error: fmt.Sprintf("bad params: %v", err)}))
+			return
+		}
+	}
+	f := p.filter()
+	w := d.events.Watch(f, 0)
+	defer w.Close()
+
+	send := func(b EventsBatch) bool {
+		data, err := json.Marshal(b)
+		if err != nil {
+			_ = enc.Encode(d.stamp(Response{Error: fmt.Sprintf("marshal events: %v", err)}))
+			return false
+		}
+		return enc.Encode(d.stamp(Response{Result: data})) == nil
+	}
+
+	backlog := d.events.Snapshot(f, p.N)
+	var last uint64
+	if n := len(backlog); n > 0 {
+		last = backlog[n-1].Seq
+	}
+	if !send(EventsBatch{Events: backlog}) {
+		return
+	}
+
+	// The request is the only thing the client ever writes, so a read
+	// that returns is the client hanging up. This is what ends the
+	// stream on the unix socket and on an SSH channel alike.
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		_, _ = io.Copy(io.Discard, rwc)
+	}()
+
+	keepalive := time.NewTicker(eventsWatchKeepalive)
+	defer keepalive.Stop()
+	for {
+		var batch []events.Event
+		select {
+		case <-gone:
+			return
+		case <-d.stopping():
+			return
+		case <-keepalive.C:
+		case ev := <-w.Events():
+			batch = append(batch, ev)
+		drain:
+			for len(batch) < eventsWatchBatchMax {
+				select {
+				case ev := <-w.Events():
+					batch = append(batch, ev)
+				default:
+					break drain
+				}
+			}
+		}
+		out := EventsBatch{}
+		for _, ev := range batch {
+			if ev.Seq <= last {
+				continue
+			}
+			out.Events = append(out.Events, ev)
+			last = ev.Seq
+		}
+		out.Dropped, out.ResumeFrom = w.Gap()
+		if !send(out) {
+			return
+		}
+	}
 }
 
 // Apply params
@@ -2006,6 +2160,63 @@ func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Respons
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	return &resp, nil
+}
+
+// ErrWatchUnsupported is returned by WatchEventsWith when the daemon
+// predates events.watch. The caller falls back to polling the events
+// method with a since_seq cursor.
+var ErrWatchUnsupported = errors.New("daemon does not support events.watch; falling back to polling")
+
+// WatchEventsWith opens an events.watch stream against the daemon and
+// calls fn for every message until fn returns an error, the daemon
+// closes the stream, or the dial fails. The first message is the backlog
+// (see MethodEventsWatch); later messages carry live deliveries and, when
+// the daemon-side watch overflowed, the gap. fn receives the stamped
+// Response alongside the decoded batch so the caller can read
+// DaemonHome once.
+//
+// A daemon that does not know the method answers the request with an
+// unknown-method error, which is returned as ErrWatchUnsupported. The
+// daemon closing the connection ends the stream with an error that says
+// so; a clean end is fn returning an error of its own, which is
+// returned unchanged.
+func WatchEventsWith(socketPath string, params json.RawMessage, opts DialOptions, fn func(*Response, EventsBatch) error) error {
+	conn, err := dialDaemonWith(socketPath, opts)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := json.NewEncoder(conn).Encode(Request{Method: MethodEventsWatch, Params: params}); err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	dec := json.NewDecoder(conn)
+	first := true
+	for {
+		var resp Response
+		if err := dec.Decode(&resp); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return errors.New("event stream ended: the daemon closed the connection")
+			}
+			return fmt.Errorf("read event stream: %w", err)
+		}
+		if resp.Error != "" {
+			if first && strings.HasPrefix(resp.Error, "unknown method") {
+				return ErrWatchUnsupported
+			}
+			return errors.New(resp.Error)
+		}
+		var b EventsBatch
+		if len(resp.Result) > 0 {
+			if err := json.Unmarshal(resp.Result, &b); err != nil {
+				return fmt.Errorf("parse event stream: %w", err)
+			}
+		}
+		if err := fn(&resp, b); err != nil {
+			return err
+		}
+		first = false
+	}
 }
 
 // dialDaemonWith connects to the daemon. Routes based on address scheme:

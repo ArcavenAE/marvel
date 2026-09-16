@@ -343,7 +343,12 @@ emit the unprefixed vocabulary in `internal/runtime/events`
 `internal/session/bridge.go` lifts each one into its `agent.*` ring kind,
 which is what lets the daemon and the CLI see one vocabulary regardless of
 harness. The ring is bounded, so it is history for the life of the daemon
-process, not durable storage.
+process, not durable storage. It is also subscribable: `Ring.Watch` hands a
+caller a filtered, bounded queue of events emitted after the call, with
+drop-oldest on overflow and the gap reported, and `Emit` never blocks on a
+subscriber. The daemon's `events.watch` RPC is the first subscriber; it is
+what `marvel events --follow` streams from. Design:
+`docs/design/internal-bus.md`.
 
 ## Manifest formats
 
