@@ -10,6 +10,7 @@
 package events
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -366,6 +367,10 @@ type Ring struct {
 	head     int // index of the oldest event when len(buf) == capacity
 	full     bool
 	nextSeq  uint64 // next Seq to assign; monotonic for the ring's lifetime
+	// watches is the live subscriber set. Guarded by mu, so an Emit
+	// offers to every watch under the same lock that assigned the Seq,
+	// and a Close removes the watch before its channel closes.
+	watches []*Watch
 }
 
 // DefaultCapacity is the ring size used when NewRing is called with
@@ -405,10 +410,21 @@ func (r *Ring) Emit(ev Event) {
 		if len(r.buf) == r.capacity {
 			r.full = true
 		}
-		return
+	} else {
+		r.buf[r.head] = ev
+		r.head = (r.head + 1) % r.capacity
 	}
-	r.buf[r.head] = ev
-	r.head = (r.head + 1) % r.capacity
+	// Offer to every watch under the ring lock. Each offer is a
+	// non-blocking send, so this loop is bounded by the subscriber
+	// count, never by a subscriber's speed. Emit runs inside the adapter
+	// drain goroutine, the path that back-pressures the harness, and a
+	// subscriber must not be able to slow it. See docs/design/internal-bus.md
+	// section 3.
+	for _, w := range r.watches {
+		if matches(ev, w.filter) {
+			w.offer(ev)
+		}
+	}
 }
 
 // Filter selects events to include in Snapshot results. Empty fields
@@ -446,6 +462,14 @@ func (r *Ring) Snapshot(f Filter, n int) []Event {
 		out = out[len(out)-n:]
 	}
 	return out
+}
+
+// Watchers returns the number of live watches. Diagnostic: it lets a
+// caller (and the tests) confirm that a closed subscriber left the set.
+func (r *Ring) Watchers() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.watches)
 }
 
 // Len returns the number of events currently stored.
@@ -491,4 +515,132 @@ func matches(ev Event, f Filter) bool {
 		return false
 	}
 	return true
+}
+
+// Watch is a subscription to a Ring: every event matching its Filter that
+// is emitted after the Watch call, delivered through a bounded queue.
+//
+// The contract, in the order it matters (docs/design/internal-bus.md
+// section 3, from the 24oy filtered-watch study):
+//
+//  1. Emit never blocks on a watch. Delivery is a non-blocking send.
+//  2. The Filter is the same one Snapshot takes; it is applied before
+//     the queue, so a narrow watch pays nothing for events it does not
+//     want.
+//  3. The queue is bounded. On overflow the oldest queued event is
+//     dropped, the drop is counted, and the new event is taken. Gap
+//     reports the count and a Seq to backfill from with Snapshot.
+//  4. A slow subscriber lags or drops by that policy, never by blocking
+//     the producer and never by growing memory.
+//  5. Close is the subscriber's act. Emit never closes Events.
+//
+// There is no callback form: a subscriber's code never runs on the
+// emitting goroutine.
+type Watch struct {
+	ring   *Ring
+	filter Filter
+	ch     chan Event
+
+	mu           sync.Mutex
+	dropped      uint64
+	firstDropped uint64 // Seq of the oldest event dropped since the last Gap
+	closed       bool
+}
+
+// Watch registers a subscription for events matching f that are emitted
+// after this call. queue is the subscriber's buffer depth; zero or
+// negative uses the ring's own capacity, which is the largest useful
+// value: a watch that holds as much as the ring falls behind exactly as
+// far as a poller could before the ring itself forgets, and no further.
+//
+// Events already in the ring are not replayed. A subscriber that wants
+// the backlog too takes the Watch first, then Snapshot, and skips any
+// Seq the snapshot already covered; registering first is what makes the
+// two contiguous.
+func (r *Ring) Watch(f Filter, queue int) *Watch {
+	if queue <= 0 {
+		queue = r.capacity
+	}
+	w := &Watch{ring: r, filter: f, ch: make(chan Event, queue)}
+	r.mu.Lock()
+	r.watches = append(r.watches, w)
+	r.mu.Unlock()
+	return w
+}
+
+// offer is the ring side of delivery. Called under the ring lock, so
+// offers are serialized and a full queue means the subscriber is behind,
+// not that another Emit got in first. Never blocks.
+func (w *Watch) offer(ev Event) {
+	select {
+	case w.ch <- ev:
+		return
+	default:
+	}
+	// Full: drop the oldest, record which one, take the new event. The
+	// reader may also be draining concurrently; that only makes room.
+	select {
+	case old := <-w.ch:
+		w.recordDrop(old.Seq)
+	default:
+	}
+	select {
+	case w.ch <- ev:
+	default:
+		// Unreachable with a positive queue depth and serialized offers;
+		// kept so a zero-depth watch can never block or panic.
+		w.recordDrop(ev.Seq)
+	}
+}
+
+func (w *Watch) recordDrop(seq uint64) {
+	w.mu.Lock()
+	w.dropped++
+	if w.firstDropped == 0 {
+		w.firstDropped = seq
+	}
+	w.mu.Unlock()
+}
+
+// Events is the subscriber's read side. It is never closed by Emit;
+// Close closes it, which ends a range loop over it.
+func (w *Watch) Events() <-chan Event {
+	return w.ch
+}
+
+// Gap returns the number of events this watch dropped since the last
+// call, and the Seq to resume a Snapshot from: Snapshot(Filter{SinceSeq:
+// resumeFrom}) returns the dropped events and everything after them,
+// subject to the ring's own capacity. Both are zero when nothing was
+// dropped. The counters reset on each call.
+//
+// A backfill overlaps whatever is still queued in the watch, so a
+// subscriber that backfills should skip any Seq it has already seen.
+func (w *Watch) Gap() (dropped uint64, resumeFrom uint64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	dropped = w.dropped
+	if w.firstDropped > 0 {
+		resumeFrom = w.firstDropped - 1
+	}
+	w.dropped, w.firstDropped = 0, 0
+	return dropped, resumeFrom
+}
+
+// Close removes the watch from the ring and closes Events. Idempotent.
+// Removal happens under the ring lock, the same lock Emit offers under,
+// so no send can follow the close.
+func (w *Watch) Close() {
+	r := w.ring
+	r.mu.Lock()
+	if w.closed {
+		r.mu.Unlock()
+		return
+	}
+	w.closed = true
+	if i := slices.Index(r.watches, w); i >= 0 {
+		r.watches = slices.Delete(r.watches, i, i+1)
+	}
+	r.mu.Unlock()
+	close(w.ch)
 }

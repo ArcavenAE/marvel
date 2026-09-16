@@ -98,9 +98,11 @@ layout answers with the name you exported, the real one answers
 The acts read better watched than replayed. Two tools:
 
 - `marvel events --follow` (`-f`) tails the ring: it prints the current
-  tail, then polls once a second and prints each new event exactly once,
-  in order, using a ring-assigned sequence cursor. All the usual filters
-  compose with it (`--workspace`, `--kind`, `--warnings`).
+  tail, then subscribes to the ring through the daemon's `events.watch`
+  stream and prints each new event exactly once, in order, as it lands,
+  resuming from a ring-assigned sequence cursor. All the usual filters
+  compose with it (`--workspace`, `--kind`, `--warnings`). Against a
+  daemon older than the stream it falls back to polling once a second.
 - `just demo-watch` builds a four-pane tmux operator console:
 
   ```

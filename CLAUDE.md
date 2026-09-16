@@ -306,7 +306,9 @@ director owns the envelope. Ruling: orc `docs/roadmap.md` M2 and
 What exists:
 
 - **`internal/events`**: bounded ring, severity-tagged, filterable by
-  workspace/team/role/session/kind. `marvel events`.
+  workspace/team/role/session/kind. `marvel events`. `Ring.Watch` is the
+  subscription seam (bounded queue, drop-oldest, gap reported, `Emit`
+  never blocks); `events.watch` streams it to `marvel events --follow`.
 - **`internal/usage`**: the context-window and token accountant, the
   stream-fed CTX% producer. Occupancy is a per-request level, never a
   sum; an unresolved window renders `?` and emits

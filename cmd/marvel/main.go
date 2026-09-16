@@ -480,7 +480,7 @@ Examples:
   marvel events --kind context.limit-unresolved  # why a CTX% cell is blank
   marvel events --kind admission.refused     # spawns a team budget refused
   marvel events --warnings                   # only warning-severity events
-  marvel events --follow                     # live tail; poll the ring every second
+  marvel events --follow                     # live tail, streamed from the ring as events land
   marvel events --list-kinds                 # every kind --kind accepts
   marvel --cluster desk events               # remote daemon via mrvl://
 
@@ -537,35 +537,7 @@ prints the catalog, and needs no daemon.`,
 				return result.Events, nil
 			}
 			printBatch := func(evs []events.Event, header bool) {
-				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				if header {
-					_, _ = fmt.Fprintln(tw, "TIME\tSEV\tKIND\tSESSION\tMESSAGE")
-				}
-				for _, ev := range evs {
-					sev := string(ev.Severity)
-					if sev == "" {
-						sev = "info"
-					}
-					sessRef := ev.Session
-					if sessRef == "" && ev.Team != "" {
-						sessRef = ev.Workspace + "/" + ev.Team
-					}
-					if sessRef == "" {
-						sessRef = ev.Workspace
-					}
-					// Actor rides in the message rather than its own
-					// column: it is set on a small minority of events,
-					// and a column sized to a "pid=N socket=PATH" string
-					// would push MESSAGE off the right of every row that
-					// does not carry one.
-					msg := ev.Message
-					if ev.Actor != "" {
-						msg = fmt.Sprintf("%s [by %s]", msg, ev.Actor)
-					}
-					_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-						ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, msg)
-				}
-				_ = tw.Flush()
+				printEventBatch(os.Stdout, evs, header)
 			}
 			maxSeq := func(evs []events.Event, cur uint64) uint64 {
 				for _, ev := range evs {
@@ -595,11 +567,20 @@ prints the catalog, and needs no daemon.`,
 			if !follow {
 				return nil
 			}
-			// Follow mode: poll the ring with a Seq cursor so each event
-			// prints exactly once, in order, until interrupted. The ring
-			// assigns Seq monotonically, so a cursor survives ring
-			// wraparound (missed events are simply gone, never repeated).
+			// Follow mode: subscribe to the daemon's event ring through
+			// the events.watch stream, resuming from the Seq cursor the
+			// first fetch left, so each event prints exactly once, in
+			// order, as it lands. The ring assigns Seq monotonically, so
+			// the cursor survives ring wraparound (missed events are gone,
+			// never repeated). Batches print through the same printBatch
+			// as the poll did, so a batch of the same events renders the
+			// same bytes. An older daemon without the stream falls back
+			// to the one-second poll on the same cursor.
 			cursor := maxSeq(evs, 0)
+			err = followStream(cursor, buildParams, printBatch)
+			if !errors.Is(err, daemon.ErrWatchUnsupported) {
+				return err
+			}
 			for {
 				time.Sleep(time.Second)
 				batch, err := fetch(cursor)
@@ -621,9 +602,72 @@ prints the catalog, and needs no daemon.`,
 	cmd.Flags().StringVar(&session, "session", "", "filter by session key (workspace/name)")
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (e.g. session.crashed, health.failed, agent.tool.call)")
 	cmd.Flags().BoolVar(&warningsOnly, "warnings", false, "show only warning-severity events")
-	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "poll for new events every second until interrupted")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream new events as they land until interrupted")
 	cmd.Flags().BoolVar(&listKinds, "list-kinds", false, "print every event kind --kind accepts, then exit")
 	return cmd
+}
+
+// printEventBatch renders one batch of events as the table `marvel
+// events` prints. Both the first fetch and every follow-mode batch,
+// whether streamed or polled, go through this one function, so a batch
+// of the same events renders the same bytes whichever path delivered it.
+func printEventBatch(w io.Writer, evs []events.Event, header bool) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if header {
+		_, _ = fmt.Fprintln(tw, "TIME\tSEV\tKIND\tSESSION\tMESSAGE")
+	}
+	for _, ev := range evs {
+		sev := string(ev.Severity)
+		if sev == "" {
+			sev = "info"
+		}
+		sessRef := ev.Session
+		if sessRef == "" && ev.Team != "" {
+			sessRef = ev.Workspace + "/" + ev.Team
+		}
+		if sessRef == "" {
+			sessRef = ev.Workspace
+		}
+		// Actor rides in the message rather than its own
+		// column: it is set on a small minority of events,
+		// and a column sized to a "pid=N socket=PATH" string
+		// would push MESSAGE off the right of every row that
+		// does not carry one.
+		msg := ev.Message
+		if ev.Actor != "" {
+			msg = fmt.Sprintf("%s [by %s]", msg, ev.Actor)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, msg)
+	}
+	_ = tw.Flush()
+}
+
+// followStream runs the live half of `marvel events --follow` over the
+// daemon's events.watch stream. It returns daemon.ErrWatchUnsupported
+// untouched so the caller can fall back to polling, and any other error
+// as the reason the tail ended. A daemon-side overflow (this client fell
+// behind the ring) is reported once per gap on stderr; stdout carries
+// only events, so a script reading it sees nothing but rows.
+func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, printBatch func([]events.Event, bool)) error {
+	addr, opts := resolveDaemon()
+	first := true
+	return daemon.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemon.Response, b daemon.EventsBatch) error {
+		if first {
+			first = false
+			// Same diagnostic send() prints for a request-response call.
+			if w := config.DaemonHomeWarning(addr, resp.DaemonHome, config.ClientHome()); w != "" {
+				fmt.Fprintln(os.Stderr, w)
+			}
+		}
+		if b.Dropped > 0 {
+			fmt.Fprintf(os.Stderr, "note: %d event(s) dropped from the live stream (this client fell behind the ring); 'marvel events -n 0' still holds them if the ring has not wrapped\n", b.Dropped)
+		}
+		if len(b.Events) > 0 {
+			printBatch(b.Events, false)
+		}
+		return nil
+	})
 }
 
 // printKindCatalog renders the event-kind catalog in two groups, because
