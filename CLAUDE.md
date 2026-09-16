@@ -301,6 +301,14 @@ director owns the envelope. Ruling: orc `docs/roadmap.md` M2 and
 `docs/design/director-envelope-and-adapter-events.md`. Open question:
 `_kos/nodes/frontier/question-agent-communication-broker.yaml`.
 
+The broker is declared in the client config as a cluster **Services**
+entry (`docs/design/services-list.md`): `class: message-bus`, `provider:
+nats-server`, `mode: managed | adopted | external`, validated against the
+registries in `internal/service`. A `bus:` block is the same record under
+its older spelling, lifted at read time as the entry named `bus`; the two
+spellings together are refused. The daemon attaches entries in a loop by
+provider (`attachServices`); the nats-server arm is `attachBus`.
+
 ## Observability
 
 What exists:

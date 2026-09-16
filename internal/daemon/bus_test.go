@@ -115,7 +115,7 @@ func TestBusLeafBlockFollowsTheSeedCredential(t *testing.T) {
 	}
 }
 
-// attachBus reads the client config from HOME and binds by socket. With
+// attachServices reads the client config from HOME and binds by socket. With
 // managed: false the daemon renders nothing but sessions still learn the URL
 // (brief 10 section 4: this lands before supervision exists).
 func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
@@ -132,7 +132,7 @@ func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.attachBus(sock); err != nil {
+	if err := d.attachServices(sock); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,10 +154,49 @@ func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
 
 	// A socket that matches no cluster attaches nothing.
 	d2 := newHandlerDaemon(t)
-	if err := d2.attachBus(filepath.Join(home, "other.sock")); err != nil {
+	if err := d2.attachServices(filepath.Join(home, "other.sock")); err != nil {
 		t.Fatal(err)
 	}
 	if d2.sessMgr.Bus != nil || d2.bus != nil {
 		t.Error("unmatched socket attached a bus")
+	}
+}
+
+// The services: spelling reaches the daemon through the same loop and lands
+// the same adopted provider as the bus: block (services-list.md 1.3). A
+// list the validator refuses attaches nothing and does not fail start.
+func TestAttachServicesSpellingAndRefusedList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MARVEL_SOCKET", "")
+	sock := filepath.Join(home, ".marvel", "run", "marvel.sock")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("clusters:\n  - name: kinu\n    socket: " + sock + "\n    services:\n      - name: bus\n        class: message-bus\n        provider: nats-server\n        mode: adopted\n        url: nats://127.0.0.1:4222\ncurrent_cluster: kinu\n")
+	d := newHandlerDaemon(t)
+	if err := d.attachServices(sock); err != nil {
+		t.Fatal(err)
+	}
+	if d.bus != nil || d.sessMgr.Bus == nil || d.sessMgr.Bus.URL() != "nats://127.0.0.1:4222" {
+		t.Fatalf("services: spelling did not land the adopted provider: bus=%v sessBus=%v", d.bus, d.sessMgr.Bus)
+	}
+
+	// An unregistered provider is refused by the validator; the daemon
+	// logs it and attaches nothing rather than refusing to start.
+	write("clusters:\n  - name: kinu\n    socket: " + sock + "\n    services:\n      - name: llm\n        class: inference-gateway\n        provider: litellm\n        mode: adopted\n        url: http://127.0.0.1:4000\ncurrent_cluster: kinu\n")
+	d2 := newHandlerDaemon(t)
+	if err := d2.attachServices(sock); err != nil {
+		t.Fatalf("a refused list failed start: %v", err)
+	}
+	if d2.sessMgr.Bus != nil || d2.bus != nil {
+		t.Error("a refused list attached a bus")
 	}
 }

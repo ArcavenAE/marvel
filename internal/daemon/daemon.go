@@ -30,6 +30,7 @@ import (
 	"github.com/arcavenae/marvel/internal/knownhosts"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
@@ -395,7 +396,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// daemon's broker, and no session may spawn before there is a bus to
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
-	if err := d.attachBus(socketPath); err != nil {
+	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()
 		if d.pidFile != "" {
 			_ = os.Remove(d.pidFile)
@@ -2530,44 +2531,83 @@ func loadKeyFile(path string, strictPerms bool) (ssh.Signer, error) {
 // it through the broker environment).
 const busLeafCredential = "bus/leaf"
 
-// attachBus binds this daemon to its cluster's bus section and renders the
-// broker configuration once. The client config names clusters by how to
-// reach them, and the daemon is reached at exactly one socket path, so the
-// entry whose socket is ours is ours. A cluster with no bus section, or an
-// adopted (managed: false) one, leaves d.bus nil: nothing to render. A bad
-// section is logged and skipped rather than refusing the daemon; sessions
-// still run, they just get no managed broker.
-func (d *Daemon) attachBus(socketPath string) error {
+// attachServices binds this daemon to its cluster's Services list
+// (docs/design/services-list.md section 1.3) and attaches each entry by
+// provider. The client config names clusters by how to reach them, and
+// the daemon is reached at exactly one socket path, so the entry whose
+// socket is ours is ours. A cluster with no services leaves d.bus nil. A
+// list the validator refuses is logged and skipped rather than refusing
+// the daemon; sessions still run, they just get no managed service. One
+// arm today, nats-server; a second driver joins the loop, not a second
+// bespoke function.
+func (d *Daemon) attachServices(socketPath string) error {
 	cfg, err := config.Load()
-	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidBus) {
-		log.Printf("bus: client config unreadable, no managed broker: %v", err)
+	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidBus) && !errors.Is(err, config.ErrInvalidService) {
+		log.Printf("services: client config unreadable, no managed service: %v", err)
 		return nil
 	}
 	if cfg == nil {
 		return nil
 	}
 	cl := cfg.ClusterForSocket(socketPath)
-	if cl == nil || cl.Bus == nil {
+	if cl == nil {
 		return nil
 	}
-	if verr := config.ValidateBus(cl.Name, cl.Bus); verr != nil {
-		log.Printf("bus: cluster %s has an invalid bus section, no managed broker: %v", cl.Name, verr)
+	if verr := config.ValidateServices(cl); verr != nil {
+		log.Printf("services: cluster %s has an invalid services list, nothing attached: %v", cl.Name, verr)
+		return nil
+	}
+	entries, aerr := cl.AllServices()
+	if aerr != nil {
+		log.Printf("services: cluster %s: %v", cl.Name, aerr)
+		return nil
+	}
+	if len(entries) == 0 {
 		return nil
 	}
 	if nerr := config.ValidateClusterName(cl.Name); nerr != nil {
-		log.Printf("bus: %v; no managed broker", nerr)
+		log.Printf("services: %v; nothing attached", nerr)
 		return nil
 	}
 	layout, lerr := paths.Default()
 	if lerr != nil {
-		log.Printf("bus: resolve layout: %v", lerr)
+		log.Printf("services: resolve layout: %v", lerr)
 		return nil
 	}
-	rb := cl.Bus.Resolve(layout.StateDir())
+	busSeen := false
+	for i := range entries {
+		svc := &entries[i]
+		switch svc.Provider {
+		case service.ProviderNATSServer:
+			if busSeen {
+				return fmt.Errorf("services: cluster %s declares a second %s entry %q; one bus per cluster today", cl.Name, service.ClassMessageBus, svc.Name)
+			}
+			busSeen = true
+			if err := d.attachBus(cl, svc, layout); err != nil {
+				return err
+			}
+		default:
+			// Unreachable after ValidateServices; named so a registry
+			// addition without a daemon arm fails loudly at start.
+			return fmt.Errorf("services: cluster %s: service %q: no daemon arm for provider %q", cl.Name, svc.Name, svc.Provider)
+		}
+	}
+	return nil
+}
+
+// attachBus is the nats-server arm of attachServices: it renders the
+// broker configuration once and supervises the broker, or for an adopted
+// or external bus hands sessions the URL and nothing else.
+func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths.Layout) error {
+	spec, err := svc.BusSpec()
+	if err != nil {
+		return err
+	}
+	rb := spec.Resolve(layout.StateDir())
 	if !rb.Managed {
 		// Sessions still learn the URL; there is no authorization to hand out.
 		d.sessMgr.Bus = bus.NewAdopted(rb.URL)
-		log.Printf("bus: cluster %s adopts an existing broker at %s (managed: false); sessions receive NATS_URL, nothing rendered", cl.Name, rb.URL)
+		log.Printf("bus: cluster %s reaches an existing broker at %s (mode %s); sessions receive NATS_URL, nothing rendered", cl.Name, rb.URL, rb.Mode)
 		return nil
 	}
 	mgr, merr := bus.NewManager(filepath.Join(layout.StateDir(), "nats"), cl.Name, rb, d.store, func() bool {
