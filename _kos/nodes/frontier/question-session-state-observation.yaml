@@ -156,6 +156,16 @@ content: |
   reported-running gap). Scope was recon only: no fix was proposed and
   the campaign explicitly reserved the comms/bus layer to the
   conductor.
+
+  ONE STALL WITH A PREVENT-SIDE FIX (finding-045). A first cast into a
+  new workspace directory stalls at claude's folder-trust gate, reading
+  green all the while (finding-030 §2d: the gate bites once per directory,
+  worst unattended at first launch). The permission mode marvel passes
+  does not clear it. This is the same blind spot the node names, and it
+  splits into detect and prevent: aae-orc-fxmi1 surfaces the stall,
+  advisory only, and a candidate feature (finding-045) would pre-clear the
+  gate by writing the workspace into `~/.claude.json` trust at cast time,
+  scoped to that workspace only.
 edges:
   - target: elem-agentic-resource-matrix
     type: supports

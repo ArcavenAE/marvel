@@ -33,6 +33,16 @@ content: |
   state. This is legitimate, not a leak. It is the "defined state" a
   cluster can later converge to.
 
+  **The write side matches (finding-043).** `Manifest.Apply`
+  (manifest.go:517) is an upsert over the teams the manifest names: an
+  existing team has its `Roles` and `Budget` replaced in place, a new one
+  is created, and there is no loop deleting teams the manifest omits. So a
+  re-applied manifest hot-updates the teams it names (a dropped role
+  drains, finding-006; budget is replaced) and leaves every team it does
+  not name running. Apply is not a teardown, in the same way teardown does
+  not clear desired Teams. The read-side posture is what governs whether a
+  durable Team spends; the write side never prunes it.
+
   **The reframe (operator ruling).** Convergence is not a fork we pick;
   it is **configurable posture the user defines**, on a spectrum from 0
   to hero. The mechanism stays converge-to-desired, but:
