@@ -278,6 +278,20 @@ content: |
      defect. So the cost model this node has been waiting on is still
      blocked: a shift that hands off nothing cannot be priced end to end
      against a compaction that preserves the working context.
+
+  TRIGGER-MODEL DESIGN (2026-09-17): a casting-call party elaborated the
+  auto-trigger into requirements and recommendations in
+  `_kos/ideas/auto-shift-trigger-model.md`. It heeds this node's ruling
+  (a per-session fraction of the resolved window is not the incommensurable
+  fleet column the ruling rejects) and adds: a `compaction-event` trigger as
+  the denominator-free cross-harness backstop for codex/opencode unresolved
+  windows (relates aae-orc-i8ern); a workspace/team/role shift-policy
+  resolution ladder with a per-role override and an explicit `enabled` field;
+  reading-age plus a fire-once-per-generation guard for the anti-flap gap
+  this node named (mirrors director R-93/BEAT-G); shift-inhibit predicates;
+  and an emergency-shift path on a runaway detector plus a peer verdict, the
+  verdict envelope splitting to director. Proposed flat bd tasks relate to
+  aae-orc-hpeu, not a new epic.
 edges:
   - target: question-shifts
     type: derives
