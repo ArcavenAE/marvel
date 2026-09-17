@@ -120,6 +120,14 @@ launch-to-ready, plus a handoff turn where a handoff is in play).
 
 Scope and limits:
 
+- A resolved window supplies the denominator (`context_limit`); it does not by
+  itself arm the trigger. The numerator (`context_tokens`) is filled only for a
+  session marvel has an activity channel for: a headless stream, or the
+  statusline feed. An interactive claude (the default mode) emits no parseable
+  stream, so it needs `runtime.context_feed = "statusline"` before its occupancy
+  is ever read. Without it the reading stays 0 and the trigger never arms while
+  looking configured (finding-044). `examples/auto-shift.toml` shows the full
+  interactive shape (window plus feed).
 - Only sessions on a resolved window are metered. codex reports a session
   total rather than a per-request level, and opencode declares no window, so a
   role on either stays operator-shifted unless the operator sets

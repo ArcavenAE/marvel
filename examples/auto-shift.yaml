@@ -9,10 +9,15 @@
 # finish BEFORE the harness compacts; the event would arrive one compaction too
 # late (orc finding-016). Set headroom_tokens above the cost of a clean shift.
 #
-# Scope: only sessions on a resolved window are metered. This role pins the 1M
-# Claude window via runtime.context_window so the denominator is explicit; a
-# claude [1m] session resolves 1000000 from the model table on its own. codex
-# and opencode declare no window and stay operator-shifted unless given one.
+# Scope: a resolved window is the denominator, not the whole trigger. This role
+# pins the 1M Claude window via runtime.context_window so context_limit is
+# explicit (a claude [1m] session resolves 1000000 from the model table on its
+# own). But the numerator, context_tokens, is only read for a session marvel has
+# an activity channel for: a headless stream, or the statusline feed. This is an
+# interactive claude, which emits no parseable stream, so it also declares
+# context_feed: statusline; without it the reading stays 0 and the trigger never
+# arms (orc finding-044). codex and opencode declare no window and stay
+# operator-shifted unless given one.
 #
 # Setup:
 #   just build
@@ -36,6 +41,7 @@ teams:
           image: claude
           command: claude
           context_window: 1000000
+          context_feed: statusline
         shift:
           on: context-pressure
           headroom_tokens: 120000
