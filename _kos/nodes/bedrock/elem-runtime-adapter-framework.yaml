@@ -94,6 +94,20 @@ content: |
   since roadmap rev-2. The evidence line also read "9 tests, 606
   lines", which the current test surface exceeds by a wide margin.
   Both were documentation drift, not a change of decision.
+
+  **2026-09-17: two adapters composed live in one team (finding-046).**
+  The roster above describes each adapter alone. A throwaway team ran a
+  claude worker (interactive) and a codex reviewer (headless) in the same
+  team, each resolved to its own adapter from `Runtime.Name`. The codex
+  reviewer's `codex exec --json` stream parsed into the event ring and the
+  accountant end to end and ended `session.succeeded ... replica satisfied`
+  (completion semantics, ADR-010). finding-001 established roles-carry-own-
+  runtime claude-only; this is the first live cross-harness composition. Two
+  adapter facts it exercised: codex clears its own fresh-cwd gate via the
+  `--skip-git-repo-check` this node lists (no trust freeze, unlike claude's
+  uncleared folder-trust, finding-045), and marvel injects no codex sandbox,
+  so the reviewer inherited codex's read-only workspace and its output landed
+  in the ring rather than on disk.
 edges:
   - target: elem-console-agnostic
     type: implements
