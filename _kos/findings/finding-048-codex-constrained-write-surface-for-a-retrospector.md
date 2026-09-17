@@ -1,4 +1,4 @@
-# finding-047: a codex role gets a constrained write surface from its own sandbox plus a pinned cwd
+# finding-048: a codex role gets a constrained write surface from its own sandbox plus a pinned cwd
 
 finding-046 left a codex reviewer read-only, its output in the event ring. A
 retrospector must WRITE, but only to a defined place. This proves the write

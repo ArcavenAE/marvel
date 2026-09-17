@@ -28,7 +28,7 @@ Both roles run codex on gpt-5.6-luna, to be economical with tokens.
   `gpt-5.6-luna`; the codex default here is `gpt-5.6-sol`), and the codex
   adapter passes `runtime.args` verbatim, so `-m gpt-5.6-luna` selects it.
   Confirmed live: the throwaway retrospector's rollout recorded gpt-5.6-luna
-  (finding-047).
+  (finding-048).
 
 ## The casting problem (shared by both roles)
 
@@ -90,14 +90,14 @@ completion semantics hold the slot (ADR-010).
 ## Workstream 2: retrospector (constrained write)
 
 The retrospector must write its findings log and recommendation queue, and
-nothing else. finding-047 proves the write surface can be exactly one directory.
+nothing else. finding-048 proves the write surface can be exactly one directory.
 
 **The write surface.** codex `-s workspace-write` makes the primary workspace
 (the cwd) and system temp writable, allows reads broadly, and disables network.
 Pinning the cwd to a dedicated retro output dir makes that dir the only writable
 surface; the retrospector reads the repo for context and is refused every write
 outside the retro dir. Proved: it wrote `RETRO.md` to the retro dir, read the
-repo, and was refused an out-of-scope write to the repo (finding-047).
+repo, and was refused an out-of-scope write to the repo (finding-048).
 
 **Which directory.** Recommend an out-of-repo dir for v1, one the throwaway
 proved safe: `~/.marvel/retro/aae/` (per workspace). It is not inside a git
@@ -167,7 +167,7 @@ write-enabled.
 
 - marvel: map codex `file_change` items in the codex parser, so a write-capable
   codex role's writes read as `tool.result` rather than `agent.error` on the
-  ring (finding-047, aae-orc-tvlcg).
+  ring (finding-048, aae-orc-tvlcg).
 - marvel/director: the codex cast wrappers (aae-orc-gz9pd) (`cast-aae-codex.sh`,
   `cast-aae-retro.sh`): pin cwd, prepend the wardrobe slice, select the model
   and sandbox. The live apply depends on these.
@@ -179,7 +179,7 @@ write-enabled.
 
 ## Evidence
 
-finding-046 (the read-only codex reviewer, proven), finding-047 (the codex
+finding-046 (the read-only codex reviewer, proven), finding-048 (the codex
 constrained write surface, proven on gpt-5.6-luna), question-permission-model
 (Layer 1), finding-043 (per-team upsert, why the apply is additive), wardrobe
 `reviewer.md` and `retrospector.md`.

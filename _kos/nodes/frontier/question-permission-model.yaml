@@ -91,7 +91,7 @@ content: |
   event-ring pressure from spammed refusals.
 
   LAYER 1 FOR A NON-PROJECTING HARNESS IS THE HARNESS'S OWN SANDBOX
-  (finding-047, 2026-09-17). The Policy projection above is the claude
+  (finding-048, 2026-09-17). The Policy projection above is the claude
   path: marvel writes a settings fragment via `ProjectionFor`. The codex
   adapter reports no projection surface (codex.go) and marvel injects no
   codex sandbox, so for a codex role the Layer-1 enforcement is codex's
