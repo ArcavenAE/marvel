@@ -27,6 +27,15 @@ type Controller struct {
 	Events events.Emitter
 	mu     sync.Mutex
 
+	// autoShiftsThisTick counts automatic shifts initiated during the current
+	// ReconcileOnce pass, reset at the top of each pass. It caps automatic
+	// initiations to maxAutoShiftsPerTick fleet-wide per tick so correlated
+	// context pressure across roles or teams does not fire a burst of shifts
+	// into the shared per-account rate limit at once (the aggregation hazard,
+	// aae-orc-hfc0). Excess triggers wait for a later tick; with pre-emptive
+	// headroom the couple-second stagger is immaterial. Guarded by mu.
+	autoShiftsThisTick int
+
 	// roleHealth tracks per-role crash-loop state: restart count and
 	// next-allowed-restart deadline. Keyed by workspace/team/role so
 	// state survives session delete+recreate across restarts — the
@@ -455,11 +464,24 @@ func (c *Controller) ReconcileOnce() {
 	c.reapDeadLocked()
 	c.evaluateHealth()
 
+	// Reset the per-tick automatic-shift budget before the team loop so the
+	// fleet-wide cap (maxAutoShiftsPerTick) applies across every team this
+	// pass, not per team. See evaluateShiftTriggers.
+	c.autoShiftsThisTick = 0
+
 	teams := c.store.ListTeams()
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}
 }
+
+// maxAutoShiftsPerTick caps how many automatic shifts the controller initiates
+// in one reconcile pass, fleet-wide. It staggers correlated context pressure
+// across ticks so an automatic actuator cannot burst the shared per-account
+// rate limit (aae-orc-hfc0). One per tick is deliberately conservative: a
+// pre-emptive trigger fires with headroom to spare, so a few-second delay for
+// the second and later roles costs nothing.
+const maxAutoShiftsPerTick = 1
 
 // reapDeadLocked reaps sessions whose panes have vanished, charging each role's
 // crash accounting once per tick and emitting it. It is the pane-liveness
@@ -773,6 +795,14 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	// Drop a recorded admission condition this process never refused, before
 	// any role is reconciled. See reconcileAdmissionState.
 	c.reconcileAdmissionState(t)
+
+	// Evaluate automatic shift triggers before the shift-in-progress check:
+	// it initiates a shift on the store when a role's context-pressure policy
+	// fires, and returns without acting if one is already running, so it never
+	// interrupts an in-flight shift. A shift it initiates this tick is driven
+	// by reconcileShift on the next tick, the same one-tick handoff the
+	// operator path takes (handleShift initiates, the next reconcile drives).
+	c.evaluateShiftTriggers(t)
 
 	if t.Shift.Phase != api.ShiftNone {
 		c.reconcileShift(t)
@@ -1688,7 +1718,15 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 func (c *Controller) InitiateShift(teamKey, role string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.initiateShiftLocked(teamKey, role)
+}
 
+// initiateShiftLocked is InitiateShift's body without the lock, for callers
+// that already hold c.mu. The operator RPC takes the lock via InitiateShift;
+// the automatic trigger (evaluateShiftTriggers) runs inside the reconcile pass,
+// which already holds it. Splitting the lock out is what lets the trigger fire
+// a shift without the non-reentrant mu deadlocking.
+func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	t, err := c.store.GetTeam(teamKey)
 	if err != nil {
 		return fmt.Errorf("get team %s: %w", teamKey, err)
@@ -1780,6 +1818,74 @@ func shiftOrder(roles []api.Role) []string {
 		return false // preserve original order for non-supervisors
 	})
 	return names
+}
+
+// evaluateShiftTriggers initiates an automatic shift for the first role of t
+// whose shift policy has fired, subject to the per-tick fleet-wide budget.
+// Caller holds c.mu. It never interrupts an in-flight shift and ignores roles
+// with no policy.
+//
+// The trigger is a REMAINDER, not a percentage: a role fires when any of its
+// live current-generation sessions has a resolved window and its occupancy has
+// risen within HeadroomTokens of that window. Firing on the level rather than
+// on a post-compaction event is what lets the shift finish BEFORE the harness
+// auto-compacts; the event would arrive one compaction too late. A session on
+// an unresolved window (ContextLimit == 0: codex, or opencode with no
+// context_window override) is skipped, because a remainder against no
+// denominator is meaningless (orc finding-016).
+func (c *Controller) evaluateShiftTriggers(t *api.Team) {
+	if t.Shift.Phase != api.ShiftNone {
+		return
+	}
+	if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
+		return
+	}
+	for i := range t.Roles {
+		role := &t.Roles[i]
+		if role.Shift == nil || role.Shift.On != api.ShiftTriggerContextPressure {
+			continue
+		}
+		sess, tokens, limit, ok := c.firstSessionOverRemainder(t, role)
+		if !ok {
+			continue
+		}
+		events.Emit(c.Events, events.Event{
+			Kind:       events.KindShiftAutoTriggered,
+			Workspace:  t.Workspace,
+			Team:       t.Name,
+			Role:       role.Name,
+			Session:    sess,
+			Generation: t.Generation,
+			Message: fmt.Sprintf("context pressure: session %s at %d/%d tokens, remainder %d <= headroom %d",
+				sess, tokens, limit, limit-tokens, role.Shift.HeadroomTokens),
+		})
+		if err := c.initiateShiftLocked(t.Key(), role.Name); err != nil {
+			// A concurrent operator shift or a store race can refuse this. Not
+			// fatal: the next tick re-evaluates against fresh state.
+			log.Printf("auto-shift: %s role %s not initiated: %v", t.Key(), role.Name, err)
+			continue
+		}
+		c.autoShiftsThisTick++
+		return // one automatic shift per team per tick, within the fleet budget
+	}
+}
+
+// firstSessionOverRemainder returns the first live current-generation session
+// of role whose resolved-window occupancy has crossed the role's headroom
+// remainder, with its token count and window. ok is false when none has (none
+// over the remainder, or none on a resolved window).
+func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role) (sessionKey string, tokens, limit int, ok bool) {
+	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	for i := range live {
+		s := &live[i]
+		if s.ContextLimit <= 0 {
+			continue
+		}
+		if s.ContextTokens > s.ContextLimit-role.Shift.HeadroomTokens {
+			return s.Key(), s.ContextTokens, s.ContextLimit, true
+		}
+	}
+	return "", 0, 0, false
 }
 
 func (c *Controller) reconcileShift(t *api.Team) {
