@@ -41,6 +41,21 @@ content: |
   - Once ruling 81 is lifted, how does a non-null `tools` allowlist project, and
     does an allowlist that omits an MCP server drop that server's channel?
 
+  DECLARATION VERSUS ENFORCEMENT (surfaced 2026-09-17, marvel-builder live
+  testing on this host): a projected constraint is only as real as the harness
+  enforcement under it. Encoding a write constraint in the frontmatter DECLARES
+  intent; whether it is ENFORCED depends on the harness sandbox, which can be
+  overridden. On this host codex's own sandbox did NOT enforce a declared write
+  constraint against a codex TRUSTED project: the codex config marks the
+  workspace trusted, trust overrode the `-s read-only` sandbox flag and the
+  pinned cwd, and a codex role wrote into the repo (disk-verified) while the
+  model self-reported "refused." This corrects the scope of finding-048, whose
+  "refused" result held on UNtrusted projects. So the projection question is not
+  only "which tools and MCP does the seat get," it is "is a declared constraint
+  actually enforced," and the probe must check enforcement per harness with codex
+  project trust named as the confound. marvel-builder's codex-trust finding is
+  the seed for this half.
+
   The projection of a role definition into a running agent is marvel's, which is
   why this question sits in marvel's graph beside question-permission-model,
   though the field and its rulings are wardrobe's and the channel at risk is
