@@ -54,6 +54,7 @@ type Supervisor struct {
 	parent      context.Context
 	cmd         *exec.Cmd
 	pid         int
+	version     string // what `nats-server --version` on the resolved binary reports
 	adopted     bool
 	ready       bool
 	stopping    bool
@@ -66,14 +67,27 @@ type Supervisor struct {
 
 // Status is what `marvel bus status` prints.
 type Status struct {
-	Managed  bool   `json:"managed"`
-	Listen   string `json:"listen,omitempty"`
-	URL      string `json:"url,omitempty"`
-	Domain   string `json:"domain,omitempty"`
-	ConfPath string `json:"conf_path,omitempty"`
-	PID      int    `json:"pid,omitempty"`
-	Adopted  bool   `json:"adopted"`
-	Ready    bool   `json:"ready"`
+	Managed bool `json:"managed"`
+	// The Services record's common fields (docs/design/services-list.md).
+	Class          string `json:"class,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	CallerIdentity string `json:"caller_identity,omitempty"`
+	// Version is what the resolved nats-server binary reports, so a host
+	// whose PATH disagrees with the mise pin is visible here rather than
+	// discovered at an upgrade.
+	Version string `json:"version,omitempty"`
+	// Seat is "<workspace>/<team>" when a director seat is declared; the
+	// user is always director and its password sits at SeatPassFile.
+	Seat         string `json:"seat,omitempty"`
+	SeatPassFile string `json:"seat_pass_file,omitempty"`
+	Listen       string `json:"listen,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Domain       string `json:"domain,omitempty"`
+	ConfPath     string `json:"conf_path,omitempty"`
+	PID          int    `json:"pid,omitempty"`
+	Adopted      bool   `json:"adopted"`
+	Ready        bool   `json:"ready"`
 	// Leaf is "up", "down", "unenrolled" (hub with no seed), "n/a" (no hub),
 	// or "unknown" (not polled yet).
 	Leaf     string `json:"leaf"`
@@ -114,6 +128,7 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 	return &Supervisor{
 		mgr:         mgr,
 		binary:      bin,
+		version:     binaryVersion(bin),
 		pidFile:     filepath.Join(runDir, "nats-server.pid"),
 		logPath:     filepath.Join(logDir, "nats-server.log"),
 		ring:        ring,
@@ -220,8 +235,24 @@ func (s *Supervisor) spawnLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.pidFile), 0o700); err == nil {
 		_ = os.WriteFile(s.pidFile, []byte(strconv.Itoa(s.pid)+"\n"), 0o644)
 	}
-	log.Printf("bus: started nats-server pid %d (%s -c %s), log %s", s.pid, s.binary, conf, s.logPath)
+	log.Printf("bus: started nats-server %s pid %d (%s -c %s), log %s", s.version, s.pid, s.binary, conf, s.logPath)
 	return nil
+}
+
+// binaryVersion runs `<bin> --version` and returns the version token
+// ("v2.14.6" from "nats-server: v2.14.6"), or "unknown" when the binary
+// does not answer. Read once at construction; the pin lives in mise.toml
+// and this is how a disagreeing PATH shows up in marvel bus status.
+func binaryVersion(bin string) string {
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		return "unknown"
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return "unknown"
+	}
+	return fields[len(fields)-1]
 }
 
 func hasEnv(env []string, key string) bool {
@@ -427,7 +458,13 @@ func (s *Supervisor) Status() Status {
 	defer s.mu.Unlock()
 	st := Status{
 		Managed: true, Listen: s.mgr.bus.Listen, URL: s.mgr.bus.URL, Domain: s.mgr.Domain(),
+		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
+		Version:  s.version,
 		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.ready, Restarts: s.restarts,
+	}
+	if seat := s.mgr.bus.Seat; seat != nil {
+		st.Seat = seat.Workspace + "/" + seat.Team
+		st.SeatPassFile = s.mgr.SeatPassPath()
 	}
 	switch {
 	case s.mgr.bus.HubURL == "":

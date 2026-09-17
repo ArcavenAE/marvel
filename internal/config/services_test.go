@@ -232,3 +232,55 @@ func TestServicesRoundTripThroughMarshal(t *testing.T) {
 		}
 	}
 }
+
+// The seat and hub.ca_file fields: seat needs a managed bus, both tokens
+// in class, and a team that is not a reserved user name; ca_file must be
+// absolute or ~-relative, and both resolve through to ResolvedBus.
+func TestBusSeatAndHubCAFileValidateAndResolve(t *testing.T) {
+	t.Parallel()
+	managed := "managed: true\n      listen: 127.0.0.1:4222\n"
+	cases := []struct {
+		name, block, refuse string
+	}{
+		{"seat ok", managed + "      seat: {workspace: aae-orc, team: ops}", ""},
+		{"seat on adopted", "url: nats://x:1\n      seat: {workspace: aae-orc, team: ops}", "only a managed bus"},
+		{"seat team reserved", managed + "      seat: {workspace: aae-orc, team: director}", "reserved"},
+		{"seat admin reserved", managed + "      seat: {workspace: aae-orc, team: marvel_admin}", "reserved"},
+		{"seat bad token", managed + "      seat: {workspace: aae-orc, team: ops.x}", "seat.team"},
+		{"seat empty workspace", managed + "      seat: {team: ops}", "seat.workspace"},
+		{"ca_file absolute", managed + "      hub: {url: 'tls://h:7442', ca_file: /etc/ca.pem}", ""},
+		{"ca_file tilde", managed + "      hub: {url: 'tls://h:7442', ca_file: ~/ca.pem}", ""},
+		{"ca_file relative", managed + "      hub: {url: 'tls://h:7442', ca_file: certs/ca.pem}", "absolute"},
+	}
+	for _, tc := range cases {
+		cl := parseCluster(t, "clusters:\n  - name: kinu\n    bus:\n      "+tc.block+"\n")
+		err := ValidateBus(cl.Name, cl.Bus)
+		if tc.refuse == "" && err != nil {
+			t.Errorf("%s: refused: %v", tc.name, err)
+		}
+		if tc.refuse != "" && (err == nil || !errors.Is(err, ErrInvalidBus) || !strings.Contains(err.Error(), tc.refuse)) {
+			t.Errorf("%s: err %v, want ErrInvalidBus carrying %q", tc.name, err, tc.refuse)
+		}
+	}
+	cl := parseCluster(t, "clusters:\n  - name: kinu\n    bus:\n      "+managed+"      caller_identity: api-key\n      seat: {workspace: aae-orc, team: ops}\n      hub: {url: 'tls://h:7442', ca_file: /etc/ca.pem}\n")
+	r := cl.Bus.Resolve("/state")
+	if r.Class != service.ClassMessageBus || r.Provider != service.ProviderNATSServer || r.CallerIdentity != "api-key" {
+		t.Errorf("resolved record fields = %+v", r)
+	}
+	if r.Seat == nil || r.Seat.Workspace != "aae-orc" || r.Seat.Team != "ops" {
+		t.Errorf("resolved seat = %+v", r.Seat)
+	}
+	if r.HubURL != "tls://h:7442" || r.HubCAFile != "/etc/ca.pem" {
+		t.Errorf("resolved hub = %q %q", r.HubURL, r.HubCAFile)
+	}
+	// The services: spelling carries the same body.
+	cl = parseCluster(t, "clusters:\n  - name: kinu\n    services:\n      - name: bus\n        class: message-bus\n        provider: nats-server\n        mode: managed\n        listen: 127.0.0.1:4222\n        seat: {workspace: aae-orc, team: ops}\n        hub: {url: 'tls://h:7442', ca_file: /etc/ca.pem}\n")
+	if err := ValidateServices(cl); err != nil {
+		t.Fatalf("services spelling with seat and ca_file refused: %v", err)
+	}
+	svc, _ := cl.BusService()
+	b, _ := svc.BusSpec()
+	if r2 := b.Resolve("/state"); r2.Seat == nil || r2.HubCAFile != "/etc/ca.pem" {
+		t.Errorf("services spelling lost seat or ca_file: %+v", r2)
+	}
+}

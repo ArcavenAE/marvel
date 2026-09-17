@@ -2606,7 +2606,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 	rb := spec.Resolve(layout.StateDir())
 	if !rb.Managed {
 		// Sessions still learn the URL; there is no authorization to hand out.
-		d.sessMgr.Bus = bus.NewAdopted(rb.URL)
+		d.sessMgr.Bus = bus.NewAdopted(rb)
 		log.Printf("bus: cluster %s reaches an existing broker at %s (mode %s); sessions receive NATS_URL, nothing rendered", cl.Name, rb.URL, rb.Mode)
 		return nil
 	}
@@ -2680,6 +2680,10 @@ func (d *Daemon) handleBusStatus() Response {
 		st = d.busSup.Status()
 	case d.sessMgr.Bus != nil:
 		st = bus.Status{Managed: false, URL: d.sessMgr.Bus.URL(), Leaf: "n/a"}
+		if a, ok := d.sessMgr.Bus.(bus.Adopted); ok {
+			rb := a.Bus()
+			st.Class, st.Provider, st.Mode, st.CallerIdentity = rb.Class, rb.Provider, string(rb.Mode), rb.CallerIdentity
+		}
 	default:
 		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
 	}

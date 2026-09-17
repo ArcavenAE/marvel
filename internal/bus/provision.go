@@ -40,10 +40,11 @@ type Provisioned struct {
 	Existed []string
 }
 
-// Provision connects to the broker as the admin user and ensures the three
-// objects exist. Idempotent: an object already present counts as existing
-// and is left exactly as found, so a hand-provisioned broker (phase 0) and a
-// marvel-provisioned one converge on the same state without a rewrite.
+// Provision connects to the broker as the admin user and ensures every
+// declared object exists. Idempotent: an object already present counts as
+// existing and is left exactly as found, so a hand-provisioned broker
+// (phase 0) and a marvel-provisioned one converge on the same state
+// without a rewrite.
 func Provision(ctx context.Context, url, user, password string) (Provisioned, error) {
 	var out Provisioned
 	nc, err := connectAdmin(ctx, url, user, password)
@@ -66,59 +67,43 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 		}
 	}
 
-	streams := []jetstream.StreamConfig{
-		{
-			Name:       InboxStream,
-			Subjects:   inboxSubjects,
-			Storage:    jetstream.FileStorage,
-			Retention:  jetstream.LimitsPolicy,
-			MaxAge:     24 * time.Hour,
-			MaxMsgSize: 65536,
-			Duplicates: 2 * time.Minute,
-		},
-		{
-			Name:      AuditStream,
-			Subjects:  []string{"agent.audit"},
-			Storage:   jetstream.FileStorage,
-			Retention: jetstream.LimitsPolicy,
-			MaxAge:    720 * time.Hour,
-		},
-	}
 	// Look before creating: CreateStream on an existing stream with an equal
 	// config succeeds silently and with a differing one errors, and neither
 	// is what "exists is success, leave it as found" means. A lookup first
-	// keeps a phase-0 hand-provisioned object exactly as it was.
-	for _, cfg := range streams {
-		_, err := js.Stream(ctx, cfg.Name)
-		switch {
-		case err == nil:
-			note(cfg.Name, false)
-			continue
-		case !errors.Is(err, jetstream.ErrStreamNotFound):
-			return out, fmt.Errorf("stream %s: %w", cfg.Name, err)
+	// keeps a phase-0 hand-provisioned object exactly as it was. The set is
+	// the declared one (declared.go); nothing is created that is not in it.
+	for _, obj := range DeclaredObjects() {
+		switch obj.Kind {
+		case ObjectStream:
+			_, err := js.Stream(ctx, obj.Name)
+			switch {
+			case err == nil:
+				note(obj.Name, false)
+				continue
+			case !errors.Is(err, jetstream.ErrStreamNotFound):
+				return out, fmt.Errorf("stream %s: %w", obj.Name, err)
+			}
+			if _, err := js.CreateStream(ctx, *obj.Stream); err != nil {
+				return out, fmt.Errorf("create stream %s: %w", obj.Name, err)
+			}
+			note(obj.Name, true)
+		case ObjectKV:
+			_, err := js.KeyValue(ctx, obj.Name)
+			switch {
+			case err == nil:
+				note(obj.Name, false)
+				continue
+			case !errors.Is(err, jetstream.ErrBucketNotFound):
+				return out, fmt.Errorf("kv bucket %s: %w", obj.Name, err)
+			}
+			if _, err := js.CreateKeyValue(ctx, *obj.KV); err != nil {
+				return out, fmt.Errorf("create kv bucket %s: %w", obj.Name, err)
+			}
+			note(obj.Name, true)
+		default:
+			return out, fmt.Errorf("declared object %s has unknown kind %q", obj.Name, obj.Kind)
 		}
-		if _, err := js.CreateStream(ctx, cfg); err != nil {
-			return out, fmt.Errorf("create stream %s: %w", cfg.Name, err)
-		}
-		note(cfg.Name, true)
 	}
-
-	_, err = js.KeyValue(ctx, StateBucket)
-	switch {
-	case err == nil:
-		note(StateBucket, false)
-		return out, nil
-	case !errors.Is(err, jetstream.ErrBucketNotFound):
-		return out, fmt.Errorf("kv bucket %s: %w", StateBucket, err)
-	}
-	if _, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:  StateBucket,
-		TTL:     90 * time.Second,
-		Storage: jetstream.FileStorage,
-	}); err != nil {
-		return out, fmt.Errorf("create kv bucket %s: %w", StateBucket, err)
-	}
-	note(StateBucket, true)
 	return out, nil
 }
 

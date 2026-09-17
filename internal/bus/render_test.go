@@ -290,9 +290,12 @@ func TestRenderedConfPassesNatsServerCheck(t *testing.T) {
 
 func TestAdoptedGivesURLAndNoCredential(t *testing.T) {
 	t.Parallel()
-	a := NewAdopted("nats://127.0.0.1:4222")
+	a := NewAdopted(config.ResolvedBus{Mode: "adopted", Class: "message-bus", Provider: "nats-server", URL: "nats://127.0.0.1:4222"})
 	if a.URL() != "nats://127.0.0.1:4222" {
 		t.Errorf("URL = %q", a.URL())
+	}
+	if a.Bus().Mode != "adopted" {
+		t.Errorf("adopted provider lost its record: %+v", a.Bus())
 	}
 	if _, _, ok := a.TeamCredential("ops"); ok {
 		t.Error("adopted broker handed out a credential")

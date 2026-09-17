@@ -14,7 +14,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 )
 
@@ -43,13 +42,15 @@ const (
 // Spec is everything the renderer needs. Every name in it is a subject token
 // already, or Render refuses.
 type Spec struct {
-	Domain   string // the cluster name; becomes the JetStream domain
-	Listen   string // explicit host:port
-	StoreDir string // JetStream store root; the store itself is StoreDir/store
-	HubURL   string // empty for a local-only cluster
-	LeafSeed bool   // a bus/leaf credential is in the Store; the leaf block renders only then
-	Admin    User
-	Teams    []TeamUser
+	Domain    string // the cluster name; becomes the JetStream domain
+	Listen    string // explicit host:port
+	StoreDir  string // JetStream store root; the store itself is StoreDir/store
+	HubURL    string // empty for a local-only cluster
+	HubCAFile string // trusts a TLS hub from the leaf remote; empty for plaintext
+	LeafSeed  bool   // a bus/leaf credential is in the Store; the leaf block renders only then
+	Admin     User
+	Seat      *SeatUser // the director seat, when the cluster declares one
+	Teams     []TeamUser
 }
 
 // User is a broker user with a marvel-issued password.
@@ -126,63 +127,41 @@ func RenderConf(s Spec) (string, error) {
 		// nkey is unquoted on purpose: quoted, nats-server would take the
 		// text "$DIRECTOR_LEAF_NKEY" literally and the leaf would fail auth
 		// with no hint why; unquoted, an unset variable refuses to start.
-		fmt.Fprintf(&b, "\nleafnodes {\n  remotes: [\n    { urls: [%q], nkey: $%s }\n  ]\n}\n", s.HubURL, LeafSeedEnv)
+		tls := ""
+		if s.HubCAFile != "" {
+			tls = fmt.Sprintf(", tls { ca_file: %q }", s.HubCAFile)
+		}
+		fmt.Fprintf(&b, "\nleafnodes {\n  remotes: [\n    { urls: [%q], nkey: $%s%s }\n  ]\n}\n", s.HubURL, LeafSeedEnv, tls)
 	}
 	return b.String(), nil
 }
 
-// RenderAuth renders authorization.conf: the admin user, one confined user per
-// applied team, and the supervisor team's global grants when a hub is set.
-// Team users are named by team, so two workspaces applying the same team
-// name is refused rather than merged (a shared user would cross the subtree
-// confinement the file exists to hold).
+// RenderAuth renders authorization.conf from the declared principal set:
+// the admin user, the director seat user when a seat is declared, and one
+// confined user per applied team with the supervisor team's global grants
+// when a hub is set. Every validation the file depends on (token class,
+// duplicate team names across workspaces, reserved names) lives in
+// DeclaredPrincipals.
 func RenderAuth(s Spec) (string, error) {
 	if err := validToken("cluster name", s.Domain); err != nil {
 		return "", err
 	}
-	if s.Admin.Name == "" || s.Admin.Password == "" {
-		return "", errors.New("admin user and password are required")
+	principals, err := DeclaredPrincipals(s)
+	if err != nil {
+		return "", err
 	}
-	teams := append([]TeamUser(nil), s.Teams...)
-	sort.Slice(teams, func(i, j int) bool {
-		if teams[i].Workspace != teams[j].Workspace {
-			return teams[i].Workspace < teams[j].Workspace
-		}
-		return teams[i].Team < teams[j].Team
-	})
-	seen := map[string]string{}
-	for _, t := range teams {
-		if err := validToken("workspace", t.Workspace); err != nil {
-			return "", err
-		}
-		if err := validToken("team", t.Team); err != nil {
-			return "", err
-		}
-		if t.Password == "" {
-			return "", fmt.Errorf("team %s/%s has no password", t.Workspace, t.Team)
-		}
-		if other, dup := seen[t.Team]; dup {
-			return "", fmt.Errorf("team name %q is applied in workspaces %q and %q; broker users are named by team, so the second is refused rather than sharing the first's grants", t.Team, other, t.Workspace)
-		}
-		seen[t.Team] = t.Workspace
-	}
-
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# Rendered by marvel for cluster %s; regenerated on apply. Mode 0600.\n", s.Domain)
 	fmt.Fprintf(&b, "# One user per applied team, confined to agent.<workspace>.<team>.> (director#4 shape).\n\n")
 	b.WriteString("authorization {\n  users: [\n")
-	// Admin: marvel's own identity, publish and subscribe everything.
-	fmt.Fprintf(&b, "    { user: %s, password: %q,\n      permissions { publish { allow: [ \">\" ] }, subscribe { allow: [ \">\" ] } } }\n", s.Admin.Name, s.Admin.Password)
-	for _, t := range teams {
-		own := fmt.Sprintf("agent.%s.%s.>", t.Workspace, t.Team)
-		pub := []string{own, "agent.audit", "$JS.API.>", "$JS.ACK.>", "$KV.AGENT_STATE.>", "_INBOX.>"}
-		sub := []string{own, fmt.Sprintf("agent.%s.broadcast", t.Workspace), "$KV.AGENT_STATE.>", "_INBOX.>"}
-		if t.Supervisor && s.HubURL != "" {
-			pub = append(pub, "global.director.inbox", "$JS.global.API.>")
-			sub = append(sub, fmt.Sprintf("global.%s.>", s.Domain))
+	for _, p := range principals {
+		if p.Scope == ScopeService && p.Name == s.Admin.Name {
+			// Admin: marvel's own identity, publish and subscribe everything.
+			fmt.Fprintf(&b, "    { user: %s, password: %q,\n      permissions { publish { allow: [ \">\" ] }, subscribe { allow: [ \">\" ] } } }\n", p.Name, p.Password)
+			continue
 		}
 		fmt.Fprintf(&b, "    { user: %s, password: %q,\n      permissions {\n        publish   { allow: [ %s ] }\n        subscribe { allow: [ %s ] }\n      } }\n",
-			t.Team, t.Password, quoteList(pub), quoteList(sub))
+			p.Name, p.Password, quoteList(p.Publish), quoteList(p.Subscribe))
 	}
 	b.WriteString("  ]\n}\n")
 	return b.String(), nil

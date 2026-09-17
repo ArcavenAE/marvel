@@ -95,26 +95,40 @@ func TestProvisionUnreachableBrokerNamesTheURL(t *testing.T) {
 // failure as a test: the successor daemon mints new passwords and adopts a
 // broker that still holds the old ones. The adopt path reloads and the
 // provisioning connect rides out the reload, so the new admin identity works.
-func TestProvisionAfterAdoptWithFreshPasswords(t *testing.T) {
+// A successor daemon adopts the running broker and recovers every password
+// from the authorization file the predecessor rendered (bus-as-service.md
+// section 8.2, decided in aae-orc-wzexa): the admin identity provisions
+// without a reload race, and a team credential minted before the restart
+// still authenticates after it, which is what keeps a running session's
+// shim connected across a daemon restart or reexec.
+func TestProvisionAfterAdoptRecoversPasswords(t *testing.T) {
 	s1, m1, _ := newTestSupervisor(t, "")
 	if err := s1.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	pid := s1.Status().PID
+	_, opsPw, ok := m1.TeamCredential("ops")
+	if !ok {
+		t.Fatal("test premise: ops has no credential before the restart")
+	}
 	s1.Stop(true)
 	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
 
-	// A new manager over the same directory: fresh admin and team passwords,
-	// rewritten to disk, unknown to the running broker.
+	// A new manager over the same directory reads the passwords back.
 	m2, err := NewManager(m1.Dir(), m1.Domain(), m1.bus, m1.teams, func() bool { return false })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m2.Regenerate(); err != nil {
-		t.Fatal(err)
+	if m2.Admin().Password != m1.Admin().Password {
+		t.Fatal("successor minted a fresh admin password instead of recovering it")
 	}
-	if m2.Admin().Password == m1.Admin().Password {
-		t.Fatal("test premise: successor minted the same admin password")
+	if _, pw, _ := m2.TeamCredential("ops"); pw != opsPw {
+		t.Fatal("successor minted a fresh ops password; a running session's shim would be refused at its next reconnect")
+	}
+	if changed, err := m2.Regenerate(); err != nil {
+		t.Fatal(err)
+	} else if changed {
+		t.Error("regenerate after recovery rewrote the files; nothing changed, so nothing should be written")
 	}
 	s2, err := NewSupervisor(m2, filepath.Dir(s1.pidFile), filepath.Dir(s1.logPath), events.NewRing(16))
 	if err != nil {
@@ -141,5 +155,15 @@ func TestProvisionAfterAdoptWithFreshPasswords(t *testing.T) {
 	}
 	if !provisioned || !s2.Status().Adopted {
 		t.Fatalf("provisioned=%v adopted=%v", provisioned, s2.Status().Adopted)
+	}
+	// The pre-restart team password authenticates against the adopted
+	// broker under the successor.
+	nc, err := nats.Connect(m2.URL(), nats.UserInfo("ops", opsPw), nats.MaxReconnects(0), nats.Timeout(3*time.Second))
+	if err != nil {
+		t.Fatalf("pre-restart ops password refused after the restart: %v", err)
+	}
+	nc.Close()
+	if st := s2.Status(); st.Version == "" || st.Version == "unknown" {
+		t.Errorf("status carries no nats-server version: %+v", st)
 	}
 }
