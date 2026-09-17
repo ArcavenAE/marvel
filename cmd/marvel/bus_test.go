@@ -50,3 +50,25 @@ func TestPrintBusStatusRecordFields(t *testing.T) {
 		t.Errorf("external render:\n%s", got)
 	}
 }
+
+func TestPrintBusStatusStructuralReading(t *testing.T) {
+	var b strings.Builder
+	printBusStatus(&b, bus.Status{
+		Managed: true, Ready: false, Leaf: "n/a", URL: "nats://127.0.0.1:4222", Listen: "127.0.0.1:4222", Domain: "kinu", PID: 7, ConfPath: "/x",
+		Structure: &bus.StructureStatus{Provisioned: false, Authorized: true, TLS: false, Missing: []string{"AGENT_INBOX"}},
+	})
+	got := b.String()
+	for _, want := range []string{"ready:    no\n", "provisioned: no (missing AGENT_INBOX)\n", "authorized:  yes\n", "tls:         no\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "provisioned:") < strings.Index(got, "ready:") {
+		t.Errorf("the structural lines should follow ready, which they explain:\n%s", got)
+	}
+	b.Reset()
+	printBusStatus(&b, bus.Status{Managed: true, Ready: true, Leaf: "n/a", PID: 7})
+	if strings.Contains(b.String(), "provisioned") {
+		t.Error("structural lines printed with no reading")
+	}
+}

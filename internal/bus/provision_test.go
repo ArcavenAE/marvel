@@ -22,6 +22,8 @@ import (
 // is what connected the shim on the second host.
 func TestProvisionCreatesThenFindsAgainstRealBroker(t *testing.T) {
 	s, m, _ := newTestSupervisor(t, "")
+	// The test drives Provision itself, so the broker must come up bare.
+	s.AfterReady = nil
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +105,9 @@ func TestProvisionUnreachableBrokerNamesTheURL(t *testing.T) {
 // shim connected across a daemon restart or reexec.
 func TestProvisionAfterAdoptRecoversPasswords(t *testing.T) {
 	s1, m1, _ := newTestSupervisor(t, "")
+	// The predecessor leaves the broker bare so the successor's
+	// provisioning pass is observably the first.
+	s1.AfterReady = nil
 	if err := s1.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

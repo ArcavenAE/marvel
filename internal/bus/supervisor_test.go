@@ -91,6 +91,15 @@ func newTestSupervisor(t *testing.T, hub string) (*Supervisor, *Manager, *events
 	s.backoff = func(int) time.Duration { return 200 * time.Millisecond }
 	s.dialTimeout = 5 * time.Second
 	s.leafPoll = 200 * time.Millisecond
+	// What the daemon wires: provisioning as the admin identity. Since the
+	// structural-health contract (aae-orc-vy6k7) a bare broker is not
+	// ready, so a supervisor under test provisions like the real one; a
+	// test that wants a different AfterReady overrides it before Start.
+	s.AfterReady = func() error {
+		admin := m.Admin()
+		_, err := Provision(context.Background(), m.URL(), admin.Name, admin.Password)
+		return err
+	}
 	m.Reloader = s
 	t.Cleanup(func() { s.Stop(false) })
 	return s, m, ring

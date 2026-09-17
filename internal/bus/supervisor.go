@@ -42,7 +42,13 @@ type Supervisor struct {
 	Env func() []string
 	// AfterReady runs once the listener answers and before the bus is marked
 	// ready: provisioning (aae-orc-apeoc). Nil means ready at listener-up.
+	// It is also what a structural miss re-runs, so it must stay
+	// idempotent.
 	AfterReady func() error
+	// leafPoll is also the structural-check cadence; one ticker (section
+	// 3.2). checkStructure reads the broker through this, so a test can
+	// point it at a reader that fails on demand.
+	checkStructureFn func(ctx context.Context) (Structure, error)
 	// backoff maps a restart count to a wait; tests shorten it.
 	backoff func(n int) time.Duration
 	// dialTimeout bounds the listener wait at start.
@@ -63,6 +69,16 @@ type Supervisor struct {
 	leafUp      *bool
 	cancel      context.CancelFunc
 	watchDone   chan struct{}
+
+	// Structural health (aae-orc-vy6k7). structure is the last definite
+	// reading; structureKnown says one exists; problems is the last
+	// reading's Problems string, the once-per-change key for
+	// bus.unprovisioned; authReloaded says the one SIGHUP an authorized
+	// miss gets has been sent.
+	structure      Structure
+	structureKnown bool
+	problems       string
+	authReloaded   bool
 }
 
 // Status is what `marvel bus status` prints.
@@ -90,10 +106,23 @@ type Status struct {
 	Ready        bool   `json:"ready"`
 	// Leaf is "up", "down", "unenrolled" (hub with no seed), "n/a" (no hub),
 	// or "unknown" (not polled yet).
-	Leaf     string `json:"leaf"`
-	Restarts int    `json:"restarts"`
+	Leaf string `json:"leaf"`
+	// Structure is the structural-health reading on a managed broker
+	// (provisioned, authorized, tls, what is missing); nil before the first
+	// reading and on an adopted or external bus, where marvel holds no
+	// admin credential and does not guess.
+	Structure *StructureStatus `json:"structure,omitempty"`
+	Restarts  int              `json:"restarts"`
 	// BackoffUntil is set while a crashed broker waits to restart.
 	BackoffUntil string `json:"backoff_until,omitempty"`
+}
+
+// StructureStatus is Structure as marvel bus status prints it.
+type StructureStatus struct {
+	Provisioned bool     `json:"provisioned"`
+	Authorized  bool     `json:"authorized"`
+	TLS         bool     `json:"tls"`
+	Missing     []string `json:"missing,omitempty"`
 }
 
 // These mirror internal/team's crash-loop schedule for roles, so a broker
@@ -188,6 +217,10 @@ func (s *Supervisor) becomeReady(ctx context.Context, how string) error {
 		}
 	}
 	s.ready = true
+	// First structural reading, under the lock the caller holds, so ready
+	// means listener, pid, provisioned, and authorized from the first
+	// moment anything asks.
+	s.checkStructureLocked(ctx)
 	s.emit(events.KindBusStarted, events.SeverityInfo, fmt.Sprintf("nats-server %s: pid %d on %s, domain %s", how, s.pid, s.mgr.bus.Listen, s.mgr.Domain()))
 	if s.mgr.bus.HubURL != "" && !s.mgr.leafEnrolled() {
 		s.emit(events.KindBusLeafUnenrolled, events.SeverityWarning, fmt.Sprintf("hub %s is configured but no %s credential is in the store; running local-only until one is pushed", s.mgr.bus.HubURL, "bus/leaf"))
@@ -301,6 +334,7 @@ func (s *Supervisor) watch(ctx context.Context, done chan struct{}, cmd *exec.Cm
 			return
 		case <-leaf.C:
 			s.pollLeaf()
+			s.checkStructure(ctx)
 		case err := <-exit:
 			s.mu.Lock()
 			stopping := s.stopping
@@ -411,6 +445,23 @@ func (s *Supervisor) Reload() error {
 		return fmt.Errorf("bus: SIGHUP pid %d: %w", pid, err)
 	}
 	s.emit(events.KindBusReloaded, events.SeverityInfo, fmt.Sprintf("nats-server pid %d reloaded authorization", pid))
+	// A reload is asynchronous in the broker; read the structure once it
+	// has had the auth retry window to land, off the caller's path (the
+	// caller is the apply RPC under the manager lock).
+	s.mu.Lock()
+	ctx := s.parent
+	s.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(authRetryWindow):
+		}
+		s.checkStructure(ctx)
+	}()
 	return nil
 }
 
@@ -449,7 +500,87 @@ func (s *Supervisor) Stop(keep bool) {
 func (s *Supervisor) Ready() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.ready
+	return s.readyLocked()
+}
+
+// readyLocked is the ready predicate: listener and pid (ready), and the
+// last structural reading healthy when one exists. Caller holds s.mu.
+func (s *Supervisor) readyLocked() bool {
+	return s.ready && (!s.structureKnown || s.structure.Healthy())
+}
+
+// checkStructure takes one structural reading and acts on it: a miss
+// re-provisions through AfterReady, an authorization miss gets one SIGHUP,
+// ready drops while the problem stands so BusGate holds new spawns, and
+// bus.unprovisioned is emitted once per change in the problem set. A
+// read error is no information and changes nothing. The broker is never
+// restarted here: a missing stream is metadata, and a restart would drop
+// every live connection to fix a lookup.
+func (s *Supervisor) checkStructure(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checkStructureLocked(ctx)
+}
+
+// checkStructureLocked is checkStructure with s.mu held. It releases the
+// lock around the broker reads so a slow broker cannot hold Status.
+func (s *Supervisor) checkStructureLocked(ctx context.Context) {
+	if !s.ready || s.stopping {
+		return
+	}
+	read := s.checkStructureFn
+	if read == nil {
+		read = s.readStructure
+	}
+	pid := s.pid
+	s.mu.Unlock()
+	st, err := read(ctx)
+	if err == nil && !st.Provisioned() && s.AfterReady != nil {
+		// Re-provision now, idempotently, and read again so the common
+		// case clears inside the same tick.
+		if perr := s.AfterReady(); perr != nil {
+			log.Printf("bus: re-provision after a structural miss (%s): %v", st.Problems(), perr)
+		} else if again, aerr := read(ctx); aerr == nil {
+			st = again
+		}
+	}
+	s.mu.Lock()
+	if err != nil {
+		log.Printf("bus: structural check: no reading (%v); keeping the last one", err)
+		return
+	}
+	if !st.Authorized && !s.authReloaded && pid != 0 {
+		// One reload per authorized miss; then hold. Never a restart.
+		s.authReloaded = true
+		if kerr := syscall.Kill(pid, syscall.SIGHUP); kerr != nil {
+			log.Printf("bus: SIGHUP pid %d after an authorization miss: %v", pid, kerr)
+		} else {
+			log.Printf("bus: authorization not loaded on pid %d; sent one SIGHUP, re-checking on the next tick", pid)
+		}
+	}
+	if st.Authorized {
+		s.authReloaded = false
+	}
+	prev, prevKnown := s.problems, s.structureKnown
+	s.structure, s.structureKnown = st, true
+	s.problems = st.Problems()
+	switch {
+	case s.problems != "" && s.problems != prev:
+		s.emit(events.KindBusUnprovisioned, events.SeverityWarning, fmt.Sprintf("broker %s: %s; new spawns hold until it is restored, nothing is restarted", s.mgr.bus.Listen, s.problems))
+	case s.problems == "" && prevKnown && prev != "":
+		log.Printf("bus: structure restored on %s; releasing the spawn hold", s.mgr.bus.Listen)
+	}
+}
+
+// readStructure is the production reader: the admin identity against the
+// broker URL and the loopback monitor.
+func (s *Supervisor) readStructure(ctx context.Context) (Structure, error) {
+	mon, err := MonitorAddr(s.mgr.bus.Listen)
+	if err != nil {
+		return Structure{}, err
+	}
+	admin := s.mgr.Admin()
+	return CheckStructure(ctx, s.mgr.URL(), admin.Name, admin.Password, mon)
 }
 
 // Status snapshots the broker for `marvel bus status`.
@@ -460,7 +591,13 @@ func (s *Supervisor) Status() Status {
 		Managed: true, Listen: s.mgr.bus.Listen, URL: s.mgr.bus.URL, Domain: s.mgr.Domain(),
 		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
 		Version:  s.version,
-		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.ready, Restarts: s.restarts,
+		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.readyLocked(), Restarts: s.restarts,
+	}
+	if s.structureKnown {
+		st.Structure = &StructureStatus{
+			Provisioned: s.structure.Provisioned(), Authorized: s.structure.Authorized, TLS: s.structure.TLS,
+			Missing: append([]string(nil), s.structure.Missing...),
+		}
 	}
 	if seat := s.mgr.bus.Seat; seat != nil {
 		st.Seat = seat.Workspace + "/" + seat.Team

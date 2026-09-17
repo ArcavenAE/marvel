@@ -51,6 +51,13 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 		}
 		return []string{bus.LeafSeedEnv + "=" + string(seed)}
 	}
+	// What attachBus wires: a bare broker is not ready under the
+	// structural-health contract (aae-orc-vy6k7), so provision as the daemon does.
+	sup.AfterReady = func() error {
+		admin := mgr.Admin()
+		_, perr := bus.Provision(context.Background(), mgr.URL(), admin.Name, admin.Password)
+		return perr
+	}
 	d.bus, d.sessMgr.Bus = mgr, mgr
 	d.regenerateBus("start")
 	mgr.Reloader = sup

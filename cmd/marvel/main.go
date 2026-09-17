@@ -2248,7 +2248,23 @@ func printBusStatus(w io.Writer, st bus.Status) {
 		ready = "yes"
 	}
 	record()
-	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\nurl:      %s\nlisten:   %s\ndomain:   %s\n", ready, st.Leaf, st.URL, st.Listen, st.Domain)
+	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\n", ready, st.Leaf)
+	if s := st.Structure; s != nil {
+		// The structural reading (aae-orc-vy6k7): what ready is made of
+		// beyond the listener, so a "no" above has its reason right here.
+		yn := func(b bool) string {
+			if b {
+				return "yes"
+			}
+			return "no"
+		}
+		prov := yn(s.Provisioned)
+		if !s.Provisioned {
+			prov += " (missing " + strings.Join(s.Missing, ", ") + ")"
+		}
+		_, _ = fmt.Fprintf(w, "provisioned: %s\nauthorized:  %s\ntls:         %s\n", prov, yn(s.Authorized), yn(s.TLS))
+	}
+	_, _ = fmt.Fprintf(w, "url:      %s\nlisten:   %s\ndomain:   %s\n", st.URL, st.Listen, st.Domain)
 	if st.Version != "" {
 		_, _ = fmt.Fprintf(w, "version:  %s\n", st.Version)
 	}

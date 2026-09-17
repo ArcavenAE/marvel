@@ -2665,6 +2665,17 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		if st.BackoffUntil != "" {
 			return false, fmt.Sprintf("bus %s is down; restart #%d waits until %s", rb.Listen, st.Restarts, st.BackoffUntil)
 		}
+		// A structural miss holds new spawns while the process stays up
+		// (aae-orc-vy6k7); the reason names what is missing so the
+		// operator reads it from the hold, not from the ring.
+		if s := st.Structure; s != nil && st.PID != 0 {
+			switch {
+			case !s.Provisioned:
+				return false, fmt.Sprintf("bus %s is missing %s; re-provisioning, nothing is restarted", rb.Listen, strings.Join(s.Missing, ", "))
+			case !s.Authorized:
+				return false, fmt.Sprintf("bus %s has no authorization loaded; one reload sent, holding until it lands", rb.Listen)
+			}
+		}
 		return false, fmt.Sprintf("bus %s is not ready", rb.Listen)
 	}
 	return nil
