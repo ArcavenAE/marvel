@@ -1,0 +1,60 @@
+id: question-role-tools-field-projection
+type: question
+confidence: frontier
+title: "What does a wardrobe role tools field project to for a launched agent's harness tools and MCP access?"
+tags:
+  - marvel
+  - wardrobe
+  - permission
+  - projection
+  - mcp
+content: |
+  A wardrobe role definition carries a `constraints.tools` field. The question
+  is what that field projects to when marvel launches the agent: which harness
+  tools and which MCP servers the running seat gets, and in particular whether
+  `tools: null` resolves to "inherit, unrestricted by this field" or to "no
+  tools," and whether it can sever an MCP channel such as director-mcp.
+
+  This matters because a role with `reports_to: director` and
+  `escalates_to: supervisor` (the retrospector, wardrobe#11) depends on a
+  messaging channel. A tools value that resolved to "no tools" would sever the
+  role's own edges, so the resolution of the field is a correctness property,
+  not a detail.
+
+  DOCUMENTED CONTRACT (the seed, from wardrobe docs, not yet runtime-verified):
+  - `definition-contract.md` (ruling 81): `tools: null` is "reserved; refused if
+    set." The field is reserved and the validator refuses a non-null value today.
+  - `projection.md` (ruling 81): the launcher leaves the policy `settings` block
+    empty until `constraints.tools` is set.
+  So by the written contract, `tools: null` imposes no restriction and does not
+  sever director-mcp; the launched seat gets whatever tools and MCP the harness
+  and marvel provide by default. A corollary the retrospector P3 work runs into:
+  because a non-null `tools` value is refused today, a constrained write surface
+  cannot be encoded through the `tools` field until ruling 81 is lifted or a
+  separate field is added.
+
+  OPEN (the empirical question, tracked by the probe below):
+  - Does the documented behavior hold at runtime, under both claude and codex?
+    marvel and each harness could interpret an empty or null tools set
+    differently; the codex reviewer case (finding-046) already showed harnesses
+    behave differently, so this needs testing per harness, not assumption.
+  - Once ruling 81 is lifted, how does a non-null `tools` allowlist project, and
+    does an allowlist that omits an MCP server drop that server's channel?
+
+  The projection of a role definition into a running agent is marvel's, which is
+  why this question sits in marvel's graph beside question-permission-model,
+  though the field and its rulings are wardrobe's and the channel at risk is
+  director's. The author-facing note lives in wardrobe docs so a role author does
+  not rediscover this from zero.
+
+  Empirical seed: marvel-builder's confirmation of what `tools: null` resolves to
+  right now, gathered while encoding the retrospector frontmatter (P3).
+edges:
+  - target: question-permission-model
+    type: supports
+    note: "Tools-field projection is one input to the permission model marvel constructs at spawn"
+provenance:
+  created_by: human
+  session: session-2026-09-17
+  created_at: "2026-09-17"
+  probe: aae-orc-ofs4l
