@@ -124,6 +124,9 @@ type ManifestRole struct {
 	Identity             string               `toml:"identity,omitempty"            yaml:"identity,omitempty"`
 	Policy               string               `toml:"policy,omitempty"              yaml:"policy,omitempty"`
 	HealthCheck          *ManifestHealthCheck `toml:"healthcheck,omitempty"         yaml:"healthcheck,omitempty"`
+	// Shift opts this role into automatic shifts. Unset means the role shifts
+	// only on an operator `marvel shift`. Parsed into Role.Shift.
+	Shift *ManifestShift `toml:"shift,omitempty"               yaml:"shift,omitempty"`
 	// ActivityTimeout is a duration string ("10m") opting this role into the
 	// activity-staleness advisory (aae-orc-9box). Empty/unset disables it.
 	// Parsed into Role.ActivityTimeout, the same string→duration shape as
@@ -136,6 +139,12 @@ type ManifestHealthCheck struct {
 	Type             string `toml:"type"                         yaml:"type"`
 	Timeout          string `toml:"timeout,omitempty"             yaml:"timeout,omitempty"`
 	FailureThreshold int    `toml:"failure_threshold,omitempty"   yaml:"failure_threshold,omitempty"`
+}
+
+// ManifestShift is the automatic-shift section within a role.
+type ManifestShift struct {
+	On             string `toml:"on"                        yaml:"on"`
+	HeadroomTokens int    `toml:"headroom_tokens,omitempty" yaml:"headroom_tokens,omitempty"`
 }
 
 // ManifestRuntime is the runtime section within a role.
@@ -289,6 +298,18 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
+			}
+			// An unrecognized shift.on would silently never fire; a zero
+			// or negative headroom would fire on the first sample or never.
+			// Reject both so a misconfigured trigger is an error at apply,
+			// not a no-op at runtime.
+			if r.Shift != nil {
+				if r.Shift.On != ShiftTriggerContextPressure {
+					return nil, fmt.Errorf("parse manifest: team[%d].role[%d].shift.on %q is not valid (valid: %q)", i, j, r.Shift.On, ShiftTriggerContextPressure)
+				}
+				if r.Shift.HeadroomTokens <= 0 {
+					return nil, fmt.Errorf("parse manifest: team[%d].role[%d].shift.headroom_tokens must be > 0 for on=%q", i, j, ShiftTriggerContextPressure)
+				}
 			}
 			// Permissions maps verbatim to --permission-mode; an empty
 			// value means "unset" and is allowed, but a non-empty typo
@@ -581,6 +602,12 @@ func (m *Manifest) Apply(store *Store) error {
 					Type:             HealthCheckType(mr.HealthCheck.Type),
 					Timeout:          timeout,
 					FailureThreshold: threshold,
+				}
+			}
+			if mr.Shift != nil {
+				role.Shift = &ShiftPolicy{
+					On:             mr.Shift.On,
+					HeadroomTokens: mr.Shift.HeadroomTokens,
 				}
 			}
 			roles = append(roles, role)

@@ -1,0 +1,41 @@
+# Marvel example — automatic shift on context pressure (the remainder trigger).
+#
+# This role shifts itself before its context occupancy forces Claude Code to
+# auto-compact. The trigger is a token REMAINDER, not a percentage: marvel
+# initiates a shift when a live session rises within headroom_tokens of its
+# resolved window (context_tokens > context_limit - headroom_tokens).
+#
+# Firing on the level, not on a post-compaction event, is what lets the shift
+# finish BEFORE the harness compacts; the event would arrive one compaction too
+# late (orc finding-016). Set headroom_tokens above the cost of a clean shift.
+#
+# Scope: only sessions on a resolved window are metered. This role pins the 1M
+# Claude window via runtime.context_window so the denominator is explicit; a
+# claude [1m] session resolves 1000000 from the model table on its own. codex
+# and opencode declare no window and stay operator-shifted unless given one.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/auto-shift.yaml
+#
+# Observe:
+#   ./bin/marvel events   # team.shift-autotriggered names the deciding session,
+#                         # then team.shift-started for the same shift
+
+workspace:
+  name: long-run
+
+teams:
+  - name: researcher
+    roles:
+      - name: worker
+        replicas: 1
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+          context_window: 1000000
+        shift:
+          on: context-pressure
+          headroom_tokens: 120000

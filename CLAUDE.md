@@ -60,7 +60,7 @@ Declared in TOML or YAML manifests, applied with `marvel work`.
 | Pod | **Session** | The atomic unit. One tmux pane running one harness process. Lifecycle pending → running → succeeded/failed, plus crashed and crashloop-backoff. Restartable. |
 | Container | **Runtime** | The harness binary, args, and mode, plus `context_window` to override the model-to-window table for CTX%, and `context_feed = "statusline"` to give interactive claude sessions a cooperative CTX% feed via projected statusline hooks + `marvel ctx-forward` (finding-011, `examples/context-feed.toml`). `runtime` names the HARNESS (claude, codex, opencode), never the agent: `elem-runtime-names-harness`. |
 | Deployment | **Team** | Heterogeneous roles, each with its own runtime and replica count. Per-role scaling, shifts. Binds a supervisor to its agents. |
-| (none) | **Role** | One kind of agent within a team: name, replicas, runtime, restart policy, `max_restarts`, `permissions`, `dangerous_permissions`, `policy`, persona, identity. |
+| (none) | **Role** | One kind of agent within a team: name, replicas, runtime, restart policy, `max_restarts`, `permissions`, `dangerous_permissions`, `policy`, persona, identity, and an optional `shift` block for automatic shifts (see below). |
 | Service | **Endpoint** | A named record of `{name, workspace, team}` and nothing else. Created from a manifest `[[endpoint]]` section, read with `marvel get endpoints` and `marvel describe endpoint`. No role field, and no code resolves an endpoint to a session, so it is a name in the store rather than a routing target. Role-based routing waits on director (roadmap M2). |
 | ConfigMap | **Policy** | Named Claude Code settings fragment marvel projects into a per-session file the harness reads. Workspace-scoped, referenced by `Role.Policy`. Marvel writes it verbatim and does not interpret it. See orc finding-024 and `examples/policy-projection.toml`. |
 | Probe (liveness) | **Healthcheck** | `heartbeat` (staleness) or `process-alive`. Failures feed the restart policy. |
@@ -97,6 +97,42 @@ name = "review-squad"
 ```
 
 Healthchecks, policies, endpoints, and headless launches: see `examples/`.
+
+### Automatic shifts (context pressure)
+
+A role may declare a `shift` block so marvel shifts it before its context
+occupancy forces the harness to auto-compact. The trigger is a token
+REMAINDER, not a percentage:
+
+```toml
+    [team.role.shift]
+    on = "context-pressure"
+    headroom_tokens = 120000
+```
+
+marvel initiates a shift for the role when a live session's occupancy rises
+within `headroom_tokens` of its resolved window
+(`context_tokens > context_limit - headroom_tokens`). Firing on the level, not
+on a post-compaction event, is what lets the shift finish before the harness
+compacts; the event arrives one compaction too late (orc finding-016). Set
+`headroom_tokens` above the cost of a clean shift (the successor's
+launch-to-ready, plus a handoff turn where a handoff is in play).
+
+Scope and limits:
+
+- Only sessions on a resolved window are metered. codex reports a session
+  total rather than a per-request level, and opencode declares no window, so a
+  role on either stays operator-shifted unless the operator sets
+  `runtime.context_window` to supply a denominator. See `internal/usage/doc.go`
+  and `aae-orc-dc1j` (interactive sessions).
+- Automatic initiations are capped fleet-wide per reconcile tick
+  (`maxAutoShiftsPerTick`) so correlated pressure across roles does not burst
+  the shared per-account rate limit at once (`aae-orc-hfc0`). Excess triggers
+  wait for a later tick.
+- The shift itself is the existing rolling shift: it replaces sessions with
+  fresh ones. A handoff artifact (the departing agent authoring state for its
+  successor) is a separate, gated arc (`aae-orc-7opc`); this trigger ships the
+  pre-emptive replacement, not the handoff. Example: `examples/auto-shift.toml`.
 
 ## Architecture
 

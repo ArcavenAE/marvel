@@ -414,6 +414,10 @@ type Role struct {
 	// half (a curtain profile) stays parked with aae-orc-10x.
 	Policy      string       `toml:"policy,omitempty"`
 	HealthCheck *HealthCheck `toml:"-"`
+	// Shift declares when marvel automatically shifts this role. Nil (unset)
+	// means the role shifts only on an operator `marvel shift`. Parsed from
+	// the manifest like HealthCheck. See ShiftPolicy.
+	Shift *ShiftPolicy `toml:"-"`
 	// MaxRestarts caps the number of restarts for any single replica
 	// slot in this role before the reconciler gives up and leaves the
 	// session in SessionFailed. Zero means unlimited; negative values
@@ -434,6 +438,40 @@ type Role struct {
 	// stretch. This is the "threshold is a role-level setting" the ticket
 	// names.
 	ActivityTimeout time.Duration `toml:"-"`
+}
+
+// ShiftTriggerContextPressure is the one automatic-shift trigger implemented:
+// shift a role before its context occupancy forces the harness to compact.
+const ShiftTriggerContextPressure = "context-pressure"
+
+// ShiftPolicy declares when marvel automatically shifts a role, replacing its
+// sessions with fresh ones before an external limit forces the harness to act.
+//
+// The one trigger implemented is context pressure, expressed as a token
+// REMAINDER, not a percentage. A shift fires for the role when a live session's
+// occupancy rises within HeadroomTokens of its resolved window:
+//
+//	ContextTokens > ContextLimit - HeadroomTokens   (ContextLimit > 0)
+//
+// The remainder is the right shape because the quantity that forces the
+// harness's hand is "tokens left before it auto-compacts", and the auto-compact
+// point is an absolute token count on a resolved window, not a fixed fraction
+// of it (orc finding-016). HeadroomTokens must cover a clean shift: the
+// successor's launch-to-ready, plus the departing agent's handoff turn where a
+// handoff is in play. Set it above that floor so the shift completes before the
+// harness compacts.
+//
+// A session on an unresolved window (ContextLimit == 0: codex, or opencode with
+// no context_window override) cannot be metered this way and is never shifted by
+// this trigger. The operator gives it a denominator with runtime.context_window,
+// or the role stays operator-shifted.
+type ShiftPolicy struct {
+	// On names the trigger. The only understood value is
+	// ShiftTriggerContextPressure ("context-pressure").
+	On string `toml:"on"`
+	// HeadroomTokens is the remainder floor. Required and > 0 when
+	// On == ShiftTriggerContextPressure.
+	HeadroomTokens int `toml:"headroom_tokens,omitempty"`
 }
 
 // ShiftPhase represents the current phase of a shift operation.
