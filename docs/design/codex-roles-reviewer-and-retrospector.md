@@ -159,9 +159,33 @@ reversible (drop the two blocks and re-apply, or `marvel delete` the two roles).
 
 This change is NOT applied here. It is the operator's to authorize and the
 director's to execute, and it depends on the codex cast wrappers existing
-(`cast-aae-codex.sh`, `cast-aae-retro.sh`) and the retro dir being created. The
-two-part write verify above runs against the retrospector before it is trusted
-write-enabled.
+(`cast-aae-codex.sh`, `cast-aae-retro.sh`), the retro dir being created, and the
+shift-safety condition below. The two-part write verify above runs against the
+retrospector before it is trusted write-enabled.
+
+## Shift safety: a dependency on the auto-shift work (marvel#297)
+
+codex and opencode run unresolved context windows: per the auto-shift
+ground-truth survey they report a session total, not a per-request level against
+a resolved window, so `ContextLimit == 0` and the context-pressure auto-shift
+(finding-044) cannot arm for a codex role. It has no denominator to meter, so a
+codex role never auto-shifts on context today.
+
+Both roles here are headless one-shot (`mode = "headless"`): each run has fresh
+context, completes (ADR-010), and does not accumulate across runs, so the
+one-shot shape is the interim shift-safety guard. But if either role is run as a
+standing or long-lived session, or a single run approaches the window (the
+retrospector's full rebuild from merge history is the case to watch), there is no
+context-pressure trigger to protect it.
+
+So shift-safety for a long-running codex role on the live team depends on the
+auto-shift design (marvel#297): recommendation C (a compaction-event trigger,
+which needs no resolved window) or recommendation B (resolved windows for codex,
+which would give the remainder trigger a denominator). Until one of those lands,
+the live apply must not put an unshiftable, context-accumulating codex role on
+the arcaven team, the retrospector especially; keep both roles headless one-shot,
+which bounds each run and frees or holds the slot on completion. This is a
+precondition of the manifest change above, not a follow-on.
 
 ## Follow-on work (flat)
 
