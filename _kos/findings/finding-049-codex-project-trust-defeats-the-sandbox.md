@@ -70,6 +70,22 @@ the repo under `-s read-only`; the same role home without it refused. So an
 autonomous codex role must carry neither a trusted target NOR an auto-approving
 review policy.
 
+## A third property: identity inheritance
+
+Copying the operator config carries a third thing beyond the two sandbox levers,
+found live after the reviewer was applied: the operator's
+`[mcp_servers.director.env]` hardcodes `DIRECTOR_AGENT_ID = "codex-reviewer"`.
+A role home that copies that block verbatim makes every marvel-launched codex
+role register on the director bus under the operator's id, colliding with the
+operator's own standalone `codex-reviewer` (a live instance of the session-
+identity collision, finding-003). The claude path never hits this: cast-launch
+builds the director MCP config fresh from `MARVEL_SESSION`/`MARVEL_TEAM`/
+`MARVEL_WORKSPACE`, so each role registers under its own id. The codex role home
+must do the same, not copy the operator's identity. The collision is transient
+on the bus (a headless one-shot registers under the wrong id only while it runs,
+then completes and drops off presence), which is exactly why it survived the
+first apply unnoticed until the roster was read during a run.
+
 ## The fix: a role-scoped CODEX_HOME (menu option c)
 
 codex reads its config from `CODEX_HOME` (identity already travels by env; the
@@ -77,13 +93,19 @@ adapter seeds `CODEX_HOME` from `~/.codex`). Point the role at its own
 `CODEX_HOME` whose config carries neither bypass lever, symlink the identity
 files back to the operator's home, and `-s` governs writes again.
 
-Built as an ALLOWLIST, not a filtered copy, because both levers ride operator
+Built as an ALLOWLIST, not a filtered copy, because the levers ride operator
 conveniences and a denylist would miss the next one. The role `config.toml`
-carries only the model, a reasoning effort, and every `[mcp_servers.*]` table
-(so director-mcp survives); `auth.json` and `models_cache.json` are symlinked
-from `~/.codex`. No `[projects.*]` trust, no `approvals_reviewer`. Regenerated on
-every cast, so any trust codex tries to persist mid-run is wiped before the next.
-Disk-verified through the actual wrappers on gpt-5.6-luna:
+carries only the model, a reasoning effort, and a freshly built
+`[mcp_servers.director]` block: the director endpoint and `NATS_URL` are read
+from the operator config (not identity), but `DIRECTOR_AGENT_ID`/`_TEAM`/
+`_WORKSPACE` are set from the marvel role (the wrapper resolves them from
+`MARVEL_SESSION`/`MARVEL_TEAM`/`MARVEL_WORKSPACE` exactly as cast-launch does,
+and validates the id against R-76). `auth.json` and `models_cache.json` are
+symlinked from `~/.codex`. No `[projects.*]` trust, no `approvals_reviewer`, no
+copied identity. Regenerated on every cast, and the home is per-session
+(`~/.marvel/codex-home/<MARVEL_SESSION>`) so a reviewer and a retrospector
+running at once never clobber each other's config. Disk-verified through the
+actual wrappers on gpt-5.6-luna:
 
 - Retrospector shape (cwd = retro dir, `-s workspace-write`): wrote `RETRO.md`
   to the retro dir, READ `~/work/aae-orc/charter.md` for context, and the repo
@@ -132,7 +154,8 @@ gate, and it must read the filesystem, never the model's report.
 - The `file_change`-reads-as-`agent.error` parser gap (finding-048,
   aae-orc-tvlcg) is unrelated and still open.
 
-Related: finding-046 (the read-only reviewer, scoped to untrusted here),
+Related: finding-003 (the session-identity collision this inherits on the bus),
+finding-046 (the read-only reviewer, scoped to untrusted here),
 finding-048 (the constrained write surface, scoped to untrusted here),
 finding-045 (codex/claude folder-trust gate, the adjacent trust surface),
 question-permission-model (Layer 1 for a non-projecting harness), ADR-009
