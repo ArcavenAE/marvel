@@ -242,6 +242,56 @@ content: |
   marvel holds bears no relation to the harness's own count, measured
   0.14x to 18.6x across a resume gap) is distinguishable from a fresh
   reading by an operator or by a gate.
+
+  THE TRIGGER SHIPPED AND IS EXECUTED (finding-044, 2026-09-17). The
+  remainder policy landed in #292 (`Role.Shift`, `evaluateShiftTriggers`,
+  `team.shift-autotriggered`, a per-tick fleet-wide budget of one for the
+  aae-orc-hfc0 correlated-burst hazard). It fires when a live session
+  crosses `ContextTokens > ContextLimit - HeadroomTokens` on a resolved
+  window. Two facts from running it on f601b6e:
+
+  1. IT ARMS ONLY ON A READING, NOT ON A WINDOW. `ContextLimit` resolves
+     from the window ladder, but `ContextTokens` is filled only for a
+     session marvel has an activity channel for: a headless stream, or the
+     statusline feed (`runtime.context_feed = "statusline"`). An
+     interactive claude (the default `Mode = ""`) emits no parseable
+     stream, so without `context_feed` the numerator stays 0 and the
+     trigger never arms while looking configured. This is the same failure
+     shape as the frozen latch above: a level that cannot move reads as
+     safe. The shipped examples set `context_window` but omitted
+     `context_feed`, so as written they never fired; fixed in the same
+     harvest.
+  2. IT ROTATES BUT DOES NOT HAND OFF. Measured trail: shift-autotriggered
+     (session at 206225/1000000, remainder 793775 <= headroom 799000),
+     shift-started gen 1->2, gen-2 created on a new pane, shift-role-ready
+     draining gen 1, gen-1 deleted, shift-completed. A clean rolling
+     shift, remainder math exactly as designed. But the successor came up a
+     cold idle REPL: no task, no commander's intent, CTX 0, and there is
+     no handoff `Kind` in events.go. This is the executed confirmation of
+     what this node deduced from code (finding-018: no drain, no handoff
+     artifact in the repo). Filesystem recovery worked in the test only
+     because the work was file-based in a shared cwd, the successor was
+     externally prompted, and the brief carried successor-aware
+     instructions; marvel supplied none of the three. The 7opc handoff
+     artifact (commander's intent plus a resume pointer at spawn) is what
+     closes this, and it is roadmap (vision M-2a, matrix row 15), not a
+     defect. So the cost model this node has been waiting on is still
+     blocked: a shift that hands off nothing cannot be priced end to end
+     against a compaction that preserves the working context.
+
+  TRIGGER-MODEL DESIGN (2026-09-17): a casting-call party elaborated the
+  auto-trigger into requirements and recommendations in
+  `_kos/ideas/auto-shift-trigger-model.md`. It heeds this node's ruling
+  (a per-session fraction of the resolved window is not the incommensurable
+  fleet column the ruling rejects) and adds: a `compaction-event` trigger as
+  the denominator-free cross-harness backstop for codex/opencode unresolved
+  windows (relates aae-orc-i8ern); a workspace/team/role shift-policy
+  resolution ladder with a per-role override and an explicit `enabled` field;
+  reading-age plus a fire-once-per-generation guard for the anti-flap gap
+  this node named (mirrors director R-93/BEAT-G); shift-inhibit predicates;
+  and an emergency-shift path on a runaway detector plus a peer verdict, the
+  verdict envelope splitting to director. Proposed flat bd tasks relate to
+  aae-orc-hpeu, not a new epic.
 edges:
   - target: question-shifts
     type: derives

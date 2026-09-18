@@ -36,8 +36,14 @@ func TestMonitorAddr(t *testing.T) {
 	if err != nil || got != "127.0.0.1:8222" {
 		t.Errorf("MonitorAddr = %q, %v; want loopback at listen+4000", got, err)
 	}
-	if _, err := MonitorAddr("127.0.0.1:65000"); err == nil {
-		t.Error("port that cannot carry the offset was accepted")
+	// A high listen port whose +4000 monitor would overflow 65535 relocates
+	// the monitor port the same distance below instead of refusing, so a high
+	// OS ephemeral or configured port still renders (finding-047 recurrence).
+	if got, err := MonitorAddr("127.0.0.1:65000"); err != nil || got != "127.0.0.1:61000" {
+		t.Errorf("MonitorAddr(65000) = %q, %v; want relocated below to 127.0.0.1:61000", got, err)
+	}
+	if _, err := MonitorAddr("127.0.0.1:70000"); err == nil {
+		t.Error("out-of-range port was accepted")
 	}
 	if _, err := MonitorAddr("4222"); err == nil {
 		t.Error("bare port was accepted")

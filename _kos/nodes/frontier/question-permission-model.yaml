@@ -89,6 +89,44 @@ content: |
   finding-022: same-uid environment reads (an agent that hunts can take a
   sibling's token, which is enforcement locus 3 plus curtain), and
   event-ring pressure from spammed refusals.
+
+  LAYER 1 FOR A NON-PROJECTING HARNESS IS THE HARNESS'S OWN SANDBOX
+  (finding-048, 2026-09-17). The Policy projection above is the claude
+  path: marvel writes a settings fragment via `ProjectionFor`. The codex
+  adapter reports no projection surface (codex.go) and marvel injects no
+  codex sandbox, so for a codex role the Layer-1 enforcement is codex's
+  own sandbox, set at launch through `runtime.Args`
+  (`-s workspace-write`, the pinned cwd as the writable root, `--add-dir`
+  for extra roots). Proved on gpt-5.6-luna: a codex role wrote only to its
+  pinned cwd and was refused everywhere else while reading the repo for
+  context. This answers the second open sub-question above (how Layer 1
+  composes with a sandbox) for the interim, harness-native case: the
+  writable-root set is a single named parameter today, which is what a
+  later curtain policy would take declaratively (aae-orc-10x). One adapter
+  gap surfaced: codex `file_change` items are unmapped by marvel's codex
+  parser, so a write-capable codex role's writes read as `agent.error` on
+  the ring (flat marvel task).
+
+  QUALIFIED (finding-049, 2026-09-17): codex's own sandbox is Layer 1 ONLY
+  when the target is not a codex TRUSTED project. A per-project
+  `trust_level = "trusted"` in `~/.codex/config.toml` makes that project's
+  tree writable by codex's `apply_patch` tool regardless of `-s`, and a
+  `-c` override of the projects table does not lift it. The live `aae-orc`
+  repo is trusted for the operator's own convenience, so against the live
+  target both the read-only reviewer and the constrained-write retrospector
+  could write the repo. Disk-verified; the model self-reported "refused"
+  while the file landed, so the write verify must read the filesystem, not
+  the model. A second lever compounds it: `approvals_reviewer =
+  "auto_review"` in the operator config auto-approves an out-of-sandbox
+  write even against an untrusted project. The fix keeps marvel out of the
+  operator's config: give the codex role its own `CODEX_HOME` built as an
+  allowlist (model, reasoning, and `[mcp_servers.*]` only, so it carries
+  neither a trusted project nor an auto-approving review policy; identity
+  files symlinked back, `[mcp_servers.director]` kept so the bus channel
+  survives), and `-s` governs writes again. That is environment
+  construction one config layer below the claude projection: marvel controls
+  the harness's trust surface by constructing the role's config home rather
+  than by owning the operator's.
 edges:
   - target: elem-runtime-adapter-framework
     type: derives

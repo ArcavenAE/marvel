@@ -33,9 +33,13 @@ func startTestLeafBroker(t *testing.T, d *Daemon, hub string, preEnroll bool) (*
 	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// Any free loopback port works: the config renderer relocates the +4000
+	// monitoring port below the listen port when it would overflow 65535, so a
+	// high macOS ephemeral port no longer flakes this test (finding-047, fixed
+	// in bus.MonitorAddr).
+	l, lerr := net.Listen("tcp", "127.0.0.1:0")
+	if lerr != nil {
+		t.Fatal(lerr)
 	}
 	listen := l.Addr().String()
 	port := l.Addr().(*net.TCPAddr).Port

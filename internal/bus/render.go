@@ -77,18 +77,30 @@ type TeamUser struct {
 }
 
 // MonitorAddr returns the loopback monitoring address for a listen address:
-// 127.0.0.1 at the listen port plus 4000. Loopback only, whatever host the
-// broker listens on, because /leafz and /varz are for the daemon.
+// 127.0.0.1 at the listen port plus 4000, or minus 4000 when plus would
+// overflow. Loopback only, whatever host the broker listens on, because
+// /leafz and /varz are for the daemon.
 func MonitorAddr(listen string) (string, error) {
 	_, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		return "", fmt.Errorf("listen %q is not host:port: %w", listen, err)
 	}
 	n, err := strconv.Atoi(port)
-	if err != nil || n < 1 || n+monitorPortOffset > 65535 {
-		return "", fmt.Errorf("listen %q: port cannot carry the monitoring offset of %d", listen, monitorPortOffset)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("listen %q: port %q is out of range 1..65535", listen, port)
 	}
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(n+monitorPortOffset)), nil
+	// Place the monitor port monitorPortOffset above the listen port; when that
+	// overflows 65535 (a high listen port, e.g. an OS ephemeral port on a box
+	// whose counter has climbed near the top of the range), place it the same
+	// distance below instead. Overflow needs n > 65535-monitorPortOffset, so
+	// n-monitorPortOffset is always >= 1 and distinct from the listen port. A
+	// high configured or test-assigned port renders a valid monitoring address
+	// rather than a refusal (finding-047 recurrence).
+	monitor := n + monitorPortOffset
+	if monitor > 65535 {
+		monitor = n - monitorPortOffset
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(monitor)), nil
 }
 
 // validToken is the R-76 closed class [A-Za-z0-9_-], the shape the director
