@@ -26,25 +26,16 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 	d := newHandlerDaemon(t)
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
-	// Cap the broker port so listen+4000 (the bus monitoring offset) fits under
-	// 65535; macOS ephemeral ports climb into the top of the range and overflow
-	// the config renderer otherwise, flaking this test (finding-047).
-	var port int
-	for i := 0; i < 8192; i++ {
-		l, lerr := net.Listen("tcp", "127.0.0.1:0")
-		if lerr != nil {
-			t.Fatal(lerr)
-		}
-		port = l.Addr().(*net.TCPAddr).Port
-		_ = l.Close()
-		if port <= 61535 { // 65535 - the bus monitoring offset of 4000
-			break
-		}
-		port = 0
+	// Any free loopback port works: the config renderer relocates the +4000
+	// monitoring port below the listen port when it would overflow 65535, so a
+	// high macOS ephemeral port no longer flakes this test (finding-047, fixed
+	// in bus.MonitorAddr).
+	l, lerr := net.Listen("tcp", "127.0.0.1:0")
+	if lerr != nil {
+		t.Fatal(lerr)
 	}
-	if port == 0 {
-		t.Fatal("no loopback port at or below the monitoring-offset cap after 8192 tries")
-	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
 	listen := "127.0.0.1:" + strconv.Itoa(port)
 	rb := config.ResolvedBus{Managed: true, Listen: listen, URL: "nats://" + listen, StoreDir: dir, HubURL: "nats-leaf://127.0.0.1:1"}
 	mgr, err := bus.NewManager(dir, "t"+strconv.Itoa(port), rb, d.store, func() bool {
