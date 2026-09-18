@@ -2777,9 +2777,16 @@ func (d *Daemon) enrollLeafSeed() {
 	}
 	if d.busSup != nil && !d.busSup.LeafSeedInEnv() {
 		// The running broker cannot resolve the seed on a reload. Render
-		// without reloading, then restart so the new process reads it.
+		// without reloading, then restart so the new process reads it. When
+		// the operator has the leaf detached, the restart still loads the
+		// seed (so a later connect is reload-only) but renders no leaf, so
+		// the reason says so and the bounce is not read as a failed bring-up.
+		reason := "picking up the leaf seed after enrollment"
+		if !d.bus.LeafAttached() {
+			reason += "; leaf stays detached until connect"
+		}
 		d.regenerateBusNoReload("credential.put " + busLeafCredential)
-		d.restartBus("picking up the leaf seed after enrollment")
+		d.restartBus(reason)
 		return
 	}
 	d.regenerateBus("credential.put " + busLeafCredential)
