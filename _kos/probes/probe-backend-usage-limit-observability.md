@@ -28,7 +28,7 @@ disk claims confirmed by direct field-name inspection.
 
 ## Result
 
-Harvested to finding-049. Codex is observable on disk (the rollout JSONL
+Harvested to finding-050. Codex is observable on disk (the rollout JSONL
 `rate_limits` snapshot). Claude Code has no live number on disk, but the number
 is reachable within the custody boundary through agent self-query and
 vault-brokered channels, so it is observable-via-channel, not virtual-only (the

@@ -1,4 +1,4 @@
-# finding-049: what usage-limit state marvel can observe per auth backend
+# finding-050: what usage-limit state marvel can observe per auth backend
 
 Work: director research dispatch (operator-authorized), 2026-09-17. Feeds the
 agentic resource matrix (token-spend / spend-budget rows 1 and 2) and vision
