@@ -152,6 +152,39 @@ func TestLeafCredentialPutRestartsOnFirstEnrollmentThenReloads(t *testing.T) {
 	}
 }
 
+// TestLeafCredentialRotationRestartsForNewSeed proves a seed ROTATION (a new
+// seed value) restarts the broker rather than reloading. nats-server reads the
+// seed from its environment once at start, so a reload would keep the old seed
+// and the leaf would authenticate with the wrong one; the daemon must restart
+// so the new process reads the new seed (codex review P1-1). This contrasts the
+// reload-only identical re-put in the enrollment test above. Needs a real
+// nats-server.
+func TestLeafCredentialRotationRestartsForNewSeed(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sup, _ := startTestLeafBroker(t, d, "nats-leaf://127.0.0.1:1", true)
+	start := sup.Status()
+
+	// Rotation is delete + put of a NEW seed value (the store rejects a
+	// duplicate name, so a real rotation deletes first).
+	del, _ := json.Marshal(map[string]string{"name": busLeafCredential})
+	if resp := d.dispatchAs(Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
+		t.Fatalf("credential.delete: %s", resp.Error)
+	}
+	kp, _ := nkeys.CreateUser()
+	seedB, _ := kp.Seed()
+	put, _ := json.Marshal(map[string]any{"name": busLeafCredential, "kind": "nats-nkey-seed", "value": seedB})
+	if resp := d.dispatchAs(Request{Method: "credential.put", Params: put}, localCaller()); resp.Error != "" {
+		t.Fatalf("credential.put (rotated seed): %s", resp.Error)
+	}
+	after := sup.Status()
+	if after.PID == start.PID {
+		t.Errorf("rotation to a new seed did not restart the broker: pid stayed %d", start.PID)
+	}
+	if !after.Ready {
+		t.Errorf("broker not ready after rotation restart: %+v", after)
+	}
+}
+
 // TestBusLeafConnectDisconnectIsReloadOnly is the connect/disconnect lifecycle:
 // against a broker that booted with the seed enrolled, disconnect and connect
 // toggle the leafnodes block and reload without ever bouncing the broker, so

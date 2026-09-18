@@ -2726,12 +2726,13 @@ func (d *Daemon) regenerateBus(reason string) {
 // can pick the change up (the leaf seed reaching a broker that booted
 // unenrolled), so the caller restarts instead of the broker being SIGHUP'd
 // with a conf it cannot resolve yet.
-func (d *Daemon) regenerateBusNoReload(reason string) {
+func (d *Daemon) regenerateBusNoReload(reason string) error {
 	if d.bus == nil {
-		return
+		return nil
 	}
 	changed, err := d.bus.Render()
 	d.emitBusRender(reason, changed, err)
+	return err
 }
 
 // emitBusRender records the outcome of a render on the ring and the log.
@@ -2775,21 +2776,44 @@ func (d *Daemon) enrollLeafSeed() {
 	if d.bus == nil {
 		return
 	}
-	if d.busSup != nil && !d.busSup.LeafSeedInEnv() {
-		// The running broker cannot resolve the seed on a reload. Render
-		// without reloading, then restart so the new process reads it. When
-		// the operator has the leaf detached, the restart still loads the
-		// seed (so a later connect is reload-only) but renders no leaf, so
-		// the reason says so and the bounce is not read as a failed bring-up.
+	if d.busSup != nil && d.leafSeedNeedsRestart() {
+		// The running broker cannot resolve the current seed on a reload (it
+		// booted unenrolled, or its environment carries a different seed than
+		// the one now stored). Render without reloading, then restart so the
+		// new process reads it. When the operator has the leaf detached, the
+		// restart still loads the seed (so a later connect is reload-only) but
+		// renders no leaf, so the reason says so and the bounce is not read as
+		// a failed bring-up.
 		reason := "picking up the leaf seed after enrollment"
 		if !d.bus.LeafAttached() {
 			reason += "; leaf stays detached until connect"
 		}
-		d.regenerateBusNoReload("credential.put " + busLeafCredential)
+		if err := d.regenerateBusNoReload("credential.put " + busLeafCredential); err != nil {
+			// Restarting on a conf that did not render would read stale files;
+			// the render error is already on the ring, so hold and let the next
+			// enrollment or reconcile retry.
+			return
+		}
 		d.restartBus(reason)
 		return
 	}
 	d.regenerateBus("credential.put " + busLeafCredential)
+}
+
+// leafSeedNeedsRestart reports whether picking up the enrolled seed needs a
+// fresh broker process rather than a reload. nats-server reads the seed from
+// its environment once at start, so a broker that booted unenrolled, or one
+// whose environment carries a different seed than the one now stored (a
+// rotation), cannot resolve the current seed on SIGHUP.
+func (d *Daemon) leafSeedNeedsRestart() bool {
+	if !d.busSup.LeafSeedInEnv() {
+		return true
+	}
+	seed, err := d.store.RevealCredentialValue(busLeafCredential)
+	if err != nil {
+		return false // nothing to compare against; a reload is the safe default
+	}
+	return bus.SeedFingerprint(seed) != d.busSup.LeafSeedFingerprint()
 }
 
 // handleBusLeafConnect and handleBusLeafDisconnect toggle the leaf link on a

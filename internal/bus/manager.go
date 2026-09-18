@@ -404,14 +404,29 @@ func (m *Manager) LeafAttached() bool { return m.leafAttached.Load() }
 // moves: the seed stays enrolled, so a disconnect keeps the enrollment and a
 // later connect needs no re-enrollment (aae-orc-ct0l4).
 func (m *Manager) SetLeafAttached(attached bool) (bool, error) {
-	if m.leafAttached.Load() == attached {
+	prev := m.leafAttached.Load()
+	if prev == attached {
 		return false, nil
 	}
-	if err := m.writeLeafState(attached); err != nil {
-		return false, err
-	}
 	m.leafAttached.Store(attached)
-	return m.Regenerate()
+	changed, err := m.Regenerate()
+	if err != nil {
+		// The broker did not accept the change. Undo the in-memory decision and
+		// re-render the previous conf so state, disk, and the broker are
+		// consistent again; a retry then re-applies instead of the
+		// prev==attached guard turning it into a silent no-op (codex review P1-3).
+		m.leafAttached.Store(prev)
+		if _, rerr := m.Regenerate(); rerr != nil {
+			return changed, errors.Join(err, fmt.Errorf("roll back leaf state to %v: %w", prev, rerr))
+		}
+		return changed, err
+	}
+	// Persist only after the broker accepted the change, so a restart never
+	// recovers a decision the broker never applied.
+	if werr := m.writeLeafState(attached); werr != nil {
+		return changed, fmt.Errorf("leaf %v applied but not persisted: %w", attached, werr)
+	}
+	return changed, nil
 }
 
 // writeLeafState persists the connect/disconnect decision atomically, 0644
