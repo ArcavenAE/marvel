@@ -2222,6 +2222,48 @@ change, and holds new sessions while it is down. A cluster with
 		},
 	}
 	cmd.AddCommand(status)
+
+	leafToggle := func(method string) func(*cobra.Command, []string) error {
+		return func(cmd *cobra.Command, args []string) error {
+			resp, err := send(daemon.Request{Method: method})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			var st bus.Status
+			if err := json.Unmarshal(resp.Result, &st); err != nil {
+				return fmt.Errorf("decode bus status: %w", err)
+			}
+			printBusStatus(os.Stdout, st)
+			return nil
+		}
+	}
+	leaf := &cobra.Command{
+		Use:   "leaf",
+		Short: "Connect or disconnect the local broker's leaf link to the hub",
+		Long: `Connect or disconnect the local broker's leaf link to the hub.
+
+Both toggle the leafnodes remote in the broker's config and reload it with
+SIGHUP, so the broker and every local session stay up. The leaf seed stays
+enrolled across a disconnect, so a later connect needs no re-enrollment.
+The link comes up only when a bus/leaf seed is enrolled; connect on a cluster
+with no seed records the intent and the link comes up when a seed is pushed.`,
+	}
+	leaf.AddCommand(&cobra.Command{
+		Use:   "connect",
+		Short: "Attach the leaf to the hub without bouncing the broker",
+		Args:  cobra.NoArgs,
+		RunE:  leafToggle("bus.leaf.connect"),
+	})
+	leaf.AddCommand(&cobra.Command{
+		Use:   "disconnect",
+		Short: "Detach the leaf from the hub without bouncing the broker",
+		Args:  cobra.NoArgs,
+		RunE:  leafToggle("bus.leaf.disconnect"),
+	})
+	cmd.AddCommand(leaf)
 	return cmd
 }
 

@@ -64,13 +64,13 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response 
 	}
 	d.emitCredentialEvent(events.KindCredentialPut, cred.Name, cred.Kind, c)
 	if cred.Name == busLeafCredential {
-		// The leaf remote renders only while a seed exists (brief 10 s.3), and
-		// the seed reaches the broker through its environment, which a reload
-		// cannot change: a rendered change here means a new broker process
-		// (brief 10 s.6 step 7). Clients reconnect; the hub link comes up.
-		if d.regenerateBus("credential.put " + busLeafCredential) {
-			d.restartBus("credential.put " + busLeafCredential)
-		}
+		// Enrollment: the seed enters the store. Bring the leaf up the cheap way
+		// when the running broker's environment already carries the seed (a
+		// reload, no bounce); a broker that booted unenrolled needs a fresh
+		// process to read the seed from its environment (nats-server reads it
+		// once at start). This is the one accepted restart, and every later
+		// connect/disconnect is reload-only (aae-orc-ct0l4).
+		d.enrollLeafSeed()
 	}
 
 	meta, err := d.store.GetCredential(cred.Name) // metadata only (value stripped)

@@ -44,6 +44,21 @@ func TestBusStatusIsNotACredentialPushMethod(t *testing.T) {
 	}
 }
 
+func TestBusLeafToggleReusesTheCredentialPushGate(t *testing.T) {
+	d := newHandlerDaemon(t)
+	for _, m := range []string{"bus.leaf.connect", "bus.leaf.disconnect"} {
+		resp := d.dispatchAs(Request{Method: m}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
+		// The toggle reuses credential.put/delete's gate (aae-orc-ct0l4), so the
+		// scope does not refuse; without a managed bus the handler answers.
+		if strings.Contains(resp.Error, "not permitted") {
+			t.Errorf("%s refused for a credential-push key: %s", m, resp.Error)
+		}
+		if !strings.Contains(resp.Error, "no managed bus") {
+			t.Errorf("%s without a managed bus: error = %q, want the handler's no-managed-bus answer", m, resp.Error)
+		}
+	}
+}
+
 func TestStopParamsCarryKeepBus(t *testing.T) {
 	var p stopParams
 	if err := json.Unmarshal([]byte(`{"keep_bus":true}`), &p); err != nil {

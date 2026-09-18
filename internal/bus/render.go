@@ -48,9 +48,16 @@ type Spec struct {
 	HubURL    string // empty for a local-only cluster
 	HubCAFile string // trusts a TLS hub from the leaf remote; empty for plaintext
 	LeafSeed  bool   // a bus/leaf credential is in the Store; the leaf block renders only then
-	Admin     User
-	Seat      *SeatUser // the director seat, when the cluster declares one
-	Teams     []TeamUser
+	// LeafAttached is the operator's connect/disconnect decision. The leaf
+	// remote renders only while it is true, so a disconnect drops the block
+	// (and, on reload, the link) while the seed stays enrolled, and a later
+	// connect renders it again without re-enrolling (aae-orc-ct0l4). The
+	// Manager defaults it to attached, so an enrolled cluster that never issued
+	// a disconnect renders the leaf as before.
+	LeafAttached bool
+	Admin        User
+	Seat         *SeatUser // the director seat, when the cluster declares one
+	Teams        []TeamUser
 }
 
 // User is a broker user with a marvel-issued password.
@@ -103,8 +110,9 @@ func validToken(kind, s string) error {
 }
 
 // RenderConf renders nats-server.conf. The leafnodes block renders only when
-// both a hub URL and a leaf seed exist: a hub with no seed starts local-only
-// and the daemon says so (section 6, S6).
+// a hub URL and a leaf seed both exist and the operator has the leaf attached:
+// a hub with no seed starts local-only and the daemon says so (section 6, S6),
+// and a disconnect drops the block while the seed stays enrolled (aae-orc-ct0l4).
 func RenderConf(s Spec) (string, error) {
 	if err := validToken("cluster name", s.Domain); err != nil {
 		return "", err
@@ -123,7 +131,7 @@ func RenderConf(s Spec) (string, error) {
 	fmt.Fprintf(&b, "http: %s\n\n", monitor)
 	fmt.Fprintf(&b, "jetstream {\n  store_dir: %q\n  domain: %s\n}\n\n", filepath.Join(s.StoreDir, "store"), s.Domain)
 	fmt.Fprintf(&b, "include %q\n", AuthName)
-	if s.HubURL != "" && s.LeafSeed {
+	if s.HubURL != "" && s.LeafSeed && s.LeafAttached {
 		// nkey is unquoted on purpose: quoted, nats-server would take the
 		// text "$DIRECTOR_LEAF_NKEY" literally and the leaf would fail auth
 		// with no hint why; unquoted, an unset variable refuses to start.

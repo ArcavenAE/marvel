@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -54,6 +56,13 @@ type Manager struct {
 	seat        string            // the director seat's password; empty when no seat is declared
 	passwords   map[string]string // team name -> password
 
+	// leafAttached is the operator's connect/disconnect decision, persisted
+	// beside the conf and defaulting to attached. It is an atomic rather than
+	// mu-guarded state because Supervisor.Status reads it while holding the
+	// supervisor lock, and Regenerate takes m.mu then the supervisor lock via
+	// Reload: guarding it with m.mu would invert that order (aae-orc-ct0l4).
+	leafAttached atomic.Bool
+
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
 }
@@ -63,6 +72,13 @@ type Manager struct {
 // it. The operator's MCP env points DIRECTOR_NATS_PASS_FILE at it once and
 // rotation needs no re-paste.
 const SeatPassName = "director.pass"
+
+// LeafStateName holds the operator's connect/disconnect decision beside the
+// rendered conf, so a daemon restart or reexec keeps a disconnected leaf
+// disconnected instead of silently reattaching on the next regenerate. Its
+// content is "true" or "false"; an absent file means attached, the default
+// when a seed is enrolled (aae-orc-ct0l4).
+const LeafStateName = "leaf-attached"
 
 // NewManager builds a manager for a managed bus. dir is where the rendered
 // files live (Layout.StateDir()/nats); domain is the validated cluster
@@ -108,7 +124,19 @@ func NewManager(dir, domain string, rb config.ResolvedBus, teams TeamLister, has
 	if n := len(recovered); n > 0 {
 		log.Printf("bus: recovered %d password(s) from %s; running sessions keep their credentials", n, filepath.Join(dir, AuthName))
 	}
+	m.leafAttached.Store(readLeafAttached(filepath.Join(dir, LeafStateName)))
 	return m, nil
+}
+
+// readLeafAttached reads the persisted connect/disconnect decision. A missing
+// or unreadable file is attached, the default: an enrolled cluster that never
+// issued a disconnect renders and reloads its leaf exactly as before.
+func readLeafAttached(path string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(body)) != "false"
 }
 
 // SeatCredential is the director seat's broker user and password, when the
@@ -168,23 +196,45 @@ func (m *Manager) TeamPassword(team string) (string, bool) {
 	return pw, ok
 }
 
-// Regenerate renders both files from the bus section and the applied teams,
-// writes them if anything changed, and asks the broker to reload when a
-// Reloader is wired. A team keeps its password across regenerations, so a
-// running session's credential stays valid; a removed team's password is
-// dropped and its user disappears from the file, which is revocation.
+// Regenerate renders both files and, when anything changed, asks the broker to
+// reload. It is the path for a change a running broker can pick up on SIGHUP:
+// applied teams, and the leaf connect/disconnect toggle, whose seed already
+// rides the broker's environment. A team keeps its password across
+// regenerations, so a running session's credential stays valid; a removed
+// team's password is dropped and its user disappears from the file, which is
+// revocation.
 func (m *Manager) Regenerate() (bool, error) {
+	changed, err := m.Render()
+	if err != nil {
+		return changed, err
+	}
+	if changed && m.Reloader != nil {
+		if err := m.Reloader.Reload(); err != nil {
+			return changed, fmt.Errorf("reload broker after rewrite: %w", err)
+		}
+	}
+	return changed, nil
+}
+
+// Render renders both files and writes them if anything changed, WITHOUT
+// asking the broker to reload. The enrollment path uses it when only a fresh
+// process can pick the change up: the leaf seed reaches the broker through its
+// environment, read once at start (aae-orc-vqq2c), so a broker that booted
+// unenrolled cannot resolve a newly rendered leaf remote on SIGHUP and the
+// caller restarts instead of reloading a conf the process cannot honor.
+func (m *Manager) Render() (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	spec := Spec{
-		Domain:    m.domain,
-		Listen:    m.bus.Listen,
-		StoreDir:  m.bus.StoreDir,
-		HubURL:    m.bus.HubURL,
-		HubCAFile: m.bus.HubCAFile,
-		LeafSeed:  m.hasLeafSeed != nil && m.hasLeafSeed(),
-		Admin:     m.admin,
+		Domain:       m.domain,
+		Listen:       m.bus.Listen,
+		StoreDir:     m.bus.StoreDir,
+		HubURL:       m.bus.HubURL,
+		HubCAFile:    m.bus.HubCAFile,
+		LeafSeed:     m.hasLeafSeed != nil && m.hasLeafSeed(),
+		LeafAttached: m.leafAttached.Load(),
+		Admin:        m.admin,
 	}
 	if m.bus.Seat != nil && m.seat != "" {
 		spec.Seat = &SeatUser{Workspace: m.bus.Seat.Workspace, Team: m.bus.Seat.Team, Password: m.seat}
@@ -231,11 +281,6 @@ func (m *Manager) Regenerate() (bool, error) {
 	// authorization.conf, not this file.
 	if err := m.writeSeatPass(spec.Seat); err != nil {
 		return changed, err
-	}
-	if changed && m.Reloader != nil {
-		if err := m.Reloader.Reload(); err != nil {
-			return changed, fmt.Errorf("reload broker after rewrite: %w", err)
-		}
 	}
 	return changed, nil
 }
@@ -347,4 +392,38 @@ func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", 
 // link can actually come up. Nil hasLeafSeed means never enrolled.
 func (m *Manager) leafEnrolled() bool {
 	return m.hasLeafSeed != nil && m.hasLeafSeed()
+}
+
+// LeafAttached reports the operator's current connect/disconnect decision.
+func (m *Manager) LeafAttached() bool { return m.leafAttached.Load() }
+
+// SetLeafAttached records connect (true) or disconnect (false), persists it
+// beside the conf, and regenerates so the leafnodes block appears or
+// disappears and the broker reloads without a bounce. It is a no-op reporting
+// (false, nil) when the decision is already what is asked. Only the block
+// moves: the seed stays enrolled, so a disconnect keeps the enrollment and a
+// later connect needs no re-enrollment (aae-orc-ct0l4).
+func (m *Manager) SetLeafAttached(attached bool) (bool, error) {
+	if m.leafAttached.Load() == attached {
+		return false, nil
+	}
+	if err := m.writeLeafState(attached); err != nil {
+		return false, err
+	}
+	m.leafAttached.Store(attached)
+	return m.Regenerate()
+}
+
+// writeLeafState persists the connect/disconnect decision atomically, 0644
+// (it is a flag, not a secret). The directory already exists once the broker
+// has been rendered, which is the only time connect/disconnect are reachable.
+func (m *Manager) writeLeafState(attached bool) error {
+	body := "true\n"
+	if !attached {
+		body = "false\n"
+	}
+	if err := os.MkdirAll(m.dir, 0o700); err != nil {
+		return fmt.Errorf("create bus dir %s: %w", m.dir, err)
+	}
+	return writeFileAtomic(filepath.Join(m.dir, LeafStateName), []byte(body), 0o644)
 }

@@ -50,10 +50,19 @@ func ParseScope(s string) (Scope, error) {
 // (aae-orc-gdum6); calling one before it exists fails as an unknown method,
 // never as an authorization bypass. credential.get is deliberately absent: a
 // pushing key never reads a value back (reveal is local-socket only, S3).
+//
+// bus.leaf.connect and bus.leaf.disconnect reuse this exact gate rather than
+// growing a new scope: the leaf toggle is an operational sibling of the
+// enrollment a credential-push key already performs, and a dedicated grant
+// waits on the principal model (aae-orc-bs3x). They are the leaf lifecycle's
+// operational verbs, not credential reads, so they converge on the operator or
+// supervisor principal when bs3x lands (aae-orc-ct0l4).
 var credentialPushMethods = map[string]bool{
-	"credential.put":    true,
-	"credential.list":   true,
-	"credential.delete": true,
+	"credential.put":      true,
+	"credential.list":     true,
+	"credential.delete":   true,
+	"bus.leaf.connect":    true,
+	"bus.leaf.disconnect": true,
 }
 
 // methodAllowedForScope reports whether a caller with the given scope may call

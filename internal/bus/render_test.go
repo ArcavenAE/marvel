@@ -18,7 +18,11 @@ func baseSpec() Spec {
 		Domain:   "kinu",
 		Listen:   "127.0.0.1:4222",
 		StoreDir: "/state/nats",
-		Admin:    User{Name: AdminUser, Password: "adminpw"},
+		// Attached mirrors the Manager's default (an enrolled cluster that
+		// never issued a disconnect renders the leaf); the detached case is
+		// exercised where it matters.
+		LeafAttached: true,
+		Admin:        User{Name: AdminUser, Password: "adminpw"},
 		Teams: []TeamUser{
 			{Workspace: "aae-orc", Team: "ops", Password: "opspw", Supervisor: true},
 			{Workspace: "aae-orc", Team: "fleet", Password: "fleetpw"},
@@ -69,6 +73,14 @@ func TestRenderConfLeafBlockOnlyWithHubAndSeed(t *testing.T) {
 	}
 	if strings.Contains(conf, `"$DIRECTOR_LEAF_NKEY"`) {
 		t.Error("nkey variable is quoted; nats-server would take it literally")
+	}
+
+	// Disconnected: hub and seed both present, but the operator detached the
+	// leaf, so the block drops while the seed stays enrolled (aae-orc-ct0l4).
+	s.LeafAttached = false
+	conf, _ = RenderConf(s)
+	if strings.Contains(conf, "leafnodes") {
+		t.Error("a detached leaf rendered a leafnodes block; disconnect must drop it")
 	}
 }
 
@@ -234,6 +246,86 @@ func TestManagerRegenerateKeepsPasswordsDropsRemovedAndReloadsOnChange(t *testin
 	}
 	if rl.n != 3 {
 		t.Errorf("reload count = %d, want 3 (one per change)", rl.n)
+	}
+}
+
+func TestManagerSetLeafAttachedTogglesBlockPersistsAndReloads(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", StoreDir: dir, HubURL: "nats-leaf://h:7442"}
+	m, err := NewManager(dir, "kinu", rb, teams{}, func() bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rl := &countingReloader{}
+	m.Reloader = rl
+
+	hasLeaf := func() bool {
+		body, _ := os.ReadFile(filepath.Join(dir, ConfName))
+		return strings.Contains(string(body), "leafnodes")
+	}
+
+	// Enrolled and attached by default: the first render carries the leaf.
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.LeafAttached() || !hasLeaf() {
+		t.Fatalf("default state is not attached-with-block (attached=%v hasLeaf=%v)", m.LeafAttached(), hasLeaf())
+	}
+	base := rl.n
+
+	// Disconnect: block drops, broker reloads (no bounce here to bounce), the
+	// decision persists to disk.
+	changed, err := m.SetLeafAttached(false)
+	if err != nil || !changed {
+		t.Fatalf("disconnect: changed=%v err=%v", changed, err)
+	}
+	if m.LeafAttached() || hasLeaf() {
+		t.Error("disconnect left the leaf block rendered")
+	}
+	if rl.n != base+1 {
+		t.Errorf("disconnect reloads = %d, want %d", rl.n, base+1)
+	}
+	if body, _ := os.ReadFile(filepath.Join(dir, LeafStateName)); strings.TrimSpace(string(body)) != "false" {
+		t.Errorf("disconnect not persisted: %q", body)
+	}
+
+	// Idempotent: disconnecting again changes nothing and does not reload.
+	if changed, err := m.SetLeafAttached(false); err != nil || changed {
+		t.Errorf("second disconnect: changed=%v err=%v", changed, err)
+	}
+	if rl.n != base+1 {
+		t.Errorf("idempotent disconnect reloaded: %d", rl.n)
+	}
+
+	// Reconnect: block returns, broker reloads, no re-enrollment needed.
+	if changed, err := m.SetLeafAttached(true); err != nil || !changed {
+		t.Fatalf("reconnect: changed=%v err=%v", changed, err)
+	}
+	if !hasLeaf() {
+		t.Error("reconnect did not render the leaf block")
+	}
+	if rl.n != base+2 {
+		t.Errorf("reconnect reloads = %d, want %d", rl.n, base+2)
+	}
+
+	// The decision survives a daemon restart: a disconnect persists so a
+	// rebuilt Manager renders local-only until an explicit reconnect.
+	if _, err := m.SetLeafAttached(false); err != nil {
+		t.Fatal(err)
+	}
+	m2, err := NewManager(dir, "kinu", rb, teams{}, func() bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m2.LeafAttached() {
+		t.Error("rebuilt Manager forgot the persisted disconnect")
+	}
+	if _, err := m2.Render(); err != nil {
+		t.Fatal(err)
+	}
+	if hasLeaf() {
+		t.Error("rebuilt Manager rendered the leaf block despite a persisted disconnect")
 	}
 }
 
