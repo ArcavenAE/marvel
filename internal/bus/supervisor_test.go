@@ -34,15 +34,28 @@ func TestComputeBackoffMatchesRoleSchedule(t *testing.T) {
 
 // freePort asks the kernel for a free loopback port and releases it; the
 // broker binds it a moment later. Racy in theory, fine for a local test.
+//
+// The port is capped so the derived monitoring port (listen +
+// monitorPortOffset) still fits under 65535. macOS hands out ephemeral ports
+// sequentially from 49152, so a port in the top monitorPortOffset of the range
+// overflows the offset and fails the config renderer, flaking the pre-push
+// race suite by where the OS ephemeral counter happens to sit (finding-047).
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	const maxBase = 65535 - monitorPortOffset // room for the +4000 monitoring offset
+	for i := 0; i < 8192; i++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		_ = l.Close()
+		if port <= maxBase {
+			return port
+		}
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port
+	t.Fatal("freePort: no loopback port at or below the monitoring-offset cap after 8192 tries")
+	return 0
 }
 
 func kindsOf(r *events.Ring) []events.Kind {
