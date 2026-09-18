@@ -58,23 +58,41 @@ UNtrusted project (their throwaway teams were fresh dirs). The design assumed th
 target behaves like those teams. The live repo is trusted for the operator's own
 convenience, which the design did not account for.
 
+## A second bypass lever: approvals_reviewer
+
+Trust is not the only lever. Building the role home the first way (the operator
+config with only the `[projects.*]` tables stripped) still let the repo write
+through with NO trust entry present. The cause is a second operator convenience
+carried over: `approvals_reviewer = "auto_review"` in `~/.codex/config.toml`
+auto-approves an out-of-sandbox write instead of refusing it, so `-s` is bypassed
+even against an untrusted project. Disk-verified: a role home with that key wrote
+the repo under `-s read-only`; the same role home without it refused. So an
+autonomous codex role must carry neither a trusted target NOR an auto-approving
+review policy.
+
 ## The fix: a role-scoped CODEX_HOME (menu option c)
 
 codex reads its config from `CODEX_HOME` (identity already travels by env; the
 adapter seeds `CODEX_HOME` from `~/.codex`). Point the role at its own
-`CODEX_HOME` whose `config.toml` does not trust the target project, symlink the
-identity files back to the operator's home, and `-s` governs writes again.
+`CODEX_HOME` whose config carries neither bypass lever, symlink the identity
+files back to the operator's home, and `-s` governs writes again.
 
-Built and disk-verified. Role home: a `config.toml` carrying the model and
-`[mcp_servers.director]` (see below) and NO project-trust entries, plus
-`auth.json` and `models_cache.json` symlinked from `~/.codex`. Then, on
-gpt-5.6-luna:
+Built as an ALLOWLIST, not a filtered copy, because both levers ride operator
+conveniences and a denylist would miss the next one. The role `config.toml`
+carries only the model, a reasoning effort, and every `[mcp_servers.*]` table
+(so director-mcp survives); `auth.json` and `models_cache.json` are symlinked
+from `~/.codex`. No `[projects.*]` trust, no `approvals_reviewer`. Regenerated on
+every cast, so any trust codex tries to persist mid-run is wiped before the next.
+Disk-verified through the actual wrappers on gpt-5.6-luna:
 
 - Retrospector shape (cwd = retro dir, `-s workspace-write`): wrote `RETRO.md`
   to the retro dir, READ `~/work/aae-orc/charter.md` for context, and the repo
   write was REFUSED (`patch rejected: writing outside of the project`).
 - Reviewer shape (cwd = the repo, `-s read-only`): the repo write was REFUSED
   (`writing is blocked by read-only sandbox`).
+
+Implemented as a shared helper `codex-role-home.sh` the two cast wrappers call
+before `exec codex`, exporting `CODEX_HOME` at the role home.
 
 The operator's global `~/.codex/config.toml` is never touched, so their own
 interactive codex in `aae-orc` keeps its trusted convenience. This is the

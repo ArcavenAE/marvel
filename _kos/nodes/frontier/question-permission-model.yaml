@@ -116,8 +116,12 @@ content: |
   target both the read-only reviewer and the constrained-write retrospector
   could write the repo. Disk-verified; the model self-reported "refused"
   while the file landed, so the write verify must read the filesystem, not
-  the model. The fix keeps marvel out of the operator's config: give the
-  codex role its own `CODEX_HOME` whose config trusts nothing (identity
+  the model. A second lever compounds it: `approvals_reviewer =
+  "auto_review"` in the operator config auto-approves an out-of-sandbox
+  write even against an untrusted project. The fix keeps marvel out of the
+  operator's config: give the codex role its own `CODEX_HOME` built as an
+  allowlist (model, reasoning, and `[mcp_servers.*]` only, so it carries
+  neither a trusted project nor an auto-approving review policy; identity
   files symlinked back, `[mcp_servers.director]` kept so the bus channel
   survives), and `-s` governs writes again. That is environment
   construction one config layer below the claude projection: marvel controls
