@@ -2,6 +2,8 @@ package bus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,8 +69,20 @@ type Supervisor struct {
 	restarts    int
 	backoffTill time.Time
 	leafUp      *bool
-	cancel      context.CancelFunc
-	watchDone   chan struct{}
+	// leafSeedInEnv records whether the running broker was spawned with the
+	// leaf seed in its environment. nats-server reads its environment once at
+	// start, so this is what decides whether a newly enrolled leaf can come up
+	// on a reload (seed already present) or needs a fresh process to read it
+	// (booted unenrolled); see the daemon enrollment path (aae-orc-ct0l4).
+	leafSeedInEnv bool
+	// leafSeedFP fingerprints the leaf seed the running broker was spawned
+	// with (empty when none). A seed ROTATION (a new seed value) also needs a
+	// fresh process, since the environment is read once at start; the daemon
+	// compares this to the currently stored seed to tell rotation from an
+	// identical re-put.
+	leafSeedFP string
+	cancel     context.CancelFunc
+	watchDone  chan struct{}
 
 	// Structural health (aae-orc-vy6k7). structure is the last definite
 	// reading; structureKnown says one exists; problems is the last
@@ -104,8 +118,9 @@ type Status struct {
 	PID          int    `json:"pid,omitempty"`
 	Adopted      bool   `json:"adopted"`
 	Ready        bool   `json:"ready"`
-	// Leaf is "up", "down", "unenrolled" (hub with no seed), "n/a" (no hub),
-	// or "unknown" (not polled yet).
+	// Leaf is "up", "down", "detached" (enrolled but the operator disconnected
+	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
+	// polled yet).
 	Leaf string `json:"leaf"`
 	// Structure is the structural-health reading on a managed broker
 	// (provisioned, authorized, tls, what is missing); nil before the first
@@ -248,6 +263,18 @@ func (s *Supervisor) spawnLocked() error {
 	if strings.Contains(string(body), "$"+LeafSeedEnv) && !hasEnv(env, LeafSeedEnv) {
 		return fmt.Errorf("bus: %s references $%s but no %s credential is in the store; the broker would refuse to start", conf, LeafSeedEnv, "bus/leaf")
 	}
+	// Record whether this process can resolve a leaf remote's seed on a later
+	// reload. A broker spawned with the seed already present picks up a
+	// connect on SIGHUP; one spawned without it needs a fresh process when a
+	// seed is enrolled (aae-orc-ct0l4). Also fingerprint the spawned seed so a
+	// later rotation (a different seed value) is distinguished from an
+	// identical re-put.
+	s.leafSeedInEnv = hasEnv(env, LeafSeedEnv)
+	if v, ok := envValue(env, LeafSeedEnv); ok {
+		s.leafSeedFP = SeedFingerprint([]byte(v))
+	} else {
+		s.leafSeedFP = ""
+	}
 	if err := os.MkdirAll(filepath.Dir(s.logPath), 0o700); err != nil {
 		return fmt.Errorf("bus: create log dir: %w", err)
 	}
@@ -295,6 +322,26 @@ func hasEnv(env []string, key string) bool {
 		}
 	}
 	return false
+}
+
+// envValue returns the value of key in a KEY=VALUE environment slice. The last
+// match wins, mirroring how exec resolves a repeated variable.
+func envValue(env []string, key string) (string, bool) {
+	prefix := key + "="
+	for i := len(env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(env[i], prefix) {
+			return env[i][len(prefix):], true
+		}
+	}
+	return "", false
+}
+
+// SeedFingerprint is a stable, non-reversible identifier for a leaf seed. It
+// lets the daemon tell a seed rotation from an identical re-put without ever
+// logging or comparing the seed itself.
+func SeedFingerprint(seed []byte) string {
+	sum := sha256.Sum256(seed)
+	return hex.EncodeToString(sum[:8])
 }
 
 // watch follows the child: a pid exit marvel did not ask for is
@@ -583,6 +630,25 @@ func (s *Supervisor) readStructure(ctx context.Context) (Structure, error) {
 	return CheckStructure(ctx, s.mgr.URL(), admin.Name, admin.Password, mon)
 }
 
+// LeafSeedInEnv reports whether the running broker was spawned with the leaf
+// seed in its environment. The daemon's enrollment path reads it to decide
+// whether a newly enrolled leaf comes up on a reload or needs a fresh process.
+func (s *Supervisor) LeafSeedInEnv() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leafSeedInEnv
+}
+
+// LeafSeedFingerprint returns a stable, non-reversible identifier for the leaf
+// seed the running broker was spawned with, or "" when it booted without one.
+// The daemon compares it to the currently stored seed to decide whether a
+// newly stored seed is a rotation (needs a restart) or an identical re-put.
+func (s *Supervisor) LeafSeedFingerprint() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leafSeedFP
+}
+
 // Status snapshots the broker for `marvel bus status`.
 func (s *Supervisor) Status() Status {
 	s.mu.Lock()
@@ -608,6 +674,8 @@ func (s *Supervisor) Status() Status {
 		st.Leaf = "n/a"
 	case !s.mgr.leafEnrolled():
 		st.Leaf = "unenrolled"
+	case !s.mgr.LeafAttached():
+		st.Leaf = "detached"
 	case s.leafUp == nil:
 		st.Leaf = "unknown"
 	case *s.leafUp:

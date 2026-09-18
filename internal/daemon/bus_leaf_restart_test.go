@@ -4,26 +4,33 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nkeys"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 )
 
-// TestLeafCredentialPutRestartsTheSupervisedBroker is brief 10 s.6 step 7
-// end to end inside the daemon: a hub-configured cluster starts unenrolled,
-// `credential put bus/leaf` re-renders the leaf remote, and the broker is
-// restarted so its environment carries the seed. Needs a real nats-server.
-func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
+// startTestLeafBroker wires a managed broker the way attachBus does and starts
+// it: a hub-configured cluster, the seed revealed from the store at each spawn,
+// and provisioning as AfterReady. With preEnroll the seed is in the store
+// before the broker starts, so it boots with the seed in its environment and
+// the leaf attached (no enrollment restart); without it the broker boots
+// unenrolled. Returns the supervisor and the rendered-config directory. Skips
+// when nats-server is not on PATH.
+func startTestLeafBroker(t *testing.T, d *Daemon, hub string, preEnroll bool) (*bus.Supervisor, string) {
+	t.Helper()
 	if _, err := exec.LookPath("nats-server"); err != nil {
 		t.Skip("nats-server not on PATH")
 	}
-	d := newHandlerDaemon(t)
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	// Any free loopback port works: the config renderer relocates the +4000
@@ -34,10 +41,21 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 	if lerr != nil {
 		t.Fatal(lerr)
 	}
+	listen := l.Addr().String()
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
-	listen := "127.0.0.1:" + strconv.Itoa(port)
-	rb := config.ResolvedBus{Managed: true, Listen: listen, URL: "nats://" + listen, StoreDir: dir, HubURL: "nats-leaf://127.0.0.1:1"}
+
+	if preEnroll {
+		kp, _ := nkeys.CreateUser()
+		seed, _ := kp.Seed()
+		if err := d.store.CreateCredential(&api.Credential{
+			Name: busLeafCredential, Kind: api.CredentialNATSNKeySeed, Value: seed, IssuedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rb := config.ResolvedBus{Managed: true, Listen: listen, URL: "nats://" + listen, StoreDir: dir, HubURL: hub}
 	mgr, err := bus.NewManager(dir, "t"+strconv.Itoa(port), rb, d.store, func() bool {
 		_, gerr := d.store.GetCredential(busLeafCredential)
 		return gerr == nil
@@ -56,8 +74,8 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 		}
 		return []string{bus.LeafSeedEnv + "=" + string(seed)}
 	}
-	// What attachBus wires: a bare broker is not ready under the
-	// structural-health contract (aae-orc-vy6k7), so provision as the daemon does.
+	// A bare broker is not ready under the structural-health contract
+	// (aae-orc-vy6k7), so provision as the daemon does.
 	sup.AfterReady = func() error {
 		admin := mgr.Admin()
 		_, perr := bus.Provision(context.Background(), mgr.URL(), admin.Name, admin.Password)
@@ -71,6 +89,27 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 	}
 	d.busSup = sup
 	t.Cleanup(func() { sup.Stop(false) })
+	return sup, dir
+}
+
+func leafInConf(t *testing.T, dir string) bool {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(dir, bus.ConfName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(string(body), "leafnodes")
+}
+
+// TestLeafCredentialPutRestartsOnFirstEnrollmentThenReloads is the enrollment
+// lifecycle end to end inside the daemon: a hub-configured cluster starts
+// unenrolled, the first `credential put bus/leaf` restarts the broker so its
+// environment carries the seed (the one accepted bounce), and a later put on
+// the same broker is reload-only because the environment already carries the
+// seed (aae-orc-ct0l4). Needs a real nats-server.
+func TestLeafCredentialPutRestartsOnFirstEnrollmentThenReloads(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sup, _ := startTestLeafBroker(t, d, "nats-leaf://127.0.0.1:1", false)
 	first := sup.Status()
 	if first.Leaf != "unenrolled" {
 		t.Fatalf("before put: leaf=%q, want unenrolled", first.Leaf)
@@ -85,7 +124,7 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 	}
 	after := sup.Status()
 	if after.PID == first.PID || !after.Ready {
-		t.Fatalf("broker not restarted by the put: before %+v after %+v", first, after)
+		t.Fatalf("broker not restarted by the first put: before %+v after %+v", first, after)
 	}
 	if after.Leaf == "unenrolled" {
 		t.Error("leaf still unenrolled after the put")
@@ -93,7 +132,8 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 
 	// Delete clears memory only (brief 9 E4): the conf loses the remote and
 	// reloads, but the running broker is not restarted for a revoke the hub
-	// side owns. A fresh put is a rendered change again, and restarts.
+	// side owns. The seed stays in the broker's environment (delete does not
+	// change the running process), so a second put is reload-only.
 	del, _ := json.Marshal(map[string]string{"name": busLeafCredential})
 	if resp := d.dispatchAs(Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
 		t.Fatalf("credential.delete: %s", resp.Error)
@@ -104,7 +144,91 @@ func TestLeafCredentialPutRestartsTheSupervisedBroker(t *testing.T) {
 	if resp := d.dispatchAs(Request{Method: "credential.put", Params: params}, localCaller()); resp.Error != "" {
 		t.Fatalf("second put: %s", resp.Error)
 	}
-	if again := sup.Status(); again.PID == after.PID || !again.Ready {
-		t.Errorf("second put did not restart: %+v", again)
+	// The environment already carried the seed (the first put restarted for
+	// it), so the second put reloads in place: same pid, and no longer
+	// unenrolled. The link itself stays down because the hub port is bogus.
+	if again := sup.Status(); again.PID != after.PID || !again.Ready || again.Leaf == "unenrolled" {
+		t.Errorf("second put should be reload-only and re-enrolled: %+v", again)
+	}
+}
+
+// TestLeafCredentialRotationRestartsForNewSeed proves a seed ROTATION (a new
+// seed value) restarts the broker rather than reloading. nats-server reads the
+// seed from its environment once at start, so a reload would keep the old seed
+// and the leaf would authenticate with the wrong one; the daemon must restart
+// so the new process reads the new seed (codex review P1-1). This contrasts the
+// reload-only identical re-put in the enrollment test above. Needs a real
+// nats-server.
+func TestLeafCredentialRotationRestartsForNewSeed(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sup, _ := startTestLeafBroker(t, d, "nats-leaf://127.0.0.1:1", true)
+	start := sup.Status()
+
+	// Rotation is delete + put of a NEW seed value (the store rejects a
+	// duplicate name, so a real rotation deletes first).
+	del, _ := json.Marshal(map[string]string{"name": busLeafCredential})
+	if resp := d.dispatchAs(Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
+		t.Fatalf("credential.delete: %s", resp.Error)
+	}
+	kp, _ := nkeys.CreateUser()
+	seedB, _ := kp.Seed()
+	put, _ := json.Marshal(map[string]any{"name": busLeafCredential, "kind": "nats-nkey-seed", "value": seedB})
+	if resp := d.dispatchAs(Request{Method: "credential.put", Params: put}, localCaller()); resp.Error != "" {
+		t.Fatalf("credential.put (rotated seed): %s", resp.Error)
+	}
+	after := sup.Status()
+	if after.PID == start.PID {
+		t.Errorf("rotation to a new seed did not restart the broker: pid stayed %d", start.PID)
+	}
+	if !after.Ready {
+		t.Errorf("broker not ready after rotation restart: %+v", after)
+	}
+}
+
+// TestBusLeafConnectDisconnectIsReloadOnly is the connect/disconnect lifecycle:
+// against a broker that booted with the seed enrolled, disconnect and connect
+// toggle the leafnodes block and reload without ever bouncing the broker, so
+// every local session survives (aae-orc-ct0l4). Needs a real nats-server.
+func TestBusLeafConnectDisconnectIsReloadOnly(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sup, dir := startTestLeafBroker(t, d, "nats-leaf://127.0.0.1:1", true)
+	start := sup.Status()
+	switch start.Leaf {
+	case "unenrolled", "n/a", "detached":
+		t.Fatalf("pre-enrolled attached broker: leaf=%q, want up/down/unknown", start.Leaf)
+	}
+	if !leafInConf(t, dir) {
+		t.Fatal("pre-enrolled attached broker rendered no leaf block")
+	}
+	pid := start.PID
+
+	// Disconnect: reload-only, the broker never bounces, the block is gone.
+	if resp := d.dispatchAs(Request{Method: "bus.leaf.disconnect"}, localCaller()); resp.Error != "" {
+		t.Fatalf("disconnect: %s", resp.Error)
+	}
+	off := sup.Status()
+	if off.PID != pid {
+		t.Errorf("disconnect bounced the broker: pid %d -> %d", pid, off.PID)
+	}
+	if !off.Ready || off.Leaf != "detached" {
+		t.Errorf("after disconnect: %+v, want ready and detached", off)
+	}
+	if leafInConf(t, dir) {
+		t.Error("disconnect left the leaf block in the conf")
+	}
+
+	// Reconnect: reload-only, same broker, the block is back, no re-enrollment.
+	if resp := d.dispatchAs(Request{Method: "bus.leaf.connect"}, localCaller()); resp.Error != "" {
+		t.Fatalf("connect: %s", resp.Error)
+	}
+	on := sup.Status()
+	if on.PID != pid {
+		t.Errorf("connect bounced the broker: pid %d -> %d", pid, on.PID)
+	}
+	if !on.Ready || on.Leaf == "detached" || on.Leaf == "unenrolled" {
+		t.Errorf("after connect: %+v, want ready and re-attached", on)
+	}
+	if !leafInConf(t, dir) {
+		t.Error("connect did not restore the leaf block")
 	}
 }

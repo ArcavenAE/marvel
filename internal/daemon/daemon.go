@@ -837,6 +837,10 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleCredentialReveal(req.Params, c)
 	case "bus.status":
 		return d.handleBusStatus()
+	case "bus.leaf.connect":
+		return d.handleBusLeafConnect()
+	case "bus.leaf.disconnect":
+		return d.handleBusLeafDisconnect()
 	case "credential.list":
 		return d.handleCredentialList()
 	case "credential.delete":
@@ -2706,13 +2710,33 @@ func (d *Daemon) handleBusStatus() Response {
 }
 
 // regenerateBus re-renders the managed broker's files from the applied
-// teams and the leaf seed's presence. It is a no-op without a managed bus
-// and quiet when nothing changed; a change or a failure lands on the ring.
-func (d *Daemon) regenerateBus(reason string) bool {
+// teams and the leaf seed's presence and reloads the broker on a change. It
+// is a no-op without a managed bus and quiet when nothing changed; a change
+// or a failure lands on the ring.
+func (d *Daemon) regenerateBus(reason string) {
 	if d.bus == nil {
-		return false
+		return
 	}
 	changed, err := d.bus.Regenerate()
+	d.emitBusRender(reason, changed, err)
+}
+
+// regenerateBusNoReload re-renders the managed broker's files without asking
+// the broker to reload. The enrollment path uses it when only a fresh process
+// can pick the change up (the leaf seed reaching a broker that booted
+// unenrolled), so the caller restarts instead of the broker being SIGHUP'd
+// with a conf it cannot resolve yet.
+func (d *Daemon) regenerateBusNoReload(reason string) error {
+	if d.bus == nil {
+		return nil
+	}
+	changed, err := d.bus.Render()
+	d.emitBusRender(reason, changed, err)
+	return err
+}
+
+// emitBusRender records the outcome of a render on the ring and the log.
+func (d *Daemon) emitBusRender(reason string, changed bool, err error) {
 	switch {
 	case err != nil:
 		msg := fmt.Sprintf("bus config not rendered (%s): %v", reason, err)
@@ -2723,7 +2747,6 @@ func (d *Daemon) regenerateBus(reason string) bool {
 		events.Emit(d.events, events.Event{Kind: events.KindBusRendered, Severity: events.SeverityInfo, Message: msg})
 		log.Printf("%s: %s", events.KindBusRendered, msg)
 	}
-	return changed && err == nil
 }
 
 // restartBus restarts the supervised broker so a change that only a new
@@ -2740,4 +2763,95 @@ func (d *Daemon) restartBus(reason string) {
 		events.Emit(d.events, events.Event{Kind: events.KindBusCrashed, Severity: events.SeverityWarning, Message: msg})
 		log.Printf("%s: %s", events.KindBusCrashed, msg)
 	}
+}
+
+// enrollLeafSeed brings the leaf up after a bus/leaf seed is stored. It reloads
+// when the running broker's environment already carries the seed, and restarts
+// only when the broker booted unenrolled so a fresh process reads the seed from
+// its environment. That restart is the one accepted bounce (surfaced as its own
+// "picking up the leaf seed" start, never as a connect/disconnect); afterward
+// the environment carries the seed for the process's life and the toggle is
+// reload-only (aae-orc-ct0l4).
+func (d *Daemon) enrollLeafSeed() {
+	if d.bus == nil {
+		return
+	}
+	if d.busSup != nil && d.leafSeedNeedsRestart() {
+		// The running broker cannot resolve the current seed on a reload (it
+		// booted unenrolled, or its environment carries a different seed than
+		// the one now stored). Render without reloading, then restart so the
+		// new process reads it. When the operator has the leaf detached, the
+		// restart still loads the seed (so a later connect is reload-only) but
+		// renders no leaf, so the reason says so and the bounce is not read as
+		// a failed bring-up.
+		reason := "picking up the leaf seed after enrollment"
+		if !d.bus.LeafAttached() {
+			reason += "; leaf stays detached until connect"
+		}
+		if err := d.regenerateBusNoReload("credential.put " + busLeafCredential); err != nil {
+			// Restarting on a conf that did not render would read stale files;
+			// the render error is already on the ring, so hold and let the next
+			// enrollment or reconcile retry.
+			return
+		}
+		d.restartBus(reason)
+		return
+	}
+	d.regenerateBus("credential.put " + busLeafCredential)
+}
+
+// leafSeedNeedsRestart reports whether picking up the enrolled seed needs a
+// fresh broker process rather than a reload. nats-server reads the seed from
+// its environment once at start, so a broker that booted unenrolled, or one
+// whose environment carries a different seed than the one now stored (a
+// rotation), cannot resolve the current seed on SIGHUP.
+func (d *Daemon) leafSeedNeedsRestart() bool {
+	if !d.busSup.LeafSeedInEnv() {
+		return true
+	}
+	seed, err := d.store.RevealCredentialValue(busLeafCredential)
+	if err != nil {
+		return false // nothing to compare against; a reload is the safe default
+	}
+	return bus.SeedFingerprint(seed) != d.busSup.LeafSeedFingerprint()
+}
+
+// handleBusLeafConnect and handleBusLeafDisconnect toggle the leaf link on a
+// managed broker without a bounce: they render the leafnodes block in or out
+// and reload (SIGHUP), leaving the seed enrolled and every local session
+// connected. They never restart; the one enrollment restart lives in
+// enrollLeafSeed (aae-orc-ct0l4).
+func (d *Daemon) handleBusLeafConnect() Response {
+	return d.setLeafAttached(true, "bus.leaf.connect")
+}
+
+func (d *Daemon) handleBusLeafDisconnect() Response {
+	return d.setLeafAttached(false, "bus.leaf.disconnect")
+}
+
+func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
+	if d.bus == nil || d.busSup == nil {
+		return Response{Error: "no managed bus is configured for this cluster; connect and disconnect apply to a marvel-supervised broker"}
+	}
+	if d.bus.Bus().HubURL == "" {
+		return Response{Error: "this cluster declares no hub (bus.hub.url); there is no leaf to connect or disconnect"}
+	}
+	changed, err := d.bus.SetLeafAttached(attached)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("%s: %v", reason, err)}
+	}
+	verb := "disconnected"
+	if attached {
+		verb = "connected"
+	}
+	if changed {
+		msg := fmt.Sprintf("leaf %s from %s by config reload; local sessions kept", verb, d.bus.Bus().HubURL)
+		events.Emit(d.events, events.Event{Kind: events.KindBusReloaded, Severity: events.SeverityInfo, Message: msg})
+		log.Printf("%s: %s", events.KindBusReloaded, msg)
+	}
+	data, err := json.Marshal(d.busSup.Status())
+	if err != nil {
+		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
+	}
+	return Response{Result: data}
 }
