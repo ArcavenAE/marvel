@@ -118,3 +118,102 @@ func backendFlagTruthy(v string) bool {
 		return true
 	}
 }
+
+// Backend names a specific model backend, richer than the coarse
+// BackendRedirection verdict the window resolver consumes. It carries two
+// roles in the backend-override design (design-backend-swaps.md, R1/R4/R5):
+// the per-role INTENDED backend an operator declares (Runtime.Backend), and
+// the NAMED backend the constructed spawn environment resolves to
+// (ResolveBackend). marvel compares the two and fails loudly when they
+// disagree. Empty means unspecified: no declared intent, or a session the
+// classifier never ran on.
+type Backend string
+
+const (
+	// BackendDefaultName is the vendor direct API with no selector set. It
+	// is also where a subscription (Max OAuth) session resolves, because
+	// the environment cannot show subscription apart from default; the
+	// intent label carries that distinction (BackendSubscription).
+	BackendDefaultName Backend = "default"
+	// BackendSubscription is an operator's own Max/Pro OAuth, selectors
+	// positively OFF (design R7, single-user A2). An intent label only:
+	// the environment resolves it to BackendDefaultName.
+	BackendSubscription Backend = "subscription"
+	BackendBedrock      Backend = "bedrock"
+	BackendAnthropicAWS Backend = "anthropic-aws"
+	BackendVertex       Backend = "vertex"
+	BackendFoundry      Backend = "foundry"
+	BackendMantle       Backend = "mantle"
+	BackendGateway      Backend = "gateway"
+	// BackendCustom is a base-URL redirect that names no standard selector
+	// (a proxy, or a future local backend). Recognised so the intent check
+	// is honest; the named local modes are BT13, out of pass 1.
+	BackendCustom Backend = "custom"
+)
+
+// backendSelectorNames maps each Claude Code boolean selector to the backend
+// it names, in the precedence order Claude Code applies. Bedrock and Foundry
+// outrank Platform-on-AWS, so turning Platform-on-AWS ON is not enough while
+// a Bedrock selector is also ON (research Q, the reason the overlay pins
+// competitors OFF rather than only turning one ON). ResolveBackend returns
+// the first truthy selector in this order.
+var backendSelectorNames = []struct {
+	env     string
+	backend Backend
+}{
+	{"CLAUDE_CODE_USE_BEDROCK", BackendBedrock},
+	{"CLAUDE_CODE_USE_FOUNDRY", BackendFoundry},
+	{"CLAUDE_CODE_USE_VERTEX", BackendVertex},
+	{"CLAUDE_CODE_USE_MANTLE", BackendMantle},
+	{"CLAUDE_CODE_USE_GATEWAY", BackendGateway},
+	{"CLAUDE_CODE_USE_ANTHROPIC_AWS", BackendAnthropicAWS},
+}
+
+// ResolveBackend names the backend the constructed spawn environment selects.
+// It reads the same variables ClassifyBackendRedirection checks but returns
+// the SPECIFIC backend rather than the coarse redirected/default verdict, so
+// marvel can compare it against the declared intent. A truthy selector wins
+// in precedence order; a base-URL redirect with no selector is BackendCustom;
+// nothing set is BackendDefaultName. Like ClassifyBackendRedirection it takes
+// a lookup so the caller can overlay the process environment with the
+// per-session env it constructed, and it never returns the empty Backend:
+// running the classifier always yields a name.
+func ResolveBackend(lookup func(string) string) Backend {
+	for _, s := range backendSelectorNames {
+		if backendFlagTruthy(lookup(s.env)) {
+			return s.backend
+		}
+	}
+	for _, name := range backendValueVars {
+		if strings.TrimSpace(lookup(name)) != "" {
+			return BackendCustom
+		}
+	}
+	return BackendDefaultName
+}
+
+// selectorFamily reduces a named backend to what the environment can show:
+// subscription is indistinguishable from default in the env (both set no
+// selector), so both collapse to BackendDefaultName. Every other backend is
+// its own family. This is what BackendMatches compares, so a subscription
+// intent agrees with a clean (no-selector) environment while a leaked
+// selector does not.
+func (b Backend) selectorFamily() Backend {
+	if b == BackendSubscription {
+		return BackendDefaultName
+	}
+	return b
+}
+
+// BackendMatches reports whether a resolved backend is consistent with the
+// declared intent. An empty intent matches anything (no declaration to
+// contradict). Otherwise the two must share a selector family, so
+// subscription intent matches a clean environment (resolved default) and a
+// leaked selector (resolved bedrock) does not. This is the intent-versus-
+// actual test the loud-failure gate applies (design R4).
+func BackendMatches(intended, resolved Backend) bool {
+	if intended == "" {
+		return true
+	}
+	return intended.selectorFamily() == resolved.selectorFamily()
+}

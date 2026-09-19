@@ -113,3 +113,68 @@ func TestEveryBackendVariableRedirects(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveBackend(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		env  map[string]string
+		want Backend
+	}{
+		{"empty environment resolves to default", nil, BackendDefaultName},
+		{"a falsy selector resolves to default", map[string]string{"CLAUDE_CODE_USE_BEDROCK": "0"}, BackendDefaultName},
+		{"bedrock selector names bedrock", map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1"}, BackendBedrock},
+		{"platform-on-aws selector names anthropic-aws", map[string]string{"CLAUDE_CODE_USE_ANTHROPIC_AWS": "1"}, BackendAnthropicAWS},
+		{"vertex selector names vertex", map[string]string{"CLAUDE_CODE_USE_VERTEX": "true"}, BackendVertex},
+		{
+			// The load-bearing precedence: Bedrock outranks Platform-on-AWS,
+			// so both ON resolves to bedrock. This is why the overlay pins
+			// competitors OFF rather than only turning the chosen one ON.
+			name: "bedrock outranks platform-on-aws when both are set",
+			env:  map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_ANTHROPIC_AWS": "1"},
+			want: BackendBedrock,
+		},
+		{"a base URL with no selector is custom", map[string]string{"ANTHROPIC_BASE_URL": "https://proxy.internal/v1"}, BackendCustom},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ResolveBackend(lookupFrom(c.env)); got != c.want {
+				t.Errorf("ResolveBackend() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestBackendMatches(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name               string
+		intended, resolved Backend
+		want               bool
+	}{
+		{"no intent matches anything", "", BackendBedrock, true},
+		{"bedrock intent matches bedrock", BackendBedrock, BackendBedrock, true},
+		{"bedrock intent does not match default", BackendBedrock, BackendDefaultName, false},
+		{"subscription intent matches a clean default environment", BackendSubscription, BackendDefaultName, true},
+		{
+			// The finding-166 silent-redirect: intended subscription, but a
+			// leaked selector resolved bedrock. The gate must call this a
+			// mismatch.
+			name:     "subscription intent does not match a leaked bedrock selector",
+			intended: BackendSubscription,
+			resolved: BackendBedrock,
+			want:     false,
+		},
+		{"default intent matches default", BackendDefaultName, BackendDefaultName, true},
+		{"default intent does not match a leaked selector", BackendDefaultName, BackendBedrock, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := BackendMatches(c.intended, c.resolved); got != c.want {
+				t.Errorf("BackendMatches(%q, %q) = %v, want %v", c.intended, c.resolved, got, c.want)
+			}
+		})
+	}
+}

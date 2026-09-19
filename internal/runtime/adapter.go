@@ -333,6 +333,16 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
 		}
 	}
+	// The per-role manifest Env is the override seam (Layer B): it is merged
+	// LAST so a declared value wins over marvel's constructed defaults, which
+	// is what the BEADS_ACTOR comment above promises a "future manifest env
+	// surface". This is the per-role backend declaration
+	// (design-backend-swaps.md); it is advisory against a settings-managed
+	// host, so the reliable enforcement is the --settings overlay. An operator
+	// who overrides bus or identity vars here owns that choice.
+	for k, v := range ctx.Role.Runtime.Env {
+		env[k] = v
+	}
 	return env
 }
 

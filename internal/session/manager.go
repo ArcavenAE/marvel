@@ -482,7 +482,16 @@ func (m *Manager) Create(sess *api.Session) error {
 	// value of a backend switch is the constructed override when present and
 	// os.Getenv otherwise. Recorded on the session so the window resolver can
 	// tell a direct-API window from a redirected one.
-	sess.BackendRedirection = api.ClassifyBackendRedirection(backendEnvLookup(plan.env))
+	lookup := backendEnvLookup(plan.env)
+	sess.BackendRedirection = api.ClassifyBackendRedirection(lookup)
+	// The named intent/actual pair for the backend-override loud-failure gate
+	// (design R4): the operator's declared backend for this role, and the
+	// backend the constructed environment actually selects. The gate compares
+	// them; the verification command reads them back. Recorded here, at the
+	// same point and over the same constructed environment as the coarse
+	// verdict, so all three stay consistent.
+	sess.BackendIntended = api.Backend(sess.Runtime.Backend)
+	sess.BackendResolved = api.ResolveBackend(lookup)
 
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
