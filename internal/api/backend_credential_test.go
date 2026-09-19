@@ -13,7 +13,10 @@ func TestResolveBackendCredentialSource(t *testing.T) {
 		{"export helper", BackendOverlay{Mode: BackendBedrock, AWSCredentialExport: "/opt/creds.sh"}, BackendCredentialAWSExport},
 		{"profile name", BackendOverlay{Mode: BackendBedrock, Extra: map[string]string{awsProfileEnv: "eng"}}, BackendCredentialAWSProfile},
 		{"api key helper", BackendOverlay{Mode: BackendAnthropicAWS, APIKeyHelper: "/opt/key.sh"}, BackendCredentialAPIKeyHelper},
+		{"auth refresh hook", BackendOverlay{Mode: BackendBedrock, AWSAuthRefresh: "/opt/refresh.sh"}, BackendCredentialAWSAuthRefresh},
 		{"export outranks profile", BackendOverlay{Mode: BackendBedrock, AWSCredentialExport: "/opt/creds.sh", Extra: map[string]string{awsProfileEnv: "eng"}}, BackendCredentialAWSExport},
+		{"export outranks auth refresh", BackendOverlay{Mode: BackendBedrock, AWSCredentialExport: "/opt/creds.sh", AWSAuthRefresh: "/opt/refresh.sh"}, BackendCredentialAWSExport},
+		{"auth refresh outranks a bare profile", BackendOverlay{Mode: BackendBedrock, AWSAuthRefresh: "/opt/refresh.sh", Extra: map[string]string{awsProfileEnv: "eng"}}, BackendCredentialAWSAuthRefresh},
 		{"profile outranks api key helper", BackendOverlay{Mode: BackendBedrock, APIKeyHelper: "/opt/key.sh", Extra: map[string]string{awsProfileEnv: "eng"}}, BackendCredentialAWSProfile},
 		{"blank declarations are not a source", BackendOverlay{Mode: BackendBedrock, AWSCredentialExport: "   ", Extra: map[string]string{awsProfileEnv: " "}}, BackendCredentialAmbient},
 	}
@@ -39,6 +42,7 @@ func TestBackendCredentialSourceRefreshesNonInteractively(t *testing.T) {
 		{BackendCredentialAWSExport, true},
 		{BackendCredentialAPIKeyHelper, true},
 		{BackendCredentialAWSProfile, false},
+		{BackendCredentialAWSAuthRefresh, false},
 		{BackendCredentialAmbient, false},
 		{BackendCredentialUnknown, false},
 	}
@@ -63,6 +67,7 @@ func TestBackendIsIAMSessionAndRefreshVouched(t *testing.T) {
 	}{
 		{"bedrock with export helper", BackendBedrock, BackendCredentialAWSExport, true, true},
 		{"bedrock with profile only", BackendBedrock, BackendCredentialAWSProfile, true, false},
+		{"bedrock with only an auth refresh hook", BackendBedrock, BackendCredentialAWSAuthRefresh, true, false},
 		{"bedrock with static keys", BackendBedrock, BackendCredentialAmbient, false, true},
 		{"platform-on-aws with export helper", BackendAnthropicAWS, BackendCredentialAWSExport, true, true},
 		{"platform-on-aws with profile only", BackendAnthropicAWS, BackendCredentialAWSProfile, true, false},
@@ -90,11 +95,12 @@ func TestBackendVariantLabel(t *testing.T) {
 		src     BackendCredentialSource
 		want    string
 	}{
-		{BackendBedrock, BackendCredentialAWSExport, "bedrock (iam)"},
-		{BackendBedrock, BackendCredentialAWSProfile, "bedrock (iam)"},
-		{BackendBedrock, BackendCredentialAmbient, "bedrock (static)"},
-		{BackendAnthropicAWS, BackendCredentialAWSExport, "anthropic-aws (iam)"},
-		{BackendAnthropicAWS, BackendCredentialAmbient, "anthropic-aws (static)"},
+		{BackendBedrock, BackendCredentialAWSExport, "bedrock (IAM session)"},
+		{BackendBedrock, BackendCredentialAWSProfile, "bedrock (IAM session)"},
+		{BackendBedrock, BackendCredentialAWSAuthRefresh, "bedrock (IAM session)"},
+		{BackendBedrock, BackendCredentialAmbient, "bedrock (static key)"},
+		{BackendAnthropicAWS, BackendCredentialAWSExport, "anthropic-aws (IAM session)"},
+		{BackendAnthropicAWS, BackendCredentialAmbient, "anthropic-aws (static key)"},
 		{BackendVertex, BackendCredentialAmbient, "vertex"},
 		{BackendSubscription, BackendCredentialAmbient, "subscription"},
 	}

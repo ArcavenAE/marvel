@@ -146,9 +146,25 @@ func VerifyBackend(in BackendVerifyInput) BackendVerification {
 	}
 
 	if !BackendRefreshVouched(in.Resolved, in.CredentialSource) {
-		v.Problems = append(v.Problems, fmt.Sprintf("%s has no refresh marvel can vouch for (declared source %s); an expiry mid-shift needs a human", v.Label, in.CredentialSource))
+		v.Problems = append(v.Problems, fmt.Sprintf("%s has no refresh marvel can vouch for: %s. An expiry mid-shift would need a human; declare an awsCredentialExport pointer to close it, or prove it in the shakedown", v.Label, backendRefreshGap(in.CredentialSource)))
 	}
 
 	v.OK = len(v.Problems) == 0
 	return v
+}
+
+// backendRefreshGap says what marvel cannot see for a source it will not vouch
+// for. The distinction is the point: each of these is a real limit on what a
+// configuration declaration can prove, not a guess about the operator's setup.
+func backendRefreshGap(src BackendCredentialSource) string {
+	switch src {
+	case BackendCredentialAWSProfile:
+		return "the role declares only an AWS_PROFILE, and marvel does not read the AWS config, so it cannot tell a non-interactive credential_process from an SSO profile that wants a browser"
+	case BackendCredentialAWSAuthRefresh:
+		return "the role declares an awsAuthRefresh hook but no awsCredentialExport, and marvel cannot see whether that script refreshes without a human"
+	case BackendCredentialUnknown:
+		return "marvel never classified this session's credential source"
+	default:
+		return "the role declares no non-interactive credential source"
+	}
 }

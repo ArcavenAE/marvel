@@ -586,6 +586,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.BackendIntended = sess.BackendIntended
 		live.BackendResolved = sess.BackendResolved
 		live.BackendCredentialSource = sess.BackendCredentialSource
+		live.BackendOverlayPath = sess.BackendOverlayPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID

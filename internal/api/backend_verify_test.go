@@ -88,7 +88,7 @@ func TestVerifyBackend(t *testing.T) {
 				CredentialSource: BackendCredentialAWSExport,
 				OverlayPath:      "/tmp/ov.json", OverlaySettings: bedrockOverlay,
 			},
-			wantOK: true, wantLabel: "bedrock (iam)",
+			wantOK: true, wantLabel: "bedrock (IAM session)",
 		},
 		{
 			name: "subscription needs an overlay and agrees with a clean environment",
@@ -141,7 +141,7 @@ func TestVerifyBackend(t *testing.T) {
 				CredentialSource: BackendCredentialAWSProfile,
 				OverlayPath:      "/tmp/ov.json", OverlaySettings: bedrockOverlay,
 			},
-			wantOK: false, wantLabel: "bedrock (iam)", wantProblem: "no refresh marvel can vouch for",
+			wantOK: false, wantLabel: "bedrock (IAM session)", wantProblem: "no refresh marvel can vouch for",
 		},
 		{
 			name: "static bedrock has nothing to refresh",
@@ -150,7 +150,7 @@ func TestVerifyBackend(t *testing.T) {
 				CredentialSource: BackendCredentialAmbient,
 				OverlayPath:      "/tmp/ov.json", OverlaySettings: bedrockOverlay,
 			},
-			wantOK: true, wantLabel: "bedrock (static)",
+			wantOK: true, wantLabel: "bedrock (static key)",
 		},
 		{
 			name: "unclassified session cannot tell",
@@ -197,5 +197,37 @@ func TestVerifyBackendReportsOverlayAgainstRecord(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(got.Problems, " | "), "marvel recorded vertex at spawn") {
 		t.Errorf("problems %v do not name the disagreement", got.Problems)
+	}
+}
+
+// Each unvouched source has its own limit, and the report names which one. The
+// distinction is the useful part: an operator fixes a bare profile differently
+// from a refresh hook marvel cannot see inside.
+func TestVerifyBackendNamesTheRefreshGap(t *testing.T) {
+	t.Parallel()
+	overlay := overlayFor(t, BackendOverlay{Mode: BackendBedrock})
+	tests := []struct {
+		src  BackendCredentialSource
+		want string
+	}{
+		{BackendCredentialAWSProfile, "does not read the AWS config"},
+		{BackendCredentialAWSAuthRefresh, "awsAuthRefresh hook but no awsCredentialExport"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.src), func(t *testing.T) {
+			t.Parallel()
+			got := VerifyBackend(BackendVerifyInput{
+				Session: "aae/dev/x", Intended: BackendBedrock, Resolved: BackendBedrock,
+				CredentialSource: tt.src,
+				OverlayPath:      "/tmp/ov.json", OverlaySettings: overlay,
+			})
+			if got.OK {
+				t.Fatal("expected an unvouched refresh to be reported")
+			}
+			joined := strings.Join(got.Problems, " | ")
+			if !strings.Contains(joined, tt.want) {
+				t.Errorf("problems %q do not name the gap %q", joined, tt.want)
+			}
+		})
 	}
 }

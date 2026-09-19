@@ -329,8 +329,11 @@ type Session struct {
 	// and the delete that sweeps it: a recomputed path then points at a
 	// directory the file was never in, os.Remove returns ErrNotExist, the
 	// best-effort sweep swallows it, and the real 0600 overlay outlives the
-	// session that owned it with nothing left to remove it. Empty when the
-	// declared backend warranted no overlay. Status, not spec.
+	// session that owned it with nothing left to remove it. Verification reads
+	// it for the same reason (design R5): an adopted session keeps classifying
+	// the file it was launched with rather than one recomputed from wherever
+	// the directory points now. Empty when the declared backend warranted no
+	// overlay. Status, not spec.
 	BackendOverlayPath string `toml:"-" json:"backend_overlay_path,omitempty"`
 	// BackendCredentialSource names HOW this session's backend authenticates,
 	// which neither of the fields above can show: the IAM twins and their

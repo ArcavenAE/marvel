@@ -241,8 +241,8 @@ func TestVerifyBackendRoundTripsAWrittenOverlay(t *testing.T) {
 	if !v.OverlayPresent {
 		t.Error("OverlayPresent = false, want true")
 	}
-	if v.Label != "bedrock (iam)" {
-		t.Errorf("Label = %q, want %q", v.Label, "bedrock (iam)")
+	if v.Label != "bedrock (IAM session)" {
+		t.Errorf("Label = %q, want %q", v.Label, "bedrock (IAM session)")
 	}
 	if v.OverlayPath != plan.env[MarvelBackendSettingsEnv] {
 		t.Errorf("OverlayPath = %q, want the stamped %q", v.OverlayPath, plan.env[MarvelBackendSettingsEnv])
@@ -315,5 +315,65 @@ func TestBackendOverlayForNamesTheDeclaredCredentialSource(t *testing.T) {
 				t.Errorf("credential source = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// The overlay path is recorded on the session at spawn (design R5), and
+// verification reads the recorded path rather than recomputing one. An adopted
+// session whose daemon has since moved BackendOverlayDir must still verify
+// against the file it was actually launched with.
+func TestVerifyBackendPrefersTheRecordedOverlayPath(t *testing.T) {
+	t.Parallel()
+	launchDir := t.TempDir()
+	m := &Manager{BackendOverlayDir: launchDir}
+	sess := newBackendTestSession("bedrock", nil)
+	plan := &launchPlan{env: map[string]string{}}
+	if _, err := m.applyBackendOverlay(sess, plan); err != nil {
+		t.Fatalf("applyBackendOverlay: %v", err)
+	}
+	if sess.BackendOverlayPath == "" {
+		t.Fatal("overlay path not recorded on the session")
+	}
+	if sess.BackendOverlayPath != plan.env[MarvelBackendSettingsEnv] {
+		t.Errorf("recorded path %q does not match the stamped one %q", sess.BackendOverlayPath, plan.env[MarvelBackendSettingsEnv])
+	}
+	sess.BackendIntended = api.BackendBedrock
+	sess.BackendResolved = api.BackendBedrock
+	sess.BackendCredentialSource = api.BackendCredentialAmbient
+
+	// The daemon's overlay directory moves out from under the running session.
+	moved := &Manager{BackendOverlayDir: t.TempDir()}
+	v := moved.VerifyBackend(*sess)
+	if !v.OK {
+		t.Fatalf("expected the recorded path to still verify, got %v", v.Problems)
+	}
+	if v.OverlayPath != sess.BackendOverlayPath {
+		t.Errorf("verified against %q, want the recorded %q", v.OverlayPath, sess.BackendOverlayPath)
+	}
+}
+
+// The design wires awsAuthRefresh for both IAM modes, so a role declares it
+// through a reserved key that is lifted into the settings file rather than
+// carried as a pane env var.
+func TestBackendOverlayForLiftsTheAuthRefreshPointer(t *testing.T) {
+	t.Parallel()
+	sess := newBackendTestSession("bedrock", map[string]string{
+		backendAWSAuthRefreshKey: "/opt/refresh.sh",
+		"AWS_PROFILE":            "eng",
+	})
+	ov := backendOverlayFor(sess)
+	if ov.AWSAuthRefresh != "/opt/refresh.sh" {
+		t.Errorf("AWSAuthRefresh = %q, want the declared pointer", ov.AWSAuthRefresh)
+	}
+	// The reserved key is a settings pointer, not pane env, so it must not
+	// survive into the passthrough block.
+	if _, ok := ov.Extra[backendAWSAuthRefreshKey]; ok {
+		t.Error("the reserved auth-refresh key leaked into the overlay env")
+	}
+	if ov.Extra["AWS_PROFILE"] != "eng" {
+		t.Errorf("AWS_PROFILE passthrough = %q, want it carried", ov.Extra["AWS_PROFILE"])
+	}
+	if got := api.ResolveBackendCredentialSource(ov); got != api.BackendCredentialAWSAuthRefresh {
+		t.Errorf("credential source = %q, want %q", got, api.BackendCredentialAWSAuthRefresh)
 	}
 }

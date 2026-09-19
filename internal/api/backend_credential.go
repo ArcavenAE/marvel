@@ -27,6 +27,13 @@ const (
 	// non-interactive refresh path the IAM modes need to survive hour two
 	// without a human (BT8), because the harness can re-run it itself.
 	BackendCredentialAWSExport BackendCredentialSource = "aws-credential-export"
+	// BackendCredentialAWSAuthRefresh is a declared awsAuthRefresh pointer: the
+	// script Claude Code runs once AWS auth has expired. The design wires it for
+	// both IAM modes (R6). It is recorded and emitted, but it does NOT vouch for
+	// unattended refresh: the setting's canonical use is an interactive browser
+	// login, and marvel cannot see which kind of script it points at. Declaring
+	// it says a refresh hook exists, not that the hook avoids a human.
+	BackendCredentialAWSAuthRefresh BackendCredentialSource = "aws-auth-refresh"
 	// BackendCredentialAWSProfile is a declared AWS_PROFILE name. It names
 	// an AWS identity but NOT how that identity refreshes: the same profile
 	// spelling covers a credential_process (non-interactive) and an SSO
@@ -57,6 +64,8 @@ func ResolveBackendCredentialSource(o BackendOverlay) BackendCredentialSource {
 	switch {
 	case strings.TrimSpace(o.AWSCredentialExport) != "":
 		return BackendCredentialAWSExport
+	case strings.TrimSpace(o.AWSAuthRefresh) != "":
+		return BackendCredentialAWSAuthRefresh
 	case strings.TrimSpace(o.Extra[awsProfileEnv]) != "":
 		return BackendCredentialAWSProfile
 	case strings.TrimSpace(o.APIKeyHelper) != "":
@@ -96,7 +105,7 @@ func BackendIsIAMSession(b Backend, src BackendCredentialSource) bool {
 		return false
 	}
 	switch src {
-	case BackendCredentialAWSExport, BackendCredentialAWSProfile:
+	case BackendCredentialAWSExport, BackendCredentialAWSAuthRefresh, BackendCredentialAWSProfile:
 		return true
 	default:
 		return false
@@ -118,12 +127,18 @@ func BackendRefreshVouched(b Backend, src BackendCredentialSource) bool {
 // BackendVariantLabel renders a backend for an operator, naming the IAM or
 // static variant for the AWS backends whose selector cannot distinguish them.
 // Non-AWS backends render as their plain name, because they have no twin.
+//
+// The parenthetical follows the design's own mode vocabulary ("Bedrock (IAM
+// session)", "Bedrock (static key)") so an operator reading this report and the
+// design see the same words. The leading token stays the wire identifier
+// (bedrock, anthropic-aws) rather than the product name, so the label still
+// corresponds to the value on the session record.
 func BackendVariantLabel(b Backend, src BackendCredentialSource) string {
 	if !backendUsesAWSIdentity(b) {
 		return string(b)
 	}
 	if BackendIsIAMSession(b, src) {
-		return string(b) + " (iam)"
+		return string(b) + " (IAM session)"
 	}
-	return string(b) + " (static)"
+	return string(b) + " (static key)"
 }

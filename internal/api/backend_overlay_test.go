@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func overlayEnv(t *testing.T, settings map[string]any) map[string]string {
 	t.Helper()
@@ -177,6 +180,61 @@ func TestBuildBackendOverlayIgnoresADeclaredSelector(t *testing.T) {
 	}
 	if got := overlayEnv(t, settings)["CLAUDE_CODE_USE_BEDROCK"]; got != "0" {
 		t.Errorf("CLAUDE_CODE_USE_BEDROCK = %q, want the builder's pin to hold", got)
+	}
+}
+
+// A role that declares a literal bearer is asking marvel to write a third
+// party's credential into a file marvel owns. That is custody, not brokering,
+// so the build refuses rather than writing it (ADR-009). The design names
+// AWS_BEARER_TOKEN_BEDROCK as the static Bedrock bearer.
+func TestBuildBackendOverlayRefusesAnInlinedBearer(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"AWS_BEARER_TOKEN_BEDROCK", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			_, err := BuildBackendOverlay(BackendOverlay{
+				Mode:  BackendBedrock,
+				Extra: map[string]string{key: "a-literal-secret-value"},
+			})
+			if err == nil {
+				t.Fatalf("expected a refusal for an inlined %s", key)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q does not name the offending key", err)
+			}
+			if strings.Contains(err.Error(), "a-literal-secret-value") {
+				t.Errorf("error leaks the credential value: %q", err)
+			}
+		})
+	}
+}
+
+// The design wires awsAuthRefresh for both IAM modes (R6), so the builder has
+// to emit it as a settings pointer beside awsCredentialExport.
+func TestBuildBackendOverlayEmitsAuthRefreshPointer(t *testing.T) {
+	t.Parallel()
+	settings, err := BuildBackendOverlay(BackendOverlay{
+		Mode:                BackendBedrock,
+		AWSCredentialExport: "/opt/creds.sh",
+		AWSAuthRefresh:      "/opt/refresh.sh",
+	})
+	if err != nil {
+		t.Fatalf("BuildBackendOverlay: %v", err)
+	}
+	if got := settings["awsAuthRefresh"]; got != "/opt/refresh.sh" {
+		t.Errorf("awsAuthRefresh = %v, want the declared pointer", got)
+	}
+	if got := settings["awsCredentialExport"]; got != "/opt/creds.sh" {
+		t.Errorf("awsCredentialExport = %v, want the declared pointer", got)
+	}
+	// An undeclared pointer stays absent rather than empty, so the harness
+	// never sees a key pointing at nothing.
+	bare, err := BuildBackendOverlay(BackendOverlay{Mode: BackendBedrock})
+	if err != nil {
+		t.Fatalf("BuildBackendOverlay: %v", err)
+	}
+	if _, ok := bare["awsAuthRefresh"]; ok {
+		t.Error("awsAuthRefresh present when none was declared")
 	}
 }
 

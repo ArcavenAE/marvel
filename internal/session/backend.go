@@ -28,8 +28,9 @@ const MarvelBackendSettingsEnv = "MARVEL_BACKEND_SETTINGS"
 // process env (they are Claude Code settings keys, not env vars). Their values
 // are helper-script PATHS whose stdout is the secret, never a literal bearer.
 const (
-	backendAPIKeyHelperKey  = "MARVEL_BACKEND_API_KEY_HELPER"
-	backendAWSCredExportKey = "MARVEL_BACKEND_AWS_CREDENTIAL_EXPORT"
+	backendAPIKeyHelperKey   = "MARVEL_BACKEND_API_KEY_HELPER"
+	backendAWSCredExportKey  = "MARVEL_BACKEND_AWS_CREDENTIAL_EXPORT"
+	backendAWSAuthRefreshKey = "MARVEL_BACKEND_AWS_AUTH_REFRESH"
 )
 
 // backendWorkspaceIDKey is the non-secret Platform-on-AWS workspace id an
@@ -40,7 +41,7 @@ const backendWorkspaceIDKey = "ANTHROPIC_AWS_WORKSPACE_ID"
 // backendReserved reports whether a role-env key is lifted to a settings
 // pointer rather than carried as a pane env var.
 func backendReserved(k string) bool {
-	return k == backendAPIKeyHelperKey || k == backendAWSCredExportKey
+	return k == backendAPIKeyHelperKey || k == backendAWSCredExportKey || k == backendAWSAuthRefreshKey
 }
 
 // backendOverlayEnabled reports whether a session's declared backend warrants a
@@ -69,6 +70,7 @@ func backendOverlayFor(sess *api.Session) api.BackendOverlay {
 		WorkspaceID:         sess.Runtime.Env[backendWorkspaceIDKey],
 		APIKeyHelper:        sess.Runtime.Env[backendAPIKeyHelperKey],
 		AWSCredentialExport: sess.Runtime.Env[backendAWSCredExportKey],
+		AWSAuthRefresh:      sess.Runtime.Env[backendAWSAuthRefreshKey],
 		Extra:               backendExtraEnv(sess.Runtime.Env),
 	}
 }
@@ -97,9 +99,10 @@ func (m *Manager) applyBackendOverlay(sess *api.Session, plan *launchPlan) (map[
 		plan.env = map[string]string{}
 	}
 	plan.env[MarvelBackendSettingsEnv] = path
-	// Record it on the session too, so the sweep removes the file this session
-	// was actually launched with rather than one recomputed from a directory
-	// that may have moved since.
+	// Record it on the session as well as in the pane env. Both the sweep
+	// and the verification read it back: the file this session was actually
+	// launched with is the one to remove and the one to classify, even if
+	// BackendOverlayDir has moved since (design R5).
 	sess.BackendOverlayPath = path
 
 	// Return the env block the harness will actually see through --settings, so
@@ -168,8 +171,16 @@ func (m *Manager) VerifyBackend(sess api.Session) api.BackendVerification {
 		CredentialSource: sess.BackendCredentialSource,
 	}
 	var readErr error
-	if m.BackendOverlayDir != "" {
+	// The recorded path wins over the computed one: it is what this session was
+	// actually launched with (design R5). Falling back to the computed path
+	// keeps sessions that predate the field verifiable.
+	switch {
+	case sess.BackendOverlayPath != "":
+		in.OverlayPath = sess.BackendOverlayPath
+	case m.BackendOverlayDir != "":
 		in.OverlayPath = m.backendOverlayPath(sess.Key())
+	}
+	if in.OverlayPath != "" {
 		settings, err := readBackendOverlay(in.OverlayPath)
 		switch {
 		case err == nil:
