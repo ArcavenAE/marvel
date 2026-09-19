@@ -212,3 +212,108 @@ func TestApplyBackendOverlayRefusesADeclaredBearer(t *testing.T) {
 		})
 	}
 }
+
+// VerifyBackend reads back the overlay the writer just wrote, which is the
+// round trip BT7 depends on: written as map[string]string, read as
+// map[string]any, and it must classify the same both ways.
+func TestVerifyBackendRoundTripsAWrittenOverlay(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := &Manager{BackendOverlayDir: dir}
+	sess := newBackendTestSession("bedrock", map[string]string{
+		backendAWSCredExportKey: "/opt/aws-creds.sh",
+	})
+	plan := &launchPlan{env: map[string]string{}}
+	if _, err := m.applyBackendOverlay(sess, plan); err != nil {
+		t.Fatalf("applyBackendOverlay: %v", err)
+	}
+	sess.BackendIntended = api.Backend(sess.Runtime.Backend)
+	sess.BackendResolved = api.BackendBedrock
+	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+
+	v := m.VerifyBackend(*sess)
+	if !v.OK {
+		t.Fatalf("expected a clean verdict, got problems: %v", v.Problems)
+	}
+	if v.Overlay != api.BackendBedrock {
+		t.Errorf("Overlay = %q, want %q", v.Overlay, api.BackendBedrock)
+	}
+	if !v.OverlayPresent {
+		t.Error("OverlayPresent = false, want true")
+	}
+	if v.Label != "bedrock (iam)" {
+		t.Errorf("Label = %q, want %q", v.Label, "bedrock (iam)")
+	}
+	if v.OverlayPath != plan.env[MarvelBackendSettingsEnv] {
+		t.Errorf("OverlayPath = %q, want the stamped %q", v.OverlayPath, plan.env[MarvelBackendSettingsEnv])
+	}
+}
+
+// A declared backend whose overlay never landed is the case the verification
+// exists to catch: the harness was launched without the --settings that makes
+// the backend stick.
+func TestVerifyBackendReportsAMissingOverlay(t *testing.T) {
+	t.Parallel()
+	m := &Manager{BackendOverlayDir: t.TempDir()}
+	sess := newBackendTestSession("bedrock", nil)
+	sess.BackendIntended = api.BackendBedrock
+	sess.BackendResolved = api.BackendBedrock
+	sess.BackendCredentialSource = api.BackendCredentialAmbient
+
+	v := m.VerifyBackend(*sess)
+	if v.OK {
+		t.Fatal("expected a problem for a missing overlay")
+	}
+	if !strings.Contains(strings.Join(v.Problems, " | "), "no backend overlay at") {
+		t.Errorf("problems %v do not name the missing overlay", v.Problems)
+	}
+}
+
+// An unreadable overlay is not a pass. The file is what the harness launched
+// with, so a parse failure means the verdict cannot be vouched for either way.
+func TestVerifyBackendReportsAnUnreadableOverlay(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := &Manager{BackendOverlayDir: dir}
+	sess := newBackendTestSession("bedrock", nil)
+	sess.BackendIntended = api.BackendBedrock
+	sess.BackendResolved = api.BackendBedrock
+	if err := os.WriteFile(m.backendOverlayPath(sess.Key()), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("write overlay: %v", err)
+	}
+
+	v := m.VerifyBackend(*sess)
+	if v.OK {
+		t.Fatal("expected a problem for an unreadable overlay")
+	}
+	if !strings.Contains(strings.Join(v.Problems, " | "), "cannot read backend overlay") {
+		t.Errorf("problems %v do not name the unreadable overlay", v.Problems)
+	}
+}
+
+// The credential source is recorded for every session, overlay or not, so a
+// default-mode session reads as ambient rather than as never-classified.
+func TestBackendOverlayForNamesTheDeclaredCredentialSource(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		backend string
+		env     map[string]string
+		want    api.BackendCredentialSource
+	}{
+		{"export helper", "bedrock", map[string]string{backendAWSCredExportKey: "/opt/creds.sh"}, api.BackendCredentialAWSExport},
+		{"profile passthrough", "bedrock", map[string]string{"AWS_PROFILE": "eng"}, api.BackendCredentialAWSProfile},
+		{"api key helper", "anthropic-aws", map[string]string{backendAPIKeyHelperKey: "/opt/key.sh"}, api.BackendCredentialAPIKeyHelper},
+		{"nothing declared", "default", nil, api.BackendCredentialAmbient},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sess := newBackendTestSession(tt.backend, tt.env)
+			got := api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+			if got != tt.want {
+				t.Errorf("credential source = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

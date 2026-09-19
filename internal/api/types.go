@@ -332,8 +332,18 @@ type Session struct {
 	// session that owned it with nothing left to remove it. Empty when the
 	// declared backend warranted no overlay. Status, not spec.
 	BackendOverlayPath string `toml:"-" json:"backend_overlay_path,omitempty"`
-	SessionMetrics     `toml:"-"`
-	SessionContext     `toml:"-"`
+	// BackendCredentialSource names HOW this session's backend authenticates,
+	// which neither of the fields above can show: the IAM twins and their
+	// static counterparts set the same selector, and only one of the two
+	// expires mid-shift (design Q3). Resolved at spawn from what the role
+	// DECLARED - a helper-script path or a profile NAME - so it is a
+	// non-secret fact about configuration and never a credential (ADR-009).
+	// The verification command reads it back to name the variant, and the
+	// loud-failure gate asks whether an expiring session can renew itself.
+	// Empty for a session marvel never classified. Status, not spec.
+	BackendCredentialSource BackendCredentialSource `toml:"-" json:"backend_credential_source,omitempty"`
+	SessionMetrics          `toml:"-"`
+	SessionContext          `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.
