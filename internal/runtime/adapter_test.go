@@ -573,3 +573,82 @@ func TestBaseEnvBusVarsFollowTheClusterBusSection(t *testing.T) {
 		t.Error("password set with no bus URL")
 	}
 }
+
+// The manifest env seam is a VALUE seam, not an authority seam. Nothing in
+// internal/ set Role.Runtime.Env before this, which is why the unfiltered
+// merge shipped: the override path had no test at all.
+func TestBaseEnvRefusesIdentityCredentialsFromRoleEnv(t *testing.T) {
+	t.Parallel()
+
+	const token = "9c1e77aa"
+	ctx := testContext()
+	ctx.Session.HeartbeatToken = token
+	ctx.BusURL = "nats://127.0.0.1:4222"
+	ctx.BusUser = "squad-worker"
+	ctx.BusPassword = "constructed-by-marvel"
+	ctx.Role.Runtime.Env = map[string]string{
+		api.HeartbeatTokenEnv: "forged-by-the-manifest",
+		"DIRECTOR_NATS_USER":  "director",
+		"DIRECTOR_NATS_PASS":  "forged",
+	}
+
+	env := baseEnv(ctx)
+
+	if got := env[api.HeartbeatTokenEnv]; got != token {
+		t.Errorf("heartbeat token = %q, want marvel's %q: a role must not be able to forge the credential that proves its identity", got, token)
+	}
+	if got := env["DIRECTOR_NATS_USER"]; got != "squad-worker" {
+		t.Errorf("DIRECTOR_NATS_USER = %q, want marvel's %q", got, "squad-worker")
+	}
+	if got := env["DIRECTOR_NATS_PASS"]; got != "constructed-by-marvel" {
+		t.Errorf("DIRECTOR_NATS_PASS = %q, want marvel's constructed value", got)
+	}
+}
+
+// A constructed environment is readable by anything the harness republishes
+// (finding-020), so a declared bearer is custody in the most exposed surface
+// marvel owns (ADR-009).
+func TestBaseEnvRefusesLiteralBearersFromRoleEnv(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"ANTHROPIC_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			ctx := testContext()
+			ctx.Role.Runtime.Env = map[string]string{key: "a-literal-credential"}
+
+			env := baseEnv(ctx)
+
+			if _, present := env[key]; present {
+				t.Errorf("%s reached the constructed environment; a literal bearer must be refused, not carried", key)
+			}
+		})
+	}
+}
+
+// The seam still has to work, or the refusals above have simply broken the
+// per-role backend declaration this branch exists to add.
+func TestBaseEnvCarriesOrdinaryRoleEnv(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.Role.Runtime.Env = map[string]string{
+		"CLAUDE_CODE_USE_BEDROCK": "1",
+		"AWS_PROFILE":             "eng",
+		"BEADS_ACTOR":             "operator/explicit",
+	}
+
+	env := baseEnv(ctx)
+
+	if got := env["CLAUDE_CODE_USE_BEDROCK"]; got != "1" {
+		t.Errorf("declared selector = %q, want it carried", got)
+	}
+	if got := env["AWS_PROFILE"]; got != "eng" {
+		t.Errorf("declared profile name = %q, want it carried", got)
+	}
+	// An override of a constructed value is the operator's choice and still
+	// wins; it is logged rather than refused.
+	if got := env["BEADS_ACTOR"]; got != "operator/explicit" {
+		t.Errorf("BEADS_ACTOR = %q, want the declared override to win", got)
+	}
+}

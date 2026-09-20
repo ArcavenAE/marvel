@@ -61,14 +61,50 @@ func (b BackendRedirection) String() string {
 // third party's fact that silently breaks a window when wrong, so it lives
 // in Go where it is diff-reviewable and versioned with the binary — the
 // same placement rationale as canonicalPermissionModes (see manifest.go).
-var backendFlagVars = []string{
-	"CLAUDE_CODE_USE_BEDROCK",
-	"CLAUDE_CODE_USE_VERTEX",
-	"CLAUDE_CODE_USE_FOUNDRY",
-	"CLAUDE_CODE_USE_MANTLE",
-	"CLAUDE_CODE_USE_GATEWAY",
-	"CLAUDE_CODE_USE_ANTHROPIC_AWS",
-	"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+// It is DERIVED from backendSelectorNames rather than hand-listed beside it.
+// The two were separate copies of one fact and drifted: the hand-written
+// selector list was short CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD, so a session
+// redirected by that variable classified as "redirected" here and resolved to
+// "default" three lines away, and the verify command reported ok on it. One
+// slice, derived, is the only thing that keeps the two answers consistent.
+var backendFlagVars = backendSelectorEnvNames()
+
+// backendSelectorEnvNames lists the selector variables in precedence order.
+func backendSelectorEnvNames() []string {
+	out := make([]string, 0, len(backendSelectorNames))
+	for _, s := range backendSelectorNames {
+		out = append(out, s.env)
+	}
+	return out
+}
+
+// backendBearerEnv are environment variables whose VALUE is a credential: a
+// bearer at a third party rather than a setting. They are named here, in one
+// place, because two different surfaces have to refuse them and neither can be
+// the sole guard: the constructed pane environment (which a harness can
+// republish wholesale, finding-020) and the settings overlay marvel writes.
+//
+// ADR-009 draws the custody line at audience, not format. Any of these is
+// authority at a vendor, so marvel holding one in a surface it owns is custody
+// rather than brokering. The supported shape is a helper POINTER whose stdout
+// is the secret (apiKeyHelper, awsCredentialExport), which marvel can carry
+// without ever seeing the value.
+var backendBearerEnv = []string{
+	"ANTHROPIC_API_KEY",
+	"AWS_BEARER_TOKEN_BEDROCK",
+	"AWS_SECRET_ACCESS_KEY",
+	"AWS_SESSION_TOKEN",
+}
+
+// BackendBearerEnv reports whether an env key carries a literal credential
+// that must never be inlined into a constructed environment or an overlay.
+func BackendBearerEnv(k string) bool {
+	for _, b := range backendBearerEnv {
+		if b == k {
+			return true
+		}
+	}
+	return false
 }
 
 // backendValueVars redirect by carrying any value at all: a custom base URL
@@ -145,6 +181,11 @@ const (
 	BackendFoundry      Backend = "foundry"
 	BackendMantle       Backend = "mantle"
 	BackendGateway      Backend = "gateway"
+	// BackendAnthropicGoogleCloud is Claude on Google Cloud, the GCP sibling
+	// of BackendAnthropicAWS. It exists because the redirect list has always
+	// named its selector; without a constant here ResolveBackend had no name
+	// to return and fell through to BackendDefaultName.
+	BackendAnthropicGoogleCloud Backend = "anthropic-google-cloud"
 	// BackendCustom is a base-URL redirect that names no standard selector
 	// (a proxy, or a future local backend). Recognised so the intent check
 	// is honest; the named local modes are BT13, out of pass 1.
@@ -167,6 +208,12 @@ var backendSelectorNames = []struct {
 	{"CLAUDE_CODE_USE_MANTLE", BackendMantle},
 	{"CLAUDE_CODE_USE_GATEWAY", BackendGateway},
 	{"CLAUDE_CODE_USE_ANTHROPIC_AWS", BackendAnthropicAWS},
+	// Placed beside its AWS sibling rather than higher: the research names
+	// only the Bedrock and Foundry precedence over Platform-on-AWS, and the
+	// vendor docs are silent on the rest, so this claims no rank it cannot
+	// support. The overlay pins every competitor OFF precisely so the
+	// deterministic attach never depends on this order being right.
+	{"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", BackendAnthropicGoogleCloud},
 }
 
 // ResolveBackend names the backend the constructed spawn environment selects.

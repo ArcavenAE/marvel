@@ -114,6 +114,39 @@ func TestEveryBackendVariableRedirects(t *testing.T) {
 	}
 }
 
+// The twin of TestEveryBackendVariableRedirects, and the test whose absence
+// let the two selector lists drift. Every variable that trips the redirect
+// classifier must also RESOLVE to a named backend: a variable that redirects
+// but resolves to "default" makes the verify command report ok on a session
+// that is demonstrably not on the default backend. Drives off the package's
+// own slice for the same reason its twin does.
+func TestEveryBackendVariableResolvesToANamedBackend(t *testing.T) {
+	t.Parallel()
+	for _, name := range backendFlagVars {
+		got := ResolveBackend(lookupFrom(map[string]string{name: "1"}))
+		if got == BackendDefaultName {
+			t.Errorf("selector %q resolved to %q, so a session it redirects would verify as being on the default backend", name, got)
+		}
+		if got == "" {
+			t.Errorf("selector %q resolved to the empty backend", name)
+		}
+	}
+}
+
+// The redirect classifier and the resolver must answer over the same set, or
+// one session gets two verdicts. This is the invariant B1 broke.
+func TestBackendFlagVarsTracksTheSelectorTable(t *testing.T) {
+	t.Parallel()
+	if len(backendFlagVars) != len(backendSelectorNames) {
+		t.Fatalf("backendFlagVars has %d entries, backendSelectorNames %d", len(backendFlagVars), len(backendSelectorNames))
+	}
+	for i, s := range backendSelectorNames {
+		if backendFlagVars[i] != s.env {
+			t.Errorf("index %d: flag var %q does not match selector %q", i, backendFlagVars[i], s.env)
+		}
+	}
+}
+
 func TestResolveBackend(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
