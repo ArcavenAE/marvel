@@ -176,6 +176,24 @@ type Runtime struct {
 	// figures to the heartbeat RPC. Headless sessions do not need this —
 	// their stream already feeds the usage accountant. See finding-011.
 	ContextFeed string `toml:"context_feed,omitempty"`
+	// Env is the per-role environment override, the Layer B declaration
+	// surface for a per-role backend (design-backend-swaps.md). Each entry
+	// is merged over marvel's constructed base environment at spawn
+	// (baseEnv, the documented override seam), so a manifest chooses a
+	// backend per role without editing the role. A plain env value is
+	// ADVISORY on a host whose settings.json already selects a backend
+	// (silent no-op, measurement M1); the reliable enforcement is the
+	// per-session --settings overlay (Backend + the overlay writer). Keep
+	// bearer secrets out: an entry here is visible to anything that reads
+	// the pane environment (finding-020).
+	Env map[string]string `toml:"env,omitempty"`
+	// Backend is the per-role INTENDED backend label (design R1/R4). It
+	// names the backend the operator declared this role should run on
+	// (for example "bedrock", "anthropic-aws", "subscription", "default"),
+	// recorded on the Session at spawn so marvel can compare the intent
+	// against the backend the constructed environment actually resolves to
+	// and fail loudly when they disagree. Empty means no declared intent.
+	Backend string `toml:"backend,omitempty"`
 }
 
 // ContextFeedStatusline is the only ContextFeed value marvel understands
@@ -293,8 +311,20 @@ type Session struct {
 	// daemon restart — the pane still runs under the environment it was
 	// launched with.
 	BackendRedirection BackendRedirection `toml:"-"`
-	SessionMetrics     `toml:"-"`
-	SessionContext     `toml:"-"`
+	// BackendIntended is the named backend the operator declared this
+	// session's role should run on (Runtime.Backend), recorded at spawn.
+	// BackendResolved is the named backend the constructed spawn
+	// environment actually selects (ResolveBackend over the pane env). The
+	// pair is the intent-versus-actual signal the loud-failure gate and the
+	// verification command read: agreement is the healthy case, a
+	// disagreement is the silent-redirect the commission exists to catch
+	// (design R4/R5). Both empty for a session marvel never classified or a
+	// record predating these fields. Status, not spec (toml:"-"); persisted
+	// to bolt via json so an adopted session keeps the spawn-time verdict.
+	BackendIntended Backend `toml:"-" json:"backend_intended,omitempty"`
+	BackendResolved Backend `toml:"-" json:"backend_resolved,omitempty"`
+	SessionMetrics  `toml:"-"`
+	SessionContext  `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.

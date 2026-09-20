@@ -36,6 +36,7 @@ package runtime
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -333,7 +334,69 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
 		}
 	}
+	// The per-role manifest Env is the override seam (Layer B): it is merged
+	// LAST so a declared value wins over marvel's constructed defaults, which
+	// is what the BEADS_ACTOR comment above promises a "future manifest env
+	// surface". This is the per-role backend declaration
+	// (design-backend-swaps.md); it is advisory against a settings-managed
+	// host, so the reliable enforcement is the --settings overlay.
+	//
+	// Two classes never pass, because neither is a value seam:
+	//
+	//   1. The credentials that decide WHO this session is. The heartbeat
+	//      token and the broker user and password are how marvel and the bus
+	//      establish that a session is the agent it claims to be. A manifest
+	//      field able to set them is not an override, it is a privilege
+	//      escalation: a role could write presence under another agent's
+	//      address and have every message attributed to it. This is
+	//      enforcement locus 1, named above, so it cannot be a passthrough.
+	//   2. A literal bearer. A constructed environment is readable by
+	//      anything the harness republishes (finding-020), which makes it the
+	//      most exposed surface marvel owns, and ADR-009 puts third-party
+	//      authority outside the custody line entirely.
+	//
+	// Everything else a role declares still wins, including the identity
+	// values it is merely inadvisable to change, because the operator owns
+	// that choice. It is logged so that a wrong identity on the bus is
+	// traceable to the manifest that caused it rather than being invisible.
+	// Only the KEY is ever logged; a refused value is never echoed.
+	for k, v := range ctx.Role.Runtime.Env {
+		switch {
+		case roleEnvRefused(k):
+			log.Printf("warning: session %s: role env %q refused, marvel owns the credentials that prove a session's identity", ctx.Session.Name, k)
+			continue
+		case api.BackendBearerEnv(k):
+			log.Printf("warning: session %s: role env %q refused, it carries a literal credential; declare a helper pointer instead (ADR-009)", ctx.Session.Name, k)
+			continue
+		}
+		if _, constructed := env[k]; constructed {
+			log.Printf("warning: session %s: role env %q overrides a marvel-constructed value", ctx.Session.Name, k)
+		}
+		env[k] = v
+	}
 	return env
+}
+
+// roleEnvRefusedKeys are the constructed variables a role may never override.
+// Each one is a credential marvel or the broker checks to decide whether a
+// session is who it says it is, which is why the answer is refusal rather than
+// a warning: there is no legitimate manifest reason to set one, and the
+// failure it enables is silent.
+var roleEnvRefusedKeys = []string{
+	api.HeartbeatTokenEnv,
+	"DIRECTOR_NATS_USER",
+	"DIRECTOR_NATS_PASS",
+}
+
+// roleEnvRefused reports whether a role-declared env key is one marvel refuses
+// to let a manifest set.
+func roleEnvRefused(k string) bool {
+	for _, r := range roleEnvRefusedKeys {
+		if r == k {
+			return true
+		}
+	}
+	return false
 }
 
 // buildCommand joins a binary and its args into the single command string

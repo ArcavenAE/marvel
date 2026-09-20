@@ -113,3 +113,101 @@ func TestEveryBackendVariableRedirects(t *testing.T) {
 		}
 	}
 }
+
+// The twin of TestEveryBackendVariableRedirects, and the test whose absence
+// let the two selector lists drift. Every variable that trips the redirect
+// classifier must also RESOLVE to a named backend: a variable that redirects
+// but resolves to "default" makes the verify command report ok on a session
+// that is demonstrably not on the default backend. Drives off the package's
+// own slice for the same reason its twin does.
+func TestEveryBackendVariableResolvesToANamedBackend(t *testing.T) {
+	t.Parallel()
+	for _, name := range backendFlagVars {
+		got := ResolveBackend(lookupFrom(map[string]string{name: "1"}))
+		if got == BackendDefaultName {
+			t.Errorf("selector %q resolved to %q, so a session it redirects would verify as being on the default backend", name, got)
+		}
+		if got == "" {
+			t.Errorf("selector %q resolved to the empty backend", name)
+		}
+	}
+}
+
+// The redirect classifier and the resolver must answer over the same set, or
+// one session gets two verdicts. This is the invariant B1 broke.
+func TestBackendFlagVarsTracksTheSelectorTable(t *testing.T) {
+	t.Parallel()
+	if len(backendFlagVars) != len(backendSelectorNames) {
+		t.Fatalf("backendFlagVars has %d entries, backendSelectorNames %d", len(backendFlagVars), len(backendSelectorNames))
+	}
+	for i, s := range backendSelectorNames {
+		if backendFlagVars[i] != s.env {
+			t.Errorf("index %d: flag var %q does not match selector %q", i, backendFlagVars[i], s.env)
+		}
+	}
+}
+
+func TestResolveBackend(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		env  map[string]string
+		want Backend
+	}{
+		{"empty environment resolves to default", nil, BackendDefaultName},
+		{"a falsy selector resolves to default", map[string]string{"CLAUDE_CODE_USE_BEDROCK": "0"}, BackendDefaultName},
+		{"bedrock selector names bedrock", map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1"}, BackendBedrock},
+		{"platform-on-aws selector names anthropic-aws", map[string]string{"CLAUDE_CODE_USE_ANTHROPIC_AWS": "1"}, BackendAnthropicAWS},
+		{"vertex selector names vertex", map[string]string{"CLAUDE_CODE_USE_VERTEX": "true"}, BackendVertex},
+		{
+			// The load-bearing precedence: Bedrock outranks Platform-on-AWS,
+			// so both ON resolves to bedrock. This is why the overlay pins
+			// competitors OFF rather than only turning the chosen one ON.
+			name: "bedrock outranks platform-on-aws when both are set",
+			env:  map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_ANTHROPIC_AWS": "1"},
+			want: BackendBedrock,
+		},
+		{"a base URL with no selector is custom", map[string]string{"ANTHROPIC_BASE_URL": "https://proxy.internal/v1"}, BackendCustom},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ResolveBackend(lookupFrom(c.env)); got != c.want {
+				t.Errorf("ResolveBackend() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestBackendMatches(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name               string
+		intended, resolved Backend
+		want               bool
+	}{
+		{"no intent matches anything", "", BackendBedrock, true},
+		{"bedrock intent matches bedrock", BackendBedrock, BackendBedrock, true},
+		{"bedrock intent does not match default", BackendBedrock, BackendDefaultName, false},
+		{"subscription intent matches a clean default environment", BackendSubscription, BackendDefaultName, true},
+		{
+			// The finding-166 silent-redirect: intended subscription, but a
+			// leaked selector resolved bedrock. The gate must call this a
+			// mismatch.
+			name:     "subscription intent does not match a leaked bedrock selector",
+			intended: BackendSubscription,
+			resolved: BackendBedrock,
+			want:     false,
+		},
+		{"default intent matches default", BackendDefaultName, BackendDefaultName, true},
+		{"default intent does not match a leaked selector", BackendDefaultName, BackendBedrock, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := BackendMatches(c.intended, c.resolved); got != c.want {
+				t.Errorf("BackendMatches(%q, %q) = %v, want %v", c.intended, c.resolved, got, c.want)
+			}
+		})
+	}
+}

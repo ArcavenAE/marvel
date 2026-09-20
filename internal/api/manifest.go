@@ -160,6 +160,13 @@ type ManifestRuntime struct {
 	// ContextFeed opts an interactive session into cooperative context
 	// reporting. Only "statusline" is understood. See api.Runtime.
 	ContextFeed string `toml:"context_feed,omitempty" yaml:"context_feed,omitempty"`
+	// Env is the per-role environment override (Layer B, the backend
+	// declaration surface). Merged over marvel's base environment at spawn.
+	// See api.Runtime.Env.
+	Env map[string]string `toml:"env,omitempty" yaml:"env,omitempty"`
+	// Backend is the per-role INTENDED backend label, compared against the
+	// resolved backend at spawn for loud failure. See api.Runtime.Backend.
+	Backend string `toml:"backend,omitempty" yaml:"backend,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -559,6 +566,8 @@ func (m *Manifest) Apply(store *Store) error {
 				Prompt:        mr.Runtime.Prompt,
 				ContextWindow: mr.Runtime.ContextWindow,
 				ContextFeed:   mr.Runtime.ContextFeed,
+				Env:           mr.Runtime.Env,
+				Backend:       mr.Runtime.Backend,
 			}
 			if rt.Name == "" {
 				rt.Name = rt.Command
