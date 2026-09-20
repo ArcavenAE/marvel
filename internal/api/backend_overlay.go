@@ -13,19 +13,15 @@ import "fmt"
 // stdout is the secret (custody stays out of marvel state, ADR-009).
 
 // backendCompetitorSelectors is every Claude Code boolean backend selector the
-// overlay must be able to pin OFF. It is a superset of the modes marvel builds
-// today, on purpose: an ambient selector this list omits would survive into the
-// session and silently outrank the chosen one, the exact failure the overlay
-// exists to prevent. Kept in sync with backendFlagVars.
-var backendCompetitorSelectors = []string{
-	"CLAUDE_CODE_USE_BEDROCK",
-	"CLAUDE_CODE_USE_VERTEX",
-	"CLAUDE_CODE_USE_FOUNDRY",
-	"CLAUDE_CODE_USE_MANTLE",
-	"CLAUDE_CODE_USE_GATEWAY",
-	"CLAUDE_CODE_USE_ANTHROPIC_AWS",
-	"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
-}
+// overlay must be able to pin OFF: an ambient selector this set omits would
+// survive into the session and silently outrank the chosen one, the exact
+// failure the overlay exists to prevent.
+//
+// It IS backendFlagVars, not a copy of it. A third hand-maintained list here,
+// synchronised by a comment, is how the first two drifted; the set the
+// classifier treats as redirecting and the set the overlay neutralises have to
+// be the same set or the overlay cannot make the attach deterministic.
+var backendCompetitorSelectors = backendFlagVars
 
 // backendSelectorFor names the single selector a mode turns ON, or "" for the
 // selector-less modes (subscription, default), which are distinguished by intent
@@ -49,20 +45,25 @@ func backendSelectorFor(mode Backend) (string, bool) {
 	}
 }
 
-// BackendBuilderOwnedEnv reports whether an env key is one the overlay builder
-// sets itself: a competitor selector or ANTHROPIC_API_KEY. A caller merging
-// operator-declared passthrough into an overlay skips these so the builder's
-// deterministic selector block stays authoritative.
-func BackendBuilderOwnedEnv(k string) bool {
-	if k == "ANTHROPIC_API_KEY" {
-		return true
-	}
+// backendSelectorOwned reports whether an env key is part of the selector block
+// the builder sets deterministically.
+func backendSelectorOwned(k string) bool {
 	for _, s := range backendCompetitorSelectors {
 		if s == k {
 			return true
 		}
 	}
 	return false
+}
+
+// BackendBuilderOwnedEnv reports whether an env key is one the overlay builder
+// sets itself: a competitor selector or ANTHROPIC_API_KEY.
+//
+// This is no longer the gate. The builder enforces both classes itself, so a
+// caller does not have to pre-filter; it remains exported for callers that want
+// to describe the split without duplicating it.
+func BackendBuilderOwnedEnv(k string) bool {
+	return k == "ANTHROPIC_API_KEY" || backendSelectorOwned(k)
 }
 
 // BackendOverlay is the non-secret input to the overlay builder. Everything
@@ -110,6 +111,19 @@ func BuildBackendOverlay(o BackendOverlay) (map[string]any, error) {
 	// every managed mode; a mode that needs a key supplies it through a helper
 	// pointer, not this variable.
 	env["ANTHROPIC_API_KEY"] = ""
+	// Pin the value-carrying redirects empty as well. This package treats a
+	// non-empty ANTHROPIC_BASE_URL or ANTHROPIC_BEDROCK_SERVICE_TIER as a
+	// departure from the default backend, so leaving them ambient means a
+	// session an operator believes is pinned to Bedrock carries an untouched
+	// proxy URL into the pane. Pinning only the booleans inverted the
+	// protection relative to risk: the selector-less modes were covered and
+	// the selector-bearing modes the overlay exists for were not, because
+	// ResolveBackend returns on the first truthy selector and never reaches
+	// the value-var loop. A mode that legitimately needs one of these sets it
+	// through Extra, which is merged after this block and wins.
+	for _, name := range backendValueVars {
+		env[name] = ""
+	}
 
 	switch o.Mode {
 	case BackendSubscription, BackendDefaultName, "":
@@ -132,9 +146,27 @@ func BuildBackendOverlay(o BackendOverlay) (map[string]any, error) {
 	}
 
 	// Operator-declared passthrough wins over the builder's defaults, so a role
-	// can add a key the builder does not model (AWS_PROFILE for an IAM mode, an
-	// OTEL attribute). It must not carry a literal secret.
+	// can add a key the builder does not model (AWS_PROFILE for an IAM mode, a
+	// service tier, an OTEL attribute). Two classes are handled here rather
+	// than by the caller, because a guarantee enforced in an out-of-package
+	// caller is not a guarantee this exported builder can make:
+	//
+	//   - A literal bearer is REFUSED. ADR-009 draws the custody line at
+	//     authority held at a third party, and the overlay is a file marvel
+	//     owns and writes, so inlining one puts marvel in custody. The
+	//     supported shape is a helper pointer whose stdout is the secret.
+	//   - A builder-owned selector is IGNORED, keeping the ruling that the
+	//     builder owns the selector block so a declared selector cannot
+	//     override the pins. Ignoring rather than refusing is deliberate: the
+	//     pins are the point, and a role that names its mode twice is
+	//     redundant rather than wrong.
 	for k, v := range o.Extra {
+		if BackendBearerEnv(k) {
+			return nil, fmt.Errorf("build backend overlay: %s carries a literal credential; declare a helper pointer (awsCredentialExport or apiKeyHelper) instead", k)
+		}
+		if backendSelectorOwned(k) {
+			continue
+		}
 		env[k] = v
 	}
 

@@ -93,6 +93,10 @@ func (m *Manager) applyBackendOverlay(sess *api.Session, plan *launchPlan) (map[
 		plan.env = map[string]string{}
 	}
 	plan.env[MarvelBackendSettingsEnv] = path
+	// Record it on the session too, so the sweep removes the file this session
+	// was actually launched with rather than one recomputed from a directory
+	// that may have moved since.
+	sess.BackendOverlayPath = path
 
 	// Return the env block the harness will actually see through --settings, so
 	// the caller classifies the effective backend, not the pane env alone.
@@ -103,16 +107,21 @@ func (m *Manager) applyBackendOverlay(sess *api.Session, plan *launchPlan) (map[
 }
 
 // backendExtraEnv is the role's declared env minus the reserved settings-pointer
-// keys and the selector/api-key vars the builder owns, so operator passthrough
-// (AWS_PROFILE, an OTEL attribute) reaches the overlay while the builder stays
-// authoritative over the selector block.
+// keys, so operator passthrough (AWS_PROFILE, a service tier, an OTEL
+// attribute) reaches the overlay.
+//
+// It no longer drops the keys the builder owns. Doing so filtered
+// ANTHROPIC_API_KEY out before BuildBackendOverlay could refuse it, so the one
+// bearer the design names first was the one key silently accepted while the
+// AWS trio was refused. The builder now ignores selectors and refuses bearers
+// itself, which is where that decision belongs.
 func backendExtraEnv(env map[string]string) map[string]string {
 	if len(env) == 0 {
 		return nil
 	}
 	out := map[string]string{}
 	for k, v := range env {
-		if backendReserved(k) || api.BackendBuilderOwnedEnv(k) {
+		if backendReserved(k) {
 			continue
 		}
 		out[k] = v
@@ -138,14 +147,23 @@ func backendClassifyLookup(overlayEnv, planEnv map[string]string) func(string) s
 	}
 }
 
-// sweepBackendOverlay removes a session's overlay on delete (design: ephemeral,
-// swept with the session). Best-effort: a missing file is not an error, and a
-// failure is logged rather than blocking teardown.
-func (m *Manager) sweepBackendOverlay(sessionKey string) {
-	if m.BackendOverlayDir == "" {
-		return
+// sweepBackendOverlay removes a session's overlay (design: ephemeral, swept
+// with the session). Best-effort: a missing file is not an error, and a failure
+// is logged rather than blocking teardown.
+//
+// It prefers the path recorded at spawn, for the reason the record exists: if
+// MARVEL_BACKEND_OVERLAY_DIR moved between launch and delete, a recomputed path
+// names a file that was never written, the ErrNotExist is swallowed by the
+// best-effort contract, and the real overlay survives the session permanently.
+// Read honoured the recorded path before delete did.
+func (m *Manager) sweepBackendOverlay(sess api.Session) {
+	path := sess.BackendOverlayPath
+	if path == "" {
+		if m.BackendOverlayDir == "" {
+			return
+		}
+		path = m.backendOverlayPath(sess.Key())
 	}
-	path := m.backendOverlayPath(sessionKey)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("warning: sweep backend overlay %s: %v", path, err)
 	}

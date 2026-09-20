@@ -53,7 +53,7 @@ func TestApplyBackendOverlayWritesAndStamps(t *testing.T) {
 	}
 
 	// Sweep removes it.
-	m.sweepBackendOverlay(sess.Key())
+	m.sweepBackendOverlay(*sess)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("overlay not swept: %v", err)
 	}
@@ -133,5 +133,82 @@ func TestApplyBackendOverlayExtraAndReservedKeys(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "awsCredentialExport") {
 		t.Error("overlay missing awsCredentialExport pointer")
+	}
+}
+
+// The sweep has to remove the file this session was actually launched with.
+// Read honoured the recorded path before delete did, so an overlay written
+// under one MARVEL_BACKEND_OVERLAY_DIR and swept after the directory moved
+// survived the session that owned it, permanently and silently.
+func TestSweepBackendOverlayHonoursTheRecordedPath(t *testing.T) {
+	t.Parallel()
+	launchDir := t.TempDir()
+	m := &Manager{BackendOverlayDir: launchDir}
+	sess := newBackendTestSession("bedrock", nil)
+	plan := &launchPlan{env: map[string]string{}}
+	if _, err := m.applyBackendOverlay(sess, plan); err != nil {
+		t.Fatalf("applyBackendOverlay: %v", err)
+	}
+	path := sess.BackendOverlayPath
+	if path == "" {
+		t.Fatal("overlay path not recorded on the session")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("overlay not written: %v", err)
+	}
+
+	// The daemon's overlay directory moves between launch and delete.
+	moved := &Manager{BackendOverlayDir: t.TempDir()}
+	moved.sweepBackendOverlay(*sess)
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("overlay at the recorded path survived the sweep: %v", err)
+	}
+}
+
+// A session that predates the recorded field still has to be sweepable, so the
+// computed path stays as the fallback rather than being replaced.
+func TestSweepBackendOverlayFallsBackToTheComputedPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := &Manager{BackendOverlayDir: dir}
+	sess := newBackendTestSession("bedrock", nil)
+	plan := &launchPlan{env: map[string]string{}}
+	if _, err := m.applyBackendOverlay(sess, plan); err != nil {
+		t.Fatalf("applyBackendOverlay: %v", err)
+	}
+	path := m.backendOverlayPath(sess.Key())
+	sess.BackendOverlayPath = "" // a record written before the field existed
+
+	m.sweepBackendOverlay(*sess)
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("overlay not swept via the computed fallback: %v", err)
+	}
+}
+
+// A declared bearer must reach the builder and be refused there. It used to be
+// filtered out of the passthrough first, so the one key the design names first
+// was the one silently accepted.
+func TestApplyBackendOverlayRefusesADeclaredBearer(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"ANTHROPIC_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "AWS_SECRET_ACCESS_KEY"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			m := &Manager{BackendOverlayDir: t.TempDir()}
+			sess := newBackendTestSession("bedrock", map[string]string{key: "a-literal-credential"})
+			plan := &launchPlan{env: map[string]string{}}
+
+			_, err := m.applyBackendOverlay(sess, plan)
+			if err == nil {
+				t.Fatalf("expected a refusal for a declared %s", key)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q does not name the offending key", err)
+			}
+			if strings.Contains(err.Error(), "a-literal-credential") {
+				t.Errorf("error leaks the credential value: %q", err)
+			}
+		})
 	}
 }

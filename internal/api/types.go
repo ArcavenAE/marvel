@@ -323,8 +323,17 @@ type Session struct {
 	// to bolt via json so an adopted session keeps the spawn-time verdict.
 	BackendIntended Backend `toml:"-" json:"backend_intended,omitempty"`
 	BackendResolved Backend `toml:"-" json:"backend_resolved,omitempty"`
-	SessionMetrics  `toml:"-"`
-	SessionContext  `toml:"-"`
+	// BackendOverlayPath is the settings overlay marvel wrote for this session
+	// and passed to the harness, recorded at spawn. Recorded rather than
+	// recomputed because MARVEL_BACKEND_OVERLAY_DIR can move between a launch
+	// and the delete that sweeps it: a recomputed path then points at a
+	// directory the file was never in, os.Remove returns ErrNotExist, the
+	// best-effort sweep swallows it, and the real 0600 overlay outlives the
+	// session that owned it with nothing left to remove it. Empty when the
+	// declared backend warranted no overlay. Status, not spec.
+	BackendOverlayPath string `toml:"-" json:"backend_overlay_path,omitempty"`
+	SessionMetrics     `toml:"-"`
+	SessionContext     `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.

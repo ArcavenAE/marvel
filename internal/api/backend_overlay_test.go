@@ -117,3 +117,72 @@ func TestBuildBackendOverlayHelperPointerAndExtra(t *testing.T) {
 		t.Error("apiKeyHelper present but none was supplied")
 	}
 }
+
+// The overlay neutralises the value-carrying redirects as well as the boolean
+// selectors. Pinning only the booleans inverted the protection relative to
+// risk: ResolveBackend returns on the first truthy selector and never reaches
+// the value-var loop, so a selector-bearing mode could carry an ambient proxy
+// URL into the pane and still verify clean.
+func TestBuildBackendOverlayPinsTheValueRedirects(t *testing.T) {
+	t.Parallel()
+	settings, err := BuildBackendOverlay(BackendOverlay{Mode: BackendBedrock})
+	if err != nil {
+		t.Fatalf("BuildBackendOverlay: %v", err)
+	}
+	env := overlayEnv(t, settings)
+	for _, name := range backendValueVars {
+		got, present := env[name]
+		if !present {
+			t.Errorf("%s not pinned by the overlay", name)
+			continue
+		}
+		if got != "" {
+			t.Errorf("%s = %q, want it pinned empty", name, got)
+		}
+	}
+	// With every redirect neutralised, an ambient proxy URL cannot survive
+	// into the effective environment the harness reads.
+	if got := ClassifySettingsBackendForTest(env); got != BackendBedrock {
+		t.Errorf("overlay classifies as %q, want bedrock", got)
+	}
+}
+
+// A mode that legitimately needs one of the value vars sets it through Extra,
+// which is merged after the pin block and wins.
+func TestBuildBackendOverlayLetsAModeSupplyAValueVar(t *testing.T) {
+	t.Parallel()
+	settings, err := BuildBackendOverlay(BackendOverlay{
+		Mode:  BackendBedrock,
+		Extra: map[string]string{"ANTHROPIC_BEDROCK_SERVICE_TIER": "priority"},
+	})
+	if err != nil {
+		t.Fatalf("BuildBackendOverlay: %v", err)
+	}
+	if got := overlayEnv(t, settings)["ANTHROPIC_BEDROCK_SERVICE_TIER"]; got != "priority" {
+		t.Errorf("service tier = %q, want the declared value to win", got)
+	}
+}
+
+// The builder owns the selector block, so a declared selector is ignored
+// rather than allowed to override the pins. The guarantee has to hold in the
+// builder itself, not in whichever caller happens to pre-filter.
+func TestBuildBackendOverlayIgnoresADeclaredSelector(t *testing.T) {
+	t.Parallel()
+	settings, err := BuildBackendOverlay(BackendOverlay{
+		Mode:  BackendSubscription,
+		Extra: map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1"},
+	})
+	if err != nil {
+		t.Fatalf("BuildBackendOverlay: %v", err)
+	}
+	if got := overlayEnv(t, settings)["CLAUDE_CODE_USE_BEDROCK"]; got != "0" {
+		t.Errorf("CLAUDE_CODE_USE_BEDROCK = %q, want the builder's pin to hold", got)
+	}
+}
+
+// ClassifySettingsBackendForTest resolves a backend from a built env block.
+// The full settings-file classifier arrives with the verify command; this
+// keeps the assertion above honest without reaching forward to it.
+func ClassifySettingsBackendForTest(env map[string]string) Backend {
+	return ResolveBackend(func(k string) string { return env[k] })
+}

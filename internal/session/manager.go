@@ -498,12 +498,6 @@ func (m *Manager) Create(sess *api.Session) error {
 
 	plan := m.planLaunch(sess)
 
-	// Classify the backend-selecting environment this session is launched
-	// into (finding-031 / aae-orc-b2d0p). The pane inherits marvel's process
-	// environment and layers the per-pane env map over it, so the effective
-	// value of a backend switch is the constructed override when present and
-	// os.Getenv otherwise. Recorded on the session so the window resolver can
-	// tell a direct-API window from a redirected one.
 	// Layer A: write the per-session backend overlay for a role that declared a
 	// non-default backend, and stamp its path so cast-launch.sh passes it as
 	// claude --settings (design BT3). A build or write failure fails the launch
@@ -513,10 +507,17 @@ func (m *Manager) Create(sess *api.Session) error {
 		_ = m.store.DeleteSession(sess.Key())
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
-	// Classify the effective backend through the overlay layered over the pane
-	// env (finding-031 / aae-orc-b2d0p; design R4). The overlay's --settings env
-	// wins over the pane env, which wins over marvel's process environment, so
-	// backendClassifyLookup mirrors Claude Code's precedence.
+	// Classify the backend-selecting environment this session is launched into
+	// (finding-031 / aae-orc-b2d0p; design R4). The pane inherits marvel's
+	// process environment and layers the per-pane env map over it, and the
+	// --settings overlay layers over both, so the effective value of a backend
+	// switch is the overlay when present, then the constructed override, then
+	// os.Getenv. backendClassifyLookup walks them in that order. Recorded on
+	// the session so the window resolver can tell a direct-API window from a
+	// redirected one.
+	//
+	// That the overlay outranks the pane env is measurement M2, to be verified
+	// in the shakedown rather than assumed.
 	lookup := backendClassifyLookup(overlayEnv, plan.env)
 	sess.BackendRedirection = api.ClassifyBackendRedirection(lookup)
 	// The named intent/actual pair for the backend-override loud-failure gate:
@@ -546,8 +547,12 @@ func (m *Manager) Create(sess *api.Session) error {
 		KeepOnExit: sess.Runtime.Mode == api.RuntimeModeHeadless,
 	})
 	if err := inst.Spawn(context.Background()); err != nil {
-		// Clean up store on failure.
+		// Clean up store on failure. The overlay goes with it: this path never
+		// reaches Delete, so without this the file outlives the failed spawn at
+		// the same per-key path, and a later session with that key but a
+		// different declared backend reads an overlay a crash left behind.
 		_ = m.store.DeleteSession(sess.Key())
+		m.sweepBackendOverlay(*sess)
 		return fmt.Errorf("create pane for %s: %w", sess.Key(), err)
 	}
 	paneID := inst.PaneID()
@@ -1094,7 +1099,7 @@ func (m *Manager) Delete(key string) error {
 
 	// Sweep the per-session backend overlay (design: ephemeral, swept with the
 	// session). Best-effort; a missing file is not an error.
-	m.sweepBackendOverlay(key)
+	m.sweepBackendOverlay(sess)
 
 	log.Printf("session %s deleted", key)
 	events.Emit(m.Events, events.Event{
