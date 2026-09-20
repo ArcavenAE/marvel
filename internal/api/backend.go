@@ -160,8 +160,11 @@ func backendFlagTruthy(v string) bool {
 // roles in the backend-override design (design-backend-swaps.md, R1/R4/R5):
 // the per-role INTENDED backend an operator declares (Runtime.Backend), and
 // the NAMED backend the constructed spawn environment resolves to
-// (ResolveBackend). marvel compares the two and fails loudly when they
-// disagree. Empty means unspecified: no declared intent, or a session the
+// (ResolveBackend). marvel records both at spawn; the loud-failure gate that
+// WILL compare them and refuse a mismatched launch is BT5 (aae-orc-29f04) and
+// is not built yet. Until it lands, a mismatch is reported only when an
+// operator runs `marvel backend verify`, so this pair is evidence rather than
+// enforcement. Empty means unspecified: no declared intent, or a session the
 // classifier never ran on.
 type Backend string
 

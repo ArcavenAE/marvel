@@ -1,6 +1,8 @@
 package session
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -26,8 +28,9 @@ const MarvelBackendSettingsEnv = "MARVEL_BACKEND_SETTINGS"
 // process env (they are Claude Code settings keys, not env vars). Their values
 // are helper-script PATHS whose stdout is the secret, never a literal bearer.
 const (
-	backendAPIKeyHelperKey  = "MARVEL_BACKEND_API_KEY_HELPER"
-	backendAWSCredExportKey = "MARVEL_BACKEND_AWS_CREDENTIAL_EXPORT"
+	backendAPIKeyHelperKey   = "MARVEL_BACKEND_API_KEY_HELPER"
+	backendAWSCredExportKey  = "MARVEL_BACKEND_AWS_CREDENTIAL_EXPORT"
+	backendAWSAuthRefreshKey = "MARVEL_BACKEND_AWS_AUTH_REFRESH"
 )
 
 // backendWorkspaceIDKey is the non-secret Platform-on-AWS workspace id an
@@ -38,7 +41,7 @@ const backendWorkspaceIDKey = "ANTHROPIC_AWS_WORKSPACE_ID"
 // backendReserved reports whether a role-env key is lifted to a settings
 // pointer rather than carried as a pane env var.
 func backendReserved(k string) bool {
-	return k == backendAPIKeyHelperKey || k == backendAWSCredExportKey
+	return k == backendAPIKeyHelperKey || k == backendAWSCredExportKey || k == backendAWSAuthRefreshKey
 }
 
 // backendOverlayEnabled reports whether a session's declared backend warrants a
@@ -47,12 +50,7 @@ func backendReserved(k string) bool {
 // case exercises. Every other mode (including subscription, which must pin
 // competitors OFF) gets one.
 func backendOverlayEnabled(backend string) bool {
-	switch api.Backend(backend) {
-	case "", api.BackendDefaultName:
-		return false
-	default:
-		return true
-	}
+	return api.BackendOverlayWarranted(api.Backend(backend))
 }
 
 // backendOverlayPath is the deterministic overlay file for a session, so the
@@ -60,6 +58,21 @@ func backendOverlayEnabled(backend string) bool {
 func (m *Manager) backendOverlayPath(sessionKey string) string {
 	name := strings.ReplaceAll(sessionKey, "/", "-") + ".json"
 	return filepath.Join(m.BackendOverlayDir, name)
+}
+
+// backendOverlayFor gathers the non-secret overlay inputs a role declared. It
+// is the single place that reads the reserved keys out of the role env, so the
+// overlay writer and the credential-source classifier cannot drift apart on
+// what a role actually asked for.
+func backendOverlayFor(sess *api.Session) api.BackendOverlay {
+	return api.BackendOverlay{
+		Mode:                api.Backend(sess.Runtime.Backend),
+		WorkspaceID:         sess.Runtime.Env[backendWorkspaceIDKey],
+		APIKeyHelper:        sess.Runtime.Env[backendAPIKeyHelperKey],
+		AWSCredentialExport: sess.Runtime.Env[backendAWSCredExportKey],
+		AWSAuthRefresh:      sess.Runtime.Env[backendAWSAuthRefreshKey],
+		Extra:               backendExtraEnv(sess.Runtime.Env),
+	}
 }
 
 // applyBackendOverlay builds and writes the per-session backend overlay for a
@@ -74,14 +87,7 @@ func (m *Manager) applyBackendOverlay(sess *api.Session, plan *launchPlan) (map[
 	if !backendOverlayEnabled(sess.Runtime.Backend) {
 		return nil, nil
 	}
-	ov := api.BackendOverlay{
-		Mode:                api.Backend(sess.Runtime.Backend),
-		WorkspaceID:         sess.Runtime.Env[backendWorkspaceIDKey],
-		APIKeyHelper:        sess.Runtime.Env[backendAPIKeyHelperKey],
-		AWSCredentialExport: sess.Runtime.Env[backendAWSCredExportKey],
-		Extra:               backendExtraEnv(sess.Runtime.Env),
-	}
-	settings, err := api.BuildBackendOverlay(ov)
+	settings, err := api.BuildBackendOverlay(backendOverlayFor(sess))
 	if err != nil {
 		return nil, err
 	}
@@ -93,9 +99,10 @@ func (m *Manager) applyBackendOverlay(sess *api.Session, plan *launchPlan) (map[
 		plan.env = map[string]string{}
 	}
 	plan.env[MarvelBackendSettingsEnv] = path
-	// Record it on the session too, so the sweep removes the file this session
-	// was actually launched with rather than one recomputed from a directory
-	// that may have moved since.
+	// Record it on the session as well as in the pane env. Both the sweep
+	// and the verification read it back: the file this session was actually
+	// launched with is the one to remove and the one to classify, even if
+	// BackendOverlayDir has moved since (design R5).
 	sess.BackendOverlayPath = path
 
 	// Return the env block the harness will actually see through --settings, so
@@ -145,6 +152,70 @@ func backendClassifyLookup(overlayEnv, planEnv map[string]string) func(string) s
 		}
 		return base(k)
 	}
+}
+
+// VerifyBackend answers, for one session, which backend it is actually on and
+// whether every layer agrees (BT7). It runs daemon-side because the overlay
+// directory is the manager's own state: a CLI cannot recompute a path that
+// MARVEL_BACKEND_OVERLAY_DIR may have moved, and guessing it would report a
+// missing overlay that is merely somewhere else.
+//
+// macOS cannot read a sibling process's environ, so this verifies against
+// artifacts marvel controls - the settings file it wrote and the intent/actual
+// pair it recorded at spawn - rather than against the live pane.
+func (m *Manager) VerifyBackend(sess api.Session) api.BackendVerification {
+	in := api.BackendVerifyInput{
+		Session:          sess.Key(),
+		Intended:         sess.BackendIntended,
+		Resolved:         sess.BackendResolved,
+		CredentialSource: sess.BackendCredentialSource,
+	}
+	var readErr error
+	// The recorded path wins over the computed one: it is what this session was
+	// actually launched with (design R5). Falling back to the computed path
+	// keeps sessions that predate the field verifiable.
+	switch {
+	case sess.BackendOverlayPath != "":
+		in.OverlayPath = sess.BackendOverlayPath
+	case m.BackendOverlayDir != "":
+		in.OverlayPath = m.backendOverlayPath(sess.Key())
+	}
+	if in.OverlayPath != "" {
+		settings, err := readBackendOverlay(in.OverlayPath)
+		switch {
+		case err == nil:
+			in.OverlaySettings = settings
+		case errors.Is(err, os.ErrNotExist):
+			// Absent. VerifyBackend reports that only when the declared
+			// backend warranted an overlay in the first place.
+		default:
+			readErr = err
+		}
+	}
+	v := api.VerifyBackend(in)
+	if readErr != nil {
+		// An unreadable overlay is not a pass. The file is what the harness
+		// launched with, so being unable to read it means the verdict cannot
+		// be vouched for either way.
+		v.Problems = append(v.Problems, fmt.Sprintf("cannot read backend overlay %s: %v", in.OverlayPath, readErr))
+		v.OK = false
+	}
+	return v
+}
+
+// readBackendOverlay reads a written overlay back as the harness would see it.
+// The env block returns as map[string]any here rather than the map[string]string
+// the builder produced, which is why ClassifySettingsBackend accepts both.
+func readBackendOverlay(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("parse backend overlay %s: %w", path, err)
+	}
+	return settings, nil
 }
 
 // sweepBackendOverlay removes a session's overlay (design: ephemeral, swept

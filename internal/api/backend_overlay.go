@@ -85,6 +85,13 @@ type BackendOverlay struct {
 	// AWSCredentialExport points at a script that prints JSON AWS credentials,
 	// the non-interactive refresh path for the IAM modes (BT8). A pointer.
 	AWSCredentialExport string
+	// AWSAuthRefresh points at the script Claude Code runs when AWS auth has
+	// expired. The design wires it for both IAM modes (R6), pointed at a
+	// non-interactive credential_process or export helper rather than at a
+	// browser login. Marvel emits the pointer it is given; it cannot see
+	// whether the script behind it actually avoids a human, which is why
+	// declaring it does not by itself vouch for unattended refresh.
+	AWSAuthRefresh string
 	// Extra is additional non-secret env the role declared to carry into the
 	// overlay (for example AWS_PROFILE, ANTHROPIC_AWS_WORKSPACE_ID set directly,
 	// or an OTEL attribute). Merged after the selector block, so an operator can
@@ -176,6 +183,9 @@ func BuildBackendOverlay(o BackendOverlay) (map[string]any, error) {
 	}
 	if o.AWSCredentialExport != "" {
 		settings["awsCredentialExport"] = o.AWSCredentialExport
+	}
+	if o.AWSAuthRefresh != "" {
+		settings["awsAuthRefresh"] = o.AWSAuthRefresh
 	}
 	return settings, nil
 }

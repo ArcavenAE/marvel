@@ -522,11 +522,20 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.BackendRedirection = api.ClassifyBackendRedirection(lookup)
 	// The named intent/actual pair for the backend-override loud-failure gate:
 	// the operator's declared backend for this role, and the backend the
-	// effective environment actually selects. The gate compares them; the
-	// verification command reads them back. Recorded here so all three stay
+	// effective environment actually selects. The verification command reads
+	// them back today; the spawn-time gate that will compare them and fail the
+	// launch is BT5 (aae-orc-29f04) and is not in this branch. Recorded here so all three stay
 	// consistent over the same environment.
 	sess.BackendIntended = api.Backend(sess.Runtime.Backend)
 	sess.BackendResolved = api.ResolveBackend(lookup)
+	// How this session authenticates, which neither field above can show: the
+	// IAM twins and their static counterparts set the same selector, and only
+	// one of the two expires mid-shift (BT8). Read from what the role DECLARED
+	// rather than from the environment, because a helper pointer and a profile
+	// name are configuration while the credential itself is never marvel's to
+	// see. Recorded for every session, overlay or not, so a default-mode
+	// session reads as ambient rather than as unclassified.
+	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
 
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
@@ -577,6 +586,8 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.BackendRedirection = sess.BackendRedirection
 		live.BackendIntended = sess.BackendIntended
 		live.BackendResolved = sess.BackendResolved
+		live.BackendCredentialSource = sess.BackendCredentialSource
+		live.BackendOverlayPath = sess.BackendOverlayPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID

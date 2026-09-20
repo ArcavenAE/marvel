@@ -835,6 +835,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleCredentialGet(req.Params)
 	case "credential.reveal":
 		return d.handleCredentialReveal(req.Params, c)
+	case "backend.verify":
+		return d.handleBackendVerify(req.Params)
 	case "bus.status":
 		return d.handleBusStatus()
 	case "bus.leaf.connect":
@@ -2705,6 +2707,41 @@ func (d *Daemon) handleBusStatus() Response {
 	data, err := json.Marshal(st)
 	if err != nil {
 		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
+	}
+	return Response{Result: data}
+}
+
+// backendVerifyParams names one session to verify, or every session when
+// blank.
+type backendVerifyParams struct {
+	Session string `json:"session"`
+}
+
+// handleBackendVerify answers which backend each session is actually on and
+// whether the layers agree (BT7). It runs here rather than in the CLI because
+// the overlay directory is the session manager's own state; see
+// session.Manager.VerifyBackend.
+func (d *Daemon) handleBackendVerify(params json.RawMessage) Response {
+	var p backendVerifyParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
+	sessions := d.store.ListSessions()
+	out := make([]api.BackendVerification, 0, len(sessions))
+	for _, sess := range sessions {
+		if p.Session != "" && sess.Key() != p.Session {
+			continue
+		}
+		out = append(out, d.sessMgr.VerifyBackend(sess))
+	}
+	if p.Session != "" && len(out) == 0 {
+		return Response{Error: fmt.Sprintf("no session %s", p.Session)}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("encode backend verification: %v", err)}
 	}
 	return Response{Result: data}
 }
