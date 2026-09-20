@@ -2690,6 +2690,27 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 // handleBusStatus serves `marvel bus status`: the supervised broker when
 // there is one, the adopted URL when the cluster only points at a bus, and
 // a plain "no bus" otherwise.
+func (d *Daemon) handleBusStatus() Response {
+	var st bus.Status
+	switch {
+	case d.busSup != nil:
+		st = d.busSup.Status()
+	case d.sessMgr.Bus != nil:
+		st = bus.Status{Managed: false, URL: d.sessMgr.Bus.URL(), Leaf: "n/a"}
+		if a, ok := d.sessMgr.Bus.(bus.Adopted); ok {
+			rb := a.Bus()
+			st.Class, st.Provider, st.Mode, st.CallerIdentity = rb.Class, rb.Provider, string(rb.Mode), rb.CallerIdentity
+		}
+	default:
+		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
+	}
+	data, err := json.Marshal(st)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
+	}
+	return Response{Result: data}
+}
+
 // backendVerifyParams names one session to verify, or every session when
 // blank.
 type backendVerifyParams struct {
@@ -2721,27 +2742,6 @@ func (d *Daemon) handleBackendVerify(params json.RawMessage) Response {
 	data, err := json.Marshal(out)
 	if err != nil {
 		return Response{Error: fmt.Sprintf("encode backend verification: %v", err)}
-	}
-	return Response{Result: data}
-}
-
-func (d *Daemon) handleBusStatus() Response {
-	var st bus.Status
-	switch {
-	case d.busSup != nil:
-		st = d.busSup.Status()
-	case d.sessMgr.Bus != nil:
-		st = bus.Status{Managed: false, URL: d.sessMgr.Bus.URL(), Leaf: "n/a"}
-		if a, ok := d.sessMgr.Bus.(bus.Adopted); ok {
-			rb := a.Bus()
-			st.Class, st.Provider, st.Mode, st.CallerIdentity = rb.Class, rb.Provider, string(rb.Mode), rb.CallerIdentity
-		}
-	default:
-		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
-	}
-	data, err := json.Marshal(st)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
 	}
 	return Response{Result: data}
 }

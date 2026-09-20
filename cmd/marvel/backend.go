@@ -125,10 +125,12 @@ func renderBackendVerifications(report []api.BackendVerification) string {
 	// and the operator needs the whole sentence to act on one.
 	for _, v := range report {
 		for _, p := range v.Problems {
-			fmt.Fprintf(&buf, "\n%s: %s", v.Session, p)
+			_, _ = fmt.Fprintf(&buf, "\n%s: %s", v.Session, p)
 		}
 	}
-	if buf.Len() > 0 && buf.Bytes()[buf.Len()-1] != '\n' {
+	// The table header is always written above, so the buffer is never empty
+	// here; only the trailing newline is in question.
+	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
 	return buf.String()

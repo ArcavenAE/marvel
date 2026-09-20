@@ -522,8 +522,9 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.BackendRedirection = api.ClassifyBackendRedirection(lookup)
 	// The named intent/actual pair for the backend-override loud-failure gate:
 	// the operator's declared backend for this role, and the backend the
-	// effective environment actually selects. The gate compares them; the
-	// verification command reads them back. Recorded here so all three stay
+	// effective environment actually selects. The verification command reads
+	// them back today; the spawn-time gate that will compare them and fail the
+	// launch is BT5 (aae-orc-29f04) and is not in this branch. Recorded here so all three stay
 	// consistent over the same environment.
 	sess.BackendIntended = api.Backend(sess.Runtime.Backend)
 	sess.BackendResolved = api.ResolveBackend(lookup)
