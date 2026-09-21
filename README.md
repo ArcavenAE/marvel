@@ -123,9 +123,12 @@ name = "review-squad"
 ```
 
 `image` names the harness and is what selects the runtime adapter; marvel
-falls back to `command` when it is unset. The claude adapter injects each
-session's identity (workspace, team, role, session name) on its own, so a
-role does not pass its own identity flags. Runnable manifests live in
+falls back to `command` when it is unset, and a name matching no adapter
+resolves to the generic one. Every adapter puts the session's identity in the
+environment (`MARVEL_SESSION`, `MARVEL_ROLE`, `MARVEL_TEAM`,
+`MARVEL_WORKSPACE`), so no role passes its own identity flags. The claude
+adapter additionally names the session in the system prompt, unless the role
+already passes its own `--append-system-prompt`. Runnable manifests live in
 [examples/](examples/).
 
 ## CLI
@@ -265,10 +268,15 @@ Written in Go. The daemon manages agent sessions through a tmux substrate:
 
 ## BYOA
 
-Marvel works with any BYOA console that accepts a prompt on stdin:
+Marvel works with any BYOA console it can launch as a process in a tmux pane:
 `claude`, `codex`, `opencode`, or a custom agent. The runtime is just a
 command path plus args, and marvel does not care what the agent is: it
 manages the process lifecycle.
+
+The prompt is not delivered on stdin. The claude adapter passes it as a
+positional argument under `--print`; the codex and opencode adapters close
+stdin outright, because `codex exec` otherwise appends piped stdin to its
+prompt and hangs on the pane tty.
 
 A forestage adapter also ships, frozen as the reference implementation of the
 deep-integration contract rather than as a live target (forestage was retired
