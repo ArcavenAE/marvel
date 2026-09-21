@@ -104,8 +104,8 @@ name = "review-squad"
   replicas = 3
 
     [team.role.runtime]
-    command = "/usr/local/bin/forestage"
-    args = ["--persona", "dune/reviewer"]
+    image = "claude"
+    command = "claude"
 
     [team.role.healthcheck]
     type = "heartbeat"
@@ -118,9 +118,15 @@ name = "review-squad"
   restart_policy = "always"
 
     [team.role.runtime]
-    command = "/usr/local/bin/forestage"
-    args = ["--persona", "dune/supervisor"]
+    image = "claude"
+    command = "claude"
 ```
+
+`image` names the harness and is what selects the runtime adapter; marvel
+falls back to `command` when it is unset. The claude adapter injects each
+session's identity (workspace, team, role, session name) on its own, so a
+role does not pass its own identity flags. Runnable manifests live in
+[examples/](examples/).
 
 ## CLI
 
@@ -260,9 +266,13 @@ Written in Go. The daemon manages agent sessions through a tmux substrate:
 ## BYOA
 
 Marvel works with any BYOA console that accepts a prompt on stdin:
-forestage, zclaude, dclaude, bare `claude` CLI, or custom agents.
-The runtime is just a command path + args. Marvel doesn't care what
-the agent is — it manages the process lifecycle.
+`claude`, `codex`, `opencode`, or a custom agent. The runtime is just a
+command path plus args, and marvel does not care what the agent is: it
+manages the process lifecycle.
+
+A forestage adapter also ships, frozen as the reference implementation of the
+deep-integration contract rather than as a live target (forestage was retired
+2026-07-31).
 
 ## Requirements
 
