@@ -237,6 +237,132 @@ marvel config remove-cluster staging
 `~/.marvel/config.yaml`. Created automatically on first use with a
 `local` cluster resolving to `~/.marvel/run/marvel.sock`.
 
+## The message bus
+
+A cluster may declare a message broker. Marvel provisions it, keeps its
+structure correct, and can attach it to a shared hub. This section covers what
+you declare, what marvel does with it, and what it does when something is
+wrong.
+
+### Declaring it
+
+The broker is a cluster Services entry in the client config:
+
+```yaml
+services:
+  - name: bus
+    class: message-bus
+    provider: nats-server
+    mode: managed
+```
+
+`class` and `provider` are checked against registries, so a typo is refused at
+read time rather than at attach. `mode` is one of:
+
+| Mode | What marvel does |
+|---|---|
+| `managed` | Starts the broker, renders its config, provisions its objects, and keeps them correct. |
+| `adopted` | Supervises a broker it did not start. |
+| `external` | Uses a broker it neither starts nor supervises. |
+
+A `bus:` block is the same record under an older spelling, lifted at read time
+as the entry named `bus`. Declaring both is refused, with an error naming the
+cluster and asking you to keep one spelling.
+
+A `seat:` block gives a human director seat its own broker user:
+
+```yaml
+    seat:
+      workspace: <ws>
+      team: <team>
+```
+
+That user is named `director` and its password is written to
+`<state dir>/nats/director.pass`. Sessions marvel spawned get their own
+credentials stamped into their environment instead; the seat exists for a
+session marvel did not start. `hub.ca_file` trusts a TLS hub from the leaf
+remote; it must be an absolute path, or `~`-relative, because the broker
+process resolves it rather than the daemon.
+
+### What survives a restart
+
+Passwords are recovered from the `authorization.conf` marvel rendered last
+time, so a daemon restart or a `daemon reexec` leaves running sessions'
+credentials valid. The daemon logs how many it recovered.
+
+### Structural health
+
+Readiness on a managed broker is structural, and it is read from the running
+broker rather than inferred from the files marvel wrote:
+
+- every declared service-scope object exists
+- `/varz` reports `auth_required`
+- `/varz` reports `tls_required`, which is recorded but does not yet join the
+  ready predicate; until the client listener is rendered with TLS, false is
+  the interim posture rather than a miss
+
+It is structural only, by design. Consumer counts, undelivered durables and
+stream age are vital signs and never enter this reading.
+
+It is read at start, after a reload, and on the same thirty-second poll that
+checks the leaf link.
+
+### What a miss does, and what it does not
+
+On a structural miss marvel re-provisions and holds new spawns. It does not
+restart the broker. Specifically:
+
+- the missing objects are re-provisioned
+- an authorization miss gets one SIGHUP
+- readiness drops while the problem stands, so new sessions are held rather
+  than launched onto a broker that cannot carry them
+- `bus.unprovisioned` is emitted once per change in the problem set, not once
+  per tick
+
+A held spawn carries the reason, so you read the problem from the hold rather
+than from the event ring. It names the listener and then what is wrong: the
+missing objects, or that authorization has not loaded and a reload is
+outstanding, or that the broker is down and which restart is waiting on
+backoff.
+
+### Connecting to a shared hub
+
+A leaf link attaches the local broker to a shared hub:
+
+```sh
+marvel bus status              # pid, listener, readiness, hub leaf link
+marvel bus leaf connect        # attach without bouncing the broker
+marvel bus leaf disconnect     # detach without bouncing the broker
+```
+
+Connect and disconnect are reload-only: marvel renders the leaf block and
+reloads, so agents on the broker keep running.
+
+The exception is the leaf seed, which rides in the broker's environment and is
+read once at start. A broker already running with the seed takes a connect on
+a reload. A broker that booted without one, or one whose stored seed has since
+rotated, needs a fresh process, so marvel restarts it; clients reconnect, and
+that restart is counted separately from a crash and is not subject to backoff.
+Storing the same seed again is not a rotation and restarts nothing.
+
+A leaf link that goes down is reported and nothing is restarted: the local
+broker keeps serving its own sessions.
+
+### Ports
+
+A managed broker's monitoring endpoint is on loopback at the listen port plus
+4000, or 4000 below the listen port when plus would exceed 65535. So a broker
+listening on 4222 monitors on 8222, and one on a high port relocates downward
+rather than failing to start. The relocated port is always valid and always
+distinct from the listen port.
+
+### Stopping the daemon without stopping the bus
+
+```sh
+marvel stop --keep-bus   # detach, leave a managed broker up for the next daemon
+```
+
+
 ## Data directory
 
 All marvel daemon and client state lives in `~/.marvel/`:
