@@ -259,11 +259,35 @@ services:
 `class` and `provider` are checked against registries, so a typo is refused at
 read time rather than at attach. `mode` is one of:
 
-| Mode | What marvel does |
+| Mode | What marvel does today |
 |---|---|
-| `managed` | Starts the broker, renders its config, provisions its objects, and keeps them correct. |
-| `adopted` | Supervises a broker it did not start. |
-| `external` | Uses a broker it neither starts nor supervises. |
+| `managed` | Renders the broker's config, starts it, supervises it, provisions its objects, mints the credentials sessions present, and keeps the structure correct. |
+| `adopted` | Does not start or supervise the broker. Sessions receive `NATS_URL` and nothing else. |
+| `external` | The same path as `adopted`: sessions receive `NATS_URL` and nothing else. |
+
+The split that matters in the code is managed against not-managed, and
+`adopted` and `external` are on the same side of it. The daemon branches once,
+on whether the mode is `managed`; both other modes take the identical arm and
+get a record that carries a URL. The declared mode is kept and reported, so
+`marvel bus status` tells you which one you wrote, but nothing in the daemon
+behaves differently between them yet. Choose by what you mean, and do not
+expect the choice to change marvel's behaviour today.
+
+The consequences of not-managed are worth stating plainly, because they are
+what an operator actually feels:
+
+- no credentials. Marvel mints nothing for a broker it did not render, and
+  there is deliberately no field for a foreign credential, because holding one
+  would be custody rather than issuance (ADR-009). Sessions get the URL and
+  must be authorized some other way, or the broker must not require it.
+- no structural health, no hold. Everything in the next two sections is
+  managed-only. A not-managed broker is not read for structure and does not
+  gate spawns.
+- no leaf management. `marvel bus leaf connect` and `disconnect` act on a
+  managed broker's rendered config, so they do not apply. `bus status` reports
+  the leaf as `n/a`.
+- a `url` is required. A not-managed entry with neither `url` nor `listen` is
+  refused at read time.
 
 A `bus:` block is the same record under an older spelling, lifted at read time
 as the entry named `bus`. Declaring both is refused, with an error naming the
@@ -327,7 +351,7 @@ backoff.
 
 ### Connecting to a shared hub
 
-A leaf link attaches the local broker to a shared hub:
+A leaf link attaches a managed local broker to a shared hub:
 
 ```sh
 marvel bus status              # pid, listener, readiness, hub leaf link
