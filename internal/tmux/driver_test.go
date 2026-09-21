@@ -290,11 +290,14 @@ func TestSendKeys(t *testing.T) {
 
 // TestSendKeysConcurrentInjectNoInterleave drives many goroutines
 // injecting distinct markers into ONE pane at once, each as a literal
-// text + Enter. Before the fix, SendKeys issued text and Enter as two
-// separate tmux processes with no per-pane serialization, so a concurrent
-// inject could land its text between another call's text and Enter,
-// merging two markers onto one line. With text+Enter in a single
-// invocation and a per-pane lock, every marker must land on its own line.
+// text plus Enter. SendKeys issues the text and its Enter as two separate
+// tmux invocations (the Enter must be a distinct non-literal keypress so a
+// paste-aware composer submits it, aae-orc-2uiw9). Without serialization, a
+// concurrent inject could land its text between another call's text and
+// Enter, merging two markers onto one line. The per-pane lock, held for the
+// whole SendKeys call, keeps the text and its Enter atomic against other
+// injects, so every marker must land on its own line. This test guards that
+// the lock, not a single invocation, is the interleave guarantee.
 //
 // The pane runs cat, which echoes each completed line, so a marker shows
 // up on its echoed input line and on cat's output line; both must carry
