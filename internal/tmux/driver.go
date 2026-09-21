@@ -452,38 +452,42 @@ func (d *Driver) KillServer() error {
 	return nil
 }
 
-// SendKeys sends keystrokes to a tmux pane. If literal is true, each key is
+// SendKeys sends keystrokes to a tmux pane. If literal is true, the text is
 // sent literally (tmux send-keys -l) — no interpretation of special key names.
-// If enter is true, an Enter keystroke is appended after the text.
+// If enter is true, a submit follows the text.
 //
-// Text and Enter go in a single tmux invocation so a concurrent inject to
-// the same pane cannot land its text between this call's text and Enter:
-// a non-literal Enter rides as a trailing key argument, and a literal
-// Enter as a trailing carriage return (what the Enter key sends). The
-// per-pane lock is the backstop for any caller that still issues separate
-// SendKeys calls to one pane.
+// The submit is always a SEPARATE, non-literal Enter keypress, never a carriage
+// return folded into the literal text. A paste-aware TUI composer (Claude Code)
+// treats a trailing \r inside a literal send-keys burst as a draft newline and
+// does not submit; a distinct Enter key event after the burst does. Folding the
+// Enter into the literal send (PR #81) is what broke every inject-based doorbell
+// across the fleet: text landed in the composer and never submitted
+// (aae-orc-2uiw9).
+//
+// The two invocations stay atomic against other injects to the same pane because
+// the per-pane lock is held for the whole call, so a concurrent SendKeys cannot
+// land its text between this call's text and Enter. The lock, not a single
+// invocation, is the interleave guard (TestSendKeysConcurrentInjectNoInterleave).
 func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
 	unlock := d.lockPane(paneID)
 	defer unlock()
 
-	args := []string{"send-keys", "-t", paneID}
+	textArgs := []string{"send-keys", "-t", paneID}
 	if literal {
-		// -l makes tmux send every argument literally, so a "Enter" key
-		// name cannot ride along. A trailing carriage return is what the
-		// Enter key itself sends, and it submits from the same invocation.
-		if enter {
-			text += "\r"
-		}
-		args = append(args, "-l", text)
+		textArgs = append(textArgs, "-l", text)
 	} else {
-		args = append(args, text)
-		if enter {
-			args = append(args, "Enter")
-		}
+		textArgs = append(textArgs, text)
+	}
+	if out, err := d.cmd(textArgs...).CombinedOutput(); err != nil {
+		return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
 	}
 
-	if out, err := d.cmd(args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
+	if !enter {
+		return nil
+	}
+
+	if out, err := d.cmd("send-keys", "-t", paneID, "Enter").CombinedOutput(); err != nil {
+		return fmt.Errorf("send-keys %s enter: %s: %w", paneID, string(out), err)
 	}
 	return nil
 }
