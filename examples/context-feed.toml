@@ -1,4 +1,4 @@
-# Marvel example — cooperative context feed for interactive Claude Code.
+# Marvel example: cooperative context feed for interactive Claude Code.
 #
 # Interactive (TUI) sessions emit no parseable stream, so the usage
 # accountant cannot meter them and CTX% renders "-". context_feed =
