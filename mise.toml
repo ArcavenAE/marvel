@@ -28,4 +28,4 @@
 [tools]
 golangci-lint = "2.13.2"
 gofumpt = "0.12.0"
-"github:nats-io/nats-server" = "2.14.6"
+"github:nats-io/nats-server" = "2.15.0"
