@@ -520,9 +520,24 @@ appends Enter. The `-l` flag (default: true) sends keys literally.
 # Send without Enter (type but don't submit)
 marvel inject dev/squad-worker-g1-0 "partial text"
 
-# Send a special key
-marvel inject dev/squad-worker-g1-0 "C-c" --literal=false
+# Press a key, rather than type its name
+marvel inject dev/squad-worker-g1-0 --key C-c
+marvel inject dev/squad-worker-g1-0 --key Enter
+
+# Type, then press Enter
+marvel inject dev/squad-worker-g1-0 "review the auth module" --key Enter
 ```
+
+**Use `--key` for control keys.** Because text is literal by default, a key
+name given as text types its characters instead of pressing it. Injecting the
+word `Enter` appends five characters to a Claude draft, and on a codex
+approval menu it matches nothing, cancels the pending command, and returns the
+seat to a clean idle prompt that still reports healthy: the seat records a
+refusal the agent never made and nothing in the control plane shows it.
+
+`marvel inject <key> Enter` is therefore refused, with the three working forms
+in the error. The refusal is on the default only. If you genuinely mean to
+send the word, `--literal` says so explicitly and is believed.
 
 **When to use:** Giving an agent a task, interrupting a stuck agent,
 sending Ctrl-C to stop a runaway process. This is the "executive
