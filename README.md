@@ -220,13 +220,17 @@ and are never restarted by health evaluation.
 
 ## Examples
 
+`examples/` holds a manifest per scenario, each shipped in both TOML and YAML.
+[examples/README.md](examples/README.md) indexes every one of them: what it
+demonstrates, grouped by topic, and which to open first.
+
+Three entry points:
+
 | Manifest | What it shows |
 |----------|---------------|
-| `examples/demo.toml` | 3 agents + chaos supervisor with healthchecks |
-| `examples/demo2.toml` | 5 agents + chaos supervisor (larger team) |
-| `examples/review-team.toml` | Multi-role team: reviewers, architect, supervisor |
-| `examples/shift-demo.toml` | Minimal team for demonstrating shifts |
-| `examples/claude.toml` | Real Claude Code agents (requires claude CLI) |
+| `examples/generic-agent.toml` | The smallest thing that works: marvel managing an arbitrary command through the generic adapter. No model auth needed. |
+| `examples/claude.toml` | Real Claude Code agents beside a simulator supervisor: adapter selection, permission injection, identity injection. Requires the claude CLI. |
+| `examples/review-team.toml` | A heterogeneous team: reviewer, architect and supervisor roles, each with its own replica count. |
 
 ## Just Recipes
 
