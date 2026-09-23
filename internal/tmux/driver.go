@@ -464,30 +464,34 @@ func (d *Driver) KillServer() error {
 // across the fleet: text landed in the composer and never submitted
 // (aae-orc-2uiw9).
 //
-// The two invocations stay atomic against other injects to the same pane because
-// the per-pane lock is held for the whole call, so a concurrent SendKeys cannot
-// land its text between this call's text and Enter. The lock, not a single
-// invocation, is the interleave guard (TestSendKeysConcurrentInjectNoInterleave).
+// Text and Enter go out as ONE tmux invocation joined by the command separator
+// (send-keys -l TEXT ; send-keys Enter), so tmux enqueues both key events in a
+// single client/server exchange. A prior form issued them as two separate tmux
+// processes under the per-pane lock; that lock orders marvel's callers, but a
+// send-keys client returns when it exits, not when the server has delivered the
+// keys to the pane, so under concurrency the text and Enter of adjacent calls
+// could still interleave on one input line (marvel#324, aae-orc-sa2yt). The
+// single invocation is the interleave guard; the per-pane lock still orders
+// whole calls (TestSendKeysConcurrentInjectNoInterleave).
 func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
 	unlock := d.lockPane(paneID)
 	defer unlock()
 
-	textArgs := []string{"send-keys", "-t", paneID}
+	args := []string{"send-keys", "-t", paneID}
 	if literal {
-		textArgs = append(textArgs, "-l", text)
+		args = append(args, "-l", text)
 	} else {
-		textArgs = append(textArgs, text)
+		args = append(args, text)
 	}
-	if out, err := d.cmd(textArgs...).CombinedOutput(); err != nil {
+	if enter {
+		// A bare ";" argument is tmux's command separator, so tmux reads what
+		// follows as a second command rather than as keys. The Enter therefore
+		// stays a distinct interpreted keypress (never a folded carriage return)
+		// while riding the same client/server exchange as the text.
+		args = append(args, ";", "send-keys", "-t", paneID, "Enter")
+	}
+	if out, err := d.cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
-	}
-
-	if !enter {
-		return nil
-	}
-
-	if out, err := d.cmd("send-keys", "-t", paneID, "Enter").CombinedOutput(); err != nil {
-		return fmt.Errorf("send-keys %s enter: %s: %w", paneID, string(out), err)
 	}
 	return nil
 }
