@@ -323,8 +323,30 @@ type Session struct {
 	// to bolt via json so an adopted session keeps the spawn-time verdict.
 	BackendIntended Backend `toml:"-" json:"backend_intended,omitempty"`
 	BackendResolved Backend `toml:"-" json:"backend_resolved,omitempty"`
-	SessionMetrics  `toml:"-"`
-	SessionContext  `toml:"-"`
+	// BackendOverlayPath is the settings overlay marvel wrote for this session
+	// and passed to the harness, recorded at spawn. Recorded rather than
+	// recomputed because MARVEL_BACKEND_OVERLAY_DIR can move between a launch
+	// and the delete that sweeps it: a recomputed path then points at a
+	// directory the file was never in, os.Remove returns ErrNotExist, the
+	// best-effort sweep swallows it, and the real 0600 overlay outlives the
+	// session that owned it with nothing left to remove it. Verification reads
+	// it for the same reason (design R5): an adopted session keeps classifying
+	// the file it was launched with rather than one recomputed from wherever
+	// the directory points now. Empty when the declared backend warranted no
+	// overlay. Status, not spec.
+	BackendOverlayPath string `toml:"-" json:"backend_overlay_path,omitempty"`
+	// BackendCredentialSource names HOW this session's backend authenticates,
+	// which neither of the fields above can show: the IAM twins and their
+	// static counterparts set the same selector, and only one of the two
+	// expires mid-shift (design Q3). Resolved at spawn from what the role
+	// DECLARED - a helper-script path or a profile NAME - so it is a
+	// non-secret fact about configuration and never a credential (ADR-009).
+	// The verification command reads it back to name the variant, and the
+	// loud-failure gate asks whether an expiring session can renew itself.
+	// Empty for a session marvel never classified. Status, not spec.
+	BackendCredentialSource BackendCredentialSource `toml:"-" json:"backend_credential_source,omitempty"`
+	SessionMetrics          `toml:"-"`
+	SessionContext          `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.

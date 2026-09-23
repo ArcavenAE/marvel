@@ -144,6 +144,7 @@ func main() {
 	root.AddCommand(describeCmd())
 	root.AddCommand(credentialCmd())
 	root.AddCommand(busCmd())
+	root.AddCommand(backendCmd())
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())
 	root.AddCommand(convergeCmd())

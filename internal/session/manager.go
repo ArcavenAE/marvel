@@ -60,6 +60,17 @@ type Manager struct {
 	// working state, not marvel's record. Anything that must outlive the
 	// session is the harness's to write elsewhere.
 	HarnessHomeDir string
+	// BackendOverlayDir holds the per-session backend settings overlays
+	// (design-backend-swaps.md, Layer A). Defaults to a per-layout temp
+	// directory, overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
+	// or an operator can point it at the design's on-repo location
+	// (.session/backend-swaps/overlays). Marvel-owned and ephemeral: the
+	// overlay is swept when its session is deleted, and a stale one left by
+	// a crash is harmless (the next launch overwrites its own path). The
+	// path must stay stable across a restart for the same reason
+	// ProjectionDir does: an adopted agent keeps reading the --settings file
+	// it was launched with.
+	BackendOverlayDir string
 	// Usage receives adapter events for token and context accounting.
 	// Nil is safe, matching Events.
 	Usage UsageObserver
@@ -76,14 +87,15 @@ type Manager struct {
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	return &Manager{
-		store:          store,
-		driver:         driver,
-		adapters:       runtime.NewRegistry(),
-		StreamDir:      defaultStreamDir(),
-		ProjectionDir:  defaultProjectionDir(),
-		HarnessHomeDir: defaultHarnessHomeDir(),
-		instances:      make(map[string]*runtime.TmuxInstance),
-		drains:         make(map[string]*usageDrain),
+		store:             store,
+		driver:            driver,
+		adapters:          runtime.NewRegistry(),
+		StreamDir:         defaultStreamDir(),
+		ProjectionDir:     defaultProjectionDir(),
+		HarnessHomeDir:    defaultHarnessHomeDir(),
+		BackendOverlayDir: defaultBackendOverlayDir(),
+		instances:         make(map[string]*runtime.TmuxInstance),
+		drains:            make(map[string]*usageDrain),
 	}
 }
 
@@ -102,6 +114,16 @@ func defaultProjectionDir() string {
 // another's.
 func defaultHarnessHomeDir() string {
 	return daemonTempDir("marvel-harness-homes")
+}
+
+// defaultBackendOverlayDir keeps one daemon's backend overlays away from
+// another's, or honors MARVEL_BACKEND_OVERLAY_DIR so a shakedown can point at
+// the design's on-repo location (.session/backend-swaps/overlays).
+func defaultBackendOverlayDir() string {
+	if dir := os.Getenv("MARVEL_BACKEND_OVERLAY_DIR"); dir != "" {
+		return dir
+	}
+	return daemonTempDir("marvel-backend-overlays")
 }
 
 // daemonTempDir names a daemon-owned scratch directory that is unique per
@@ -476,22 +498,44 @@ func (m *Manager) Create(sess *api.Session) error {
 
 	plan := m.planLaunch(sess)
 
-	// Classify the backend-selecting environment this session is launched
-	// into (finding-031 / aae-orc-b2d0p). The pane inherits marvel's process
-	// environment and layers the per-pane env map over it, so the effective
-	// value of a backend switch is the constructed override when present and
-	// os.Getenv otherwise. Recorded on the session so the window resolver can
-	// tell a direct-API window from a redirected one.
-	lookup := backendEnvLookup(plan.env)
+	// Layer A: write the per-session backend overlay for a role that declared a
+	// non-default backend, and stamp its path so cast-launch.sh passes it as
+	// claude --settings (design BT3). A build or write failure fails the launch
+	// loudly rather than running on the wrong backend (finding-166 shape).
+	overlayEnv, err := m.applyBackendOverlay(sess, &plan)
+	if err != nil {
+		_ = m.store.DeleteSession(sess.Key())
+		return fmt.Errorf("create session %s: %w", sess.Key(), err)
+	}
+	// Classify the backend-selecting environment this session is launched into
+	// (finding-031 / aae-orc-b2d0p; design R4). The pane inherits marvel's
+	// process environment and layers the per-pane env map over it, and the
+	// --settings overlay layers over both, so the effective value of a backend
+	// switch is the overlay when present, then the constructed override, then
+	// os.Getenv. backendClassifyLookup walks them in that order. Recorded on
+	// the session so the window resolver can tell a direct-API window from a
+	// redirected one.
+	//
+	// That the overlay outranks the pane env is measurement M2, to be verified
+	// in the shakedown rather than assumed.
+	lookup := backendClassifyLookup(overlayEnv, plan.env)
 	sess.BackendRedirection = api.ClassifyBackendRedirection(lookup)
-	// The named intent/actual pair for the backend-override loud-failure gate
-	// (design R4): the operator's declared backend for this role, and the
-	// backend the constructed environment actually selects. The gate compares
-	// them; the verification command reads them back. Recorded here, at the
-	// same point and over the same constructed environment as the coarse
-	// verdict, so all three stay consistent.
+	// The named intent/actual pair for the backend-override loud-failure gate:
+	// the operator's declared backend for this role, and the backend the
+	// effective environment actually selects. The verification command reads
+	// them back today; the spawn-time gate that will compare them and fail the
+	// launch is BT5 (aae-orc-29f04) and is not in this branch. Recorded here so all three stay
+	// consistent over the same environment.
 	sess.BackendIntended = api.Backend(sess.Runtime.Backend)
 	sess.BackendResolved = api.ResolveBackend(lookup)
+	// How this session authenticates, which neither field above can show: the
+	// IAM twins and their static counterparts set the same selector, and only
+	// one of the two expires mid-shift (BT8). Read from what the role DECLARED
+	// rather than from the environment, because a helper pointer and a profile
+	// name are configuration while the credential itself is never marvel's to
+	// see. Recorded for every session, overlay or not, so a default-mode
+	// session reads as ambient rather than as unclassified.
+	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
 
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
@@ -512,8 +556,12 @@ func (m *Manager) Create(sess *api.Session) error {
 		KeepOnExit: sess.Runtime.Mode == api.RuntimeModeHeadless,
 	})
 	if err := inst.Spawn(context.Background()); err != nil {
-		// Clean up store on failure.
+		// Clean up store on failure. The overlay goes with it: this path never
+		// reaches Delete, so without this the file outlives the failed spawn at
+		// the same per-key path, and a later session with that key but a
+		// different declared backend reads an overlay a crash left behind.
 		_ = m.store.DeleteSession(sess.Key())
+		m.sweepBackendOverlay(*sess)
 		return fmt.Errorf("create pane for %s: %w", sess.Key(), err)
 	}
 	paneID := inst.PaneID()
@@ -536,6 +584,10 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.PID = pid
 		live.State = api.SessionRunning
 		live.BackendRedirection = sess.BackendRedirection
+		live.BackendIntended = sess.BackendIntended
+		live.BackendResolved = sess.BackendResolved
+		live.BackendCredentialSource = sess.BackendCredentialSource
+		live.BackendOverlayPath = sess.BackendOverlayPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID
@@ -1055,6 +1107,10 @@ func (m *Manager) Delete(key string) error {
 	if err := m.store.DeleteSession(key); err != nil {
 		return fmt.Errorf("delete session %s from store: %w", key, err)
 	}
+
+	// Sweep the per-session backend overlay (design: ephemeral, swept with the
+	// session). Best-effort; a missing file is not an error.
+	m.sweepBackendOverlay(sess)
 
 	log.Printf("session %s deleted", key)
 	events.Emit(m.Events, events.Event{
