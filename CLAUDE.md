@@ -432,7 +432,7 @@ marvel daemon logs [-n N]                            # daemon log ring (works ov
 marvel daemon reexec                                 # adopt a freshly installed binary, agents keep running
 marvel events                                        # structured event ring (control-plane + agent.*)
 marvel capture <session-key>                         # capture a session's pane content
-marvel inject <session-key> <keys>                   # send keystrokes to a pane
+marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (--key presses a key, text is literal)
 marvel config <add-cluster|list|current|use-cluster|remove-cluster>   # named-cluster config
 marvel keys <generate|show|list|trust|authorize|authorized|revoke|doctor>  # SSH client keys
 marvel version                                       # print version and channel

@@ -1527,33 +1527,54 @@ restart_policy=never, short of deleting and re-applying the whole team.`,
 
 func injectCmd() *cobra.Command {
 	var literal, enter bool
+	var keys []string
 	cmd := &cobra.Command{
-		Use:   "inject <session-key> <text>",
+		Use:   "inject <session-key> [text]",
 		Short: "Send keystrokes to a session's pane (executive privilege)",
-		Args:  cobra.ExactArgs(2),
+		Long: `Send keystrokes to a session's pane.
+
+Text is sent literally by default, so a tmux key name given as text types the
+characters rather than pressing the key. Use --key for a control key:
+
+  marvel inject <session-key> --key Enter        press Enter
+  marvel inject <session-key> '' --enter         submit an existing draft
+  marvel inject <session-key> 'hello' --key Enter   type, then press Enter`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			params, _ := json.Marshal(map[string]any{
-				"session_key": args[0],
-				"text":        args[1],
-				"literal":     literal,
-				"enter":       enter,
-			})
-			resp, err := send(daemon.Request{
-				Method: "inject",
-				Params: params,
-			})
+			var text string
+			hasText := len(args) == 2
+			if hasText {
+				text = args[1]
+			}
+			steps, err := resolveInject(text, hasText, keys, literal, enter, cmd.Flags().Changed("literal"))
 			if err != nil {
 				return err
 			}
-			if resp.Error != "" {
-				return fmt.Errorf("%s", resp.Error)
+			for _, step := range steps {
+				params, _ := json.Marshal(map[string]any{
+					"session_key": args[0],
+					"text":        step.Text,
+					"literal":     step.Literal,
+					"enter":       step.Enter,
+				})
+				resp, err := send(daemon.Request{
+					Method: "inject",
+					Params: params,
+				})
+				if err != nil {
+					return err
+				}
+				if resp.Error != "" {
+					return fmt.Errorf("%s", resp.Error)
+				}
 			}
-			fmt.Printf("injected %d bytes into %s\n", len(args[1]), args[0])
+			fmt.Println(describeInject(args[0], steps))
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&literal, "literal", "l", true, "send keys literally (no special key interpretation)")
 	cmd.Flags().BoolVarP(&enter, "enter", "e", false, "append Enter keystroke after text")
+	cmd.Flags().StringArrayVarP(&keys, "key", "k", nil, "press a tmux key by name (Enter, Escape, C-c); repeatable, never sent as literal text")
 	return cmd
 }
 

@@ -157,7 +157,7 @@ marvel delete <resource> <key>                       # delete a session, team, o
 
 # Session interaction
 marvel capture <session-key>                         # capture a session's pane content
-marvel inject <session-key> <keys>                   # send keystrokes to a pane (executive privilege)
+marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (executive privilege)
 
 # Remote daemons (named clusters)
 marvel config add-cluster <name> ...                 # add or update a cluster
