@@ -75,7 +75,7 @@ harness targets; `generic` is the fallback; `simulator` serves load tests;
 
 | Adapter | Triggered by | What it does | Stream | Projection |
 |---------|-------------|--------------|--------|------------|
-| **claude** | `image: claude` | Injects --settings for the projected policy, --permission-mode from the role, and --append-system-prompt with the session identity unless the manifest already supplies one. Headless adds --print --output-format stream-json --verbose and the prompt as the positional argument. | headless only | yes |
+| **claude** | `image: claude` | Injects --settings for the projected policy, --permission-mode from the role, and --append-system-prompt with the session identity unless the manifest already supplies one or the role command is a wrapper around the harness (claude keeps only the last prompt flag). Headless adds --print --output-format stream-json --verbose and the prompt as the positional argument. | headless only | yes |
 | **codex** | `image: codex` | Env-var identity only. Headless becomes `codex exec --json --skip-git-repo-check <prompt>` with stdin from /dev/null, since codex appends piped stdin to its prompt and would otherwise hang on the pane tty. | headless only | no |
 | **opencode** | `image: opencode` | Env-var identity only. Headless becomes `opencode run --format json <message>`, stdin likewise closed. | headless only | no |
 | **forestage** | `image: forestage` | The deepest surface: --persona, --identity, --role, --name, --workspace, --team, --socket, --permission-mode, --dangerously-skip-permissions, --script, then --settings and --append-system-prompt after the `--` claude passthrough. Retired to reference; the adapter stays as the deep-integration contract's reference implementation. | no | yes |

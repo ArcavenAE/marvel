@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -123,9 +124,16 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--permission-mode", ctx.Role.Permissions)
 	}
 
-	// Inject system prompt with role context if no --append-system-prompt
-	// is already present.
-	if !hasFlag(args, "--append-system-prompt") {
+	// Inject system prompt with role context, unless the manifest already
+	// supplies one or the command is a wrapper around the harness. Claude
+	// Code keeps only the last --append-system-prompt it is given and
+	// refuses the flag alongside --append-system-prompt-file, so a second
+	// prompt never adds to the first: it replaces it. A wrapper (a launch
+	// script, a container run) that sets its own prompt would lose it to
+	// this one-liner, because marvel's args land after its own
+	// (aae-orc-1vq6z). A wrapper owns the prompt; the identity it would
+	// carry is in the constructed env (MARVEL_SESSION and siblings).
+	if isBareClaude(binary) && !hasAnyFlag(args, "--append-system-prompt", "--append-system-prompt-file") {
 		prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
 			", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
 		args = append(args, "--append-system-prompt", prompt)
@@ -150,13 +158,18 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	return result, nil
 }
 
-func hasFlag(args []string, flag string) bool {
-	for _, a := range args {
-		if a == flag {
-			return true
-		}
+// isBareClaude reports whether a resolved runtime command launches the
+// Claude Code binary directly, by bare name or by path. Anything else
+// (a launcher script, `docker run ... claude`, `npx ...`) is a wrapper:
+// marvel cannot see what the wrapper passes to the harness, so it must
+// not add a flag the wrapper's own would collide with. The command is
+// shell text, so the first field is the program tmux will run.
+func isBareClaude(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
 	}
-	return false
+	return filepath.Base(fields[0]) == "claude"
 }
 
 // hasAnyFlag reports whether args carry any of the named flags, in either

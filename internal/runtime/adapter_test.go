@@ -179,6 +179,69 @@ func TestClaudePreparePreservesExistingSystemPrompt(t *testing.T) {
 	}
 }
 
+// A role whose command wraps the harness gets no injected prompt: Claude
+// Code keeps only the last --append-system-prompt, so marvel's would replace
+// the one the wrapper passes (aae-orc-1vq6z). The bare harness, by name or
+// by path, keeps the injected identity prompt.
+func TestClaudePrepareSystemPromptOnlyForBareHarness(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		command string
+		want    int
+	}{
+		{"bare name", "claude", 1},
+		{"bare path", "/usr/local/bin/claude", 1},
+		{"empty command falls back to runtime name", "", 1},
+		{"launcher script", "/home/op/.marvel/manifests/cast-seat.sh", 0},
+		{"container run", "docker run --rm -it img claude", 0},
+		{"package runner", "npx claude", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := testContext()
+			ctx.Session.Runtime.Name = "claude"
+			ctx.Session.Runtime.Command = tc.command
+
+			result, err := (&Claude{}).Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if got := strings.Count(result.Command, "--append-system-prompt"); got != tc.want {
+				t.Errorf("--append-system-prompt count = %d, want %d in: %s", got, tc.want, result.Command)
+			}
+			// The rest of the adapter's contract is unchanged for a wrapper.
+			if !strings.Contains(result.Command, "--permission-mode plan") {
+				t.Errorf("command should still carry --permission-mode, got: %s", result.Command)
+			}
+			if result.Env["MARVEL_SESSION"] == "" {
+				t.Errorf("wrapper and bare launches both carry identity in the env")
+			}
+		})
+	}
+}
+
+// A manifest prompt in the joined form, or as a file, is the caller's
+// prompt just as surely as the separate-value form, and marvel adds none.
+func TestClaudePreparePreservesJoinedAndFileSystemPrompt(t *testing.T) {
+	t.Parallel()
+	for _, arg := range []string{"--append-system-prompt=custom", "--append-system-prompt-file"} {
+		ctx := testContext()
+		ctx.Session.Runtime.Name = "claude"
+		ctx.Session.Runtime.Command = "claude"
+		ctx.Session.Runtime.Args = []string{arg, "x"}
+
+		result, err := (&Claude{}).Prepare(ctx)
+		if err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+		if strings.Contains(result.Command, "--append-system-prompt 'You are") {
+			t.Errorf("%s: marvel injected a second prompt: %s", arg, result.Command)
+		}
+	}
+}
+
 func TestGenericPrepare(t *testing.T) {
 	t.Parallel()
 	g := &Generic{}

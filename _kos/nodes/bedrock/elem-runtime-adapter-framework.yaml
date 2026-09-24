@@ -9,7 +9,7 @@ content: |
 
   | Adapter | Depth | Stream | Projection |
   |---|---|---|---|
-  | **claude** | live target. `--settings` for the projected policy, `--permission-mode` from the role, `--append-system-prompt` with the session identity unless the manifest supplies one; headless adds `--print --output-format stream-json --verbose`. | headless only | yes |
+  | **claude** | live target. `--settings` for the projected policy, `--permission-mode` from the role, `--append-system-prompt` with the session identity unless the manifest supplies one or the command wraps the harness (aae-orc-1vq6z); headless adds `--print --output-format stream-json --verbose`. | headless only | yes |
   | **codex** | live target. Env-var identity only; headless is `codex exec --json --skip-git-repo-check <prompt>` with stdin closed. | headless only | no |
   | **opencode** | live target. Env-var identity only; headless is `opencode run --format json <message>` with stdin closed. | headless only | no |
   | **forestage** | deepest surface, frozen as reference: `--persona`, `--identity`, `--role`, `--name`, `--workspace`, `--team`, `--socket`, `--permission-mode`, `--dangerously-skip-permissions`, `--script`, then `--settings` and `--append-system-prompt` after the `--` claude passthrough. Retired as a live target by operator directive 2026-07-31; the adapter stays as the reference implementation of the deep-integration contract. | no | yes |

@@ -128,7 +128,9 @@ resolves to the generic one. Every adapter puts the session's identity in the
 environment (`MARVEL_SESSION`, `MARVEL_ROLE`, `MARVEL_TEAM`,
 `MARVEL_WORKSPACE`), so no role passes its own identity flags. The claude
 adapter additionally names the session in the system prompt, unless the role
-already passes its own `--append-system-prompt`. Runnable manifests live in
+already passes its own `--append-system-prompt` or its `command` is a wrapper
+around the harness (anything other than `claude` by name or path), which then
+owns the prompt. Runnable manifests live in
 [examples/](examples/).
 
 ## CLI
