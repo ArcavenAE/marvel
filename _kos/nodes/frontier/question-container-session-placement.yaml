@@ -162,11 +162,34 @@ content: |
       agent socket, and host networking, since (d), (e) and (f) turn
       on those three.
 
+  **PROBED 2026-09-24 (finding-051, OrbStack only).** P1 works with no
+  marvel code change: capture and inject through the container tty (shell
+  and a full-screen harness TUI), restart after `docker kill`, and bus reach
+  from host networking and from the default bridge via the host alias, with
+  subject results and durable/presence counts identical to a host control.
+  What it does not do: marvel orphans the container on kill, team delete,
+  shift drain and teardown (the pane kill reaches the docker client, not the
+  container); a bind-mounted host unix socket refuses connections, so no
+  heartbeat from inside; `--settings` needs a mount of a directory only the
+  wrapper can discover; the model login here is a keychain item, so nothing
+  can be mounted without copying it (stopped per ADR-009). A manifest must use
+  `command = "sh"` with `-c`, or a wrapper script: a multi-word command fails
+  pre-flight, and `$` in args is single-quoted. The operator's per-session
+  credential, minted at spawn and injected at launch, works across the
+  boundary, scopes tighter than the team credential (no foreign inbox, no
+  forged presence) and revokes live on reload; env was the carrier because
+  the shim's only file form needs JWT authorization. Sub-questions still
+  open: (b) who reaps the container, (c) partially, (g), (h) beyond OrbStack,
+  and P2.
+
   NOT A COMMITMENT TO BUILD. The probe (brief-container-session-
   placement) answers whether P1 works with no marvel code change and
   names what needs one. Whether marvel grows a container field on
   Runtime is decided after.
 edges:
+  - target: finding-051-container-in-pane-sessions
+    type: supports
+    note: "the P1 probe: tty, restart and bus work; container teardown, heartbeat socket and model login do not"
   - target: question-managed-runtime-placement
     type: derives
     note: "the local sibling of the cloud ruling. That node found the seam for an API-driven session is Instance, not Adapter; P1 here tests whether a local container avoids needing that seam at all, P2 would need it"

@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-24 (review of #346 and the operator's credential model
 folded in the same day)
-**Status:** BRIEF, approved to run on the scratch rig (operator go,
-2026-09-24). Results go to a finding, not into this file.
+**Status:** RUN 2026-09-24 on the scratch rig (operator go). Results:
+finding-051. Not edited after the run.
 **Question:** `question-container-session-placement` (frontier). This brief
 is attached to that node; the node carries the sub-questions (a) to (h) and
 the use case, and this document carries the experiment.
