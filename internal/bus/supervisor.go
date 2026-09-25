@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/service"
+	"github.com/arcavenae/marvel/internal/workload"
 )
 
 // Supervisor runs a managed broker as a child of the daemon (brief 10
@@ -36,8 +38,9 @@ type Supervisor struct {
 	logPath string
 	ring    *events.Ring
 
-	// Env supplies extra environment for the child, beyond the daemon's own,
-	// read fresh at every spawn. The leaf seed rides here as DIRECTOR_LEAF_NKEY
+	// Env supplies the secrets the daemon minted for the child, read fresh at
+	// every spawn. The child's environment is these plus the message-bus
+	// class allowlist and nothing of the daemon's own (aae-orc-oo62t). The leaf seed rides here as DIRECTOR_LEAF_NKEY
 	// (aae-orc-vqq2c): daemon memory to broker environment, nothing else. A
 	// conf whose leaf block needs the variable while Env yields none is
 	// refused at spawn rather than handed to a broker that cannot resolve it.
@@ -248,20 +251,37 @@ func (s *Supervisor) becomeReady(ctx context.Context, how string) error {
 	return nil
 }
 
-// spawnLocked starts the child in its own process group with its output in
-// the broker log. Caller holds s.mu.
+// spawnLocked starts the broker through workload.Start, the one spawn path
+// for a managed child: its environment is the message-bus class allowlist
+// plus the minted leaf seed, never the daemon's own (aae-orc-oo62t).
+// Caller holds s.mu.
 func (s *Supervisor) spawnLocked() error {
 	conf := s.mgr.ConfPath()
 	body, err := os.ReadFile(conf)
 	if err != nil {
 		return fmt.Errorf("bus: read %s: %w", conf, err)
 	}
-	env := os.Environ()
-	if s.Env != nil {
-		env = append(env, s.Env()...)
+	class, err := service.Class(service.ClassMessageBus)
+	if err != nil {
+		return fmt.Errorf("bus: %w", err)
 	}
-	if strings.Contains(string(body), "$"+LeafSeedEnv) && !hasEnv(env, LeafSeedEnv) {
-		return fmt.Errorf("bus: %s references $%s but no %s credential is in the store; the broker would refuse to start", conf, LeafSeedEnv, "bus/leaf")
+	child, err := workload.Start(workload.ProcessSpec{
+		Name:      "bus",
+		Binary:    s.binary,
+		Args:      []string{"-c", conf},
+		EnvAllow:  class.ChildEnvAllow,
+		MintedEnv: s.Env,
+		Check: func(env []string) error {
+			if strings.Contains(string(body), "$"+LeafSeedEnv) && !hasEnv(env, LeafSeedEnv) {
+				return fmt.Errorf("bus: %s references $%s but no %s credential is in the store; the broker would refuse to start", conf, LeafSeedEnv, "bus/leaf")
+			}
+			return nil
+		},
+		LogPath: s.logPath,
+		PidFile: s.pidFile,
+	})
+	if err != nil {
+		return err
 	}
 	// Record whether this process can resolve a leaf remote's seed on a later
 	// reload. A broker spawned with the seed already present picks up a
@@ -269,32 +289,13 @@ func (s *Supervisor) spawnLocked() error {
 	// seed is enrolled (aae-orc-ct0l4). Also fingerprint the spawned seed so a
 	// later rotation (a different seed value) is distinguished from an
 	// identical re-put.
-	s.leafSeedInEnv = hasEnv(env, LeafSeedEnv)
-	if v, ok := envValue(env, LeafSeedEnv); ok {
+	s.leafSeedInEnv = hasEnv(child.Env, LeafSeedEnv)
+	if v, ok := envValue(child.Env, LeafSeedEnv); ok {
 		s.leafSeedFP = SeedFingerprint([]byte(v))
 	} else {
 		s.leafSeedFP = ""
 	}
-	if err := os.MkdirAll(filepath.Dir(s.logPath), 0o700); err != nil {
-		return fmt.Errorf("bus: create log dir: %w", err)
-	}
-	logf, err := os.OpenFile(s.logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("bus: open %s: %w", s.logPath, err)
-	}
-	cmd := exec.Command(s.binary, "-c", conf)
-	cmd.Env = env
-	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		_ = logf.Close()
-		return fmt.Errorf("bus: start nats-server: %w", err)
-	}
-	_ = logf.Close() // the child holds its own descriptor
-	s.cmd, s.pid, s.adopted = cmd, cmd.Process.Pid, false
-	if err := os.MkdirAll(filepath.Dir(s.pidFile), 0o700); err == nil {
-		_ = os.WriteFile(s.pidFile, []byte(strconv.Itoa(s.pid)+"\n"), 0o644)
-	}
+	s.cmd, s.pid, s.adopted = child.Cmd, child.Pid, false
 	log.Printf("bus: started nats-server %s pid %d (%s -c %s), log %s", s.version, s.pid, s.binary, conf, s.logPath)
 	return nil
 }
