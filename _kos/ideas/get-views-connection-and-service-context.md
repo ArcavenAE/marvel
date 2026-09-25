@@ -25,7 +25,7 @@ above are per-item; this one is the round-up.
 
 ## The known items so far
 
-Two are named. Both are examples of the same shape: a `get` view today shows
+Two were named at filing, and a third joined on 2026-09-25. All are examples of the same shape: a `get` view today shows
 per-session facts, and the operator wants it to also show the CONTEXT the session
 sits in, the cluster it belongs to and the services that cluster depends on.
 
@@ -39,6 +39,18 @@ sits in, the cluster it belongs to and the services that cluster depends on.
    status, and the status of the other managed or attached services, for example
    a credential vault, a code graph, flyloft, curtain, and any other attached
    service. The list of services and which of their fields matter is open.
+
+3. **The account's budget, reset, and credit state** (added 2026-09-25 by
+   operator ruling). Claude Code `rate_limits` (five_hour, seven_day: used
+   and resets_at) and codex `rate_limits` (windows keyed on
+   `window_minutes`, plus credits), with near-limit, time-to-reset, credit,
+   and no-rate_limits-block flags. Same shape as items 1 and 2: context the
+   session sits in, not a per-session fact, because every session on an
+   account reports the same number. Detail, the account-scope constraint,
+   and the recommended presentation (a separate account view, with an
+   `ACCT`-labelled column as the in-table fallback, never aggregated) live
+   in [[token-rate-column-and-configurable-columns]] Feature C; bd
+   aae-orc-f08m0.
 
 ## The open questions
 
