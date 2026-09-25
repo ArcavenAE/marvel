@@ -224,6 +224,14 @@ something marvel can see without holding an account identifier (for codex,
 a seat's rollout home; for Claude Code, nothing yet). That key is a
 prerequisite for options 2 and 3 and for de-duplicating reporters.
 
+## Width and truncation (2026-09-25)
+
+When the chosen columns do not fit the terminal, the policy lives in
+[[get-sessions-width-and-truncation]]: each column definition gains a
+priority, a soft max width, and a truncation mode, applied only on a
+terminal, with `--no-trunc` to opt out. It adds properties to the column
+definitions above and changes neither the grammar nor the precedence.
+
 ## The seam to the state watchdog (do not let these diverge)
 
 A rate that decays to zero is the cheapest trigger for the tmux harness-state
