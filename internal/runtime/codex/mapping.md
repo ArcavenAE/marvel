@@ -117,6 +117,15 @@ Compares what codex actually emits with the sketch in
    budget, not context occupancy. Nothing in the context accountant reads
    it; recorded here so nobody wires it to CTX%.
 
+   **CORRECTION PENDING (2026-09-25):** "primary is the weekly budget" was
+   true of that fixture (its primary carried `window_minutes` 10080), not
+   of codex in general. A live seat's rollout on 2026-09-24 carried
+   primary=300 (5 hours) and secondary=10080 (weekly). The position means
+   nothing; key a window on `window_minutes`. The budget columns that will
+   read these fields are specified in
+   `_kos/ideas/token-rate-column-and-configurable-columns.md` Feature C
+   (bd aae-orc-f08m0, aae-orc-p577l).
+
 6. **`reasoning` items are unmapped.** Codex emits
    `item.completed{type:reasoning}` (the thinking analog). There is no v1
    event kind for it, so per the never-drop rule this parser emits

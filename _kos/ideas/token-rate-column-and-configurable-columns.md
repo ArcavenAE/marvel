@@ -2,7 +2,9 @@
 
 - **Status:** idea (pre-hypothesis, no commitment). Two features, one root
   cause: `marvel get sessions` has no token-throughput signal and a rigid,
-  hardcoded column layout.
+  hardcoded column layout. Extended 2026-09-25 by operator ruling with a
+  third (Feature C, account budget, reset, and credit columns), which rides
+  the same substrate.
 - **Date:** 2026-09-16
 - **Origin:** commission via director. The rate column is the forcing
   function; first-class column definitions are the substrate it drags in.
@@ -145,6 +147,83 @@ the same defect seen from two sides.
   renders. A display preference that can brick `get sessions` is worse than
   no preference.
 
+## Feature C: account budget, reset, and credit columns (operator ruling 2026-09-25)
+
+The operator ruled that the new columns (the Tin/Tout pair and the
+tokens-out rate above) become selectable on and off, and that the harness
+budget, reset, and credit metrics join them: any of them should be
+displayable. They ride the Feature B substrate; none is a hardcoded
+addition.
+
+### The metrics
+
+- **Claude Code**, from the statusline payload's `rate_limits` (already
+  captured by `cmd/marvel/ctxforward.go` and shown in the pane, deliberately
+  not sent on the heartbeat): `five_hour` (the "current session" window) and
+  `seven_day` (the weekly window), each with `used_percentage` and
+  `resets_at`. Time to reset matters as much as the percentage: 90% with
+  ten minutes left and 90% with four days left call for opposite actions.
+  The populated shape is read from the binary, not yet measured from
+  traffic (ctxforward.go says so); treat it as unverified until a live
+  payload is captured.
+- **codex**, from every rollout `token_count` event's `rate_limits`:
+  `limit_id`; `primary` and `secondary`, each with `used_percent`,
+  `window_minutes`, `resets_at`; and `credits` {`has_credits`, `unlimited`,
+  `balance`} (finding-050).
+- **Key codex windows on `window_minutes`, never on position.** A live codex
+  seat on 2026-09-24 carried primary=300 (5 hours) and secondary=10080
+  (weekly); `internal/runtime/codex/mapping.md` item 5 and finding-007
+  describe a fixture where primary was the weekly window. Both readings are
+  true of their data, so the position carries no meaning; a 5h column reads
+  whichever window has `window_minutes` 300.
+- **Kept:** Tin/Tout and the tokens-out rate (Features A and B).
+
+### The flags
+
+Each is a derived, diagnostic cell (SOUL section 8, ADR-007): it informs,
+never gates, and no threshold here blocks a spawn or a shift.
+
+- **near-limit**, per window: `used` at or above a display threshold.
+- **time-to-reset**, per window: `resets_at` minus now; once `resets_at` has
+  passed with no newer reading, the cell says the reading is stale rather
+  than printing a negative duration (the `untilReset` rule in
+  ctxforward.go).
+- **credit state** (codex): unlimited, has credits with a balance, or none.
+- **no rate_limits block**: a candidate signal that a session runs on an API
+  backend rather than a subscription. **Unverified.** For Claude Code the
+  block is also absent until the session has parsed its first API response,
+  so the flag is only meaningful after a response has been seen; it must
+  not fire on a fresh session.
+
+### The constraint: these figures belong to the account, not the session
+
+ctxforward.go records the reason: every session on one account reports the
+same windows, so N sessions are N reporters of one number. A per-session
+column of that number is a category error, and summing or averaging it
+across sessions is wrong. Each reading also carries an as-of time, because
+the freshest reporter wins and an idle session's copy goes stale.
+
+Three presentations fit a per-session table:
+
+1. **Labelled `acct`**, as the pane does: the cell repeats on every row of
+   the account, the header says `ACCT`, and nothing aggregates it.
+2. **Grouped by account**: rows sort by an account key, with the account
+   figures shown once per group.
+3. **A separate account view**: one row per account and harness (window,
+   used, resets in, credits, flags, as-of, reporter count), with
+   `get sessions` carrying at most an account key per row.
+
+**Recommendation: 3, the separate account view, as the home.** One number
+gets one row, so there is nothing to sum, sort, or threshold twice. When an
+operator selects an account column in `get sessions` anyway, render it as
+option 1 (`ACCT`-prefixed header, value repeated, never aggregated) so that
+every metric stays displayable as the ruling asks.
+
+**Open:** marvel has no account key today. The grouping key must come from
+something marvel can see without holding an account identifier (for codex,
+a seat's rollout home; for Claude Code, nothing yet). That key is a
+prerequisite for options 2 and 3 and for de-duplicating reporters.
+
 ## The seam to the state watchdog (do not let these diverge)
 
 A rate that decays to zero is the cheapest trigger for the tmux harness-state
@@ -180,3 +259,9 @@ pays off alone and pulls the column substrate in behind it. Configurable
 columns (Feature B) is a separate bead filed when that work is committed,
 not a sub-issue invented alongside the starter (per bd-hierarchy: flat
 tickets, real containers only).
+
+2026-09-25: the operator ruling commits Feature B, so its bead is filed
+flat as aae-orc-f08m0, carrying Feature C's display half.
+Acquisition stays where it already lives: the codex reader in
+aae-orc-p577l, the account headroom channel in aae-orc-reif, and the codex
+context channel in aae-orc-pt8k.
