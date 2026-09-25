@@ -178,3 +178,86 @@ func TestSendKeysConcurrentPanesNoCrossDelivery(t *testing.T) {
 		}
 	}
 }
+
+// newPlainRecorderPane is newRecorderPane without bracketed paste: a pane
+// whose application never turned mode 2004 on.
+func newPlainRecorderPane(t *testing.T, d *Driver, session, name string) (paneID, record string) {
+	t.Helper()
+	record = filepath.Join(t.TempDir(), name+".bytes")
+	cmd := fmt.Sprintf(`sh -c 'stty raw -echo; exec cat > %s'`, record)
+	paneID, err := d.NewPane(session, cmd, name, nil, false)
+	if err != nil {
+		t.Fatalf("new pane %s: %v", name, err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(record); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recorder pane %s never started", name)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return paneID, record
+}
+
+// TestSendKeysEmptyLiteralWithEnterSubmits: `inject <session> ” --enter` is
+// the documented submit form. Empty text has nothing to paste, and an empty
+// load-buffer creates no buffer, so the paste must be skipped and the Enter
+// still sent (review of #357, item 1).
+func TestSendKeysEmptyLiteralWithEnterSubmits(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	session := "marvel-test-inject-empty"
+	t.Cleanup(func() { _ = d.KillSession(session) })
+	if err := d.NewSession(session); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	paneID, record := newRecorderPane(t, d, session, "empty")
+
+	if err := d.SendKeys(paneID, "", true, true); err != nil {
+		t.Fatalf("empty literal with enter: %v", err)
+	}
+	if got := waitBytes(t, record, "\r"); got != "\r" {
+		t.Errorf("pane read %q, want a lone \\r", got)
+	}
+}
+
+// TestSendKeysMultiLineKeepsLineFeeds: paste-buffer rewrites LF to CR unless
+// given -r. Inside a bracketed paste the text must keep its LFs, and on a pane
+// without bracketed paste the bytes must match what send-keys -l sent, where a
+// CR per line would be a submit per line (review of #357, item 2).
+func TestSendKeysMultiLineKeepsLineFeeds(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	session := "marvel-test-inject-multiline"
+	t.Cleanup(func() { _ = d.KillSession(session) })
+	if err := d.NewSession(session); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	text := "line1\nline2\nline3"
+
+	bracketed, brec := newRecorderPane(t, d, session, "bracketed")
+	if err := d.SendKeys(bracketed, text, true, true); err != nil {
+		t.Fatalf("send keys bracketed: %v", err)
+	}
+	want := pasteStart + text + pasteEnd + "\r"
+	if got := waitBytes(t, brec, want); got != want {
+		t.Errorf("bracketed pane read %q, want %q", got, want)
+	}
+
+	plain, prec := newPlainRecorderPane(t, d, session, "plain")
+	if err := d.SendKeys(plain, text, true, false); err != nil {
+		t.Fatalf("send keys plain: %v", err)
+	}
+	if got := waitBytes(t, prec, "line3"); got != text {
+		t.Errorf("plain pane read %q, want the same bytes send-keys -l sends: %q", got, text)
+	}
+}

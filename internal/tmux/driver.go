@@ -498,7 +498,8 @@ func nextInjectBuffer() string {
 // installed harness does at its first screen). The end marker tells the
 // harness where the paste stops, so the Enter after it is a keypress however
 // the bytes are split into reads. On a pane without mode 2004, paste-buffer -p
-// sends the same bytes send-keys -l did, so nothing regresses there.
+// -r sends the same bytes send-keys -l did, LF included, so nothing regresses
+// there. Empty literal text sends only the Enter.
 //
 // The text reaches tmux on stdin through load-buffer, never on argv, into a
 // buffer named uniquely for this call; paste-buffer -d deletes it. The paste
@@ -511,6 +512,18 @@ func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
 	unlock := d.lockPane(paneID)
 	defer unlock()
 
+	// Empty literal text is the submit form (`inject <session> '' --enter`).
+	// There is nothing to paste, and an empty load-buffer creates no buffer,
+	// so a paste would fail and tmux would drop the Enter queued after it.
+	if literal && text == "" {
+		if !enter {
+			return nil
+		}
+		if out, err := d.cmd("send-keys", "-t", paneID, "Enter").CombinedOutput(); err != nil {
+			return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
+		}
+		return nil
+	}
 	if !literal {
 		args := []string{"send-keys", "-t", paneID, text}
 		if enter {
@@ -528,7 +541,9 @@ func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
 	if out, err := load.CombinedOutput(); err != nil {
 		return fmt.Errorf("load-buffer for %s: %s: %w", paneID, string(out), err)
 	}
-	args := []string{"paste-buffer", "-p", "-d", "-b", buf, "-t", paneID}
+	// -r keeps LF as LF. Without it paste-buffer rewrites each LF to CR, which
+	// on a pane without bracketed paste is a submit per line.
+	args := []string{"paste-buffer", "-p", "-r", "-d", "-b", buf, "-t", paneID}
 	if enter {
 		// A bare ";" argument is tmux's command separator, so the Enter is a
 		// second command and stays a distinct interpreted keypress.
