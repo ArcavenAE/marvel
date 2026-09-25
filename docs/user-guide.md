@@ -577,7 +577,8 @@ marvel scale dev/squad --role worker --replicas 5
 ```
 
 The reconciler creates or removes sessions to match the new count.
-Scale down removes the newest sessions first.
+Scale down removes the oldest sessions first, by creation time, so the
+newest survive.
 
 **When to use:** Increasing capacity for a burst of work, scaling
 down after a sprint, adjusting team composition.
@@ -600,7 +601,10 @@ marvel get sessions -w
 ```
 
 The GEN column increments. New-gen sessions launch, become ready,
-then old-gen sessions drain one per reconciler tick.
+then every older seat of the shifted role drains, one per reconciler tick,
+oldest first. A role's seats can sit at an older generation than the
+team's previous one after an earlier `--role` shift of another role; they
+drain all the same.
 
 **When to use:** Context windows are filling up. Agents have been
 running long enough that their context is stale. A configuration

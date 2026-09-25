@@ -3266,3 +3266,80 @@ func TestProjectHeldRoleRowsAnnotatesTerminalRoles(t *testing.T) {
 		}
 	}
 }
+
+// runShiftToCompletion drives the reconciler until the team's shift clears.
+func runShiftToCompletion(t *testing.T, ctrl *Controller, teamKey string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		ctrl.ReconcileOnce()
+		if !ctrl.IsShifting(teamKey) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("shift of %s did not complete", teamKey)
+}
+
+// TestSelectiveShiftDrainsTheRolesOwnOldSeat is ArcavenAE/marvel#345 and
+// #348 together. A --role shift advances the team generation, so the next
+// --role shift of a different role found that role's seat at an older
+// generation than the team's previous one. The drain looked it up at the
+// team's previous generation, found nothing, emitted shift-drained-empty and
+// completed with the old seat still running; the reconcile then shed one of
+// the two seats at random. The drain must remove the role's own old seat, and
+// the role must end with exactly its new seat.
+func TestSelectiveShiftDrainsTheRolesOwnOldSeat(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(0)
+	ctrl.Events = ring
+	sessMgr.Events = ring
+
+	const ws = "test-345-348"
+	sleeper := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	createTeamFixture(t, store, ws, "squad", []api.Role{
+		{Name: "filer", Replicas: 1, Runtime: sleeper},
+		{Name: "reader", Replicas: 1, Runtime: sleeper},
+	})
+	teamKey := ws + "/squad"
+
+	ctrl.ReconcileOnce()
+	before := store.ListSessionsByTeamRole(ws, "squad", "reader")
+	if len(before) != 1 || before[0].Generation != 1 {
+		t.Fatalf("reader before shifts = %+v, want one gen-1 seat", before)
+	}
+	oldReader := before[0].Key()
+
+	// Shift filer alone: the team moves to gen 2, reader stays at gen 1.
+	if err := ctrl.InitiateShift(teamKey, "filer"); err != nil {
+		t.Fatalf("shift filer: %v", err)
+	}
+	runShiftToCompletion(t, ctrl, teamKey)
+
+	// Shift reader alone: the team moves to gen 3, and reader's old seat is
+	// at gen 1, not at the team's previous generation 2.
+	if err := ctrl.InitiateShift(teamKey, "reader"); err != nil {
+		t.Fatalf("shift reader: %v", err)
+	}
+	runShiftToCompletion(t, ctrl, teamKey)
+	for i := 0; i < 3; i++ {
+		ctrl.ReconcileOnce() // the post-shift reconcile #348 raced in
+	}
+
+	after := store.ListSessionsByTeamRole(ws, "squad", "reader")
+	if len(after) != 1 {
+		t.Fatalf("reader after shift has %d seats, want 1: %v", len(after), sessionKeys(after))
+	}
+	if after[0].Generation != 3 {
+		t.Errorf("reader seat %s is at gen %d, want the new gen 3", after[0].Key(), after[0].Generation)
+	}
+	if after[0].Key() == oldReader {
+		t.Errorf("reader's old seat %s survived the shift", oldReader)
+	}
+	for _, ev := range ring.Snapshot(events.Filter{Kind: events.KindShiftDrainedEmpty}, 0) {
+		if ev.Role == "reader" {
+			t.Errorf("shift-drained-empty for reader: %s (its old seat existed at gen 1)", ev.Message)
+		}
+	}
+}
