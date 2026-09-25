@@ -674,7 +674,7 @@ func TestBaseEnvRefusesIdentityCredentialsFromRoleEnv(t *testing.T) {
 func TestBaseEnvRefusesLiteralBearersFromRoleEnv(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{"ANTHROPIC_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
 		t.Run(key, func(t *testing.T) {
 			t.Parallel()
 			ctx := testContext()
