@@ -631,7 +631,7 @@ type launchPlan struct {
 // in the same place: the point is to separate this agent's state from every
 // other agent's, not to discard it between respawns.
 //
-// Seeding is symlink-only and best-effort. A missing source entry is skipped
+// Linking and seeding are best-effort. A missing source entry is skipped
 // rather than fatal, and any failure downgrades to the shared home the
 // session would have used anyway, because a harness that cannot be
 // containerised should still run.
@@ -668,6 +668,15 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 		if err := os.Symlink(src, dst); err != nil {
 			log.Printf("session %s: could not link %s into the private %s: %v",
 				lctx.Session.Key(), name, spec.EnvVar, err)
+		}
+	}
+	if spec.Seed != nil {
+		// Seeded files are marvel's own, rewritten at every launch. A
+		// failure costs what the file would have given (a hook, a server)
+		// and not the session.
+		if err := spec.Seed(dir); err != nil {
+			log.Printf("session %s: seeding the private %s: %v",
+				lctx.Session.Key(), spec.EnvVar, err)
 		}
 	}
 	lctx.HarnessHomePath = dir
@@ -830,6 +839,26 @@ func (m *Manager) CanStreamRole(r api.ManifestRole) bool {
 		Session: &api.Session{Runtime: rt},
 		Role:    &api.Role{Name: r.Name, Replicas: r.Replicas, Runtime: rt},
 	})
+}
+
+// CanFeedContextRole reports whether a role's harness can honour
+// runtime.context_feed: its adapter renders the feed and reads a projected
+// settings file. It is the manifest-side capability the apply advisory asks
+// for, with the same runtime resolution CanStreamRole uses.
+func (m *Manager) CanFeedContextRole(r api.ManifestRole) bool {
+	name := r.Runtime.Image
+	if name == "" {
+		name = r.Runtime.Command
+	}
+	adapter := m.adapters.Resolve(name)
+	if _, ok := adapter.(runtime.StatuslineFeeder); !ok {
+		return false
+	}
+	rt := api.Runtime{Name: name, Command: r.Runtime.Command, Mode: r.Runtime.Mode}
+	return adapter.ProjectionFor(&runtime.LaunchContext{
+		Session: &api.Session{Runtime: rt},
+		Role:    &api.Role{Name: r.Name, Runtime: rt},
+	}, os.TempDir()).Supported
 }
 
 // openSink creates the FIFO for a stream-capable adapter, or returns nil.

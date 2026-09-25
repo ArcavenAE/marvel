@@ -901,9 +901,15 @@ func workCmd() *cobra.Command {
 				return fmt.Errorf("%s", resp.Error)
 			}
 
-			var result map[string]string
+			var result struct {
+				Workspace  string   `json:"workspace"`
+				Advisories []string `json:"advisories"`
+			}
 			_ = json.Unmarshal(resp.Result, &result)
-			fmt.Printf("workspace/%s ready\n", result["workspace"])
+			for _, a := range result.Advisories {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", a)
+			}
+			fmt.Printf("workspace/%s ready\n", result.Workspace)
 			return nil
 		},
 	}

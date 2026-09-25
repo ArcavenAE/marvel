@@ -455,6 +455,38 @@ func (m *Manifest) ValidateBudgets(canStream StreamCapableRole) error {
 	return nil
 }
 
+// ContextFeedCapableRole reports whether a role's harness can honour
+// runtime.context_feed. Injected for the reason StreamCapableRole is: the
+// answer lives in the adapter registry.
+type ContextFeedCapableRole func(ManifestRole) bool
+
+// ContextFeedAdvisories lists every role that declares runtime.context_feed
+// on a harness that cannot honour it. It is advisory, not a refusal: the
+// role still runs, it just gets no feed from that line, which is how a
+// policy on a runtime with no settings surface is treated. What it removes
+// is the silence: before this, `marvel work` reported ready and CTX% stayed
+// `-` with nothing to say why (orc finding-179 §3, the finding-044 shape).
+func (m *Manifest) ContextFeedAdvisories(canFeed ContextFeedCapableRole) []string {
+	if canFeed == nil {
+		return nil
+	}
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.ContextFeed == "" || canFeed(r) {
+				continue
+			}
+			runtimeName := r.Runtime.Image
+			if runtimeName == "" {
+				runtimeName = r.Runtime.Command
+			}
+			out = append(out, fmt.Sprintf("team %s role %s: runtime %q cannot honour context_feed %q; it is advisory and feeds nothing",
+				t.Name, r.Name, runtimeName, r.Runtime.ContextFeed))
+		}
+	}
+	return out
+}
+
 // ValidateRuntimes checks that each role's runtime command (and script,
 // if set) actually resolves on the daemon's host before the manifest
 // is applied. Returns an aggregated error listing every missing binary

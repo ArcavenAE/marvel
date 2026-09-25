@@ -1190,3 +1190,41 @@ func TestValidateManifestPermissionModes(t *testing.T) {
 		}
 	})
 }
+
+// TestContextFeedAdvisories: context_feed on a harness that cannot honour
+// it is reported by team and role, and a role without it, or on a harness
+// that can, is not (orc finding-179 §3).
+func TestContextFeedAdvisories(t *testing.T) {
+	t.Parallel()
+	canFeed := func(r ManifestRole) bool { return r.Runtime.Image == "claude" }
+	role := func(name, image, feed string) ManifestRole {
+		return ManifestRole{Name: name, Replicas: 1, Runtime: ManifestRuntime{Image: image, Command: image, ContextFeed: feed}}
+	}
+	tests := []struct {
+		name  string
+		roles []ManifestRole
+		want  []string
+	}{
+		{name: "claude with a feed is honoured", roles: []ManifestRole{role("sup", "claude", ContextFeedStatusline)}},
+		{name: "codex without a feed says nothing", roles: []ManifestRole{role("rev", "codex", "")}},
+		{
+			name:  "codex with a feed is advisory",
+			roles: []ManifestRole{role("rev", "codex", ContextFeedStatusline)},
+			want:  []string{`team crew role rev: runtime "codex" cannot honour context_feed "statusline"; it is advisory and feeds nothing`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &Manifest{Teams: []ManifestTeam{{Name: "crew", Roles: tt.roles}}}
+			got := m.ContextFeedAdvisories(canFeed)
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("advisories = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	m := &Manifest{Teams: []ManifestTeam{{Name: "crew", Roles: []ManifestRole{role("rev", "codex", ContextFeedStatusline)}}}}
+	if got := m.ContextFeedAdvisories(nil); got != nil {
+		t.Errorf("nil predicate gave %q, want none", got)
+	}
+}

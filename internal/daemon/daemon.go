@@ -1119,8 +1119,19 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		}
 	}
 
+	advisories := m.ContextFeedAdvisories(d.sessMgr.CanFeedContextRole)
+
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
+	}
+	for _, a := range advisories {
+		log.Printf("apply: %s", a)
+		events.Emit(d.events, events.Event{
+			Kind:      events.KindContextFeedUnsupported,
+			Severity:  events.SeverityWarning,
+			Workspace: m.Workspace.Name,
+			Message:   a,
+		})
 	}
 
 	// Apply is an explicit "make it so": the operator named these teams and
@@ -1152,9 +1163,10 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// Trigger immediate reconciliation.
 	d.teamCtrl.ReconcileOnce()
 
-	result, _ := json.Marshal(map[string]string{
-		"status":    "applied",
-		"workspace": m.Workspace.Name,
+	result, _ := json.Marshal(map[string]any{
+		"status":     "applied",
+		"workspace":  m.Workspace.Name,
+		"advisories": advisories,
 	})
 	return Response{Result: result}
 }

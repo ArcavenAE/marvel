@@ -84,6 +84,12 @@ const (
 	// to "why is that column empty", and the fix is usually one
 	// runtime.context_window line in the manifest.
 	KindContextLimitUnresolved Kind = "context.limit-unresolved"
+	// KindContextFeedUnsupported records that an applied manifest declares
+	// runtime.context_feed on a role whose harness cannot honour it, so the
+	// declaration is advisory and CTX% will not be fed by it. Fires once
+	// per role at apply, the way a policy on a runtime with no settings
+	// surface is reported rather than dropped (orc finding-179 §3).
+	KindContextFeedUnsupported Kind = "context.feed-unsupported"
 	// KindAdmissionRefused records that marvel refused to spawn against a
 	// team-declared budget, with the arithmetic in the Message. Fires at
 	// every refusal point: the operator's verb (apply, scale, run, shift)
@@ -236,6 +242,7 @@ var allKinds = []Kind{
 	KindRoleRemoved,
 	KindPolicyProjected,
 	KindContextLimitUnresolved,
+	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindAdmissionCleared,
 	KindAdmissionUnmeasured,

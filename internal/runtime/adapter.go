@@ -145,6 +145,14 @@ type SessionHomeSpec struct {
 	// error: an operator who has not logged that harness in yet is not a
 	// spawn failure, they are a session that will report it themselves.
 	LinkIn []string
+	// Seed writes the files marvel AUTHORS into the private home, after the
+	// links are in place. It is the positive allowlist beside LinkIn: a
+	// harness whose config file mixes settings a session needs with the
+	// operator's own trust decisions and identity cannot have that file
+	// linked in, so marvel writes a file of its own instead, naming each
+	// key it sets and nothing else (marvel#308). Nil means nothing is
+	// written. An error is logged and the session still launches.
+	Seed func(dir string) error
 }
 
 // SessionHomeAssigner is the optional containment contract. An adapter
@@ -289,8 +297,18 @@ func (r *Registry) Resolve(runtimeName string) Adapter {
 	return r.fallback
 }
 
-// baseEnv returns the environment variables common to all adapters.
+// baseEnv returns the environment variables common to all adapters: the
+// values marvel constructs, then the role's declared env merged over them.
 func baseEnv(ctx *LaunchContext) map[string]string {
+	return mergeRoleEnv(ctx, constructedEnv(ctx))
+}
+
+// constructedEnv returns the values marvel itself stamps into every
+// session, before any role override. It is its own function because the
+// set of names is also a contract: a harness that does not pass its
+// environment on to its tool children (codex, for MCP servers) has to be
+// told which names to forward, and this is that list.
+func constructedEnv(ctx *LaunchContext) map[string]string {
 	env := map[string]string{
 		"MARVEL_SESSION":   ctx.Session.Name,
 		"MARVEL_ROLE":      ctx.Role.Name,
@@ -334,6 +352,11 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
 		}
 	}
+	return env
+}
+
+// mergeRoleEnv merges the role's declared env over the constructed values.
+func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 	// The per-role manifest Env is the override seam (Layer B): it is merged
 	// LAST so a declared value wins over marvel's constructed defaults, which
 	// is what the BEADS_ACTOR comment above promises a "future manifest env
