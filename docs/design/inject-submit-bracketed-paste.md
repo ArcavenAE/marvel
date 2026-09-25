@@ -78,10 +78,13 @@ interleave guard stays.
   per call, and `-d` deletes it (parallel safety). Text reaches tmux on stdin,
   not argv.
 - **Limit:** tmux brackets only when the application has enabled bracketed
-  paste (mode 2004). Claude Code does. codex and opencode are unverified, and
-  where a harness does not enable it the bytes are the same as today, so there
-  is no regression. The per-harness choice belongs in the composer contract
-  (aae-orc-g88i1).
+  paste (mode 2004). On a pane without it, `paste-buffer -p` sends the same
+  bytes as `send-keys -l`, so there is no regression (measured). All four
+  installed harnesses turn the mode on at their first screen: claude 2.1.282,
+  codex 0.155.1, opencode 1.18.15, crush 0.88.1. opencode and crush submitted
+  both today's form and the bracketed form, so the staging is a Claude Code
+  behavior and A is harmless where it was never needed. Whether codex submits
+  the bracketed form is not measured, and pi is not installed here.
 - **Cleanup:** once A lands, director's post-check that presses a second Enter
   must go. Against a staged stack, that Enter is what submits two messages as
   one turn.
@@ -113,6 +116,66 @@ R-111, R-112).
 **Order:** A first, since it is small and removes the cause. B next, so a
 failure is seen and reported. C as dispatches move to the inbox. None of the
 three adds a retry, a sleep, or an extra keypress.
+
+## Panel review (three-round party, 2026-09-25)
+
+The operator asked for the options to be argued in a three-round BMAD party.
+The casting call (Dr. Quinn; Batten in the platform-engineer seat; the extras
+casting-call group) chose five panelists:
+
+- Batten: tmux and pty substrate
+- Wren: harness composer internals
+- Ezra: delivery semantics
+- Penny: token cost per seat
+- Null: adversarial
+
+Every factual claim a panelist made was checked with one command on a scratch
+server before it counted. The record is in `_bmad-output/party-mode/inject-delivery-2026-09-25/`
+at the orchestrator.
+
+**Final vote, 5-0 on every item, no dissent:**
+
+| item | ruling |
+|---|---|
+| A, bracketed paste in `SendKeys`, harness-blind, per-call unique buffer name | adopt |
+| B, liveness ack only: a projected `UserPromptSubmit` hook with a nonce on Claude Code; `turn.started` on codex and opencode once measured; no ack claimed for crush or pi. A missing ack is one escalation, never a resend. No agent-called ack tool | adopt |
+| C, payload on the bus with a doorbell | direction only: A and B ship first, and C proceeds under aae-orc-fln6p once per-seat bus auth is deployed and a bounded pull is designed |
+| Remove director's second-Enter post-check once A lands | yes |
+| Placement: A in the tmux driver; B in the adapters and projected settings; C at the director and bus boundary, with per-seat auth enforced at the broker | agree |
+
+**What the checks settled:**
+
+- **Stacking:** two bracketed injects 100 ms apart arrived as two turns, so A
+  removes stacking too.
+- **Authority:** the channel could already force a submit (two tmux calls
+  submit on Claude Code; opencode and crush submit today's form), so A changes
+  framing, not authority. The authority boundary is the tmux socket
+  directory, which only the owning Unix user can open.
+- **The hook:** `UserPromptSubmit` fires for an injected bracketed turn and
+  receives `prompt` (nonce included), `prompt_id`, `session_id` and
+  `transcript_path` on stdin.
+- **Provenance:** Claude Code transcript entries do carry provenance fields,
+  but an injected turn reads `origin.kind=human`, `promptSource=typed`. An ack
+  proves the text landed, never who sent it.
+- **Not ready for C:** no inbox pull exists at spawn or shift today, and per-seat
+  bus credentials are designed (director#77) but not deployed.
+
+**Risks the panel requires the implementation to carry:**
+
+1. **Cross-seat misdelivery (security defect).** With one shared paste-buffer
+   name, two concurrent injects to two panes lost one message, failed one call
+   with `no buffer`, and delivered the first seat's text to the second seat. A
+   PID-derived name has the same fault inside one daemon. The buffer name comes
+   from a per-call counter or random id. A test that sends N concurrent injects
+   to N panes, with zero loss and no cross-pane content, gates the merge of A.
+2. **Unmeasured harnesses stay named as gaps.** codex's submit behavior and pi
+   are unmeasured. Starting codex once on a scratch pane and pressing Enter
+   at its first screen chose its "update now" option and upgraded the host
+   binary. Nothing in this design presses a key blind.
+3. **Retention is not delivery.** A durable stream does not make a missed
+   doorbell recoverable until delivery to the consumer is verified.
+4. **C's recovery is a bounded pull at an existing boundary, never a timer.**
+   A poll on a timer is the retry ban paid in tokens.
 
 ## Reproduce
 
