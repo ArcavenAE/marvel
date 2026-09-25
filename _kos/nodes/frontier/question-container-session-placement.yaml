@@ -108,30 +108,41 @@ content: |
       container-specific parts only; the fabric itself (one fleet
       address space over NATS leaf nodes, per-seat credentials,
       retention that never deletes unread mail, presence aggregated
-      across clusters) is the director leaf-fabric design brief of
-      2026-09-24, and this depends on it rather than restating it.
+      across clusters) is ArcavenAE/director#77
+      (sim/design/leaf-fabric-one-address-space.md), a candidate and
+      unmerged. This question does not wait on it: the probe runs on the
+      current bus and records each result under both models.
       Container-specific parts:
       - Network namespace: `NATS_URL=nats://127.0.0.1:...` means the
         container itself inside a container. Host networking, a
         published port reached through `host.docker.internal` (or the
-        runtime's equivalent), or a NATS leaf node inside the
-        container. Each has a different answer to "reach limited to
-        the clones and the supervisor".
+        runtime's equivalent). A NATS leaf node inside the container is
+        OUT: a leaf credential is a cluster credential, and with
+        JetStream the inbox would die with an ephemeral container. A
+        network limit says where a seat can connect, not which subjects
+        it may use, so reach is measured against a broker that enforces
+        authorization.
       - Identity injection: the bus identity is `DIRECTOR_AGENT_ID`
-        plus the team credential marvel minted. It must arrive per
-        launch through the environment or a mounted file, never an
-        image layer, because an image outlives the session and a
-        minted credential must not.
+        plus the credential marvel minted (per team today in managed
+        mode; per session is the operator's direction: minted at spawn,
+        short-lived, revocable, injected at launch, twelve-factor style,
+        which is issuance and not custody). It arrives per launch as an
+        env var or a projected, rotatable file, never an image layer,
+        because an image outlives the session and a minted credential
+        must not.
       - Presence and heartbeat from inside: the shim publishes
         presence; `ctx-forward` posts heartbeats to `MARVEL_SOCKET`,
         which needs the marvel binary and the socket inside.
       - Wake: a seat that never polls loses mail at the 24h inbox
         max_age (aae-orc-t77rr). An ephemeral seat that polls only
         between tapes is exactly that seat.
-      - Lifecycle-bound durables: each shim start makes a durable
-        consumer and none are reaped (aae-orc-iejcx, 183 counted). An
-        ephemeral container per run multiplies that by the run count
-        unless the durable's lifetime is bound to the container's.
+      - Durables bound to the address, not the container: each shim
+        start makes a durable consumer and none are reaped
+        (aae-orc-iejcx, 183 counted). A long-term seat's durable must
+        outlive any single container; an ephemeral seat's address is
+        new each run, so its durable is removed at unapply after pending
+        mail is drained or reported. Container results are judged
+        against a host control, not against zero.
       - Duplicate presence rows after a shim restart (aae-orc-4unyk):
         a container restart is a shim restart by construction.
   (f) Workspace mounts and git signing. Ephemeral legion repos have no
