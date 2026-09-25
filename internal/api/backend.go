@@ -89,22 +89,49 @@ func backendSelectorEnvNames() []string {
 // rather than brokering. The supported shape is a helper POINTER whose stdout
 // is the secret (apiKeyHelper, awsCredentialExport), which marvel can carry
 // without ever seeing the value.
+//
+// ANTHROPIC_AUTH_TOKEN is the bearer Claude Code sends to a router such as
+// liteLLM, and CLAUDE_CODE_OAUTH_TOKEN is a subscription's long-lived grant;
+// both were missing from the first version of this list.
 var backendBearerEnv = []string{
 	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
 	"AWS_BEARER_TOKEN_BEDROCK",
 	"AWS_SECRET_ACCESS_KEY",
 	"AWS_SESSION_TOKEN",
+	"CLAUDE_CODE_OAUTH_TOKEN",
+}
+
+// backendBearerSuffixes catch the bearer a hand list has not named yet: a
+// new vendor's key (OPENAI_API_KEY) follows the same naming, so a name ending
+// in one of these is refused without waiting for someone to add it. The
+// match is anchored at the end, so a pointer to a helper
+// (MARVEL_BACKEND_API_KEY_HELPER) is not caught. A false positive fails
+// closed and is logged by key, which is the safe direction for custody.
+var backendBearerSuffixes = []string{
+	"_API_KEY",
+	"_AUTH_TOKEN",
+	"_OAUTH_TOKEN",
+	"_SECRET_ACCESS_KEY",
+	"_SESSION_TOKEN",
 }
 
 // BackendBearerEnv reports whether an env key carries a literal credential
 // that must never be inlined into a constructed environment or an overlay.
+// It judges the key, never the value, so a helper pointer declared through
+// apiKeyHelper or awsCredentialExport stays the supported path.
 func BackendBearerEnv(k string) bool {
 	for _, b := range backendBearerEnv {
 		if b == k {
 			return true
 		}
 	}
-	return false
+	for _, s := range backendBearerSuffixes {
+		if strings.HasSuffix(k, s) {
+			return true
+		}
+	}
+	return strings.Contains(k, "_BEARER_TOKEN")
 }
 
 // backendValueVars redirect by carrying any value at all: a custom base URL

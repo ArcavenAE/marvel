@@ -211,3 +211,33 @@ func TestBackendMatches(t *testing.T) {
 		})
 	}
 }
+
+// The list names the bearers known today; the suffixes refuse the next one
+// before anyone remembers to add it (ADR-009). Near-misses stay allowed: a
+// helper pointer, a selector, a token-count setting.
+func TestBackendBearerEnv(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"ANTHROPIC_API_KEY", true},
+		{"ANTHROPIC_AUTH_TOKEN", true},
+		{"CLAUDE_CODE_OAUTH_TOKEN", true},
+		{"AWS_BEARER_TOKEN_BEDROCK", true},
+		{"AWS_SECRET_ACCESS_KEY", true},
+		{"AWS_SESSION_TOKEN", true},
+		{"OPENAI_API_KEY", true},
+		{"SOME_ROUTER_AUTH_TOKEN", true},
+		{"MARVEL_BACKEND_API_KEY_HELPER", false},
+		{"AWS_PROFILE", false},
+		{"ANTHROPIC_BASE_URL", false},
+		{"CLAUDE_CODE_USE_BEDROCK", false},
+		{"CLAUDE_CODE_MAX_OUTPUT_TOKENS", false},
+	}
+	for _, tt := range tests {
+		if got := BackendBearerEnv(tt.key); got != tt.want {
+			t.Errorf("BackendBearerEnv(%q) = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+}
