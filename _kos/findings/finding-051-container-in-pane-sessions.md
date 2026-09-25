@@ -109,6 +109,21 @@ per applied team, the team user confined to `agent.<workspace>.<team>.>` plus
   seat's presence key succeeded under the team user. Its `$JS.API.>` grant is
   also broad. Both are properties of per-team scope.
 
+**Under the fabric model** (ArcavenAE/director#77,
+`sim/design/leaf-fabric-one-address-space.md`, a candidate and unmerged; this
+paragraph is INFERRED from that design, not measured). An inbox there is a
+work-queue stream with one durable per address, and a restart rebinds it. The
+measured 1-then-2 durable growth across a `docker kill` and restart would
+instead be one durable, rebound by the restarted container under the same
+address, and a second live claimant would be refused. The growth measured here
+is today's per-instance durable (aae-orc-iejcx), not a container effect, which
+matches the host control. The fabric's per-seat credentials would scope a seat
+to its own address, so the presence forgery above would be refused if the
+presence keys fall under that scope; the design would have to say so, and it
+is the same gap aae-orc-a2max names for today's bus. Reach and the
+credential-scoped subject results do not change in kind: the network mode
+still decides reachability only, and the grant unit narrows from team to seat.
+
 ## Credential-injection verdict (the operator's per-session model)
 
 The probe minted a per-seat user on the scratch broker by hand (standing in for
@@ -164,23 +179,24 @@ that directory is mounted.
   allow-list, so "broker and clone ports only" needs a gateway container on
   both networks or an egress proxy (INFERRED; not built).
 - **SSH agent.** OrbStack's forwarded agent socket gave the container the
-  operator's full agent: `ssh-add -l` listed three keys, one hardware-backed
-  and two plain ED25519 keys, and plain keys sign without any touch.
+  operator's full agent, including keys that sign without a touch.
   Forwarding the agent therefore hands a container signing authority as the
   operator, and it should not be done for analyst seats. Ephemeral legion
   repos have no remote and need no signing. A long-term seat that commits
   memory needs a key scoped to that seat. No signature was attempted.
 
-## What this needs from marvel (candidates, not yet filed)
+## What this needs from marvel (filed flat, one ticket each)
 
 1. Container lifecycle: stop and remove the container when marvel kills the
    pane (kill, delete, drain, teardown). Either a runtime-level teardown hook,
-   or a container-aware Instance (P2 in the node).
+   or a container-aware Instance (P2 in the node). aae-orc-g5wkx.
 2. Per-session bus credentials minted at spawn, replacing per-team.
+   aae-orc-a2max.
 3. Set `DIRECTOR_TEAM` and `DIRECTOR_WORKSPACE` in the constructed env beside
-   `DIRECTOR_AGENT_ID`.
+   `DIRECTOR_AGENT_ID`. aae-orc-z5wuq.
 4. A heartbeat path that is not a host unix socket (a TCP listener scoped to the
    session, or the bus itself), if container seats are to heartbeat.
+   aae-orc-tf73q.
 
 ## Not measured
 
@@ -188,3 +204,8 @@ that directory is mounted.
 - A NATS leaf in the container (out per the brief), tmux-in-container (P2),
   image provenance (sub-question g, a paper answer), and a signed commit
   inside a container.
+- Credential refresh for a file-based login (brief step 6): a read-only mount
+  breaking refresh, and a writable mount letting the container rewrite the
+  operator's credential. This host has no credential file (the login is a
+  keychain item), so it could not be run here. A probe on a Linux host, where the login is
+  typically a file, should run it.
