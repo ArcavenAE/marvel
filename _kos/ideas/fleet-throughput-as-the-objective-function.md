@@ -193,3 +193,5 @@ Related: `marvel-agentic-resource-matrix.md`,
 `context-pressure-is-an-operating-point-not-a-fill-level.md`,
 `probe-context-operating-points-and-axes.md`, `question-shift-triggers`,
 vision Gap 1 (attention routing) and Gap 5 (cost and quality).
+Demand side (queues, work-driven scaling, limits): orc `_kos/ideas/workload-queue-depth-and-capacity.md`.
+Supply side (backend registry, quota estimation): `inference-backend-registry-and-quota-estimation.md`.
