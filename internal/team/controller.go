@@ -1152,9 +1152,15 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 		return plan
 
 	case actual > desired:
-		// Shed the excess, newest first — the same sessions and order the old
-		// reconcileRoleAt deleted (current[len-1-i]).
+		// Shed the excess, oldest first, so the newest sessions survive.
+		// current comes from ranging over the store's session map, whose
+		// order Go randomizes, so it must be ordered before anything is
+		// chosen from it. Taking current[len-1-i] unordered deleted an
+		// arbitrary session: after a role shift that left two seats on a
+		// one-replica role, the new seat lost about half the time
+		// (ArcavenAE/marvel#348).
 		excess := actual - desired
+		sortNewestFirst(current)
 		plan.Delete = make([]api.Session, 0, excess)
 		for i := 0; i < excess; i++ {
 			plan.Delete = append(plan.Delete, current[len(current)-1-i])
@@ -2153,7 +2159,14 @@ func (c *Controller) allReady(sessions []api.Session, role *api.Role) bool {
 }
 
 func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
-	oldGen := c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Shift.OldGeneration)
+	// Drain every seat the role has outside the generation this shift just
+	// launched, not the team's previous generation. The counter is team-wide
+	// but a role's seats carry the generation of the last shift that covered
+	// that role, so after one --role shift the two disagree and a lookup at
+	// OldGeneration finds nothing while the role's real old seat keeps
+	// running (ArcavenAE/marvel#345).
+	oldGen := sessionsOutsideGeneration(
+		c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name), t.Generation)
 
 	if len(oldGen) == 0 {
 		// Old generation empty — advance to the next role. Drained tells a
@@ -2174,7 +2187,7 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 				Team:       t.Name,
 				Role:       role.Name,
 				Generation: t.Shift.OldGeneration,
-				Message:    fmt.Sprintf("old gen %d for role %s was empty, nothing drained", t.Shift.OldGeneration, role.Name),
+				Message:    fmt.Sprintf("role %s had no seats outside gen %d, nothing drained", role.Name, t.Generation),
 			})
 		}
 		_ = c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
@@ -2191,10 +2204,11 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 		return
 	}
 
-	// Rolling drain: delete one old-gen session per reconcile tick, and
+	// Rolling drain: delete one old seat per reconcile tick, oldest first, and
 	// record the progress so the empty-generation branch above can tell a
 	// finished drain from one that never moved anything.
-	sess := oldGen[0]
+	sortNewestFirst(oldGen)
+	sess := oldGen[len(oldGen)-1]
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {
 		log.Printf("shift: drain session %s: %v", sess.Key(), err)
 		return
@@ -2208,6 +2222,36 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 		}
 		live.Shift.Drained[role.Name]++
 		return nil
+	})
+}
+
+// sessionsOutsideGeneration returns the sessions whose generation is not gen,
+// in their input order.
+func sessionsOutsideGeneration(sessions []api.Session, gen int64) []api.Session {
+	out := make([]api.Session, 0, len(sessions))
+	for i := range sessions {
+		if sessions[i].Generation != gen {
+			out = append(out, sessions[i])
+		}
+	}
+	return out
+}
+
+// sortNewestFirst orders sessions by creation time, newest first, so a
+// caller choosing which session survives gets the same answer every time.
+// The store returns sessions in map order, which Go randomizes. Ties, and
+// rows with no creation time, fall back to the higher generation and then
+// the higher name, which keeps the order total.
+func sortNewestFirst(sessions []api.Session) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		a, b := sessions[i], sessions[j]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		if a.Generation != b.Generation {
+			return a.Generation > b.Generation
+		}
+		return a.Name > b.Name
 	})
 }
 

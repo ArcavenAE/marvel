@@ -409,3 +409,67 @@ func TestPlanThenApplyScaleDownDeletesExactly(t *testing.T) {
 		t.Errorf("survivor %s was named in the plan's Delete set", survivors[0].Key())
 	}
 }
+
+// TestPlanScaleDownKeepsNewestByCreationTime is ArcavenAE/marvel#348. The
+// scale-down chose its victims from store order, which is Go map order and
+// randomized, so after a role shift left two seats on a one-replica role the
+// new seat was deleted about half the time. The survivor must be the newest
+// session by creation time on every run, and with no creation time recorded
+// the higher generation must win.
+func TestPlanScaleDownKeepsNewestByCreationTime(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name     string
+		sessions []api.Session
+		survivor string
+	}{
+		{
+			name: "newest creation time survives",
+			sessions: []api.Session{
+				{Name: "team-worker-g1-0", Generation: 1, CreatedAt: base},
+				{Name: "team-worker-g3-0", Generation: 3, CreatedAt: base.Add(4 * 24 * time.Hour)},
+				{Name: "team-worker-g2-0", Generation: 2, CreatedAt: base.Add(time.Hour)},
+				{Name: "team-worker-g1-1", Generation: 1, CreatedAt: base.Add(time.Minute)},
+			},
+			survivor: "team-worker-g3-0",
+		},
+		{
+			name: "no creation time falls back to the higher generation",
+			sessions: []api.Session{
+				{Name: "team-worker-g1-0", Generation: 1},
+				{Name: "team-worker-g6-0", Generation: 6},
+			},
+			survivor: "team-worker-g6-0",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := api.NewStore()
+			ctrl := NewController(store, nil)
+			for i := range tc.sessions {
+				s := tc.sessions[i]
+				s.Workspace, s.Team, s.Role, s.State = planTestWS, "team", "worker", api.SessionRunning
+				if err := store.CreateSession(&s); err != nil {
+					t.Fatalf("seed session: %v", err)
+				}
+			}
+			tm := api.Team{Name: "team", Workspace: planTestWS, Generation: 6, Roles: []api.Role{{Name: "worker", Replicas: 1}}}
+
+			// Map order is randomized per range, so one lucky run proves
+			// nothing; the same survivor must come back every time.
+			for run := 0; run < 64; run++ {
+				plan := ctrl.planRole(&tm, &tm.Roles[0], tm.Generation)
+				if plan.Action != RoleScaleDown || len(plan.Delete) != len(tc.sessions)-1 {
+					t.Fatalf("run %d: plan = %+v, want scale_down deleting %d", run, plan, len(tc.sessions)-1)
+				}
+				for _, d := range plan.Delete {
+					if d.Name == tc.survivor {
+						t.Fatalf("run %d: deleted %s, which must survive", run, d.Name)
+					}
+				}
+			}
+		})
+	}
+}
