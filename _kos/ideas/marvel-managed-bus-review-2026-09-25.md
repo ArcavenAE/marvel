@@ -23,7 +23,9 @@ dependency via mise/brew" (orc `docs/marvel-remap-2026-08.md:167-172`,
 Managed mode does most of it today:
 
 - the broker runs as a child of the daemon, in its own process group, with
-  crash backoff (`internal/bus/supervisor.go:285-288`, `:146-160`)
+  crash backoff (`internal/bus/supervisor.go:285-288`, `:146-160`). Citations
+  are pinned at 1df684c; since #351 (4ef7222) the spawn itself lives in
+  `internal/workload/process.go` (`exec.Command` at :79, `Setpgid` at :82)
 - config rendering (`internal/bus/render.go:128-160`)
 - credential minting (`internal/bus/manager.go:32-46`)
 - provisioning of the declared streams and KV (`internal/bus/declared.go:96-132`)
@@ -42,9 +44,17 @@ The operator's framing departs from what exists in three places:
    that another broker could fill. Section 4 says that seam should be a
    document now, not code.
 
-No live cluster uses managed mode yet. `~/.marvel/config.yaml` has no `bus:`
-or `services:` entry. On kinu, the phase-0 broker (127.0.0.1:4222, no auth, no
-domain) and the global hub (4242/7442/8242) are both started by hand.
+Managed mode has a live user: mokuzai (192.168.100.196, the `skippy`
+cluster). The reviewer's `marvel bus status` there reports managed, ready,
+leaf up, provisioned and authorized, and the hub's `/leafz` on kinu shows a
+leaf from 192.168.100.196 in account FLEET. The known live defect on that path
+is marvel#339 (a reexec drops the leaf).
+
+kinu is the other shape. Its `~/.marvel/config.yaml` has no `bus:` or
+`services:` entry, and its phase-0 broker (127.0.0.1:4222, no auth, no domain)
+and the global hub (4242/7442/8242) are both started by hand. Every
+observation below names its host; nothing here rests on managed mode being
+untried.
 
 ## 1. What marvel owns, and what the broker keeps
 
@@ -83,8 +93,9 @@ reach the hub in `external` mode, which marvel already models
     rendered conf. Later starts reuse it, so seats' stamped `NATS_URL` stays
     valid across restarts.
   - A port the OS assigns afresh at each start (nats-server's random-port
-    option; UNVERIFIED for this version) is rejected, because it changes on
-    every restart.
+    option, `-p -1`; the reviewer verified it on nats-server 2.14.6, where
+    `-p -1 -a 127.0.0.1` listened on 127.0.0.1:59448) is rejected, because it
+    changes on every restart.
   - Unix sockets are not an option: nats-server has no client listener on a
     unix socket (UNVERIFIED; no such option found in the rendered config).
 - **Monitor port: allocate it too, instead of listen+4000**
@@ -113,7 +124,10 @@ reach the hub in `external` mode, which marvel already models
   seats. That keeps seats free of a marvel dependency (SOUL §2).
 - **Restarts.** With persisted ports and recovered passwords
   (`manager.go:39-46`), a restart changes nothing a seat holds. A deliberate
-  port change goes through the record file. The phase-0 default of
+  port change goes through the record file. One exception after #351: a broker
+  the daemon adopts rather than spawns (`supervisor.go:199-207`, SIGHUP only)
+  keeps its old process environment until it next restarts. mokuzai is the
+  first host where that case is live. The phase-0 default of
   `nats://127.0.0.1:4222` (director-mcp `main.go:73`) should become an error
   when neither env nor record file names a bus, since a silent default is how
   a seat ends up on another cluster's broker.
@@ -160,7 +174,8 @@ tenant that does not exist.
 
 ## 5. Health: the check that would have caught 2026-09-24
 
-The incident, from the hub log: the first "JetStream failed to store a msg on
+The incident, from the hub log on kinu
+(`~/.director/nats-global/log/nats-server.log`): the first "JetStream failed to store a msg on
 stream 'FLEET > KV_GLOBAL_PRESENCE' ... no space left on device" came at
 2026-09-24 16:14:57. There were 11,530 of them until a restart at 2026-09-25
 16:17:42.
@@ -171,7 +186,8 @@ stream 'FLEET > KV_GLOBAL_PRESENCE' ... no space left on device" came at
   (`health.go:77-117`). A bucket that exists but refuses every write passes.
 - The shim logs a presence write failure once, on the transition, and does
   not escalate (director-mcp `bus.go:781-783`).
-- The hub is hand-run, so no marvel check covers it at all.
+- The hub on kinu is hand-run, so no marvel check covers it at all. mokuzai's
+  managed leaf has the checks above, and they read the same way.
 
 Add three things:
 
@@ -192,8 +208,8 @@ Add three things:
    back, and the operator's policy allows it. That is one decision with a
    named trigger, not a restart loop.
 
-Whether the hub's store would have recovered on its own once space came back is
-UNVERIFIED. The probe answers it the next time.
+Whether the kinu hub's store would have recovered on its own once space came
+back is UNVERIFIED. The probe answers it the next time.
 
 The shim should also escalate a presence write failure instead of logging it
 once, as a director follow-up.
@@ -203,8 +219,12 @@ once, as a director follow-up.
 **Supersede it.** A launchd unit builds a second supervisor, outside marvel,
 for exactly the component the ruling says marvel supervises. It would also
 leave the hub without the write probe that section 5 shows is needed. Keep the
-hand-run hub as it is until the follow-ups land. Do not harden it with
-launchd.
+hand-run hub on kinu as it is until the follow-ups land. Do not harden it
+with launchd.
+
+This plan has a live user. mokuzai already runs the managed shape against the
+kinu hub, so it is the first target for the write probe (follow-up 3,
+aae-orc-kjix3) and for the adopt-keeps-old-env case in section 3.
 
 Follow-up tickets I would file (not filed; flat, with edges):
 
