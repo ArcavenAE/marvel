@@ -2,6 +2,8 @@
 package tmux
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/arcavenae/marvel/internal/paths"
 )
@@ -452,46 +455,106 @@ func (d *Driver) KillServer() error {
 	return nil
 }
 
-// SendKeys sends keystrokes to a tmux pane. If literal is true, the text is
-// sent literally (tmux send-keys -l) — no interpretation of special key names.
-// If enter is true, a submit follows the text.
+// injectBufferPrefix names the tmux paste buffers SendKeys creates. Each call
+// adds a unique suffix and deletes its buffer, so no two injects share one.
+const injectBufferPrefix = "marvel-inject-"
+
+// injectSeq and injectNonce make a paste-buffer name unique per call: the
+// counter within this daemon, the random part across daemons on one tmux
+// server. tmux buffers are server-global, so a shared name let one seat's
+// text reach another seat when two injects ran at once (the panel's check in
+// docs/design/inject-submit-bracketed-paste.md). A PID-derived name has the
+// same fault inside one daemon.
+var (
+	injectSeq   atomic.Uint64
+	injectNonce = newInjectNonce()
+)
+
+func newInjectNonce() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		// The counter alone still separates calls within this daemon.
+		return strconv.Itoa(os.Getpid())
+	}
+	return hex.EncodeToString(b)
+}
+
+func nextInjectBuffer() string {
+	return fmt.Sprintf("%s%s-%d", injectBufferPrefix, injectNonce, injectSeq.Add(1))
+}
+
+// SendKeys sends keystrokes to a tmux pane. If literal is false, text is a key
+// name (Enter, C-c) and goes out as send-keys. If literal is true, text is
+// delivered as a bracketed paste. If enter is true, a separate Enter keypress
+// follows.
 //
-// The submit is always a SEPARATE, non-literal Enter keypress, never a carriage
-// return folded into the literal text. A paste-aware TUI composer (Claude Code)
-// treats a trailing \r inside a literal send-keys burst as a draft newline and
-// does not submit; a distinct Enter key event after the burst does. Folding the
-// Enter into the literal send (PR #81) is what broke every inject-based doorbell
-// across the fleet: text landed in the composer and never submitted
-// (aae-orc-2uiw9).
+// Literal text is a paste, not typed keys (aae-orc-jzmvo, design
+// docs/design/inject-submit-bracketed-paste.md, option A). Claude Code treats
+// a read of about 80 bytes or more as a paste and reads a \r inside a paste as
+// a newline, so an unbracketed text-plus-Enter staged in the composer instead
+// of submitting, the next Enter was swallowed, and later injects stacked into
+// one turn. send-keys -l never adds the paste markers; paste-buffer -p does,
+// when the application has turned bracketed paste on (mode 2004, which every
+// installed harness does at its first screen). The end marker tells the
+// harness where the paste stops, so the Enter after it is a keypress however
+// the bytes are split into reads. On a pane without mode 2004, paste-buffer -p
+// -r sends the same bytes send-keys -l did, LF included, so nothing regresses
+// there. Empty literal text sends only the Enter.
 //
-// Text and Enter go out as ONE tmux invocation joined by the command separator
-// (send-keys -l TEXT ; send-keys Enter), so tmux enqueues both key events in a
-// single client/server exchange. A prior form issued them as two separate tmux
-// processes under the per-pane lock; that lock orders marvel's callers, but a
-// send-keys client returns when it exits, not when the server has delivered the
-// keys to the pane, so under concurrency the text and Enter of adjacent calls
-// could still interleave on one input line (marvel#324, aae-orc-sa2yt). The
-// single invocation is the interleave guard; the per-pane lock still orders
-// whole calls (TestSendKeysConcurrentInjectNoInterleave).
+// The text reaches tmux on stdin through load-buffer, never on argv, into a
+// buffer named uniquely for this call; paste-buffer -d deletes it. The paste
+// and its Enter go out as ONE tmux invocation joined by the command
+// separator, the interleave guard from aae-orc-sa2yt, and the per-pane lock
+// orders whole calls (TestSendKeysConcurrentInjectNoInterleave). Unique names
+// are what keep concurrent injects to different panes apart
+// (TestSendKeysConcurrentPanesNoCrossDelivery).
 func (d *Driver) SendKeys(paneID, text string, literal, enter bool) error {
 	unlock := d.lockPane(paneID)
 	defer unlock()
 
-	args := []string{"send-keys", "-t", paneID}
-	if literal {
-		args = append(args, "-l", text)
-	} else {
-		args = append(args, text)
+	// Empty literal text is the submit form (`inject <session> '' --enter`).
+	// There is nothing to paste, and an empty load-buffer creates no buffer,
+	// so a paste would fail and tmux would drop the Enter queued after it.
+	if literal && text == "" {
+		if !enter {
+			return nil
+		}
+		if out, err := d.cmd("send-keys", "-t", paneID, "Enter").CombinedOutput(); err != nil {
+			return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
+		}
+		return nil
 	}
+	if !literal {
+		args := []string{"send-keys", "-t", paneID, text}
+		if enter {
+			args = append(args, ";", "send-keys", "-t", paneID, "Enter")
+		}
+		if out, err := d.cmd(args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
+		}
+		return nil
+	}
+
+	buf := nextInjectBuffer()
+	load := d.cmd("load-buffer", "-b", buf, "-")
+	load.Stdin = strings.NewReader(text)
+	if out, err := load.CombinedOutput(); err != nil {
+		return fmt.Errorf("load-buffer for %s: %s: %w", paneID, string(out), err)
+	}
+	// -r keeps LF as LF. Without it paste-buffer rewrites each LF to CR, which
+	// on a pane without bracketed paste is a submit per line.
+	args := []string{"paste-buffer", "-p", "-r", "-d", "-b", buf, "-t", paneID}
 	if enter {
-		// A bare ";" argument is tmux's command separator, so tmux reads what
-		// follows as a second command rather than as keys. The Enter therefore
-		// stays a distinct interpreted keypress (never a folded carriage return)
-		// while riding the same client/server exchange as the text.
+		// A bare ";" argument is tmux's command separator, so the Enter is a
+		// second command and stays a distinct interpreted keypress.
 		args = append(args, ";", "send-keys", "-t", paneID, "Enter")
 	}
 	if out, err := d.cmd(args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("send-keys %s: %s: %w", paneID, string(out), err)
+		// A failed paste leaves the buffer; remove it so no text lingers in
+		// the server's buffer list. Best effort: the paste error is the one
+		// that matters.
+		_ = d.cmd("delete-buffer", "-b", buf).Run()
+		return fmt.Errorf("paste-buffer %s: %s: %w", paneID, string(out), err)
 	}
 	return nil
 }
