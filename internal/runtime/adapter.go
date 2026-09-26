@@ -153,6 +153,12 @@ type SessionHomeSpec struct {
 	// key it sets and nothing else (marvel#308). Nil means nothing is
 	// written. An error is logged and the session still launches.
 	Seed func(dir string) error
+	// Socket names, relative to the home, the unix socket the harness opens
+	// under it, if any. The manager checks the resolved path against the
+	// sun_path limit at spawn and logs a path that would not fit, because
+	// the harness's own failure names neither marvel nor the fix. Empty
+	// means the harness opens none.
+	Socket string
 }
 
 // SessionHomeAssigner is the optional containment contract. An adapter
