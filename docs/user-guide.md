@@ -22,6 +22,39 @@ marvel stop
 marvel stop --teardown
 ```
 
+### Check: one codex seat shows CTX%
+
+After `codex login`, launch a single codex seat and confirm the context
+feed reaches the table. No hook setup is needed; marvel seeds it
+("Codex context pressure" below).
+
+```bash
+cat > /tmp/codex-check.toml <<'TOML'
+[workspace]
+name = "codex-check"
+
+[[team]]
+name = "solo"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "codex"
+    command = "codex"
+TOML
+marvel work /tmp/codex-check.toml
+marvel inject codex-check/solo-worker-g1-0 'Reply with the single word: ok' --enter
+marvel get sessions        # CTX% for solo-worker-g1-0 shows a figure after the reply
+marvel delete team codex-check/solo
+```
+
+`CTX%` stays `-` until codex has written its first model reply, because
+that reply is where the reading comes from. If it stays `-` after one,
+`marvel daemon logs` names the reason (for example, no `codex` binary to
+record hook trust with).
+
 ## Writing manifests
 
 A manifest declares the desired state: which agents to run, how many,
@@ -423,40 +456,42 @@ a level, so nothing marvel parses out of the stream is occupancy, and
 setting `runtime.context_window` for a codex role does not light CTX%.
 
 The rollout is reached through a codex hook, which hands over the file's
-absolute path. Marvel ships the hook command; you install the stanza,
-because codex reads its hooks from `$CODEX_HOME/config.toml`, the same
-directory that holds your credentials, and marvel does not write there.
+absolute path, and marvel installs the hook for you. Each codex session
+runs in a private `CODEX_HOME` under the daemon's state directory, and
+marvel writes that home's `config.toml` at every launch. First-time setup
+is `codex login` and nothing else.
 
-Add to `~/.codex/config.toml`:
+The seeded file is an allowlist, not a copy of yours. It carries:
 
-```toml
-[[hooks.SessionStart]]
-[[hooks.SessionStart.hooks]]
-type = "command"
-command = "/opt/homebrew/bin/marvel codex-ctx"
+- `marvel codex-ctx` on `SessionStart`, `Stop` and `PostToolUse`, using
+  the absolute path of the daemon's own binary. `SessionStart` gives a
+  reading before the first turn, `Stop` refreshes it at every turn
+  boundary, and `PostToolUse` keeps a long tool-heavy turn measured.
+- A trust record for each of those hooks. Codex skips an untrusted hook
+  silently, and the startup review that would trust it never appears in
+  `codex exec` or in a pane nobody watches. Marvel asks the installed
+  codex (`codex app-server`, `hooks/list`) for each hook's key and hash
+  and records them, so no `--dangerously-bypass-hook-trust` is needed.
+- Your `[mcp_servers.director]` entry's `command` and `args`, if you
+  have one, with `env_vars` naming the values marvel constructs for the
+  session and `default_tools_approval_mode = "approve"`. Codex does not
+  pass its environment to an MCP server, so without `env_vars` the server
+  starts with no identity and no broker; without approve mode an
+  unattended seat waits on a prompt nobody answers.
+- The directory the pane starts in, declared `trust_level = "untrusted"`
+  rather than untrusted by default.
 
-[[hooks.Stop]]
-[[hooks.Stop.hooks]]
-type = "command"
-command = "/opt/homebrew/bin/marvel codex-ctx"
+It leaves out everything else in `~/.codex/config.toml`, on purpose: your
+`projects` trust table (a trusted target is writable under
+`-s read-only`, marvel finding-049), `approvals_reviewer`, and the `env`
+of your own director entry, which is your identity, not the session's.
+Only `auth.json` is linked in, as a symlink, so the login stays yours.
+The seeded file is rewritten at every launch; change the manifest or your
+own config instead of editing it.
 
-[[hooks.PostToolUse]]
-[[hooks.PostToolUse.hooks]]
-type = "command"
-command = "/opt/homebrew/bin/marvel codex-ctx"
-```
-
-Use the absolute path to your own marvel binary. `SessionStart` gives a
-reading before the first turn, `Stop` refreshes it at every turn
-boundary, and `PostToolUse` keeps a long tool-heavy turn from going
-unmeasured; drop any of the three you do not want.
-
-Codex requires each hook to be trusted before it will run one. Start
-codex interactively once after adding the stanza and accept the hook
-review; the review does not appear in `codex exec`, and an untrusted
-hook is skipped silently rather than reported. Automation that cannot
-run the review has only `codex exec --dangerously-bypass-hook-trust`,
-which runs every enabled hook in that `CODEX_HOME` without review.
+If marvel cannot find a `codex` binary to ask, it still writes the file,
+without trust records, and says so in `marvel daemon logs`; the hooks are
+then skipped and CTX% reads `-`.
 
 Attribution needs nothing extra. `marvel codex-ctx` reads
 `MARVEL_SOCKET`, `MARVEL_WORKSPACE`, `MARVEL_SESSION` and

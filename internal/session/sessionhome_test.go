@@ -159,3 +159,56 @@ func TestRuntimesWithoutARelocatableHomeGetNone(t *testing.T) {
 		t.Error("a claude launch must not carry CODEX_HOME")
 	}
 }
+
+// config.toml is SEEDED, never linked (marvel#308). The operator's file
+// carries project trust that makes the target writable under -s read-only
+// (finding-049), an approvals reviewer, and their own director identity. The
+// private home gets a file marvel wrote, carrying the codex-ctx hooks and
+// none of those keys.
+func TestCodexConfigIsSeededNotLinked(t *testing.T) {
+	// No t.Parallel: this one sets CODEX_HOME for the process.
+	mgr := homeManager(t)
+	source := t.TempDir()
+	operator := `approvals_reviewer = "auto_review"
+
+[projects."/work/target"]
+trust_level = "trusted"
+
+[mcp_servers.director]
+command = "/opt/director/bin/director-mcp"
+
+[mcp_servers.director.env]
+DIRECTOR_AGENT_ID = "ops/operator"
+`
+	if err := os.WriteFile(filepath.Join(source, "config.toml"), []byte(operator), 0o600); err != nil {
+		t.Fatalf("write operator config: %v", err)
+	}
+	t.Setenv("CODEX_HOME", source)
+
+	sess := sessionFor("coder", "codex")
+	mgr.planLaunch(sess)
+
+	path := filepath.Join(sess.HarnessHome, "config.toml")
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("a codex launch should seed config.toml: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("config.toml must be marvel's own file, not a link to the operator's")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded config: %v", err)
+	}
+	got := string(data)
+	for _, banned := range []string{"approvals_reviewer", "/work/target", "ops/operator"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("seeded config carries the operator's %q:\n%s", banned, got)
+		}
+	}
+	for _, want := range []string{"codex-ctx", "SessionStart", "Stop", "PostToolUse", "/opt/director/bin/director-mcp", `"MARVEL_SESSION"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("seeded config lacks %q:\n%s", want, got)
+		}
+	}
+}

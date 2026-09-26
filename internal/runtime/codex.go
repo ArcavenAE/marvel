@@ -70,7 +70,15 @@ const codexAuthFile = "auth.json"
 // The operator's own home is the seed source, and auth.json is symlinked
 // rather than copied; see SessionHomeSpec.LinkIn for why that distinction
 // is load-bearing here.
-func (c *Codex) SessionHome(_ *LaunchContext) (SessionHomeSpec, bool) {
+//
+// config.toml is not linked, and that is deliberate (marvel#308). The
+// operator's file carries their project trust, which makes the target
+// writable under `-s read-only` (finding-049), their approvals reviewer,
+// and their own director identity. A session gets a file marvel writes
+// instead: the codex-ctx hooks with their trust record, the director server
+// with the names codex must forward to it, and the start directory declared
+// untrusted rather than left untrusted by absence (orc finding-179 §5).
+func (c *Codex) SessionHome(ctx *LaunchContext) (SessionHomeSpec, bool) {
 	// An operator who set CODEX_HOME for the daemon has named the home
 	// they want seeded from; otherwise it is codex's own default.
 	source := os.Getenv(codexHomeEnv)
@@ -83,6 +91,7 @@ func (c *Codex) SessionHome(_ *LaunchContext) (SessionHomeSpec, bool) {
 		EnvVar: codexHomeEnv,
 		Source: source,
 		LinkIn: []string{codexAuthFile},
+		Seed:   codexSeeder(ctx, source),
 	}, true
 }
 
