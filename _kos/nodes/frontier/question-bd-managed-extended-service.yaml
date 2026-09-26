@@ -1,0 +1,107 @@
+id: question-bd-managed-extended-service
+type: question
+confidence: frontier
+title: "Could bd become a first-class service that marvel manages and extends for agents?"
+content: |
+  Operator request, 2026-09-26. A child of
+  question-marvel-service-provider-shape, not a duplicate of it. The parent
+  already lists bd as a runtime service (the task graph, requested through
+  the dropbox) and makes "bd ready, through a minted identity, one Binding"
+  its proving vertical (bd aae-orc-166h, aae-orc-aaj5). That is bd as a
+  service marvel CONNECTS an agent to. This node asks about two things the
+  parent does not: bd as a service marvel MANAGES, and bd as a service marvel
+  EXTENDS.
+
+  Why a child and not a sub-question I on the parent: the parent's open
+  sub-questions A to H are about the plane itself and are detailed in
+  docs/design/service-provider/03-probes-and-roadmap.md. Managing and
+  extending one provider have their own probes, their own promotion signal,
+  and a contract with an upstream project (bd) that the plane does not own.
+  Folding that into the parent would widen a speculative node whose
+  promotion signal is the proving vertical alone.
+
+  THE BD SERVER TODAY (aae-orc graph). Phase 0 (aae-orc finding-039): a
+  dolt sql-server on kinu under launchd, bd clients configured by env vars
+  (`BEADS_DOLT_SERVER_HOST/PORT/USER/PASSWORD`,
+  `BEADS_DOLT_AUTO_START=false`), credentials in the macOS keychain. Phase 1
+  (aae-orc finding-149, 2026-08-28): the same server bound to the LAN with a
+  second live writer under its own dolt identity, per-writer attribution
+  correct, and three standing hazards: a newer bd auto-migrates the shared
+  schema on connect with no server-side guard (aae-orc-sf8rt), the password
+  is the only gate on the LAN port (aae-orc-4ascm), and auto-backup does not
+  run from a remote client. The topology itself is not ruled: live shared
+  server versus working copies syncing to a hub (epic aae-orc-u028) is open
+  as aae-orc-k41dg. A managed mode has to be stated per topology, not
+  assume one.
+
+  MANAGED. marvel runs or supervises the bd/dolt server for a cluster as a
+  declared workload, the same pattern as the marvel-supervised NATS broker
+  (ruled 2026-08-01; review in [[marvel-managed-bus-review-2026-09-25]];
+  spawn through `internal/workload` with an allowlisted child environment,
+  marvel#351). Questions:
+  (a) Which topology does a managed server serve: the cluster's own live
+      server, a working copy per cluster syncing to a hub, or both behind
+      one capability class?
+  (b) Lifecycle: install and version pin (the schema-migration hazard
+      makes the bd and dolt versions a pre-flight check, not a default),
+      health, backup, and restart without losing in-flight writes.
+  (c) What happens to a cluster whose bd server marvel does not manage
+      (an operator-run server like kinu's today): discover it as an
+      external provider, or refuse to bind?
+
+  EXTENDED. marvel adds what bd lacks for agent fleets. Today a bd claim
+  never expires and names only the human principal, not the agent, session
+  or seat that made it (aae-orc task-workflow rule, "Checking whether work
+  is already underway"). Questions:
+  (d) Agent identity: can each write carry the minted seat identity
+      (parent's credential boundary) so attribution names the seat, without
+      a dolt user per agent?
+  (e) Per-seat claims: under R-151 (director register, ruled 2026-09-26),
+      work binds to a seat or role, never to an instance, and nothing waits
+      for an instance to return. A claim keyed to a seat record survives a
+      respawn from g1-0 to g1-2. Where does the seat record live, and is
+      the claim a bd field, a marvel-side join, or both?
+  (f) Leases: a claim with a heartbeat and an expiry, released when the
+      seat is retired rather than when an instance dies. Is the lease
+      marvel state projected into bd, or a bd feature proposed upstream?
+  (g) Work-queue binding: a seat's queue as a bd query bound at spawn (the
+      parent's Binding), so a successor instance inherits it with no hand
+      reassignment.
+
+  CONSTRAINTS.
+  - bd stays optional and usable without marvel (SOUL section 2,
+    ADR-005). Every extension degrades to plain bd: no marvel means no
+    seat attribution and no leases, not a broken board.
+  - Custody (SOUL section 3, ADR-009): the dolt server credentials are
+    bearer authority at the server. marvel may broker a short-lived scoped
+    credential or front the connection on the agent's behalf; an agent
+    does not hold the long-lived dolt password, and a managed server's
+    root credential stays in a store marvel can revoke and re-mint without
+    a human at a third-party console.
+  - Nothing here assumes which teams or harnesses a cluster runs.
+
+  PROMOTION SIGNAL: one cluster runs a marvel-supervised bd server, a seat
+  claims an item under its seat identity, the instance is replaced, and the
+  successor sees the claim and its queue with no hand reassignment.
+edges:
+  - target: question-marvel-service-provider-shape
+    type: derives
+    note: "Child of the service-provider plane: the parent covers bd as a runtime service marvel connects agents to; this covers bd as a service marvel manages and extends."
+  - target: question-permission-model
+    type: derives
+    note: "Custody of the dolt credentials and identity at the binding boundary are enforcement questions the permission model owns."
+provenance:
+  created_by: agent
+  session: arcaven-author-g5-0, 2026-09-26, operator request relayed via director
+  created_at: "2026-09-26"
+tags:
+  - service-provider
+  - bd
+  - identity
+  - agent-contract
+notes: >
+  Filed in marvel by the subject test: the subject is what marvel does with
+  bd (supervise, extend). bd itself, the dolt server topology (aae-orc F26,
+  question-bd-dolt-server-architecture) and director's R-151 are objects.
+  Related bd: aae-orc-166h, aae-orc-aaj5, aae-orc-k41dg, aae-orc-sf8rt,
+  aae-orc-4ascm, aae-orc-u028.
