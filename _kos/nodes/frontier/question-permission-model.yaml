@@ -127,6 +127,18 @@ content: |
   construction one config layer below the claude projection: marvel controls
   the harness's trust surface by constructing the role's config home rather
   than by owning the operator's.
+
+  EXTENDED TO MANAGED CHILDREN (2026-09-25, marvel#351 at 4ef7222,
+  aae-orc-oo62t). Environment construction covered agent panes and not
+  the processes marvel supervises for itself: the managed nats-server
+  inherited the daemon's whole environment, so a broker started from an
+  operator shell carried the bd client password, the heartbeat token,
+  and any exported vendor key. `internal/workload.Start` is now the one
+  spawn path for a managed child, and its environment is the class
+  contract's allowlist plus the secrets the daemon minted, nothing
+  inherited. Remaining gap, out of scope there: `daemon reexec` still
+  passes `os.Environ()`.
+
 edges:
   - target: elem-runtime-adapter-framework
     type: derives

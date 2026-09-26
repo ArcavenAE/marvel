@@ -63,3 +63,13 @@ The input box is the `❯` line **between the pane title separator and the statu
 marvel capture <session> \
   | awk '{l[NR]=$0} END{for(i=2;i<=NR;i++) if(l[i] ~ /^❯/ && l[i-1] ~ /─$/) print l[i]}'
 ```
+
+## Addendum 2026-09-25: the non-submit defect is root-caused and fixed, not yet live
+
+Section 2's compounding rests on #202 (`-e` stages the text without submitting). That half now has a cause and a fix:
+
+- **Cause** (marvel#355, `docs/design/inject-submit-bracketed-paste.md`, aae-orc-6vcr2): marvel sends the text and its Enter in one tmux call, so the pane reads them in one read. Claude Code treats a long read as a paste and a carriage return inside a paste as a newline, so a dispatch of roughly 80 bytes or more is staged instead of submitted. The threshold is the harness's heuristic (between 60 and 80 bytes on 2.1.282) and can move.
+- **Fix** (marvel#357, merged at 1df684c): deliver the text as a bracketed paste (`paste-buffer -p`) followed by the Enter, so the Enter lands outside the paste and submits.
+- **Live state:** not yet running. The installed binary on the measuring host is `0.1.0-alpha.20260925.024343.8037d09`, and 1df684c is not an ancestor of 8037d09. The fix takes effect after an install that includes it and a `marvel daemon reexec` (or restart). Until then the workaround above stands, and the cost is manual: about 30 hand-typed Enters across one fleet day of director dispatches (2026-09-25).
+
+Sections 1, 3 and 4 (append rather than replace, no reliable clear, long-payload chunking) are unchanged by this fix.
