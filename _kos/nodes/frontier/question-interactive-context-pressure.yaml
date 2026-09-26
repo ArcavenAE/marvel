@@ -383,6 +383,22 @@ content: |
   assumes TUI coverage), aae-orc-gtpz (shim), finding-005
   (capture-pane tier), finding-007 (the headless probe that left this
   untouched), finding-008 (OTEL), finding-011 (statusline).
+
+  STATE 2026-09-25, CODEX IN A MARVEL-MANAGED SESSION: THE READER IS
+  BUILT AND DOES NOT FIRE. `marvel codex-ctx` (marvel#170, finding-023,
+  aae-orc-pt8k) reads the rollout, but it is launched by a codex hook
+  declared in the codex config. marvel#275 gave each codex session a
+  private `CODEX_HOME` that links in `auth.json` only, so the managed
+  session carries no config, no hook, and no CTX%. Seeding the config is
+  also a trust decision, not plumbing: finding-049 showed the operator's
+  config carries project trust that defeats the sandbox, so the seeded
+  config must be an allowlist and the hook must be trusted without
+  inheriting the operator's trust table. Plan: marvel issue #308 (seed an
+  allowlisted `config.toml`), in build as marvel#359 (open at this
+  writing), plus a hook-trust spike. Until one merges and the daemon
+  runs it, codex CTX% renders absent in managed sessions, which is the
+  absence-over-wrong-number discipline above, not a regression.
+
 edges:
   - target: question-stream-attachment
     type: derives
