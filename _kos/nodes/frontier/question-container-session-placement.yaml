@@ -1,0 +1,217 @@
+id: question-container-session-placement
+type: question
+confidence: frontier
+title: "Can marvel launch, manage and attach to an agent session that runs inside a local container?"
+tags:
+  - marvel
+  - runtime
+  - containment
+  - bus
+content: |
+  Can marvel launch, supervise (health, restart, shift, kill) and attach a
+  tmux view to an agent session whose harness runs inside a local
+  container (Docker, Podman, Apple `container`, Lima/colima), while
+  keeping what a pane-hosted session has today: `capture`, `inject`,
+  healthchecks, the director bus and its shim, policy projection at
+  spawn, and the harness's own auth delegation?
+
+  **Driving use case: a SOC-analyst evaluation team's analyst seats.**
+  Two shapes, and they want different things from a container:
+
+  - **Ephemeral analyst seats** (`<product>-<petname>`), 0 to 3 at a
+    time, set up from nothing each run as the clean-room baseline. Each
+    run: name, create a local legion repo with no remote, cast a team
+    from a template with `marvel work`, run the product's SETUP.md,
+    pass a positive-control query, work the dispatched alerts, hand
+    off, unapply. What they need: a clean room per run that a finished
+    run cannot leak into the next; tool limits (MCP `query`,
+    `describe`, `sensor_health` only); no live credentials of any
+    kind; network reach limited to the vendor clones and the analysts'
+    supervisor. Today the clean room is a fresh directory on a shared
+    host, and the tool and reach limits are harness config the agent
+    runs beside, not a boundary it runs inside.
+  - **Two long-term analyst seats** (`<product>-<petname>`, named once),
+    possible targets. Memory persists as commits in their own legion
+    repo, so they need the same limits plus an isolated workspace that
+    outlives any one container.
+
+  The container is the commodity answer to the containment half of
+  that list while curtain (kernel sandbox) is design-only and
+  aae-orc-10x waits on it. This question asks whether marvel can host
+  one without losing its supervision surface, and where the container
+  sits in the ratified kxce substrate (tmux is the terminal and
+  human-view layer; a Go shim-in-pane is the supervision layer).
+
+  **What the code says today (read at 97698a3, not run):**
+
+  - `Adapter.Prepare` returns a command string that tmux runs through
+    `sh -c` in `new-window`. `resolveCommand` returns `runtime.command`
+    verbatim, so `command = "docker run --rm -it ... image claude"` is
+    legal manifest text for the generic adapter AND for the claude
+    adapter, which appends its own flags after the command.
+  - Marvel's constructed environment (`MARVEL_*`, `DIRECTOR_AGENT_ID`,
+    `NATS_URL`, `DIRECTOR_NATS_USER/PASS`, the heartbeat token) is set
+    with `tmux new-window -e`, so it lands in the HOST shell in the
+    pane. It stops at the container boundary unless the run command
+    passes each name through (`-e NAME` with no value). Enforcement
+    locus 1 is intact on the host and absent inside by default.
+  - Health is pane-shaped: `remain-on-exit` plus `pane_dead` and
+    `pane_dead_status`, read by `ReapDead`. Wave-1 metering reads the
+    `pane_pid` process tree, which for a container is the runtime's
+    CLI client, not the harness.
+  - Paths marvel hands a harness are host paths: the projected
+    `--settings` file, the headless stream FIFO, a private harness
+    home whose credential entries are symlinks into the operator's own
+    home (`SessionHomeSpec.LinkIn`), and `MARVEL_SOCKET` (a unix
+    socket, which a VM-backed runtime on macOS may not carry across a
+    bind mount).
+
+  **Candidate placements:**
+
+  (P1) container-in-pane: tmux on the host, `docker run -it` (or
+       `exec -it`) as the pane command. `capture` and `inject` see the
+       container's tty through the pane unchanged. Everything that is
+       a host path or a host env var needs a bind mount or a
+       pass-through.
+  (P2) tmux-in-container: the container runs its own tmux server and
+       marvel's driver reaches it. Keeps the harness and its shim in
+       one namespace, but marvel's driver speaks to one tmux socket
+       per cluster, so this is a second Instance implementation, the
+       same seam question-managed-runtime-placement named for the
+       cloud arm.
+
+  **OPEN SUB-QUESTIONS:**
+
+  (a) P1 against P2: what each costs `capture`, `inject`, the shim and
+      the event stream. Hypothesis in the brief: P1 costs nothing to
+      capture and inject, and everything else is plumbing.
+  (b) Healthcheck semantics. Pane-alive and container-alive can
+      disagree both ways: `docker kill` makes the client exit (pane
+      dead, correct), but killing the pane may SIGHUP the client and
+      leave the container running (orphan, marvel reports it gone).
+      Which one does marvel trust, and who reaps the orphan?
+  (c) Restart and shift when the container exits. Does a restart
+      policy re-run `docker run` cleanly (name collisions under
+      `--name`, `--rm` races), and does a shift's successor get a
+      fresh container or the predecessor's volume?
+  (d) Env and credentials against SOUL section 3 and ADR-009. The
+      harness auth must stay the harness's and the operator's: no
+      bearer baked into an image, no copy of a credential file into a
+      container layer. Is a read-only bind mount of the operator's own
+      credential file the container analogue of `LinkIn` (the operator
+      keeps custody, revoked by deleting the original), or does
+      crossing into a VM change the answer? For the analyst seats the
+      question is narrower: they hold no live credentials by design,
+      so only the model auth crosses.
+  (e) **Director and NATS reach from inside the container
+      (first-class, not a footnote).** This question covers the
+      container-specific parts only; the fabric itself (one fleet
+      address space over NATS leaf nodes, per-seat credentials,
+      retention that never deletes unread mail, presence aggregated
+      across clusters) is ArcavenAE/director#77
+      (sim/design/leaf-fabric-one-address-space.md), a candidate and
+      unmerged. This question does not wait on it: the probe runs on the
+      current bus and records each result under both models.
+      Container-specific parts:
+      - Network namespace: `NATS_URL=nats://127.0.0.1:...` means the
+        container itself inside a container. Host networking, a
+        published port reached through `host.docker.internal` (or the
+        runtime's equivalent). A NATS leaf node inside the container is
+        OUT: a leaf credential is a cluster credential, and with
+        JetStream the inbox would die with an ephemeral container. A
+        network limit says where a seat can connect, not which subjects
+        it may use, so reach is measured against a broker that enforces
+        authorization.
+      - Identity injection: the bus identity is `DIRECTOR_AGENT_ID`
+        plus the credential marvel minted (per team today in managed
+        mode; per session is the operator's direction: minted at spawn,
+        short-lived, revocable, injected at launch, twelve-factor style,
+        which is issuance and not custody). It arrives per launch as an
+        env var or a projected, rotatable file, never an image layer,
+        because an image outlives the session and a minted credential
+        must not.
+      - Presence and heartbeat from inside: the shim publishes
+        presence; `ctx-forward` posts heartbeats to `MARVEL_SOCKET`,
+        which needs the marvel binary and the socket inside.
+      - Wake: a seat that never polls loses mail at the 24h inbox
+        max_age (aae-orc-t77rr). An ephemeral seat that polls only
+        between tapes is exactly that seat.
+      - Durables bound to the address, not the container: each shim
+        start makes a durable consumer and none are reaped
+        (aae-orc-iejcx, 183 counted). A long-term seat's durable must
+        outlive any single container; an ephemeral seat's address is
+        new each run, so its durable is removed at unapply after pending
+        mail is drained or reported. Container results are judged
+        against a host control, not against zero.
+      - Duplicate presence rows after a shim restart (aae-orc-4unyk):
+        a container restart is a shim restart by construction.
+  (f) Workspace mounts and git signing. Ephemeral legion repos have no
+      remote, so signing may not arise for them; long-term seats commit
+      memory and may. SSH agent forwarding into the container, with
+      the hardware key's touch still on the operator's desk, is the
+      only acceptable shape; no key material inside.
+  (g) Image provenance. A clean room is only as clean as its image.
+      Does the image come from a pinned, signed build (the
+      sideshow-packs frozen-composition pattern), and does the
+      analyst's SETUP.md belong in the image (faster, but measures the
+      image) or in the run (slower, and measures the install path,
+      which is what the ephemeral seat exists to measure)?
+  (h) Runtime choice on macOS: Docker Desktop (licensing for
+      commercial use), colima/Lima, Apple `container` (one VM per
+      container). Which ones carry a unix socket bind mount, an SSH
+      agent socket, and host networking, since (d), (e) and (f) turn
+      on those three.
+
+  **PROBED 2026-09-24 (finding-051, OrbStack only).** P1 works with no
+  marvel code change: capture and inject through the container tty (shell
+  and a full-screen harness TUI), restart after `docker kill`, and bus reach
+  from host networking and from the default bridge via the host alias, with
+  subject results and durable/presence counts identical to a host control.
+  What it does not do: marvel orphans the container on kill, team delete,
+  shift drain and teardown (the pane kill reaches the docker client, not the
+  container); a bind-mounted host unix socket refuses connections, so no
+  heartbeat from inside; `--settings` needs a mount of a directory only the
+  wrapper can discover; the model login here is a keychain item, so nothing
+  can be mounted without copying it (stopped per ADR-009). A manifest must use
+  `command = "sh"` with `-c`, or a wrapper script: a multi-word command fails
+  pre-flight, and `$` in args is single-quoted. The operator's per-session
+  credential, minted at spawn and injected at launch, works across the
+  boundary, scopes tighter than the team credential (no foreign inbox, no
+  forged presence) and revokes live on reload; env was the carrier because
+  the shim's only file form needs JWT authorization. Sub-questions still
+  open: (b) who reaps the container, (c) partially, (g), (h) beyond OrbStack,
+  and P2.
+
+  NOT A COMMITMENT TO BUILD. The probe (brief-container-session-
+  placement) answers whether P1 works with no marvel code change and
+  names what needs one. Whether marvel grows a container field on
+  Runtime is decided after.
+edges:
+  - target: finding-051-container-in-pane-sessions
+    type: supports
+    note: "the P1 probe: tty, restart and bus work; container teardown, heartbeat socket and model login do not"
+  - target: question-managed-runtime-placement
+    type: derives
+    note: "the local sibling of the cloud ruling. That node found the seam for an API-driven session is Instance, not Adapter; P1 here tests whether a local container avoids needing that seam at all, P2 would need it"
+  - target: elem-runtime-adapter-framework
+    type: derives
+    note: "the generic and claude adapters already accept an arbitrary command string; this question tests whether that is enough"
+  - target: question-permission-model
+    type: supports
+    note: "environment construction is enforcement locus 1, and a container boundary is where it silently stops unless passed through"
+  - target: question-daemon-isolation-boundary
+    type: supports
+    note: "the probe runs against a scratch daemon, which needs the socket and tmux-prefix isolation that node measured as missing by default"
+  - target: aae-orc::val-user-sovereignty
+    type: implements
+    note: "credential custody across the container boundary is the SOUL section 3 test; the harness auth stays the operator's"
+notes: |
+  Related bd (read, not extended): aae-orc-10x (marvel + curtain,
+  sandbox by default; waits on a curtain MVP), aae-orc-ww33y (ADR-009
+  same-uid residual; a container is one candidate vehicle, check 10x
+  first), aae-orc-t77rr, aae-orc-iejcx, aae-orc-4unyk (director bus
+  defects a per-run container multiplies).
+provenance:
+  created_by: human
+  session: "2026-09-24-marvel-container-probe"
+  created_at: "2026-09-24"
