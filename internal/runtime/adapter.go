@@ -323,6 +323,13 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 		// shift or restart mints a new id by design; a stable operator-chosen
 		// id belongs to the FORWARD declared-name path.
 		"DIRECTOR_AGENT_ID": ctx.Session.Name,
+		// The rest of the bus address. The shim defaults both to
+		// "default", which puts a seat outside its team user's
+		// permissions (agent.<workspace>.<team>.>), so a seat whose
+		// launcher did not set them by hand never reached its own
+		// subjects (aae-orc-z5wuq, marvel finding-051 step 5).
+		"DIRECTOR_TEAM":      ctx.Team.Name,
+		"DIRECTOR_WORKSPACE": ctx.Workspace.Name,
 		// The same identity, stamped for the beads tracker. Session
 		// names are <team>-<role>-g<generation>-<index>, so the value
 		// is deterministic and unique per agent session. The map is

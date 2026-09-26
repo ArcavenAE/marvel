@@ -145,7 +145,7 @@ func TestCodexForwardedEnvNamesConstructedValues(t *testing.T) {
 		SocketPath: "/tmp/marvel.sock",
 	}
 	names := codexForwardedEnv(ctx)
-	for _, want := range []string{"MARVEL_SOCKET", "MARVEL_WORKSPACE", "MARVEL_SESSION", api.HeartbeatTokenEnv, "DIRECTOR_AGENT_ID"} {
+	for _, want := range []string{"MARVEL_SOCKET", "MARVEL_WORKSPACE", "MARVEL_SESSION", api.HeartbeatTokenEnv, "DIRECTOR_AGENT_ID", "DIRECTOR_TEAM", "DIRECTOR_WORKSPACE"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("forwarded names %v lack %s", names, want)
 		}
@@ -214,5 +214,27 @@ func TestSeedCodexHomeWithoutCodexStillWrites(t *testing.T) {
 	}
 	if strings.Contains(string(data), "trusted_hash") {
 		t.Errorf("config claims trust codex never reported:\n%s", data)
+	}
+}
+
+// TestConstructedEnvCarriesDirectorAddress: the director shim builds its
+// address from DIRECTOR_TEAM and DIRECTOR_WORKSPACE and defaults both to
+// "default", which lands a seat outside its team user's permissions
+// (aae-orc-z5wuq, marvel#359 review). Marvel constructs them beside
+// DIRECTOR_AGENT_ID, and a role's declared value still wins.
+func TestConstructedEnvCarriesDirectorAddress(t *testing.T) {
+	ctx := &LaunchContext{
+		Session:   &api.Session{Name: "t-r-g1-0", Workspace: "ws", Team: "t"},
+		Role:      &api.Role{Name: "r"},
+		Team:      &api.Team{Name: "t"},
+		Workspace: &api.Workspace{Name: "ws"},
+	}
+	env := baseEnv(ctx)
+	if env["DIRECTOR_TEAM"] != "t" || env["DIRECTOR_WORKSPACE"] != "ws" {
+		t.Errorf("DIRECTOR_TEAM=%q DIRECTOR_WORKSPACE=%q, want t and ws", env["DIRECTOR_TEAM"], env["DIRECTOR_WORKSPACE"])
+	}
+	ctx.Role.Runtime.Env = map[string]string{"DIRECTOR_TEAM": "ops"}
+	if got := baseEnv(ctx)["DIRECTOR_TEAM"]; got != "ops" {
+		t.Errorf("role-declared DIRECTOR_TEAM = %q, want the role's ops", got)
 	}
 }
