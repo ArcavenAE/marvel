@@ -50,6 +50,12 @@ const codexHomeEnv = "CODEX_HOME"
 // even for an operator who is logged in.
 const codexAuthFile = "auth.json"
 
+// codexControlSocket is where codex 0.157's interactive TUI opens its
+// app-server control socket under CODEX_HOME. Headless `exec` opens none.
+// A path past the sun_path limit makes the TUI exit 1 at start with "path
+// must be shorter than SUN_LEN" (aae-orc-pt8k).
+const codexControlSocket = "app-server-control/app-server-control.sock"
+
 // SessionHome gives this launch a private CODEX_HOME.
 //
 // codex offers no session-id pin, so marvel assigns the container instead
@@ -92,6 +98,7 @@ func (c *Codex) SessionHome(ctx *LaunchContext) (SessionHomeSpec, bool) {
 		Source: source,
 		LinkIn: []string{codexAuthFile},
 		Seed:   codexSeeder(ctx, source),
+		Socket: codexControlSocket,
 	}, true
 }
 

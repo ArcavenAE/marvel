@@ -457,7 +457,8 @@ setting `runtime.context_window` for a codex role does not light CTX%.
 
 The rollout is reached through a codex hook, which hands over the file's
 absolute path, and marvel installs the hook for you. Each codex session
-runs in a private `CODEX_HOME` under the daemon's state directory, and
+runs in a private `CODEX_HOME` (`/tmp/marvel-h-<tag>/<12 hex>`, shown as
+`harness_home` in `marvel describe session`), and
 marvel writes that home's `config.toml` at every launch. First-time setup
 is `codex login` and nothing else.
 
@@ -488,6 +489,14 @@ of your own director entry, which is your identity, not the session's.
 Only `auth.json` is linked in, as a symlink, so the login stays yours.
 The seeded file is rewritten at every launch; change the manifest or your
 own config instead of editing it.
+
+The home path is kept short on purpose. An interactive codex (0.157 and
+later) opens a control socket inside its home, and a unix socket path has a
+104-byte limit on macOS; past it, codex exits at start with "path must be
+shorter than SUN_LEN". Marvel logs a warning at spawn if the socket would not
+fit (for example, a `/tmp/marvel-h-<tag>` that another account already owns
+sends homes back to the long temp directory). The workaround for such a host
+is `args = ["--no-daemon", ...]` on the codex role.
 
 If marvel cannot find a `codex` binary to ask, it still writes the file,
 without trust records, and says so in `marvel daemon logs`; the hooks are

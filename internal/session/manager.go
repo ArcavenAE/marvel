@@ -4,6 +4,8 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -51,7 +53,8 @@ type Manager struct {
 	// same path to reach it.
 	ProjectionDir string
 	// HarnessHomeDir holds the per-session private harness state homes
-	// (aae-orc-ca7y). Defaults to a per-layout temp directory, for the
+	// (aae-orc-ca7y). Defaults to /tmp/marvel-h-<layout tag>, a short
+	// per-layout temp directory (see harnessHomeBase for why short), for the
 	// same reason ProjectionDir does and more strongly: codex holds its
 	// home open for the whole session, so the path must stay stable across
 	// a daemon restart or an adopted agent's state would be orphaned.
@@ -113,7 +116,55 @@ func defaultProjectionDir() string {
 // defaultHarnessHomeDir keeps one daemon's private harness homes away from
 // another's.
 func defaultHarnessHomeDir() string {
-	return daemonTempDir("marvel-harness-homes")
+	fallback := daemonTempDir("marvel-harness-homes")
+	layout, err := paths.Default()
+	if err != nil {
+		return fallback
+	}
+	return harnessHomeBase(filepath.Join("/tmp", "marvel-h-"+layout.Tag()), fallback)
+}
+
+// harnessHomeBase picks where private harness homes live. The whole path
+// has to be short, because a harness may open a unix socket under its home:
+// codex 0.157's interactive TUI puts its app-server control socket at
+// CODEX_HOME/app-server-control/app-server-control.sock, and under the old
+// per-layout TMPDIR home on macOS that path ran 155 to 164 bytes against
+// the 104-byte sun_path limit. Codex printed "path must be shorter than
+// SUN_LEN" and exited before any hook ran (aae-orc-pt8k). /tmp is short on
+// every platform marvel runs on, and it stays a temp tier, which matters
+// because homes are never swept.
+//
+// /tmp is shared, so the preferred base is used only if it is, or can be
+// made, a private directory owned by this user. One that already exists
+// with any other shape (a file, a link, someone else's directory, a mode
+// wider than 0700) could be read or planted by another account, so the
+// fallback is used instead and the reason is logged.
+func harnessHomeBase(preferred, fallback string) string {
+	if err := os.Mkdir(preferred, 0o700); err != nil && !os.IsExist(err) {
+		log.Printf("harness homes: cannot create %s, using %s: %v", preferred, fallback, err)
+		return fallback
+	}
+	fi, err := os.Lstat(preferred)
+	if err != nil {
+		log.Printf("harness homes: cannot stat %s, using %s: %v", preferred, fallback, err)
+		return fallback
+	}
+	if !fi.IsDir() || fi.Mode().Perm() != 0o700 || !ownedByMe(fi) {
+		log.Printf("harness homes: %s is not a private directory of this user (mode %v), using %s",
+			preferred, fi.Mode(), fallback)
+		return fallback
+	}
+	return preferred
+}
+
+// harnessHomeFor is the private home for one session key: a fixed-length
+// name derived from the key, so the path stays short however long the
+// workspace, team and role names are, and a restart under the same key
+// lands back in the same place. The session record carries the path
+// (harness_home), so the name need not be readable.
+func (m *Manager) harnessHomeFor(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(m.HarnessHomeDir, hex.EncodeToString(sum[:6]))
 }
 
 // defaultBackendOverlayDir keeps one daemon's backend overlays away from
@@ -644,7 +695,7 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 	if !want || spec.EnvVar == "" {
 		return
 	}
-	dir := filepath.Join(m.HarnessHomeDir, strings.ReplaceAll(lctx.Session.Key(), "/", "-"))
+	dir := m.harnessHomeFor(lctx.Session.Key())
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("session %s: private %s unavailable, sharing the operator's home: %v",
 			lctx.Session.Key(), spec.EnvVar, err)
@@ -679,8 +730,27 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 				lctx.Session.Key(), spec.EnvVar, err)
 		}
 	}
+	if spec.Socket != "" {
+		checkHomeSocket(lctx.Session.Key(), dir, spec.Socket)
+	}
 	lctx.HarnessHomePath = dir
 	lctx.Session.HarnessHome = dir
+}
+
+// checkHomeSocket logs when the socket a harness opens under its home would
+// not fit a unix socket path. The home is resolved first because a harness
+// sees the real path (/tmp is /private/tmp on macOS). It only reports: the
+// session still launches, and an interactive codex can be told --no-daemon.
+func checkHomeSocket(key, dir, socket string) {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+	sock := filepath.Join(resolved, socket)
+	if len(sock) >= paths.MaxUnixSocketPath {
+		log.Printf("session %s: the harness socket under its private home is %d bytes, over the %d-byte unix socket limit; it may fail to start (set HarnessHomeDir shorter, or pass codex --no-daemon): %s",
+			key, len(sock), paths.MaxUnixSocketPath, sock)
+	}
 }
 
 // assignSessionID mints this launch's harness session id and records it on
