@@ -23,8 +23,22 @@ Related: `router-and-backend-as-first-class-concepts.md`,
 
 > kos idea marvel we need to study each inference service and backend, figure out how we can identify which is in use across marvel, for every agent, a living registry, and like an inertia nagiation system that uses sensor fusion, we need a system to estimate token use and periodically true that up, and sample against limits reported by the backend (claude max plan's 4h-session, weekly queue, however codex/openai does it, some kind of ollama/vLLM/LMStudio throughput or contention algrythm or something, some measure of what a PAIR-connected system will accept, how many streams) so that we can inform the system about impending rate limiting, budgeting, quota-based service outages approaching and take appropriate action, moving work to other marvel clusters, moving agents to other backends, slowing the work in some areas, protecting work in flight so it's not frozen in time
 
-A note on "4h-session": Anthropic's help center states the subscription
-session window as five hours. The file uses five hours.
+A note on "4h-session" (checked 2026-09-25): the window is five hours.
+Anthropic's help center says "Your session-based usage limit will reset every
+five hours", and the statusline payload names the field `five_hour`
+(`cmd/marvel/ctxforward.go:112`). The payload carries no window length, so the
+name and the docs are the evidence; nothing found supports four hours.
+
+**PAIR, answered by the operator 2026-09-25:** "PAIR-connected" means LLM
+resources provided through NVIDIA's Personal AI Router (PAIR), a routing
+backend endpoint that attaches distributed local hardware to software through
+Ollama-compatible and other inference interfaces. Verified against PAIR's own
+README and architecture doc (NVIDIA/Personal-AI-Router at 20fc3db8, Apache-2.0):
+"a local inference router for a group of compatible computers on the same
+network" that "presents local proxy endpoints for Ollama-compatible,
+OpenAI-compatible, and Anthropic Messages API requests", and that "routes each
+independent request to one node" without pooling GPU memory or splitting a
+request.
 
 ## What this adds to what exists
 
@@ -68,7 +82,7 @@ the unbuilt BT13 placeholder, aae-orc-jmaed).
 | Router (liteLLM) | `ANTHROPIC_BASE_URL` to the router | response headers name the backend, but marvel cannot see them (router study) |
 | OpenAI / Codex plan | codex `CODEX_HOME` config | rollout `payload.rate_limits.plan_type` |
 | Local (Ollama, vLLM, LM Studio) | base URL to a local port | the server's own `/api/ps`, `/metrics`, `/api/v0/models` |
-| PAIR | unknown (see open question 1) | unknown |
+| PAIR | base URL to a local PAIR proxy (`127.0.0.1:11434` Ollama-compatible, `1234` OpenAI-compatible by default). PAIR's own docs say a client pointed at the proxy "is indistinguishable from pointing it at a native model server", so PAIR is detectable only by declaration | per request, no: the node that served a request shows only in PAIR's Jobs view |
 
 ### Keeping it living, not a snapshot
 
@@ -151,20 +165,22 @@ probe shows the gain drifts enough to need estimating online.
 | Claude subscription, richer | `get_usage` control request: five windows plus model-scoped windows | a network call to the usage endpoint, itself rate-limited ("the act of measuring rate-limit headroom consumes a rate-limited resource") | catalog, from the binary |
 | Anthropic API | `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset}`, `retry-after`. Token bucket, "continuously replenished". Spend-cap 429 carries `enforced_spend_limit_reached` and no `retry-after`. | every response, but only the harness sees the headers; marvel needs a hook, an app-server stream, or a proxy | VERIFIED (Anthropic rate-limits docs) |
 | OpenAI API | `x-ratelimit-{limit,remaining,reset}-{requests,tokens}` (+ project-scoped), `Retry-After`; resets are durations; a 429 `slow_down` can fire under the per-minute limits | same visibility problem | VERIFIED (OpenAI docs) |
-| Codex on a ChatGPT plan | rollout JSONL `payload.rate_limits`: `primary`/`secondary` with `used_percent`, `window_minutes`, `resets_at`, `plan_type`. The codex source parses `x-codex-primary-used-percent` / `-window-minutes` / `-reset-at` headers into a `RateLimitSnapshot`. | passive tail of the rollout file under marvel's private per-session `CODEX_HOME` (`internal/runtime/codex.go:61-63`); marvel reads that file today for context only. Key on `window_minutes`, not on the slot: finding-050 reads primary as 5-hour, the catalog measured primary at 10080 (weekly) in all 2,097 records. Never open the `auth.json` beside it. | rollout: measured (catalog); headers: codex source, not a documented contract; plan policy: OpenAI pricing page VERIFIED, recent 5-hour change UNVERIFIED |
+| Codex on a ChatGPT plan | rollout JSONL `payload.rate_limits`: `primary`/`secondary` with `used_percent`, `window_minutes`, `resets_at`, `plan_type`. The codex source parses `x-codex-primary-used-percent` / `-window-minutes` / `-reset-at` headers into a `RateLimitSnapshot`. | passive tail of the rollout file under marvel's private per-session `CODEX_HOME` (`internal/runtime/codex.go:61-63`); marvel reads that file today for context only. Key on `window_minutes`, not on the slot: finding-050 reads primary as 5-hour, the catalog measured primary at 10080 (weekly) in all 2,097 records. Never open the `auth.json` beside it. Marvel's own `internal/runtime/codex/mapping.md` item 5 still says `rate_limits.primary.used_percent` "is the WEEKLY PLAN budget"; a dated correction note below it (2026-09-25) already says to key on `window_minutes`, and the item text itself remains to be corrected. | rollout: measured (catalog); headers: codex source, not a documented contract; plan policy: OpenAI pricing page VERIFIED, recent 5-hour change UNVERIFIED |
 | Bedrock | Service Quotas per model per region (tokens/min on-demand and cross-region, requests/min for some models, tokens/day per account); CloudWatch `AWS/Bedrock` `InvocationThrottles`, token counts, `EstimatedTPMQuotaUsage` ("does not reflect the reservation-based token consumption that drives throttling") | CloudWatch poll at one-minute resolution, account-wide, lagged | VERIFIED (AWS docs) |
 | Vertex | per-region per-model QPM/TPM for Claude; dynamic shared quota for Gemini (no fixed limit; a 429 means the pool is busy) | 429 rate only under DSQ | UNVERIFIED (pages returned navigation only) |
 | Ollama | `OLLAMA_NUM_PARALLEL` (default 1), `OLLAMA_MAX_QUEUE` (default 512, then 503), `OLLAMA_MAX_LOADED_MODELS`; `GET /api/ps` (loaded models, size, VRAM, expiry); per-response `eval_count` | poll `/api/ps`; no queue-depth endpoint is documented | VERIFIED (Ollama docs) |
 | vLLM | Prometheus `/metrics`: `vllm:num_requests_running`, `vllm:num_requests_waiting`, `vllm:kv_cache_usage_perc`, time to first token, token counters | scrape | VERIFIED (vLLM docs) |
 | LM Studio | continuous batching, "Max Concurrent Predictions" default 4 | no metrics endpoint documented | VERIFIED (partial) |
-| PAIR | open question 1 | | |
+| PAIR | **Streams:** PAIR sets no stream limit of its own. It forwards each request whole to one eligible node, so the concurrency for a model is the sum of the engine slots on the nodes that advertise it (Ollama `OLLAMA_NUM_PARALLEL`, default 1, then `OLLAMA_MAX_QUEUE`, default 512, then 503; LM Studio max concurrent predictions, default 4), each settable per node through PAIR's engine settings. **Contention:** the scheduler ranks eligible nodes by pending work (PAIR-routed jobs queued or running, both engines summed) plus GPU pressure (the busiest GPU's smoothed utilization mapped to 0 to 3 at 40, 70 and 85 percent, with hysteresis; telemetry older than ten seconds counts as a neutral 1). Its documented limits: "It sees pressure, not capacity"; every workload counts as one; model load state is ignored; direct-to-engine traffic is invisible; each node ranks from its own lagging view. | No outside metrics endpoint is documented. Pending counts and pressure appear in the desktop Jobs view and the terminal interface; peer workload propagation (port 14320) is mutual TLS for paired members only. A marvel host running PAIR can read its own engines' metrics; a remote node's load is visible only through PAIR's interface. | VERIFIED (PAIR README, `docs/architecture.mdx`, `docs/inference-dispatcher.mdx`, `docs/engine-settings.mdx` at 20fc3db8) |
 
 **Local servers are a different kind of limit.** They expose contention
 (running, waiting, KV cache full, latency), not a quota. For them the
 forecast target changes from "time to exhaustion" to "expected queue wait and
 time to first token", and the useful action is placement, not budgeting. A
-router such as PAIR (below) also detaches the endpoint an agent calls from the
-machine whose metrics describe it.
+router such as PAIR also detaches the endpoint an agent calls from the
+machine whose metrics describe it: the forecast for a PAIR-backed agent is a
+queue-wait estimate over the owner nodes for its model, and PAIR's own ranking
+already approximates it with pending count plus GPU pressure.
 
 ## 4. Forecasting
 
@@ -255,13 +271,12 @@ idea, mechanism 1).
 
 ## 7. Open questions and a first probe
 
-1. **What is a "PAIR-connected system"?** The operator's term, undefined in
-   every kos graph. Marvel's code reserves a `pair` provider for NVIDIA
-   Personal AI Router (`internal/service/service.go:11-15`), a router across
-   machines on one network in front of Ollama and LM Studio, where each
-   request runs on one machine. "PAIR-connected" appears in none of its
-   material. **Operator: is that what you mean, and is "how many streams" the
-   pool's concurrency across its machines?**
+1. **PAIR (answered 2026-09-25; see the top).** What stays open: can marvel
+   read a PAIR cluster's pending counts and pressure without joining it as a
+   paired member (the only documented surfaces are PAIR's own interface and
+   member-only mutual TLS)? Marvel reserves a `pair` provider without a driver
+   (`internal/service/service.go:11-15`); a declared PAIR backend would be its
+   first use.
 2. Does the statusline payload identify the account, or must pools be told
    apart some other way? Without that, two logins on two hosts merge.
 3. How to key a pool without holding an account identifier (a salted local
@@ -308,7 +323,7 @@ Read for this idea (2026-09-25) unless marked.
 - Ollama, "FAQ", https://docs.ollama.com/faq ; "List running models", https://docs.ollama.com/api/ps
 - vLLM, "Metrics", https://docs.vllm.ai/en/latest/design/metrics.html
 - LM Studio, "Parallel Requests", https://lmstudio.ai/docs/app/advanced/parallel-requests
-- NVIDIA, Personal AI Router README, https://github.com/NVIDIA/Personal-AI-Router
+- NVIDIA, Personal AI Router: README, `docs/architecture.mdx` (How a Node Is Chosen, Scheduler Limitations, Port Map), `docs/inference-dispatcher.mdx`, `docs/engine-settings.mdx`, at commit 20fc3db84ae1, https://github.com/NVIDIA/Personal-AI-Router
 - Welch, G. and Bishop, G., "An Introduction to the Kalman Filter", UNC-Chapel Hill TR 95-041 (2004 update), https://www.cs.utexas.edu/~pstone/Courses/393Rfall15/readings/Welch+Bishop-TR-95.pdf
 - Higgins, W. T. (1975), "A Comparison of Complementary and Kalman Filtering", IEEE Trans. Aerospace and Electronic Systems AES-11(3), https://www.allaboutcircuits.com/uploads/articles/A_comparison_of_complementary_and_kalman_filtering.pdf
 - Heinanen, J. and Guerin, R. (1999), RFC 2697, "A Single Rate Three Color Marker", https://www.rfc-editor.org/rfc/rfc2697
