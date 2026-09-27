@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/arcavenae/marvel/internal/api"
+
 	"github.com/arcavenae/marvel/internal/paths"
 )
 
@@ -143,15 +145,41 @@ func (d *Driver) lockPane(paneID string) func() {
 // cmd builds an exec.Cmd for tmux with the driver's socket prefix
 // applied. All Driver methods go through this helper so the socket
 // scoping is enforced in exactly one place.
+//
+// Every tmux exec runs with the parent Claude Code session's identity and
+// messaging credential removed (api.InheritedSessionEnv): a tmux server
+// takes the environment of the process that starts it and hands it to every
+// pane, so the first command to start the server decides what every seat
+// inherits (aae-orc#418).
 func (d *Driver) cmd(args ...string) *exec.Cmd {
+	var c *exec.Cmd
 	if d.socket != "" {
 		full := make([]string, 0, len(args)+2)
 		full = append(full, "-L", d.socket)
 		full = append(full, args...)
-		return exec.Command(d.binary, full...)
+		c = exec.Command(d.binary, full...)
+	} else {
+		c = exec.Command(d.binary, args...)
 	}
-	return exec.Command(d.binary, args...)
+	c.Env = api.ScrubInheritedSessionEnv(os.Environ())
+	return c
 }
+
+// seatEnvPrefix drops the denylisted names inside the pane itself. It covers
+// a tmux server started earlier by a dirty process, whose global environment
+// already holds them and which the scrubbed exec in cmd cannot reach. It
+// applies to the first simple command of the pane's line, which is the whole
+// line for every adapter launch; `env -u` is on macOS and GNU coreutils.
+var seatEnvPrefix = func() string {
+	var b strings.Builder
+	b.WriteString("env")
+	for _, n := range api.InheritedSessionEnv {
+		b.WriteString(" -u ")
+		b.WriteString(n)
+	}
+	b.WriteString(" ")
+	return b.String()
+}()
 
 // Socket returns the tmux socket name the driver is scoped to. Used by
 // test teardown to kill the right server. A driver built by NewDriver
@@ -289,7 +317,7 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string,
 	for k, v := range envs {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
-	args = append(args, command)
+	args = append(args, seatEnvPrefix+command)
 
 	out, err := d.cmd(args...).CombinedOutput()
 	if err != nil {

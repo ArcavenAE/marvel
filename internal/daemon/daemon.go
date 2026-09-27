@@ -243,6 +243,14 @@ func New() (*Daemon, error) {
 
 // NewWithOptions creates a new daemon with the given options.
 func NewWithOptions(opts Options) (*Daemon, error) {
+	// Before anything is exec'd: a daemon started from a Claude Code session
+	// carries that session's messaging credential and identity, and reexec,
+	// services and tmux would otherwise pass them on (aae-orc#418).
+	scrubbed, serr := api.UnsetInheritedSessionEnv()
+	if serr != nil {
+		return nil, fmt.Errorf("scrub inherited session env: %w", serr)
+	}
+
 	driver, err := tmux.NewDriver()
 	if err != nil {
 		return nil, fmt.Errorf("init tmux driver: %w", err)
@@ -279,6 +287,15 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
+	if len(scrubbed) > 0 {
+		msg := "removed inherited session variables: " + strings.Join(scrubbed, ", ")
+		log.Printf("daemon: %s", msg)
+		events.Emit(evRing, events.Event{
+			Kind:     events.KindDaemonEnvScrubbed,
+			Severity: events.SeverityWarning,
+			Message:  msg,
+		})
+	}
 
 	// The usage accountant is event-driven, so it needs no goroutine and
 	// no interval of its own. *api.Store satisfies its Sink directly.

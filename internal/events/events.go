@@ -22,12 +22,16 @@ type Kind string
 // Canonical event kinds. New producers should add entries here rather
 // than inventing string literals at call sites.
 const (
-	KindSessionCreated    Kind = "session.created"
-	KindSessionDeleted    Kind = "session.deleted"
-	KindSessionCrashed    Kind = "session.crashed"
-	KindSessionRestarted  Kind = "session.restarted"
-	KindSessionFailed     Kind = "session.failed"
-	KindSessionSucceeded  Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	KindSessionCreated   Kind = "session.created"
+	KindSessionDeleted   Kind = "session.deleted"
+	KindSessionCrashed   Kind = "session.crashed"
+	KindSessionRestarted Kind = "session.restarted"
+	KindSessionFailed    Kind = "session.failed"
+	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindDaemonEnvScrubbed records the parent Claude Code session variables
+	// the daemon removed from its own environment at start, names only, so
+	// nothing it execs inherits them (aae-orc#418).
+	KindDaemonEnvScrubbed Kind = "daemon.env-scrubbed"
 	KindHealthCheckFailed Kind = "health.failed"
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
@@ -230,6 +234,7 @@ var allKinds = []Kind{
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,
+	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
 	KindShiftStarted,
