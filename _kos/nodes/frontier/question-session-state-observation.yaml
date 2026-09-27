@@ -175,7 +175,7 @@ content: |
   still counts as killed. So "failed" now has two meanings on a stored row,
   and `KillError` is the discriminator a reader needs.
 
-  BACK-REFERENCE (2026-09-27 harvest): finding-054. A converged
+  BACK-REFERENCE (2026-09-27 harvest): finding-055. A converged
   interactive seat can also be idle by construction: `runtime.prompt` is
   headless-only, so a respawned interactive seat starts with no first
   message and waits for a nudge (marvel#391).

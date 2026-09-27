@@ -163,13 +163,14 @@ question-permission-model (Layer 1 for a non-projecting harness), ADR-009
 custody, the seed is not held), aae-orc-10x (curtain, option b), the wardrobe
 `retrospector` and `reviewer` roles.
 
-## Addendum 2026-09-27: a codex seat without pre-answered prompts stops at a modal
+## Addendum 2026-09-27: marvel's codex seed pre-answers neither the update check nor the seat's own trust
 
-Relayed from another team's harvest (distribution manifest row 14). A
-codex seat whose config sets neither `check_for_update_on_startup = false`
-nor a `trust_level` for its project stops at the update notice or the
-folder-access screen when restarted without a prompt, and waits there. The
-seed marvel#359 writes records only the daemon's start directory as
-untrusted and does not set the update check, so a seat started elsewhere,
-or by a wrapper that changes directory, still meets both. Related:
-marvel#308, aae-orc-g71ad (role workdir), finding-052.
+Relayed from another team's harvest (distribution manifest row 14). A codex
+seat whose config sets neither `check_for_update_on_startup = false` nor a
+`trust_level` for its project stops at the update notice or the
+folder-access screen on a restart without a prompt. The marvel half: the
+seed marvel#359 writes sets no update check, and it records only the
+daemon's start directory, as untrusted. So a seat started in any other
+directory still meets both screens. The launch wrapper and seat-config side
+is director's, filed there citing this addendum. Related: marvel#308,
+aae-orc-g71ad (role workdir), finding-052.

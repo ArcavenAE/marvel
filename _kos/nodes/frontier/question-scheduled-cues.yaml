@@ -26,7 +26,7 @@ content: |
     the cue to director?
   - What does a cue deliver into an interactive seat, given that a pane
     inject is not a dispatch channel (finding-040) and an interactive
-    seat takes no first prompt today (finding-054, marvel#391)?
+    seat takes no first prompt today (finding-055, marvel#391)?
   - Where does "last ran" live so the alarm survives a daemon restart?
 
   An alarm alone would have surfaced the 19-hour gap. It is the smaller
@@ -39,7 +39,7 @@ edges:
 notes: |
   Source: harvest distribution manifest 2026-09-27, row 16.
   Related: elem-k8s-resource-model (Schedule, model-only), finding-040,
-  finding-054.
+  finding-055.
 provenance:
   created_by: agent
   session: "2026-09-27-marvel-builder-kos-harvest"

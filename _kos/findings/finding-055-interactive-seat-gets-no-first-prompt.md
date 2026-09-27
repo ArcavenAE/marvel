@@ -1,4 +1,4 @@
-# finding-054: an interactive seat gets no first prompt, because runtime.prompt is headless-only
+# finding-055: an interactive seat gets no first prompt, because runtime.prompt is headless-only
 
 Work: harvest placement, 2026-09-27. The observation came from another
 team's seats on 2026-09-26 and was relayed through the harvest
