@@ -19,7 +19,9 @@ import (
 //   - holds none of the denylisted names (checked by name, never value),
 //   - keeps its CLAUDE_CODE_USE_* backend selector,
 //   - reaches running, and
-//   - heartbeats with the token its pane was actually given.
+//   - heartbeats with the token its pane was actually given, and once the
+//     seat is replaced, the previous session's token is refused and the
+//     current one accepted (gate A's heartbeat check).
 //
 // The daemon also reports what it scrubbed, names only.
 func TestSeatUnderDirtyDaemonIsCleanAndHeartbeats(t *testing.T) {
@@ -71,25 +73,7 @@ teams:
 		t.Fatalf("apply: %s", resp.Error)
 	}
 
-	var data []byte
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		b, err := os.ReadFile(out)
-		if err == nil {
-			data = b
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("seat never wrote its environment: %v", err)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	env := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		if k, v, ok := strings.Cut(line, "="); ok {
-			env[k] = v
-		}
-	}
+	env := readSeatEnv(t, out)
 	for _, n := range api.InheritedSessionEnv {
 		if _, ok := env[n]; ok {
 			t.Errorf("seat inherited %s", n)
@@ -125,4 +109,74 @@ teams:
 	if after.LastHeartbeat.IsZero() {
 		t.Error("admitted heartbeat did not stamp LastHeartbeat")
 	}
+
+	// Gate A's heartbeat check, as the operator defined it: "the previous
+	// session's token is refused, the current one accepted." Replace the seat,
+	// then present the previous session's token for the current session.
+	if err := os.Remove(out); err != nil {
+		t.Fatalf("clear env file: %v", err)
+	}
+	if err := d.sessMgr.Delete(sess.Key()); err != nil {
+		t.Fatalf("retire seat: %v", err)
+	}
+	d.teamCtrl.ReconcileOnce()
+	env2 := readSeatEnv(t, out)
+	sessions = d.store.ListSessionsByTeam("ws418", "seatenv")
+	if len(sessions) != 1 {
+		t.Fatalf("sessions after replacement = %d, want 1", len(sessions))
+	}
+	cur := sessions[0]
+	curTok, ok := env2[api.HeartbeatTokenEnv]
+	if !ok {
+		t.Fatalf("replacement seat has no %s", api.HeartbeatTokenEnv)
+	}
+	if curTok == tok {
+		t.Fatal("replacement seat was given the previous session's token")
+	}
+	for _, n := range api.InheritedSessionEnv {
+		if _, ok := env2[n]; ok {
+			t.Errorf("replacement seat inherited %s", n)
+		}
+	}
+	stale, err := json.Marshal(api.NewHeartbeatRequestWithToken(cur.Key(), tok, 12, ""))
+	if err != nil {
+		t.Fatalf("marshal stale heartbeat: %v", err)
+	}
+	if resp := d.handleHeartbeat(stale); resp.Error == "" {
+		t.Error("heartbeat with the previous session's token was accepted; want refused")
+	}
+	fresh, err := json.Marshal(api.NewHeartbeatRequestWithToken(cur.Key(), curTok, 12, ""))
+	if err != nil {
+		t.Fatalf("marshal current heartbeat: %v", err)
+	}
+	if resp := d.handleHeartbeat(fresh); resp.Error != "" {
+		t.Errorf("heartbeat with the current session's token refused: %s", resp.Error)
+	}
+}
+
+// readSeatEnv waits for a seat to write `env` to out and returns it as a
+// map. Assertions read names; only the heartbeat token's value is used, to
+// drive the handler.
+func readSeatEnv(t *testing.T, out string) map[string]string {
+	t.Helper()
+	var data []byte
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, err := os.ReadFile(out)
+		if err == nil {
+			data = b
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("seat never wrote its environment: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			env[k] = v
+		}
+	}
+	return env
 }
