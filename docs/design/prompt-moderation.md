@@ -131,9 +131,15 @@ live one), for the claude and codex harnesses.
 5. `marvel fit` dry run and the describe fields. Blocked by 4.
 6. L4, the compaction threshold relative to the limit. Blocked by 2.
 
-## Rulings needed
+## Rulings needed (open, with defaults; they do not block this draft)
 
-- **F1-a:** placement as recommended (a supervised service, no proxy).
-- **F1-b:** the unmeasured-composition policy on small-limit models:
-  calibration spawn, or refuse.
-- **F1-c:** the reserve size default.
+- **F1-a, placement.** Default: a marvel-supervised moderator service, with
+  no proxy on the model endpoint (section 3).
+- **F1-b, an unmeasured composition on a model under the floor.** Default:
+  refuse with "unmeasured composition", and measure with a calibration run on
+  a scratch seat (`marvel fit --calibrate`, never on the live fleet). No
+  automatic calibration spawn, because a first-run guess is the failure
+  being prevented.
+- **F1-c, the reserve.** Default: the larger of 8192 tokens and 10 percent of
+  `context_limit`, revisited once ticket 1 measures a real first turn and
+  handoff.
