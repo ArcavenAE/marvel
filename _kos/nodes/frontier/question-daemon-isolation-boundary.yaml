@@ -176,6 +176,9 @@ content: |
   entire trigger. The 2026-08-07 accumulation posture governs panes
   marvel FINDS; it says nothing about desired state marvel REHYDRATES.
   That gap is this question's, not the crash-charging ticket's.
+  BACK-REFERENCE (2026-09-27): question-container-session-placement
+  (marvel#346, finding-051) links here: its probe runs against a scratch daemon, which needs the socket and tmux-prefix isolation this node measured as missing by default.
+
 edges:
   - target: elem-data-directory-permissions
     type: derives

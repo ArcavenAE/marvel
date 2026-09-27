@@ -84,6 +84,9 @@ content: |
   read at 0886801; nothing provisioned, nothing spent, so every vendor
   capability is documented-only). Prior art: orc
   `_kos/ideas/agentcore-crosswalk.md`.
+  BACK-REFERENCE (2026-09-27): question-container-session-placement
+  (marvel#346, finding-051) links here: the local sibling of this node's cloud ruling: whether a session in a local container needs the Instance seam at all (P1) or only for the API-driven case (P2).
+
 edges:
   - target: elem-runtime-adapter-framework
     type: discovered_from
