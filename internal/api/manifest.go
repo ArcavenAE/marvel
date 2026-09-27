@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -566,19 +567,36 @@ func validateScript(path string) error {
 // has succeeded and sessions are running. Refusing here, before anything is
 // committed, is the current-state fix; the cross-workspace-team model, where
 // one team may span workspaces, is the direction that supersedes it
-// (marvel#319). Re-applying a team in its own workspace is unaffected.
+// (marvel#319). Re-applying a team in a workspace that already holds it is
+// unaffected, including either side of a pair stored before this check.
 func (m *Manifest) ValidateTeamNames(existing []Team) error {
-	owner := make(map[string]string, len(existing))
+	holders := make(map[string][]string, len(existing))
+	own := make(map[string]bool, len(existing))
 	for _, t := range existing {
-		if t.Workspace != m.Workspace.Name {
-			owner[t.Name] = t.Workspace
+		if t.Workspace == m.Workspace.Name {
+			own[t.Name] = true
+			continue
 		}
+		holders[t.Name] = append(holders[t.Name], t.Workspace)
 	}
 	for _, mt := range m.Teams {
-		if ws, ok := owner[mt.Name]; ok {
-			return fmt.Errorf("team %q is already applied in workspace %q; team names are cluster-wide because broker users are named by team, so rename it or delete %s/%s first",
-				mt.Name, ws, ws, mt.Name)
+		// A workspace that already holds the team re-applies it, even when a
+		// pair from before this check exists; refusing would lock both sides
+		// of that pair out of their own teams.
+		if own[mt.Name] {
+			continue
 		}
+		ws := holders[mt.Name]
+		if len(ws) == 0 {
+			continue
+		}
+		sort.Strings(ws)
+		quoted := make([]string, len(ws))
+		for i, w := range ws {
+			quoted[i] = strconv.Quote(w)
+		}
+		return fmt.Errorf("team %q is already applied in workspace %s; team names are cluster-wide because broker users are named by team, so rename it or delete %s/%s first",
+			mt.Name, strings.Join(quoted, ", "), ws[0], mt.Name)
 	}
 	return nil
 }
