@@ -71,7 +71,12 @@ const (
 	// two apart, which len(oldGen)==0 alone could not. See aae-orc-094e.
 	KindShiftDrainedEmpty Kind = "team.shift-drained-empty"
 	KindRoleSaturated     Kind = "role.saturated"
-	KindRoleRemoved       Kind = "role.removed"
+	// KindRoleReplicasInvalid records a stored role whose replica count is
+	// below the scale minimum, reported once at daemon start. Only a daemon
+	// from before marvel#365 could have stored one; the row is left as it is
+	// and planned as steady.
+	KindRoleReplicasInvalid Kind = "role.replicas-invalid"
+	KindRoleRemoved         Kind = "role.removed"
 	// KindPolicyProjected records that marvel wrote (or rewrote) a
 	// session's projected Claude Code settings file — the observable
 	// signal of a policy landing at spawn and of live re-projection after
@@ -239,6 +244,7 @@ var allKinds = []Kind{
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
 	KindRoleSaturated,
+	KindRoleReplicasInvalid,
 	KindRoleRemoved,
 	KindPolicyProjected,
 	KindContextLimitUnresolved,

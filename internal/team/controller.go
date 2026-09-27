@@ -1057,6 +1057,14 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 		Actual:     actual,
 		Action:     RoleSteady,
 	}
+	// A negative count can only be a stored row from a daemon that predates
+	// the scale check (marvel#365); the daemon reports it at startup. It
+	// plans nothing: shedding against it once indexed past the session list
+	// and panicked, and deleting every session of the role would act on a
+	// value nobody meant.
+	if desired < 0 {
+		return plan
+	}
 
 	// An admission hold describes a refusal that is still happening. Drop it as
 	// soon as the gate below is not reached at all — the role is satisfied, the
@@ -1162,7 +1170,9 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 		excess := actual - desired
 		sortNewestFirst(current)
 		plan.Delete = make([]api.Session, 0, excess)
-		for i := 0; i < excess; i++ {
+		// Bounded by the list as well as the count: actual counts replica
+		// slots, which can differ from len(current).
+		for i := 0; i < excess && i < len(current); i++ {
 			plan.Delete = append(plan.Delete, current[len(current)-1-i])
 		}
 		plan.Action = RoleScaleDown

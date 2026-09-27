@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"encoding/json"
+	"net"
 	"runtime/debug"
 	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // negScaleManifest is one sleep replica, deterministic and needing no model
@@ -97,6 +100,9 @@ func TestRestartWithStoredNegativeReplicasDoesNotPanic(t *testing.T) {
 			_ = d2.sessMgr.CleanupWorkspace(ws.Name)
 		}
 	})
+	if got := d2.events.Snapshot(events.Filter{Kind: events.KindRoleReplicasInvalid}, 0); len(got) != 1 {
+		t.Errorf("startup reported %d %s events, want 1 naming the bad row", len(got), events.KindRoleReplicasInvalid)
+	}
 	before := len(d2.store.ListSessionsByTeam("negscale", "crew"))
 	noPanic(t, "first reconcile after restart", d2.teamCtrl.ReconcileOnce)
 	if after := len(d2.store.ListSessionsByTeam("negscale", "crew")); after != before {
@@ -108,5 +114,33 @@ func TestRestartWithStoredNegativeReplicasDoesNotPanic(t *testing.T) {
 	}
 	if got := team.Roles[0].Replicas; got != -1 {
 		t.Errorf("stored replicas rewritten to %d, want -1 left for the operator to see", got)
+	}
+}
+
+// TestRecoverRequestTurnsAPanicIntoAnError: a handler that panics answers
+// with an error Response instead of killing the daemon, and the daemon goes
+// on serving the next request on a new connection.
+func TestRecoverRequestTurnsAPanicIntoAnError(t *testing.T) {
+	d := newHandlerDaemon(t)
+	var resp Response
+	noPanic(t, "recoverRequest", func() {
+		resp = d.recoverRequest("boom", func() Response { panic("forced") })
+	})
+	if !strings.Contains(resp.Error, "internal error handling boom") || !strings.Contains(resp.Error, "forced") {
+		t.Errorf("error = %q, want an internal-error response naming the method and the panic", resp.Error)
+	}
+
+	client, server := net.Pipe()
+	go d.handleRWCAs(server, localCaller())
+	if err := json.NewEncoder(client).Encode(Request{Method: "get", Params: mustMarshal(t, map[string]string{"resource_type": "workspaces"})}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	var next Response
+	if err := json.NewDecoder(client).Decode(&next); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	_ = client.Close()
+	if next.Error != "" {
+		t.Errorf("next request after a recovered panic: %s", next.Error)
 	}
 }
