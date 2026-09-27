@@ -83,6 +83,13 @@ content: |
   director/sim/design/global-bus-tier.md (brief 8),
   director/sim/design/bus-credential-enrollment.md (brief 9),
   director/sim/twin/checks-2026-09-14.md (the run record).
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-040. `marvel inject`
+  cannot carry a programmatic dispatch. It appends rather than replaces, a
+  failed submit silently prefixes the next dispatch, a hand-typed box may
+  not clear, and a long payload can arrive in part. marvel#357 fixed the
+  submit half (bracketed paste); the remaining behaviors are why dispatch
+  belongs on the bus, not on keystrokes.
 edges:
   - target: aae-orc::finding-166-dead-bus-session-reports-running
     type: derives

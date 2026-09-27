@@ -177,6 +177,11 @@ content: |
   in ~/.claude.json), so reconciler-driven replacements come up clean —
   which means the failure is worst exactly where it is least visible, at
   first launch of a new workspace, unattended.
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-034 records the
+  hold-at-the-start-line fix (aae-orc-rwiw) this node's posture model
+  describes: a daemon start rehydrates desired state and holds, and an
+  explicit apply or go-line converges.
 edges:
   - target: question-marvel-transaction-log
     type: derives

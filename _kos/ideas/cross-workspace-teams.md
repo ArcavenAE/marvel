@@ -1,6 +1,9 @@
 # Cross-workspace teams: a team as a cluster-global identity that can span workspaces
 
 - **Status:** idea (pre-hypothesis), operator-raised 2026-09-20.
+  Crystallized 2026-09-27 into the frontier question
+  `question-cross-workspace-teams` (its trigger, #319's loud-failure fix,
+  was taken up in marvel#378).
 - **Subject:** marvel. What a team IS in marvel's data model, and its relation
   to workspace and to the bus. director/kos/the global tier are objects that
   consume the answer.

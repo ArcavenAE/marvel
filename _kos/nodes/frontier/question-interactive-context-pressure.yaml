@@ -404,6 +404,11 @@ content: |
   stacked reasons, the last two now fixed or routed, and two gaps remain:
   no reading inside a long turn, and a seeded project entry that names
   the daemon's cwd (aae-orc-g71ad). finding-052.
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-035. Whether the
+  projected statusline hook's baked binary path survives an upgrade depends
+  on install topology (a version-pinned path versus a stable link), not on
+  platform. A conclusion drawn from one install does not generalize.
 edges:
   - target: question-stream-attachment
     type: derives

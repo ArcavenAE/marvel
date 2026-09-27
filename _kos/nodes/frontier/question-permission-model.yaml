@@ -142,6 +142,21 @@ content: |
   BACK-REFERENCE (2026-09-27): question-container-session-placement
   (marvel#346, finding-051) links here: environment construction stops at a container boundary unless it is passed through, so a container session is a test of enforcement locus 1.
 
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-033. Crush's launch
+  safety: code execution from the workspace, and credential disclosure over
+  its shared socket. The socket-exposure half stays out of scope for the
+  seat-environment work below.
+
+  STATE 2026-09-27 (marvel#381, aae-orc#418). Environment construction
+  (enforcement locus 1) gains a denylist. A daemon started from a Claude
+  Code session carried that session's messaging token, socket and identity,
+  and a tmux server it started handed them to every pane.
+  `api.InheritedSessionEnv` names nine variables, stripped at daemon start,
+  in the tmux driver's exec, and by an `env -u` prefix on every pane
+  command. Backend selectors and config-shaped names are kept knowingly,
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW among them, until per-role env
+  (marvel#311) supplies the allowlist that is the stronger end state.
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
