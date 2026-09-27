@@ -35,7 +35,7 @@ Per seat, beside the existing `ContextLimit` / `ContextTokens`:
 | field | source | notes |
 |---|---|---|
 | `model` | spawn assignment (the backend registry idea, #354) | an assignment, not an observation (the router node's open-loop ruling) |
-| `context_limit`, `limit_rung` | the existing limit ladder | moderation acts only on `manifest` or `measured` rungs; on `table` it warns (#181's 3.8x case) |
+| `context_limit`, `limit_source` | the existing ladder (`internal/usage/limits.go`: stream, learned, manifest, feed, table, table-alias, unresolved) | what the fit check does per source is in section 2a; the prompt size is a separate measurement, not a rung |
 | `composition_fp` | hash of harness and version, model, role, MCP server set, tool set, and the slice and seat-file hashes | the key for the measured size |
 | `spawn_prompt_tokens` | the harness's first-turn usage (input plus cache fields, as the accountant already reads them) | measured once per `composition_fp`, then reused |
 | `spawn_prompt_parts` | a design-time ablation, not runtime | system prompt, tool schemas per MCP server, injected content |
@@ -65,9 +65,35 @@ live one), for the claude and codex harnesses.
    fingerprint and look the new one up.
 4. If it still does not fit, refuse (L5).
 5. An unmeasured fingerprint on a model whose limit is under a configured
-   floor (for example 64k) is spawned once as a calibration run on a scratch
-   seat, or refused with "unmeasured composition". It is never launched
-   blind onto the live fleet.
+   floor (for example 64k) is refused with "unmeasured composition" (F1-b,
+   ruled). There is no automatic calibration spawn. The operator measures it
+   with `marvel fit --calibrate`, which runs the composition once on a
+   scratch seat and records `spawn_prompt_tokens` for its fingerprint; the
+   next spawn then finds a measured size.
+
+## 2a. What the fit check does per limit source
+
+The ladder's sources arrive at different times. At spawn only `manifest`,
+`learned`, `table` and `table-alias` exist; `stream` and `feed` are declared
+by the harness after the session starts, and every codex window arrives as
+`feed` (`cmd/marvel/codexctx.go` routes each heartbeat window as
+`LimitFromFeed`).
+
+| source | available at spawn | the fit check at spawn | after the first turn |
+|---|---|---|---|
+| `manifest` | yes | refuses when the prompt does not fit | unchanged |
+| `learned` | yes, when a prior session of this model declared its window on this daemon | refuses when the prompt does not fit | unchanged |
+| `stream` | no | not applicable | becomes the model's `learned` value for the next spawn; if the first turn already exceeds it, the session is stopped with the same error as a refusal (never left to truncate) |
+| `feed` | no | not applicable | as `stream`: it is the harness's own declared window, so it is trusted to become `learned`. This is how codex seats become moderated from their second spawn on |
+| `table` | yes | warns, never refuses (#181: an exact key can be wrong by 3.8x) | superseded by `stream` or `feed` when they arrive |
+| `table-alias` | yes | warns, never refuses (an alias means whatever the harness points it at today) | as `table` |
+| `unresolved` | yes | emits `session.unmoderated` and spawns | as `table` |
+
+So a first spawn of a codex seat with no manifest window is warned, not
+refused, and every later spawn of that model is checked against the window
+codex itself declared. For a small local model, the operator sets
+`runtime.context_window` in the manifest, which makes the first spawn
+checkable.
 
 ## 3. Placement
 
@@ -77,8 +103,8 @@ live one), for the claude and codex harnesses.
   sees no request traffic.
 - **Degradation.** If the service is not running, the adapter spawns as
   today and emits `session.unmoderated`. If it is running but the limit rung
-  is `table`, the adapter spawns with a warning. It refuses only on a
-  measured or declared limit.
+  is `table`, `table-alias` or `unresolved`, the adapter spawns with a
+  warning. It refuses only on a `manifest` or `learned` limit (section 2a).
 - **Why not a sidecar per seat.** Nothing per-seat runs after spawn in L1 to
   L5. A sidecar would be a resident process whose only job is done in the
   first second.
@@ -104,6 +130,11 @@ live one), for the claude and codex harnesses.
   applied.
 - `marvel fit <manifest> --role <r> --model <m>` is a dry run: predicted size,
   the levers it would apply, the verdict. It spawns nothing.
+- `marvel fit <manifest> --role <r> --model <m> --calibrate` runs the
+  composition once on a scratch seat (its own daemon, socket and state;
+  never the live fleet), records `spawn_prompt_tokens` for the fingerprint,
+  and stops the seat. This is the only way an unmeasured composition gets
+  measured (F1-b).
 - A refusal error lists the three largest contributors from
   `spawn_prompt_parts`.
 
@@ -115,7 +146,8 @@ live one), for the claude and codex harnesses.
 - L1 on a fixture role cuts the measured spawn size by the ablated schema
   size, within tolerance.
 - With the moderator absent, spawns proceed and emit `session.unmoderated`.
-- A `table`-rung limit warns and does not refuse.
+- A `table`, `table-alias` or `unresolved` limit warns and does not refuse; a `manifest` or `learned` limit refuses.
+- An unmeasured composition under the floor refuses; after `--calibrate`, the same composition spawns.
 - Nothing is ever truncated. A scratch local server configured below the
   prompt size never receives the oversized prompt.
 
@@ -128,7 +160,7 @@ live one), for the claude and codex harnesses.
    omitempty). Blocked by 1.
 3. L1 and L2 in the manifest and adapters. Blocked by 1.
 4. The moderator service, the fit check and the refusal. Blocked by 2 and 3.
-5. `marvel fit` dry run and the describe fields. Blocked by 4.
+5. `marvel fit` dry run, `marvel fit --calibrate` on a scratch seat, and the describe fields. Blocked by 4.
 6. L4, the compaction threshold relative to the limit. Blocked by 2.
 
 ## Rulings (operator, RULED 2026-09-27, relayed by director)
