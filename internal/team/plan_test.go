@@ -473,3 +473,31 @@ func TestPlanScaleDownKeepsNewestByCreationTime(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanRoleNegativeDesiredIsSteady: a negative desired count (a stored row
+// from before the #365 fix) plans nothing and never indexes the session list.
+// Before the fix, excess = actual - desired overran current and planRole
+// panicked with index out of range [-1].
+func TestPlanRoleNegativeDesiredIsSteady(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	const team, role = "team", "worker"
+	addAliveSessions(t, store, team, role, 1)
+	tm := api.Team{
+		Name: team, Workspace: planTestWS, Generation: planTestGen,
+		Roles: []api.Role{{Name: role, Replicas: -1}},
+	}
+
+	var plan RolePlan
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("planRole with desired -1 panicked: %v", r)
+			}
+		}()
+		plan = ctrl.planRole(&tm, &tm.Roles[0], tm.Generation)
+	}()
+	if plan.Action != RoleSteady || len(plan.Delete) != 0 || plan.Spawn != 0 {
+		t.Errorf("plan = %+v, want steady with nothing deleted or spawned", plan)
+	}
+}
