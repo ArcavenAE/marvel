@@ -399,6 +399,11 @@ content: |
   runs it, codex CTX% renders absent in managed sessions, which is the
   absence-over-wrong-number discipline above, not a regression.
 
+  STATE 2026-09-27. codex's feed is the seeded hooks plus `marvel
+  codex-ctx` into the heartbeat (marvel#359). It stayed blank for three
+  stacked reasons, the last two now fixed or routed, and two gaps remain:
+  no reading inside a long turn, and a seeded project entry that names
+  the daemon's cwd (aae-orc-g71ad). finding-052.
 edges:
   - target: question-stream-attachment
     type: derives
