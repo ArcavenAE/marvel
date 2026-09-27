@@ -11,7 +11,13 @@ import (
 // takes a backend selector or a config-shaped name. Stripping those would
 // silently unpin the backend the overlay chose (aae-orc#418).
 func TestInheritedSessionEnvKeepsBackendSelectors(t *testing.T) {
-	keep := []string{"CLAUDE_EFFORT", "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"}
+	keep := []string{
+		"CLAUDE_EFFORT",
+		"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION",
+		"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+		// Kept knowingly; see the InheritedSessionEnv doc comment.
+		"CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+	}
 	for _, n := range InheritedSessionEnv {
 		if strings.HasPrefix(n, "CLAUDE_CODE_USE_") {
 			t.Errorf("backend selector %s is on the denylist", n)

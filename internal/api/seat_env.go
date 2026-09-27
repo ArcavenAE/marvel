@@ -20,9 +20,21 @@ import (
 // holds the line: every CLAUDE_CODE_USE_* backend selector (the backend
 // overlay pins them, backend_overlay.go) and the config-shaped names
 // (CLAUDE_EFFORT, CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION,
-// CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS), which belong to per-role env
-// (marvel#311). A CLAUDE_CODE_* prefix strip would silently unpin backend
-// selection. An allowlist is the stronger end state and waits on #311.
+// CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, CLAUDE_CODE_AUTO_COMPACT_WINDOW),
+// which belong to per-role env (marvel#311). A CLAUDE_CODE_* prefix strip
+// would silently unpin backend selection. An allowlist is the stronger end
+// state and waits on #311.
+//
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW is kept knowingly, not overlooked. It is a
+// setting, not a credential or an identity: it grants nothing and names no
+// session. Stripping it one name at a time would also strip it where an
+// operator exported it on purpose for every seat, and marvel has no per-role
+// declaration yet to put it back. The cost of keeping it is real: a daemon
+// started from a session with a non-default compaction window passes that
+// window to every claude seat, which moves the point where the harness
+// compacts relative to the context limit marvel resolves and a shift trigger
+// arms against. Until #311 lands, set it in runtime.env per role, or start
+// the daemon without it.
 var InheritedSessionEnv = []string{
 	// Credential and capability address: bearer access to the parent
 	// session's messaging channel.
