@@ -404,8 +404,7 @@ func (d *Driver) PaneStatus(paneID string) (PaneStatus, error) {
 		// that is the "gone" answer, not a failure. Anything else (no
 		// server, bad socket) is reported so a caller does not read an
 		// outage as a fleet of vanished panes.
-		if strings.Contains(text, "can't find pane") || strings.Contains(text, "can't find window") ||
-			strings.Contains(text, "can't find session") || strings.Contains(text, "no server running") {
+		if paneGoneText(text) {
 			return PaneStatus{}, nil
 		}
 		return PaneStatus{}, fmt.Errorf("pane-status %s: %s: %w", paneID, text, err)
@@ -451,9 +450,25 @@ func (d *Driver) PanePID(paneID string) (int, error) {
 // KillPane destroys a specific pane.
 func (d *Driver) KillPane(paneID string) error {
 	if out, err := d.cmd("kill-pane", "-t", paneID).CombinedOutput(); err != nil {
+		if paneGoneText(string(out)) {
+			return fmt.Errorf("kill-pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), ErrPaneGone)
+		}
 		return fmt.Errorf("kill-pane %s: %s: %w", paneID, string(out), err)
 	}
 	return nil
+}
+
+// ErrPaneGone reports a kill aimed at a pane tmux no longer has. The
+// process is not running under this server, so a caller retiring the pane
+// can treat it as done; any other kill error means the pane may still be
+// there (marvel#364).
+var ErrPaneGone = errors.New("pane already gone")
+
+// paneGoneText is tmux's wording for an unknown target, the same set
+// PaneStatus reads as "gone".
+func paneGoneText(text string) bool {
+	return strings.Contains(text, "can't find pane") || strings.Contains(text, "can't find window") ||
+		strings.Contains(text, "can't find session") || strings.Contains(text, "no server running")
 }
 
 // KillSession destroys an entire tmux session.

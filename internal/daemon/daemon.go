@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -287,6 +288,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
+	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
 		msg := "removed inherited session variables: " + strings.Join(scrubbed, ", ")
 		log.Printf("daemon: %s", msg)
@@ -773,8 +775,51 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 		return
 	}
 
-	resp := d.dispatchAs(req, c)
+	resp := d.recoverRequest(req.Method, func() Response { return d.dispatchAs(req, c) })
 	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
+}
+
+// recoverRequest runs one request's handler and turns a panic into an error
+// Response and a logged stack, so one bad request cannot take down the
+// process every operator and every adopted agent depends on. marvel#365 was
+// a scale request doing exactly that, from a local or an mrvl:// caller.
+//
+// It is scoped to the request boundary on purpose. The reconcile ticker is
+// not wrapped: a panic there is a bug to fix where it happens, and a recover
+// in the loop would hide the next one.
+func (d *Daemon) recoverRequest(method string, handle func() Response) (resp Response) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("request %s panicked: %v\n%s", method, r, debug.Stack())
+			resp = Response{Error: fmt.Sprintf("internal error handling %s: %v", method, r)}
+		}
+	}()
+	return handle()
+}
+
+// reportInvalidReplicas names every stored role whose replica count is below
+// the scale minimum, once at startup. Such a row can only come from a daemon
+// that predates the marvel#365 check. It is reported and left as it is:
+// refusing to start would strand the adopted agents, and rewriting stored
+// state silently would hide what happened (SOUL section 5). planRole treats
+// it as steady until the operator scales the role.
+func reportInvalidReplicas(store *api.Store, sink events.Emitter) {
+	for _, t := range store.ListTeams() {
+		for _, r := range t.Roles {
+			if err := api.ValidateReplicas(t.Key(), r.Name, r.Replicas); err != nil {
+				msg := err.Error() + "; left as stored and treated as steady, run marvel scale to set a valid count"
+				log.Printf("startup: %s", msg)
+				events.Emit(sink, events.Event{
+					Kind:      events.KindRoleReplicasInvalid,
+					Severity:  events.SeverityWarning,
+					Workspace: t.Workspace,
+					Team:      t.Name,
+					Role:      r.Name,
+					Message:   msg,
+				})
+			}
+		}
+	}
 }
 
 // stamp records which daemon answered. It sits on the write path rather
@@ -1422,6 +1467,13 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 	}
 	if old < 0 {
 		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+	}
+
+	// Structural validity first, before admission and before anything
+	// reaches the store: a stored negative count panicked the reconciler
+	// and then every restarted daemon (marvel#365).
+	if err := api.ValidateReplicas(p.TeamKey, p.Role, p.Replicas); err != nil {
+		return Response{Error: err.Error()}
 	}
 
 	// A scale-down adds nothing and is never refused: shedding sessions is

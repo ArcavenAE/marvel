@@ -85,11 +85,16 @@ type Manager struct {
 	imu       sync.Mutex
 	instances map[string]*runtime.TmuxInstance
 	drains    map[string]*usageDrain
+
+	// killPane kills a pane that has no instance (an adopted session). It
+	// is the driver's KillPane; a field so a test can make the kill fail
+	// without wedging a real tmux server.
+	killPane func(paneID string) error
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
-	return &Manager{
+	m := &Manager{
 		store:             store,
 		driver:            driver,
 		adapters:          runtime.NewRegistry(),
@@ -100,6 +105,10 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		instances:         make(map[string]*runtime.TmuxInstance),
 		drains:            make(map[string]*usageDrain),
 	}
+	if driver != nil {
+		m.killPane = driver.KillPane
+	}
+	return m
 }
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
@@ -1113,23 +1122,26 @@ func (m *Manager) Instance(key string) runtime.Instance {
 // harness stream that has not noticed it is finished.
 const instanceTeardownGrace = 3 * time.Second
 
-// retireInstance kills the instance for a key if marvel holds one, and
-// reports whether it did. The pane-kill error is logged rather than
-// returned: by the time a session is being retired the pane is often
-// already gone, and that is not a failure of the retirement.
-func (m *Manager) retireInstance(key string) bool {
+// retireInstance kills the instance for a key if marvel holds one. It
+// reports two separate facts: whether there was an instance, and the kill
+// error if the pane may still be there. A pane that is already gone is not
+// a failure of the retirement (tmux.ErrPaneGone is swallowed), but any
+// other kill error is returned so Delete can keep the row (marvel#364).
+// The instance is released either way; a retry goes through the driver.
+func (m *Manager) retireInstance(key string) (bool, error) {
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
 		m.forgetUsage(key, drain)
-		return false
+		return false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
 	defer cancel()
-	if err := inst.Kill(ctx); err != nil {
-		log.Printf("warning: retire instance %s: %v", key, err)
-	}
+	err := inst.Kill(ctx)
 	m.forgetUsage(key, drain)
-	return true
+	if err != nil && !errors.Is(err, tmux.ErrPaneGone) {
+		return true, err
+	}
+	return true, nil
 }
 
 // detachInstance retires the stream of a session whose pane already
@@ -1195,14 +1207,54 @@ func (m *Manager) Delete(key string) error {
 	}
 
 	// Prefer the instance: it kills the pane and retires the stream in
-	// one step. Sessions with no instance (adopted panes) fall back to
-	// the driver.
-	if !m.retireInstance(key) && sess.PaneID != "" {
-		if err := m.driver.KillPane(sess.PaneID); err != nil {
-			log.Printf("warning: kill pane %s: %v", sess.PaneID, err)
+	// one step. Sessions with no instance (adopted panes, or a row kept by
+	// an earlier failed kill) fall back to the driver.
+	had, kerr := m.retireInstance(key)
+	if !had && sess.PaneID != "" {
+		if err := m.killPane(sess.PaneID); err != nil && !errors.Is(err, tmux.ErrPaneGone) {
+			kerr = err
 		}
 	}
+	if kerr != nil {
+		return m.keepAfterFailedKill(sess, kerr)
+	}
 
+	return m.dropSession(sess, "session deleted")
+}
+
+// keepAfterFailedKill is Delete's answer to a kill that did not take. The
+// process may still be running, so the row stays: marked failed with the
+// kill error and its PaneID, it holds its index, and nextIndex cannot give
+// the same name, home and checkout to a replacement. It is not alive, so it
+// holds no replica slot, and the health loop (Running rows only) never
+// charges it again. ReapDead finishes the delete once the pane is gone; a
+// repeated Delete retries the kill through the driver. marvel#364.
+func (m *Manager) keepAfterFailedKill(sess api.Session, kerr error) error {
+	key := sess.Key()
+	if err := m.store.UpdateSession(key, func(live *api.Session) error {
+		live.State = api.SessionFailed
+		live.KillError = kerr.Error()
+		return nil
+	}); err != nil {
+		log.Printf("warning: session %s: mark kill-failed: %v", key, err)
+	}
+	log.Printf("warning: session %s: kill pane %s failed, row kept: %v", key, sess.PaneID, kerr)
+	events.Emit(m.Events, events.Event{
+		Kind:      events.KindSessionKillFailed,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   key,
+		Message:   fmt.Sprintf("kill pane %s failed, row kept so its name is not reused: %v", sess.PaneID, kerr),
+	})
+	return fmt.Errorf("delete session %s: kill pane %s failed, row kept: %w", key, sess.PaneID, kerr)
+}
+
+// dropSession removes a session's row once its pane is known to be gone,
+// sweeps its overlay, and emits session.deleted.
+func (m *Manager) dropSession(sess api.Session, message string) error {
+	key := sess.Key()
 	if err := m.store.DeleteSession(key); err != nil {
 		return fmt.Errorf("delete session %s from store: %w", key, err)
 	}
@@ -1217,8 +1269,8 @@ func (m *Manager) Delete(key string) error {
 		Workspace: sess.Workspace,
 		Team:      sess.Team,
 		Role:      sess.Role,
-		Session:   sess.Key(),
-		Message:   "session deleted",
+		Session:   key,
+		Message:   message,
 	})
 	return nil
 }
@@ -1288,6 +1340,16 @@ func (m *Manager) ReapDead() []ReapedSession {
 			if kerr := m.driver.KillPane(lostPane); kerr != nil {
 				log.Printf("warning: session %s: reclaim dead pane %s: %v", sess.Key(), lostPane, kerr)
 			}
+		}
+
+		if sess.KillError != "" {
+			// An operator or the reconciler already asked for this row to go
+			// and the kill did not take. The pane is gone now, so finish the
+			// delete; it is not a crash and charges no backoff (marvel#364).
+			if err := m.dropSession(sess, fmt.Sprintf("pane %s gone after an earlier failed kill; delete completed", lostPane)); err != nil {
+				log.Printf("warning: session %s: complete delete: %v", sess.Key(), err)
+			}
+			continue
 		}
 
 		if headlessCompleted(sess, st) {

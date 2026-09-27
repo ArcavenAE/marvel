@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -687,5 +688,26 @@ func waitPaneStatus(t *testing.T, d *Driver, paneID string, done func(PaneStatus
 			return st
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestKillPaneOnGonePaneIsErrPaneGone: a kill aimed at a pane tmux does not
+// know is distinguishable from a kill that failed, so session teardown can
+// finish for the first and keep the row for the second (marvel#364).
+func TestKillPaneOnGonePaneIsErrPaneGone(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	const name = "test-killpane-gone"
+	if err := d.NewSession(name); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	t.Cleanup(func() { _ = d.KillSession(name) })
+
+	err = d.KillPane("%987654")
+	if !errors.Is(err, ErrPaneGone) {
+		t.Fatalf("KillPane on an unknown pane = %v, want ErrPaneGone", err)
 	}
 }

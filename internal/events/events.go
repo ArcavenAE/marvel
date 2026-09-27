@@ -28,6 +28,11 @@ const (
 	KindSessionRestarted Kind = "session.restarted"
 	KindSessionFailed    Kind = "session.failed"
 	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindSessionKillFailed records a delete whose pane kill did not take.
+	// The row is kept, marked failed with the kill error, so its name is not
+	// handed to a replacement while the old process may still run; a later
+	// reap that finds the pane gone finishes the delete (marvel#364).
+	KindSessionKillFailed Kind = "session.kill-failed"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
 	// nothing it execs inherits them (aae-orc#418).
@@ -75,7 +80,12 @@ const (
 	// two apart, which len(oldGen)==0 alone could not. See aae-orc-094e.
 	KindShiftDrainedEmpty Kind = "team.shift-drained-empty"
 	KindRoleSaturated     Kind = "role.saturated"
-	KindRoleRemoved       Kind = "role.removed"
+	// KindRoleReplicasInvalid records a stored role whose replica count is
+	// below the scale minimum, reported once at daemon start. Only a daemon
+	// from before marvel#365 could have stored one; the row is left as it is
+	// and planned as steady.
+	KindRoleReplicasInvalid Kind = "role.replicas-invalid"
+	KindRoleRemoved         Kind = "role.removed"
 	// KindPolicyProjected records that marvel wrote (or rewrote) a
 	// session's projected Claude Code settings file — the observable
 	// signal of a policy landing at spawn and of live re-projection after
@@ -234,6 +244,7 @@ var allKinds = []Kind{
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,
+	KindSessionKillFailed,
 	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
@@ -244,6 +255,7 @@ var allKinds = []Kind{
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
 	KindRoleSaturated,
+	KindRoleReplicasInvalid,
 	KindRoleRemoved,
 	KindPolicyProjected,
 	KindContextLimitUnresolved,

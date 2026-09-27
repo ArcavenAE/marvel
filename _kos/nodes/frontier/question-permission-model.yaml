@@ -139,6 +139,9 @@ content: |
   inherited. Remaining gap, out of scope there: `daemon reexec` still
   passes `os.Environ()`.
 
+  BACK-REFERENCE (2026-09-27): question-container-session-placement
+  (marvel#346, finding-051) links here: environment construction stops at a container boundary unless it is passed through, so a container session is a test of enforcement locus 1.
+
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
