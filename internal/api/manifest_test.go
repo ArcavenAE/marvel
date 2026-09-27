@@ -1236,6 +1236,7 @@ func TestValidateTeamNames(t *testing.T) {
 	existing := []Team{
 		{Name: "reviewer", Workspace: "aae"},
 		{Name: "builder", Workspace: "foo"},
+		{Name: "reviewer", Workspace: "other"},
 	}
 	tests := []struct {
 		name      string
@@ -1245,6 +1246,12 @@ func TestValidateTeamNames(t *testing.T) {
 	}{
 		{"other workspace holds the name", "foo", []string{"reviewer"}, `team "reviewer" is already applied in workspace "aae"`},
 		{"own workspace re-applies", "aae", []string{"reviewer"}, ""},
+		// A pair that predates the check (aae/reviewer and other/reviewer
+		// both stored) must not lock either workspace out of re-applying
+		// its own team.
+		{"own workspace re-applies beside a pre-existing pair", "aae", []string{"reviewer"}, ""},
+		{"other side of a pre-existing pair re-applies", "other", []string{"reviewer"}, ""},
+		{"third workspace is still refused by the pair", "bar", []string{"reviewer"}, `team "reviewer" is already applied in workspace`},
 		{"unique name", "bar", []string{"planner"}, ""},
 		{"empty store", "bar", nil, ""},
 	}
