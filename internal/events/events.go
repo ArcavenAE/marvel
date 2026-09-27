@@ -22,12 +22,17 @@ type Kind string
 // Canonical event kinds. New producers should add entries here rather
 // than inventing string literals at call sites.
 const (
-	KindSessionCreated    Kind = "session.created"
-	KindSessionDeleted    Kind = "session.deleted"
-	KindSessionCrashed    Kind = "session.crashed"
-	KindSessionRestarted  Kind = "session.restarted"
-	KindSessionFailed     Kind = "session.failed"
-	KindSessionSucceeded  Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	KindSessionCreated   Kind = "session.created"
+	KindSessionDeleted   Kind = "session.deleted"
+	KindSessionCrashed   Kind = "session.crashed"
+	KindSessionRestarted Kind = "session.restarted"
+	KindSessionFailed    Kind = "session.failed"
+	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindSessionKillFailed records a delete whose pane kill did not take.
+	// The row is kept, marked failed with the kill error, so its name is not
+	// handed to a replacement while the old process may still run; a later
+	// reap that finds the pane gone finishes the delete (marvel#364).
+	KindSessionKillFailed Kind = "session.kill-failed"
 	KindHealthCheckFailed Kind = "health.failed"
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
@@ -230,6 +235,7 @@ var allKinds = []Kind{
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,
+	KindSessionKillFailed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
 	KindShiftStarted,

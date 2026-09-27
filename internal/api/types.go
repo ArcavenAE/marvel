@@ -241,6 +241,14 @@ type Session struct {
 	// out of every persisted and real-row payload (so no bolt schema bump),
 	// and toml:"-" keeps it out of manifests. See aae-orc-prhx.
 	Reason string `json:"reason,omitempty" toml:"-"`
+	// KillError is set when a delete was asked for and the pane kill did
+	// not take: the text of the kill error. The row is kept, marked
+	// SessionFailed with PaneID intact, so the name it holds is not reused
+	// while the old process may still run, and a later ReapDead that finds
+	// the pane gone completes the delete instead of charging a crash
+	// (marvel#364). Empty on every other row. Status, not spec; additive on
+	// the json path, so no bolt schema move.
+	KillError string `json:"kill_error,omitempty" toml:"-"`
 	// HarnessSessionID is the session identifier marvel ASSIGNED to this
 	// launch, for a harness that accepts one (Claude Code's --session-id).
 	// It is the spawn-time alternative to discovering the binding
