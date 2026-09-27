@@ -85,11 +85,16 @@ type Manager struct {
 	imu       sync.Mutex
 	instances map[string]*runtime.TmuxInstance
 	drains    map[string]*usageDrain
+
+	// killPane kills a pane that has no instance (an adopted session). It
+	// is the driver's KillPane; a field so a test can make the kill fail
+	// without wedging a real tmux server.
+	killPane func(paneID string) error
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
-	return &Manager{
+	m := &Manager{
 		store:             store,
 		driver:            driver,
 		adapters:          runtime.NewRegistry(),
@@ -100,6 +105,10 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		instances:         make(map[string]*runtime.TmuxInstance),
 		drains:            make(map[string]*usageDrain),
 	}
+	if driver != nil {
+		m.killPane = driver.KillPane
+	}
+	return m
 }
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
@@ -1198,7 +1207,7 @@ func (m *Manager) Delete(key string) error {
 	// one step. Sessions with no instance (adopted panes) fall back to
 	// the driver.
 	if !m.retireInstance(key) && sess.PaneID != "" {
-		if err := m.driver.KillPane(sess.PaneID); err != nil {
+		if err := m.killPane(sess.PaneID); err != nil {
 			log.Printf("warning: kill pane %s: %v", sess.PaneID, err)
 		}
 	}
