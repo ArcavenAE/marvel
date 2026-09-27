@@ -1228,3 +1228,42 @@ func TestContextFeedAdvisories(t *testing.T) {
 		t.Errorf("nil predicate gave %q, want none", got)
 	}
 }
+
+// TestValidateTeamNames: a name held by another workspace is refused and the
+// refusal names both; the manifest's own workspace re-applies freely.
+// ArcavenAE/marvel#319.
+func TestValidateTeamNames(t *testing.T) {
+	existing := []Team{
+		{Name: "reviewer", Workspace: "aae"},
+		{Name: "builder", Workspace: "foo"},
+	}
+	tests := []struct {
+		name      string
+		workspace string
+		teams     []string
+		wantErr   string
+	}{
+		{"other workspace holds the name", "foo", []string{"reviewer"}, `team "reviewer" is already applied in workspace "aae"`},
+		{"own workspace re-applies", "aae", []string{"reviewer"}, ""},
+		{"unique name", "bar", []string{"planner"}, ""},
+		{"empty store", "bar", nil, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{Workspace: ManifestWorkspace{Name: tc.workspace}}
+			for _, n := range tc.teams {
+				m.Teams = append(m.Teams, ManifestTeam{Name: n})
+			}
+			err := m.ValidateTeamNames(existing)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}

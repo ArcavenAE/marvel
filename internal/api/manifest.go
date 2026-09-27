@@ -276,10 +276,17 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 		}
 		policyNames[p.Name] = true
 	}
+	teamNames := make(map[string]bool, len(m.Teams))
 	for i, t := range m.Teams {
 		if t.Name == "" {
 			return nil, fmt.Errorf("parse manifest: team[%d].name is required", i)
 		}
+		// A second entry would overwrite the first at apply time, so the
+		// operator would get one team where they wrote two (marvel#319).
+		if teamNames[t.Name] {
+			return nil, fmt.Errorf("parse manifest: team[%d].name %q is duplicated", i, t.Name)
+		}
+		teamNames[t.Name] = true
 		if len(t.Roles) == 0 {
 			return nil, fmt.Errorf("parse manifest: team[%d] must have at least one role", i)
 		}
@@ -548,6 +555,30 @@ func validateCommand(cmd string) error {
 func validateScript(path string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("not found: %w", err)
+	}
+	return nil
+}
+
+// ValidateTeamNames refuses a team whose name is already applied in another
+// workspace. Broker users are named by team (internal/bus), so two
+// workspaces holding one team name break bus-auth rendering for the whole
+// cluster, and that failure surfaces only on the event ring after the apply
+// has succeeded and sessions are running. Refusing here, before anything is
+// committed, is the current-state fix; the cross-workspace-team model, where
+// one team may span workspaces, is the direction that supersedes it
+// (marvel#319). Re-applying a team in its own workspace is unaffected.
+func (m *Manifest) ValidateTeamNames(existing []Team) error {
+	owner := make(map[string]string, len(existing))
+	for _, t := range existing {
+		if t.Workspace != m.Workspace.Name {
+			owner[t.Name] = t.Workspace
+		}
+	}
+	for _, mt := range m.Teams {
+		if ws, ok := owner[mt.Name]; ok {
+			return fmt.Errorf("team %q is already applied in workspace %q; team names are cluster-wide because broker users are named by team, so rename it or delete %s/%s first",
+				mt.Name, ws, ws, mt.Name)
+		}
 	}
 	return nil
 }
