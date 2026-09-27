@@ -1,0 +1,46 @@
+id: question-scheduled-cues
+type: question
+confidence: frontier
+title: "Should marvel cue recurring work on a clock, and alarm when a recurring job has not run within its bound?"
+tags:
+  - marvel
+  - scheduling
+  - observability
+content: |
+  Raised by another team's harvest, 2026-09-27 (distribution manifest
+  row 16). Recurring sweeps in that fleet had no clock of their own. Each
+  one ran because a supervisor seat set a background sleep timer, then
+  routed the work and nudged the pane. When the supervisor skipped the
+  timer while waiting on a restart, no sweep ran for about 19 hours, and
+  nobody was told a gap existed until the next sweep ran. Nothing was lost
+  that time, because the next sweep's search window covered the gap; the
+  items that closed inside it were still unobserved.
+
+  marvel today has no scheduled work. The Schedule resource (the CronJob
+  row in elem-k8s-resource-model) is model-only: no type, no code, no CLI.
+
+  Open:
+  - Does marvel own the clock (a declared schedule that delivers a cue to
+    a role on a cadence), or only the freshness alarm (an event when a
+    declared recurring job has not reported within its bound), leaving
+    the cue to director?
+  - What does a cue deliver into an interactive seat, given that a pane
+    inject is not a dispatch channel (finding-040) and an interactive
+    seat takes no first prompt today (finding-054, marvel#391)?
+  - Where does "last ran" live so the alarm survives a daemon restart?
+
+  An alarm alone would have surfaced the 19-hour gap. It is the smaller
+  first piece, and it fits marvel's diagnostic-not-gate posture: an event,
+  never a block.
+edges:
+  - target: question-agent-communication-broker
+    type: derives
+    note: "a cue into a seat is a message; the bus, not a keystroke, is its channel"
+notes: |
+  Source: harvest distribution manifest 2026-09-27, row 16.
+  Related: elem-k8s-resource-model (Schedule, model-only), finding-040,
+  finding-054.
+provenance:
+  created_by: agent
+  session: "2026-09-27-marvel-builder-kos-harvest"
+  created_at: "2026-09-27"

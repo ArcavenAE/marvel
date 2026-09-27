@@ -36,6 +36,13 @@ content: |
   - Global supervisor addressing (aae-orc-q9mtd) is blocked on the answer:
     a cluster-global team makes the supervisor address team-only.
 
+  A second symptom of the same split, from another team's harvest
+  (distribution manifest row 12, 2026-09-27): a seat's session key is
+  `workspace/agent` while its bus address is `team/agent`, so one seat
+  carries two keys. A supervisor ruled both correct, and the reporting
+  seat called it a trap for successors. The answer to this question
+  decides which key is the identity.
+
   Crystallizes into a probe when a concrete use case first needs one
   team's sessions in two workspaces.
 edges:

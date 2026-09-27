@@ -48,6 +48,15 @@ content: |
   - Sidecar file vs FIFO vs socket for structured health data
 
   Commits: 2074f94 (healthcheck implementation)
+
+  Addendum 2026-09-27 (relayed from another team's harvest, distribution
+  manifest row 15): a harness feedback prompt ("1 to review, 2 to send, 0
+  to dismiss") held one builder pane for about 9 hours. The process and
+  pane were alive, so liveness stayed healthy, and nothing detected the
+  stall. Digit keys would have acted on the prompt, so nobody keyed into it
+  until the operator cleared it. This is the gap between liveness and
+  productivity that marvel#276 (detect and classify frozen sessions) and
+  the tmux-harness-state-watchdog idea address.
 evidence:
   - "TestHealthEvalHeartbeatHealthy: fresh heartbeat → healthy"
   - "TestHealthEvalHeartbeatStale: stale heartbeat → unhealthy → failed (never)"
