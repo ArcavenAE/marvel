@@ -1,7 +1,7 @@
 # Prompt moderation: fit each seat's prompt to its model (design)
 
 Owner: arcaven-architect-g5-0. Subject: marvel. Issue: #379.
-Status: design, for skippy review. No code until reviewed.
+Status: design, for skippy review; F1-a to F1-c ruled 2026-09-27. No code until reviewed.
 
 ## Why
 
@@ -131,15 +131,14 @@ live one), for the claude and codex harnesses.
 5. `marvel fit` dry run and the describe fields. Blocked by 4.
 6. L4, the compaction threshold relative to the limit. Blocked by 2.
 
-## Rulings needed (open, with defaults; they do not block this draft)
+## Rulings (operator, RULED 2026-09-27, relayed by director)
 
-- **F1-a, placement.** Default: a marvel-supervised moderator service, with
-  no proxy on the model endpoint (section 3).
-- **F1-b, an unmeasured composition on a model under the floor.** Default:
-  refuse with "unmeasured composition", and measure with a calibration run on
+- **F1-a, placement: RULED.** A marvel-supervised moderator service, with no
+  proxy on the model endpoint (section 3).
+- **F1-b, an unmeasured composition on a model under the floor: RULED.**
+  Refuse with "unmeasured composition", and measure with a calibration run on
   a scratch seat (`marvel fit --calibrate`, never on the live fleet). No
-  automatic calibration spawn, because a first-run guess is the failure
-  being prevented.
-- **F1-c, the reserve.** Default: the larger of 8192 tokens and 10 percent of
+  automatic calibration spawn.
+- **F1-c, the reserve: RULED.** The larger of 8192 tokens and 10 percent of
   `context_limit`, revisited once ticket 1 measures a real first turn and
   handoff.
