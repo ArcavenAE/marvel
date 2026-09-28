@@ -33,6 +33,10 @@ const (
 	// handed to a replacement while the old process may still run; a later
 	// reap that finds the pane gone finishes the delete (marvel#364).
 	KindSessionKillFailed Kind = "session.kill-failed"
+	// KindDaemonEnvScrubbed records the parent Claude Code session variables
+	// the daemon removed from its own environment at start, names only, so
+	// nothing it execs inherits them (aae-orc#418).
+	KindDaemonEnvScrubbed Kind = "daemon.env-scrubbed"
 	KindHealthCheckFailed Kind = "health.failed"
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
@@ -241,6 +245,7 @@ var allKinds = []Kind{
 	KindSessionFailed,
 	KindSessionSucceeded,
 	KindSessionKillFailed,
+	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
 	KindShiftStarted,
