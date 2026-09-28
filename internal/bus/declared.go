@@ -207,13 +207,15 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 		pub := append([]string{own, "agent.audit"}, plumbingPublish...)
 		sub := append([]string{own, fmt.Sprintf("agent.%s.broadcast", t.Workspace)}, plumbingSubscribe...)
 		if t.Supervisor && s.HubURL != "" {
-			pub = append(pub, "global.director.inbox", "$JS.global.API.>")
+			// global.*.supervisor.inbox: any supervisor may publish to every
+			// cluster's supervisor inbox (director#155, operator-granted).
+			pub = append(pub, "global.director.inbox", "global.*.supervisor.inbox", "$JS.global.API.>")
 			sub = append(sub, fmt.Sprintf("global.%s.>", s.Domain))
 		}
 		out = append(out, Principal{
 			Name: t.Team, Scope: ScopeBinding, Team: t.Team,
 			Publish: pub, Subscribe: sub,
-			Origin:   "brief 10 section 3 (aae-orc-e9g8i): one confined user per applied team (director#4 shape); supervisor global grants per global-bus-tier.md 4.1",
+			Origin:   "brief 10 section 3 (aae-orc-e9g8i): one confined user per applied team (director#4 shape); supervisor global grants per global-bus-tier.md 4.1, plus publish on every cluster's supervisor inbox per director#155",
 			Password: t.Password,
 		})
 	}

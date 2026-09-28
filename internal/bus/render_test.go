@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -130,8 +131,48 @@ func TestRenderAuthConfinesTeamsAndGrantsSupervisorOnlyWithHub(t *testing.T) {
 	if !strings.Contains(auth, `"global.director.inbox"`) || !strings.Contains(auth, `"$JS.global.API.>"`) || !strings.Contains(auth, `"global.kinu.>"`) {
 		t.Errorf("supervisor team lacks global grants with a hub:\n%s", auth)
 	}
-	if n := strings.Count(auth, "global."); n != 3 {
-		t.Errorf("global subjects appear %d times, want 3 (supervisor team only)", n)
+	// Any supervisor may publish to every cluster's supervisor inbox
+	// (director#155, operator-granted).
+	if !strings.Contains(auth, `"global.*.supervisor.inbox"`) {
+		t.Errorf("supervisor team lacks publish on every cluster's supervisor inbox:\n%s", auth)
+	}
+	if n := strings.Count(auth, "global."); n != 4 {
+		t.Errorf("global subjects appear %d times, want 4 (supervisor team only)", n)
+	}
+}
+
+// TestDeclaredPrincipalsNonSupervisorHasNoGlobalSubject is the negative half
+// of the supervisor grants: with a hub configured, a team without the
+// Supervisor flag gets no global subject to publish or subscribe, so widening
+// the supervisor set (director#155) cannot leak cross-cluster reach to an
+// ordinary team.
+func TestDeclaredPrincipalsNonSupervisorHasNoGlobalSubject(t *testing.T) {
+	t.Parallel()
+	s := baseSpec()
+	s.HubURL = "nats-leaf://h:7442"
+	ps, err := DeclaredPrincipals(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawSup, sawFleet bool
+	for _, p := range ps {
+		switch p.Team {
+		case "ops":
+			sawSup = true
+			if !slices.Contains(p.Publish, "global.*.supervisor.inbox") {
+				t.Errorf("supervisor team ops publish = %v, want global.*.supervisor.inbox", p.Publish)
+			}
+		case "fleet":
+			sawFleet = true
+			for _, subj := range append(append([]string{}, p.Publish...), p.Subscribe...) {
+				if strings.HasPrefix(subj, "global.") || strings.HasPrefix(subj, "$JS.global.") {
+					t.Errorf("non-supervisor team fleet holds global subject %q", subj)
+				}
+			}
+		}
+	}
+	if !sawSup || !sawFleet {
+		t.Fatalf("principals missing a team: supervisor=%v fleet=%v", sawSup, sawFleet)
 	}
 }
 
