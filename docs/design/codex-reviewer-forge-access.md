@@ -5,7 +5,7 @@
 `2026-09-26-codex-reviewer-access`.
 **Status:** design and build plan, ruled in part on 2026-09-26 (section 10).
 Sections 10 and 11 supersede sections 2.2, 2.3 and 3 where they differ.
-Operator decisions I1 to I3 (section 4.2) are open. Moved here from the
+Operator decisions I1 and I2 (section 4.2) are open; I3 is DONE (2026-09-28). Moved here from the
 author's local notes on 2026-09-27 so the ruling and the measurements have a
 git home.
 **Follows:** `docs/design/codex-roles-reviewer-and-retrospector.md`
@@ -169,11 +169,12 @@ seats.
     brokering.
 - **I2, GitLab identity:** kinu holds only `arcaven` on gitlab.com. Name the
   reviewing account and the project for verification.
-- **I3, forge CLI credentials in the keyring** (needed under any option): any
-  forge CLI login stored in a file is readable by a full-disk seat. Log in with
-  keyring storage (glab 1.111 stores in the keyring by default;
-  `--insecure-storage` is the opt-out), so a CLI's config dir can be readable to
-  the seat without exposing a token.
+- **I3, forge tokens live in the OS keyring, never in plaintext config.**
+  DONE 2026-09-28: the operator ruled the file-stored forge token removed, and
+  it was deleted from the host. The rule stands for any option: a forge CLI
+  logs in with keyring storage (glab 1.111 stores in the keyring by default;
+  `--insecure-storage` is the opt-out, and it is not used), so a CLI's config
+  dir can be readable to the seat without exposing a token.
 
 ### 4.3 Open item G1 (probe before enabling GitLab under the proxy)
 
@@ -283,8 +284,8 @@ seat does not write it). Add three invariants:
 - I1, GitHub pairing (default (a): as `arcaven`, with paper approvals on arcaven
   PRs).
 - I2, the GitLab reviewing account and the verification project.
-- I3, forge CLI logins in the keyring, not in files. Worth confirming
-  regardless of the option chosen.
+- I3: DONE 2026-09-28 (forge tokens live in the OS keyring, never in
+  plaintext config; the file-stored token was removed).
 - Approval of the wardrobe text and of the marvel issue in 7.5.
 
 ## 10. Addendum: operator ruling applied (2026-09-26)
