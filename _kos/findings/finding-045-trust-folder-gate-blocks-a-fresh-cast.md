@@ -43,3 +43,16 @@ trust beyond it. Filed as a candidate feature bead: aae-orc-w9s1c.
 Related: finding-030 (the empirical first-launch hazard),
 question-session-state-observation (a converged team is not a working team; the
 same blind spot this gate lives in), aae-orc-fxmi1 (the detect side).
+
+## Addendum 2026-09-27: the dialog's default answer exits the seat
+
+Relayed from another team's harvest (distribution manifest row 13),
+scrubbed to the mechanism. Claude's folder-trust dialog opens with the
+cursor on its "No, exit" choice. So a keystroke meant to wake an idle seat
+(an injected Enter) answers the dialog and ends the session. On the host
+observed, many git roots had never accepted trust. Trust state is
+predictable before a start: Claude records acceptance per git root
+(`hasTrustDialogAccepted`) and codex records `trust_level` per project. A
+preflight that checks the seat's own working directory before spawning
+would catch it; the launch wrapper observed checks only one directory.
+Tracked: marvel#371.

@@ -292,3 +292,18 @@ Disposition: 6kgq→step 1, m8n0→step 2, 094e→step 3, prhx→step 4,
 - **finding-019** (one-loss-event-charged-per-replica): m8n0 (§7) makes that
   per-tick charge visible on the event ring; this finding is its observability
   counterpart.
+
+## Addendum 2026-09-27: successor identity is inferred, not declared
+
+Relayed from another team's harvest (distribution manifest rows 10 and 11).
+A respawn renames the session (a `g7` seat returned as `g9`, and one
+replica came back at index 2 where its role's rule named lanes 0 and 1
+only). The departing seat's handoff stays under the old name. The
+successor finds it only when a supervisor names the path, and one
+supervisor could say only that a seat was "most likely" another's
+successor until the seat was asked. The listing join shows generations
+but carries no successor-of link, and the index is not a stable identity:
+both are recorded in marvel#363 (the replacement index depends on which
+path replaced the session; shiftLaunch has no old-to-new succession). A
+successor-of field on the session, set by whichever path replaces it,
+would make the handoff location a lookup.

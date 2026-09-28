@@ -1,0 +1,42 @@
+id: question-host-resource-lease
+type: question
+confidence: frontier
+title: "Should marvel lease an exclusive host resource (a local model server, its catalog) to one role at a time?"
+tags:
+  - marvel
+  - resource-matrix
+  - admission
+content: |
+  Raised by another team's harvest, 2026-09-27 (distribution manifest
+  row 17). One seat needed a host's local model server to itself for a
+  benchmark run. The hold was announced by bus message and nothing else.
+  It was missed once on 2026-09-26, and another seat worked around it by
+  removing the server's binaries from its own PATH, which kept its tests
+  off the server without proving they were hermetic. The benchmark seat
+  also changed the server's model catalog by hand for a run and restored
+  it after, and nothing recorded that a seat had changed a shared catalog.
+
+  In marvel's terms this is a host resource with exclusive tenancy: a row
+  in the agentic resource matrix (tool and filesystem access; a shared
+  service) that no admission path governs today.
+
+  Open:
+  - Is a lease a manifest declaration (a role holds resource R for the
+    run), a runtime admission decision (spawn waits while R is held), or
+    only an advisory record other seats can read?
+  - How does a lease end when its holder dies mid-run (the dead-man
+    problem the shift and handoff arcs already face)?
+  - Does the services catalog (ideas/services-catalog.md) declare such
+    resources, so a lease has something to name?
+edges:
+  - target: question-marvel-service-provider-shape
+    type: derives
+    note: "a leased host resource is a service marvel would declare before it could lease it"
+notes: |
+  Source: harvest distribution manifest 2026-09-27, row 17.
+  Related: elem-agentic-resource-matrix, ideas/services-catalog.md,
+  ideas/local-llm-for-marvels-own-purposes.md.
+provenance:
+  created_by: agent
+  session: "2026-09-27-marvel-builder-kos-harvest"
+  created_at: "2026-09-27"

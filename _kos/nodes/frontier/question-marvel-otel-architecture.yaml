@@ -244,6 +244,11 @@ content: |
   aae-orc-fkvv / aae-orc-tpda (the deferred OTEL studies, which still
   carry the superseded framing and should be updated from the
   inventory rather than from this node's older prose).
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-037. codex ignores
+  OTEL environment variables entirely, and does not need them: its config is
+  per process, so a per-session home (CODEX_HOME) is the channel for any
+  codex telemetry setting.
 edges:
   - target: question-stream-attachment
     type: derives

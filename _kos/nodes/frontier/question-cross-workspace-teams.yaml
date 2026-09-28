@@ -1,0 +1,59 @@
+id: question-cross-workspace-teams
+type: question
+confidence: frontier
+title: "Is a team a cluster-global identity that may span workspaces, and what do the store key, the apply gate, the bus grant and spend attribution become if so?"
+tags:
+  - marvel
+  - data-model
+  - bus
+content: |
+  Crystallized 2026-09-27 from _kos/ideas/cross-workspace-teams.md, whose
+  own trigger was "when #319's loud-failure fix is taken up". It was taken
+  up in marvel#378.
+
+  The inconsistency: the store, reconciler, accountant, admission and
+  sessions key a team as `workspace/name`, while the bus names each broker
+  user by team name alone. So two workspaces holding one team name broke
+  bus-auth rendering for the whole cluster, with the apply succeeding
+  (marvel#319).
+
+  The interim fix, marvel#378: the apply pre-flight refuses a team name
+  another workspace already holds, and a manifest declaring a name twice
+  is refused at parse time. A pair stored before the check is left in
+  place, and either side may still re-apply its own team (review G331).
+  That makes team names cluster-unique for new applies without changing
+  the data model. The bus-render failure for a pre-existing pair stays
+  until one side is renamed or deleted.
+
+  Open, and not settled by #378:
+  - Does a team become cluster-global (the operator direction, 2026-09-20),
+    with sessions of one team in more than one workspace? If so, the store
+    key, the accountant's `workspace/team` attribution, and the bus grant
+    (today one `agent.<workspace>.<team>.>` subtree) all change.
+  - Is workspace then only session placement and filesystem scope?
+  - What migrates an existing colliding pair, and how does a grant change
+    roll out without dropping live sessions?
+  - Global supervisor addressing (aae-orc-q9mtd) is blocked on the answer:
+    a cluster-global team makes the supervisor address team-only.
+
+  A second symptom of the same split, from another team's harvest
+  (distribution manifest row 12, 2026-09-27): a seat's session key is
+  `workspace/agent` while its bus address is `team/agent`, so one seat
+  carries two keys. A supervisor ruled both correct, and the reporting
+  seat called it a trap for successors. The answer to this question
+  decides which key is the identity.
+
+  Crystallizes into a probe when a concrete use case first needs one
+  team's sessions in two workspaces.
+edges:
+  - target: question-agent-communication-broker
+    type: derives
+    note: "the bus grant layout and broker user naming are the half of the team model that forced the question"
+notes: |
+  Idea: _kos/ideas/cross-workspace-teams.md. Issue: ArcavenAE/marvel#319.
+  Interim fix: marvel#378. Blocks aae-orc-q9mtd.
+provenance:
+  created_by: agent
+  session: "2026-09-27-marvel-builder-kos-harvest"
+  created_at: "2026-09-27"
+  discovered_from: ArcavenAE/marvel#319

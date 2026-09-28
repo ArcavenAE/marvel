@@ -166,6 +166,19 @@ content: |
   advisory only, and a candidate feature (finding-045) would pre-clear the
   gate by writing the workspace into `~/.claude.json` trust at cast time,
   scoped to that workspace only.
+
+  STATE 2026-09-27 (marvel#376, issue #364). A delete whose pane kill
+  fails no longer drops the row. The row is kept as failed with a new
+  `KillError` field and its pane id, a `session.kill-failed` event is
+  emitted, and `ReapDead` completes the delete once the pane is gone,
+  without charging a crash. A pane that is already gone (tmux ErrPaneGone)
+  still counts as killed. So "failed" now has two meanings on a stored row,
+  and `KillError` is the discriminator a reader needs.
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-055. A converged
+  interactive seat can also be idle by construction: `runtime.prompt` is
+  headless-only, so a respawned interactive seat starts with no first
+  message and waits for a nudge (marvel#391).
 edges:
   - target: elem-agentic-resource-matrix
     type: supports

@@ -179,6 +179,17 @@ content: |
   BACK-REFERENCE (2026-09-27): question-container-session-placement
   (marvel#346, finding-051) links here: its probe runs against a scratch daemon, which needs the socket and tmux-prefix isolation this node measured as missing by default.
 
+  BACK-REFERENCE (2026-09-27): finding-053 records a test-side breach of
+  the same boundary. Session tests built with `NewManager` write harness
+  homes into the operator's live `/tmp/marvel-h-<tag>` base, because the
+  session TestMain isolates the tmux socket but not the layout (marvel#384).
+
+  BACK-REFERENCE (2026-09-27 harvest): finding-025. Overriding HOME
+  isolates marvel's layout and the tmux server name, and also
+  de-authenticates the harness: claude resolves its login through the
+  Keychain under the real HOME, so a seat under an overridden HOME reports
+  "Not logged in" while marvel shows it running. HOME is not a free
+  isolation knob for a daemon that spawns authenticated harnesses.
 edges:
   - target: elem-data-directory-permissions
     type: derives

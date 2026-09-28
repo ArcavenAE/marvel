@@ -277,3 +277,11 @@ which reports levels and names no model.
 - Everything the sweep listed as untested for a tailing reader
   (`.zst` rollout compression under a live consumer, whether
   `SessionStart source:"compact"` opens a new file). Untouched here.
+
+## Addendum 2026-09-27: codex warnings are shown once and kept nowhere
+
+Relayed from another team's harvest (distribution manifest row 18). Both
+codex reviewer seats on one host showed "1 warning, f2 to view". The
+warning is not in the rollout, because its persistence policy drops warning
+events, so the TUI's F2 view is the only reader. A channel that reads the
+rollout, as the codex-ctx feed does, cannot see it.
