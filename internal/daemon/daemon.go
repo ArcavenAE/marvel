@@ -1219,8 +1219,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 
 	// Re-project policies for already-running sessions before reconciling.
 	// A policy edited in this manifest reconciles by rewriting the session's
-	// settings file (finding-024 contract half); Claude Code's file watcher
-	// hot-reloads it with no restart. New sessions spawned by the reconcile
+	// settings file (finding-024 contract half). Claude Code re-reads the
+	// statusline and context-feed keys live, but a permissions change waits
+	// for the next spawn (marvel#313). New sessions spawned by the reconcile
 	// below get their projection at spawn time.
 	if n := d.sessMgr.Reproject(); n > 0 {
 		log.Printf("apply: re-projected policy for %d running session(s)", n)
