@@ -35,15 +35,15 @@ CLI and the simulator's `scale_team` call with the value unchanged.
 - **Parser and `scale` disagree:** the manifest parser refuses `< 1`, while
   `marvel scale` accepts 0.
   - The store has held 0 live for `ops/director` and `ops/supervisor`, while
-    the manifest said 1 (marvel#335, bd `aae-orc-5ebrf`, finding-178).
+    the manifest said 1 (marvel#335, bd `aae-orc-5ebrf`, aae-orc finding-178).
   - `marvel plan` compares desired with actual, never with the manifest, so the
     drift is invisible until `marvel work` resurrects the role (#335; #334 is
     the same verb family).
 - **The reconciler already handles 0:** it treats it as an ordinary scale-down.
   This is confirmed by reading (the research supervisor's triage of #335).
 - **Parked roles are already wanted declaratively:**
-  - finding-168 lists `merge-queue` and `retrospector` as "declared, replicas 0";
-  - finding-178 notes that design brief 7's target manifest declares two roles
+  - aae-orc finding-168 lists `merge-queue` and `retrospector` as "declared, replicas 0";
+  - aae-orc finding-178 notes that design brief 7's target manifest declares two roles
     at 0 and so cannot be loaded.
   - The workaround today is commenting roles out, which drops their runtime and
     policy from review (#335).

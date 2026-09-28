@@ -33,7 +33,7 @@ was read or printed at any point; identity was read as a login name only.
 | P8 | Does codex start under a narrow profile? | `codex debug prompt-input` with the profile as default | **No,** until `~/.local/bin` and `~/.codex/packages` are readable: the fs helper re-executes codex (`execvp ... Operation not permitted`). |
 | P9 | Effective policy, profile passed only as `-c` flags | `codex debug prompt-input -c default_permissions=... -c permissions.reviewer={...} -c approval_policy="never" --enable network_proxy` | "`sandbox_mode` is `read-only` ... Network access is enabled", "Approval policy is currently never". Launcher `-c` flags are enough; CODEX_HOME needs no edit. |
 | P10 | Exec-policy rules | `codex execpolicy check -r <rules> <cmd>` | `gh auth token` and `security ...` are forbidden; `gh pr review` is allowed. **`bash -lc gh auth token` matches no rule:** rules govern the commands the model issues, not a kernel boundary. |
-| P11 | Identities on kinu | `gh auth status`, `glab auth status` (login lines only) | gh: `arcaven` only, in the **keyring**. glab: `arcaven` only, in a **plaintext** `~/Library/Application Support/glab-cli/config.yml`. `arcavenai` is not on kinu. |
+| P11 | Identities on kinu | `gh auth status`, `glab auth status` (login lines only) | Each CLI's stored login and its storage mode (keyring or file). Which identities are present, and where a CLI keeps its token, is host state checked on the host, not recorded here. |
 
 ## 2. Recommended shape
 
@@ -57,8 +57,8 @@ passes the instructions and the trust entry.
 - After the glab keyring migration (4.2), the glab config dir.
 
 Not readable: the rest of home (`.ssh`, `.aws`, other seats' homes, `.beads`
-credentials). This is the main gain over P3: today a P3 seat could read the
-glab plaintext token file.
+credentials). This is the main gain over P3: a P3 seat can read any credential
+a CLI keeps in a file under home.
 
 ### 2.2 Network
 
@@ -115,7 +115,7 @@ issue to seed role rules first-class is in section 7.
   - the cwd (the orchestrator tree) becomes writable, and so do /tmp and
     $TMPDIR unless excluded;
   - the domains are unrestricted;
-  - full-disk read includes the glab plaintext token.
+  - full-disk read includes any CLI credential kept in a file.
 
   A seat discipline of "write nothing" is advice, where the profile is a
   kernel refusal.
@@ -169,11 +169,11 @@ seats.
     brokering.
 - **I2, GitLab identity:** kinu holds only `arcaven` on gitlab.com. Name the
   reviewing account and the project for verification.
-- **I3, glab keyring migration** (needed under any option): the glab token is
-  plaintext in `~/Library/Application Support/glab-cli/config.yml` today,
-  readable by every full-disk seat on kinu. Re-login with keyring storage (glab
-  1.111 stores in the keyring by default; `--insecure-storage` is the opt-out),
-  so the config dir can be readable to the seat without exposing a token.
+- **I3, forge CLI credentials in the keyring** (needed under any option): any
+  forge CLI login stored in a file is readable by a full-disk seat. Log in with
+  keyring storage (glab 1.111 stores in the keyring by default;
+  `--insecure-storage` is the opt-out), so a CLI's config dir can be readable to
+  the seat without exposing a token.
 
 ### 4.3 Open item G1 (probe before enabling GitLab under the proxy)
 
@@ -283,8 +283,8 @@ seat does not write it). Add three invariants:
 - I1, GitHub pairing (default (a): as `arcaven`, with paper approvals on arcaven
   PRs).
 - I2, the GitLab reviewing account and the verification project.
-- I3, the glab re-login to the keyring. This is worth doing today regardless:
-  the plaintext token is readable by every full-disk seat on kinu.
+- I3, forge CLI logins in the keyring, not in files. Worth confirming
+  regardless of the option chosen.
 - Approval of the wardrobe text and of the marvel issue in 7.5.
 
 ## 10. Addendum: operator ruling applied (2026-09-26)
