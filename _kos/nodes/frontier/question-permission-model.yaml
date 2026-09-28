@@ -128,6 +128,15 @@ content: |
   the harness's trust surface by constructing the role's config home rather
   than by owning the operator's.
 
+  QUALIFIED AGAIN (finding-054, 2026-09-26): an exec-policy rule with
+  `decision="allow"` in the role's CODEX_HOME runs its command outside
+  `-s`, so every allow rule is a network and filesystem grant. Constructing
+  the home therefore includes its rules file. Rules match the issued
+  command, not what runs inside it (`bash -lc` is unmatched), so the ruled
+  forge escape allows one wrapper per service that re-enters `codex
+  sandbox` under a one-host network profile
+  (docs/design/codex-reviewer-forge-access.md).
+
   EXTENDED TO MANAGED CHILDREN (2026-09-25, marvel#351 at 4ef7222,
   aae-orc-oo62t). Environment construction covered agent panes and not
   the processes marvel supervises for itself: the managed nats-server
