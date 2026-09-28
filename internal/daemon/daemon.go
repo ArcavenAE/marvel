@@ -1140,6 +1140,12 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
+	// Pre-flight: a team name held by another workspace would commit, spawn,
+	// and then break bus-auth rendering cluster-wide (marvel#319).
+	if err := m.ValidateTeamNames(d.store.ListTeams()); err != nil {
+		return Response{Error: err.Error()}
+	}
+
 	// Admission, before Apply commits anything. Refusing the declaration is
 	// the whole design: gating only the spawn would leave a permanently
 	// unsatisfiable desired state, a teams table reporting replicas that
