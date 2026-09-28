@@ -84,16 +84,22 @@ by the harness after the session starts, and every codex window arrives as
 | `manifest` | yes | refuses when the prompt does not fit | unchanged |
 | `learned` | yes, when a prior session of this model declared its window on this daemon | refuses when the prompt does not fit | unchanged |
 | `stream` | no | not applicable | becomes the model's `learned` value for the next spawn; if the first turn already exceeds it, the session is stopped with the same error as a refusal (never left to truncate) |
-| `feed` | no | not applicable | as `stream`: it is the harness's own declared window, so it is trusted to become `learned`. This is how codex seats become moderated from their second spawn on |
+| `feed` | no | not applicable | stays `feed`; it is NOT promoted to `learned`. `learned` ranks above `manifest` in `limitLadder`, so a promoted feed window would let the statusline side channel overrule an operator's `runtime.context_window`, inverting the 2026-08-08 stream/feed ruling recorded at `internal/usage/limits.go` (`limitLadder`). See amendment F2 |
 | `table` | yes | warns, never refuses (#181: an exact key can be wrong by 3.8x) | superseded by `stream` or `feed` when they arrive |
 | `table-alias` | yes | warns, never refuses (an alias means whatever the harness points it at today) | as `table` |
 | `unresolved` | yes | emits `session.unmoderated` and spawns | as `table` |
 
-So a first spawn of a codex seat with no manifest window is warned, not
-refused, and every later spawn of that model is checked against the window
-codex itself declared. For a small local model, the operator sets
-`runtime.context_window` in the manifest, which makes the first spawn
-checkable.
+So a codex seat with no manifest window is warned, not refused, on every
+spawn: its window arrives only as `feed`, which this design does not promote.
+To make a codex seat (or a small local model) checkable, the operator sets
+`runtime.context_window` in the manifest.
+
+**Open amendment F2, for the operator (not part of this design until ruled).**
+A remembered feed window could get its own rank, `feed-learned`, placed
+BELOW `manifest` (stream, learned, manifest, feed-learned, feed, table,
+table-alias). A codex seat would then be checked from its second spawn on,
+and an operator's manifest value would still win. Default: not adopted; the
+manifest route above covers the case with no ladder change.
 
 ## 3. Placement
 
