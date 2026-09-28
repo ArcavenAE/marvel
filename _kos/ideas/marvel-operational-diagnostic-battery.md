@@ -21,6 +21,21 @@
 > and it's very challenging without a battery of positive and negative tests
 > to know when something is broken or not working correctly"
 
+## Operator ruling (RULED 2026-09-27)
+
+Relayed by arcaven-supervisor, 2026-09-27T18:34:43Z:
+
+> "the operator ruled on the diagnostics battery: YES to the shape, and YES
+> to the default that a shim-only refusal is not enough and the broker must
+> refuse before a third cluster joins."
+
+- The shape above (named behavior with an anchor, a positive case, a
+  negative case, and PASS, FAIL or NOT-APPLICABLE with evidence) is
+  accepted.
+- A negative case that only the shim refuses does not count as the control
+  holding. The broker must refuse too, and that has to be in place before a
+  third cluster joins.
+
 ## The observation
 
 A runnable battery that any instance (a seat, a supervisor, director, the
