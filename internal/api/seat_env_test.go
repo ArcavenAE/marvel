@@ -72,3 +72,27 @@ func TestUnsetInheritedSessionEnv(t *testing.T) {
 		t.Error("backend selector was unset")
 	}
 }
+
+// TestInheritedSessionEnvCoversObservedDaemonIdentity pins every
+// credential, capability address and parent-session identity name observed
+// on a live daemon started from a Claude Code session (kinu, 2026-09-28,
+// names only). CLAUDE_CODE_BRIDGE_SESSION_ID was on that daemon and missing
+// from the list (aae-orc#418).
+func TestInheritedSessionEnvCoversObservedDaemonIdentity(t *testing.T) {
+	for _, n := range []string{
+		"CLAUDE_CODE_MESSAGING_TOKEN",
+		"CLAUDE_CODE_MESSAGING_SOCKET",
+		"CLAUDE_CODE_SESSION_ID",
+		"CLAUDE_CODE_BRIDGE_SESSION_ID",
+		"CLAUDE_CODE_CHILD_SESSION",
+		"CLAUDE_CODE_SESSION_ATTENDED",
+		"CLAUDE_CODE_ENTRYPOINT",
+		"CLAUDE_CODE_EXECPATH",
+		"CLAUDECODE",
+		"CLAUDE_PID",
+	} {
+		if !IsInheritedSessionEnv(n) {
+			t.Errorf("IsInheritedSessionEnv(%s) = false, want true", n)
+		}
+	}
+}
