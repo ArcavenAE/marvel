@@ -90,7 +90,7 @@ teams:
 			if err == nil {
 				t.Fatal("an omitted replicas should be refused, got no error")
 			}
-			for _, want := range []string{`team "agents" role "worker"`, "replicas is required"} {
+			for _, want := range []string{"team agents role worker", "replicas is required"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("error %q does not contain %q", err, want)
 				}

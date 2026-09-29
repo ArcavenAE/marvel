@@ -107,13 +107,13 @@ name = "agents"
 
   [[team.role]]
   name = "worker"
-  replicas = 0
+  replicas = -1
 
     [team.role.runtime]
     command = "bash"
 `))
 	if err == nil {
-		t.Fatal("expected error for zero replicas")
+		t.Fatal("expected error for negative replicas")
 	}
 }
 
@@ -400,8 +400,8 @@ teams:
 		},
 		{
 			name:     "a rule that predates budgets",
-			manifest: yamlWith("      max_sessions: 6", "0"),
-			wantErr:  "replicas must be >= 1",
+			manifest: yamlWith("      max_sessions: 6", "-1"),
+			wantErr:  "is below the minimum of 0",
 		},
 	}
 	for _, tt := range tests {

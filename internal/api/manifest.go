@@ -114,8 +114,12 @@ func (b *ManifestBudget) Budget() Budget {
 // ManifestRole is a role section within a team.
 // Name is the job function. Persona and Identity are the costume and lens.
 type ManifestRole struct {
-	Name                 string               `toml:"name"                          yaml:"name"`
-	Replicas             int                  `toml:"replicas"                      yaml:"replicas"`
+	Name     string `toml:"name"                          yaml:"name"`
+	Replicas int    `toml:"replicas"                      yaml:"replicas"`
+	// replicasAbsent is set when the source document has no replicas key
+	// for this role. An omitted count must not read as 0, which parks the
+	// role (marvel#335). A role built in code is taken as declared.
+	replicasAbsent       bool
 	Runtime              ManifestRuntime      `toml:"runtime"                       yaml:"runtime"`
 	RestartPolicy        string               `toml:"restart_policy,omitempty"      yaml:"restart_policy,omitempty"`
 	MaxRestarts          int                  `toml:"max_restarts,omitempty"        yaml:"max_restarts,omitempty"`
@@ -252,6 +256,10 @@ func unmarshalManifestYAML(data []byte) (*Manifest, error) {
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse yaml manifest: %w", err)
 	}
+	var probe replicasProbe
+	if err := yaml.Unmarshal(data, &probe); err == nil {
+		probe.mark(&m)
+	}
 	return &m, nil
 }
 
@@ -260,7 +268,37 @@ func unmarshalManifestTOML(data []byte) (*Manifest, error) {
 	if err := toml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse toml manifest: %w", err)
 	}
+	var probe replicasProbe
+	if err := toml.Unmarshal(data, &probe); err == nil {
+		probe.mark(&m)
+	}
 	return &m, nil
+}
+
+// replicasProbe reads only whether each role wrote a replicas key. Since 0
+// is legal desired state (a parked role, marvel#335), the int field alone
+// cannot tell "replicas: 0" from a role that left the key out.
+type replicasProbe struct {
+	Teams []struct {
+		Roles []struct {
+			Replicas *int `toml:"replicas" yaml:"replicas"`
+		} `toml:"role" yaml:"roles"`
+	} `toml:"team" yaml:"teams"`
+}
+
+// mark flags the roles of m whose replicas key was absent in the source.
+func (p replicasProbe) mark(m *Manifest) {
+	for i := range m.Teams {
+		if i >= len(p.Teams) {
+			return
+		}
+		for j := range m.Teams[i].Roles {
+			if j >= len(p.Teams[i].Roles) {
+				break
+			}
+			m.Teams[i].Roles[j].replicasAbsent = p.Teams[i].Roles[j].Replicas == nil
+		}
+	}
 }
 
 func validateManifest(m *Manifest) (*Manifest, error) {
@@ -295,8 +333,13 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.Name == "" {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].name is required", i, j)
 			}
-			if r.Replicas < 1 {
-				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].replicas must be >= 1", i, j)
+			// 0 is legal and parks the role (marvel#335); the bound is the
+			// one marvel scale applies, from the same validator.
+			if r.replicasAbsent {
+				return nil, fmt.Errorf("parse manifest: team %s role %s: replicas is required (0 parks the role)", t.Name, r.Name)
+			}
+			if err := ValidateReplicas(t.Name, r.Name, r.Replicas); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if r.Runtime.Image == "" && r.Runtime.Command == "" {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime needs image or command", i, j)
