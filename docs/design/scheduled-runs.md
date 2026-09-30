@@ -112,6 +112,8 @@ CPU placement is not a concern at this scale.
     active_deadline = "45m"      # a run older than this is killed, and the run fails
     jitter = "5m"                # random delay per firing
     stale_after = "30h"          # the freshness alarm (section 7)
+    retries = 0                  # retries inside one firing; default 0
+    on_failure = "wait"          # wait | freeze, after retries are used up
     history = { succeeded = 3, failed = 3 }
     suspend = false
 ```
@@ -146,17 +148,30 @@ scheduled rule replaces both:
 
 - a live session of the current firing occupies (the run is in progress);
 - a `succeeded` session of the current firing occupies (the firing is done);
-- a failed or crashed session of the current firing occupies under the
-  default in section 11 (the firing is done, and failed);
+- a failed or crashed session occupies nothing (operator ruling, section 11);
+  whether the firing tries again is decided by the firing record, below, not
+  by slot counting;
 - no session of an earlier firing occupies, live or not. It still counts as a
   process everywhere else (`CountsAsAlive` is unchanged: budgets and posture
   see two runs when two run).
 
+**The firing record settles failures.** The per-role firing record carries
+`attempts` and `settled`. A run that exits non-zero or crashes increments
+`attempts` and emits `run.failed`, and the run history records it. While
+`attempts <= retries` and the firing is inside `starting_deadline`, the
+reconciler spawns a retry after a backoff, through admission like any spawn.
+Once retries are used up, the firing is `settled` as failed and the
+reconciler spawns nothing more for the role until the next firing. Then
+`on_failure` applies: `wait` (the default) does nothing further, and the next
+firing runs as declared; `freeze` suspends the schedule until an operator
+clears it with `marvel reset-health <ws/team> --role <r>`.
+
 The reap path does not charge a scheduled role's crash to its restart
-policy: `noteReapedCrash` and `applyRestartPolicy` skip scheduled roles, so a
-failed run never freezes the role (`restart_policy = never` freezes on the
-first crash today, `internal/team/controller.go:638`), and a freeze never
-no-ops every later firing. The failure lands in the run history instead.
+policy: `noteReapedCrash` and `applyRestartPolicy` skip scheduled roles, so
+`max_restarts` and `restart_policy` never turn a failure into a freeze
+(`restart_policy = never` freezes on the first crash today,
+`internal/team/controller.go:638`). A schedule freezes only when
+`on_failure = "freeze"` says so.
 
 So:
 
@@ -187,7 +202,7 @@ forgetting it.
 | same, newest older than `starting_deadline` | none | `schedule.missed` with `missed: N` |
 | `suspend = true` | none | `schedule.suspended` once per change |
 | Run passes `active_deadline` | killed; `failed` | `run.deadline` |
-| Run exits non-zero or crashes | final for its firing (section 11 default A); no retry, no freeze | `run.failed` |
+| Run exits non-zero or crashes | `attempts` + 1; retried after backoff while `attempts <= retries` and inside `starting_deadline`; else the firing settles failed and `on_failure` applies (default `wait`: next firing runs as declared) | `run.failed`; `schedule.frozen` only under `freeze` |
 
 There is no backlog and no burst: a recovery produces at most one run. That is
 the property that matters for a shared account.
@@ -324,19 +339,14 @@ S-2 before S-3 is deliberate: the alarm is useful on its own and costs least.
   host timer (launchd) outside marvel, which survives respawn but is not
   metered or admitted and lives on one host.
 - **Timezone.** Required with no default (proposed), or default to UTC.
-- **A failed run** (non-zero exit, or crashed). ADR-010 deferred
-  retry-on-failure for headless work; a schedule has to settle it.
-  - **A (default): final for its firing.** The failed session occupies the
-    firing's slot, nothing retries until the next firing, the role never
-    freezes, and the failure is in the run history. Repeated failures show
-    as no `succeeded` run within `stale_after`, which trips the freshness
-    alarm.
-  - **B: bounded retry inside the firing.** A declared `retries` (default 0)
-    with backoff, each retry admitted, only while inside
-    `starting_deadline`; then final as in A. Default 0 makes B behave as A
-    until an operator asks for more.
-  - **C: today's restart policy.** Rejected: `max_restarts` and
-    `restart_policy = never` freeze the role, and a frozen role no-ops every
-    later firing.
-  A and B both keep "at most one run per firing" unless `retries` says
-  otherwise.
+- **A failed run: RULED 2026-09-30** (operator via director, relayed by
+  arcaven-supervisor-g5-0 msg 01M3RHVMT1), verbatim: "they should do any of
+  those, a setting, but default retry is 0 so it just tries again next time
+  unless other options are set". Recorded in section 2 and the schedule
+  block:
+  - `retries` (default 0): tries inside one firing.
+  - `on_failure` (default `wait`): after retries, `wait` for the next firing,
+    or `freeze` until `marvel reset-health`.
+  - A failed run is recorded as failed (`run.failed` plus the run history),
+    holds no slot, and never freezes the role unless `on_failure = "freeze"`.
+    `max_restarts` and `restart_policy` do not apply to scheduled roles.
