@@ -133,9 +133,32 @@ references roles, and amend ADR-010 then.
 
 **How a firing becomes a run.** A new per-role store record holds the current
 firing id and its due time (the role spec at `internal/api/types.go:440` stays
-spec; this is status beside it, like `RoleHealth`). `OccupiesReplicaSlot` gains one rule:
-for a scheduled role, a `succeeded` session occupies a slot only if its
-`Firing` equals the role's current firing. So:
+spec; this is status beside it, like `RoleHealth`). Each session of a
+scheduled role records the `Firing` it was spawned for.
+
+For a scheduled role, slot occupancy is **firing-scoped**: a session occupies
+a slot only if its `Firing` equals the role's current firing, whatever its
+state. Today `OccupiesReplicaSlot` (`internal/api/budget.go:252`) counts every
+live session plus headless `succeeded`, so a previous firing's run that is
+still live would hold the slot and `allow` could never start a second run,
+and a failed run holds nothing and is refilled inside the same firing. The
+scheduled rule replaces both:
+
+- a live session of the current firing occupies (the run is in progress);
+- a `succeeded` session of the current firing occupies (the firing is done);
+- a failed or crashed session of the current firing occupies under the
+  default in section 11 (the firing is done, and failed);
+- no session of an earlier firing occupies, live or not. It still counts as a
+  process everywhere else (`CountsAsAlive` is unchanged: budgets and posture
+  see two runs when two run).
+
+The reap path does not charge a scheduled role's crash to its restart
+policy: `noteReapedCrash` and `applyRestartPolicy` skip scheduled roles, so a
+failed run never freezes the role (`restart_policy = never` freezes on the
+first crash today, `internal/team/controller.go:638`), and a freeze never
+no-ops every later firing. The failure lands in the run history instead.
+
+So:
 
 1. The scheduler advances the firing (a new id, stamped at due time plus
    jitter).
@@ -159,11 +182,12 @@ forgetting it.
 |---|---|---|
 | Firing due, previous run still live, `forbid` | not advanced; recorded | `schedule.skipped` reason `overlap` |
 | same, `replace` | previous run killed, new firing advanced | `schedule.replaced` |
-| same, `allow` | advanced; both run | `schedule.fired` |
+| same, `allow` | advanced; both run (possible because an earlier firing's run no longer occupies a slot, section 2) | `schedule.fired` |
 | Daemon was down, one or more firings due, newest within `starting_deadline` | **one** firing on recovery (launchd coalescing, systemd `Persistent`) | `schedule.fired` with `catch_up: true`, `missed: N` |
 | same, newest older than `starting_deadline` | none | `schedule.missed` with `missed: N` |
 | `suspend = true` | none | `schedule.suspended` once per change |
 | Run passes `active_deadline` | killed; `failed` | `run.deadline` |
+| Run exits non-zero or crashes | final for its firing (section 11 default A); no retry, no freeze | `run.failed` |
 
 There is no backlog and no burst: a recovery produces at most one run. That is
 the property that matters for a shared account.
@@ -248,9 +272,14 @@ before it starts.
   `dangerous_permissions`, or with a permission mode that skips checks. A
   scheduled run that needs a check skipped is a design problem to escalate,
   not a flag to set.
-- **A refusal ends the run.** If the harness's permission check or classifier
-  denies an action, the run fails with the denial in its record, and the next
-  firing runs as declared. Nothing rewords and retries (no-control-bypass).
+- **A refusal is recorded, and nothing retries around it.** A denied action
+  does not by itself fail a run: a headless run whose tool call was denied
+  usually carries on and exits 0. The run record keeps any permission
+  denials the stream reports; whether claude's `--print` stream-json final
+  result lists them is not yet verified and is checked on a captured run in
+  S-2. Until then a denial is visible only in the result text, and the run
+  reads `succeeded`. Either way, the next firing runs as declared, and
+  nothing rewords or retries the denied action (no-control-bypass).
 - **Identity.** The run acts under whatever identity the role's environment
   carries: a bot account for a public post, the operator's own credentials
   otherwise (SOUL section 3). The schedule adds no credential and holds none.
@@ -274,7 +303,7 @@ before it starts.
 | # | Edit | Depends on |
 |---|---|---|
 | S-1 | `schedule` block parsed and validated (headless only, required fields, no bypass modes); refused otherwise | ratification (section 11) |
-| S-2 | Run record, history and `describe role`; `schedule.stale` from `stale_after` | S-1 |
+| S-2 | Run record, history and the `describe team` schedule block; `schedule.stale` from `stale_after` | S-1 |
 | S-3 | The clock: next-due in the store, firing advance, `OccupiesReplicaSlot` firing rule, overlap and recovery policy | S-1 |
 | S-4 | `TriggerSchedule` in admission; `active_deadline` kill | S-3 |
 | S-5 | Move the beadle board refresh onto a scheduled role; retire the session timer | S-4, and the refresh's own permission policy |
@@ -295,3 +324,19 @@ S-2 before S-3 is deliberate: the alarm is useful on its own and costs least.
   host timer (launchd) outside marvel, which survives respawn but is not
   metered or admitted and lives on one host.
 - **Timezone.** Required with no default (proposed), or default to UTC.
+- **A failed run** (non-zero exit, or crashed). ADR-010 deferred
+  retry-on-failure for headless work; a schedule has to settle it.
+  - **A (default): final for its firing.** The failed session occupies the
+    firing's slot, nothing retries until the next firing, the role never
+    freezes, and the failure is in the run history. Repeated failures show
+    as no `succeeded` run within `stale_after`, which trips the freshness
+    alarm.
+  - **B: bounded retry inside the firing.** A declared `retries` (default 0)
+    with backoff, each retry admitted, only while inside
+    `starting_deadline`; then final as in A. Default 0 makes B behave as A
+    until an operator asks for more.
+  - **C: today's restart policy.** Rejected: `max_restarts` and
+    `restart_policy = never` freeze the role, and a frozen role no-ops every
+    later firing.
+  A and B both keep "at most one run per firing" unless `retries` says
+  otherwise.
