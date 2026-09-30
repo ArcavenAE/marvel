@@ -81,12 +81,27 @@ edits before SB-1 cannot prevent the move: the first respawn after the SB-1
 daemon starts would relocate those seats whatever the files say. The fix is in
 code:
 
-- **Stamp once, at first start.** When the SB-1 daemon first opens a store
-  written by an earlier version (a store version marker, set after the pass),
-  it stamps every existing team record that resolves no root with
+- **Stamp once, as the store's v1 to v2 migration.** SB-1 bumps
+  `boltSchemaVersion` from 1 to 2 (`internal/api/bolt.go:64`); no separate
+  marker. Today `Open` fails fast on an older on-disk version ("migration not
+  implemented", `bolt.go:126-129`). SB-1 replaces that branch with the
+  migration: inside the same `db.Update` transaction, before the daemon
+  serves anything, every team record that resolves no root is stamped
   `WorkDir = <the daemon's cwd at that start>` and `WorkDirSource = legacy`,
-  and emits one `placement.legacy-stamped` event per team. The stamp is
-  persisted, so later restarts from any cwd keep it.
+  and the schema version is written as 2. It commits whole or not at all. One
+  `placement.legacy-stamped` event per team is emitted after the commit.
+- **What it covers.** Every record in a v1 store, whenever it was written:
+  a team applied by the old daemon after the SB-1 binary was installed but
+  before the daemon restarted is still a v1 record and is stamped too. There
+  is no window where a root-less record escapes the pass.
+- **It freezes one cwd.** The stamp records the cwd of the first SB-1 start
+  and never re-reads it. Starting that first time from a directory other than
+  the orc root would pin the fleet there; the SB-1 release note says to start
+  it from where the seats run today.
+- **No way back without a restore.** The existing guard already refuses a
+  newer store: an old binary opening a v2 store fails with "on-disk schema
+  version 2 is newer than binary's 1" (`bolt.go:120-123`). Rolling back SB-1
+  therefore needs the store backup taken before the upgrade.
 - **Managed applies only to records created after SB-1.** A new team with no
   root gets rule 3. A re-apply of a legacy-stamped team that still names no
   root keeps the stamp, and the apply output says so ("placement: legacy
@@ -401,11 +416,13 @@ launch.
    regular file. A link replaced during a session is reported at its exit.
 9. A headless claude run gets placement and settings sources and no seeded
    home.
-10. The legacy stamp: a store written by the previous version holds a team
-    with no root; the SB-1 daemon starts from directory X, stamps it
-    `WorkDir = X`, `WorkDirSource = legacy`, and emits one
-    `placement.legacy-stamped`; the respawned seat's pane cwd is X. Restarting
-    the daemon from directory Y leaves the stamp at X and emits nothing. A new
+10. The legacy stamp: a v1 store holds a team with no root; the SB-1 daemon
+    starts from directory X, stamps it `WorkDir = X`,
+    `WorkDirSource = legacy` inside `Open`'s transaction, writes schema
+    version 2, and emits one `placement.legacy-stamped`; the respawned seat's
+    pane cwd is X. A failure injected mid-pass leaves the store at v1 with no
+    record stamped. Restarting the daemon from directory Y leaves the stamp at
+    X and emits nothing. The v1 binary opening the v2 store refuses to load. A new
     team with no root, applied after the stamp, gets a managed directory. A
     re-apply of the stamped team with no root keeps X and reports it; with a
     declared root, the stamp is replaced.
@@ -414,7 +431,7 @@ launch.
 
 | # | Edit | Depends on |
 |---|---|---|
-| SB-1 | Managed directory fallback for records created after SB-1; the one-time `legacy` stamp of existing root-less records; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
+| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
 | SB-7a | Cleanup: every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) and is re-applied on each cluster that runs it; a team with no file gets a manifest | SB-1 |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run) | none |
