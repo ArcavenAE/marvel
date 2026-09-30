@@ -401,6 +401,10 @@ func TestParseCronFields(t *testing.T) {
 		{"*/0 * * * *", false},
 		{"* * * JAN *", false},
 		{"1,,2 * * * *", false},
+		// A step on a single number has two readings in the wild (Vixie
+		// reads 5/15 as 5-59/15); refused until S-3 picks one.
+		{"5/15 * * * *", false},
+		{"5-59/15 * * * *", true},
 	} {
 		_, err := parseCron(c.expr)
 		if (err == nil) != c.ok {
