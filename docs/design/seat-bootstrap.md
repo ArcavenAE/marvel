@@ -98,10 +98,23 @@ code:
   and never re-reads it. Starting that first time from a directory other than
   the orc root would pin the fleet there; the SB-1 release note says to start
   it from where the seats run today.
-- **No way back without a restore.** The existing guard already refuses a
-  newer store: an old binary opening a v2 store fails with "on-disk schema
-  version 2 is newer than binary's 1" (`bolt.go:120-123`). Rolling back SB-1
-  therefore needs the store backup taken before the upgrade.
+- **The migration takes its own backup.** The old binary refuses a newer
+  store ("on-disk schema version 2 is newer than binary's 1",
+  `bolt.go:120-123`), and `marvel upgrade` deletes the previous binary once
+  the new one is installed (`internal/upgrade/upgrade.go:327`), so nothing
+  else keeps a way back. SB-1 therefore owns the backup:
+  - **When:** in the migrating `Open`, before the stamp pass, and only when
+    the on-disk version is 1.
+  - **How:** a read transaction's `tx.WriteTo` writes a consistent copy to
+    `<store>.v1.bak`, created `0600`, then fsync. If the backup cannot be
+    written, `Open` fails and the store stays v1; the daemon never migrates
+    without it. An existing `<store>.v1.bak` is never overwritten (the
+    no-deletion convention): the daemon refuses and names the file.
+  - **Rollback, by the operator:** stop the daemon; install the prior
+    release binary from its tag (the upgrade removed the local copy); move
+    `<store>.v1.bak` over `<store>`; start the daemon. Records applied after
+    the upgrade are lost by design and are re-applied from their manifests.
+  - The release note for SB-1 names the backup path and these steps.
 - **Managed applies only to records created after SB-1.** A new team with no
   root gets rule 3. A re-apply of a legacy-stamped team that still names no
   root keeps the stamp, and the apply output says so ("placement: legacy
@@ -422,7 +435,13 @@ launch.
     version 2, and emits one `placement.legacy-stamped`; the respawned seat's
     pane cwd is X. A failure injected mid-pass leaves the store at v1 with no
     record stamped. Restarting the daemon from directory Y leaves the stamp at
-    X and emits nothing. The v1 binary opening the v2 store refuses to load. A new
+    X and emits nothing. The v1 binary opening the v2 store refuses to load.
+    Backup: after the migration `<store>.v1.bak` exists, is `0600`, opens as
+    a v1 store, and holds exactly the pre-migration records; with the backup
+    write forced to fail, `Open` fails and the store is still v1 with nothing
+    stamped; with a `<store>.v1.bak` already present, `Open` refuses and the
+    existing file is unchanged. Rollback: the v1 binary opens the restored
+    backup and serves the original, unstamped records. A new
     team with no root, applied after the stamp, gets a managed directory. A
     re-apply of the stamped team with no root keeps X and reports it; with a
     declared root, the stamp is replaced.
@@ -431,7 +450,7 @@ launch.
 
 | # | Edit | Depends on |
 |---|---|---|
-| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
+| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`, preceded by the `<store>.v1.bak` backup; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
 | SB-7a | Cleanup: every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) and is re-applied on each cluster that runs it; a team with no file gets a manifest | SB-1 |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run) | none |
