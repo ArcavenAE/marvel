@@ -161,7 +161,11 @@ fails the same way on the same account until `max_restarts` freezes the role
 2. **No charge.** A headless run that ends while its account is `limited` is
    recorded with outcome `limited`, emits `run.limited`, and is not charged:
    it adds nothing to the restart count, cannot saturate `max_restarts`, and
-   never freezes the role, whatever `restart_policy` says.
+   never freezes the role, whatever `restart_policy` says. This holds for every
+   run marvel records as `limited`. A non-scheduled role on an account with no
+   reporter is charged at reap until UL-3 (below), so it can still freeze under
+   `max_restarts` until then; only scheduled roles are never frozen by a limit
+   today (#415).
 
 **How marvel decides "ended while limited".** At reap, a claude headless run
 usually cannot say: its stream has no limit report until UL-3, it produces no
@@ -177,6 +181,17 @@ tick minutes away. So the decision is:
   is charged. A reading that shows the account limited, with a reset after the
   run ended, settles it as `limited`; a reading below 100, or the 15 minutes
   running out, settles it as an ordinary failure, charged as today.
+
+  **Pending survives a daemon restart.** The hold is persisted on the session
+  record, as section 3 persists a condition's provenance: `pending` with its
+  reap time and its reap deadline (reap time plus 15 minutes). An in-memory
+  hold would be dropped by a restart, and the run would be repaired with no
+  hold and no charge; a persisted hold with no start time has no anchor and
+  could hold the slot forever. On startup, before the first reconcile, marvel
+  settles every pending hold whose deadline has passed as one charged
+  ordinary failure, and an open hold keeps its original deadline, never a
+  fresh 15 minutes. A reading that arrives after the restart settles an open
+  hold as it would have before.
 - **The account has no reporter** (no fresh reading for its key, as for an
   account only headless claude runs use): charged at reap as today, with no
   hold. Rule 2 depends on UL-3 for these accounts, and until UL-3 ships they
@@ -184,7 +199,8 @@ tick minutes away. So the decision is:
 
 Stated costs. A real crash on an account with a reporter is repaired up to 15
 minutes late. A headless-only account can still be charged for a limit until
-UL-3. For a scheduled role that charge cannot freeze it: #415 takes scheduled
+UL-3, and a non-scheduled role there can still freeze. For a scheduled role
+that charge cannot freeze it: #415 takes scheduled
 roles off the restart policy, and its default `on_failure = "wait"` records a
 failed firing and runs the next one.
 
@@ -249,6 +265,13 @@ doc supplies them.
     exactly as today, with no hold. With UL-3 recognition stubbed to report a
     limit, the same run settles `limited` and is not charged.
 17. Two codex sessions on the same operator login share one account key.
+18. A daemon restart during `pending`: a run is held at minute 0 (fake clock);
+    the daemon restarts at minute 5; no reading arrives. After the restart the
+    hold is still `pending` with its original deadline, no repair spawns, and
+    the restart count stays 0; at minute 15 it settles as one charged ordinary
+    failure and repair proceeds. A variant restarts at minute 20: startup
+    settles the expired hold as one charged failure before the first
+    reconcile.
 
 ## 7. Edits, in order (none made by this PR)
 
@@ -259,7 +282,7 @@ doc supplies them.
 | UL-3 | The `limited` condition, its column cell, describe line and events | UL-1 |
 | UL-4 | The Pause record, verbs, admission refusal, shift suppression, lift and proposal events | none |
 | UL-5 | Scheduled-run skip reasons | UL-3, UL-4, #415's S-3 |
-| UL-6 | Held headless repair, the pending hold, and the uncharged `limited` outcome (section 4a); the no-reporter case waits on UL-3's recognition | UL-1, UL-3, UL-4 |
+| UL-6 | Held headless repair, the pending hold (persisted, settled at startup), and the uncharged `limited` outcome (section 4a). The hold is a gate in `planRole` (`internal/team/controller.go:1043` on main), which already folds admission without side effects: a role whose ended run is `pending`, or whose account is `limited`, plans no repair spawn, so `applyRolePlan` has nothing to act on. The no-reporter case waits on UL-3's recognition | UL-1, UL-3, UL-4 |
 
 ## 8. Open questions
 
