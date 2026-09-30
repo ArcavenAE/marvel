@@ -1,0 +1,297 @@
+# Scheduled runs: a headless role on a clock
+
+Design for review. No code lands until this doc is reviewed.
+
+- Author: arcaven-architect-g5-0.
+- Commission: operator request via director, relayed by arcaven-supervisor-g5-0
+  (msg 01M3REAWWN, 2026-09-30): assess, then design, scheduled work in marvel.
+- Answers, in part: `question-scheduled-cues` (marvel frontier).
+- Checked against marvel `origin/main` 3cb6101.
+
+## 0. The recommendation in five lines
+
+1. A schedule is a block on a **headless role**, not a new resource. A firing
+   advances the role's current firing, and the reconciler that already
+   exists spawns the run. ADR-010 completion semantics end it.
+2. Overlap defaults to **forbid**. A missed firing runs **at most once** on
+   recovery, inside a starting deadline, never as a burst.
+3. Every firing passes the same admission check as `apply`, `scale` and
+   `run`, under a new trigger. Each run is capped by a wall-clock deadline and
+   metered by the headless stream marvel already reads.
+4. marvel keeps a bounded run history and reports on its own event ring, plus a
+   **freshness alarm** when a schedule has not succeeded within its bound. It
+   sends to the director bus only through the planned marvel events stream,
+   never into an agent inbox.
+5. A run's authority is its role's projected policy, fixed in the manifest. It
+   gets nothing from what it reads, and no scheduled role may use
+   `dangerous_permissions`.
+
+The first user is the daily beadle board refresh. Today it runs as a session
+timer inside a seat's Claude Code session, which expires after seven days and
+does not survive a respawn.
+
+## 1. Assessment: what exists
+
+### 1.1 marvel today
+
+| What | Where | State |
+|---|---|---|
+| Schedule (CronJob) | `CLAUDE.md` "Model-only, not implemented"; `_kos/nodes/bedrock/elem-k8s-resource-model.yaml` row "CronJob / Schedule / Timed agent tasks" | model-only: no type, code or CLI |
+| The open question | `_kos/nodes/frontier/question-scheduled-cues.yaml` | frontier. Asks whether marvel owns the clock or only a freshness alarm, what a cue delivers to an interactive seat, and where "last ran" lives |
+| Headless completion (ADR-010) | orc `decisions/adr-010-headless-completion-semantics.md`; marvel #244 (`OccupiesReplicaSlot`, `internal/api/budget.go:252`), #246 (writes `succeeded` from the tmux exit status) | **built**. A headless run that exits cleanly holds its replica slot and is not refilled |
+| Headless launch | `internal/runtime/claude.go:94-125` | built: `--print --output-format stream-json --verbose`, `--permission-mode` from the role |
+| Stream metering | `internal/usage` | built for headless: tokens per run are observable |
+| Admission | `internal/admission/admission.go:89-93` | built: triggers `apply`, `scale`, `run`, `shift`, `reconcile`; team budgets refuse over-budget growth |
+| One-off run | `marvel run`, `internal/daemon/daemon.go:1765` | built, but it takes a raw command and sets no headless mode, so it does not get ADR-010 completion |
+| Reconcile loop | `internal/daemon/daemon.go:52`, `ReconcileInterval = 2s` | built |
+| Per-session lifetime | `_kos/ideas/max-session-age.md` | idea; names the scheduled cue as its fleet-wide counterpart |
+| A `scheduler` service class | `_kos/ideas/services-catalog.md` line 48 | idea: "a scheduler, class `scheduler` (new), managed, not on record" |
+| Services and workloads | `docs/design/services-list.md`, `bus-as-service.md`; `workload.Process` (aae-orc-oo62t, in progress) | built for the bus; the process model for a second managed service is in flight |
+
+### 1.2 Around marvel
+
+| What | Where | Bearing |
+|---|---|---|
+| Resource model | orc ADR-003, amended by ADR-010 | a new role field or resource is a resource-model change, so it is ratified, not emergent (ADR-007) |
+| Vision | orc `vision.md` line 410: "Scheduling by what actually constrains agents ... context pressure, token spend" | spend, not CPU, is the budget a schedule must respect |
+| Gap 1 | orc `vision.md` line 458, operator attention routing | a scheduled run that ends in a GATE is attention demand; the run should report, not interrupt |
+| Director timers | aae-orc-7vw44 (open): shim `set_timer` | a cue into a live seat is director's, on the bus |
+| Bus scheduling | aae-orc-aubd6 (open): EVENTS_MARVEL with `allow_msg_schedules` | the planned bus path for marvel's events |
+| Quota pause | marvel finding-056 (on marvel#408, not yet merged) | the seats that ran into the account limit were the ones with scheduled tasks; it proposes shedding scheduled work first |
+| Usage-limit reading | marvel finding-050 | the future source of a `limited` condition |
+| Pane inject is not dispatch | finding-040; an interactive seat takes no first prompt, finding-055 | a schedule cannot target an interactive seat through the pane |
+
+bd, searched for schedule, cron, periodic, timer, recurring, headless and
+service (titles, `bd sql`):
+
+- **Closed:** 1p8o and bxeh (headless completion); vsju (terminal-state
+  probe); qiay (token and quota scheduling probe); lvzck (shim identity and
+  timer heartbeat); lzug and otbb (beadle dashboard-refresh policy and run 14);
+  4t1k (scheduled packaging in sideshow-packs); fxfkw (actor stamping at cron
+  spawn points); 1yzn8 (Services list).
+- **In progress:** oo62t (workload.Process).
+- **Open:** 7vw44 (shim timers); aubd6 (EVENTS_MARVEL); 0u4tq (marvel as
+  service provider); k28s (service packaging); ety14 (dashboard-refresh builds
+  before ingest); v0ymv (a recurring warn-only orc check); 7mz (multi-host
+  scheduling).
+- **None found:** a ticket for scheduled runs in marvel.
+
+### 1.3 Related art, and what fits marvel's resource matrix
+
+| Art | Worth taking | Not worth taking |
+|---|---|---|
+| k8s CronJob | `concurrencyPolicy` (Allow, Forbid, Replace); `startingDeadlineSeconds`; `successfulJobsHistoryLimit` 3 and `failedJobsHistoryLimit` 1; `suspend`; `timeZone`; a Job template that is ordinary Job spec | a separate Job object per firing: marvel's session already is the run record |
+| systemd timers | `Persistent=true` (run once on boot if a firing was missed); `RandomizedDelaySec` (spread a fleet's starts) | calendar-expression syntax beyond cron |
+| launchd | `StartCalendarInterval` coalesces missed firings into one on wake | per-user plist placement |
+| GitHub Actions `schedule` | an honest statement that a scheduled run can be delayed or dropped under load, and that it runs from the default branch's definition | its best-effort delivery as a design target |
+
+What k8s never had to price, and marvel does: a firing spends **tokens on a
+shared account**, carries **authority** (it acts in someone's name), and ends
+in **a report someone must read**. That is why sections 4, 6 and 7 exist.
+CPU placement is not a concern at this scale.
+
+## 2. Where a schedule lives: a block on a headless role
+
+```toml
+  [[team.role]]
+  name = "board-refresh"
+  replicas = 1
+  permissions = "acceptEdits"
+  policy = "board-refresh"
+
+    [team.role.runtime]
+    command = "claude"
+    mode = "headless"
+    prompt = "/dashboard-refresh"
+
+    [team.role.schedule]
+    cron = "17 6 * * *"          # five-field cron
+    timezone = "Etc/UTC"         # required; no host-local default
+    concurrency = "forbid"       # forbid | replace | allow
+    starting_deadline = "2h"     # a missed firing older than this is skipped
+    active_deadline = "45m"      # a run older than this is killed, and the run fails
+    jitter = "5m"                # random delay per firing
+    stale_after = "30h"          # the freshness alarm (section 7)
+    history = { succeeded = 3, failed = 3 }
+    suspend = false
+```
+
+**Why a role block and not a resource.** The role already is the job template:
+runtime, prompt, permissions, policy, budget scope, replicas as parallelism.
+ADR-010 already made a headless role a Job. A schedule is the one field that
+turns a Job into a CronJob. A new resource would duplicate the template, add a
+store bucket, a CLI verb set and a reference to keep valid, for no field the
+role cannot hold.
+
+**The cost, stated.** ADR-010 warned that mode-dependent semantics on `Role`
+may prove awkward, and that the successor is a distinct resource kind. A
+schedule adds one more mode dependency. Validation keeps it narrow: `schedule`
+is refused on a role that is not `mode = "headless"`. **Promotion trigger:**
+if a second schedule-only field lands that does not fit a role (for example,
+one schedule firing several roles), promote to a `Schedule` resource that
+references roles, and amend ADR-010 then.
+
+**How a firing becomes a run.** A new per-role store record holds the current
+firing id and its due time (the role spec at `internal/api/types.go:440` stays
+spec; this is status beside it, like `RoleHealth`). `OccupiesReplicaSlot` gains one rule:
+for a scheduled role, a `succeeded` session occupies a slot only if its
+`Firing` equals the role's current firing. So:
+
+1. The scheduler advances the firing (a new id, stamped at due time plus
+   jitter).
+2. Last firing's succeeded sessions stop occupying slots.
+3. The reconciler sees `desired > actual` and spawns, through the same path,
+   admission and launch as any role.
+4. The run exits. ADR-010 writes `succeeded`, the slot is satisfied until the
+   next firing.
+
+The scheduler writes one field; it never spawns. The reconciler stays the only
+thing that creates sessions.
+
+**The clock.** A ticker in the daemon, one per minute, beside the reconcile
+loop, not inside it. The next-due time per role is computed from `cron` and
+`timezone` and kept in the store, so a daemon restart recomputes it rather than
+forgetting it.
+
+## 3. Missed runs and overlap
+
+| Case | Behavior | Event |
+|---|---|---|
+| Firing due, previous run still live, `forbid` | not advanced; recorded | `schedule.skipped` reason `overlap` |
+| same, `replace` | previous run killed, new firing advanced | `schedule.replaced` |
+| same, `allow` | advanced; both run | `schedule.fired` |
+| Daemon was down, one or more firings due, newest within `starting_deadline` | **one** firing on recovery (launchd coalescing, systemd `Persistent`) | `schedule.fired` with `catch_up: true`, `missed: N` |
+| same, newest older than `starting_deadline` | none | `schedule.missed` with `missed: N` |
+| `suspend = true` | none | `schedule.suspended` once per change |
+| Run passes `active_deadline` | killed; `failed` | `run.deadline` |
+
+There is no backlog and no burst: a recovery produces at most one run. That is
+the property that matters for a shared account.
+
+## 4. Spend and admission
+
+- **Every firing is admitted.** It goes through the check `apply`, `scale` and
+  `run` already use, under a new trigger, `TriggerSchedule`. A refused firing
+  is recorded `schedule.skipped` reason `budget`, and it is not retried until
+  the next firing.
+- **Every run is bounded.** `active_deadline` is required, since a run with no
+  wall-clock bound is how a scheduled job spends overnight. A turn or token
+  cap, where a harness offers one, is a later addition; this design does not
+  assume one exists.
+- **Every run is metered.** Headless runs feed `internal/usage`, so the run
+  record carries its token total with the accountant's own flags (metered,
+  partial, suspect). No new meter.
+- **Usage limit and pauses (finding-056).** Scheduled seats were the ones that
+  ran into the account limit. When marvel gains a `limited` reading
+  (finding-050) or a declared pause (finding-056's proposal 3), a firing during
+  either is skipped with reason `limited` or `paused`, and the recovery rule in
+  section 3 applies at the end, so the pause produces at most one catch-up run.
+  Until those readings exist, `active_deadline` is the only bound: a run that
+  meets the limit waits inside the harness and is killed at its deadline.
+  Scheduled work is the first thing to shed, by design.
+
+## 5. Where results go
+
+- **The work product goes where the prompt puts it.** The board refresh posts
+  its own issue body. marvel does not collect, copy or forward it.
+- **marvel keeps a run record** per session: firing id, due and started times,
+  catch-up flag, exit status, duration, token total, and the stream's final
+  result message, truncated to 4 KiB. It lives in the local store, bounded by
+  `history`. `marvel describe team` (which exists; `describe` takes session,
+  team, workspace, endpoint and credential today) gains a schedule block per
+  scheduled role: the next due time and the history.
+- **What is never forwarded:** the result text. It may contain whatever the run
+  read, including a client's data. Reports carry pointers and status only
+  (section 6).
+
+## 6. How a run reports
+
+- **The event ring, always.** `schedule.fired`, `schedule.skipped`,
+  `schedule.missed`, `schedule.replaced`, `run.succeeded`, `run.failed`,
+  `run.deadline`, `schedule.stale`. Filterable by workspace, team and role like
+  every other kind.
+- **The bus, through marvel's own stream, when it exists.** aae-orc-aubd6
+  provisions EVENTS_MARVEL. Once it lands, the same kinds are mirrored there,
+  and director or a supervisor subscribes (7vw44 `subscribe_events`). marvel
+  does not publish into an agent inbox. It holds no agent address (R-94), and
+  a control plane writing mail in someone's name is the wrong shape.
+- **Optional `report_to`** on the schedule block names who should subscribe.
+  It is documentation until EVENTS_MARVEL exists, and a subscription filter
+  after.
+
+## 7. The freshness alarm (question-scheduled-cues, first piece)
+
+`stale_after` is required. When a schedule has no `succeeded` run newer than
+`stale_after`, marvel emits `schedule.stale` once per transition, and again
+when it recovers. It is an event, never a block (diagnostic-not-gate). The
+"last succeeded" time lives in the store with the history, so it survives a
+daemon restart.
+
+This alone would have surfaced the 19-hour gap the frontier node records, and
+the 57-hour envoy stall seen on 2026-09-28. It ships first (section 10).
+
+## 8. Authority and the classifier
+
+A scheduled run acts with no human watching. Its authority has to be fixed
+before it starts.
+
+- **Authority comes from the manifest, not the run.** The prompt, the
+  permission mode and the projected policy are role fields, applied by the
+  operator with `marvel work`. A run gets nothing from what it reads: issue
+  text, PR bodies and fetched pages are data (the upstream-claim and ae
+  quarantine rules).
+- **Outward writes are named.** The role's policy allowlist names the exact
+  commands a run may use to write outside the host (for the board refresh:
+  one `gh issue edit` on one repository, and a commit to its own fixture
+  path). Anything else is denied by the harness.
+- **No bypass.** Validation refuses `schedule` on a role with
+  `dangerous_permissions`, or with a permission mode that skips checks. A
+  scheduled run that needs a check skipped is a design problem to escalate,
+  not a flag to set.
+- **A refusal ends the run.** If the harness's permission check or classifier
+  denies an action, the run fails with the denial in its record, and the next
+  firing runs as declared. Nothing rewords and retries (no-control-bypass).
+- **Identity.** The run acts under whatever identity the role's environment
+  carries: a bot account for a public post, the operator's own credentials
+  otherwise (SOUL section 3). The schedule adds no credential and holds none.
+- **The report is not a GATE.** A run that finds something needing a human
+  decision records it in its result and ends. It does not wait for an
+  approval that nobody is watching for (vision Gap 1).
+
+## 9. Out of scope
+
+- **Cues into interactive seats.** A schedule starts a headless run; it does
+  not wake a live seat. A cue into a seat is a message, and it belongs to
+  director (7vw44 `set_timer`, or NATS scheduled messages on the bus).
+- **Multi-host placement** (aae-orc-7mz).
+- **A `scheduler` service class** (services-catalog idea). The daemon already
+  has a clock, a store and a reconciler; a separate service would add a
+  process and a credential path for nothing this design needs. Reopen it if
+  scheduling must survive the daemon being down.
+
+## 10. Edits, in order (none made by this PR)
+
+| # | Edit | Depends on |
+|---|---|---|
+| S-1 | `schedule` block parsed and validated (headless only, required fields, no bypass modes); refused otherwise | ratification (section 11) |
+| S-2 | Run record, history and `describe role`; `schedule.stale` from `stale_after` | S-1 |
+| S-3 | The clock: next-due in the store, firing advance, `OccupiesReplicaSlot` firing rule, overlap and recovery policy | S-1 |
+| S-4 | `TriggerSchedule` in admission; `active_deadline` kill | S-3 |
+| S-5 | Move the beadle board refresh onto a scheduled role; retire the session timer | S-4, and the refresh's own permission policy |
+| S-6 | Mirror the kinds to EVENTS_MARVEL | aae-orc-aubd6 |
+| S-7 | Skip on `limited` or `paused` | finding-050 reading, finding-056 proposal 3 |
+
+S-2 before S-3 is deliberate: the alarm is useful on its own and costs least.
+
+## 11. Rulings needed
+
+- **The resource-model change.** A `schedule` block on `Role` is a
+  resource-model change (ADR-003, ADR-010), so per ADR-007 it is ratified in
+  writing, as an ADR-010 amendment or a new ADR. Default: an ADR-010
+  amendment, since this extends its Job reading to CronJob.
+- **Interim for the board refresh.** Until S-5, the session timer expires
+  every seven days. Option A (default): renew it by hand on a calendar
+  reminder, and accept the risk until S-5. Option B: run the refresh from a
+  host timer (launchd) outside marvel, which survives respawn but is not
+  metered or admitted and lives on one host.
+- **Timezone.** Required with no default (proposed), or default to UTC.
