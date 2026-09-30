@@ -101,7 +101,7 @@ code:
 - **The migration takes its own backup.** The old binary refuses a newer
   store ("on-disk schema version 2 is newer than binary's 1",
   `bolt.go:120-123`), and `marvel upgrade` deletes the previous binary once
-  the new one is installed (`internal/upgrade/upgrade.go:327`), so nothing
+  the new one is installed (`internal/upgrade/upgrade.go:328`), so nothing
   else keeps a way back. SB-1 therefore owns the backup:
   - **When:** in the migrating `Open`, before the stamp pass, and only when
     the on-disk version is 1.
@@ -109,12 +109,21 @@ code:
     `<store>.v1.bak`, created `0600`, then fsync. If the backup cannot be
     written, `Open` fails and the store stays v1; the daemon never migrates
     without it. An existing `<store>.v1.bak` is never overwritten (the
-    no-deletion convention): the daemon refuses and names the file.
+    no-deletion convention). The daemon refuses to start and says how to
+    recover: "`<store>.v1.bak` exists beside a v1 store: a previous
+    migration was interrupted, or the file is a stale backup. Move it aside
+    and restart." The file is not trusted either way, since a crash may
+    have left it partly written; the operator keeps it until the new
+    migration's backup exists.
+  - **Retention:** marvel never removes `<store>.v1.bak`. It holds the same
+    records as the store (hence `0600`) and is the store's size. The
+    operator deletes it once SB-1 is confirmed and no rollback is wanted.
   - **Rollback, by the operator:** stop the daemon; install the prior
     release binary from its tag (the upgrade removed the local copy); move
     `<store>.v1.bak` over `<store>`; start the daemon. Records applied after
     the upgrade are lost by design and are re-applied from their manifests.
-  - The release note for SB-1 names the backup path and these steps.
+  - The release note for SB-1 names the backup path, these steps, the
+    interrupted-migration recovery line above, and the retention rule.
 - **Managed applies only to records created after SB-1.** A new team with no
   root gets rule 3. A re-apply of a legacy-stamped team that still names no
   root keeps the stamp, and the apply output says so ("placement: legacy
@@ -440,7 +449,10 @@ launch.
     a v1 store, and holds exactly the pre-migration records; with the backup
     write forced to fail, `Open` fails and the store is still v1 with nothing
     stamped; with a `<store>.v1.bak` already present, `Open` refuses and the
-    existing file is unchanged. Rollback: the v1 binary opens the restored
+    existing file is unchanged. Restart after a mid-pass failure (backup
+    written, stamp not committed): `Open` refuses with the interrupted-
+    migration message naming the file; after the file is moved aside, the
+    next start takes a fresh backup and migrates. Rollback: the v1 binary opens the restored
     backup and serves the original, unstamped records. A new
     team with no root, applied after the stamp, gets a managed directory. A
     re-apply of the stamped team with no root keeps X and reports it; with a
