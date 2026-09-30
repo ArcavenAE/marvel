@@ -61,7 +61,8 @@ type SchedulePolicy struct {
 	StaleAfter       time.Duration `json:"stale_after,omitempty"`
 	Retries          int           `json:"retries,omitempty"`
 	OnFailure        string        `json:"on_failure"`
-	// History is nil when the manifest set none; S-2 picks the default.
+	// History is always set on a parsed policy (default 3 and 3). A record
+	// written by an earlier build may carry nil.
 	History *ScheduleHistory `json:"history,omitempty"`
 	Suspend bool             `json:"suspend,omitempty"`
 }
@@ -127,6 +128,15 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 	if s.Retries < 0 {
 		return fmt.Errorf("%s: schedule.retries must be >= 0", where)
 	}
+	// Required: a run with no wall-clock bound is how a scheduled job
+	// spends overnight (design section 4), and a schedule with no freshness
+	// bound fails silently (section 7).
+	if s.ActiveDeadline == "" {
+		return fmt.Errorf("%s: schedule.active_deadline is required; it bounds each run's wall-clock time", where)
+	}
+	if s.StaleAfter == "" {
+		return fmt.Errorf("%s: schedule.stale_after is required; it raises schedule.stale when no run has succeeded for that long", where)
+	}
 	for _, d := range []struct{ name, value string }{
 		{"starting_deadline", s.StartingDeadline},
 		{"active_deadline", s.ActiveDeadline},
@@ -138,18 +148,27 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 		}
 	}
 	if h := s.History; h != nil {
-		if h.Succeeded < 0 {
-			return fmt.Errorf("%s: schedule.history.succeeded must be >= 0", where)
+		if h.Succeeded <= 0 {
+			return fmt.Errorf("%s: schedule.history.succeeded must be > 0 when set", where)
 		}
-		if h.Failed < 0 {
-			return fmt.Errorf("%s: schedule.history.failed must be >= 0", where)
+		if h.Failed <= 0 {
+			return fmt.Errorf("%s: schedule.history.failed must be > 0 when set", where)
 		}
 	}
 	return nil
 }
 
+// Defaults for what the design leaves open, ruled by the architect
+// 2026-09-30: unset history keeps this many runs of each outcome.
+const (
+	defaultScheduleHistorySucceeded = 3
+	defaultScheduleHistoryFailed    = 3
+)
+
 // policy converts a validated block. Defaults: concurrency forbid,
-// on_failure wait (design section 11).
+// on_failure wait and retries 0 (design section 11); history 3 and 3.
+// Unset jitter and starting_deadline stay zero: no delay, and no catch-up
+// of a missed firing (S-3 enforces that).
 func (s ManifestSchedule) policy() (*SchedulePolicy, error) {
 	p := &SchedulePolicy{
 		Cron:        s.Cron,
@@ -181,6 +200,7 @@ func (s ManifestSchedule) policy() (*SchedulePolicy, error) {
 		}
 		*d.dst = v
 	}
+	p.History = &ScheduleHistory{Succeeded: defaultScheduleHistorySucceeded, Failed: defaultScheduleHistoryFailed}
 	if s.History != nil {
 		p.History = &ScheduleHistory{Succeeded: s.History.Succeeded, Failed: s.History.Failed}
 	}
