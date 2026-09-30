@@ -166,6 +166,14 @@ reconciler spawns nothing more for the role until the next firing. Then
 firing runs as declared; `freeze` suspends the schedule until an operator
 clears it with `marvel reset-health <ws/team> --role <r>`.
 
+**A run that ends under a usage limit is not a failure** (#419 section 4a,
+settled jointly with this one). A run that ends while its account is
+`limited` is recorded with outcome `limited` and emits `run.limited`. It does
+not increment `attempts`, spends no retry, and never triggers `on_failure =
+"freeze"`. The firing waits: no retry spawns while the account is limited or
+the scope is paused, and after the clear #419's catch-up rule decides whether
+the firing still runs inside `starting_deadline`.
+
 The reap path does not charge a scheduled role's crash to its restart
 policy: `noteReapedCrash` and `applyRestartPolicy` skip scheduled roles, so
 `max_restarts` and `restart_policy` never turn a failure into a freeze
@@ -203,6 +211,7 @@ forgetting it.
 | `suspend = true` | none | `schedule.suspended` once per change |
 | Run passes `active_deadline` | killed; `failed` | `run.deadline` |
 | Run exits non-zero or crashes | `attempts` + 1; retried after backoff while `attempts <= retries` and inside `starting_deadline`; else the firing settles failed and `on_failure` applies (default `wait`: next firing runs as declared) | `run.failed`; `schedule.frozen` only under `freeze` |
+| Run ends while its account is `limited` (#419) | not a failure: `attempts` unchanged, no retry and no freeze; the firing waits for the clear, then #419's catch-up rule applies | `run.limited` |
 
 There is no backlog and no burst: a recovery produces at most one run. That is
 the property that matters for a shared account.
