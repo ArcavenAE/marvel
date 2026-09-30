@@ -54,9 +54,13 @@ environment. This design bounds a token's lifetime; it does not hide it.
 - `HeartbeatRevoked []RevokedToken`: `{Hash, RevokedAt, By}`, most recent
   first, capped at 8. Only hashes; the plaintext was never stored. The cap
   keeps the record small; a hash older than the cap reads as stale, which is
-  still a refusal.
+  still a refusal. Operator revocations only; rotations do not use it.
+- `HeartbeatPrevious string` (B-TTL): the one hash a rotation replaced. A
+  single slot, overwritten by the next rotation. Kept apart from
+  `HeartbeatRevoked` so rotations never crowd out revocations, and so
+  `describe` does not count a rotation as a revocation.
 
-An older binary reading the store ignores all three, so rollback is the
+An older binary reading the store ignores these fields, so rollback is the
 previous binary.
 
 ### 3.2 `marvel session revoke <workspace/name>`
@@ -85,6 +89,7 @@ confines `credential-push` keys to their own set, and revoke is not in it.
 | matches current hash | admitted | none | ok |
 | empty, record has a hash | refused | `heartbeat.refused` cause `no-token` (unchanged) | `ErrHeartbeatUnauthorized` |
 | matches a hash in `HeartbeatRevoked` | refused | `heartbeat.revoked` | `ErrHeartbeatRevoked` |
+| matches `HeartbeatPrevious` (B-TTL) | refused | none; not an orphan sighting | `ErrHeartbeatRotated` |
 | matches nothing known | refused | `heartbeat.stale` (was `heartbeat.refused` cause `stale-token`) | `ErrHeartbeatStale` |
 | record has no hash | admitted unbound | `heartbeat.unbound` (unchanged) | ok |
 
@@ -96,7 +101,7 @@ note in the PR says that `stale-token` moved to its own kind.
 Today the holder gets only `Response{Error: err.Error()}`, a string; nothing
 on the client side maps it back to a sentinel (`git grep
 ErrHeartbeatUnauthorized` finds no client use). So the heartbeat response
-gains a stable `code` field (`unauthorized`, `revoked`, `stale`,
+gains a stable `code` field (`unauthorized`, `revoked`, `rotated`, `stale`,
 `expired`) beside the message, and producers branch on the code, never on the
 text.
 
@@ -111,7 +116,7 @@ ship keeps retrying and keeps being refused, throttled, which is today's
 behavior.
 
 In B-TTL the producer reads the renewal file before every beat (section 4.3),
-and one rule covers every refusal: on `revoked`, `expired` or `stale`, re-read
+and one rule covers every refusal: on `revoked`, `rotated`, `expired` or `stale`, re-read
 the file once. If it yields a different token, retry with it; if it yields the
 same token, or the file is gone, stop as above. So a live seat survives an
 operator revoke and a rotation race, and a holder whose file is gone stops.
@@ -140,11 +145,30 @@ Never the token or any hash.
 The daemon re-mints each live session's token at half its TTL. It runs as its
 own ticker (every minute is enough), not inside the team controller's 2s
 reconcile (`internal/daemon/daemon.go:52`), which reads the whole process
-table and should not also write the store and the file tree. The daemon writes the new token to the renewal file first, then swaps the
-hash, and the old hash goes to `HeartbeatRevoked` with `By: "rotation"` (kept
-for `describe`, not for the producer). A beat that read the file just before
-the write presents the old token, is refused `revoked`, re-reads the file, and
-finds the new one (the 3.4 rule). There is no separate `rotated` outcome.
+table and should not also write the store and the file tree.
+
+**The order, and why it is this order.** Writing the file before the hash
+swap lets a beat that already read the new token reach the daemon while the
+store still holds the old hash; it is refused as stale, its re-read returns
+the same token, and a live seat stops (and is recorded as an orphan). Writing
+it after lets a beat carry the old token past the swap with no new file to
+find. So the two happen as one step under the store lock, the same lock
+`UpdateSessionHeartbeat` holds around `authenticateHeartbeat`:
+
+1. Outside the lock: mint the token and write it to a temp file beside the
+   renewal file.
+2. Under `s.mu`: move the current hash to `HeartbeatPrevious`, set the new
+   hash, persist the record, then rename the temp file into place. If the
+   persist fails, nothing is renamed and the in-memory record is restored. If
+   the rename fails, the persisted record is restored.
+3. Release the lock.
+
+No beat is authenticated between the swap and the rename, so a beat presents
+either the old token (refused `rotated`: the producer re-reads and finds the
+new one) or the new token (admitted). A crash between the persist and the
+rename leaves the file on the old token and the store on the new: the restart
+reconcile (4.3) compares the hash of each file's contents with the record and
+rotates again on any mismatch, before it admits beats.
 
 ### 4.3 The pane-scoped renewal file
 
@@ -172,7 +196,9 @@ finds the new one (the 3.4 rule). There is no separate `rotated` outcome.
   the run directory and reads another session's file; that is aae-orc-ww33y,
   out of scope here (section 2).
 - A daemon restart reconciles the directory tree against live sessions and
-  removes every directory the live records do not name, the same pass 5yqw3
+  removes every directory the live records do not name, and for every live
+  session compares the hash of its file's contents with the record, rotating
+  on any mismatch (the crash case in 4.2). This is the same pass 5yqw3
   plans for its user table. Before it admits any beat, the same pass rotates
   every live token already past half its TTL (or expired) and rewrites its
   file, so a daemon that was down longer than a token's remaining life does
@@ -180,20 +206,24 @@ finds the new one (the 3.4 rule). There is no separate `rotated` outcome.
 
 ### 4.4 Operator surface after B-TTL
 
-`marvel session revoke` now also rewrites the renewal file (file first, then
-the hash swap, as in 4.2). The live session reads the file before its next
-beat and presents the new token; a holder without the file (an orphan whose
-directory is gone) is refused `revoked`, re-reads, finds nothing new, and
+`marvel session revoke` now also rewrites the renewal file, in the same
+locked step as 4.2, except that the old hash goes to `HeartbeatRevoked`
+rather than `HeartbeatPrevious`. The live session reads the file before its
+next beat and presents the new token. A beat that read the old file just
+before the step is refused `revoked`, re-reads, finds the new token (the rename
+finished inside the lock) and retries. A holder without the file (an orphan
+whose directory is gone) is refused `revoked`, re-reads, finds nothing new, and
 stops. `--restart` stays available for the case where the operator does not
 trust the pane itself.
 
 ### 4.5 Renewal end to end, and a missed renewal
 
-- **Who renews, and when.** Only the daemon. At half the TTL it writes the new
-  token to the spawn's renewal file, then swaps the hash (4.2). The seat never
+- **Who renews, and when.** Only the daemon. At half the TTL it swaps the hash
+  and renames the new token into the spawn's renewal file as one locked step
+  (4.2). The seat never
   mints; its producer reads the file before every beat. No human step.
-- **A failed write.** The daemon swaps the hash only after the file write
-  succeeds. On a failed write it keeps the old hash, emits
+- **A failed write.** If the temp write, the persist or the rename fails, the
+  step is undone as a whole (4.2). The daemon keeps the old hash, emits
   `heartbeat.rotation-failed` (throttled like the other auth notices), and
   retries on the next rotation tick. The seat keeps beating on the old token
   until it expires.
@@ -229,13 +259,20 @@ trust the pane itself.
    an orphan of an earlier daemon at the same generation (the respawn minted a
    new spawn id). The second is the k58k case.
 8. B-TTL: a beat racing rotation is admitted after one file re-read, not
-   stopped.
+   stopped, and is not recorded as an orphan. Both interleavings: the beat
+   read the old file before the locked step (refused `rotated`, then
+   admitted), and the beat arrives after it (admitted). No interleaving
+   produces `stale` for a live seat.
 9. B-TTL: after `session revoke`, the live pane's next beat (reading the
    rewritten file) is admitted, and a holder of the old token without the file
    is refused `revoked` and stops.
 10. B-TTL: a daemon down past a token's remaining life rotates it at restart
     before admitting beats, so the live pane's first beat is admitted.
-11. B-TTL: a rotation whose file write fails keeps the old hash, emits
+11. B-TTL: a crash injected between the persist and the rename leaves the
+    file on the old token; the restart reconcile finds the hash mismatch and
+    rotates before admitting beats, and the live pane's next beat is
+    admitted.
+12. B-TTL: a rotation whose file write fails keeps the old hash, emits
     `heartbeat.rotation-failed`, and succeeds on a later tick; if the token
     expires first, the beat is refused `heartbeat.expired` and the session
     shows the `heartbeat expired` condition.
@@ -263,12 +300,12 @@ retires.
 |---|---|
 | The token, its hash, `MARVEL_HEARTBEAT_TOKEN` | thrown away |
 | `HeartbeatTTL`, rotation at half-life | thrown away: the certificate carries its own not-after, and removal-and-reload is its lifetime enforcement |
-| The renewal file and `MARVEL_HEARTBEAT_TOKEN_FILE` | thrown away |
+| The renewal file, `MARVEL_HEARTBEAT_TOKEN_FILE`, and `HeartbeatPrevious` | thrown away |
 | `HeartbeatRevoked` list of hashes | **reshaped**: removing the verify_and_map user line is the revocation, but on its own it makes a revoked certificate look the same as an unknown one. A revoked-serial list (certificate serials, not hashes, same cap) is kept so `revoked` stays distinct from `stale` |
 | `marvel session revoke` verb and its RPC scope | **kept**, re-pointed at removing the session's certificate user line and reloading |
 | Distinct outcomes `revoked`, `stale`, `expired`, `no-token`, and the 3.4 producer rule | **kept**, as certificate-verification outcomes; `revoked` depends on the revoked-serial list above |
 | `describe` `issued_at`, `generation`, `expires_at` | **kept**, filled from the certificate's not-before, serial generation, and not-after |
-| Generation-directory reconcile on daemon restart | **kept**, as the same pass 5yqw3 runs on its user table |
+| Spawn-directory reconcile on daemon restart | **kept**, as the same pass 5yqw3 runs on its user table |
 
 So roughly the operator surface and the event vocabulary carry over, and the
 bearer mechanics do not.
@@ -281,7 +318,7 @@ bearer mechanics do not.
 | HB-2 | `marvel session revoke` (with `--restart`) and its RPC; test 1 | HB-1 |
 | HB-3 | `describe session` heartbeat block; test 4 | HB-1 |
 | HB-4 | Producers stop on terminal outcomes; test 5 | HB-1 |
-| HB-5 | B-TTL: expiry, rotation, renewal file, restart reconcile, the missed-renewal path; tests 6 to 11 | HB-2, HB-4 |
+| HB-5 | B-TTL: expiry, rotation, renewal file, restart reconcile, the missed-renewal path; tests 6 to 12 | HB-2, HB-4 |
 
 marvel-builder builds only after this design is reviewed.
 
