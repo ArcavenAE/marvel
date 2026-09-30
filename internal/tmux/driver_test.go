@@ -642,8 +642,17 @@ func TestPaneStatusCarriesExitStatusForKeptWindow(t *testing.T) {
 		t.Fatalf("new pane (kept): %v", err)
 	}
 	st := waitPaneStatus(t, d, kept, func(s PaneStatus) bool { return s.Dead })
-	if !st.Exists || !st.Dead || st.ExitStatus != "3" || !st.Created {
-		t.Fatalf("kept pane status = %+v, want exists, dead, exit 3, created", st)
+	if !st.Exists || !st.Dead || !st.Created {
+		t.Fatalf("kept pane status = %+v, want exists, dead, created", st)
+	}
+	switch {
+	case st.ExitStatus == "3":
+	case st.ExitStatus == "" && tmuxLosesExitStatus(t):
+		// The PaneStatus contract: below tmux 3.5 an empty status is
+		// UNKNOWN, lost for good in a share of runs, not late (marvel#424).
+		t.Logf("tmux below 3.5 lost the kept pane's exit status; empty reads as unknown")
+	default:
+		t.Fatalf("kept pane exit status = %q, want 3", st.ExitStatus)
 	}
 	if d.HasPane(kept) {
 		t.Fatalf("HasPane(%s) = true for a dead pane; liveness must read pane_dead", kept)
@@ -673,6 +682,67 @@ func TestPaneStatusCarriesExitStatusForKeptWindow(t *testing.T) {
 	}
 	if !d.HasPane(live) {
 		t.Fatalf("HasPane(%s) = false for a live pane", live)
+	}
+}
+
+// tmuxLosesExitStatus reports whether the installed tmux is older than 3.5,
+// where a finished pane's pane_dead_status can be lost for good (the
+// PaneStatus type comment; 30 of 100 runs on 3.4, marvel#424). A version it
+// cannot parse counts as recent, so an unknown build keeps the strict check.
+func tmuxLosesExitStatus(t *testing.T) bool {
+	t.Helper()
+	out, err := exec.Command("tmux", "-V").Output()
+	if err != nil {
+		t.Fatalf("tmux -V: %v", err)
+	}
+	major, minor, ok := parseTmuxVersion(string(out))
+	if !ok {
+		return false
+	}
+	return major < 3 || (major == 3 && minor < 5)
+}
+
+// parseTmuxVersion reads the major and minor numbers from `tmux -V` output
+// such as "tmux 3.4", "tmux 3.5a" or "tmux next-3.6".
+func parseTmuxVersion(v string) (major, minor int, ok bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "tmux "))
+	v = strings.TrimPrefix(v, "next-")
+	maj, rest, found := strings.Cut(v, ".")
+	if !found {
+		return 0, 0, false
+	}
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	major, errMaj := strconv.Atoi(maj)
+	minor, errMin := strconv.Atoi(rest[:end])
+	if errMaj != nil || errMin != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+func TestParseTmuxVersion(t *testing.T) {
+	cases := []struct {
+		in           string
+		major, minor int
+		ok           bool
+	}{
+		{"tmux 3.4\n", 3, 4, true},
+		{"tmux 3.5a", 3, 5, true},
+		{"tmux 3.7b\n", 3, 7, true},
+		{"tmux 3.0a", 3, 0, true},
+		{"tmux next-3.6", 3, 6, true},
+		{"tmux 2.9", 2, 9, true},
+		{"tmux master", 0, 0, false},
+		{"", 0, 0, false},
+	}
+	for _, c := range cases {
+		major, minor, ok := parseTmuxVersion(c.in)
+		if major != c.major || minor != c.minor || ok != c.ok {
+			t.Errorf("parseTmuxVersion(%q) = %d, %d, %v; want %d, %d, %v", c.in, major, minor, ok, c.major, c.minor, c.ok)
+		}
 	}
 }
 
