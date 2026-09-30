@@ -70,23 +70,41 @@ Resolution, first match wins:
    trust entry; that is fine for trust, but two interactive seats there also
    share any project-scoped state the harness writes into it.
 
-**Root-less fleet manifests move unless they declare a root first.** Today a
-manifest with no `workspace.root` and no `workdir` places its seats in the
+**Existing root-less records keep their place (the legacy stamp).** Today a
+team with no `workspace.root` and no `workdir` places its seats in the
 daemon's cwd, which for the fleet is the orc root. Every current fleet manifest
 on kinu is that shape (`~/.marvel/manifests`, 11 of 11 `.toml` files carry no
-`root` or `workdir` key; the reviewer reports the same for the mokuzai
-manifests). Under rule 3 each of those seats would move to a managed
-directory, away from the orc root and its project `CLAUDE.md`. So SB-7a
-declares a `workspace.root` or `workdir` in every such fleet manifest, and
-SB-1 does not land until SB-7a has.
+`root` or `workdir` key; the reviewer reports the same for mokuzai, where some
+teams were reconstructed from the live daemon and have no file at all). Rule 3
+reads the daemon's persisted team record, not the file, so ordering manifest
+edits before SB-1 cannot prevent the move: the first respawn after the SB-1
+daemon starts would relocate those seats whatever the files say. The fix is in
+code:
 
-The daemon's own directory is never a result. The tmux session itself is
+- **Stamp once, at first start.** When the SB-1 daemon first opens a store
+  written by an earlier version (a store version marker, set after the pass),
+  it stamps every existing team record that resolves no root with
+  `WorkDir = <the daemon's cwd at that start>` and `WorkDirSource = legacy`,
+  and emits one `placement.legacy-stamped` event per team. The stamp is
+  persisted, so later restarts from any cwd keep it.
+- **Managed applies only to records created after SB-1.** A new team with no
+  root gets rule 3. A re-apply of a legacy-stamped team that still names no
+  root keeps the stamp, and the apply output says so ("placement: legacy
+  daemon cwd; declare a root"). A re-apply that declares a root replaces the
+  stamp.
+- **SB-7a becomes cleanup, not a precondition.** Each root-less fleet manifest
+  is edited to declare its root **and re-applied on each cluster that runs
+  it**; a team with no file is re-applied from a manifest written for it.
+  Until then its seats stay where they are.
+
+The daemon's own directory is never a result for a record created after SB-1;
+a legacy stamp is the one exception, and it names itself. The tmux session itself is
 created with `new-session -c <StateDir>/seats`, so even the base pane is off
 the daemon's cwd, and `new-window -c <dir>` places each seat (the spawn
 wiring in aae-orc-5as2e, extended with the managed fallback).
 
 The session records `WorkDir` and `WorkDirSource` (`role`, `team`, `root`,
-`run`, `managed`).
+`run`, `managed`, `legacy`).
 
 ## 4. Which settings apply, and whose
 
@@ -176,7 +194,7 @@ visible and reviewed with the rest of that command line.
 |---|---|---|---|
 | Local send and receive | `DIRECTOR_AGENT_ID`, `DIRECTOR_WORKSPACE`, `DIRECTOR_TEAM`, `NATS_URL`, and broker credentials when the broker requires them | marvel's `baseEnv` sets all of these (`internal/runtime/adapter.go:323-358`); the file carries `command` and `args` only | works **if** Claude Code hands its process environment to a stdio MCP child. **Not shown yet**: the mokuzai seats authenticate, but `director-mcp-seat` falls back to the seat's own credentials, so that does not prove inheritance; on kinu my own seat's environment carries no broker credentials. SB-0 line 11 tests it |
 | `role://` delivery | `DIRECTOR_ROLE`: the shim subscribes to the role subject only when it is set (director `probe/nats-phase-0/director-mcp/bus.go:234-235`) | **not set by marvel today**; `cast-launch.sh` sets it | **breaks**: messages to `role://<team>/<role>` would not reach the seat. SB-4 adds `DIRECTOR_ROLE` to `baseEnv` |
-| Placement of seats whose manifest names no root | the orc root as cwd, so the project `CLAUDE.md` and the tracked settings load | rule 3 would give a managed directory | **moves** unless SB-7a declares a root first; SB-1 waits on SB-7a, and SB-0 line 12 re-applies one such manifest |
+| Placement of seats whose manifest names no root | the orc root as cwd, so the project `CLAUDE.md` and the tracked settings load | rule 3 would give a managed directory | **stays**: SB-1 stamps each existing root-less record `legacy` with the daemon's cwd at first start, so no seat moves; only teams created after SB-1 get a managed directory. SB-0 line 12 checks both a never re-applied record and a re-applied one |
 | Global address | `DIRECTOR_GLOBAL_DOMAIN`, `DIRECTOR_CLUSTER`, `DIRECTOR_GLOBAL_ROLE`; unset means the global tier is off (`global.go:78`) | not set by marvel (`cast-aae.sh:14-17` says marvel does not pass them through) | off. Correct for most roles (R-94 gives global addresses to supervisors only). A supervisor keeps the wrapper until marvel carries the global levers, which is out of scope here |
 
 So nothing breaks for seats launched as they are today. A bare-claude seat
@@ -206,13 +224,19 @@ out until every line passes or is ruled acceptable:
    status recorded (SB-3).
 10. Placement: the pane's cwd is the managed or declared directory, and no
     trust dialog appears.
-11. Env inheritance: in the projected seat, with the seat-credential fallback
-    unavailable to the child, the `director-mcp` child authenticates with the
-    `DIRECTOR_NATS_*` values marvel injected. A child that authenticates only
-    through the fallback is a fail for this line.
-12. A root-less manifest: re-apply one existing fleet manifest that had no
-    root before SB-7a (now carrying its declared root). The pane's cwd is that
-    root, and the project `CLAUDE.md` loads (the seat can name a rule from it).
+11. Env inheritance, by what the fallback would change: the seat appears in
+    `list_roster` under its session name, not the fallback id
+    `director-seat`, and the broker's connection list shows its
+    `director-mcp` child connected as the session's own broker user, not the
+    seat user `director` (the launcher's own diagnostic,
+    `director-mcp-seat:48-49`). Either fallback sign is a fail. The seat's
+    environment is not altered for the test.
+12. Placement of existing records, two cases. (a) A team applied before SB-1
+    and never re-applied: after the SB-1 daemon starts and the seat respawns,
+    its record reads `WorkDirSource = legacy`, the pane's cwd is the orc
+    root, and the project `CLAUDE.md` loads (the seat can name a rule from
+    it). (b) The same team re-applied with a declared root: the pane's cwd is
+    that root, `WorkDirSource = root`, and `CLAUDE.md` still loads.
 13. Links at exit: when the probe seat exits, every `LinkIn` entry in its
     home is still a symlink to the operator's file; record any that is not.
 
@@ -332,8 +356,10 @@ server configured) logs and continues, as the codex seed does today.
   seeds trust for the directory it placed the seat in, under settings it
   chose, and does not claim anything about other directories.
 - Decision 3's refusal of a manifest with no `workspace.root`: unchanged for
-  `marvel work`, which always fills it. A raw API apply or an older record
-  with no root gets a managed directory instead of the daemon's cwd.
+  `marvel work`, which always fills it. A raw API apply with no root, for a
+  team created after SB-1, gets a managed directory instead of the daemon's
+  cwd. A record that existed before SB-1 keeps the daemon's cwd as a `legacy`
+  stamp (section 3).
 
 ## 8. What the session records
 
@@ -375,13 +401,21 @@ launch.
    regular file. A link replaced during a session is reported at its exit.
 9. A headless claude run gets placement and settings sources and no seeded
    home.
+10. The legacy stamp: a store written by the previous version holds a team
+    with no root; the SB-1 daemon starts from directory X, stamps it
+    `WorkDir = X`, `WorkDirSource = legacy`, and emits one
+    `placement.legacy-stamped`; the respawned seat's pane cwd is X. Restarting
+    the daemon from directory Y leaves the stamp at X and emits nothing. A new
+    team with no root, applied after the stamp, gets a managed directory. A
+    re-apply of the stamped team with no root keeps X and reports it; with a
+    declared root, the stamp is replaced.
 
 ## 10. Edits, in order (none made by this PR)
 
 | # | Edit | Depends on |
 |---|---|---|
-| SB-7a | Every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) | none |
-| SB-1 | Managed directory fallback; `new-session -c`; `WorkDirSource` | aae-orc-5as2e, SB-7a |
+| SB-1 | Managed directory fallback for records created after SB-1; the one-time `legacy` stamp of existing root-less records; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
+| SB-7a | Cleanup: every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) and is re-applied on each cluster that runs it; a team with no file gets a manifest | SB-1 |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run) | none |
 | SB-4 | claude `Bootstrapper`: private home, trust and onboarding seed, MCP projection for bare claude only, `DIRECTOR_ROLE` in `baseEnv` | SB-3 green, SB-1 |
@@ -391,9 +425,9 @@ launch.
 | SB-0 | Rollout probe: one bare-claude seat, the section 4a checklist, a written pass or fail per line | SB-1, SB-2, SB-4 or SB-4F |
 | SB-7 | Fleet and example manifests declare `settings_sources` (for wrapped roles, inside `cast-launch.sh`, a director PR), and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2, SB-0 passed |
 
-The shortest path to an unblocked step 0 is SB-7a, SB-1, SB-2, SB-3 and then
-SB-4 or SB-4F. SB-7a comes first because SB-1 would otherwise move every
-root-less fleet seat out of the orc root.
+The shortest path to an unblocked step 0 is SB-1, SB-2, SB-3 and then SB-4 or
+SB-4F. SB-1 carries its own guard (the `legacy` stamp), so no host state has to
+change first.
 
 ## 11. Rulings needed
 
