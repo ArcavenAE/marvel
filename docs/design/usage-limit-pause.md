@@ -54,11 +54,14 @@ is the separation `ctxforward.go` asked for.
   `rate_limits` record in the rollout log (finding-050). No refusal text is
   parsed.
 - **Storage.** In memory, per key: the newest reading and its provenance. A
-  reading older than 15 minutes shows as `stale`, never as a number.
+  reading older than 15 minutes shows as `stale`, never as a number. The
+  provenance a condition relies on is copied onto the session with the
+  condition (section 3), so it survives a daemon restart without the reading.
 - **Where it shows.** The budget view already renders one row per dimension
   (`cmd/marvel/main.go:2885`). It gains one row per account and window:
   dimension `account_window`, observed `used_percent`, the window's reset as a
-  short remaining time, and the provenance in the note. Registered, not
+  short remaining time, and the provenance in the note. An account belongs to
+  no workspace or team, so those two cells read `-`. Registered, not
   enforced: it informs, it does not gate (diagnostic-not-gate).
 - **Custody.** The reading is a number the harness already computed from
   response headers. No credential moves (finding-050 section 1).
@@ -79,6 +82,11 @@ A session is `limited` when either holds:
 It clears at the window's `resets_at`, or earlier when a newer reading for its
 account is below 100.
 
+The session stores the condition with its provenance: the window, `resets_at`,
+the reporting session and the reading time. After a daemon restart the
+condition still clears at `resets_at`, and `describe` still names where it
+came from, though the in-memory reading is gone.
+
 `limited` is a condition, not a state: `State` stays `running`, and
 process-alive health is untouched. It is stored beside `ActivityState`, with
 the same restart-neutral rule: it never triggers a restart, a kill or a
@@ -88,7 +96,9 @@ shift.
 
 - **`get sessions`:** the `STATE` cell reads `limited` in place of `running`
   while the condition holds. Seven characters, the same width as `running`. No
-  until-time, no reason.
+  until-time, no reason. Stated cost: a script that filters the table on
+  `running` misses a limited seat. The JSON form keeps `state` (`running`) and
+  `condition` (`limited`) as separate fields, and scripts should read that.
 - **`describe session`:** `Condition: limited until 2026-09-30T21:00Z (five_hour
   window at 100%, account <name>, reading from <session> at <time>)`.
 - **The event ring:** `session.limited` and `session.unlimited`, once per
@@ -103,7 +113,7 @@ A **Pause** is a record in the store, not a manifest resource:
 | `scope` | `fleet`, or a `workspace/team` |
 | `by` | who declared it (the RPC caller's key fingerprint) |
 | `reason` | free text |
-| `until` | `reset` (the scoped accounts' latest `resets_at`), an explicit time, or empty |
+| `until` | `reset`, an explicit time, or empty. `reset` is resolved once, at declaration, to the latest `resets_at` among the scoped accounts' fresh readings, and stored as a time. With no fresh reading, `--until reset` is refused, so a pause never waits on a reading that has gone stale |
 | `hold` | true means it does not end by itself |
 
 Verbs: `marvel pause <scope> --reason ... [--until reset|<time>] [--hold]`,
@@ -112,8 +122,8 @@ Verbs: `marvel pause <scope> --reason ... [--until reset|<time>] [--hold]`,
 **While a pause holds:**
 
 - admission refuses growth in its scope (new spawns from apply, scale, run,
-  shift and reconcile), except repair of a slot a crash emptied; the refusal
-  names the pause;
+  shift and reconcile), except repair of an interactive seat's slot a crash
+  emptied; the refusal names the pause. Headless repair is held (section 4a);
 - automatic shifts in its scope do not start;
 - scheduled firings in its scope are skipped with reason `paused` (#415
   section 3, which then allows at most one catch-up run after the lift);
@@ -130,6 +140,32 @@ auto-lift the operator approved. With `hold` true, marvel emits
 (ADR-007: marvel proposes, the operator decides). A lift always emits one
 event, so a director relay can tell seats "lifted" from a record rather than
 from memory, which is the gap finding-056 measured.
+
+### 4a. A headless run that ends under a limit or a pause
+
+A headless run already in flight when its account becomes `limited` either
+exits non-zero or is killed at its `active_deadline`. Today the reap path
+would mark it `crashed`, refill it through `noteReapedCrash`
+(`internal/team/controller.go:638`), and charge a restart, and the refill
+fails the same way on the same account until `max_restarts` freezes the role
+(with `restart_policy = never`, on the first). Two rules close that:
+
+1. **Held repair.** While a headless role's account is `limited`, or its scope
+   is paused, the reconciler spawns no repair for it. The slot stays empty and
+   the ended run keeps its record. When the condition clears or the pause
+   lifts, one repair spawn is admitted as usual. The pause's repair exemption
+   is for interactive seats only.
+2. **No charge.** A headless run that ends while its account is `limited` is
+   recorded with outcome `limited`, emits `run.limited`, and is not charged:
+   it adds nothing to the restart count, cannot saturate `max_restarts`, and
+   never freezes the role, whatever `restart_policy` says. "Ends while
+   limited" is decided at reap time from the account's condition, or from the
+   run's own limit report once UL-3 recognizes one.
+
+For a scheduled role, #415 applies the same two rules to its firing record: a
+run that ends while limited spends no retry and never triggers `on_failure =
+"freeze"`; the firing waits, and section 5's catch-up rule decides whether it
+runs after the clear.
 
 **Automatic pauses: not in this design.** marvel does not declare a pause on
 its own when a reading reaches 100%. Whether to pause at a threshold is the
@@ -166,6 +202,15 @@ doc supplies them.
    (joins #415's tests).
 9. The heartbeat RPC still carries no account fields (a guard on the
    separation).
+10. A headless role with `max_restarts = 1` whose run exits non-zero while its
+    account is `limited`: no repair spawns until the clear, the restart count
+    stays 0, the role is not frozen, and `run.limited` is emitted once; after
+    the clear exactly one repair spawns.
+11. The same with `restart_policy = never`: not frozen.
+12. A paused scope admits repair of an interactive seat and holds repair of a
+    headless role.
+13. `--until reset` with no fresh reading is refused; with one, the stored
+    `until` does not move when a later reading arrives.
 
 ## 7. Edits, in order (none made by this PR)
 
@@ -176,6 +221,7 @@ doc supplies them.
 | UL-3 | The `limited` condition, its column cell, describe line and events | UL-1 |
 | UL-4 | The Pause record, verbs, admission refusal, shift suppression, lift and proposal events | none |
 | UL-5 | Scheduled-run skip reasons | UL-3, UL-4, #415's S-3 |
+| UL-6 | Held headless repair and the uncharged `limited` outcome (section 4a) | UL-3, UL-4 |
 
 ## 8. Open questions
 
