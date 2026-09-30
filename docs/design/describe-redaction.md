@@ -8,7 +8,7 @@ Design for review. No code lands until this doc is reviewed.
   be treated as a separate item".
 - Precedents: `HeartbeatToken` (`internal/api/types.go:286-293`) and
   `Credential.Value` (`:680-707`), both kept off every wire surface.
-- Checked against marvel `origin/main` 4b2fd5c.
+- Checked against marvel `origin/main` 4b2fd5c; citations re-checked on 12b08d0.
 
 ## 1. The problem, verified
 
@@ -16,6 +16,7 @@ Design for review. No code lands until this doc is reviewed.
 |---|---|---|
 | describe marshals the stored record whole | `handleDescribe`, `internal/daemon/daemon.go:1332` (`json.Marshal(result)` for session, team, workspace, endpoint, credential) | true |
 | get does the same for lists | `handleGet`, `daemon.go:1248` (`ListSessions`, `ListTeams`, ...) | true |
+| plan does it too | `handlePlan`, `daemon.go:1318`, marshals `RolePlan.Delete []api.Session` (`internal/team/controller.go:993`) | true: a verb-by-verb fix would miss it |
 | `Env` and `Runtime` carry no json tag | `types.go:189`, `:214` | true: every declared Env value, every Args entry and the Prompt go out on get and describe, for sessions and for teams' roles |
 | Every seat can call those methods | `MARVEL_SOCKET` is in every seat's environment (`internal/runtime/adapter.go:358`, `internal/session/manager.go:1194`), and the local socket caller is admin (`internal/daemon/scope.go:17-19`) | true: any seat can read any other seat's declared Env |
 | A json tag is not the fix | the bolt store encodes records with the same `encoding/json` (`internal/api/bolt.go:285`) | true: `json:"-"` on `Env` would drop it from the durable record, and a restarted daemon would respawn roles without their Env |
@@ -30,9 +31,20 @@ happens daemon-side, once, at the RPC boundary, so no client (local socket,
 `mrvl://`, a seat, the CLI) can receive a value it was not meant to have. The
 store and bolt are unchanged.
 
-A `wireView` function projects each record type before it is marshalled for
-`get`, `describe` and `get -w`. The same view serves every transport. Nothing
-downstream of the view can reconstruct a value.
+**By record type, not by verb.** Records leave the daemon through more
+methods than get and describe: `plan` returns whole sessions in each role's
+`Delete` list (`handlePlan`, `internal/daemon/daemon.go:1318`; `RolePlan.Delete
+[]api.Session`, `internal/team/controller.go:993`), and a later method could do
+the same. So the redaction is not attached to verbs. Every successful response
+passes through one function at the dispatch boundary (`dispatchAs`,
+`daemon.go:863`) before it is written, and that function redacts every
+`api.Runtime` it finds, at any depth, whichever method built the response.
+The simplest form: handlers return values rather than pre-marshalled bytes,
+and the boundary marshals a redacted copy. A handler that still returns bytes
+is converted, not exempted.
+
+The same boundary serves every transport. Nothing after it can reconstruct a
+value.
 
 ## 3. Which fields, and what shows in their place
 
@@ -72,8 +84,20 @@ rest. A manifest can instead name where a value comes from:
 - `file:` reads the file at spawn; `env:` reads the daemon's own environment
   at spawn.
 - The reference is stored and shown; the value is resolved into the pane's
-  environment at launch and is never stored, logged, emitted or put on the
-  wire.
+  environment at launch and is never stored in marvel's store, logged,
+  emitted or put on the wire.
+- **What `env_from` does not hide.** At launch every Env value, resolved or
+  literal, is passed to tmux as `new-window -e K=V`
+  (`internal/tmux/driver.go:317-318`). It sits on that tmux client's argv,
+  visible to `ps` for the call's lifetime, and in the window's environment
+  afterwards. That is the finding-020 class named in section 8. `env_from`
+  keeps values out of the record, not out of process listings. The error path
+  is clean: `NewPane` reports tmux's output, not its argv (`:322-324`).
+- **`env_from` does not widen reach.** Only an admin caller can apply a
+  manifest, and an admin caller can already read daemon-host files through
+  `inject` and `capture`; a `credential-push` key cannot apply
+  (`internal/daemon/scope.go`). A `file:` reference is not a new remote file
+  read.
 - A reference that cannot be resolved refuses the spawn with
   `session.env-unresolved` naming the key and the reference, never a value,
   and is not charged to the restart policy.
@@ -103,9 +127,12 @@ work` output. Keys and reference strings may. This is already true on main
 3. The same over an `mrvl://` client.
 4. After a daemon restart the respawned session's pane still has `K=canary-1`
    (the store kept it).
-5. A canary sweep: apply, spawn, describe, get, a failed apply, and a spawn
-   refusal; grep the event ring, the daemon log ring and every response for
-   the canary. Zero hits.
+5. A canary sweep over every method in the dispatch table: with a canary
+   role applied and running, call each method with valid params (including
+   `plan` for a scale-down to 0, whose `Delete` list carries the session) and
+   with invalid params; also a failed apply and a spawn refusal. Grep every
+   response, the event ring and the daemon log ring for the canary. Zero hits.
+   A method added later without a sweep entry fails the test.
 6. `env_from` `file:` and `env:` resolve into the pane; the value is absent
    from the bolt file (read the raw bytes) and from every surface in test 5.
 7. An unresolvable `env_from` refuses with `session.env-unresolved`, restart
@@ -130,7 +157,7 @@ work` output. Keys and reference strings may. This is already true on main
 
 | # | Edit | Depends on |
 |---|---|---|
-| RD-1 | `wireView` for sessions and teams on get, describe and watch; Env values `(redacted)` | none |
+| RD-1 | Redaction at the dispatch boundary for every response, by record type (`api.Runtime` at any depth); handlers return values; Env values `(redacted)` | none |
 | RD-2 | Canary sweep test over ring, log, errors and responses (test 5) | RD-1 |
 | RD-3 | `env_from` with `file:` and `env:`, resolution at spawn, refusal event | RD-1 |
 | RD-4 | Apply-time warning for secret-looking Args | none |
