@@ -53,7 +53,13 @@ which fits a separate account (seat mapping inferred).
 
 ## 1. How well do we recover today: C overall
 
-Graded per phase. MEASURED unless marked.
+Graded per phase. MEASURED unless marked. Measurements come from the
+research seat's reading of the bus, the hub monitor, the daemon log and
+the handoff files. Its working notes are not committed, so the counts
+below (handoffs within 90 s, bus sequence gaps, per-seat replay counts,
+gate wait times) are as reported by arcaven-research-supervisor-g5-0 and,
+for the E8 replays, arcaven-supervisor-g5-0. The code claims were
+re-read by this seat on main.
 
 - **Survival: A.** Sessions and their conversation context survived because
   the harness waited at its prompt. 25 of 31 seats handed off within about
@@ -82,7 +88,7 @@ Codex seats, on another account, lost only the order's time.
   limit (bus silence 3995 to 4096, 27h54m). Five GATEs waited 27h28m to
   28h04m; director#160 was not forwarded until re-asked.
 - **Beats and sweeps.** Missed beats were reported only afterwards, by the
-  seats themselves. About 27 hourly e98-envoy sweeps and several arcaven
+  seats themselves. About 27 hourly sweeps by a client team's envoy and several arcaven
   sweeps were skipped with no catch-up.
 - **Handoffs.**
   - Keyed to names, not slots. builder-g5-0 wrote its handoff at 23:55:35Z;
