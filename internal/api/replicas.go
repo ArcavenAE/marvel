@@ -8,9 +8,9 @@ import "fmt"
 // the daemon, and because the count was stored first the next daemon
 // panicked again at its first reconcile (marvel#365).
 //
-// Whether zero is legal is an open question (marvel#335); the manifest
-// parser still requires at least 1. When that is ruled, this constant is
-// the one place scale's lower bound changes.
+// Zero is legal desired state: it parks the role (marvel#335). The
+// manifest parser and marvel scale share this bound through
+// ValidateReplicas, so the two doors cannot disagree again.
 const MinScaleReplicas = 0
 
 // ValidateReplicas refuses a replica count below MinScaleReplicas, naming

@@ -11,7 +11,7 @@ import (
 // handleApply produced "parse manifest: parse manifest: <rule>". The rule
 // still has to reach the operator; only the doubled prefix is a defect.
 func TestHandleApplyDoesNotDoublePrefixParseError(t *testing.T) {
-	// A YAML manifest with a validation error (replicas must be >= 1). The
+	// A YAML manifest with a validation error (negative replicas). The
 	// masking fix (PR #101) already routes this to the real rule; this test
 	// covers the formatting of that error, not the routing.
 	const badYAML = `
@@ -21,7 +21,7 @@ teams:
   - name: crew
     roles:
       - name: crew
-        replicas: 0
+        replicas: -1
         runtime:
           command: sleep
 `
@@ -29,9 +29,9 @@ teams:
 	resp := applyManifest(t, d, badYAML)
 
 	if resp.Error == "" {
-		t.Fatal("expected a parse error for replicas: 0, got none")
+		t.Fatal("expected a parse error for replicas: -1, got none")
 	}
-	if !strings.Contains(resp.Error, "replicas must be >= 1") {
+	if !strings.Contains(resp.Error, "is below the minimum of 0") {
 		t.Errorf("error = %q, want it to name the broken rule", resp.Error)
 	}
 	if strings.Contains(resp.Error, "parse manifest: parse manifest:") {

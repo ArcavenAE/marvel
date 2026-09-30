@@ -100,8 +100,9 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	copy(args, ctx.Session.Runtime.Args)
 
 	// Point claude at the projected policy settings file when marvel wrote
-	// one for this launch. Claude Code re-reads it mid-session, so a later
-	// re-projection changes the running agent's contract without a restart.
+	// one for this launch. A later re-projection rewrites the file live, but
+	// its permissions take effect on the next spawn; a running session keeps
+	// the permissions it started with (marvel#313).
 	if ctx.PolicyProjectionPath != "" {
 		args = append(args, "--settings", ctx.PolicyProjectionPath)
 	}

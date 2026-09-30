@@ -281,7 +281,7 @@ demo-act2: build _require-daemon
     @echo "  ./bin/marvel inject mixed/matrix-analyst-t-g1-0 'say only the word ready' -e"
     @echo "  ./bin/marvel get sessions   # -p rows: stream accountant · -t row: statusline feed"
 
-# Act 3 — Control plane: project a policy, then re-project live with no restart
+# Act 3 (Control plane): project a policy, then re-project it; permissions take effect on next spawn (marvel#313)
 demo-act3: build _require-daemon
     @echo "==> Act 3 (Control plane). Projecting reviewer-contract v1..."
     @echo "    Needs the claude binary on PATH (auth not required for the projection events)."
@@ -292,7 +292,7 @@ demo-act3: build _require-daemon
     ./bin/marvel get policies
     ./bin/marvel events --kind policy.projected
     @echo ""
-    @echo "Now swap to v2 and watch the running agent's contract change with no restart:"
+    @echo "Now swap to v2 and watch the file re-project live (permissions take effect on next spawn, marvel#313):"
     @echo "  ./bin/marvel work examples/policy-projection-v2.toml"
     @echo "  ./bin/marvel get policies                    # VERSION now 2"
     @echo "  ./bin/marvel events --kind policy.projected  # second event: re-projected after manifest change"

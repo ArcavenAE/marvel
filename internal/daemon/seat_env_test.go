@@ -31,10 +31,9 @@ func TestSeatUnderDirtyDaemonIsCleanAndHeartbeats(t *testing.T) {
 	}
 	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
 	// A fresh server, so the dirty daemon is the process that starts it.
-	t.Setenv("MARVEL_TMUX_SOCKET", fmt.Sprintf("marvel-test-seatenv-d-%d", os.Getpid()))
+	useFreshTmuxServer(t, fmt.Sprintf("marvel-test-seatenv-d-%d", os.Getpid()))
 
 	d := newHandlerDaemon(t)
-	t.Cleanup(func() { _ = d.driver.KillServer() })
 	for _, n := range api.InheritedSessionEnv {
 		if _, ok := os.LookupEnv(n); ok {
 			t.Errorf("daemon still carries %s after start", n)

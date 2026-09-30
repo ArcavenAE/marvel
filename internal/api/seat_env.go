@@ -43,6 +43,9 @@ var InheritedSessionEnv = []string{
 	// Parent-session identity: a seat is its own session, never a child
 	// of the process that happened to start the daemon.
 	"CLAUDE_CODE_SESSION_ID",
+	// Set on a session reached through a bridge (observed on a live daemon,
+	// kinu 2026-09-28); names the parent session, so it is identity too.
+	"CLAUDE_CODE_BRIDGE_SESSION_ID",
 	"CLAUDE_CODE_CHILD_SESSION",
 	"CLAUDE_CODE_SESSION_ATTENDED",
 	"CLAUDE_CODE_ENTRYPOINT",
