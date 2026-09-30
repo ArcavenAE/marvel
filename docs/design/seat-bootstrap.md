@@ -80,8 +80,10 @@ The session records `WorkDir` and `WorkDirSource` (`role`, `team`, `root`,
 
 ## 4. Which settings apply, and whose
 
-marvel always tells the harness which settings sources to load, so what
-applies is a declaration rather than a consequence of the directory.
+Every launch tells the harness which settings sources to load, so what
+applies is a declaration rather than a consequence of the directory. For a
+bare claude command marvel adds the flag; for a wrapper the wrapper passes it
+(section 4a, SB-7).
 
 For Claude Code the sources are managed policy (always, by the harness),
 `user` (the operator's own `~/.claude/settings.json`), `project` (the
@@ -104,6 +106,7 @@ stands).
 `director-mcp`, because Claude Code files it under that path. On mokuzai the
 role command already declares it. The rule covers both:
 
+- **The command is a wrapper: marvel projects nothing** (section 4a).
 - **The role declares its MCP servers: marvel projects nothing.** If the role's
   command or args carry `--mcp-config` or `--strict-mcp-config`, the role's
   declaration wins whole. marvel adds no second `--mcp-config` and does not
@@ -134,6 +137,62 @@ its `local` file, which carries a long allow list. Moving them to `user,project`
 changes what they may do without asking. The fleet manifests declare
 `settings_sources` explicitly in the same change (SB-7), so no running role
 changes behavior by accident in either direction.
+
+## 4a. Will this break director? (operator question, 2026-09-30)
+
+The operator accepted the default settings sources and asked, verbatim: "will
+it bread director? could we do a probe before wider rollout to see what stops
+working?". The answer depends on how a seat launches.
+
+**Today's fleet seats: the director wiring does not change.** Every arcaven
+role's command is a wrapper (`cast-aae.sh`, then director's
+`sim/twin/cast-launch.sh`), and the wrapper already passes
+`--strict-mcp-config --mcp-config <json>` itself (`cast-launch.sh:158-159`,
+`:262`). marvel cannot see flags inside a wrapper, so the rule for wrappers
+is the one the prompt already follows (aae-orc-1vq6z): **for a wrapper, marvel
+projects no MCP config and adds no `--setting-sources`**; the wrapper owns its
+command line. The session records `mcp: wrapper`. SB-7 adds
+`--setting-sources` inside `cast-launch.sh` (a director PR), where it is
+visible and reviewed with the rest of that command line.
+
+**A bare-claude seat that marvel projects director into** (the step 0 shape):
+
+| Director function | Needs | From the projection? | Verdict |
+|---|---|---|---|
+| Local send and receive | `DIRECTOR_AGENT_ID`, `DIRECTOR_WORKSPACE`, `DIRECTOR_TEAM`, `NATS_URL`, and broker credentials when the broker requires them | marvel's `baseEnv` sets all of these (`internal/runtime/adapter.go:323-358`); the file carries `command` and `args` only | works **if** Claude Code hands its process environment to a stdio MCP child. Evidence: the mokuzai seats, reported in the #422 review. **Not verified by me**: on kinu my own seat's environment carries no broker credentials, so kinu does not show it |
+| `role://` delivery | `DIRECTOR_ROLE`: the shim subscribes to the role subject only when it is set (director `probe/nats-phase-0/director-mcp/bus.go:234-235`) | **not set by marvel today**; `cast-launch.sh` sets it | **breaks**: messages to `role://<team>/<role>` would not reach the seat. SB-4 adds `DIRECTOR_ROLE` to `baseEnv` |
+| Global address | `DIRECTOR_GLOBAL_DOMAIN`, `DIRECTOR_CLUSTER`, `DIRECTOR_GLOBAL_ROLE`; unset means the global tier is off (`global.go:78`) | not set by marvel (`cast-aae.sh:14-17` says marvel does not pass them through) | off. Correct for most roles (R-94 gives global addresses to supervisors only). A supervisor keeps the wrapper until marvel carries the global levers, which is out of scope here |
+
+So nothing breaks for seats launched as they are today. A bare-claude seat
+works for local traffic once `DIRECTOR_ROLE` is injected, subject to the one
+unverified inheritance claim, and the rollout probe checks it first.
+
+**Rollout probe (SB-0), one seat before any wider rollout.** The builder
+applies one throwaway bare-claude seat with the SB-1..SB-4 behaviour, in its
+own workspace, and records pass or fail for each line. Nothing wider rolls
+out until every line passes or is ruled acceptable:
+
+1. Director receive: a message sent to the seat's `agent://` address arrives
+   through `wait_for_message`.
+2. Director send: the seat sends to a known seat, which confirms receipt.
+3. `role://` delivery: a message to `role://<team>/<role>` arrives.
+4. Presence: the seat appears once in `list_roster`.
+5. Other MCP servers: the operator's user-scope servers still load (strict
+   off), or are absent when strict is declared, as intended.
+6. The local allow list: a tool call the orc `local` settings would have
+   pre-approved now prompts or is refused per the role's permission mode;
+   record which, since that is the expected change.
+7. Hooks: marvel's statusline feed (`ctx-forward`) and any user-scope hooks
+   still fire; project hooks load only under `project`.
+8. Skills and commands: user-scope skills load; project skills load only
+   under `project`.
+9. Login: the seat reaches its prompt logged in; `claude auth status` exit
+   status recorded (SB-3).
+10. Placement: the pane's cwd is the managed or declared directory, and no
+    trust dialog appears.
+
+The probe reports what broke, as a list, before SB-7 touches any fleet
+manifest.
 
 ## 5. First-run state, per harness
 
@@ -296,11 +355,12 @@ launch.
 | SB-1 | Managed directory fallback; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run) | none |
-| SB-4 | claude `Bootstrapper`: private home, trust and onboarding seed, MCP projection | SB-3 green, SB-1 |
+| SB-4 | claude `Bootstrapper`: private home, trust and onboarding seed, MCP projection for bare claude only, `DIRECTOR_ROLE` in `baseEnv` | SB-3 green, SB-1 |
 | SB-4F | Fallback F2, if SB-3 fails | SB-3 red, SB-1 |
 | SB-5 | codex seed uses the resolved workdir | SB-1 |
 | SB-6 | Refusal path, `Session.Bootstrap`, events, `describe` | SB-1 |
-| SB-7 | Fleet and example manifests declare `settings_sources`, and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2 |
+| SB-0 | Rollout probe: one bare-claude seat, the section 4a checklist, a written pass or fail per line | SB-1, SB-2, SB-4 or SB-4F |
+| SB-7 | Fleet and example manifests declare `settings_sources` (for wrapped roles, inside `cast-launch.sh`, a director PR), and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2, SB-0 passed |
 
 The shortest path to an unblocked step 0 is SB-1, SB-2, SB-3 and then SB-4 or
 SB-4F.
