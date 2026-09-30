@@ -1,0 +1,189 @@
+# Usage limits: read the account, mark the seat, pause with an end
+
+Design for review. No code lands until this doc is reviewed.
+
+- Author: arcaven-architect-g5-0.
+- Issue: #417. Tracks: aae-orc-1p9z2, which carries recommendations 1 to 3 of
+  marvel finding-056 (on #408), approved by the operator on 2026-09-30 as one
+  design.
+- Related: finding-050 (what each backend exposes); #415 (scheduled runs).
+- Checked against marvel `origin/main` 3cb6101.
+
+## 1. The problem, verified
+
+| Premise | Where | Result |
+|---|---|---|
+| The harness reports the account's windows | `cmd/marvel/ctxforward.go:111-124` | `rate_limits` with `five_hour` and `seven_day`, each `used_percentage` and `resets_at` |
+| marvel parses them and then drops them | `ctxforward.go:30-38`, `:430-440` | shown in the pane, deliberately not sent: the heartbeat RPC is keyed to a session, and headroom belongs to the account |
+| The populated shape is not yet observed live | `ctxforward.go:104-109` | "NOT VERIFIED: a populated payload observed in the wild" |
+| codex writes the same data to disk | finding-050 section 2a | `payload.rate_limits` in the rollout log: `primary` and `secondary` windows with `used_percent`, `resets_at` |
+| marvel has no account identifier | `internal/api/backend.go:196-215`; `Session.BackendResolved`, `BackendCredentialSource` | a subscription session resolves to `default`; nothing names the account |
+| A restart-neutral advisory has a precedent | `api.ActivityState` (`internal/api/types.go:69-101`), shown as a `(stalled)` suffix | a condition beside health, never a restart trigger |
+| No pause record exists | `git grep -i pause internal/api` | none |
+
+What finding-056 measured, summarized: a fleet ran into an account limit, the
+harness resumed on its own at the reset, and the seats then stayed idle for
+hours because the pause a human declared had no end a machine could read.
+
+## 2. Part 1: an account-scoped reading
+
+**The account key.** marvel cannot see which account a session uses: a
+subscription resolves to `default`, and reading the credential to find out
+would cross the custody boundary (ADR-009). So the key is derived from what
+marvel already records, and labelled as derived:
+
+```
+account = (harness, resolved backend, credential source, config home)
+```
+
+`config home` is the harness's config directory for that session (the
+private home when marvel sets one, the operator's own otherwise). Every
+session with the same key is taken to share a limit. The operator may name a
+key in the cluster config (`accounts: [{name, match: {...}}]`) so the views
+show a word instead of a tuple. **Stated limit:** two sessions on the same key
+with different logins would be merged. That is a configuration error to
+report, not a case to design around.
+
+**The home.** A new daemon RPC, `account.limits`, takes one reading: the key,
+the windows (`name`, `used_percent`, `resets_at`), the reporting session and
+the time. It is not the heartbeat RPC and carries no session-keyed fields, which
+is the separation `ctxforward.go` asked for.
+
+- **Producers.** `ctx-forward` sends it on the statusline tick, beside, not
+  inside, the heartbeat. A codex reader sends it from the newest
+  `rate_limits` record in the rollout log (finding-050). No refusal text is
+  parsed.
+- **Storage.** In memory, per key: the newest reading and its provenance. A
+  reading older than 15 minutes shows as `stale`, never as a number.
+- **Where it shows.** The budget view already renders one row per dimension
+  (`cmd/marvel/main.go:2885`). It gains one row per account and window:
+  dimension `account_window`, observed `used_percent`, the window's reset as a
+  short remaining time, and the provenance in the note. Registered, not
+  enforced: it informs, it does not gate (diagnostic-not-gate).
+- **Custody.** The reading is a number the harness already computed from
+  response headers. No credential moves (finding-050 section 1).
+
+## 3. Part 2: the `limited` seat condition
+
+A session is `limited` when either holds:
+
+1. its account's reading has a window at `used_percent >= 100` with `resets_at`
+   in the future; or
+2. its own harness reported a limit refusal. For an interactive seat the
+   statusline reading is that report; there is no pane-text scraping. For a
+   headless run, neither stream parser recognizes a limit error today
+   (`internal/runtime/claudecode`, `internal/runtime/codex`: no match for rate
+   limit or usage limit). UL-3 adds it only after capturing a real sample, so
+   until then a headless run is `limited` through its account's reading only.
+
+It clears at the window's `resets_at`, or earlier when a newer reading for its
+account is below 100.
+
+`limited` is a condition, not a state: `State` stays `running`, and
+process-alive health is untouched. It is stored beside `ActivityState`, with
+the same restart-neutral rule: it never triggers a restart, a kill or a
+shift.
+
+**How it shows (operator constraint).** The columnar view must stay narrow:
+
+- **`get sessions`:** the `STATE` cell reads `limited` in place of `running`
+  while the condition holds. Seven characters, the same width as `running`. No
+  until-time, no reason.
+- **`describe session`:** `Condition: limited until 2026-09-30T21:00Z (five_hour
+  window at 100%, account <name>, reading from <session> at <time>)`.
+- **The event ring:** `session.limited` and `session.unlimited`, once per
+  transition, carrying the until-time and the reason.
+
+## 4. Part 3: a declared pause with an end
+
+A **Pause** is a record in the store, not a manifest resource:
+
+| Field | Meaning |
+|---|---|
+| `scope` | `fleet`, or a `workspace/team` |
+| `by` | who declared it (the RPC caller's key fingerprint) |
+| `reason` | free text |
+| `until` | `reset` (the scoped accounts' latest `resets_at`), an explicit time, or empty |
+| `hold` | true means it does not end by itself |
+
+Verbs: `marvel pause <scope> --reason ... [--until reset|<time>] [--hold]`,
+`marvel pause lift <scope>`, `marvel get pauses`.
+
+**While a pause holds:**
+
+- admission refuses growth in its scope (new spawns from apply, scale, run,
+  shift and reconcile), except repair of a slot a crash emptied; the refusal
+  names the pause;
+- automatic shifts in its scope do not start;
+- scheduled firings in its scope are skipped with reason `paused` (#415
+  section 3, which then allows at most one catch-up run after the lift);
+- running seats are not stopped. marvel does not tell an interactive seat to
+  stop: it holds no agent address, and a seat is told by its supervisor or by
+  director. The pause is readable by every seat through `marvel get pauses`
+  (seats carry `MARVEL_SOCKET`), and mirrored to the marvel events stream when
+  that exists (aae-orc-aubd6).
+
+**How it ends.** With `until` set and `hold` false, the daemon lifts it at that
+time and emits `pause.lifted` with reason `until-reached`. That is the
+auto-lift the operator approved. With `hold` true, marvel emits
+`pause.lift-proposed` at the reset time and waits for `marvel pause lift`
+(ADR-007: marvel proposes, the operator decides). A lift always emits one
+event, so a director relay can tell seats "lifted" from a record rather than
+from memory, which is the gap finding-056 measured.
+
+**Automatic pauses: not in this design.** marvel does not declare a pause on
+its own when a reading reaches 100%. Whether to pause at a threshold is the
+operator's call (finding-056 says so). A `limited` seat already stops making
+progress; the pause is for the operator's fleet-wide intent.
+
+## 5. How it fits scheduled runs (#415)
+
+- A firing whose role's account is `limited`, or whose scope is paused, is
+  skipped with reason `limited` or `paused`.
+- When the condition clears or the pause lifts, #415's recovery rule gives at
+  most one catch-up run, if it is still inside `starting_deadline`.
+- Scheduled work is the first to shed: nothing here waits for it.
+
+#415 section 4 already names these two reasons as waiting on this design; this
+doc supplies them.
+
+## 6. Tests (red first on 3cb6101)
+
+1. `account.limits` with a window at 100% and a future reset: every session on
+   that key reads `limited` in `get sessions`, and `describe` shows the
+   until-time, window and provenance.
+2. The column cell is exactly `limited`; no until-time appears in the table.
+3. At `resets_at` (fake clock) the condition clears and `session.unlimited` is
+   emitted once.
+4. A reading older than 15 minutes renders `stale` in the budget view, and
+   does not set or hold `limited`.
+5. `limited` never triggers a restart, a kill or a shift.
+6. A pause with `--until reset` refuses a scale-up in scope, admits repair,
+   and lifts itself at the reset with `pause.lifted`.
+7. A pause with `--hold` emits `pause.lift-proposed` at the reset and stays
+   until `marvel pause lift`.
+8. A scheduled firing in a paused scope is skipped with reason `paused`
+   (joins #415's tests).
+9. The heartbeat RPC still carries no account fields (a guard on the
+   separation).
+
+## 7. Edits, in order (none made by this PR)
+
+| # | Edit | Depends on |
+|---|---|---|
+| UL-1 | `account.limits` RPC, in-memory store, derived key, the budget-view rows | none |
+| UL-2 | `ctx-forward` sends the reading; the codex rollout reader | UL-1 |
+| UL-3 | The `limited` condition, its column cell, describe line and events | UL-1 |
+| UL-4 | The Pause record, verbs, admission refusal, shift suppression, lift and proposal events | none |
+| UL-5 | Scheduled-run skip reasons | UL-3, UL-4, #415's S-3 |
+
+## 8. Open questions
+
+- **The populated statusline shape** is read from the binary, not observed
+  (`ctxforward.go:104`). UL-2 should capture one live payload as a fixture
+  before relying on it.
+- **Account naming.** Derived keys work without configuration. Whether to
+  require operator names for accounts, so a merge of two logins cannot happen
+  silently, is the operator's choice; default is optional names.
+- **The 15-minute staleness bound** is a guess sized to the statusline cadence
+  of an idle seat. It is a constant to tune, not a finding.
