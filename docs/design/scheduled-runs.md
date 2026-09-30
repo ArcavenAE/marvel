@@ -106,7 +106,8 @@ CPU placement is not a concern at this scale.
 
     [team.role.schedule]
     cron = "17 6 * * *"          # five-field cron
-    timezone = "Etc/UTC"         # required; no host-local default
+    timezone = "Etc/UTC"         # required, no default; an IANA zone or a fixed offset like "-06:00"
+    # dst_ack = true             # required only for a zone that observes DST (section 2a)
     concurrency = "forbid"       # forbid | replace | allow
     starting_deadline = "2h"     # a missed firing older than this is skipped
     active_deadline = "45m"      # a run older than this is killed, and the run fails
@@ -198,6 +199,72 @@ thing that creates sessions.
 loop, not inside it. The next-due time per role is computed from `cron` and
 `timezone` and kept in the store, so a daemon restart recomputes it rather than
 forgetting it.
+
+### 2a. The timezone and daylight saving (RULED, section 11)
+
+`timezone` is required and has no default. It takes an IANA zone name
+(`Etc/UTC`, `America/Chicago`) or a fixed UTC offset (`+00:00`, `-06:00`).
+
+**The problem.** A cron in a zone that observes daylight saving is a local
+clock time, and local clock time moves against UTC twice a year. The beadle
+board timer hit this: a local-time schedule had to be re-armed at each change
+(operator report, 2026-09-30). Around a change a local-time cron also has two
+edge cases: a time that does not exist (the spring-forward gap, for example
+02:30 on the change night) and a time that happens twice (the fall-back
+overlap). A fixed offset has neither.
+
+**Detection.** At apply, and again whenever the daemon computes a next-due
+time, marvel checks whether the zone observes daylight saving: it loads the
+zone and compares its UTC offsets across the next twelve months. A fixed
+offset and `Etc/UTC` never do.
+
+**The trap.** A schedule whose zone observes daylight saving is refused at
+apply unless it carries `dst_ack = true`. The refusal names the zone and offers
+the fixed alternatives, computed for this schedule:
+
+```
+schedule for team/role: timezone America/Chicago observes daylight saving;
+its firings move by an hour against UTC twice a year.
+  fixed alternative: timezone = "-06:00" (keeps 06:17 in winter, 07:17 CDT in summer)
+  or UTC:            timezone = "Etc/UTC", cron = "17 12 * * *"
+  or keep DST:       add dst_ack = true
+```
+
+The offset form is offered rather than an `Etc/GMT+N` name, because those
+names invert the sign (`Etc/GMT+6` is UTC-6), which is its own trap.
+
+**With `dst_ack = true`.** The schedule is accepted and runs in local time.
+marvel emits `schedule.dst-acknowledged` once at apply. At each change it
+emits `schedule.dst-shift` with the old and new UTC offset and what the change
+did to the next firing. The edge cases are fixed, not left to a library
+default:
+
+- a firing time inside the spring-forward gap fires once, at the first minute
+  after the gap;
+- a firing time inside the fall-back overlap fires once, at its first
+  occurrence.
+
+**At runtime without the ack.** If a zone begins to observe daylight saving
+after apply (a tzdata update), marvel does not stop a running schedule. It
+emits `schedule.dst-unacknowledged` (warning) once per next-due computation
+that finds it, and keeps firing, and `describe team` shows the warning until
+the manifest adds `dst_ack` or changes the zone.
+
+**Tests.**
+
+1. Apply with `timezone` missing: refused, naming the field.
+2. `America/Chicago` without `dst_ack`: refused; the message offers `-06:00`
+   and the UTC cron; `schedule.dst-unacknowledged` is not emitted (apply
+   refusals are errors, not events).
+3. The same with `dst_ack = true`: accepted; `schedule.dst-acknowledged` once.
+4. `Etc/UTC`, `+00:00` and `-06:00` with no ack: accepted, no DST events.
+5. A fake clock across the spring change with cron `30 2 * * *`: exactly one
+   firing that night, at 03:00 local; `schedule.dst-shift` emitted.
+6. A fake clock across the fall change with cron `30 1 * * *`: exactly one
+   firing, at the first 01:30.
+7. A daemon restart between two changes recomputes the same next-due time.
+8. A zone whose tzdata gains DST after apply (a test zone): firings continue,
+   `schedule.dst-unacknowledged` is emitted, and `describe team` shows it.
 
 ## 3. Missed runs and overlap
 
@@ -326,7 +393,7 @@ before it starts.
 
 | # | Edit | Depends on |
 |---|---|---|
-| S-1 | `schedule` block parsed and validated (headless only, required fields, no bypass modes); refused otherwise | ratification (section 11) |
+| S-1 | `schedule` block parsed and validated (headless only, required fields, no bypass modes); the timezone rules and DST trap in section 2a; refused otherwise | the ADR-010 amendment merged (section 11) |
 | S-2 | Run record, history and the `describe team` schedule block; `schedule.stale` from `stale_after` | S-1 |
 | S-3 | The clock: next-due in the store, firing advance, `OccupiesReplicaSlot` firing rule, overlap and recovery policy | S-1 |
 | S-4 | `TriggerSchedule` in admission; `active_deadline` kill | S-3 |
@@ -336,18 +403,23 @@ before it starts.
 
 S-2 before S-3 is deliberate: the alarm is useful on its own and costs least.
 
-## 11. Rulings needed
+## 11. Rulings (all made)
 
-- **The resource-model change.** A `schedule` block on `Role` is a
-  resource-model change (ADR-003, ADR-010), so per ADR-007 it is ratified in
-  writing, as an ADR-010 amendment or a new ADR. Default: an ADR-010
-  amendment, since this extends its Job reading to CronJob.
-- **Interim for the board refresh.** Until S-5, the session timer expires
-  every seven days. Option A (default): renew it by hand on a calendar
-  reminder, and accept the risk until S-5. Option B: run the refresh from a
-  host timer (launchd) outside marvel, which survives respawn but is not
-  metered or admitted and lives on one host.
-- **Timezone.** Required with no default (proposed), or default to UTC.
+All four rulings are made. The operator's words for the first three, via
+director and arcaven-supervisor (msg 01M3S7M3MP, 2026-09-30), verbatim: "(a)
+amend ADR-010 (b) option A (c) required with no default, include the DST issue
+in docs and trap/detect DST-based timezones in runtime and offer alternative
+fixed time but allow user to ack and use DST anyways".
+
+- **The resource-model change: RULED, amend ADR-010.** The amendment is drafted
+  in the orc's `decisions/adr-010-headless-completion-semantics.md` in its own
+  orc PR, and S-1 depends on it merging.
+- **Interim for the board refresh: RULED, Option A.** Renew the session timer
+  by hand on a calendar reminder until S-5, and accept the risk until then.
+  (Option B, a host timer outside marvel, is not taken.)
+- **Timezone: RULED, required with no default,** with daylight-saving
+  detection, a refusal that offers a fixed alternative, and `dst_ack = true`
+  to keep a DST zone. Section 2a.
 - **A failed run: RULED 2026-09-30** (operator via director, relayed by
   arcaven-supervisor-g5-0 msg 01M3RHVMT1), verbatim: "they should do any of
   those, a setting, but default retry is 0 so it just tries again next time
