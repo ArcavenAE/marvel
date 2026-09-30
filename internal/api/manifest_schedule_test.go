@@ -9,8 +9,16 @@ import (
 
 // scheduleManifest is one team with one role in the given runtime mode,
 // carrying the given role-level lines and schedule block. Replicas is 0 so
-// nothing here would ever spawn.
+// nothing here would ever spawn. The required active_deadline and
+// stale_after are added unless the schedule names them, which a case that
+// tests their absence does in a TOML comment.
 func scheduleManifest(mode, roleExtra, schedule string) string {
+	if !strings.Contains(schedule, "active_deadline") {
+		schedule += "\nactive_deadline = \"45m\""
+	}
+	if !strings.Contains(schedule, "stale_after") {
+		schedule += "\nstale_after = \"30h\""
+	}
 	return fmt.Sprintf(`
 [workspace]
 name = "test"
@@ -167,10 +175,28 @@ func TestScheduleRefusals(t *testing.T) {
 			want:     []string{"active_deadline must be > 0"},
 		},
 		{
+			name:     "active_deadline missing",
+			mode:     "headless",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\n# no active_deadline",
+			want:     []string{"active_deadline is required"},
+		},
+		{
+			name:     "stale_after missing",
+			mode:     "headless",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\n# no stale_after",
+			want:     []string{"stale_after is required"},
+		},
+		{
+			name:     "zero history",
+			mode:     "headless",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = 3, failed = 0 }",
+			want:     []string{"history.failed must be > 0"},
+		},
+		{
 			name:     "negative history",
 			mode:     "headless",
 			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = -1, failed = 3 }",
-			want:     []string{"history.succeeded must be >= 0"},
+			want:     []string{"history.succeeded must be > 0"},
 		},
 		{
 			// ADR-010 Amendment 1: the restart policy does not apply to a
@@ -260,6 +286,32 @@ func TestScheduleCarriedOntoRole(t *testing.T) {
 	}
 	if s.Retries != 1 || s.History == nil || s.History.Succeeded != 3 || s.History.Failed != 2 {
 		t.Errorf("retries %d, history %+v", s.Retries, s.History)
+	}
+}
+
+// TestScheduleGapDefaults: the architect's ruling on what the design left
+// open. Unset history keeps 3 of each outcome; unset jitter and
+// starting_deadline stay zero (no delay; no catch-up, which S-3 enforces).
+func TestScheduleGapDefaults(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"")))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	s := team.Roles[0].Schedule
+	if s.History == nil || s.History.Succeeded != 3 || s.History.Failed != 3 {
+		t.Errorf("history = %+v, want succeeded 3, failed 3", s.History)
+	}
+	if s.Jitter != 0 || s.StartingDeadline != 0 {
+		t.Errorf("jitter %v, starting_deadline %v; want both unset", s.Jitter, s.StartingDeadline)
+	}
+	if s.ActiveDeadline != 45*time.Minute || s.StaleAfter != 30*time.Hour {
+		t.Errorf("active_deadline %v, stale_after %v", s.ActiveDeadline, s.StaleAfter)
 	}
 }
 

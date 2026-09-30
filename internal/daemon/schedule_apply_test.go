@@ -24,6 +24,8 @@ teams:
           args: ["1"]
           mode: headless
         schedule:
+          active_deadline: 45m
+          stale_after: 30h
 %s
 `, ws, ws, schedule)
 }
