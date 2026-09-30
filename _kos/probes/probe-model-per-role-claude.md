@@ -8,8 +8,10 @@ half of that ticket's premise; it does not close it.
 **Question:** which model a claude role runs, and whether marvel can
 declare it. Neighbour, not this question: `question-model-runtime-posture`
 (M6, whether marvel manages the runtime that serves a model).
-**Status:** OPEN. Pre-registration below; results append in a dated
-section.
+**Status:** NOT RUN: scratch apply denied by the auto-mode classifier as
+[Shared Cluster Mutation], 2026-09-30 about 03:51Z; awaiting operator.
+Pre-registration below is unchanged; the manifest to run is in "Run it"
+at the end, and results append in a dated section.
 
 ## Why
 
@@ -111,3 +113,52 @@ One session, about 90 minutes including teardown.
   through the stream parser rather than the statusline.
 - H2: medium that the env var selects the model, and high that marvel's
   window fallback misses it.
+
+## Run it
+
+The scratch manifest, verbatim. Save it outside `~/.marvel/manifests`
+and apply it with `marvel work <path>`. It declares only workspace
+`probe` and team `probe-model`; `handleApply`
+(`internal/daemon/daemon.go:1127`) iterates only the manifest's teams, so it
+cannot touch a live team. The `ANTHROPIC_MODEL` env role is added after
+the args roles show which id resolves.
+
+```yaml
+# Scratch manifest for probe-model-per-role-claude. Not a live team.
+workspace:
+  name: probe
+
+teams:
+  - name: probe-model
+    roles:
+      - name: args-sonnet-5
+        replicas: 1
+        restart_policy: never
+        runtime:
+          image: claude
+          command: claude
+          mode: headless
+          prompt: "reply with the word ok"
+          args: ["--strict-mcp-config", "--model", "claude-sonnet-5"]
+      - name: args-sonnet-5-5
+        replicas: 1
+        restart_policy: never
+        runtime:
+          image: claude
+          command: claude
+          mode: headless
+          prompt: "reply with the word ok"
+          args: ["--strict-mcp-config", "--model", "claude-sonnet-5-5"]
+      - name: args-alias-sonnet
+        replicas: 1
+        restart_policy: never
+        runtime:
+          image: claude
+          command: claude
+          mode: headless
+          prompt: "reply with the word ok"
+          args: ["--strict-mcp-config", "--model", "sonnet"]
+```
+
+Teardown: `marvel delete team probe/probe-model`, then confirm with
+`marvel get sessions` that no `probe` sessions remain.
