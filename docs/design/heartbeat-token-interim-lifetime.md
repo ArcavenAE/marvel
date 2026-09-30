@@ -187,6 +187,30 @@ directory is gone) is refused `revoked`, re-reads, finds nothing new, and
 stops. `--restart` stays available for the case where the operator does not
 trust the pane itself.
 
+### 4.5 Renewal end to end, and a missed renewal
+
+- **Who renews, and when.** Only the daemon. At half the TTL it writes the new
+  token to the spawn's renewal file, then swaps the hash (4.2). The seat never
+  mints; its producer reads the file before every beat. No human step.
+- **A failed write.** The daemon swaps the hash only after the file write
+  succeeds. On a failed write it keeps the old hash, emits
+  `heartbeat.rotation-failed` (throttled like the other auth notices), and
+  retries on the next rotation tick. The seat keeps beating on the old token
+  until it expires.
+- **Expiry without a renewal.** The beat is refused `heartbeat.expired` (an
+  event on the ring). The producer re-reads, finds the same token and stops
+  sending (3.4). The session gains a visible condition, `heartbeat expired`, in
+  `get sessions` and `describe session`. The seat's process keeps working;
+  what it loses is its heartbeat feed (liveness readings, CTX%).
+- **The restart path.** A role with a `heartbeat` healthcheck goes stale and
+  its restart policy restarts it with a fresh token, automatically. A role
+  with `process-alive` health is not restarted by marvel: the condition and
+  the event name the fix, `marvel session revoke --restart`. marvel does not
+  restart a working seat on its own for a lost heartbeat (automation proposes,
+  it does not judge).
+- **Never silent.** Every path above leaves an event and, for expiry, a
+  visible condition.
+
 ## 5. Tests (red first on b1f4953)
 
 1. Revoke: a token presented after `session revoke` is refused with
@@ -211,6 +235,10 @@ trust the pane itself.
    is refused `revoked` and stops.
 10. B-TTL: a daemon down past a token's remaining life rotates it at restart
     before admitting beats, so the live pane's first beat is admitted.
+11. B-TTL: a rotation whose file write fails keeps the old hash, emits
+    `heartbeat.rotation-failed`, and succeeds on a later tick; if the token
+    expires first, the beat is refused `heartbeat.expired` and the session
+    shows the `heartbeat expired` condition.
 
 ## 6. Migration
 
@@ -253,7 +281,7 @@ bearer mechanics do not.
 | HB-2 | `marvel session revoke` (with `--restart`) and its RPC; test 1 | HB-1 |
 | HB-3 | `describe session` heartbeat block; test 4 | HB-1 |
 | HB-4 | Producers stop on terminal outcomes; test 5 | HB-1 |
-| HB-5 | B-TTL: expiry, rotation, renewal file, restart reconcile; tests 6 to 8 | HB-2, HB-4 |
+| HB-5 | B-TTL: expiry, rotation, renewal file, restart reconcile, the missed-renewal path; tests 6 to 11 | HB-2, HB-4 |
 
 marvel-builder builds only after this design is reviewed.
 
