@@ -3,8 +3,9 @@
 # Same workspace, team, and role as examples/policy-projection.yaml, with
 # the reviewer-contract policy edited: Edit is now allowed and a
 # SessionStart hook is added. Applying this over v1 re-projects the running
-# reviewer session's settings file and emits a policy.projected event — the
-# contract changes with no restart.
+# reviewer session's settings file and emits a policy.projected event. The
+# file changes at once; the Edit permission reaches the running agent only
+# when it next spawns (`marvel shift`), and the event says so (marvel#313).
 #
 #   ./marvel work examples/policy-projection-v2.yaml
 #   ./marvel events --kind policy.projected

@@ -37,10 +37,14 @@ func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.
 
 // Reproject rewrites the projected settings file for every live session
 // whose role references a policy, and emits a policy.projected event for
-// each session whose on-disk contract actually changed. This is the live
-// re-projection beat of finding-024: the daemon calls it after applying a
-// manifest, an edited policy's new settings land in the running agents'
-// files, and Claude Code's file watcher picks them up without a restart.
+// each session whose on-disk contract actually changed. The daemon calls it
+// after applying a manifest (finding-024).
+//
+// What a running session picks up is narrower than what is written. Claude
+// Code re-reads the statusline and context-feed keys live, but resolves
+// permissions at session start, so a changed permissions block reaches the
+// agent only when it next spawns (marvel#313). When a rewrite changes
+// permissions, the event says so rather than reading as a live change.
 //
 // Returns the number of files rewritten with changed content, for the
 // caller's logs.
@@ -57,6 +61,7 @@ func (m *Manager) Reproject() int {
 		if !ok {
 			continue
 		}
+		before := projectedPermissions(adapter.ProjectionFor(lctx, m.ProjectionDir).Path)
 		target, wrote, changed, shadowed, err := m.projectPolicy(lctx, adapter)
 		if err != nil {
 			log.Printf("session %s: re-projection failed: %v", sess.Key(), err)
@@ -64,7 +69,11 @@ func (m *Manager) Reproject() int {
 		}
 		if wrote && changed {
 			changedCount++
-			m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "re-projected after manifest change", shadowed)
+			detail := "re-projected after manifest change"
+			if !bytes.Equal(before, projectedPermissions(target.Path)) {
+				detail += "; permissions take effect on next spawn (a running session keeps the permissions it started with)"
+			}
+			m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, detail, shadowed)
 		}
 	}
 	return changedCount
@@ -224,6 +233,32 @@ func injectStatuslineFeed(settings map[string]any, adapter runtime.Adapter, sess
 			sessionKey, policyName, strings.Join(shadowed, ", "))
 	}
 	return shadowed
+}
+
+// projectedPermissions returns the permissions block of the projected
+// settings file at path, re-encoded so key order cannot read as a change.
+// A missing file or block yields nil, so adding a block counts as a change.
+func projectedPermissions(path string) []byte {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var doc map[string]any
+	if json.Unmarshal(data, &doc) != nil {
+		return nil
+	}
+	perms, ok := doc["permissions"]
+	if !ok {
+		return nil
+	}
+	out, err := json.Marshal(perms)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 // withinDir reports whether path lies inside dir. Used to hold adapters to

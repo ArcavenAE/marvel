@@ -3,8 +3,8 @@
 Marvel is a control plane for agent sessions. It keeps a declared team
 running, notices when a session dies, and repairs it; it observes what every
 session is doing, in one event vocabulary, across different agent harnesses;
-it changes a running agent's permission contract by editing a manifest, with
-no restart; and it refuses work that would carry a team past a budget the
+it re-projects an agent's permission contract when a manifest is edited, and
+the new permissions take effect on the next spawn (marvel#313); and it refuses work that would carry a team past a budget the
 manifest declares, without leaving that team in a state it cannot reach. This
 runbook shows those four properties as copy-pasteable command sequences, each
 mapped to the exact events marvel emits.
@@ -597,8 +597,11 @@ thinking block has no mapped v1 event kind), not a session failure.
 ## Act 3 — Control plane
 
 Marvel projects a Policy (a Claude Code settings fragment) into a per-session
-file the harness reads, and re-projects it when the manifest changes, so a
-running agent's permission contract changes with no restart.
+file the harness reads, and re-projects it when the manifest changes. The
+running agent's settings file is rewritten with no restart. Claude Code
+re-reads the statusline and context-feed keys live, but it resolves
+permissions at session start, so a permissions change takes effect on the next
+spawn (marvel#313).
 
 `policy-projection.toml` declares `reviewer-contract` version 1 (read-only: allow
 Read/Grep/Glob, deny Bash/Write/Edit) and a claude reviewer that references it.
@@ -619,19 +622,28 @@ over the running v1 state:
 ./bin/marvel work examples/policy-projection-v2.toml
 sleep 3
 ./bin/marvel get policies                       # VERSION now 2
-./bin/marvel events --kind policy.projected     # a second event: "re-projected after manifest change"
+./bin/marvel events --kind policy.projected     # a second event: "re-projected after manifest change; permissions take effect on next spawn ..."
 ./bin/marvel get sessions                        # same session, same GEN 1, no restart
 ```
 
 The second `policy.projected` event fires against the same running session
 (same name, same generation, no restart). Marvel rewrote that session's settings
 file in place; a verified run showed the file's content change from the v1
-allow/deny lists to the v2 lists plus the SessionStart hook. Claude Code's file
-watcher re-reads the settings file, so the contract change lands live.
+allow/deny lists to the v2 lists plus the SessionStart hook. The running agent
+keeps the permissions it started with: the Edit it is now allowed arrives when
+the session next spawns, and the event says so. To apply it now, shift the
+role:
+
+```sh
+./bin/marvel shift policy-demo/review-squad --role reviewer   # new generation spawns with the v2 permissions
+```
+
+This is also why re-projection is not a way to revoke a capability from a
+running agent mid-incident: the file changes, the agent does not (marvel#313).
 
 This act is deterministic given the `claude` binary on PATH. The projection
 events fire because marvel writes the file, independent of whether claude is
-authenticated. The one requirement for the live re-projection beat is that the
+authenticated. The one requirement for the re-projection beat is that the
 reviewer session is still running when you apply v2 (an interactive claude
 session stays up while it waits for input, so it is).
 
@@ -674,8 +686,8 @@ sleep 6
 
 A session's runtime is frozen at spawn, and re-projection reads
 `context_feed` from the session's copy rather than the role's, so a manifest
-change reaches only sessions created after it. The live re-projection that
-works for policy content does not retrofit the feed. Tracked as
+change reaches only sessions created after it. Re-projection rewrites policy
+content in a running session's file but does not retrofit the feed. Tracked as
 `aae-orc-mjrm`; until it is fixed, a shift is the migration path, and the
 `no events` above is how you tell the wrinkle from a typo in your manifest.
 

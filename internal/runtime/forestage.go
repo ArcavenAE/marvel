@@ -99,7 +99,8 @@ func (f *Forestage) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// Claude passthrough: projected settings file (when marvel wrote one)
 	// then team context as system prompt. forestage forwards everything
 	// after "--" to its claude subprocess, so --settings lands where Claude
-	// Code's file watcher hot-reloads it on a later re-projection.
+	// Code re-reads its statusline keys on a later re-projection (a
+	// permissions change there waits for the next spawn, marvel#313).
 	teamContext := fmt.Sprintf(
 		"You are %s (role: %s, team: %s, workspace: %s).",
 		ctx.Session.Name, ctx.Role.Name, ctx.Team.Name, ctx.Workspace.Name,

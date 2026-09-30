@@ -65,7 +65,7 @@ are `context-feed-off` and `context-feed`.
 | Manifest | What it shows |
 |---|---|
 | `policy-projection` | A named settings fragment projected into a per-session file the harness reads. |
-| `policy-projection-v2` | The same policy at version 2, to watch a live re-projection reach running agents. |
+| `policy-projection-v2` | The same policy at version 2, to watch a re-projection rewrite running agents' settings files. A permissions change takes effect on next spawn (marvel#313). |
 
 ## Admission and budgets
 

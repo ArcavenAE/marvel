@@ -5,9 +5,13 @@
 # spawn marvel writes the file and points the harness at it (claude via
 # --settings, forestage via the same flag in its claude passthrough).
 #
-# The demo beat is LIVE re-projection: edit a policy and re-apply, and the
-# running agent's contract changes with no restart. See
-# examples/policy-projection-v2.yaml for the tightened version to swap to.
+# The demo beat is re-projection: edit a policy and re-apply, and marvel
+# rewrites the running agent's settings file and emits policy.projected.
+# Claude Code re-reads the statusline and context-feed keys live, but it
+# resolves permissions at session start, so a permissions change reaches a
+# running agent only when it next spawns (for example `marvel shift`), and
+# the event says so (marvel#313). See examples/policy-projection-v2.yaml
+# for the edited version to swap to.
 #
 #   just build
 #   ./marvel daemon &

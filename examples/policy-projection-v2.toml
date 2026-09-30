@@ -4,7 +4,9 @@
 # the reviewer-contract policy edited: Edit is now allowed and a hook is
 # added. Applying this over the v1 manifest re-projects the settings file
 # for the already-running reviewer session and emits a policy.projected
-# event — the running agent's contract changes with no restart.
+# event. The file changes at once; the Edit permission reaches the running
+# agent only when it next spawns (`marvel shift`), and the event says so
+# (marvel#313).
 #
 #   ./marvel work examples/policy-projection-v2.toml
 #   ./marvel events --kind policy.projected
