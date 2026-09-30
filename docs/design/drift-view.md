@@ -44,9 +44,17 @@ store and attach a derived field, `spec` (`current`, `behind`, or empty for
 `-`), on the response. It is never persisted: a derived answer that went stale
 in the store would be the problem this view exists to show.
 
-For `behind` sessions, `describe` also returns the **names** of the differing
-fields (for example `args, prompt`). Never their values: `Env` can hold values
-an operator would not print in a table, and a name is enough to act on.
+For `behind` sessions, `describe` also returns `spec_diff`: the **names** of
+the differing fields (for example `args, prompt`). The new field carries names,
+never values, so it adds no exposure; a name is enough to act on.
+
+**The existing exposure, named and not changed here.** `describe session`
+already prints the whole stored session as JSON (`cmd/marvel/main.go:1131`),
+and `Session.Runtime` (`internal/api/types.go:214`) and `Runtime.Env` (`:189`)
+carry no json tag, so today's output includes every `Env` value, every `Args`
+entry and the `Prompt`. This design neither adds to that nor redacts it:
+redacting would be a behavior change with its own review, and director has
+raised the `Env` exposure with the operator separately.
 
 ## 4. How it shows
 
@@ -84,8 +92,9 @@ an operator would not print in a table, and a name is enough to act on.
    succeeded session shows `behind`, and no new run is spawned (ADR-010
    unchanged).
 4. A `marvel run` session shows `-`.
-5. `Env` differs: `describe` lists `env` and prints no value (grep the output
-   for the value).
+5. `Env` differs: `spec_diff` lists `env` and carries no value (assert on
+   the `spec_diff` field only; the rest of `describe` still prints the
+   runtime, see section 3).
 6. `marvel work` that changes one role with two live sessions prints
    `2 sessions are behind...`; a no-op apply prints nothing extra.
 7. Nil and empty `Args` and `Env` compare equal.
