@@ -137,6 +137,9 @@ type ManifestRole struct {
 	// Parsed into Role.ActivityTimeout, the same string→duration shape as
 	// healthcheck.timeout.
 	ActivityTimeout string `toml:"activity_timeout,omitempty"    yaml:"activity_timeout,omitempty"`
+	// Schedule puts a headless role on a clock (ADR-010 Amendment 1,
+	// docs/design/scheduled-runs.md). Parsed into Role.Schedule.
+	Schedule *ManifestSchedule `toml:"schedule,omitempty"            yaml:"schedule,omitempty"`
 }
 
 // ManifestHealthCheck is the healthcheck section within a role.
@@ -367,6 +370,11 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 				}
 				if r.Shift.HeadroomTokens <= 0 {
 					return nil, fmt.Errorf("parse manifest: team[%d].role[%d].shift.headroom_tokens must be > 0 for on=%q", i, j, ShiftTriggerContextPressure)
+				}
+			}
+			if r.Schedule != nil {
+				if err := validateSchedule(t.Name, r, time.Now().UTC()); err != nil {
+					return nil, fmt.Errorf("parse manifest: %w", err)
 				}
 			}
 			// Permissions maps verbatim to --permission-mode; an empty
@@ -742,6 +750,13 @@ func (m *Manifest) Apply(store *Store) error {
 					On:             mr.Shift.On,
 					HeadroomTokens: mr.Shift.HeadroomTokens,
 				}
+			}
+			if mr.Schedule != nil {
+				sched, err := mr.Schedule.policy()
+				if err != nil {
+					return fmt.Errorf("parse role %q schedule: %w", mr.Name, err)
+				}
+				role.Schedule = sched
 			}
 			roles = append(roles, role)
 		}

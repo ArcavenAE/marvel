@@ -575,3 +575,53 @@ func TestBoltStore_LegacyAccountantReadingZeroedOnRehydrate(t *testing.T) {
 			"and would render as live: %+v", got.SessionContext)
 	}
 }
+
+// TestBoltStore_ScheduleRoundTrips: a role's schedule survives a daemon
+// restart, so S-3 can recompute next-due from the stored block.
+func TestBoltStore_ScheduleRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "timers", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	want := SchedulePolicy{
+		Cron: "17 6 * * *", Timezone: "America/Chicago", DSTAck: true,
+		Concurrency: ScheduleConcurrencyForbid, OnFailure: ScheduleOnFailureWait,
+		StartingDeadline: 2 * time.Hour, Retries: 1,
+		History: &ScheduleHistory{Succeeded: 3, Failed: 2},
+	}
+	sched := want
+	if err := s1.CreateTeam(&Team{
+		Name:      "board",
+		Workspace: "timers",
+		Roles: []Role{{
+			Name: "refresh", Replicas: 1,
+			Runtime:  Runtime{Name: "sleep", Command: "sleep", Mode: RuntimeModeHeadless},
+			Schedule: &sched,
+		}},
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetTeam("timers/board")
+	if err != nil {
+		t.Fatalf("get team after rehydrate: %v", err)
+	}
+	s := got.Roles[0].Schedule
+	if s == nil || s.Cron != want.Cron || s.Timezone != want.Timezone || !s.DSTAck ||
+		s.StartingDeadline != want.StartingDeadline || s.Retries != 1 ||
+		s.History == nil || *s.History != *want.History {
+		t.Fatalf("schedule after rehydrate = %+v, want %+v", s, want)
+	}
+}

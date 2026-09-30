@@ -122,6 +122,14 @@ func cloneRole(r Role) Role {
 		hc := *r.HealthCheck
 		out.HealthCheck = &hc
 	}
+	if r.Schedule != nil {
+		sc := *r.Schedule
+		if r.Schedule.History != nil {
+			h := *r.Schedule.History
+			sc.History = &h
+		}
+		out.Schedule = &sc
+	}
 	return out
 }
 

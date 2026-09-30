@@ -964,6 +964,12 @@ const (
 	// under backoff, or not yet started. Spawning would hand a session a
 	// NATS_URL nothing answers on.
 	HoldBus HoldReason = "bus_unavailable"
+	// HoldSchedule means the role is on a schedule and spawns only when a
+	// firing is due. Until the schedule clock lands (S-3) no firing is ever
+	// due, so the role spawns nothing: without the hold it would run at
+	// apply as an ordinary Job, and a failed run would be refilled under a
+	// restart policy that does not apply to it (ADR-010 Amendment 1).
+	HoldSchedule HoldReason = "schedule"
 )
 
 // RolePlan is the convergence decision for one role at one generation: what the
@@ -1077,6 +1083,12 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	}
 
 	switch {
+	case actual < desired && role.Schedule != nil:
+		// S-3 replaces this with the firing rule.
+		plan.Action = RoleHold
+		plan.Hold = HoldSchedule
+		plan.HoldDetail = "scheduled; the clock is S-3"
+		return plan
 	case actual < desired:
 		// The bus gate comes first: a broker outage is not the role's fault,
 		// so it neither charges a crash nor reaches admission. The hold is
@@ -2045,6 +2057,11 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	// the live replacement that should take its place. See aae-orc-6kgq.
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
 	desired := role.Replicas
+	// A scheduled role spawns only through its firing (HoldSchedule), so a
+	// shift launches nothing for it and passes straight to draining.
+	if role.Schedule != nil {
+		desired = 0
+	}
 
 	if len(live) < desired {
 		// Create remaining new-gen sessions. nextIndex counts all states,

@@ -1188,9 +1188,25 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	}
 
 	advisories := m.ContextFeedAdvisories(d.sessMgr.CanFeedContextRole)
+	now := time.Now().UTC()
+	acks := m.DSTAcknowledgements(now)
+	scheduleAdvisories := m.ScheduleAdvisories(now)
 
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
+	}
+	for _, a := range scheduleAdvisories {
+		log.Printf("apply: %s", a)
+	}
+	for _, a := range acks {
+		events.Emit(d.events, events.Event{
+			Kind:      events.KindScheduleDSTAcknowledged,
+			Severity:  events.SeverityInfo,
+			Workspace: m.Workspace.Name,
+			Team:      a.Team,
+			Role:      a.Role,
+			Message:   fmt.Sprintf("schedule in %s observes daylight saving; kept by dst_ack, so its firings move against UTC twice a year", a.Timezone),
+		})
 	}
 	for _, a := range advisories {
 		log.Printf("apply: %s", a)
@@ -1235,7 +1251,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
-		"advisories": advisories,
+		"advisories": append(advisories, scheduleAdvisories...),
 	})
 	return Response{Result: result}
 }
