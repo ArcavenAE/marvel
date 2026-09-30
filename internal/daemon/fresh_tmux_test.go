@@ -17,7 +17,7 @@ import (
 func useFreshTmuxServer(t *testing.T, socket string) {
 	t.Helper()
 	t.Setenv("MARVEL_TMUX_SOCKET", socket)
-	t.Cleanup(func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() })
+	t.Cleanup(func() { killTestServer(socket) })
 }
 
 // TestFreshTmuxServerLeavesNoSocket starts a server under the helper in a
