@@ -8,8 +8,7 @@ probe asked what limit state marvel can *observe*; this one asks what happens
 when the limit is *reached* and how the fleet comes back.
 **Related node:** `question-shift-triggers` (a usage limit is a candidate
 trigger that node does not yet list).
-**Status:** open. Evidence collection is delegated to research-supervisor;
-the finding lands on this brief's PR.
+**Status:** complete. Harvested to finding-056.
 
 ## Question
 
