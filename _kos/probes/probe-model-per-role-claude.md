@@ -74,7 +74,10 @@ existed; corrections append below.
 
 - A scratch team `probe-model` in its own workspace `probe`, declared in
   a manifest under the session scratchpad, never in `~/.marvel/manifests`.
-  No live team or live manifest is read for write, applied, or edited.
+  No live team's manifest, sessions, or roles are created, changed, or
+  deleted. The daemon and the shared broker are not untouched: apply and
+  teardown each reload the broker, and apply re-projects every live
+  session (see "Run it").
 - **Headless** claude roles (`mode: headless`, one fixed prompt: reply
   with the word ok). Headless gives each role exactly one turn with no
   inject, and its stream names the model the harness actually used.
@@ -100,7 +103,9 @@ existed; corrections append below.
 
 - Any classifier or permission denial on apply, describe or delete:
   stop at that step and report the denial verbatim.
-- Any sign the scratch manifest touches a live team: stop and delete.
+- Any sign the scratch manifest creates, changes, or deletes a live
+  team's manifest, sessions, or roles: stop and delete. The two expected
+  broker reloads are not that sign.
 
 ### Timebox
 
@@ -119,9 +124,28 @@ One session, about 90 minutes including teardown.
 The scratch manifest, verbatim. Save it outside `~/.marvel/manifests`
 and apply it with `marvel work <path>`. It declares only workspace
 `probe` and team `probe-model`; `handleApply`
-(`internal/daemon/daemon.go:1127`) iterates only the manifest's teams, so it
-cannot touch a live team. The `ANTHROPIC_MODEL` env role is added after
-the args roles show which id resolves.
+(`internal/daemon/daemon.go:1127`) creates and updates only the manifest's
+teams, so no live team's manifest, sessions, or roles are created, changed,
+or deleted. The `ANTHROPIC_MODEL` env role is added after the args roles
+show which id resolves.
+
+The run still reaches past the scratch team, in three places:
+
+- **Re-projection on apply.** Before reconciling, `handleApply` calls
+  `sessMgr.Reproject()` (`internal/daemon/daemon.go:1226`), which walks
+  every live session in every team and rewrites any settings file whose
+  projection differs. A scratch manifest changes no live team's policy, so
+  no live file should change, but the pass runs over all of them.
+- **Broker reload on apply.** `regenerateBus("apply")`
+  (`internal/daemon/daemon.go:1230`) re-renders the shared managed
+  broker's files and reloads it (SIGHUP) when they changed. The scratch
+  team's new broker user is such a change.
+- **Broker reload on teardown.** Deleting the scratch team calls
+  `regenerateBus("delete team ...")` (`internal/daemon/daemon.go:1396`),
+  which removes that user and reloads the shared broker again.
+
+Every live team on this daemon shares that broker, so run the probe when
+two reloads are acceptable to them.
 
 ```yaml
 # Scratch manifest for probe-model-per-role-claude. Not a live team.
