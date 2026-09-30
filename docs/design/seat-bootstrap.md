@@ -70,6 +70,16 @@ Resolution, first match wins:
    trust entry; that is fine for trust, but two interactive seats there also
    share any project-scoped state the harness writes into it.
 
+**Root-less fleet manifests move unless they declare a root first.** Today a
+manifest with no `workspace.root` and no `workdir` places its seats in the
+daemon's cwd, which for the fleet is the orc root. Every current fleet manifest
+on kinu is that shape (`~/.marvel/manifests`, 11 of 11 `.toml` files carry no
+`root` or `workdir` key; the reviewer reports the same for the mokuzai
+manifests). Under rule 3 each of those seats would move to a managed
+directory, away from the orc root and its project `CLAUDE.md`. So SB-7a
+declares a `workspace.root` or `workdir` in every such fleet manifest, and
+SB-1 does not land until SB-7a has.
+
 The daemon's own directory is never a result. The tmux session itself is
 created with `new-session -c <StateDir>/seats`, so even the base pane is off
 the daemon's cwd, and `new-window -c <dir>` places each seat (the spawn
@@ -120,12 +130,17 @@ role command already declares it. The rule covers both:
   not from Claude Code's own file, because the entry there is keyed by project
   path and has no single operator-level value to read. With no configured
   entry, nothing is projected, and the session logs it and records `mcp: none`.
-- **No env in the file.** Only `command` and `args` are written. The mokuzai
-  seats show this is enough: their `--mcp-config` carries only `command`, and
-  their `director-mcp` children still authenticate. Claude Code hands its
-  process environment, including the `DIRECTOR_NATS_*` names marvel injects
-  (`internal/runtime/adapter.go:351-355`), to a stdio MCP child. That evidence
-  is from the review; I did not check it on mokuzai myself.
+- **No env in the file.** Only `command` and `args` are written. That is
+  enough only if Claude Code hands its process environment, including the
+  `DIRECTOR_NATS_*` names marvel injects
+  (`internal/runtime/adapter.go:351-355`), to a stdio MCP child. The mokuzai
+  seats do not show it: their `--mcp-config` carries only `command`, and their
+  `director-mcp` children authenticate, but the `director-mcp-seat` launcher
+  defers to the environment and falls back to the seat's own director
+  credentials when the environment has none
+  (`director/probe/nats-phase-0/director-mcp-seat:29`). Authentication
+  therefore does not prove inheritance. The reviewer corrected this evidence;
+  SB-0 line 11 tests inheritance directly.
 - `args` are copied verbatim, so a secret an operator puts in the command's
   args would be written to that file. Today's command has none.
 
@@ -141,7 +156,7 @@ changes behavior by accident in either direction.
 ## 4a. Will this break director? (operator question, 2026-09-30)
 
 The operator accepted the default settings sources and asked, verbatim: "will
-it bread director? could we do a probe before wider rollout to see what stops
+it bread [sic] director? could we do a probe before wider rollout to see what stops
 working?". The answer depends on how a seat launches.
 
 **Today's fleet seats: the director wiring does not change.** Every arcaven
@@ -159,8 +174,9 @@ visible and reviewed with the rest of that command line.
 
 | Director function | Needs | From the projection? | Verdict |
 |---|---|---|---|
-| Local send and receive | `DIRECTOR_AGENT_ID`, `DIRECTOR_WORKSPACE`, `DIRECTOR_TEAM`, `NATS_URL`, and broker credentials when the broker requires them | marvel's `baseEnv` sets all of these (`internal/runtime/adapter.go:323-358`); the file carries `command` and `args` only | works **if** Claude Code hands its process environment to a stdio MCP child. Evidence: the mokuzai seats, reported in the #422 review. **Not verified by me**: on kinu my own seat's environment carries no broker credentials, so kinu does not show it |
+| Local send and receive | `DIRECTOR_AGENT_ID`, `DIRECTOR_WORKSPACE`, `DIRECTOR_TEAM`, `NATS_URL`, and broker credentials when the broker requires them | marvel's `baseEnv` sets all of these (`internal/runtime/adapter.go:323-358`); the file carries `command` and `args` only | works **if** Claude Code hands its process environment to a stdio MCP child. **Not shown yet**: the mokuzai seats authenticate, but `director-mcp-seat` falls back to the seat's own credentials, so that does not prove inheritance; on kinu my own seat's environment carries no broker credentials. SB-0 line 11 tests it |
 | `role://` delivery | `DIRECTOR_ROLE`: the shim subscribes to the role subject only when it is set (director `probe/nats-phase-0/director-mcp/bus.go:234-235`) | **not set by marvel today**; `cast-launch.sh` sets it | **breaks**: messages to `role://<team>/<role>` would not reach the seat. SB-4 adds `DIRECTOR_ROLE` to `baseEnv` |
+| Placement of seats whose manifest names no root | the orc root as cwd, so the project `CLAUDE.md` and the tracked settings load | rule 3 would give a managed directory | **moves** unless SB-7a declares a root first; SB-1 waits on SB-7a, and SB-0 line 12 re-applies one such manifest |
 | Global address | `DIRECTOR_GLOBAL_DOMAIN`, `DIRECTOR_CLUSTER`, `DIRECTOR_GLOBAL_ROLE`; unset means the global tier is off (`global.go:78`) | not set by marvel (`cast-aae.sh:14-17` says marvel does not pass them through) | off. Correct for most roles (R-94 gives global addresses to supervisors only). A supervisor keeps the wrapper until marvel carries the global levers, which is out of scope here |
 
 So nothing breaks for seats launched as they are today. A bare-claude seat
@@ -190,6 +206,15 @@ out until every line passes or is ruled acceptable:
    status recorded (SB-3).
 10. Placement: the pane's cwd is the managed or declared directory, and no
     trust dialog appears.
+11. Env inheritance: in the projected seat, with the seat-credential fallback
+    unavailable to the child, the `director-mcp` child authenticates with the
+    `DIRECTOR_NATS_*` values marvel injected. A child that authenticates only
+    through the fallback is a fail for this line.
+12. A root-less manifest: re-apply one existing fleet manifest that had no
+    root before SB-7a (now carrying its declared root). The pane's cwd is that
+    root, and the project `CLAUDE.md` loads (the seat can name a rule from it).
+13. Links at exit: when the probe seat exits, every `LinkIn` entry in its
+    home is still a symlink to the operator's file; record any that is not.
 
 The probe reports what broke, as a list, before SB-7 touches any fleet
 manifest.
@@ -247,7 +272,10 @@ known to do or not do this. So at every spawn that reuses a home,
 still a symlink to the operator's file. If one is not, the session is
 refused with reason `link-replaced`, naming the path, and marvel deletes
 nothing (the no-deletion convention): the operator removes the copy and
-re-applies. `Session.Bootstrap` records the check.
+re-applies. `Session.Bootstrap` records the check. The same check also runs
+when a session exits or is reaped, so a replaced link is reported (event
+`bootstrap.link-replaced`, naming the path) when it happens rather than at
+the next spawn; it deletes nothing there either.
 
 Trust is seeded only for the resolved workdir, and only because section 4
 decides what that trust loads. Trusting a directory whose local settings
@@ -344,7 +372,7 @@ launch.
    `bootstrap-refused` (not logged in) and never launched; a `LinkIn` entry
    replaced by a regular file is refused `link-replaced` and nothing is
    deleted; on Linux the credential under the home is a symlink, never a
-   regular file.
+   regular file. A link replaced during a session is reported at its exit.
 9. A headless claude run gets placement and settings sources and no seeded
    home.
 
@@ -352,7 +380,8 @@ launch.
 
 | # | Edit | Depends on |
 |---|---|---|
-| SB-1 | Managed directory fallback; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
+| SB-7a | Every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) | none |
+| SB-1 | Managed directory fallback; `new-session -c`; `WorkDirSource` | aae-orc-5as2e, SB-7a |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run) | none |
 | SB-4 | claude `Bootstrapper`: private home, trust and onboarding seed, MCP projection for bare claude only, `DIRECTOR_ROLE` in `baseEnv` | SB-3 green, SB-1 |
@@ -362,8 +391,9 @@ launch.
 | SB-0 | Rollout probe: one bare-claude seat, the section 4a checklist, a written pass or fail per line | SB-1, SB-2, SB-4 or SB-4F |
 | SB-7 | Fleet and example manifests declare `settings_sources` (for wrapped roles, inside `cast-launch.sh`, a director PR), and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2, SB-0 passed |
 
-The shortest path to an unblocked step 0 is SB-1, SB-2, SB-3 and then SB-4 or
-SB-4F.
+The shortest path to an unblocked step 0 is SB-7a, SB-1, SB-2, SB-3 and then
+SB-4 or SB-4F. SB-7a comes first because SB-1 would otherwise move every
+root-less fleet seat out of the orc root.
 
 ## 11. Rulings needed
 
