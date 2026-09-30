@@ -32,7 +32,7 @@ Verified against marvel `origin/main` b1f4953 (#403), each with its command:
 | Injected as env | `internal/runtime/adapter.go:351-355` | `DIRECTOR_NATS_USER`, `DIRECTOR_NATS_PASS` |
 | "Supervisor team" means an exact role name | `internal/bus/manager.go:361-368` | `r.Name == "supervisor"`; `research-supervisor` does not count, which is correct under R-94 |
 | #403 widened worker publish | `gh pr view 403 -R ArcavenAE/marvel` | MERGED b1f4953; adds `global.*.supervisor.inbox` to the same shared team user |
-| Live teams affected | `marvel get teams` on kinu | `aae/arcaven` and `infra/e98` each hold `supervisor` plus six or more worker roles |
+| Live teams affected | `marvel get teams` on the operator host | two applied teams, the operator's own team and one client team, each hold `supervisor` plus six or more worker roles |
 
 The measured leak is finding-179 (mokuzai, 2026-09-18): a worker's own user,
 with a plain NATS client and no shim, subscribed `global.mokuzai.>` and
@@ -202,6 +202,18 @@ ships in two phases:
 Phase 1 and phase 2 are separate PRs so phase 2 can wait on step 3 per
 cluster without holding phase 1.
 
+Rollback, by what is being reverted:
+
+- **Phase 2:** revert it alone. Workers regain the old grants at reload.
+- **Phase 1 (M9-3), after supervisors rotated onto `<team>.supervisor`:** the
+  dotted user disappears at reload and those supervisors lose auth. Rotate
+  them back to `<team>` first (phase 2 not yet applied, so `<team>` still
+  carries the global grants), then revert.
+- **The daemon binary, past M9-2:** never while a dotted user is rendered.
+  The old `RecoverPasswords` drops that user's password and remints it, which
+  breaks every rotated supervisor's credential (the section 3 failure, in
+  reverse). Revert phase 1 as above first, then downgrade.
+
 ## 8. Edits, in order (none made by this PR)
 
 Each could land in its own PR; the edges are the order.
@@ -228,7 +240,21 @@ reviewed; marvel-builder builds only after that.
   phase 1 and phase 2 collapse into the per-session rollout and this doc
   becomes its grant table.
 
-## 10. Open questions
+## 10. Open questions and out of scope
+
+- **Out of scope: cross-team supervisor fan-out on one cluster.** Every
+  `<team>.supervisor` user on a cluster subscribes the same subject,
+  `global.<domain>.supervisor.inbox`, so a send to
+  `global://<cluster>/supervisor` still reaches every supervisor-bearing team
+  on that cluster, including teams of different clients. Per-role users close
+  #312's leak (a worker reading its own team's supervisor mail); they do not
+  close this one, and "R-94 enforced at the broker" in this doc means the
+  former only. The fan-out is a director addressing question, owned by
+  aae-orc-q9mtd (global role address shared by several teams) and director
+  finding-006 (the global tier has no per-agent address). A team segment
+  under the domain would close it at the broker, at the cost of a change to
+  the global address grammar that director owns; this design does not make
+  that change.
 
 - **Hub-side JetStream reach (unrun probe).** Does the kinu hub's leaf account
   stop a leaf user holding `$JS.global.API.>` from creating a consumer on a
