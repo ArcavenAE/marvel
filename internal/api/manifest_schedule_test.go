@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scheduleManifest is one team with one role in the given runtime mode,
@@ -227,5 +228,153 @@ func TestScheduleAccepts(t *testing.T) {
 		if _, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", schedule))); err != nil {
 			t.Errorf("schedule %q refused: %v", schedule, err)
 		}
+	}
+}
+
+// TestScheduleCarriedOntoRole: a valid block lands on Role.Schedule after
+// apply, with the ruled defaults (concurrency forbid, on_failure wait).
+func TestScheduleCarriedOntoRole(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(scheduleManifest("headless", "",
+		"cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nstarting_deadline = \"2h\"\nactive_deadline = \"45m\"\njitter = \"5m\"\nstale_after = \"30h\"\nretries = 1\nhistory = { succeeded = 3, failed = 2 }")))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, _ := store.GetTeam("test/squad")
+	s := team.Roles[0].Schedule
+	if s == nil {
+		t.Fatal("expected a schedule policy on the role")
+	}
+	if s.Cron != "17 6 * * *" || s.Timezone != "Etc/UTC" {
+		t.Errorf("cron, timezone = %q, %q", s.Cron, s.Timezone)
+	}
+	if s.Concurrency != ScheduleConcurrencyForbid || s.OnFailure != ScheduleOnFailureWait {
+		t.Errorf("defaults: concurrency %q, on_failure %q; want forbid, wait", s.Concurrency, s.OnFailure)
+	}
+	if s.StartingDeadline != 2*time.Hour || s.ActiveDeadline != 45*time.Minute || s.Jitter != 5*time.Minute || s.StaleAfter != 30*time.Hour {
+		t.Errorf("durations = %v %v %v %v", s.StartingDeadline, s.ActiveDeadline, s.Jitter, s.StaleAfter)
+	}
+	if s.Retries != 1 || s.History == nil || s.History.Succeeded != 3 || s.History.Failed != 2 {
+		t.Errorf("retries %d, history %+v", s.Retries, s.History)
+	}
+}
+
+func TestScheduleAbsentIsNil(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(validManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, team := range store.ListTeams() {
+		for _, r := range team.Roles {
+			if r.Schedule != nil {
+				t.Errorf("role %s/%s has a schedule it never declared", team.Name, r.Name)
+			}
+		}
+	}
+}
+
+func TestScheduleYAML(t *testing.T) {
+	t.Parallel()
+	_, err := ParseManifestBytes([]byte(`
+workspace:
+  name: test
+teams:
+  - name: squad
+    roles:
+      - name: board-refresh
+        replicas: 0
+        runtime:
+          command: claude
+          mode: headless
+        schedule:
+          cron: "17 6 * * *"
+`))
+	if err == nil || !strings.Contains(err.Error(), "timezone is required") {
+		t.Fatalf("YAML schedule without timezone: err = %v, want timezone is required", err)
+	}
+}
+
+// TestDSTAcknowledgements covers the apply half of design 2a test 3: a DST
+// zone with dst_ack is listed for schedule.dst-acknowledged; fixed zones,
+// and a fixed zone that carries a needless ack, are not.
+func TestDSTAcknowledgements(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		schedule string
+		want     int
+	}{
+		{"cron = \"17 6 * * *\"\ntimezone = \"America/Chicago\"\ndst_ack = true", 1},
+		{"cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\ndst_ack = true", 0},
+		{"cron = \"17 6 * * *\"\ntimezone = \"-06:00\"", 0},
+	} {
+		m, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", c.schedule)))
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.schedule, err)
+		}
+		got := m.DSTAcknowledgements(time.Now().UTC())
+		if len(got) != c.want {
+			t.Errorf("%q: %d acknowledgements, want %d", c.schedule, len(got), c.want)
+			continue
+		}
+		if c.want == 1 && (got[0].Team != "squad" || got[0].Role != "board-refresh" || got[0].Timezone != "America/Chicago") {
+			t.Errorf("acknowledgement = %+v", got[0])
+		}
+	}
+}
+
+func TestParseCronFields(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		expr string
+		ok   bool
+	}{
+		{"* * * * *", true},
+		{"*/5 0-23/2 1,15 1-12 0-7", true},
+		{"0 0 29 2 *", true},
+		{"60 * * * *", false},
+		{"* 24 * * *", false},
+		{"* * 0 * *", false},
+		{"* * * 13 *", false},
+		{"* * * * 8", false},
+		{"5-1 * * * *", false},
+		{"*/0 * * * *", false},
+		{"* * * JAN *", false},
+		{"1,,2 * * * *", false},
+	} {
+		_, err := parseCron(c.expr)
+		if (err == nil) != c.ok {
+			t.Errorf("parseCron(%q) err = %v, want ok=%v", c.expr, err, c.ok)
+		}
+	}
+}
+
+// TestScheduleSnapshotIsolated: a read returns a copy, so editing the
+// returned schedule does not reach the store (go.md rule 12).
+func TestScheduleSnapshotIsolated(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(scheduleManifest("headless", "",
+		"cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = 3, failed = 3 }")))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	first, _ := store.GetTeam("test/squad")
+	first.Roles[0].Schedule.Cron = "0 0 * * *"
+	first.Roles[0].Schedule.History.Failed = 99
+	again, _ := store.GetTeam("test/squad")
+	if again.Roles[0].Schedule.Cron != "17 6 * * *" || again.Roles[0].Schedule.History.Failed != 3 {
+		t.Fatalf("a snapshot edit reached the store: %+v", again.Roles[0].Schedule)
 	}
 }

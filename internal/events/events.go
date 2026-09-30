@@ -98,6 +98,10 @@ const (
 	// to "why is that column empty", and the fix is usually one
 	// runtime.context_window line in the manifest.
 	KindContextLimitUnresolved Kind = "context.limit-unresolved"
+	// KindScheduleDSTAcknowledged records that apply accepted a schedule in
+	// a zone that observes daylight saving because it carries dst_ack, so
+	// its firings will move against UTC twice a year (scheduled-runs 2a).
+	KindScheduleDSTAcknowledged Kind = "schedule.dst-acknowledged"
 	// KindContextFeedUnsupported records that an applied manifest declares
 	// runtime.context_feed on a role whose harness cannot honour it, so the
 	// declaration is advisory and CTX% will not be fed by it. Fires once
@@ -259,6 +263,7 @@ var allKinds = []Kind{
 	KindRoleRemoved,
 	KindPolicyProjected,
 	KindContextLimitUnresolved,
+	KindScheduleDSTAcknowledged,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindAdmissionCleared,

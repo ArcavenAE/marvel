@@ -1188,9 +1188,20 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	}
 
 	advisories := m.ContextFeedAdvisories(d.sessMgr.CanFeedContextRole)
+	acks := m.DSTAcknowledgements(time.Now().UTC())
 
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
+	}
+	for _, a := range acks {
+		events.Emit(d.events, events.Event{
+			Kind:      events.KindScheduleDSTAcknowledged,
+			Severity:  events.SeverityInfo,
+			Workspace: m.Workspace.Name,
+			Team:      a.Team,
+			Role:      a.Role,
+			Message:   fmt.Sprintf("schedule in %s observes daylight saving; kept by dst_ack, so its firings move against UTC twice a year", a.Timezone),
+		})
 	}
 	for _, a := range advisories {
 		log.Printf("apply: %s", a)
