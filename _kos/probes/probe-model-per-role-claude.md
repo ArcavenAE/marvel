@@ -106,6 +106,22 @@ existed; corrections append below.
 - Any sign the scratch manifest creates, changes, or deletes a live
   team's manifest, sessions, or roles: stop and delete. The two expected
   broker reloads are not that sign.
+- Any `bus.rendered` event whose reason is anything other than `apply`
+  or `delete team probe/probe-model`: stop and delete. The reason is the
+  parenthesized text in either form `emitBusRender` writes, the info form
+  `bus config rendered (<reason>): ...` and the warning form
+  `bus config not rendered (<reason>): ...`
+  (`internal/daemon/daemon.go:2864-2875`). The teardown reason carries the
+  team key exactly as `marvel delete team` received it, so it reads
+  `probe/probe-model`, not the bare team name. The warning form is a stop
+  whatever its reason: a failed render leaves the shared broker on its
+  old config.
+- Any apply log line `apply: re-projected policy for N running
+  session(s)` (`internal/daemon/daemon.go:1226-1228`): stop and delete.
+  It prints only when N is greater than zero. On the first apply the
+  scratch team has no sessions yet, and the later apply that adds the env
+  role changes no existing role's policy, so any appearance means a live
+  session's projection changed.
 
 ### Timebox
 
@@ -146,6 +162,19 @@ The run still reaches past the scratch team, in three places:
 
 Every live team on this daemon shares that broker, so run the probe when
 two reloads are acceptable to them.
+
+Watch two places for the stop conditions above, from before the apply
+until after the teardown:
+
+- **The marvel event ring:** `marvel events --kind bus.rendered`. Expect
+  exactly two, `bus config rendered (apply)` and
+  `bus config rendered (delete team probe/probe-model)`. The later apply
+  that adds the env role should render nothing, because the team's broker
+  user already exists; if it does render, the reason is still `apply`.
+  Anything else, and the warning form with any reason, is a stop.
+- **The daemon log:** `marvel daemon logs`. The `bus.rendered` lines
+  appear here too, and the `apply: re-projected policy` line appears only
+  here. Any appearance of it is a stop.
 
 ```yaml
 # Scratch manifest for probe-model-per-role-claude. Not a live team.
