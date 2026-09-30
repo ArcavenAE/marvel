@@ -243,6 +243,27 @@ func (m *Manifest) DSTAcknowledgements(now time.Time) []DSTAcknowledgement {
 	return out
 }
 
+// ScheduleAdvisories lists schedules whose dst_ack does nothing because
+// their zone never changes offset. Apply succeeds; the operator is told.
+func (m *Manifest) ScheduleAdvisories(now time.Time) []string {
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Schedule == nil || !r.Schedule.DSTAck {
+				continue
+			}
+			loc, err := loadScheduleZone(r.Schedule.Timezone)
+			if err != nil {
+				continue
+			}
+			if _, _, observes := zoneOffsets(loc, now); !observes {
+				out = append(out, fmt.Sprintf("team %s role %s: schedule.dst_ack is set but timezone %s does not observe daylight saving; the ack does nothing and can be removed", t.Name, r.Name, r.Schedule.Timezone))
+			}
+		}
+	}
+	return out
+}
+
 // loadScheduleZone resolves an IANA zone name or a fixed "+HH:MM" offset.
 // "Local" is refused: it is the daemon host's zone, a default in disguise.
 func loadScheduleZone(tz string) (*time.Location, error) {
@@ -410,6 +431,12 @@ func checkCronItem(item string, lo, hi int) error {
 		n, err := strconv.Atoi(step)
 		if err != nil || n < 1 {
 			return fmt.Errorf("step %q must be a positive number", step)
+		}
+		// "5/15" has two readings in the wild (Vixie reads it as 5-59/15);
+		// refuse it until the clock (S-3) picks one. "*/n" and "a-b/n" are
+		// unambiguous.
+		if base != "*" && !strings.Contains(base, "-") {
+			return fmt.Errorf("step on a single number %q is ambiguous; write %s-%d/%s or */%s", item, base, hi, step, step)
 		}
 	}
 	if base == "*" {

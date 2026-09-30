@@ -1188,10 +1188,15 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	}
 
 	advisories := m.ContextFeedAdvisories(d.sessMgr.CanFeedContextRole)
-	acks := m.DSTAcknowledgements(time.Now().UTC())
+	now := time.Now().UTC()
+	acks := m.DSTAcknowledgements(now)
+	scheduleAdvisories := m.ScheduleAdvisories(now)
 
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
+	}
+	for _, a := range scheduleAdvisories {
+		log.Printf("apply: %s", a)
 	}
 	for _, a := range acks {
 		events.Emit(d.events, events.Event{
@@ -1246,7 +1251,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
-		"advisories": advisories,
+		"advisories": append(advisories, scheduleAdvisories...),
 	})
 	return Response{Result: result}
 }

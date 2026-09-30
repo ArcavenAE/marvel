@@ -434,3 +434,33 @@ func TestScheduleSnapshotIsolated(t *testing.T) {
 		t.Fatalf("a snapshot edit reached the store: %+v", again.Roles[0].Schedule)
 	}
 }
+
+// TestScheduleAdvisoryForNeedlessAck: dst_ack on a zone that never changes
+// offset applies, and the operator is told the ack does nothing.
+func TestScheduleAdvisoryForNeedlessAck(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		schedule string
+		want     int
+	}{
+		{"cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\ndst_ack = true", 1},
+		{"cron = \"17 6 * * *\"\ntimezone = \"America/Chicago\"\ndst_ack = true", 0},
+		{"cron = \"17 6 * * *\"\ntimezone = \"-06:00\"", 0},
+	} {
+		m, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", c.schedule)))
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.schedule, err)
+		}
+		got := m.ScheduleAdvisories(time.Now().UTC())
+		if len(got) != c.want {
+			t.Errorf("%q: %d advisories %v, want %d", c.schedule, len(got), got, c.want)
+		}
+		if c.want == 1 && !strings.Contains(got[0], "does not observe daylight saving") {
+			t.Errorf("advisory %q does not say why", got[0])
+		}
+	}
+	_, err := parseCron("5/15 * * * *")
+	if err == nil || !strings.Contains(err.Error(), "5-59/15") {
+		t.Errorf("step-base refusal %v does not offer 5-59/15", err)
+	}
+}
