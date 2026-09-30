@@ -96,7 +96,7 @@ note in the PR says that `stale-token` moved to its own kind.
 Today the holder gets only `Response{Error: err.Error()}`, a string; nothing
 on the client side maps it back to a sentinel (`git grep
 ErrHeartbeatUnauthorized` finds no client use). So the heartbeat response
-gains a stable `code` field (`unauthorized`, `revoked`, `rotated`, `stale`,
+gains a stable `code` field (`unauthorized`, `revoked`, `stale`,
 `expired`) beside the message, and producers branch on the code, never on the
 text.
 
@@ -110,8 +110,12 @@ retrying forever") for every producer marvel ships. A process marvel does not
 ship keeps retrying and keeps being refused, throttled, which is today's
 behavior.
 
-In B-TTL, `ErrHeartbeatExpired` is not terminal: the producer re-reads the
-renewal file once and retries (section 4.3).
+In B-TTL the producer reads the renewal file before every beat (section 4.3),
+and one rule covers every refusal: on `revoked`, `expired` or `stale`, re-read
+the file once. If it yields a different token, retry with it; if it yields the
+same token, or the file is gone, stop as above. So a live seat survives an
+operator revoke and a rotation race, and a holder whose file is gone stops.
+In B-min there is no file, so `revoked` and `stale` stop at once.
 
 ### 3.5 `marvel describe session`
 
@@ -136,35 +140,51 @@ Never the token or any hash.
 The daemon re-mints each live session's token at half its TTL. It runs as its
 own ticker (every minute is enough), not inside the team controller's 2s
 reconcile (`internal/daemon/daemon.go:52`), which reads the whole process
-table and should not also write the store and the file tree. Old hash goes to `HeartbeatRevoked` with
-`By: "rotation"`, so a beat racing the rotation reads `revoked` and the
-producer re-reads the file (below) instead of stopping. That is one exception
-to 3.4: a revoked hash whose `By` is `rotation` is non-terminal, and the error
-says so (`ErrHeartbeatRotated`, a wrapped `ErrHeartbeatRevoked`).
+table and should not also write the store and the file tree. The daemon writes the new token to the renewal file first, then swaps the
+hash, and the old hash goes to `HeartbeatRevoked` with `By: "rotation"` (kept
+for `describe`, not for the producer). A beat that read the file just before
+the write presents the old token, is refused `revoked`, re-reads the file, and
+finds the new one (the 3.4 rule). There is no separate `rotated` outcome.
 
 ### 4.3 The pane-scoped renewal file
 
-- Path: `<marvel run dir>/sessions/<workspace>/<name>/g<generation>/heartbeat.token`,
-  directory 0700, file 0600, written atomically (temp plus rename) at every
-  mint and rotation.
+- Path: `<marvel run dir>/sessions/<workspace>/<name>/<spawn-id>/heartbeat.token`,
+  where `<spawn-id>` is a random nonce minted at each spawn and stored on the
+  session record as `HeartbeatDir`. Directory 0700, file 0600, written
+  atomically (temp plus rename) at every mint and rotation. A daemon restart
+  that adopts a live pane keeps its `HeartbeatDir`; a respawn of the same
+  session key gets a new one.
 - The pane gets the path, not only the token:
   `MARVEL_HEARTBEAT_TOKEN_FILE` beside `MARVEL_HEARTBEAT_TOKEN`. Producers read
-  the file first and fall back to the environment, so a session spawned before
-  B-TTL keeps working until its token expires.
-- The generation directory is removed when the session exits, is reaped, or is
-  replaced by a new generation. **This is the property that matters:** an
-  orphan from an earlier daemon or generation points at a directory that no
-  longer exists, so it cannot renew, and its token dies within one TTL. That
-  turns k58k's permanent refusal into a bounded one without a reaper.
+  the file before every beat (a small local read per beat) and fall back to the
+  environment when the variable is unset, so a session spawned before B-TTL
+  keeps working until its token expires.
+- A spawn directory is removed when its session exits or is reaped, and when
+  the record's `HeartbeatDir` no longer names it. **This is the property that
+  matters:** an orphan points at its own spawn directory, and the only
+  directory that survives is the one the live record names. That holds for an
+  orphan of an earlier generation and for the k58k case, an orphan of an
+  earlier daemon at the same generation: the respawn that replaced it minted a
+  new spawn id, so the orphan's directory is gone, it cannot renew, and its
+  token dies within one TTL without a reaper.
+- The bound is against orphans that follow their own environment, which every
+  producer marvel ships does. It is not against a same-uid process that lists
+  the run directory and reads another session's file; that is aae-orc-ww33y,
+  out of scope here (section 2).
 - A daemon restart reconciles the directory tree against live sessions and
-  removes directories with no live session, the same pass 5yqw3 plans for its
-  user table.
+  removes every directory the live records do not name, the same pass 5yqw3
+  plans for its user table. Before it admits any beat, the same pass rotates
+  every live token already past half its TTL (or expired) and rewrites its
+  file, so a daemon that was down longer than a token's remaining life does
+  not come back to a fleet of expired tokens.
 
 ### 4.4 Operator surface after B-TTL
 
-`marvel session revoke` now also rewrites the renewal file, so the live
-session renews on its next beat and only other holders of the old token are
-cut off. `--restart` stays available for the case where the operator does not
+`marvel session revoke` now also rewrites the renewal file (file first, then
+the hash swap, as in 4.2). The live session reads the file before its next
+beat and presents the new token; a holder without the file (an orphan whose
+directory is gone) is refused `revoked`, re-reads, finds nothing new, and
+stops. `--restart` stays available for the case where the operator does not
 trust the pane itself.
 
 ## 5. Tests (red first on b1f4953)
@@ -180,10 +200,17 @@ trust the pane itself.
    a fake-clock loop).
 6. B-TTL: an expired token is refused with `heartbeat.expired`; after the file
    is rewritten, the producer renews and is admitted.
-7. B-TTL: after the generation directory is removed, a holder of the old token
-   cannot renew and is refused once the TTL passes.
+7. B-TTL: a holder whose spawn directory is gone cannot renew and is refused
+   once the TTL passes, in two cases: an orphan of an earlier generation, and
+   an orphan of an earlier daemon at the same generation (the respawn minted a
+   new spawn id). The second is the k58k case.
 8. B-TTL: a beat racing rotation is admitted after one file re-read, not
    stopped.
+9. B-TTL: after `session revoke`, the live pane's next beat (reading the
+   rewritten file) is admitted, and a holder of the old token without the file
+   is refused `revoked` and stops.
+10. B-TTL: a daemon down past a token's remaining life rotates it at restart
+    before admitting beats, so the live pane's first beat is admitted.
 
 ## 6. Migration
 
@@ -209,9 +236,9 @@ retires.
 | The token, its hash, `MARVEL_HEARTBEAT_TOKEN` | thrown away |
 | `HeartbeatTTL`, rotation at half-life | thrown away: the certificate carries its own not-after, and removal-and-reload is its lifetime enforcement |
 | The renewal file and `MARVEL_HEARTBEAT_TOKEN_FILE` | thrown away |
-| `HeartbeatRevoked` list | thrown away: removing the verify_and_map user line is the revocation |
+| `HeartbeatRevoked` list of hashes | **reshaped**: removing the verify_and_map user line is the revocation, but on its own it makes a revoked certificate look the same as an unknown one. A revoked-serial list (certificate serials, not hashes, same cap) is kept so `revoked` stays distinct from `stale` |
 | `marvel session revoke` verb and its RPC scope | **kept**, re-pointed at removing the session's certificate user line and reloading |
-| Distinct outcomes `revoked`, `stale`, `expired`, `no-token`, and the producers stopping on terminal ones | **kept**, as certificate-verification outcomes |
+| Distinct outcomes `revoked`, `stale`, `expired`, `no-token`, and the 3.4 producer rule | **kept**, as certificate-verification outcomes; `revoked` depends on the revoked-serial list above |
 | `describe` `issued_at`, `generation`, `expires_at` | **kept**, filled from the certificate's not-before, serial generation, and not-after |
 | Generation-directory reconcile on daemon restart | **kept**, as the same pass 5yqw3 runs on its user table |
 
