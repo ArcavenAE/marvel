@@ -23,7 +23,7 @@ Design for review. No code lands until this doc is reviewed.
 | codex already treats that directory as the start directory | `internal/runtime/codex_home.go:335` (`os.Getwd()`, declared untrusted) | true, and it names g71ad as the fix |
 | The claude adapter has no private home and seeds nothing | `internal/runtime/claude.go` implements no `SessionHome`; `Prepare` (`:89`) adds `--settings`, `--permission-mode`, a prompt | true |
 | Claude Code keeps folder trust, onboarding and per-project MCP servers in its user config file, keyed by path | key names in `~/.claude.json`: `projects.<path>.hasTrustDialogAccepted`, `projects.<path>.mcpServers`, top-level `hasCompletedOnboarding` (names only read) | true |
-| The fleet's director MCP server reaches claude seats through that per-path entry | `projects.<orc root>.mcpServers` holds `director-mcp`; the top-level `mcpServers` does not | true: a seat placed anywhere else loses director |
+| The fleet's director MCP server reaches claude seats through that per-path entry | on this host (kinu): `projects.<orc root>.mcpServers` holds `director-mcp`; the top-level `mcpServers` does not | true on kinu: a seat placed anywhere else loses director. **Not fleet-wide:** per the #422 review, the second cluster's seats (mokuzai) declare director in the role command (`--strict-mcp-config --mcp-config {...director-mcp-seat}`) and that host's config has no director entry. I did not check that host. Section 4 handles both |
 | Claude Code can be told which settings files to load | `claude --help`: `--setting-sources <user,project,local>`, `--settings`, `--mcp-config`, `--strict-mcp-config` | true |
 | A headless claude run never shows the dialog | `claude --help` on `-p`: "The workspace trust dialog is skipped when Claude is run in non-interactive mode" | true; the dialog is an interactive-seat problem |
 | The nine pre-approved tools came from `marvel-wt-318/.claude/settings.local.json` | `ls marvel-wt-318/.claude` | **false**: no such file there. `settings.local.json` exists in three ancestors (the orc root, `~/work`, `~`), so the list came from a file other than the checkout's own. Which one is not established; the design does not depend on it, because section 4 stops loading local settings by accident from anywhere |
@@ -66,7 +66,9 @@ Resolution, first match wins:
 3. Otherwise a **managed directory**: `<StateDir>/seats/<workspace>/<team>/<role>`,
    created `0700` by marvel, per role and stable across restarts, so a
    restart lands where its predecessor worked. It holds nothing marvel did
-   not write.
+   not write. A role with more than one replica shares the directory and its
+   trust entry; that is fine for trust, but two interactive seats there also
+   share any project-scoped state the harness writes into it.
 
 The daemon's own directory is never a result. The tmux session itself is
 created with `new-session -c <StateDir>/seats`, so even the base pane is off
@@ -98,13 +100,34 @@ in, and the declaration is recorded on the session. The value is passed as
 given; marvel does not interpret settings files (the policy projection rule
 stands).
 
-**MCP servers.** A seat placed outside the orc root loses `director-mcp`,
-because Claude Code files it under that path. marvel therefore projects the
-director server the way the codex seed already does
-(`operatorDirector`, `codex_home.go:125`): the operator's command and args
-only, no env table, written to a per-session file passed as `--mcp-config`.
-Whether to add `--strict-mcp-config`, which drops every server the operator
-has not declared for seats, is ruling 2.
+**MCP servers.** On kinu a seat placed outside the orc root loses
+`director-mcp`, because Claude Code files it under that path. On mokuzai the
+role command already declares it. The rule covers both:
+
+- **The role declares its MCP servers: marvel projects nothing.** If the role's
+  command or args carry `--mcp-config` or `--strict-mcp-config`, the role's
+  declaration wins whole. marvel adds no second `--mcp-config` and does not
+  merge. Merging two declarations is a second source to reconcile (R-84's
+  one-source rule), and the role author chose strict on purpose. The session
+  records `mcp: role-declared`.
+- **Otherwise marvel projects director.** It writes a per-session file,
+  `0600` (as `writeSeedFile` does, `internal/runtime/codex_home.go:188`), and
+  passes it as `--mcp-config`. The command and args come from the cluster
+  config (`claude.director_mcp: {command, args}` in `~/.marvel/config.yaml`),
+  not from Claude Code's own file, because the entry there is keyed by project
+  path and has no single operator-level value to read. With no configured
+  entry, nothing is projected, and the session logs it and records `mcp: none`.
+- **No env in the file.** Only `command` and `args` are written. The mokuzai
+  seats show this is enough: their `--mcp-config` carries only `command`, and
+  their `director-mcp` children still authenticate. Claude Code hands its
+  process environment, including the `DIRECTOR_NATS_*` names marvel injects
+  (`internal/runtime/adapter.go:351-355`), to a stdio MCP child. That evidence
+  is from the review; I did not check it on mokuzai myself.
+- `args` are copied verbatim, so a secret an operator puts in the command's
+  args would be written to that file. Today's command has none.
+
+Whether a projected seat also gets `--strict-mcp-config` is ruling 2. A role
+that already declares it keeps it either way.
 
 **Rollout cost, stated.** Today's fleet seats run in the orc root and load
 its `local` file, which carries a long allow list. Moving them to `user,project`
@@ -134,6 +157,39 @@ naming only the keys it sets. Claude Code relocates its config with
 - nothing copied from the operator's file: no history, no other projects'
   trust, no MCP servers, no identity.
 
+Claude Code later writes account metadata into that file (`oauthAccount`) on
+login or use. That is identity, not bearer authority. marvel neither reads it
+nor carries it between homes.
+
+**What the home links, per platform (ADR-009).** Like codex's `auth.json`,
+the credential is linked and never copied:
+
+| Platform | Claude Code keeps the credential | `LinkIn` |
+|---|---|---|
+| macOS | the login keychain | nothing (SB-3 decides whether the relocated home still finds it) |
+| Linux | a file under its config directory (`.credentials.json`, per Claude Code's layout; SB-3 confirms the name) | that file, symlinked to the operator's own |
+
+**A seat that would come up logged out is refused.** `LinkIn` skips a missing
+entry by design (`adapter.go:142-145`), and for codex the session reports its
+own auth. For an interactive claude seat that report is a login screen, which
+breaks section 2's rule. Worse, completing that login would write a new
+refresh token under `StateDir`, which is marvel holding bearer authority at a
+third party. So before launch marvel runs `claude auth status` under the
+private home (the harness reads its own credential; marvel reads only the
+exit status). Not logged in is a `bootstrap-refused` reason (section 6). The
+exit-status contract of `claude auth status` is not verified here; SB-3
+records it.
+
+**A link must stay a link.** A harness that refreshes a credential by writing
+a temp file and renaming it over the path would replace the symlink with a
+regular file, and a copy would then live under `StateDir`. Neither harness is
+known to do or not do this. So at every spawn that reuses a home,
+`prepareSessionHome` checks, for every adapter, that each `LinkIn` entry is
+still a symlink to the operator's file. If one is not, the session is
+refused with reason `link-replaced`, naming the path, and marvel deletes
+nothing (the no-deletion convention): the operator removes the copy and
+re-applies. `Session.Bootstrap` records the check.
+
 Trust is seeded only for the resolved workdir, and only because section 4
 decides what that trust loads. Trusting a directory whose local settings
 would then load unreviewed is the thing the declined dialog was protecting,
@@ -145,7 +201,10 @@ the item it looks up changes with `CLAUDE_CONFIG_DIR` was not checked here,
 because the check reads the credential store and was declined. SB-3 is a
 probe the operator runs (or grants): launch one seeded interactive claude
 under a private `CLAUDE_CONFIG_DIR` and read whether it reaches the prompt
-logged in. If it does not, the private home is not the mechanism, and the
+logged in, and what `claude auth status` exits with there. **If it is not
+logged in, the probe stops there and never logs in inside the private home.**
+Also record whether a token refresh leaves the Linux link a link. If the home
+does not keep the login, the private home is not the mechanism, and the
 fallback is:
 
 - **Fallback F1:** write the one trust key into the operator's own config
@@ -162,7 +221,8 @@ fallback is:
 
 When a bootstrap step the harness needs fails (the declared workdir is
 missing, the managed directory cannot be created, the claude home cannot be
-seeded, or trust is absent under F2):
+seeded, the seat would come up logged out, a `LinkIn` entry is no longer a
+link, or trust is absent under F2):
 
 - the session is not launched. It is recorded `failed` with condition
   `bootstrap-refused` and the reason, and it is **not** charged to the restart
@@ -217,8 +277,16 @@ launch.
 6. A missing declared workdir: not launched, `bootstrap-refused`, restart
    count 0, not frozen under `restart_policy = never`, one event, no respawn
    until re-apply.
-7. The projected MCP file carries the director command and args and no env.
-8. A headless claude run gets placement and settings sources and no seeded
+7. The projected MCP file carries the configured director command and args,
+   no env, and is `0600`. A role whose command already declares
+   `--mcp-config` or `--strict-mcp-config` gets no projection and no second
+   flag, and its declaration reaches the command line unchanged.
+8. Custody: a claude home whose linked credential is missing is refused
+   `bootstrap-refused` (not logged in) and never launched; a `LinkIn` entry
+   replaced by a regular file is refused `link-replaced` and nothing is
+   deleted; on Linux the credential under the home is a symlink, never a
+   regular file.
+9. A headless claude run gets placement and settings sources and no seeded
    home.
 
 ## 10. Edits, in order (none made by this PR)
@@ -232,7 +300,7 @@ launch.
 | SB-4F | Fallback F2, if SB-3 fails | SB-3 red, SB-1 |
 | SB-5 | codex seed uses the resolved workdir | SB-1 |
 | SB-6 | Refusal path, `Session.Bootstrap`, events, `describe` | SB-1 |
-| SB-7 | Fleet and example manifests declare `settings_sources` | SB-2 |
+| SB-7 | Fleet and example manifests declare `settings_sources`, and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2 |
 
 The shortest path to an unblocked step 0 is SB-1, SB-2, SB-3 and then SB-4 or
 SB-4F.
@@ -242,7 +310,8 @@ SB-4F.
 1. **Default settings sources** (section 4). Default offered: `user,project`
    for a declared workdir, `user` for a managed one, `local` only by
    declaration.
-2. **`--strict-mcp-config` for seats.** Default offered: off, so a seat still
-   has the operator's user-scope servers; the director server comes from the
-   projection either way.
+2. **`--strict-mcp-config` for projected seats.** Default offered: off for a
+   seat marvel projects director into, so it keeps the operator's user-scope
+   servers. A role that declares strict (as the mokuzai seats do) keeps it; the
+   default never overrides a role.
 3. **The #255 amendments in section 7.** Default offered: adopt as written.
