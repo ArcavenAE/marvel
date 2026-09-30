@@ -104,8 +104,9 @@ Projection is `ProjectionFor(ctx, dir).Supported`.
    `internal/session/projection.go` writes the settings JSON, and
    `LaunchContext.PolicyProjectionPath` is what the adapter points the
    harness at via `--settings`. Re-projection happens live on re-apply,
-   emitting a `policy.projected` event, so a running agent's contract can
-   change without a restart. Harnesses that support no projection (codex,
+   emitting a `policy.projected` event. The file is rewritten live, but its
+   permissions take effect on the next spawn; a running session keeps the
+   permissions it started with (marvel#313). Harnesses that support no projection (codex,
    opencode, simulator, generic) have the referenced policy logged as
    advisory rather than silently dropped.
 

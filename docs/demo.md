@@ -3,8 +3,8 @@
 Marvel is a control plane for agent sessions. It keeps a declared team
 running, notices when a session dies, and repairs it; it observes what every
 session is doing, in one event vocabulary, across different agent harnesses;
-it changes a running agent's permission contract by editing a manifest, with
-no restart; and it refuses work that would carry a team past a budget the
+it re-projects an agent's permission contract when a manifest is edited, and
+the new permissions take effect on the next spawn (marvel#313); and it refuses work that would carry a team past a budget the
 manifest declares, without leaving that team in a state it cannot reach. This
 runbook shows those four properties as copy-pasteable command sequences, each
 mapped to the exact events marvel emits.

@@ -503,8 +503,9 @@ detected, so a session launches with harness defaults.
 4. **Configuration is resolved, not assumed.** Manifest and adapter resolve
    at launch. Policy projection resolves at launch and re-resolves on
    re-apply: `session.Manager.Reproject` rewrites the projected settings
-   file for every live session, so an edited policy reaches running agents
-   without a restart.
+   file for every live session. The file changes live; its permissions take
+   effect on the next spawn, and a running session keeps the permissions it
+   started with (marvel#313).
 5. **Fail observable.** Every session's output is visible; marvel logs all state transitions.
 6. **Gradual elaboration.** Start with one session in a manifest, grow to fleet management.
 7. **Harness-agnostic.** Six adapters, and the generic fallback manages any CLI.
