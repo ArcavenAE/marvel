@@ -36,8 +36,11 @@ marvel already records, and labelled as derived:
 account = (harness, resolved backend, credential source, config home)
 ```
 
-`config home` is the harness's config directory for that session (the
-private home when marvel sets one, the operator's own otherwise). Every
+`config home` is the home the session's login comes from: the operator's
+harness home, or the `Source` a private home links its credentials from
+(`SessionHomeSpec.Source`). It is never the per-session private home itself,
+which differs for every session (`internal/session/sessionhome_test.go:91`) and
+would give each codex session a key of its own. Every
 session with the same key is taken to share a limit. The operator may name a
 key in the cluster config (`accounts: [{name, match: {...}}]`) so the views
 show a word instead of a tuple. **Stated limit:** two sessions on the same key
@@ -158,9 +161,32 @@ fails the same way on the same account until `max_restarts` freezes the role
 2. **No charge.** A headless run that ends while its account is `limited` is
    recorded with outcome `limited`, emits `run.limited`, and is not charged:
    it adds nothing to the restart count, cannot saturate `max_restarts`, and
-   never freezes the role, whatever `restart_policy` says. "Ends while
-   limited" is decided at reap time from the account's condition, or from the
-   run's own limit report once UL-3 recognizes one.
+   never freezes the role, whatever `restart_policy` says.
+
+**How marvel decides "ended while limited".** At reap, a claude headless run
+usually cannot say: its stream has no limit report until UL-3, it produces no
+reading of its own, and the reconcile loop reaps within about 2 seconds
+(`internal/daemon/daemon.go:52`) while the next reading may be a statusline
+tick minutes away. So the decision is:
+
+- **The run reported a limit itself** (UL-3, once built): `limited` at reap.
+- **The account is already `limited` at reap:** `limited` at reap.
+- **The account has a reporter** (a fresh reading for its key exists): the
+  exit is held as `pending` until the account's next fresh reading or 15
+  minutes, whichever comes first. While pending, no repair spawns and nothing
+  is charged. A reading that shows the account limited, with a reset after the
+  run ended, settles it as `limited`; a reading below 100, or the 15 minutes
+  running out, settles it as an ordinary failure, charged as today.
+- **The account has no reporter** (no fresh reading for its key, as for an
+  account only headless claude runs use): charged at reap as today, with no
+  hold. Rule 2 depends on UL-3 for these accounts, and until UL-3 ships they
+  keep today's charging.
+
+Stated costs. A real crash on an account with a reporter is repaired up to 15
+minutes late. A headless-only account can still be charged for a limit until
+UL-3. For a scheduled role that charge cannot freeze it: #415 takes scheduled
+roles off the restart policy, and its default `on_failure = "wait"` records a
+failed firing and runs the next one.
 
 For a scheduled role, #415 applies the same two rules to its firing record: a
 run that ends while limited spends no retry and never triggers `on_failure =
@@ -211,6 +237,18 @@ doc supplies them.
     headless role.
 13. `--until reset` with no fresh reading is refused; with one, the stored
     `until` does not move when a later reading arrives.
+14. A reading that arrives after the reap: a headless run on an account with a
+    reporter exits non-zero while the account still reads 90%; the exit is
+    held `pending`, no repair spawns, and the restart count stays 0; a reading
+    at 100% with a later reset arrives 3 minutes after the reap (fake clock);
+    the run settles `limited`, is never charged, and repair waits for the
+    clear.
+15. The same, but the next reading is below 100: the run settles as an
+    ordinary failure and is charged once, at settlement.
+16. An account with no interactive reporter: the exit is charged at reap
+    exactly as today, with no hold. With UL-3 recognition stubbed to report a
+    limit, the same run settles `limited` and is not charged.
+17. Two codex sessions on the same operator login share one account key.
 
 ## 7. Edits, in order (none made by this PR)
 
@@ -221,7 +259,7 @@ doc supplies them.
 | UL-3 | The `limited` condition, its column cell, describe line and events | UL-1 |
 | UL-4 | The Pause record, verbs, admission refusal, shift suppression, lift and proposal events | none |
 | UL-5 | Scheduled-run skip reasons | UL-3, UL-4, #415's S-3 |
-| UL-6 | Held headless repair and the uncharged `limited` outcome (section 4a) | UL-3, UL-4 |
+| UL-6 | Held headless repair, the pending hold, and the uncharged `limited` outcome (section 4a); the no-reporter case waits on UL-3's recognition | UL-1, UL-3, UL-4 |
 
 ## 8. Open questions
 
