@@ -1,0 +1,168 @@
+package session
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/usage"
+)
+
+// runFixture is a claude stream-json run with one metered request whose
+// final result line names one refused tool call.
+const runFixture = `{"type":"system","subtype":"init","session_id":"run-1","cwd":"/tmp","model":"claude-haiku-4-5"}
+{"type":"assistant","session_id":"run-1","message":{"id":"msg_run1","model":"claude-haiku-4-5","role":"assistant","content":[{"type":"text","text":"board refreshed"}],"usage":{"input_tokens":1200,"output_tokens":13}}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"run-1","num_turns":1,"stop_reason":"end_turn","result":"board refreshed","total_cost_usd":0.0421,"usage":{"input_tokens":1200,"output_tokens":13},"modelUsage":{"claude-haiku-4-5":{"inputTokens":1200,"outputTokens":13,"costUSD":0.0421}},"permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_1"}]}
+`
+
+// exitingHarness replays transcript and then exits with code, so a run
+// can end in either outcome after a full stream.
+func exitingHarness(t *testing.T, transcript string, code int) string {
+	t.Helper()
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "transcript.ndjson")
+	if err := os.WriteFile(fixture, []byte(transcript), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	script := filepath.Join(dir, "stub-claude")
+	body := fmt.Sprintf("#!/bin/sh\ncat %q\nexit %d\n", fixture, code)
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	return script
+}
+
+func runTestSchedule() *api.SchedulePolicy {
+	return &api.SchedulePolicy{
+		Cron: "17 6 * * *", Timezone: "Etc/UTC",
+		Concurrency: api.ScheduleConcurrencyForbid, OnFailure: api.ScheduleOnFailureWait,
+		ActiveDeadline: 45 * time.Minute, StaleAfter: 30 * time.Hour,
+		History: &api.ScheduleHistory{Succeeded: 3, Failed: 3},
+	}
+}
+
+// reapUntilGone polls ReapDead until no session in keys holds a pane.
+func reapUntilGone(t *testing.T, mgr *Manager, store *api.Store, keys ...string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.ReapDead()
+		done := true
+		for _, k := range keys {
+			if s, err := store.GetSession(k); err != nil || s.PaneID != "" {
+				done = false
+			}
+		}
+		if done {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("sessions %v were not reaped within 15s", keys)
+}
+
+// TestReapRecordsScheduledRuns is design section 5's run record, written
+// when a scheduled role's run ends: outcome, exit status, times, the
+// metered token total, the denial count and the result text. An
+// unscheduled headless role in the same pass records nothing, and the
+// run.* events carry status but never the result text.
+func TestReapRecordsScheduledRuns(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	ring := events.NewRing(400)
+	mgr := NewManager(store, driver)
+	mgr.Events = ring
+	mgr.Usage = usage.New(store, usage.NewResolver(usage.DefaultTable()))
+	mgr.StreamDir = filepath.Join(t.TempDir(), "streams")
+
+	ws := "test-run-record"
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	okCmd := exitingHarness(t, runFixture, 0)
+	failCmd := exitingHarness(t, runFixture, 3)
+	rt := func(cmd string) api.Runtime {
+		return api.Runtime{Name: "claude", Command: cmd, Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
+	}
+	if err := store.CreateTeam(&api.Team{
+		Name: "timers", Workspace: ws,
+		Roles: []api.Role{
+			{Name: "refresh", Replicas: 1, Runtime: rt(okCmd), Schedule: runTestSchedule()},
+			{Name: "broken", Replicas: 1, Runtime: rt(failCmd), Schedule: runTestSchedule()},
+			{Name: "plain", Replicas: 1, Runtime: rt(okCmd)},
+		},
+	}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+
+	before := time.Now().UTC()
+	cmds := map[string]string{"refresh": okCmd, "broken": failCmd, "plain": okCmd}
+	var keys []string
+	for _, role := range []string{"refresh", "broken", "plain"} {
+		sess := &api.Session{
+			Name: "timers-" + role + "-g1-0", Workspace: ws, Team: "timers", Role: role,
+			Runtime: rt(cmds[role]),
+		}
+		if err := mgr.Create(sess); err != nil {
+			t.Fatalf("create %s: %v", role, err)
+		}
+		keys = append(keys, sess.Key())
+	}
+	reapUntilGone(t, mgr, store, keys...)
+
+	ok, found := store.GetScheduleStatus(ws + "/timers/refresh")
+	if !found || len(ok.History) != 1 {
+		t.Fatalf("refresh status = %+v (found %v), want one run", ok, found)
+	}
+	r := ok.History[0]
+	if r.Session != keys[0] || r.Outcome != api.RunSucceeded || r.ExitStatus != "0" {
+		t.Fatalf("refresh run = %+v, want succeeded with exit 0 for %s", r, keys[0])
+	}
+	if r.StartedAt.Before(before.Add(-time.Second)) || r.EndedAt.Before(r.StartedAt) {
+		t.Fatalf("refresh run times: started %v ended %v (test began %v)", r.StartedAt, r.EndedAt, before)
+	}
+	if r.Result != "board refreshed" || r.PermissionDenials != 1 {
+		t.Fatalf("refresh run result %q denials %d, want the final message and 1 denial", r.Result, r.PermissionDenials)
+	}
+	if !r.Tokens.Metered || r.Tokens.Out != 13 || r.Tokens.Prompt == 0 || !r.Tokens.CostReported {
+		t.Fatalf("refresh run tokens = %+v, want metered spend from the stream", r.Tokens)
+	}
+	if !ok.LastSucceededAt.Equal(r.EndedAt) {
+		t.Fatalf("last succeeded = %v, want the run's end %v", ok.LastSucceededAt, r.EndedAt)
+	}
+
+	bad, found := store.GetScheduleStatus(ws + "/timers/broken")
+	if !found || len(bad.History) != 1 || bad.History[0].Outcome != api.RunFailed || bad.History[0].ExitStatus != "3" {
+		t.Fatalf("broken status = %+v (found %v), want one failed run with exit 3", bad, found)
+	}
+	if !bad.LastSucceededAt.IsZero() {
+		t.Fatalf("a failed run set last succeeded: %v", bad.LastSucceededAt)
+	}
+
+	if _, found := store.GetScheduleStatus(ws + "/timers/plain"); found {
+		t.Fatal("an unscheduled role got a run record")
+	}
+
+	succ := ring.Snapshot(events.Filter{Kind: events.KindRunSucceeded}, 0)
+	fail := ring.Snapshot(events.Filter{Kind: events.KindRunFailed}, 0)
+	if len(succ) != 1 || succ[0].Role != "refresh" || len(fail) != 1 || fail[0].Role != "broken" {
+		t.Fatalf("run.succeeded %+v, run.failed %+v: want one each for refresh and broken", succ, fail)
+	}
+	for _, ev := range append(succ, fail...) {
+		if strings.Contains(ev.Message, "board refreshed") {
+			t.Fatalf("a run event carried the result text: %q", ev.Message)
+		}
+	}
+}

@@ -199,6 +199,14 @@ func TestScheduleRefusals(t *testing.T) {
 			want:     []string{"history.succeeded must be > 0"},
 		},
 		{
+			// The whole status is one stored value rewritten on every run,
+			// so "bounded" needs a ceiling as well as a floor.
+			name:     "history over the cap",
+			mode:     "headless",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = 3, failed = 51 }",
+			want:     []string{"history keeps at most 50 runs of each outcome"},
+		},
+		{
 			// ADR-010 Amendment 1: the restart policy does not apply to a
 			// scheduled role, so setting it would silently do nothing.
 			name:      "restart_policy on a scheduled role",

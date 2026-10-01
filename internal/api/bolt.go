@@ -18,7 +18,7 @@ import (
 //
 // Persisted: Workspaces, Teams (incl. Roles + ShiftState), Sessions
 // (incl. PaneID, State, Generation, Runtime, restart counters, CreatedAt),
-// Endpoints, RoleHealth. Volatile session fields (LastHeartbeat,
+// Endpoints, RoleHealth, ScheduleStatus. Volatile session fields (LastHeartbeat,
 // HealthState, LastHealthCheck, PID) are persisted with the rest of the
 // struct but treated as may-be-stale on rehydrate; the reconciler
 // refreshes them.
@@ -48,7 +48,10 @@ var (
 	bucketEndpoints  = []byte("endpoints")
 	bucketPolicies   = []byte("policies")
 	bucketRoleHealth = []byte("role_health")
-	bucketMeta       = []byte("meta")
+	// bucketScheduleStatus is new in a schema-compatible way: OpenBolt
+	// creates a missing bucket, so an older database opens unchanged.
+	bucketScheduleStatus = []byte("schedule_status")
+	bucketMeta           = []byte("meta")
 )
 
 var (
@@ -72,6 +75,7 @@ var allBuckets = [][]byte{
 	bucketEndpoints,
 	bucketPolicies,
 	bucketRoleHealth,
+	bucketScheduleStatus,
 	bucketMeta,
 }
 
@@ -265,7 +269,16 @@ func (s *Store) rehydrate() error {
 		}); err != nil {
 			return err
 		}
-		return nil
+		// Schedule status
+		return tx.Bucket(bucketScheduleStatus).ForEach(func(k, v []byte) error {
+			var st ScheduleStatus
+			if err := json.Unmarshal(v, &st); err != nil {
+				return fmt.Errorf("unmarshal schedule status %s: %w", string(k), err)
+			}
+			st.Key = string(k)
+			s.scheduleStatus[st.Key] = &st
+			return nil
+		})
 	})
 }
 

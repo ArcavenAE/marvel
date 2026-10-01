@@ -102,6 +102,17 @@ const (
 	// a zone that observes daylight saving because it carries dst_ack, so
 	// its firings will move against UTC twice a year (scheduled-runs 2a).
 	KindScheduleDSTAcknowledged Kind = "schedule.dst-acknowledged"
+	// KindScheduleStale is the freshness alarm (scheduled-runs section 7): a
+	// scheduled role has no succeeded run newer than its stale_after. It
+	// fires once when the role goes stale, at warning, and once more, at
+	// info, when a succeeded run brings it back. Diagnostic only: it blocks
+	// nothing.
+	KindScheduleStale Kind = "schedule.stale"
+	// KindRunSucceeded and KindRunFailed record that a run of a scheduled
+	// role ended and was added to the role's run history. They carry
+	// status only, never the run's result text (scheduled-runs section 5).
+	KindRunSucceeded Kind = "run.succeeded"
+	KindRunFailed    Kind = "run.failed"
 	// KindContextFeedUnsupported records that an applied manifest declares
 	// runtime.context_feed on a role whose harness cannot honour it, so the
 	// declaration is advisory and CTX% will not be fed by it. Fires once
@@ -264,6 +275,9 @@ var allKinds = []Kind{
 	KindPolicyProjected,
 	KindContextLimitUnresolved,
 	KindScheduleDSTAcknowledged,
+	KindScheduleStale,
+	KindRunSucceeded,
+	KindRunFailed,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindAdmissionCleared,
