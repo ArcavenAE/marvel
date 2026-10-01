@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 // RunOutcome is how one run of a scheduled role ended.
@@ -16,7 +18,9 @@ const (
 // section 5).
 const maxRunResultBytes = 4 << 10
 
-// RunRecord is one finished run of a scheduled role.
+// RunRecord is one finished run of a scheduled role (scheduled-runs
+// section 5). Firing, DueAt and CatchUp belong to the schedule clock and
+// stay empty until it sets them.
 type RunRecord struct {
 	Session    string     `json:"session"`
 	Firing     string     `json:"firing,omitempty"`
@@ -28,13 +32,18 @@ type RunRecord struct {
 	ExitStatus string     `json:"exit_status,omitempty"`
 	Tokens     RunTokens  `json:"tokens"`
 	// PermissionDenials counts the tool calls the harness refused, from
-	// the stream's final result line.
-	PermissionDenials int    `json:"permission_denials,omitempty"`
-	Result            string `json:"result,omitempty"`
-	ResultTruncated   bool   `json:"result_truncated,omitempty"`
+	// the stream's final result line. A denied call does not fail a run,
+	// so this is the only place a denial shows in the record.
+	PermissionDenials int `json:"permission_denials,omitempty"`
+	// Result is the run's final message, kept in the store for the
+	// operator and never forwarded: it may hold whatever the run read.
+	Result          string `json:"result,omitempty"`
+	ResultTruncated bool   `json:"result_truncated,omitempty"`
 }
 
-// RunTokens is a run's spend as the usage accountant metered it.
+// RunTokens is a run's spend as the usage accountant metered it. Metered
+// is false when the accountant never saw a request from the run, so a
+// zero total that was never measured cannot read as a free run.
 type RunTokens struct {
 	Prompt       int     `json:"prompt"`
 	Out          int     `json:"out"`
@@ -43,42 +52,174 @@ type RunTokens struct {
 	Metered      bool    `json:"metered"`
 }
 
-// SetResult stores text as the run's result.
-func (r *RunRecord) SetResult(text string) {}
-
-// Duration is how long the run took.
-func (r RunRecord) Duration() time.Duration { return 0 }
-
-// ScheduleStatus is the per-role record beside a scheduled role's spec.
-type ScheduleStatus struct {
-	Key             string      `json:"key"`
-	Since           time.Time   `json:"since"`
-	LastSucceededAt time.Time   `json:"last_succeeded_at,omitzero"`
-	Stale           bool        `json:"stale,omitempty"`
-	StaleChangedAt  time.Time   `json:"stale_changed_at,omitzero"`
-	History         []RunRecord `json:"history,omitempty"`
+// SetResult stores text as the run's result, cut to the cap on a rune
+// boundary so the record never holds half a character.
+func (r *RunRecord) SetResult(text string) {
+	r.ResultTruncated = len(text) > maxRunResultBytes
+	if !r.ResultTruncated {
+		r.Result = text
+		return
+	}
+	cut := maxRunResultBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	r.Result = text[:cut]
 }
 
-// AddRun records a finished run.
-func (st *ScheduleStatus) AddRun(r RunRecord, h ScheduleHistory) {}
+// Duration is how long the run took, zero when its start is unknown.
+func (r RunRecord) Duration() time.Duration {
+	if r.StartedAt.IsZero() || r.EndedAt.Before(r.StartedAt) {
+		return 0
+	}
+	return r.EndedAt.Sub(r.StartedAt)
+}
 
-// EvaluateFreshness reports whether the stale state changed at now.
+// ScheduleStatus is the status a scheduled role keeps beside its spec, the
+// way RoleHealth sits beside a role: run history, the last success, and
+// the freshness alarm's state. Key is workspace/team/role.
+type ScheduleStatus struct {
+	Key string `json:"key"`
+	// Since is when marvel first recorded this schedule. Until a run
+	// succeeds it is the freshness alarm's anchor.
+	Since           time.Time `json:"since"`
+	LastSucceededAt time.Time `json:"last_succeeded_at,omitzero"`
+	Stale           bool      `json:"stale,omitempty"`
+	StaleChangedAt  time.Time `json:"stale_changed_at,omitzero"`
+	// History is oldest first, bounded per outcome by the role's
+	// schedule.history.
+	History []RunRecord `json:"history,omitempty"`
+}
+
+// AddRun records a finished run, then drops the oldest runs of the run's
+// outcome beyond that outcome's bound. Each bound counts only its own
+// outcome, so a streak of failures cannot push the last success out.
+func (st *ScheduleStatus) AddRun(r RunRecord, h ScheduleHistory) {
+	if st.Since.IsZero() {
+		st.Since = r.EndedAt
+	}
+	if r.Outcome == RunSucceeded && r.EndedAt.After(st.LastSucceededAt) {
+		st.LastSucceededAt = r.EndedAt
+	}
+	st.History = append(st.History, r)
+
+	limit := h.Failed
+	if r.Outcome == RunSucceeded {
+		limit = h.Succeeded
+	}
+	excess := -limit
+	for _, x := range st.History {
+		if x.Outcome == r.Outcome {
+			excess++
+		}
+	}
+	if excess <= 0 {
+		return
+	}
+	kept := st.History[:0]
+	for _, x := range st.History {
+		if x.Outcome == r.Outcome && excess > 0 {
+			excess--
+			continue
+		}
+		kept = append(kept, x)
+	}
+	st.History = kept
+}
+
+// EvaluateFreshness sets the stale state at now and reports whether it
+// changed. A schedule is stale when no run has succeeded within
+// staleAfter: of the last success, or of Since when none has. The first
+// evaluation stamps Since.
 func (st *ScheduleStatus) EvaluateFreshness(now time.Time, staleAfter time.Duration) bool {
-	return false
+	if st.Since.IsZero() {
+		st.Since = now
+	}
+	anchor := st.LastSucceededAt
+	if anchor.IsZero() {
+		anchor = st.Since
+	}
+	stale := now.Sub(anchor) > staleAfter
+	if stale == st.Stale {
+		return false
+	}
+	st.Stale = stale
+	st.StaleChangedAt = now
+	return true
+}
+
+// HistoryBound is how many runs of each outcome the role keeps,
+// defaulted for a record written before the field existed.
+func (p SchedulePolicy) HistoryBound() ScheduleHistory {
+	if p.History == nil {
+		return ScheduleHistory{Succeeded: defaultScheduleHistorySucceeded, Failed: defaultScheduleHistoryFailed}
+	}
+	return *p.History
+}
+
+func cloneScheduleStatus(st *ScheduleStatus) ScheduleStatus {
+	out := *st
+	out.History = append([]RunRecord(nil), st.History...)
+	return out
 }
 
 // GetScheduleStatus returns a copy of one role's schedule status.
 func (s *Store) GetScheduleStatus(key string) (ScheduleStatus, bool) {
-	return ScheduleStatus{}, false
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st, ok := s.scheduleStatus[key]
+	if !ok {
+		return ScheduleStatus{}, false
+	}
+	return cloneScheduleStatus(st), true
 }
 
 // ListScheduleStatus returns a copy of every schedule status.
-func (s *Store) ListScheduleStatus() []ScheduleStatus { return nil }
-
-// UpdateScheduleStatus applies fn to one role's schedule status.
-func (s *Store) UpdateScheduleStatus(key string, fn func(*ScheduleStatus) bool) (ScheduleStatus, error) {
-	return ScheduleStatus{}, nil
+func (s *Store) ListScheduleStatus() []ScheduleStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]ScheduleStatus, 0, len(s.scheduleStatus))
+	for _, st := range s.scheduleStatus {
+		out = append(out, cloneScheduleStatus(st))
+	}
+	return out
 }
 
-// DeleteScheduleStatus removes one role's schedule status.
-func (s *Store) DeleteScheduleStatus(key string) error { return nil }
+// UpdateScheduleStatus applies fn to one role's schedule status under the
+// store lock, creating the record when it does not exist, and returns a
+// copy of the result. fn reports whether it changed anything; only a
+// change is written to disk, so the reconciler can evaluate every tick
+// without a write per tick.
+func (s *Store) UpdateScheduleStatus(key string, fn func(*ScheduleStatus) bool) (ScheduleStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.scheduleStatus[key]
+	if !ok {
+		st = &ScheduleStatus{Key: key}
+	}
+	work := cloneScheduleStatus(st)
+	if !fn(&work) && ok {
+		return cloneScheduleStatus(st), nil
+	}
+	work.Key = key
+	if err := s.persistPut(bucketScheduleStatus, key, &work); err != nil {
+		return cloneScheduleStatus(st), fmt.Errorf("persist schedule status %s: %w", key, err)
+	}
+	s.scheduleStatus[key] = &work
+	return cloneScheduleStatus(&work), nil
+}
+
+// DeleteScheduleStatus removes one role's schedule status. Deleting a key
+// that does not exist is not an error.
+func (s *Store) DeleteScheduleStatus(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.scheduleStatus[key]; !ok {
+		return nil
+	}
+	if err := s.persistDelete(bucketScheduleStatus, key); err != nil {
+		return fmt.Errorf("delete schedule status %s: %w", key, err)
+	}
+	delete(s.scheduleStatus, key)
+	return nil
+}

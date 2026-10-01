@@ -998,6 +998,9 @@ type usageDrain struct {
 	// arithmetic plus one non-persisting store write.
 	mu      sync.Mutex
 	retired bool
+	// tail is what a scheduled role's run record needs from the stream,
+	// noted as events pass. Guarded by mu.
+	tail runTail
 }
 
 func (d *usageDrain) observe(u UsageObserver, c usage.Coords, ev rtevents.Event) {
@@ -1012,11 +1015,23 @@ func (d *usageDrain) observe(u UsageObserver, c usage.Coords, ev rtevents.Event)
 	u.Observe(c, ev)
 }
 
-func (d *usageDrain) retire(u UsageObserver, key string) {
+// retire forgets the session's accounting and returns the run's tail,
+// with the spend read in the same critical section so no fold lands
+// between the read and the Forget.
+func (d *usageDrain) retire(u UsageObserver, key string) runTail {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.retired = true
+	tail := d.tail
+	if u == nil {
+		return tail
+	}
+	if r, ok := u.(spendReader); ok {
+		spend, seen := r.SessionSpend(key)
+		tail.spend, tail.metered = spend, seen && spend.Requests > 0
+	}
 	u.Forget(key)
+	return tail
 }
 
 // attachInstance records the instance and drains its event stream into
@@ -1062,6 +1077,7 @@ func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) 
 	go func() {
 		defer close(drain.done)
 		for ev := range inst.Events() {
+			drain.note(ev)
 			drain.observe(m.Usage, uc, ev)
 			events.Emit(m.Events, bridgeEvent(c, ev))
 		}
@@ -1087,22 +1103,22 @@ func (m *Manager) takeInstance(key string) (*runtime.TmuxInstance, *usageDrain) 
 const usageDrainGrace = 2 * time.Second
 
 // forgetUsage retires a session's accounting after its drain goroutine
-// has folded the last buffered event. See usageDrain for why the order
-// matters. A nil drain is an adopted pane, which never had one.
-func (m *Manager) forgetUsage(key string, drain *usageDrain) {
-	if m.Usage == nil {
-		return
-	}
+// has folded the last buffered event, and returns the run's tail. See
+// usageDrain for why the order matters. A nil drain is an adopted pane,
+// which never had one and has no tail.
+func (m *Manager) forgetUsage(key string, drain *usageDrain) runTail {
 	if drain == nil {
-		m.Usage.Forget(key)
-		return
+		if m.Usage != nil {
+			m.Usage.Forget(key)
+		}
+		return runTail{}
 	}
 	select {
 	case <-drain.done:
 	case <-time.After(usageDrainGrace):
 		log.Printf("warning: session %s: usage drain still running after %v, retiring its accounting anyway", key, usageDrainGrace)
 	}
-	drain.retire(m.Usage, key)
+	return drain.retire(m.Usage, key)
 }
 
 // Instance returns the live instance for a session key, or nil when
@@ -1146,17 +1162,17 @@ func (m *Manager) retireInstance(key string) (bool, error) {
 
 // detachInstance retires the stream of a session whose pane already
 // vanished. Distinct from retireInstance so the reap path does not log a
-// kill-pane failure for a pane it knows is gone.
-func (m *Manager) detachInstance(key string) {
+// kill-pane failure for a pane it knows is gone. It returns the run's
+// tail for the reap path's run record.
+func (m *Manager) detachInstance(key string) runTail {
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
-		m.forgetUsage(key, drain)
-		return
+		return m.forgetUsage(key, drain)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
 	defer cancel()
 	inst.Detach(ctx)
-	m.forgetUsage(key, drain)
+	return m.forgetUsage(key, drain)
 }
 
 // backendEnvLookup resolves an environment variable name against the
@@ -1331,7 +1347,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 		// The harness is gone; its stream has nothing left to say.
 		// Detaching here keeps a finished session from leaving a pipe
 		// and a parked reader behind.
-		m.detachInstance(sess.Key())
+		tail := m.detachInstance(sess.Key())
 		// A dead pane kept by remain-on-exit has given up its status;
 		// reclaim the window so the store, not tmux, carries the marker.
 		// Only for panes marvel made: the fence from finding-014 holds on
@@ -1376,6 +1392,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 				Session:   sess.Key(),
 				Message:   fmt.Sprintf("pane %s exited 0; replica satisfied", lostPane),
 			})
+			m.recordScheduledRun(sess, api.RunSucceeded, st.ExitStatus, tail)
 			// Not appended to reaped: completion is not a crash and charges
 			// no backoff. The session stays in the store holding its slot.
 			continue
@@ -1415,6 +1432,7 @@ func (m *Manager) ReapDead() []ReapedSession {
 			Session:   sess.Key(),
 			Message:   fmt.Sprintf("pane %s gone (%s)", lostPane, describeExit(st)),
 		})
+		m.recordScheduledRun(sess, api.RunFailed, st.ExitStatus, tail)
 	}
 	return reaped
 }

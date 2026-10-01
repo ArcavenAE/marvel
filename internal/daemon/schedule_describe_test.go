@@ -42,7 +42,7 @@ func TestDescribeTeamShowsTheSchedule(t *testing.T) {
 			ExitStatus: "0", StartedAt: ended.Add(-3 * time.Minute), EndedAt: ended,
 			Tokens: api.RunTokens{Prompt: 1200, Out: 13, Metered: true},
 		}
-		r.SetResult("client-private board body")
+		r.SetResult("private board body")
 		st.AddRun(r, api.ScheduleHistory{Succeeded: 3, Failed: 3})
 		return true
 	}); err != nil {
@@ -50,7 +50,7 @@ func TestDescribeTeamShowsTheSchedule(t *testing.T) {
 	}
 
 	raw := d.handleDescribe(mustMarshal(t, describeParams{ResourceType: "team", Name: teamKey}))
-	if strings.Contains(string(raw.Result), "client-private") {
+	if strings.Contains(string(raw.Result), "private board body") {
 		t.Fatalf("describe printed a run's result text: %s", raw.Result)
 	}
 	out := describeTeam(t, d, teamKey)
@@ -76,7 +76,7 @@ func TestDescribeTeamShowsTheSchedule(t *testing.T) {
 		t.Fatalf("runs = %v, want one", s["runs"])
 	}
 	r, _ := runs[0].(map[string]any)
-	if r["outcome"] != "succeeded" || r["duration"] != "3m0s" || r["result_bytes"] != float64(len("client-private board body")) {
+	if r["outcome"] != "succeeded" || r["duration"] != "3m0s" || r["result_bytes"] != float64(len("private board body")) {
 		t.Fatalf("run = %v", r)
 	}
 

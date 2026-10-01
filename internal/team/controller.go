@@ -473,6 +473,7 @@ func (c *Controller) ReconcileOnce() {
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}
+	c.reconcileScheduleFreshness(teams)
 }
 
 // maxAutoShiftsPerTick caps how many automatic shifts the controller initiates

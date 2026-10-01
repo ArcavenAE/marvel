@@ -112,7 +112,7 @@ func TestScheduleStatusFreshness(t *testing.T) {
 		t.Fatal("a standing stale state reported a second transition")
 	}
 
-	st.AddRun(run("s1", RunSucceeded, int((after + 2*time.Hour).Minutes())), ScheduleHistory{Succeeded: 3, Failed: 3})
+	st.AddRun(run("s1", RunSucceeded, int((after+2*time.Hour).Minutes())), ScheduleHistory{Succeeded: 3, Failed: 3})
 	recovered := statusEpoch.Add(after + 2*time.Hour + time.Minute)
 	if !st.EvaluateFreshness(recovered, after) || st.Stale {
 		t.Fatal("a fresh success did not report recovery")

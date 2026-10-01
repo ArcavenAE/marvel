@@ -14,10 +14,10 @@ import (
 	"github.com/arcavenae/marvel/internal/usage"
 )
 
-// runFixture is a claude stream-json run whose final result line names
-// one refused tool call.
+// runFixture is a claude stream-json run with one metered request whose
+// final result line names one refused tool call.
 const runFixture = `{"type":"system","subtype":"init","session_id":"run-1","cwd":"/tmp","model":"claude-haiku-4-5"}
-{"type":"assistant","session_id":"run-1","message":{"role":"assistant","content":[{"type":"text","text":"board refreshed"}]}}
+{"type":"assistant","session_id":"run-1","message":{"id":"msg_run1","model":"claude-haiku-4-5","role":"assistant","content":[{"type":"text","text":"board refreshed"}],"usage":{"input_tokens":1200,"output_tokens":13}}}
 {"type":"result","subtype":"success","is_error":false,"session_id":"run-1","num_turns":1,"stop_reason":"end_turn","result":"board refreshed","total_cost_usd":0.0421,"usage":{"input_tokens":1200,"output_tokens":13},"modelUsage":{"claude-haiku-4-5":{"inputTokens":1200,"outputTokens":13,"costUSD":0.0421}},"permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_1"}]}
 `
 

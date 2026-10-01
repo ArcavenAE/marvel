@@ -1357,7 +1357,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 	case "session":
 		result, err = d.store.GetSession(p.Name)
 	case "team":
-		result, err = d.store.GetTeam(p.Name)
+		result, err = d.describeTeam(p.Name)
 	case "workspace":
 		result, err = d.store.GetWorkspace(p.Name)
 	case "endpoint":

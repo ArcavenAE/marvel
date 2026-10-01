@@ -32,6 +32,11 @@ type Store struct {
 	// live only in this map, are never written to bolt, and are dropped on a
 	// daemon restart. See the credential CRUD below and brief 9 S1.
 	credentials map[string]*Credential
+	// scheduleStatus is each scheduled role's run history and freshness
+	// state, keyed workspace/team/role. Status beside the role's spec, like
+	// a team's ShiftState, so it has its own bucket rather than riding the
+	// team record that apply replaces. See schedule_status.go.
+	scheduleStatus map[string]*ScheduleStatus
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by
@@ -90,6 +95,8 @@ func NewStore() *Store {
 		endpoints:   make(map[string]*Endpoint),
 		policies:    make(map[string]*Policy),
 		credentials: make(map[string]*Credential),
+
+		scheduleStatus: make(map[string]*ScheduleStatus),
 	}
 }
 
