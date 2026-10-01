@@ -8,10 +8,11 @@ half of that ticket's premise; it does not close it.
 **Question:** which model a claude role runs, and whether marvel can
 declare it. Neighbour, not this question: `question-model-runtime-posture`
 (M6, whether marvel manages the runtime that serves a model).
-**Status:** NOT RUN: scratch apply denied by the auto-mode classifier as
-[Shared Cluster Mutation], 2026-09-30 about 03:51Z; awaiting operator.
-Pre-registration below is unchanged; the manifest to run is in "Run it"
-at the end, and results append in a dated section.
+**Status:** RAN (2026-10-01; H1 confirmed; H2 not run). The first
+attempt, 2026-09-30 about 03:51Z, was denied by the auto-mode classifier as
+[Shared Cluster Mutation]; the run went ahead on the operator's grant.
+Pre-registration below is unchanged; results are in "Results, 2026-10-01"
+at the end.
 
 ## Why
 
@@ -215,3 +216,94 @@ teams:
 
 Teardown: `marvel delete team probe/probe-model`, then confirm with
 `marvel get sessions` that no `probe` sessions remain.
+
+## Results, 2026-10-01
+
+Appended after the run. The pre-registration above is not edited.
+
+### Provenance
+
+- **Director run.** The director applied the "Run it" manifest on the
+  operator's grant, against the operator's cluster, and tore it down. The
+  per-role ContextModel values, the exit codes, the daemon-log checks and
+  the teardown session count below are as the director reported them.
+  The builder who wrote this section did not see them.
+- **Supervisor ring check.** The supervisor who dispatched this write-up
+  read the cluster's event ring for the run window and confirmed the two
+  `bus.rendered` events and the absence of any probe team or session
+  after teardown. It did not see the ContextModel values or the daemon log.
+- Nothing in this section was run by its author.
+
+### Timeline (UTC)
+
+| step | time | source |
+|---|---|---|
+| apply | 00:40:51 | director; ring check |
+| teardown | 00:55:03 | director; ring check |
+
+### Candidates
+
+All three are headless roles from the scratch manifest, one turn each.
+
+| role | `--model` arg | exit | ContextModel | outcome |
+|---|---|---|---|---|
+| `args-sonnet-5` | `claude-sonnet-5` | 0 | `claude-sonnet-5` | resolves |
+| `args-sonnet-5-5` | `claude-sonnet-5-5` | 0 | `claude-sonnet-5-5` | resolves |
+| `args-alias-sonnet` | `sonnet` | 0 | `claude-sonnet-5-5` | resolves to `claude-sonnet-5-5` |
+
+Source: director.
+
+No candidate errored, so there is no error text to record.
+
+### Hypotheses
+
+- **H1: confirmed.** `runtime.args: ["--model", "<id>"]` selects the
+  model per role today with no marvel change, and marvel records it.
+  The pre-registered signal asks for the model in both the harness's own
+  report and `describe` ContextModel. The relayed results give only
+  ContextModel, but the alias row covers the harness half. For a headless
+  session the recorded model is the one the stream names, and the
+  `--model` arg is read only when the stream names none
+  (`internal/usage/limits.go:546-549`, `internal/usage/accountant.go:305-317`
+  and `:774`). The arg there was `sonnet`, so a recorded
+  `claude-sonnet-5-5` can only have come from the harness's stream. For the two full ids the arg and the stream name agree, so
+  ContextModel alone cannot tell which source wrote them.
+- **H2: not run.** No `runtime.env.ANTHROPIC_MODEL` role was applied.
+  It stays open as an optional follow-up: add the env role named in
+  "Rig", set to `claude-sonnet-5-5`, and compare the harness's report with
+  marvel's recorded model.
+- **H0: rejected** for the args passthrough. marvel neither strips nor
+  overrides `--model`.
+
+### Stop conditions checked
+
+- **Classifier or permission denial on apply, describe or delete:** none
+  reported for the run (director).
+- **A live team's manifest, sessions, or roles created, changed, or
+  deleted:** no sign reported (director).
+- **A `bus.rendered` event with an unexpected reason, or any warning
+  form:** none. The ring shows exactly two `bus.rendered` events in the
+  window, `(apply)` at 00:40:51 and `(delete team probe/probe-model)` at
+  00:55:03 (supervisor ring check). No `bus config not rendered` line in
+  the daemon log (director).
+- **`apply: re-projected policy for N running session(s)`:** absent from
+  the daemon log (director).
+
+No stop fired.
+
+### Renders observed
+
+| reason | time | source |
+|---|---|---|
+| `apply` | 00:40:51 | director; ring check |
+| `delete team probe/probe-model` | 00:55:03 | director; ring check |
+
+These are the two expected reloads named in "Run it", and there were no
+others.
+
+### Teardown
+
+`marvel delete team probe/probe-model` at 00:55:03. Zero `probe`
+sessions remain (director), and the ring check found no probe team or
+session. The empty workspace `probe` may persist; the run did not
+delete it.
