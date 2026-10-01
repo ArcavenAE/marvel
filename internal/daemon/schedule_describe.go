@@ -30,18 +30,11 @@ type scheduleDescription struct {
 	Runs            []runDescription `json:"runs"`
 }
 
-// runDescription is a run record as describe shows it: everything but
-// the result text, which stays in the store because it may hold whatever
-// the run read, and any seat can call describe. ResultBytes says whether
-// there is one.
+// runDescription is a run record as describe shows it: the record,
+// result text included, plus its duration.
 type runDescription struct {
 	api.RunRecord
-	// These two shadow the embedded record's fields, and encoding/json
-	// takes the shallower field, so the text never reaches the wire.
-	Result          string `json:"result,omitempty"`
-	ResultTruncated bool   `json:"result_truncated,omitempty"`
-	ResultBytes     int    `json:"result_bytes"`
-	Duration        string `json:"duration"`
+	Duration string `json:"duration"`
 }
 
 // scheduleHeld matches the plan's HoldSchedule: no firing is ever due yet.
@@ -73,9 +66,8 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 			for i := len(st.History) - 1; i >= 0; i-- {
 				r := st.History[i]
 				s.Runs = append(s.Runs, runDescription{
-					RunRecord:   r,
-					ResultBytes: len(r.Result),
-					Duration:    r.Duration().String(),
+					RunRecord: r,
+					Duration:  r.Duration().String(),
 				})
 			}
 		}

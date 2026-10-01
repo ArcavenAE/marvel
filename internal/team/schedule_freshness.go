@@ -73,6 +73,11 @@ func (c *Controller) evaluateScheduleFreshness(t *api.Team, role *api.Role, key 
 	} else {
 		ev.Severity = events.SeverityInfo
 		ev.Message = fmt.Sprintf("recovered: a run succeeded at %s, within stale_after %s", st.LastSucceededAt.Format(time.RFC3339), staleAfter)
+		// With no success, only a raised stale_after can end the stale
+		// state; there is no run to name.
+		if st.LastSucceededAt.IsZero() {
+			ev.Message = fmt.Sprintf("recovered: stale_after raised to %s", staleAfter)
+		}
 	}
 	events.Emit(c.Events, ev)
 }

@@ -22,11 +22,14 @@ const maxRunResultBytes = 4 << 10
 // section 5). Firing, DueAt and CatchUp belong to the schedule clock and
 // stay empty until it sets them.
 type RunRecord struct {
-	Session    string     `json:"session"`
-	Firing     string     `json:"firing,omitempty"`
-	DueAt      time.Time  `json:"due_at,omitzero"`
-	CatchUp    bool       `json:"catch_up,omitempty"`
-	StartedAt  time.Time  `json:"started_at,omitzero"`
+	Session   string    `json:"session"`
+	Firing    string    `json:"firing,omitempty"`
+	DueAt     time.Time `json:"due_at,omitzero"`
+	CatchUp   bool      `json:"catch_up,omitempty"`
+	StartedAt time.Time `json:"started_at,omitzero"`
+	// EndedAt is when the reap path found the run's pane dead, not when
+	// the process exited, so Duration includes up to one reconcile tick
+	// of lag.
 	EndedAt    time.Time  `json:"ended_at"`
 	Outcome    RunOutcome `json:"outcome"`
 	ExitStatus string     `json:"exit_status,omitempty"`
@@ -35,10 +38,11 @@ type RunRecord struct {
 	// the stream's final result line. A denied call does not fail a run,
 	// so this is the only place a denial shows in the record.
 	PermissionDenials int `json:"permission_denials,omitempty"`
-	// Result is the run's final message, kept in the store for the
-	// operator and never forwarded: it may hold whatever the run read.
+	// Result is the run's final message, cut to 4 KiB. describe team
+	// shows it; events and reports carry status only (scheduled-runs
+	// section 5).
 	Result          string `json:"result,omitempty"`
-	ResultTruncated bool   `json:"result_truncated,omitempty"`
+	ResultTruncated bool   `json:"result_truncated"`
 }
 
 // RunTokens is a run's spend as the usage accountant metered it. Metered
