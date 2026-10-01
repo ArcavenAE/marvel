@@ -8,10 +8,12 @@ half of that ticket's premise; it does not close it.
 **Question:** which model a claude role runs, and whether marvel can
 declare it. Neighbour, not this question: `question-model-runtime-posture`
 (M6, whether marvel manages the runtime that serves a model).
-**Status:** NOT RUN: scratch apply denied by the auto-mode classifier as
-[Shared Cluster Mutation], 2026-09-30 about 03:51Z; awaiting operator.
-Pre-registration below is unchanged; the manifest to run is in "Run it"
-at the end, and results append in a dated section.
+**Status:** RAN (2026-10-01; H1 confirmed at the init report, served
+model not observed; H2 not run). The first
+attempt, 2026-09-30 about 03:51Z, was denied by the auto-mode classifier as
+[Shared Cluster Mutation]; the run went ahead on the operator's grant.
+Pre-registration below is unchanged; results are in "Results, 2026-10-01"
+at the end.
 
 ## Why
 
@@ -215,3 +217,151 @@ teams:
 
 Teardown: `marvel delete team probe/probe-model`, then confirm with
 `marvel get sessions` that no `probe` sessions remain.
+
+## Results, 2026-10-01
+
+Appended after the run. The pre-registration above is not edited.
+
+### Provenance
+
+- **Director run.** The director applied the "Run it" manifest on the
+  operator's grant, against the operator's cluster, and tore it down. The
+  per-role ContextModel values, the exit codes, the daemon-log checks and
+  the teardown session count below are as the director reported them.
+  The builder who wrote this section did not see them.
+- **Supervisor ring check.** The supervisor who dispatched this write-up
+  read the cluster's event ring (`marvel events`, read-only) for the run
+  window. It confirmed the two `bus.rendered` events and the absence of
+  any probe team or session after teardown. A second read at about
+  02:2xZ recovered the `agent.session.started` and `agent.session.ended`
+  lines quoted below, tagged "ring check (supervisor), session.started".
+  It did not see the ContextModel values or the daemon log.
+- Nothing in this section was run by its author.
+
+### Timeline (UTC)
+
+| step | time | source |
+|---|---|---|
+| apply | 00:40:51 | director; ring check |
+| three sessions start | 00:40:59 | ring check (supervisor), session.started |
+| last session ends | 00:41:10 | ring check (supervisor), session.started |
+| teardown | 00:55:03 | director; ring check |
+
+### Candidates
+
+All three are headless roles from the scratch manifest, one turn each.
+
+| role | `--model` arg | exit | ContextModel | init model | outcome |
+|---|---|---|---|---|---|
+| `args-sonnet-5` | `claude-sonnet-5` | 0 | `claude-sonnet-5` | `claude-sonnet-5` | resolves |
+| `args-sonnet-5-5` | `claude-sonnet-5-5` | 0 | `claude-sonnet-5-5` | `claude-sonnet-5-5` | resolves |
+| `args-alias-sonnet` | `sonnet` | 0 | `claude-sonnet-5-5` | `claude-sonnet-5-5` | resolves to `claude-sonnet-5-5` |
+
+Sources: the arg is the manifest; exit and ContextModel are the director's
+report; init model is the ring check (supervisor), session.started.
+
+The ring lines, verbatim except that the working directory is replaced
+with `<orc dir>` (ring check (supervisor), session.started):
+
+```
+00:40:59  info  agent.session.started  probe/probe-model-args-alias-sonnet-g1-0  model claude-sonnet-5-5 in <orc dir>
+00:40:59  info  agent.session.started  probe/probe-model-args-sonnet-5-5-g1-0    model claude-sonnet-5-5 in <orc dir>
+00:40:59  info  agent.session.started  probe/probe-model-args-sonnet-5-g1-0      model claude-sonnet-5 in <orc dir>
+00:41:02  agent.session.ended  args-alias-sonnet  exit 0 (end_turn) ... cost=$0.2040
+00:41:07  agent.session.ended  args-sonnet-5-5    exit 0 (end_turn) ... cost=$0.2040
+00:41:10  agent.session.ended  args-sonnet-5      exit 0 (end_turn) ... cost=$0.2947
+```
+
+`agent.session.started` is the ring form of the claude parser's
+`system/init` event (`internal/runtime/claudecode/parser.go:150-178`,
+`internal/session/bridge.go:45-46`). Its model is Claude Code's own
+statement of the model it resolved, not marvel's echo of the arg.
+
+No candidate errored, so there is no error text to record.
+
+### Hypotheses
+
+- **H1: confirmed at the init report; served model not observed.**
+  `runtime.args: ["--model", "<id>"]` selects the model per role today
+  with no marvel change, and marvel records it. For each of the three
+  roles the harness's init report matches the requested model, including
+  `args-sonnet-5` = `claude-sonnet-5`. The pre-registered signal is "the
+  harness's own report and `describe` ContextModel", and the init line is
+  the harness's own report, so the label is confirmed at that level; the
+  reviewer rules on whether that strength is enough.
+  The served model was not captured: no response's `message.model` was
+  recorded. So this shows the harness was told the model and acknowledged
+  it. It does not show which model served the tokens.
+- **What ContextModel proves, per role.** ContextModel is the harness's
+  report only partly. At launch, `Bind` resolves with no stream model,
+  so ContextModel is the `--model` arg echoed back unchanged
+  (`internal/usage/limits.go:546-549`). When the harness sends its
+  `system/init` line, `observeStart` overwrites it with the init model
+  (`internal/usage/accountant.go:290-317`, shown by `describe` via
+  `:774`). The served `message.model` never replaces it, because a
+  sample's model is adopted only when none is set (`:396`).
+  - `args-alias-sonnet`: ContextModel `claude-sonnet-5-5` differs from the
+    arg (`sonnet`) and from marvel's own alias table, so only the init
+    line can have written it. It is a genuine harness report.
+  - `args-sonnet-5` and `args-sonnet-5-5`: ContextModel equals the arg,
+    so ContextModel alone cannot tell an init report from the echo. The
+    session.started lines above are what separate them.
+  - No row: ContextModel never carries the served model.
+- **H2: not run.** No `runtime.env.ANTHROPIC_MODEL` role was applied.
+  It stays open as an optional follow-up: add the env role named in
+  "Rig", set to `claude-sonnet-5-5`, and compare the harness's report with
+  marvel's recorded model.
+- **H0: excluded as pre-registered, at the init report.** H0 says marvel
+  strips or overrides the flag, or the session reports the account default
+  regardless. Two distinct init models appear across the roles
+  (`claude-sonnet-5` and `claude-sonnet-5-5`), each matching its arg, so
+  no single account default decided all three, and marvel passed each
+  flag through. The account default itself was never recorded, so the run
+  cannot say which model that is. Like H1, this rests on the init report,
+  not the served model.
+
+### Notes (non-blocking)
+
+- **Alias-table mismatch.** marvel's alias table maps `sonnet` to
+  `claude-sonnet-5` (`internal/usage/limits.go:336`), but the harness
+  resolved `sonnet` to `claude-sonnet-5-5`. Before init arrives, and for
+  any harness that never names a model, a role launched with
+  `--model sonnet` is keyed to the wrong model for its context-window
+  lookup.
+- **Cost, as an observation only.** The ended lines show $0.2040 for each
+  of the two `claude-sonnet-5-5` sessions and $0.2947 for
+  `claude-sonnet-5`. One turn per role is not evidence about which model
+  served the tokens, and nothing here rests on it.
+
+### Stop conditions checked
+
+- **Classifier or permission denial on apply, describe or delete:** none
+  reported for the run (director).
+- **A live team's manifest, sessions, or roles created, changed, or
+  deleted:** no sign reported (director).
+- **A `bus.rendered` event with an unexpected reason, or any warning
+  form:** none. The ring shows exactly two `bus.rendered` events in the
+  window, `(apply)` at 00:40:51 and `(delete team probe/probe-model)` at
+  00:55:03 (supervisor ring check). No `bus config not rendered` line in
+  the daemon log (director).
+- **`apply: re-projected policy for N running session(s)`:** absent from
+  the daemon log (director).
+
+No stop fired.
+
+### Renders observed
+
+| reason | time | source |
+|---|---|---|
+| `apply` | 00:40:51 | director; ring check |
+| `delete team probe/probe-model` | 00:55:03 | director; ring check |
+
+These are the two expected reloads named in "Run it", and there were no
+others.
+
+### Teardown
+
+`marvel delete team probe/probe-model` at 00:55:03. Zero `probe`
+sessions remain (director), and the ring check found no probe team or
+session. The empty workspace `probe` may persist; the run did not
+delete it.
