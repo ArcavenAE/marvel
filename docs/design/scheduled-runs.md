@@ -315,9 +315,8 @@ the property that matters for a shared account.
   `history`. `marvel describe team` (which exists; `describe` takes session,
   team, workspace, endpoint and credential today) gains a schedule block per
   scheduled role: the next due time and the history.
-- **What is never forwarded:** the result text. It may contain whatever the run
-  read, including a client's data. Reports carry pointers and status only
-  (section 6).
+- **What is never forwarded:** the result text. Reports carry pointers and
+  status only (section 6).
 
 ## 6. How a run reports
 
