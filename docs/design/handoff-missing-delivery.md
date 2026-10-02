@@ -66,14 +66,45 @@ seat holds the role now, so a supervisor that shifted still gets it.
   waits in the stream, and the next holder's new durable reads it
   (`DeliverAllPolicy`), which is the point of a durable channel. The event
   says `delivered: queued, no live holder`.
-- **The escalated seat is a supervisor.** When the escalated session's own
-  role is `supervisor`, marvel does not deliver: a role address would reach
-  every holder's durable, the escalated seat's included, which this section
-  forbids. The event says `delivered: none, escalated seat holds the
-  supervisor role`, one log line says the same, and the decision falls to the
-  operator through the event and `get sessions`. marvel cannot reach director
-  from here (it holds no global address, and marvel#457 keeps `global://`
-  out of the schema), so escalating to director is ruling 4.
+- **The escalated seat is a supervisor** (ruled 2026-10-02: "Deliver to
+  other supervisors and director"). marvel never uses the role address here,
+  since it would reach the escalated seat's own durable. Instead it sends the
+  same envelope to:
+  1. every other live replica of the same team's `supervisor` role, each by
+     `agent://<team>/<session>` (its own inbox, which the shim always reads,
+     so P1 does not gate this leg);
+  2. the `supervisor` role of every other team on this cluster that has one,
+     by `role://<team>/supervisor` (gated by P1, as in the normal case);
+  3. the director, by `global://director`, published on
+     `global.director.inbox` (gated by P2 below).
+  Supervisors on other clusters are not included; the director is the
+  cross-cluster recipient. The event lists the legs and what each got
+  (`sent`, `queued`, `off`, `undelivered`). If every leg is unavailable, the
+  event says `delivered: none, no other supervisor and no global tier`, and
+  the operator decides from the event and `get sessions`.
+
+**Precondition P2, the director leg.** In this order:
+1. marvel#457 lands: the canonical schema accepts `global://` recipients.
+   Until then a `global://director` envelope fails the schema, so the leg
+   stays off.
+2. Then this leg ships. It is off on a cluster with no hub.
+
+Where the global send comes from, checked against the hub conf and the
+role-users design (`docs/design/bus-role-users.md`, marvel#461):
+- marvel publishes on its own broker with its existing admin connection
+  (ruling 3). It holds no global address and gains none: the subject crosses
+  to the hub over the cluster's existing leaf connection. The hub's
+  per-cluster leaf user already allows publish on `global.director.inbox`
+  and `global.*.supervisor.inbox` (checked on the running hub by permission
+  lines only), so no hub grant changes. That the hub's director stream
+  captures a core publish arriving over the leaf is INFERRED, and test 14
+  proves it.
+- marvel#461 narrows the team and role users and leaves the admin principal
+  unchanged, so it does not affect this path. The admin principal is never
+  handed to a session (`declared.go`), so no seat gains the global send.
+- SOUL section 3 and ADR-009: no new credential. The admin password is
+  issuance on marvel's own broker; the leaf seed stays where the leaf design
+  put it, and marvel does not read it for this.
 - **A team or workspace name the schema cannot address** (upper case, `_`,
   or over 32 characters): no delivery, `delivered: none, team name not
   addressable`, and one warning at `marvel work` naming the team. Not
@@ -172,7 +203,7 @@ event ring.
 
 | control | verb | scope | effect | persists across a restart | undone by | expires |
 |---|---|---|---|---|---|---|
-| (a) mute | `marvel autoshift mute <session> --reason R [--for D]` | one escalated request | supervisor delivery and the repeating event pause | yes, on the persisted request | `marvel autoshift unmute <session>`, the expiry, or the request ending | yes: default 4h, `--for` up to 24h, no "forever" |
+| (a) mute | `marvel autoshift mute <session> --reason R [--for D \| --forever]` | one escalated request | supervisor delivery and the repeating event pause | yes, on the persisted request | `marvel autoshift unmute <session>`, the expiry, or the request ending | timed: default 4h, `--for` up to 24h. `--forever` (ruled 2026-10-02, "allow forever mute"): no expiry, but it still ends with the request, and a daily reminder keeps it visible |
 | (b) cancel | `marvel autoshift cancel <session> --reason R` | one session | that session is never auto-shifted, by either trigger, for its life; any pending request for it is dropped | yes, on the session record | `marvel autoshift resume <session>` | no; it ends with the session, and a successor starts with auto-shift on |
 | (c) abort | `marvel autoshift abort <ws/team> --reason R`, or `abort --all` | a team, or the whole daemon | no new auto-shift is initiated for that scope; pending requests in the scope are dropped | yes: team-scope on the team record, daemon-scope in the store's meta bucket | `marvel autoshift resume <ws/team>` or `resume --all` | no |
 
@@ -191,6 +222,11 @@ progress finishes or rolls back on its own timeout, and the operator's manual
   message, `mute expired`, and the normal cadence resumes. The ring event is
   not silent while muted: it repeats once per window marked `muted until
   <time>`, so the ring never shows a gap with no reason.
+- On a forever mute: one message, `muted forever by <actor>: <reason>`, then
+  one line every 24h to the same recipients, `still muted forever since
+  <time> by <actor>: <reason>; unmute with marvel autoshift unmute
+  <session>`, and the ring event marked `muted forever`. A forever mute is
+  never silent for more than a day.
 - On cancel: one message, `auto-shift canceled for <session> by <actor>:
   <reason>`, and the request ends.
 - On abort: one message per dropped request in the scope, `auto-shift
@@ -198,8 +234,9 @@ progress finishes or rolls back on its own timeout, and the operator's manual
   resumed.
 
 **How `marvel get sessions` shows it.**
-- A per-session suffix on the HEALTH cell, beside `(stalled)`: `(muted 3h12m)`
-  or `(autoshift off)`.
+- A per-session suffix on the HEALTH cell, beside `(stalled)`: `(muted 3h12m)`,
+  `(muted forever)` or `(autoshift off)`. A forever mute is always shown;
+  no flag hides it.
 - A banner line above the table while any abort stands: `auto-shift aborted:
   <scope> by <actor> at <time>: <reason>`, one line per abort.
 - `marvel describe session` and `describe team` print the actor, time and
@@ -251,7 +288,12 @@ progress finishes or rolls back on its own timeout, and the operator's manual
    ready a send follows within 35s (one 30s health tick plus slack), not a
    full window.
 7. A manifest declaring an agent id `marvel` is refused.
-8. **Mute.** Mute an escalated request for 1h: one muted message, no further
+8. **Mute.** `--forever`: one `muted forever` message; after a simulated 24h,
+   exactly one reminder line (and one per further 24h); `(muted forever)`
+   shown in `get sessions` and in `describe` with actor and reason; it
+   survives a restart; it ends when the request ends; `--forever` without
+   `--reason` is refused, as is `--forever` together with `--for`. Timed:
+   mute an escalated request for 1h: one muted message, no further
    delivery, ring events marked muted, `(muted 59m)` shown; restart the
    daemon and the mute holds; at expiry one `mute expired` message and the
    cadence resumes; `unmute` resumes it at once; mute without `--reason`, or
@@ -265,20 +307,30 @@ progress finishes or rolls back on its own timeout, and the operator's manual
     shown, and it survives a restart; `abort --all` does the same for every
     team; a shift in progress is not interrupted; manual `marvel shift`
     still works; `resume` lifts each scope separately.
-11. **Supervisor escalated.** The escalated session's role is `supervisor`:
-    no publish (with one and with two supervisor replicas), the event says
-    why, and the inject spy records zero calls.
+11. **Supervisor escalated.** The escalated session's role is `supervisor`,
+    on a cluster with two other teams that have supervisors and a hub. Nothing
+    reaches the escalated seat's durable. The other replica of its own role
+    (with two replicas) receives by `agent://`. Each other team's supervisor
+    receives by `role://`. `global.director.inbox` receives one envelope that
+    validates against the schema after #457. The inject spy records zero
+    calls. With no other supervisor and no hub, nothing is published and the
+    event says so.
 12. **Unaddressable team.** A fixture team `Team_A`: `marvel work` warns
     once, escalation publishes nothing, and the event says `team name not
     addressable`.
 13. **Precondition.** With delivery switched off (a build without SB-4),
     escalation publishes nothing and the event says `delivered: off`.
+14. **The director leg crosses the leaf.** On a test hub with a leaf user
+    whose permissions match the running hub's, an envelope marvel publishes
+    on the leaf's `global.director.inbox` with its admin connection is
+    stored in the hub's director stream. With #457 absent, the leg reports
+    `off` and publishes nothing.
 
 ## 6. Rulings needed (operator, via director)
 
 | # | question | default |
 |---|---|---|
 | 1 | RULED 2026-10-02 yes: the recipient is the role named `supervisor` in the same team (a convention, not a declared field) | yes |
-| 2 | RULED 2026-10-02: add a mute, a per-session cancel and a general abort (H6). Open within it: the mute's default and cap | 4h default, 24h cap |
+| 2 | RULED 2026-10-02: add a mute, a per-session cancel and a general abort (H6); "allow forever mute". The timed mute keeps a 4h default and a 24h cap; a forever mute sends a daily reminder | as written |
 | 3 | RULED 2026-10-02 yes: marvel publishes as `marvel` on its existing admin connection, not a new scoped principal (a scoped principal held by the same daemon adds no boundary) | yes |
-| 4 | When the escalated seat is the supervisor, deliver nowhere (operator decides from the event), or later escalate to director once marvel can address it | nowhere in this slice |
+| 4 | RULED 2026-10-02: "Deliver to other supervisors and director". Other replicas of the same role, every other team's supervisor on this cluster, and `global://director` after #457 (H1, P2) | as written |
