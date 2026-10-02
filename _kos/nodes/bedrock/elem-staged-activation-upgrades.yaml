@@ -43,6 +43,14 @@ content: |
   the new keg before reexec runs, so a deleted old keg does not strand
   it. reexec does not reopen finding-041 (keychain-capable session at
   start): it is the same pid, so the session stays keychain-capable.
+
+  RUNNING VERSION HAS NO INSTRUMENT (finding-061, 2026-10-02). Point 3
+  needs "which version runs" as a fact, and today nothing reports it:
+  `marvel version` prints the client binary, the daemon's startup log
+  names no version or revision, and no RPC returns one. After an upgrade
+  without a reexec, installed and running differ silently. A daemon
+  build field (log line plus status RPC) is a precondition of the
+  version store's active-vs-present flag.
 edges:
   - target: elem-release-pipeline
     type: derives
