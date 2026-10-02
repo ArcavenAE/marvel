@@ -218,6 +218,11 @@ type Options struct {
 	// this to layout.DaemonBolt() (~/.marvel/state/marvel.bolt).
 	// See orc finding-050 / aae-orc-k4e4.
 	StateBolt string
+	// LegacyCwd is the directory the v1 to v2 store migration stamps on
+	// every team that had no root, so it keeps its place. Empty means the
+	// daemon's working directory at that start. It matters once: the stamp is
+	// written on the first start after the upgrade and never re-read.
+	LegacyCwd string
 	// ShiftTimeout bounds how long a single shift may run before the team
 	// controller declares it stuck, aborts it, and rolls back with a
 	// team.shift-timed-out event. Zero keeps the controller's built-in

@@ -637,8 +637,22 @@ func writeV1Backup(db *bolt.DB, bak string) (err error) {
 	return os.Rename(tmp, bak)
 }
 
+// keepLegacyStamp reports whether a team's legacy stamp survives a re-apply
+// whose manifest declares the given workspace root and team workdir.
+func keepLegacyStamp(live *Team, root, teamDir string) bool {
+	return live.WorkDirSource == WorkDirSourceLegacy && root == "" && teamDir == ""
+}
+
 // LegacyPlacementNotes returns one note per team of this manifest that holds a
 // legacy stamp and still names no root, for the apply output.
-func (m *Manifest) LegacyPlacementNotes(_ *Store) []string {
-	return nil
+func (m *Manifest) LegacyPlacementNotes(store *Store) []string {
+	var notes []string
+	for _, mt := range m.Teams {
+		live, err := store.GetTeam(m.Workspace.Name + "/" + mt.Name)
+		if err != nil || !keepLegacyStamp(&live, m.Workspace.Root, mt.WorkDir) {
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("team %s: placement: legacy daemon cwd %s; declare a root", mt.Name, live.WorkDir))
+	}
+	return notes
 }
