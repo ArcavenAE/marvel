@@ -111,3 +111,31 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("re-validate after round-trip: %v", err)
 	}
 }
+
+// Absent authority means none (director#197, marvel#448). An envelope without
+// it decodes, and re-marshals without inventing one: a zero-value block would
+// emit {"strength":""}, which the schema refuses.
+func TestRoundTripWithoutAuthority(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(fixturesDir, "valid-authority-absent.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var e Envelope
+	if err := json.Unmarshal(data, &e); err != nil {
+		t.Fatalf("unmarshal an envelope with no authority: %v", err)
+	}
+	out, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal Envelope: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(out, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if a, ok := fields["authority"]; ok {
+		t.Errorf("absent authority re-marshals as %s, want it omitted", a)
+	}
+	if err := Validate(out); err != nil {
+		t.Errorf("re-validate after round-trip: %v", err)
+	}
+}
