@@ -307,6 +307,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	for _, st := range store.LegacyStamps() {
 		ws, name, _ := strings.Cut(st.TeamKey, "/")
 		msg := "placement: legacy daemon cwd " + st.Dir + "; declare a root"
+		if linkedWorktree(st.Dir) {
+			// Warn, never refuse: the stamp is correct today. But new-window -c
+			// on a directory that has since been removed exits 0 and starts the
+			// seat in $HOME, with a different cwd and a different trust
+			// decision, so the operator should know what the stamp rests on.
+			msg += "; this directory is a linked git worktree, and if it is removed the seats will silently start in $HOME"
+		}
 		log.Printf("daemon: team %s: %s", st.TeamKey, msg)
 		events.Emit(evRing, events.Event{
 			Kind:      events.KindPlacementLegacyStamped,
@@ -3046,6 +3053,18 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 }
 
 // linkedWorktree reports whether dir sits inside a linked git worktree: walking
-// up to the first .git, a file (not a directory) means it. Scaffold: not yet
-// implemented.
-func linkedWorktree(dir string) bool { return false }
+// up to the first .git, a file (a pointer to the real repository) means it, and
+// a directory means an ordinary checkout. A directory that does not exist, or
+// no repository at all, is not a worktree.
+func linkedWorktree(dir string) bool {
+	for d := filepath.Clean(dir); ; {
+		if info, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return !info.IsDir()
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
+}
