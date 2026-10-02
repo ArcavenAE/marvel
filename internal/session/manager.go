@@ -1206,6 +1206,13 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 		"MARVEL_SESSION": sess.Name,
 		"MARVEL_ROLE":    sess.Role,
 	}
+	// The same lineage the adapter path stamps (runtime.constructedEnv).
+	if sess.Predecessor != "" {
+		envs[api.PredecessorEnv] = sess.Predecessor
+	}
+	if !sess.HandoffRequestedAt.IsZero() {
+		envs[api.HandoffRequestedAtEnv] = sess.HandoffRequestedAt.UTC().Format(time.RFC3339)
+	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath
 		if sess.HeartbeatToken != "" {

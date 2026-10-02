@@ -226,6 +226,14 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+	// Predecessor is the key of the session this one replaced in a shift,
+	// empty for a first spawn. Stamped at create and exported to the seat
+	// as MARVEL_PREDECESSOR, so a successor can tell "my predecessor wrote
+	// nothing" from "I have no predecessor" (design D5 item 4).
+	Predecessor string `toml:"-"`
+	// HandoffRequestedAt is when marvel asked the predecessor for a
+	// handoff, zero when it did not. Exported as MARVEL_HANDOFF_REQUESTED_AT.
+	HandoffRequestedAt time.Time `toml:"-"`
 	// ExitStatus is what tmux reported when the pane's process ended, as
 	// pane_dead_status formats it: a decimal exit code, or empty when the
 	// process died by signal or tmux lost the status (indistinguishable
@@ -503,15 +511,30 @@ type Role struct {
 	ActivityTimeout time.Duration `toml:"-"`
 }
 
-// ShiftTriggerContextPressure is the one automatic-shift trigger implemented:
-// shift a role before its context occupancy forces the harness to compact.
+// ShiftTriggerContextPressure shifts a role before its context occupancy
+// forces the harness to compact.
 const ShiftTriggerContextPressure = "context-pressure"
+
+// ShiftTriggerMaxAge is the blunt backstop for a seat context pressure cannot
+// meter: once a session is older than its bound, marvel asks it for a handoff
+// and shifts only on an observed one (marvel#437, docs/design/shift-trigger-list.md).
+const ShiftTriggerMaxAge = "max-age"
+
+// Defaults and floor for the max-age trigger (design D4, D5; ruling 3).
+const (
+	DefaultShiftQuietFor      = 2 * time.Minute
+	DefaultShiftMaxDefer      = 30 * time.Minute
+	DefaultShiftHandoffWindow = 5 * time.Minute
+	MinShiftMaxAge            = 15 * time.Minute
+)
 
 // ShiftPolicy declares when marvel automatically shifts a role, replacing its
 // sessions with fresh ones before an external limit forces the harness to act.
 //
-// The one trigger implemented is context pressure, expressed as a token
-// REMAINDER, not a percentage. A shift fires for the role when a live session's
+// Two triggers exist. Max age (ShiftTriggerMaxAge) asks a seat past its bound
+// for a handoff and shifts only on an observed one; see ShiftCondition and
+// internal/team/shift_handoff.go. Context pressure is expressed as a token
+// REMAINDER, not a percentage. It fires for the role when a live session's
 // occupancy rises within HeadroomTokens of its resolved window:
 //
 //	ContextTokens > ContextLimit - HeadroomTokens   (ContextLimit > 0)
@@ -528,13 +551,92 @@ const ShiftTriggerContextPressure = "context-pressure"
 // no context_window override) cannot be metered this way and is never shifted by
 // this trigger. The operator gives it a denominator with runtime.context_window,
 // or the role stays operator-shifted.
+//
+// A policy is a list of conditions, any-of (design D1): the role shifts when
+// any one holds. On and HeadroomTokens are the single-trigger form every
+// policy persisted before the list existed carries; Conditions reads both.
 type ShiftPolicy struct {
-	// On names the trigger. The only understood value is
-	// ShiftTriggerContextPressure ("context-pressure").
+	// On names the trigger of the single form.
 	On string `toml:"on"`
-	// HeadroomTokens is the remainder floor. Required and > 0 when
-	// On == ShiftTriggerContextPressure.
+	// HeadroomTokens is the remainder floor of the single form. Required and
+	// > 0 when On == ShiftTriggerContextPressure.
 	HeadroomTokens int `toml:"headroom_tokens,omitempty"`
+	// Any is the list form. The manifest's single form is normalized to a
+	// list of one here too, so the evaluator has one path.
+	Any []ShiftCondition `toml:"-"`
+	// Handoff is the path, with {session} standing for the session name,
+	// where a seat asked for a handoff writes it. Empty means marvel cannot
+	// observe the handoff, so an expired request always escalates (D5).
+	Handoff string `toml:"-"`
+	// HandoffMarker is the line that, as the file's last line, marks the
+	// handoff complete.
+	HandoffMarker string `toml:"-"`
+	// HandoffWindow is how long after a request marvel waits for the marker
+	// before it escalates. Zero means DefaultShiftHandoffWindow.
+	HandoffWindow time.Duration `toml:"-"`
+}
+
+// ShiftCondition is one entry of a shift policy's list.
+type ShiftCondition struct {
+	On             string
+	HeadroomTokens int
+	// MaxAge, QuietFor and MaxDefer apply to ShiftTriggerMaxAge. A zero
+	// QuietFor or MaxDefer means its default.
+	MaxAge   time.Duration
+	QuietFor time.Duration
+	MaxDefer time.Duration
+}
+
+// Conditions returns the policy's list, reading the single form of a policy
+// written before the list existed as a list of one.
+func (p *ShiftPolicy) Conditions() []ShiftCondition {
+	if p == nil {
+		return nil
+	}
+	if len(p.Any) > 0 {
+		return p.Any
+	}
+	if p.On == "" {
+		return nil
+	}
+	return []ShiftCondition{{On: p.On, HeadroomTokens: p.HeadroomTokens}}
+}
+
+// HandoffWindowOrDefault returns the request window, defaulted.
+func (p *ShiftPolicy) HandoffWindowOrDefault() time.Duration {
+	if p == nil || p.HandoffWindow <= 0 {
+		return DefaultShiftHandoffWindow
+	}
+	return p.HandoffWindow
+}
+
+// PredecessorEnv and HandoffRequestedAtEnv carry a successor's lineage into
+// its environment (design D5 item 4). Each is set only when it has a value:
+// absent PredecessorEnv means a first spawn.
+const (
+	PredecessorEnv        = "MARVEL_PREDECESSOR"
+	HandoffRequestedAtEnv = "MARVEL_HANDOFF_REQUESTED_AT"
+)
+
+// ShiftRequest is a pending handoff request on one role: marvel asked a seat
+// past its max age for a handoff and is waiting for the marker (design D5).
+// It is per role, not per seat: while one replica's request is pending or
+// escalated, max age asks no other replica of that role. Context pressure
+// still applies to all of them. Slice 1 accepts this; per-seat requests can
+// follow if a multi-replica role needs them.
+// Status, not spec. It persists with the team so a daemon restart inside the
+// window resumes it.
+type ShiftRequest struct {
+	// Session is the key of the session asked.
+	Session string
+	// Cause names the condition that fired (ShiftTriggerMaxAge).
+	Cause string
+	// RequestedAt is when the notice was sent.
+	RequestedAt time.Time
+	// Escalated is set once the window expired with no marker and marvel
+	// emitted shift.handoff-missing. From then on the team's supervisor
+	// decides; marvel neither re-requests nor shifts on its own.
+	Escalated bool
 }
 
 // ShiftPhase represents the current phase of a shift operation.
@@ -562,6 +664,11 @@ type ShiftState struct {
 	// to bolt with the shift and resets to nil when the shift clears. See
 	// aae-orc-094e.
 	Drained map[string]int
+	// HandoffRequests carries, per role, the handoff request marvel made of
+	// the role's departing seat, so that seat's successor can be told when
+	// (MARVEL_HANDOFF_REQUESTED_AT). Moved here from Team.ShiftRequests when
+	// the shift starts; clears with the shift.
+	HandoffRequests map[string]ShiftRequest
 }
 
 // Team declares desired state: a cohesive unit of agents with heterogeneous roles.
@@ -575,6 +682,9 @@ type Team struct {
 	Budget     Budget     `toml:"budget,omitempty"`
 	Generation int64      `toml:"-"`
 	Shift      ShiftState `toml:"-"`
+	// ShiftRequests holds the pending handoff request per role name, if any.
+	// Status, not spec, persisted like Shift. See ShiftRequest.
+	ShiftRequests map[string]ShiftRequest `toml:"-"`
 	// Admission is the standing admission condition the reconciler
 	// recomputes each tick. Status, not spec — same treatment as Shift.
 	Admission AdmissionState `toml:"-"`

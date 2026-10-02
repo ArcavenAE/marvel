@@ -43,13 +43,23 @@ const (
 	KindShiftCompleted    Kind = "team.shift-completed"
 	KindShiftTimedOut     Kind = "team.shift-timed-out"
 	// KindShiftAutoTriggered records that a role's automatic shift policy
-	// fired: a live session crossed its context-pressure remainder and marvel
-	// initiated a shift the operator did not request. It precedes the ordinary
-	// KindShiftStarted for the same shift and carries the deciding session and
-	// its occupancy in Message, so the "why" of an unattended shift is legible
-	// without reconstructing it from the occupancy series. See
+	// fired and marvel initiated a shift the operator did not request: a live
+	// session crossed its context-pressure remainder, or a seat past its max
+	// age wrote the handoff it was asked for. It precedes the ordinary
+	// KindShiftStarted for the same shift, and its Message opens with
+	// cause=<trigger> and carries the deciding session, so the "why" of an
+	// unattended shift is legible without reconstructing it. See
 	// api.ShiftPolicy.
 	KindShiftAutoTriggered Kind = "team.shift-autotriggered"
+	// KindShiftHandoffRequested records that a seat past its max age was
+	// asked for a handoff (design D5 step 1). Message carries the age, the
+	// stage (quiet or hard) and whether the notice reached the pane.
+	KindShiftHandoffRequested Kind = "team.shift-handoff-requested"
+	// KindShiftHandoffMissing is the escalation: a handoff request's window
+	// expired with no marker, or the role declares no handoff path, so marvel
+	// leaves the seat running and the team's supervisor decides whether to
+	// call the shift. marvel never shifts unwatched (design D5 step 3).
+	KindShiftHandoffMissing Kind = "team.shift-handoff-missing"
 	// KindShiftRoleReady records the instant the control plane decided a
 	// role's successor generation may take over: allReady returned true and
 	// the shift advanced from launching to draining. It is the boundary
@@ -267,6 +277,8 @@ var allKinds = []Kind{
 	KindShiftCompleted,
 	KindShiftTimedOut,
 	KindShiftAutoTriggered,
+	KindShiftHandoffRequested,
+	KindShiftHandoffMissing,
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
 	KindRoleSaturated,

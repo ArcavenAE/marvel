@@ -1125,3 +1125,25 @@ func TestCreateRecordsBackendRedirection(t *testing.T) {
 		})
 	}
 }
+
+// The ad-hoc path builds its own environment, so it carries the successor's
+// lineage too (marvel#437, design D5 item 4).
+func TestDirectCommandStampsLineage(t *testing.T) {
+	t.Parallel()
+
+	sess := &api.Session{Name: "squad-worker-g2-0", Role: "worker"}
+	_, env := (&Manager{}).directCommand(sess)
+	if _, ok := env[api.PredecessorEnv]; ok {
+		t.Errorf("first spawn has %s, want it absent", api.PredecessorEnv)
+	}
+
+	sess.Predecessor = "acme/squad-worker-g1-0"
+	sess.HandoffRequestedAt = time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	_, env = (&Manager{}).directCommand(sess)
+	if got := env[api.PredecessorEnv]; got != "acme/squad-worker-g1-0" {
+		t.Errorf("%s = %q, want the predecessor's key", api.PredecessorEnv, got)
+	}
+	if got := env[api.HandoffRequestedAtEnv]; got != "2026-10-02T09:00:00Z" {
+		t.Errorf("%s = %q, want RFC 3339 UTC", api.HandoffRequestedAtEnv, got)
+	}
+}

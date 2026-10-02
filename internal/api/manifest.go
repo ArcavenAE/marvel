@@ -116,6 +116,11 @@ func (b *ManifestBudget) Budget() Budget {
 type ManifestRole struct {
 	Name     string `toml:"name"                          yaml:"name"`
 	Replicas int    `toml:"replicas"                      yaml:"replicas"`
+	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
+	// shift key this marvel does not understand, and whether the table wrote
+	// an any key at all.
+	shiftKeyErr     error
+	shiftAnyPresent bool
 	// replicasAbsent is set when the source document has no replicas key
 	// for this role. An omitted count must not read as 0, which parks the
 	// role (marvel#335). A role built in code is taken as declared.
@@ -149,10 +154,31 @@ type ManifestHealthCheck struct {
 	FailureThreshold int    `toml:"failure_threshold,omitempty"   yaml:"failure_threshold,omitempty"`
 }
 
-// ManifestShift is the automatic-shift section within a role.
+// ManifestShift is the automatic-shift section within a role. It takes one
+// of two forms (docs/design/shift-trigger-list.md D2): the single form, the
+// condition fields on the table itself, or the list form, Any. Either way it
+// normalizes to ShiftPolicy.Any. Any key this struct does not name is an
+// error at parse (checkShiftKeys), so `action`, `all` and nested `any` fail
+// loudly on this marvel instead of vanishing.
 type ManifestShift struct {
-	On             string `toml:"on"                        yaml:"on"`
+	On             string                   `toml:"on,omitempty"              yaml:"on,omitempty"`
+	HeadroomTokens int                      `toml:"headroom_tokens,omitempty" yaml:"headroom_tokens,omitempty"`
+	MaxAge         string                   `toml:"max_age,omitempty"         yaml:"max_age,omitempty"`
+	QuietFor       string                   `toml:"quiet_for,omitempty"       yaml:"quiet_for,omitempty"`
+	MaxDefer       string                   `toml:"max_defer,omitempty"       yaml:"max_defer,omitempty"`
+	Any            []ManifestShiftCondition `toml:"any,omitempty"             yaml:"any,omitempty"`
+	Handoff        string                   `toml:"handoff,omitempty"         yaml:"handoff,omitempty"`
+	HandoffMarker  string                   `toml:"handoff_marker,omitempty"  yaml:"handoff_marker,omitempty"`
+	HandoffWindow  string                   `toml:"handoff_window,omitempty"  yaml:"handoff_window,omitempty"`
+}
+
+// ManifestShiftCondition is one entry of a shift table's any list.
+type ManifestShiftCondition struct {
+	On             string `toml:"on,omitempty"              yaml:"on,omitempty"`
 	HeadroomTokens int    `toml:"headroom_tokens,omitempty" yaml:"headroom_tokens,omitempty"`
+	MaxAge         string `toml:"max_age,omitempty"         yaml:"max_age,omitempty"`
+	QuietFor       string `toml:"quiet_for,omitempty"       yaml:"quiet_for,omitempty"`
+	MaxDefer       string `toml:"max_defer,omitempty"       yaml:"max_defer,omitempty"`
 }
 
 // ManifestRuntime is the runtime section within a role.
@@ -263,6 +289,10 @@ func unmarshalManifestYAML(data []byte) (*Manifest, error) {
 	if err := yaml.Unmarshal(data, &probe); err == nil {
 		probe.mark(&m)
 	}
+	var shiftProbe shiftKeysProbe
+	if err := yaml.Unmarshal(data, &shiftProbe); err == nil {
+		shiftProbe.mark(&m)
+	}
 	return &m, nil
 }
 
@@ -274,6 +304,10 @@ func unmarshalManifestTOML(data []byte) (*Manifest, error) {
 	var probe replicasProbe
 	if err := toml.Unmarshal(data, &probe); err == nil {
 		probe.mark(&m)
+	}
+	var shiftProbe shiftKeysProbe
+	if err := toml.Unmarshal(data, &shiftProbe); err == nil {
+		shiftProbe.mark(&m)
 	}
 	return &m, nil
 }
@@ -360,17 +394,12 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
 			}
-			// An unrecognized shift.on would silently never fire; a zero
-			// or negative headroom would fire on the first sample or never.
-			// Reject both so a misconfigured trigger is an error at apply,
-			// not a no-op at runtime.
-			if r.Shift != nil {
-				if r.Shift.On != ShiftTriggerContextPressure {
-					return nil, fmt.Errorf("parse manifest: team[%d].role[%d].shift.on %q is not valid (valid: %q)", i, j, r.Shift.On, ShiftTriggerContextPressure)
-				}
-				if r.Shift.HeadroomTokens <= 0 {
-					return nil, fmt.Errorf("parse manifest: team[%d].role[%d].shift.headroom_tokens must be > 0 for on=%q", i, j, ShiftTriggerContextPressure)
-				}
+			// An unrecognized trigger or key would silently never fire, and a
+			// bad threshold would fire on the first sample or never. Reject
+			// them so a misconfigured trigger is an error at apply, not a
+			// no-op at runtime (marvel#437 D2).
+			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if r.Schedule != nil {
 				if err := validateSchedule(t.Name, r, time.Now().UTC()); err != nil {
@@ -745,12 +774,11 @@ func (m *Manifest) Apply(store *Store) error {
 					FailureThreshold: threshold,
 				}
 			}
-			if mr.Shift != nil {
-				role.Shift = &ShiftPolicy{
-					On:             mr.Shift.On,
-					HeadroomTokens: mr.Shift.HeadroomTokens,
-				}
+			shift, err := mr.shiftPolicy("team " + mt.Name + " role " + mr.Name)
+			if err != nil {
+				return fmt.Errorf("apply manifest: %w", err)
 			}
+			role.Shift = shift
 			if mr.Schedule != nil {
 				sched, err := mr.Schedule.policy()
 				if err != nil {

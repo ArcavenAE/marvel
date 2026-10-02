@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
@@ -713,5 +714,30 @@ func TestBaseEnvCarriesOrdinaryRoleEnv(t *testing.T) {
 	// wins; it is logged rather than refused.
 	if got := env["BEADS_ACTOR"]; got != "operator/explicit" {
 		t.Errorf("BEADS_ACTOR = %q, want the declared override to win", got)
+	}
+}
+
+// A successor learns from its environment that it is one, and whether its
+// predecessor was asked for a handoff (marvel#437, design D5 item 4). A first
+// spawn carries neither name, so absence means "no predecessor".
+func TestBaseEnvStampsLineageOnlyWhenSet(t *testing.T) {
+	t.Parallel()
+
+	env := baseEnv(testContext())
+	for _, name := range []string{api.PredecessorEnv, api.HandoffRequestedAtEnv} {
+		if v, ok := env[name]; ok {
+			t.Errorf("first spawn has %s=%q, want it absent", name, v)
+		}
+	}
+
+	ctx := testContext()
+	ctx.Session.Predecessor = "acme/squad-worker-g1-0"
+	ctx.Session.HandoffRequestedAt = time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	env = baseEnv(ctx)
+	if got := env[api.PredecessorEnv]; got != "acme/squad-worker-g1-0" {
+		t.Errorf("%s = %q, want the predecessor's key", api.PredecessorEnv, got)
+	}
+	if got := env[api.HandoffRequestedAtEnv]; got != "2026-10-02T09:00:00Z" {
+		t.Errorf("%s = %q, want RFC 3339 UTC", api.HandoffRequestedAtEnv, got)
 	}
 }

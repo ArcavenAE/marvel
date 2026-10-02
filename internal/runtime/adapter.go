@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
@@ -344,6 +345,15 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 		// The rig column is deliberately not set here; its semantics
 		// are gated on the bd HEAD survey (aae-orc-usohe).
 		"BEADS_ACTOR": "marvel/" + ctx.Workspace.Name + "/" + ctx.Session.Name,
+	}
+	// A successor's lineage (marvel#437, design D5 item 4). Set only when it
+	// has a value, so absence tells a first spawn from a successor whose
+	// predecessor wrote nothing.
+	if ctx.Session.Predecessor != "" {
+		env[api.PredecessorEnv] = ctx.Session.Predecessor
+	}
+	if !ctx.Session.HandoffRequestedAt.IsZero() {
+		env[api.HandoffRequestedAtEnv] = ctx.Session.HandoffRequestedAt.UTC().Format(time.RFC3339)
 	}
 	if ctx.BusURL != "" {
 		// The bus is cluster topology, so it rides from the cluster config

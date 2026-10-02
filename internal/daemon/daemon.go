@@ -269,6 +269,14 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Zero leaves the controller on its built-in default (10 minutes);
 	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.
 	teamCtrl.ShiftTimeout = opts.ShiftTimeout
+	// The max-age shift trigger asks a seat for its handoff the way an
+	// operator would, with literal keystrokes and Enter (marvel#437 D5).
+	teamCtrl.Notify = func(sess api.Session, text string) error {
+		if sess.PaneID == "" {
+			return fmt.Errorf("session %s has no pane", sess.Key())
+		}
+		return driver.SendKeys(sess.PaneID, text, true, true)
+	}
 	// Must follow OpenBolt: the controller reads its crash-loop state
 	// out of the same bolt file. Before this, a role frozen at
 	// MaxRestarts respawned on the first reconcile tick after restart.

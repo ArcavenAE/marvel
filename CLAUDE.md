@@ -98,11 +98,16 @@ name = "review-squad"
 
 Healthchecks, policies, endpoints, and headless launches: see `examples/`.
 
-### Automatic shifts (context pressure)
+### Automatic shifts (context pressure, max age)
 
-A role may declare a `shift` block so marvel shifts it before its context
-occupancy forces the harness to auto-compact. The trigger is a token
-REMAINDER, not a percentage:
+A role may declare a `shift` block with one condition (`on = ...` on the
+table) or a list (`any = [ ... ]`), any-of: the first condition that holds,
+in list order, acts. Unknown keys (`action`, `all`, a nested `any`) are
+refused at apply. Two triggers exist, context pressure and max age
+(`docs/design/shift-trigger-list.md`, marvel#437).
+
+**Context pressure** shifts a role before its context occupancy forces the
+harness to auto-compact. The trigger is a token REMAINDER, not a percentage:
 
 ```toml
     [team.role.shift]
@@ -138,9 +143,29 @@ Scope and limits:
   the shared per-account rate limit at once (`aae-orc-hfc0`). Excess triggers
   wait for a later tick.
 - The shift itself is the existing rolling shift: it replaces sessions with
-  fresh ones. A handoff artifact (the departing agent authoring state for its
-  successor) is a separate, gated arc (`aae-orc-7opc`); this trigger ships the
-  pre-emptive replacement, not the handoff. Example: `examples/auto-shift.toml`.
+  fresh ones. Context pressure still shifts without observing a handoff; the
+  seat is expected to write one at its own threshold. Example:
+  `examples/auto-shift.toml`.
+
+**Max age** (`{ on = "max-age", max_age = "8h" }`, floor 15m) is the backstop
+for a seat context pressure cannot meter or one wedged at a prompt. It never
+shifts a seat by itself. Past `max_age` and quiet for `quiet_for` (default 2m),
+or past `max_age + max_defer` (default 30m) however busy, marvel types a
+handoff request into the pane (`team.shift-handoff-requested`). When the file
+the role declares in `handoff` (with `{session}` for the session name) ends in
+`handoff_marker`, the shift starts. With no marker by the end of
+`handoff_window` (default 5m), or no declared file, marvel emits
+`team.shift-handoff-missing`, leaves the seat running, and the team's
+supervisor decides. Age runs from spawn: it survives a daemon restart and
+starts over on a health restart. A pending request persists with the team.
+It is one per role: while it is pending or escalated, max age asks no other
+replica of that role (context pressure still covers them all). The handoff
+file must be a regular file, not a symlink, FIFO or directory, and its path
+may not contain `..`. Refused on a headless role. Example: `examples/auto-shift-max-age.toml`.
+
+Every shift's successor starts with `MARVEL_PREDECESSOR` (the old seat's key)
+and, when its predecessor was asked for a handoff,
+`MARVEL_HANDOFF_REQUESTED_AT` (RFC 3339, UTC). A first spawn has neither.
 
 ## Architecture
 

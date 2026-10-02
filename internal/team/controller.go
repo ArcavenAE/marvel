@@ -81,6 +81,12 @@ type Controller struct {
 	// keeps this package free of any usage import.
 	Snapshots Snapshotter
 
+	// Notify delivers a line of text to a session's pane, as `marvel inject`
+	// does. The max-age trigger uses it to ask a seat for its handoff
+	// (design D5 step 1). Nil means no delivery: the request is still
+	// recorded, and its event says the notice did not reach the pane.
+	Notify func(sess api.Session, text string) error
+
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
 }
@@ -798,8 +804,8 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	c.reconcileAdmissionState(t)
 
 	// Evaluate automatic shift triggers before the shift-in-progress check:
-	// it initiates a shift on the store when a role's context-pressure policy
-	// fires, and returns without acting if one is already running, so it never
+	// it initiates a shift on the store when a role's shift policy fires (or
+	// asks a seat for its handoff, for max age), and returns without acting if one is already running, so it never
 	// interrupts an in-flight shift. A shift it initiates this tick is driven
 	// by reconcileShift on the next tick, the same one-tick handoff the
 	// operator path takes (handleShift initiates, the next reconcile drives).
@@ -1816,6 +1822,20 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			Roles:         roles,
 			StartedAt:     c.nowUTC(),
 		}
+		// A pending handoff request moves into the shift, for any shift that
+		// covers its role (automatic or operator), so the successor of the
+		// seat that was asked can be told when (design D5 item 4).
+		for _, r := range roles {
+			req, ok := live.ShiftRequests[r]
+			if !ok {
+				continue
+			}
+			if live.Shift.HandoffRequests == nil {
+				live.Shift.HandoffRequests = make(map[string]api.ShiftRequest)
+			}
+			live.Shift.HandoffRequests[r] = req
+			delete(live.ShiftRequests, r)
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -1849,68 +1869,126 @@ func shiftOrder(roles []api.Role) []string {
 	return names
 }
 
-// evaluateShiftTriggers initiates an automatic shift for the first role of t
-// whose shift policy has fired, subject to the per-tick fleet-wide budget.
-// Caller holds c.mu. It never interrupts an in-flight shift and ignores roles
-// with no policy.
+// evaluateShiftTriggers walks each role's shift conditions and acts on the
+// first that holds, in list order (marvel#437, design D1 and D6). Caller holds
+// c.mu. It never interrupts an in-flight shift and ignores roles with no
+// policy.
 //
-// The trigger is a REMAINDER, not a percentage: a role fires when any of its
-// live current-generation sessions has a resolved window and its occupancy has
-// risen within HeadroomTokens of that window. Firing on the level rather than
-// on a post-compaction event is what lets the shift finish BEFORE the harness
-// auto-compacts; the event would arrive one compaction too late. A session on
-// an unresolved window (ContextLimit == 0: codex, or opencode with no
-// context_window override) is skipped, because a remainder against no
-// denominator is meaningless (orc finding-016).
+// Context pressure is a REMAINDER, not a percentage: it holds when any live
+// current-generation session has a resolved window and its occupancy has risen
+// within the condition's headroom of that window. Firing on the level rather
+// than on a post-compaction event is what lets the shift finish BEFORE the
+// harness auto-compacts; the event would arrive one compaction too late. A
+// session on an unresolved window (ContextLimit == 0: codex, or opencode with
+// no context_window override) is skipped, because a remainder against no
+// denominator is meaningless (orc finding-016). It shifts at once, as before.
+//
+// Max age holds when a running session is older than its bound and either
+// quiet or past the hard threshold. It never shifts by itself: it asks the
+// seat for a handoff, and the shift follows only an observed handoff. A role
+// with a pending request is advanced instead of re-evaluated (shift_handoff.go).
+//
+// Shift initiations, from either path, count against the fleet-wide per-tick
+// budget, and a team starts at most one shift per tick.
 func (c *Controller) evaluateShiftTriggers(t *api.Team) {
 	if t.Shift.Phase != api.ShiftNone {
 		return
 	}
-	if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
-		return
-	}
+	now := c.nowUTC()
+roles:
 	for i := range t.Roles {
 		role := &t.Roles[i]
-		if role.Shift == nil || role.Shift.On != api.ShiftTriggerContextPressure {
+		conds := role.Shift.Conditions()
+		req, pending := t.ShiftRequests[role.Name]
+		if pending && !hasCondition(conds, api.ShiftTriggerMaxAge) {
+			// The policy that asked no longer declares max age.
+			c.dropShiftRequest(t, role.Name)
+			pending = false
+		}
+		if len(conds) == 0 {
 			continue
 		}
-		sess, tokens, limit, ok := c.firstSessionOverRemainder(t, role)
-		if !ok {
-			continue
+		if pending {
+			if c.advanceShiftRequest(t, role, req, now) {
+				return
+			}
+			_, pending = t.ShiftRequests[role.Name]
 		}
-		events.Emit(c.Events, events.Event{
-			Kind:       events.KindShiftAutoTriggered,
-			Workspace:  t.Workspace,
-			Team:       t.Name,
-			Role:       role.Name,
-			Session:    sess,
-			Generation: t.Generation,
-			Message: fmt.Sprintf("context pressure: session %s at %d/%d tokens, remainder %d <= headroom %d",
-				sess, tokens, limit, limit-tokens, role.Shift.HeadroomTokens),
-		})
-		if err := c.initiateShiftLocked(t.Key(), role.Name); err != nil {
-			// A concurrent operator shift or a store race can refuse this. Not
-			// fatal: the next tick re-evaluates against fresh state.
-			log.Printf("auto-shift: %s role %s not initiated: %v", t.Key(), role.Name, err)
-			continue
+		for _, cond := range conds {
+			// A pending request already answers max age; the other
+			// conditions still hold their ground (design D6), and a shift
+			// one of them starts carries the request with it.
+			if pending && cond.On == api.ShiftTriggerMaxAge {
+				continue
+			}
+			switch cond.On {
+			case api.ShiftTriggerContextPressure:
+				if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
+					continue
+				}
+				sess, tokens, limit, ok := c.firstSessionOverRemainder(t, role, cond.HeadroomTokens)
+				if !ok {
+					continue
+				}
+				msg := fmt.Sprintf("cause=%s: session %s at %d/%d tokens, remainder %d <= headroom %d",
+					cond.On, sess, tokens, limit, limit-tokens, cond.HeadroomTokens)
+				if c.autoShift(t, role, sess, msg) {
+					return // one automatic shift per team per tick, within the fleet budget
+				}
+			case api.ShiftTriggerMaxAge:
+				sess, age, stage, ok := c.firstSessionOverAge(t, role, cond, now)
+				if !ok {
+					continue
+				}
+				c.requestHandoff(t, role, cond, sess, age, stage, now)
+				continue roles
+			}
 		}
-		c.autoShiftsThisTick++
-		return // one automatic shift per team per tick, within the fleet budget
 	}
 }
 
+func hasCondition(conds []api.ShiftCondition, on string) bool {
+	for _, c := range conds {
+		if c.On == on {
+			return true
+		}
+	}
+	return false
+}
+
+// autoShift emits the auto-triggered event and initiates a role-scoped shift,
+// reporting whether it started. A concurrent operator shift or a store race
+// can refuse it; that is not fatal, and the next tick re-evaluates.
+func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bool {
+	events.Emit(c.Events, events.Event{
+		Kind:       events.KindShiftAutoTriggered,
+		Workspace:  t.Workspace,
+		Team:       t.Name,
+		Role:       role.Name,
+		Session:    sess,
+		Generation: t.Generation,
+		Message:    msg,
+	})
+	if err := c.initiateShiftLocked(t.Key(), role.Name); err != nil {
+		log.Printf("auto-shift: %s role %s not initiated: %v", t.Key(), role.Name, err)
+		return false
+	}
+	c.autoShiftsThisTick++
+	return true
+}
+
 // firstSessionOverRemainder returns the first live current-generation session
-// of role whose resolved-window occupancy has crossed the role's headroom
-// remainder, with its token count and window. ok is false when none has (none
-// over the remainder, or none on a resolved window).
-func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role) (sessionKey string, tokens, limit int, ok bool) {
+// of role whose resolved-window occupancy has crossed the headroom remainder,
+// with its token count and window. ok is false when none has (none over the
+// remainder, or none on a resolved window).
+func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role, headroom int) (sessionKey string, tokens, limit int, ok bool) {
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
 	for i := range live {
 		s := &live[i]
 		if s.ContextLimit <= 0 {
 			continue
 		}
-		if s.ContextTokens > s.ContextLimit-role.Shift.HeadroomTokens {
+		if s.ContextTokens > s.ContextLimit-headroom {
 			return s.Key(), s.ContextTokens, s.ContextLimit, true
 		}
 	}
@@ -2065,6 +2143,14 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	}
 
 	if len(live) < desired {
+		// Each successor is paired with one of the seats shiftDrain will
+		// retire, oldest first, the order it retires them in. Selected the
+		// way shiftDrain selects them: outside this shift's generation, not
+		// at OldGeneration (marvel#345).
+		predecessors := aliveSessions(sessionsOutsideGeneration(
+			c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name), t.Generation))
+		sortNewestFirst(predecessors)
+		req := t.Shift.HandoffRequests[role.Name]
 		// Create remaining new-gen sessions. nextIndex counts all states,
 		// so a dead row keeps its index and the replacement gets a fresh,
 		// non-colliding one.
@@ -2077,6 +2163,12 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				Role:       role.Name,
 				Generation: t.Generation,
 				Runtime:    role.Runtime,
+			}
+			if i < len(predecessors) {
+				sess.Predecessor = predecessors[len(predecessors)-1-i].Key()
+				if req.Session == sess.Predecessor {
+					sess.HandoffRequestedAt = req.RequestedAt
+				}
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				log.Printf("shift: create session %s: %v", name, err)
