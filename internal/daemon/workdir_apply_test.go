@@ -1,0 +1,114 @@
+package daemon
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Placement at apply (docs/design/session-working-directory.md, marvel#255).
+// Roles are parked (replicas 0) so these need no tmux.
+
+const workDirManifestYAML = `
+workspace:
+  name: placed
+teams:
+  - name: crew
+    workdir: sub
+    roles:
+      - name: crew
+        replicas: 0
+        runtime:
+          command: sleep
+          args: ["300"]
+`
+
+// applyWithRoot posts a manifest with the workspace_root param the CLI sends.
+func applyWithRoot(t *testing.T, d *Daemon, manifest, root string) Response {
+	t.Helper()
+	m := map[string]any{"manifest_data": []byte(manifest)}
+	if root != "" {
+		m["workspace_root"] = root
+	}
+	params, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal apply params: %v", err)
+	}
+	return d.handleApply(params)
+}
+
+func advisoriesOf(t *testing.T, resp Response) []string {
+	t.Helper()
+	var r struct {
+		Advisories []string `json:"advisories"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		t.Fatalf("decode apply result: %v", err)
+	}
+	return r.Advisories
+}
+
+// The workspace_root param is the absolute root marvel work computed; the
+// daemon resolves the relative team workdir against it and stores both.
+func TestApplyUsesTheWorkspaceRootParam(t *testing.T) {
+	d := newHandlerDaemon(t)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if resp := applyWithRoot(t, d, workDirManifestYAML, root); resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	ws, err := d.store.GetWorkspace("placed")
+	if err != nil || ws.Root != root {
+		t.Fatalf("stored root = %q (%v), want %q", ws.Root, err, root)
+	}
+	team, err := d.store.GetTeam("placed/crew")
+	if err != nil || team.WorkDir != filepath.Join(root, "sub") {
+		t.Fatalf("stored team workdir = %q (%v), want %q", team.WorkDir, err, filepath.Join(root, "sub"))
+	}
+}
+
+// With no root anywhere the apply still succeeds, says so, and declares no
+// placement: running fleet tooling must not break on an upgrade. The hard
+// refusal follows once every caller sends a root.
+func TestApplyWithoutRootWarnsAndPlacesNothing(t *testing.T) {
+	d := newHandlerDaemon(t)
+	manifest := strings.Replace(workDirManifestYAML, "    workdir: sub\n", "", 1)
+	resp := applyWithRoot(t, d, manifest, "")
+	if resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	if adv := strings.Join(advisoriesOf(t, resp), "; "); !strings.Contains(adv, "workspace.root") {
+		t.Fatalf("advisories = %q, want one naming workspace.root", adv)
+	}
+	if ws, err := d.store.GetWorkspace("placed"); err != nil || ws.Root != "" {
+		t.Fatalf("stored root = %q (%v), want empty", ws.Root, err)
+	}
+}
+
+// What the daemon cannot place it refuses, and refuses before anything is
+// stored.
+func TestApplyRefusesWhatItCannotPlace(t *testing.T) {
+	root := t.TempDir() // "sub" is never created under it
+	cases := []struct {
+		name, root, manifest, want string
+	}{
+		{"relative root", "rel/root", workDirManifestYAML, "not absolute"},
+		{"tilde root", "~/proj", workDirManifestYAML, "not absolute"},
+		{"root that does not exist", filepath.Join(root, "gone"), workDirManifestYAML, "does not exist"},
+		{"team workdir that does not exist", root, workDirManifestYAML, "does not exist"},
+	}
+	for _, tc := range cases {
+		d := newHandlerDaemon(t)
+		resp := applyWithRoot(t, d, tc.manifest, tc.root)
+		if resp.Error == "" || !strings.Contains(resp.Error, tc.want) {
+			t.Errorf("%s: error = %q, want it to contain %q", tc.name, resp.Error, tc.want)
+		}
+		if _, err := d.store.GetTeam("placed/crew"); err == nil {
+			t.Errorf("%s: the team was stored by a refused apply", tc.name)
+		}
+	}
+}
