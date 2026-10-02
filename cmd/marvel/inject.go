@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	osuser "os/user"
 	"regexp"
 	"strings"
 )
@@ -105,4 +107,35 @@ func describeInject(sessionKey string, steps []injectStep) string {
 	default:
 		return fmt.Sprintf("injected %d bytes into %s", bytes, sessionKey)
 	}
+}
+
+// injectRequestParams builds the params for one inject step.
+func injectRequestParams(sessionKey string, step injectStep) map[string]any {
+	return map[string]any{
+		"session_key": sessionKey,
+		"text":        step.Text,
+		"literal":     step.Literal,
+		"enter":       step.Enter,
+		"injector":    injectorDeclaration(),
+	}
+}
+
+// injectorDeclaration is what this process claims about itself: the seat it
+// runs in (MARVEL_SESSION, set in every marvel seat) and the user. The daemon
+// records it as declared, beside the transport it verified itself.
+func injectorDeclaration() map[string]string {
+	d := map[string]string{}
+	if s := os.Getenv("MARVEL_SESSION"); s != "" {
+		d["session"] = s
+	}
+	user := os.Getenv("USER")
+	if user == "" {
+		if u, err := osuser.Current(); err == nil {
+			user = u.Username
+		}
+	}
+	if user != "" {
+		d["user"] = user
+	}
+	return d
 }
