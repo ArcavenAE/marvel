@@ -6,6 +6,7 @@ import (
 	osuser "os/user"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // injectStep is one send-keys request the inject command will issue. A bare
@@ -14,6 +15,12 @@ type injectStep struct {
 	Text    string
 	Literal bool
 	Enter   bool
+	// Clear asks the daemon to clear a staged draft first, where it can do so
+	// safely. Verify asks it to read the composer afterwards and say whether the
+	// effect was seen. SettleMS is how long it waits for a redraw.
+	Clear    bool
+	Verify   bool
+	SettleMS int
 }
 
 // namedTmuxKeys are the key names a person is most likely to type as if they
@@ -139,3 +146,14 @@ func injectorDeclaration() map[string]string {
 	}
 	return d
 }
+
+// applyInjectOptions sets the verification options on the steps: a clear goes
+// with the first step, and verification with the last, so it reads the composer
+// after everything was sent. Scaffold.
+func applyInjectOptions(steps []injectStep, verify, clear bool, settle time.Duration) []injectStep {
+	return steps
+}
+
+// unconfirmedError turns an inject result into an error when the daemon sent the
+// keys but did not see their effect. Scaffold.
+func unconfirmedError(sessionKey string, result []byte) error { return nil }
