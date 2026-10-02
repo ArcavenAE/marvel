@@ -239,6 +239,9 @@ func TestMaxAgeEscalationIsRepeatedAfterRestart(t *testing.T) {
 	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
 	f.evaluate()
 	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	f.evaluate() // starts the read that grounds the escalation
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
 	f.evaluate()
 	if n := f.count(events.KindShiftHandoffMissing); n != 1 {
 		t.Fatalf("handoff-missing events = %d, want 1", n)
