@@ -375,6 +375,12 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
 		}
 	}
+	// The declared placement, for wrappers and hooks that want it without
+	// inspecting the pane. Informational, never a second source: the pane
+	// starts in this directory (design decision 5).
+	if ctx.Session.WorkDir != "" {
+		env["MARVEL_WORKDIR"] = ctx.Session.WorkDir
+	}
 	return env
 }
 

@@ -16,7 +16,7 @@ import (
 // Declaring it here keeps package runtime free of a tmux dependency and
 // lets tests drive an instance without a tmux server.
 type PaneController interface {
-	NewPane(session, command, title string, envs map[string]string, keepOnExit bool) (string, error)
+	NewPaneAt(session, command, title, dir string, envs map[string]string, keepOnExit bool) (string, error)
 	KillPane(paneID string) error
 	SendKeys(paneID, text string, literal, enter bool) error
 	CapturePane(paneID string) (string, error)
@@ -37,8 +37,12 @@ type TmuxConfig struct {
 	TmuxSession string
 	Title       string
 	Command     string
-	Env         map[string]string
-	Stream      *StreamSource
+	// Dir is the start directory of the pane (docs/design/
+	// session-working-directory.md, decision 4). Empty starts the pane where
+	// the tmux server is, as before placement existed.
+	Dir    string
+	Env    map[string]string
+	Stream *StreamSource
 	// KeepOnExit asks the pane controller to leave the window in place
 	// after the command exits, so the exit status can be read back.
 	// Set for headless roles (a job's terminal state is its exit code,
@@ -100,7 +104,7 @@ func (i *TmuxInstance) Spawn(_ context.Context) error {
 		i.closeEvents()
 	}
 
-	paneID, err := i.cfg.Panes.NewPane(i.cfg.TmuxSession, i.cfg.Command, i.cfg.Title, i.cfg.Env, i.cfg.KeepOnExit)
+	paneID, err := i.cfg.Panes.NewPaneAt(i.cfg.TmuxSession, i.cfg.Command, i.cfg.Title, i.cfg.Dir, i.cfg.Env, i.cfg.KeepOnExit)
 	if err != nil {
 		i.state.Store(int32(StateFailed))
 		i.teardownStream()

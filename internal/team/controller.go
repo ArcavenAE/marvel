@@ -1247,6 +1247,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Role:       plan.Role,
 				Generation: plan.Generation,
 				Runtime:    role.Runtime,
+				WorkDir:    c.placement(t, role),
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				log.Printf("reconcile: create session %s: %v", name, err)
@@ -1851,6 +1852,19 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	return nil
 }
 
+// placement is where a new session of role runs: the role's workdir, else the
+// team's, else the workspace root, read from the applied team at spawn so a
+// restart or a shift places the successor from the current declaration and not
+// from the dead session's value (docs/design/session-working-directory.md,
+// decisions 4 and 7). Empty places nothing, as before placement existed.
+func (c *Controller) placement(t *api.Team, role *api.Role) string {
+	root := ""
+	if ws, err := c.store.GetWorkspace(t.Workspace); err == nil {
+		root = ws.Root
+	}
+	return api.ResolveWorkDir(root, t.WorkDir, role.WorkDir)
+}
+
 // shiftOrder returns role names sorted with "supervisor" last.
 func shiftOrder(roles []api.Role) []string {
 	names := make([]string, 0, len(roles))
@@ -2163,6 +2177,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				Role:       role.Name,
 				Generation: t.Generation,
 				Runtime:    role.Runtime,
+				WorkDir:    c.placement(t, role),
 			}
 			if i < len(predecessors) {
 				sess.Predecessor = predecessors[len(predecessors)-1-i].Key()

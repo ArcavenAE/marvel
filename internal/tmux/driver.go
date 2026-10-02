@@ -320,6 +320,9 @@ func (d *Driver) NewPaneAt(session, command, title, dir string, envs map[string]
 	if title != "" {
 		args = append(args, "-n", title)
 	}
+	if dir != "" {
+		args = append(args, "-c", dir)
+	}
 	for k, v := range envs {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
