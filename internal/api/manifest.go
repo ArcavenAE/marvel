@@ -816,7 +816,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Workspace:  m.Workspace.Name,
 			Roles:      roles,
 			Budget:     budget,
-			WorkDir:    joinWorkDir(m.Workspace.Root, mt.WorkDir),
+			WorkDir:    teamAnchor(m.Workspace.Root, mt.WorkDir),
 			Generation: 1,
 			CreatedAt:  now,
 		}
@@ -829,10 +829,11 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
-				// A legacy stamp (the v1 to v2 migration's record of where a
-				// root-less team already ran) holds only while the manifest
-				// still declares no placement; any declaration replaces it.
-				if keepLegacyStamp(live, m.Workspace.Root, mt.WorkDir) {
+				// An apply that declares no placement leaves the anchor the team
+				// already has, a legacy stamp included (the v1 to v2 migration's
+				// record of where a root-less team already ran). Any declaration
+				// replaces the anchor and clears its source.
+				if m.Workspace.Root == "" && mt.WorkDir == "" {
 					return nil
 				}
 				live.WorkDir = team.WorkDir

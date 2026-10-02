@@ -152,8 +152,10 @@ func TestValidateWorkDirs(t *testing.T) {
 		{"missing root warns and places nothing", workDirManifest("", "", ""), "", "workspace.root"},
 		{"relative root is refused", workDirManifest("rel/root", "", ""), "workspace.root", "not absolute"},
 		{"tilde root is refused as not absolute", workDirManifest("~/proj", "", ""), "workspace.root", "not absolute"},
-		{"root that does not exist", workDirManifest(filepath.Join(root, "nope"), "", ""), "workspace.root", "does not exist"},
-		{"root that is a file", workDirManifest(file, "", ""), "workspace.root", "not a directory"},
+		{"root that does not exist here warns and places nothing", workDirManifest(filepath.Join(root, "nope"), "", ""), "", "does not exist on this host"},
+		{"root that is a file here warns and places nothing", workDirManifest(file, "", ""), "", "not a directory"},
+		{"absent root with a relative team workdir is refused", workDirManifest(filepath.Join(root, "nope"), "sub", ""), "workspace.root", "does not exist"},
+		{"absent root with a relative role workdir is refused", workDirManifest(filepath.Join(root, "nope"), "", "sub"), "workspace.root", "does not exist"},
 		{"relative team workdir resolves against root", workDirManifest(root, "sub", ""), "", ""},
 		{"team workdir that does not exist", workDirManifest(root, "nope", ""), "team squad", "does not exist"},
 		{"role workdir with a tilde", workDirManifest(root, "", "~/proj"), "role worker", "not absolute"},
@@ -178,5 +180,106 @@ func TestValidateWorkDirs(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), tc.wantAdvis) {
 			t.Errorf("%s: error %q, want it to contain %q and %q", tc.name, err, tc.wantErr, tc.wantAdvis)
 		}
+	}
+}
+
+// A root the daemon's host cannot see is a client-side path (marvel work posts
+// its own directory): the apply goes through, the root is dropped, and nothing
+// is placed, exactly as for an absent root.
+func TestValidateWorkDirsDropsARootThisHostCannotSee(t *testing.T) {
+	t.Parallel()
+	m := workDirManifest(filepath.Join(t.TempDir(), "client-only"), "", "")
+	advis, err := m.ValidateWorkDirs()
+	if err != nil {
+		t.Fatalf("error %v, want the apply to go through", err)
+	}
+	if m.Workspace.Root != "" {
+		t.Errorf("root = %q after validation, want it dropped", m.Workspace.Root)
+	}
+	if len(advis) != 1 || !strings.Contains(advis[0], "client-only") {
+		t.Errorf("advisories = %q, want one naming the root", advis)
+	}
+}
+
+// The root is resolved through symlinks once, at apply, so a stored anchor
+// does not flip between the link and its target.
+func TestValidateWorkDirsResolvesTheRootThroughSymlinks(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	link := filepath.Join(base, "link")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := workDirManifest(link, "", "")
+	if _, err := m.ValidateWorkDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if m.Workspace.Root != want {
+		t.Errorf("root = %q, want the resolved %q", m.Workspace.Root, want)
+	}
+}
+
+// realDir returns a fresh temp directory with symlinks resolved, which is the
+// form Apply stores (macOS temp directories sit behind a link).
+func realDir(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func rootedTeamManifest(t *testing.T, team, root string) *Manifest {
+	t.Helper()
+	m := workDirManifest(root, "", "")
+	m.Workspace.Name = "shared"
+	m.Teams[0].Name = team
+	return m
+}
+
+// Workspace.Root is per workspace and every `marvel work` posts its own
+// directory. A team applied from another directory must not move a team that
+// is already running: each team keeps the root it was applied with.
+func TestApplySnapshotsTheRootIntoTheTeam(t *testing.T) {
+	t.Parallel()
+	store := NewStore()
+	rootA, rootB := realDir(t), realDir(t)
+	for team, root := range map[string]string{"alpha": rootA, "beta": rootB} {
+		if err := rootedTeamManifest(t, team, root).Apply(store); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws, _ := store.GetWorkspace("shared")
+	for team, root := range map[string]string{"alpha": rootA, "beta": rootB} {
+		got, _ := store.GetTeam("shared/" + team)
+		if dir := ResolveWorkDir(ws.Root, got.WorkDir, ""); dir != root {
+			t.Errorf("team %s resolves to %q with the workspace root at %q, want its own %q", team, dir, ws.Root, root)
+		}
+	}
+}
+
+// An apply that declares no placement leaves a team's anchor where it was.
+func TestApplyWithNoPlacementKeepsTheTeamAnchor(t *testing.T) {
+	t.Parallel()
+	store := NewStore()
+	root := realDir(t)
+	if err := rootedTeamManifest(t, "alpha", root).Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := rootedTeamManifest(t, "alpha", "").Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.GetTeam("shared/alpha")
+	if got.WorkDir != root {
+		t.Errorf("anchor = %q after a root-less re-apply, want %q kept", got.WorkDir, root)
 	}
 }

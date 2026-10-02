@@ -54,7 +54,12 @@ func advisoriesOf(t *testing.T, resp Response) []string {
 // daemon resolves the relative team workdir against it and stores both.
 func TestApplyUsesTheWorkspaceRootParam(t *testing.T) {
 	d := newHandlerDaemon(t)
-	root := t.TempDir()
+	// Apply stores the root with symlinks resolved (macOS temp directories
+	// sit behind a link), so the expectation is the resolved form.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
