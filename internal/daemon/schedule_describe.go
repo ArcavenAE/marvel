@@ -59,6 +59,13 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		return teamDescription{}, err
 	}
 	out := teamDescription{Team: t}
+	for _, r := range d.sessMgr.PlacementRefusals() {
+		if r.Workspace == t.Workspace && r.Team == t.Name {
+			out.Conditions = append(out.Conditions, roleCondition{
+				Role: r.Role, Type: "PlacementRefused", Status: "True", Message: r.Message, Since: r.Since,
+			})
+		}
+	}
 	for _, role := range t.Roles {
 		if role.Schedule == nil {
 			continue

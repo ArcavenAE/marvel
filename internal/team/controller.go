@@ -5,6 +5,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -1257,7 +1258,8 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
 			}
-			if err := c.sessMgr.Create(sess); err != nil {
+			// A refused placement is reported, at a low rate, by the manager.
+			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
@@ -2195,7 +2197,9 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				}
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
-				log.Printf("shift: create session %s: %v", name, err)
+				if !errors.Is(err, session.ErrPlacementRefused) {
+					log.Printf("shift: create session %s: %v", name, err)
+				}
 				return
 			}
 		}
