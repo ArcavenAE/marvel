@@ -45,12 +45,12 @@ and the operator wants triggers to combine:
 
 ### D1. The combinator for a plain list is any-of
 
-A list fires when **any** condition holds. This is the operator's first
-example ("unset, context pressure, max age, or pressure above X OR age above
-Y") and the only reading under which adding a condition makes a role shift
-sooner, never later. All-of is the second example and waits for expressions
-(section 5). If a reviewer reads the list as all-of, that is a ruling for the
-operator through director, not something to settle in review.
+A list fires when **any** condition holds. The operator's first examples are
+single conditions and "context pressure above X OR max age above Y", and
+any-of is the only reading under which adding a condition makes a role shift
+sooner, never later. All-of is the operator's last example and waits for
+expressions (section 5). If a reviewer reads the list as all-of, that is a
+ruling for the operator through director, not something to settle in review.
 
 ### D2. Manifest shape
 
@@ -70,16 +70,25 @@ any = [
 ]
 ```
 
-Rules at apply (errors, never silent no-ops, as today):
+Rules at apply (errors, never silent no-ops):
+- **Unknown keys are errors**, at the shift-table level and the entry level.
+  Today `ParseManifest` decodes with `toml.Unmarshal` and `yaml.Unmarshal`
+  (`internal/api/manifest.go`), which drop unknown keys, and `ManifestShift`
+  has only `On` and `HeadroomTokens`. So the builder adds detection: for
+  TOML, `toml.MetaData.Undecoded()` from `toml.Decode`, reporting any
+  undecoded key under a role's `shift`; for YAML, a `yaml.v3` decoder with
+  `KnownFields(true)` for the shift section. The error names the key and
+  says "not supported by this marvel". This is what makes `action` (which
+  #399 sketches on the shift table itself), `all`, and nested `any` fail
+  loudly instead of vanishing; `action = "kill"` is the case that matters.
+- A shift table with neither `on` nor `any` is an error, stated as such (it
+  fails today only by accident, as `shift.on "" is not valid`).
 - `on` and `any` together is an error. `any = []` is an error (unset means
   omit the table).
 - Each entry is validated as today's single trigger is: a known `on`, and the
   fields that trigger needs (`headroom_tokens > 0`; `max_age` a positive Go
-  duration of at least the minimum in D4).
+  duration of at least the floor in D4).
 - Two entries with the same `on` is an error in slice 1.
-- An entry key slice 1 does not know (`all`, `any` nested, `action`) is an
-  error naming it as not yet supported, so a manifest written for a later
-  marvel fails loudly on this one.
 
 Internally the single form is normalized to `any` of one, so the evaluator
 has one path.
@@ -90,9 +99,16 @@ has one path.
   session and starts at zero, which is also "from the last shift".
 - It survives a daemon restart: `CreatedAt` is persisted.
 - A health restart creates a new session, so the clock starts over. That is
-  right for the "harness update waiting" case (a new process) and is called
-  out because it means a crash-looping seat never ages out; restart backoff
-  already bounds that case.
+  right for the "harness update waiting" case (a new process). It also means
+  a crash-looping seat never ages out: `max_restarts` defaults to 0
+  (unlimited) and backoff caps at 5m, so such a seat restarts indefinitely.
+  That is accepted here, because each restart is a fresh process and the
+  crash-loop machinery owns that case; max age does not.
+- **Exception, stated:** a role whose `runtime.args` carry `--resume` or
+  `--continue` comes back from a health restart into the same conversation
+  (`internal/runtime/claude.go`), yet its age resets. Slice 1 documents this
+  rather than measuring from the slot's first session; a role that resumes
+  should rely on context pressure for its conversation length.
 - Age is wall-clock time. A laptop asleep for six hours counts six hours,
   which for this backstop is the safer error.
 
@@ -117,25 +133,54 @@ already budgets the shift.
 
 ### D5. The handoff
 
-The role contract requires a seat to write its handoff on its own threshold,
-before anyone asks. A seat cannot see its own age, so for `max-age` marvel
-tells it:
-- On the quiet or hard threshold, marvel delivers a notice to the seat
-  (`shift: max age reached; write your handoff now`) and records
-  `shift.handoff-requested` with the time.
-- It waits `handoff_window` (default 5m) before starting the shift.
+The written succession contract rules out an automatic shift without a
+handoff:
+- wardrobe `contents/roles/supervisor.md`, CANNOT: "shift without a handoff
+  naming what is dropped (none)";
+- `contents/ask-classes.yaml`: `shift-call` is "a shift to be called for a
+  worker past its threshold, on a handoff that already exists";
+- `contents/fragments/succession.md`: "Where the harness hides the pressure
+  reading, the spawner requests the write." and "never auto-shift
+  unwatched";
+- `contents/processes/team-supervision.md`, step 4: "a partial handoff fails
+  its automatic start closed".
 
-marvel cannot read a handoff, so "no handoff, no shift" is not enforceable in
-marvel today. What happens without one: the shift proceeds after the window,
-and the successor's first acts (read the predecessor's handoff, report what
-changed under it) report "no handoff" as a named class to its supervisor.
-That keeps a wedged seat, which by definition will not write one, from
-blocking its own replacement. If the operator wants a hard gate instead, it
-needs a handoff-observation seam (a terminal-marker check on a declared
-path) and is a separate ruling; see section 7.
+A seat cannot see its own age, so marvel is the spawner that requests the
+write. The default conforms to the contract:
+
+1. **Request.** On the quiet or hard threshold (D4), marvel delivers a notice
+   to the seat (`shift: max age reached; write your handoff now`) and records
+   `shift.handoff-requested` with the time.
+2. **Observe (the seam).** A role that declares
+   `handoff = "<path with {session}>"` and `handoff_marker = "<line>"` gets a
+   terminal-marker check: marvel shifts when the file exists and its last
+   line is the marker. This is the observation seam; marvel reads one line of
+   one declared file and nothing else.
+3. **Escalate, never shift unwatched.** If `handoff_window` (default 5m)
+   expires with no marker, or the role declares no handoff path, marvel emits
+   `shift.handoff-missing` (warning: session, age, requested-at), leaves the
+   seat running, and the team's supervisor decides whether to call the shift.
+   The supervisor is the watcher the contract requires. For a wedged seat this
+   makes max age a reliable alarm, which is most of its value.
+4. **Tell the successor what it is.** Today a seat spawns with
+   `MARVEL_ROLE`, `MARVEL_SESSION`, `MARVEL_TEAM`, `MARVEL_WORKSPACE` and
+   transport variables, and nothing marks it a successor (finding-044 Part B:
+   it "came up cold"). Every shift (any trigger, and operator shifts) adds
+   `MARVEL_PREDECESSOR` (the predecessor's session key) and, when a request
+   was made, `MARVEL_HANDOFF_REQUESTED_AT`. Only then can a successor tell
+   "my predecessor wrote nothing" from "I have no predecessor".
+
+**Open, for the operator (conflict stated).** Proceeding with the shift after
+the window when no handoff exists would be an automatic shift with no handoff
+and no watcher, which the contract above forbids. If it is wanted for some
+roles, it would be a per-role opt-in field (`on_no_handoff = "shift"`, default
+`"escalate"`), ruled by the operator in writing, following the restart-policy
+precedent for a default that consumes state. This design does not include it
+in slice 1; it is ruling 2.
 
 Context pressure keeps today's behaviour (no notice; the seat crosses its own
-pressure threshold and writes the handoff then).
+pressure threshold and writes the handoff then), and gains only the successor
+variables in item 4.
 
 ### D6. Interaction with the context-pressure trigger
 
@@ -170,16 +215,21 @@ supported (D2), so adding it later breaks nothing.
 
 ## 4. Changes, for the builder
 
-- `internal/api/types.go`: `ShiftPolicy` gains `Any []ShiftCondition`;
-  `ShiftCondition` holds `On`, `HeadroomTokens`, `MaxAge`, `QuietFor`,
-  `MaxDefer`, `HandoffWindow`. The single form normalizes to `Any` of one.
-- `internal/api/manifest.go`: the validation rules in D2 and D7.
+- `internal/api/manifest.go`: strict unknown-key detection for the shift
+  section in TOML (`toml.Decode` metadata) and YAML (`KnownFields(true)`);
+  `ManifestShift` gains `Any`, `MaxAge`, `QuietFor`, `MaxDefer`,
+  `HandoffWindow`, `Handoff`, `HandoffMarker`; the rules in D2 and D7.
+- `internal/api/types.go`: `ShiftPolicy` gains `Any []ShiftCondition`; the
+  single form normalizes to `Any` of one; handoff fields on the policy.
 - `internal/team/controller.go`: `evaluateShiftTriggers` loops over the
   conditions; a `firstSessionOverAge` beside `firstSessionOverRemainder`; the
-  handoff notice and window as a pending phase on the role's state, persisted
-  so a daemon restart inside the window resumes it.
-- Events: `cause` on `shift.auto-triggered`; new
-  `shift.handoff-requested`.
+  request, marker check and escalation as a pending phase on the role's
+  state, persisted so a daemon restart inside the window resumes it.
+- `internal/runtime/adapter.go`: `MARVEL_PREDECESSOR` and
+  `MARVEL_HANDOFF_REQUESTED_AT` in the successor's environment on every
+  shift.
+- Events: `cause` on `shift.auto-triggered`; new `shift.handoff-requested`
+  and `shift.handoff-missing`.
 
 ## 5. Room for AND and OR later
 
@@ -202,28 +252,37 @@ changes meaning when they do.
 
 1. Today's single-trigger manifest parses, normalizes to `any` of one, and
    fires exactly as before (the existing trigger tests pass unchanged).
-2. `on` with `any` is an error; `any = []` is an error; a duplicate `on` is an
-   error; `all`, nested `any`, and `action` are errors naming the key.
+2. In both TOML and YAML: table-level `action = "kill"`, table-level
+   `all = [...]`, an entry-level unknown key, and nested `any` are each errors
+   naming the key; a shift table with neither `on` nor `any` is an error;
+   `on` with `any`, `any = []`, and a duplicate `on` are errors.
 3. `max_age` below 15m is an error; `max-age` on a headless role is an error.
-4. A session past `max_age` and quiet for `quiet_for` gets the notice, records
-   `shift.handoff-requested`, and a shift starts after `handoff_window`.
-5. A session past `max_age` and busy is not shifted until `max_age +
-   max_defer`, then is (notice and window as in 4).
-6. A session on an unresolved window is shifted by `max-age` and never by
+4. A session past `max_age` and quiet for `quiet_for` gets the notice and
+   records `shift.handoff-requested`; when the declared handoff file ends in
+   the marker, the shift starts.
+5. With no marker by the end of `handoff_window`, or no declared handoff
+   path, marvel emits `shift.handoff-missing` and does **not** shift; the
+   seat keeps running.
+6. A session past `max_age` and busy is not requested until
+   `max_age + max_defer`, then is (as in 4 and 5).
+7. A session on an unresolved window is handled by `max-age` and never by
    context pressure.
-7. With both conditions, whichever holds first fires; the event's `cause`
+8. With both conditions, whichever holds first fires; the event's `cause`
    names it; one shift per team per tick holds.
-8. A daemon restart keeps a session's age (persisted `CreatedAt`) and resumes
-   a pending handoff window.
-9. A health restart resets age (new session).
-10. A finished headless session is never evaluated.
+9. A daemon restart keeps a session's age (persisted `CreatedAt`) and resumes
+   a pending request.
+10. A health restart resets age (new session).
+11. A finished headless session is never evaluated.
+12. A successor of any shift has `MARVEL_PREDECESSOR` set to the
+    predecessor's session key, and `MARVEL_HANDOFF_REQUESTED_AT` when a
+    request was made; a first spawn has neither.
 
 ## 7. Rulings needed (operator, via director)
 
 | # | question | default |
 |---|---|---|
 | 1 | Any-of for a plain list (D1) | yes |
-| 2 | Without a handoff, the shift proceeds after the window and the successor reports it (D5), rather than a hard "no handoff, no shift" gate that marvel cannot enforce today | proceed and report |
+| 2 | Should any role be allowed to shift after the window with no handoff (`on_no_handoff = "shift"`)? This conflicts with the written succession contract ("never auto-shift unwatched"; supervisor CANNOT "shift without a handoff"), so it would override it for that role (D5) | no: escalate, never shift unwatched; not in slice 1 |
 | 3 | Defaults: `quiet_for` 2m, `max_defer` 30m, `handoff_window` 5m, `max_age` floor 15m (D4, D5) | as listed |
 | 4 | Kill branch out of slice 1 (D8) | yes |
 
