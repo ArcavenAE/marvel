@@ -889,7 +889,14 @@ func workCmd() *cobra.Command {
 				return fmt.Errorf("read manifest: %w", err)
 			}
 
-			params, _ := json.Marshal(map[string]any{"manifest_data": data})
+			// The bytes go up untouched. The workspace root marvel work
+			// resolves from the manifest file's directory rides beside them,
+			// so the daemon never sees the manifest's path.
+			p := map[string]any{"manifest_data": data}
+			if root := workspaceRootFor(args[0], declaredWorkspaceRoot(data)); root != "" {
+				p["workspace_root"] = root
+			}
+			params, _ := json.Marshal(p)
 			resp, err := send(daemon.Request{
 				Method: "apply",
 				Params: params,
