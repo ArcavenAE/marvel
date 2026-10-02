@@ -59,8 +59,11 @@ type Reader interface {
 // a contract yet gets a reader that reads Unknown and never clears; Unknown is
 // never treated as safe by a caller.
 func ReaderFor(runtime string) Reader {
-	if runtime == "codex" {
+	switch runtime {
+	case "codex":
 		return codexReader{}
+	case "claude":
+		return claudeReader{}
 	}
 	return unknownReader{}
 }

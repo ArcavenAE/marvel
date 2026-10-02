@@ -622,6 +622,16 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 	return string(out), nil
 }
 
+// CapturePaneEscapes is CapturePane with the terminal's escape sequences kept
+// (capture-pane -e), for a reader that tells text apart by its attributes.
+func (d *Driver) CapturePaneEscapes(paneID string) (string, error) {
+	out, err := d.cmd("capture-pane", "-t", paneID, "-p", "-e").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %s: %w", paneID, string(out), err)
+	}
+	return string(out), nil
+}
+
 // Repaint asks the program in a pane to redraw itself without sending it any
 // input. The harnesses repaint on a change of terminal SIZE, not on a bare
 // SIGWINCH (measured on claude and opencode), so it widens the pane's own tty
