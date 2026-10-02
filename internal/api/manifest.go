@@ -829,7 +829,14 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
+				// A legacy stamp (the v1 to v2 migration's record of where a
+				// root-less team already ran) holds only while the manifest
+				// still declares no placement; any declaration replaces it.
+				if keepLegacyStamp(live, m.Workspace.Root, mt.WorkDir) {
+					return nil
+				}
 				live.WorkDir = team.WorkDir
+				live.WorkDirSource = ""
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)
