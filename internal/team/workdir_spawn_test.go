@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // Spawn placement (docs/design/session-working-directory.md, decisions 4 and
@@ -97,36 +98,142 @@ func TestSpawnPlacesSessionByRoleOverTeamOverRoot(t *testing.T) {
 	}
 }
 
-// With nothing declared the session is placed at the workspace root, and with
-// no root either it is placed nowhere, which is how every session ran before.
-func TestSpawnFallsBackToRootThenToNothing(t *testing.T) {
+// A session is placed from the team's applied anchor and never from the live
+// workspace root. A team applied with no placement carries no anchor, so its
+// sessions are placed nowhere even when the workspace has a root: that root is
+// one value per workspace, and reading it at spawn would move a team whenever
+// another team's apply moved it.
+func TestSpawnPlacesFromTheTeamAnchorNeverTheLiveRoot(t *testing.T) {
 	skipIfNoTmux(t)
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
-	root := realDir(t)
+	root, anchor := realDir(t), realDir(t)
 	out := realDir(t)
-	createPlacedTeam(t, store, "test-wd-root", root, "", []api.Role{cwdRecorder(t, out, "atroot", "")})
-	createPlacedTeam2 := func() {
-		if err := store.CreateWorkspace(&api.Workspace{Name: "test-wd-none", CreatedAt: time.Now().UTC()}); err != nil {
-			t.Fatal(err)
-		}
+	createPlacedTeam(t, store, "test-wd-noanchor", root, "", []api.Role{cwdRecorder(t, out, "rootonly", "")})
+	createPlacedTeam(t, store, "test-wd-anchor", root, anchor, []api.Role{cwdRecorder(t, out, "anchored", "")})
+	ctrl.ReconcileOnce()
+
+	none := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-wd-noanchor", "squad", "rootonly", 1))
+	if len(none) != 1 || none[0].WorkDir != "" {
+		t.Fatalf("a team with no anchor in a workspace with a root: %+v, want one session placed nowhere", none)
+	}
+	at := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-wd-anchor", "squad", "anchored", 1))
+	if len(at) != 1 || at[0].WorkDir != anchor {
+		t.Fatalf("an anchored team: %+v, want WorkDir %q", at, anchor)
+	}
+}
+
+// Two teams of one workspace keep their own anchors however the workspace root
+// moves afterwards.
+func TestTwoTeamsKeepTheirAnchorsWhenTheWorkspaceRootMoves(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	first, second, moved := realDir(t), realDir(t), realDir(t)
+	out := realDir(t)
+	if err := store.CreateWorkspace(&api.Workspace{Name: "test-wd-two", Root: first, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	for name, dir := range map[string]string{"alpha": first, "beta": second} {
 		if err := store.CreateTeam(&api.Team{
-			Name: "squad", Workspace: "test-wd-none", Roles: []api.Role{sleepRole("nowhere", 1)}, Generation: 1,
+			Name: name, Workspace: "test-wd-two", WorkDir: dir, Generation: 1,
+			Roles:              []api.Role{cwdRecorder(t, out, "seat", "")},
 			ConvergencePosture: api.PostureConverge, CreatedAt: time.Now().UTC(),
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	createPlacedTeam2()
+	// A later apply of another team moves the workspace root.
+	if err := store.UpdateWorkspace("test-wd-two", func(w *api.Workspace) error { w.Root = moved; return nil }); err != nil {
+		t.Fatal(err)
+	}
 	ctrl.ReconcileOnce()
 
-	at := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-wd-root", "squad", "atroot", 1))
-	if len(at) != 1 || at[0].WorkDir != root {
-		t.Fatalf("root-placed session = %+v, want WorkDir %q", at, root)
+	for name, want := range map[string]string{"alpha": first, "beta": second} {
+		got := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-wd-two", name, "seat", 1))
+		if len(got) != 1 || got[0].WorkDir != want {
+			t.Fatalf("team %s: %+v, want WorkDir %q and not the moved root %q", name, got, want, moved)
+		}
+		if cwd := waitCwd(t, out, got[0].Name); cwd != want {
+			t.Errorf("team %s: pane cwd = %q, want %q", name, cwd, want)
+		}
 	}
-	none := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-wd-none", "squad", "nowhere", 1))
-	if len(none) != 1 || none[0].WorkDir != "" {
-		t.Fatalf("unplaced session = %+v, want an empty WorkDir", none)
+}
+
+func refusedEvents(ring *events.Ring) []events.Event {
+	return ring.Snapshot(events.Filter{Kind: events.KindSessionPlacementRefused}, 0)
+}
+
+// tmux starts a pane in $HOME when new-window is given a directory that does
+// not exist, and exits 0, so a pinned directory that was removed would move
+// the seat silently. The spawn is refused instead, with an event that names
+// the team, the role and the path, and nothing is created.
+func TestSpawnRefusesAMissingWorkDirAndNeverFallsToHome(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(64)
+	sessMgr.Events = ring
+	gone := filepath.Join(realDir(t), "removed-worktree")
+	out := realDir(t)
+	createPlacedTeam(t, store, "test-wd-missing", "", gone, []api.Role{cwdRecorder(t, out, "seat", "")})
+
+	ctrl.ReconcileOnce()
+	ctrl.ReconcileOnce()
+
+	if got := store.ListSessionsByTeamRoleGeneration("test-wd-missing", "squad", "seat", 1); len(got) != 0 {
+		t.Fatalf("a session exists for a team whose directory is missing: %+v", got)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Fatalf("a pane started and ran from somewhere (%d record(s)); it must not", len(entries))
+	}
+	ev := refusedEvents(ring)
+	if len(ev) != 1 {
+		t.Fatalf("%d refusal events over two ticks, want one per change: %+v", len(ev), ev)
+	}
+	for _, want := range []string{"squad", "seat", gone} {
+		if !strings.Contains(ev[0].Message+ev[0].Team+ev[0].Role, want) {
+			t.Errorf("refusal event %+v does not name %q", ev[0], want)
+		}
+	}
+	if ev[0].Team != "squad" || ev[0].Role != "seat" || ev[0].Severity != events.SeverityWarning {
+		t.Errorf("event fields = team %q role %q severity %v, want squad, seat, warning", ev[0].Team, ev[0].Role, ev[0].Severity)
+	}
+
+	// Once the directory exists the next tick spawns there.
+	if err := os.Mkdir(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.ReconcileOnce()
+	got := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-wd-missing", "squad", "seat", 1))
+	if len(got) != 1 || got[0].WorkDir != gone {
+		t.Fatalf("after the directory exists: %+v, want one session at %q", got, gone)
+	}
+	if cwd := waitCwd(t, out, got[0].Name); cwd != gone {
+		t.Errorf("pane cwd = %q, want %q", cwd, gone)
+	}
+}
+
+// A path that exists but is a file is refused the same way.
+func TestSpawnRefusesAWorkDirThatIsAFile(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	ring := events.NewRing(64)
+	sessMgr.Events = ring
+	file := filepath.Join(realDir(t), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createPlacedTeam(t, store, "test-wd-file", "", file, []api.Role{cwdRecorder(t, realDir(t), "seat", "")})
+
+	ctrl.ReconcileOnce()
+
+	if got := store.ListSessionsByTeamRoleGeneration("test-wd-file", "squad", "seat", 1); len(got) != 0 {
+		t.Fatalf("a session was created in a path that is a file: %+v", got)
+	}
+	if len(refusedEvents(ring)) != 1 {
+		t.Fatalf("refusal events = %+v, want one", refusedEvents(ring))
 	}
 }
 

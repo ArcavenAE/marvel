@@ -25,13 +25,18 @@ const (
 	// KindSessionInjected records keystrokes sent into a session's pane, with
 	// who sent them: the transport the daemon saw and what the caller declared.
 	// It never carries the text typed.
-	KindSessionInjected  Kind = "session.injected"
-	KindSessionCreated   Kind = "session.created"
-	KindSessionDeleted   Kind = "session.deleted"
-	KindSessionCrashed   Kind = "session.crashed"
-	KindSessionRestarted Kind = "session.restarted"
-	KindSessionFailed    Kind = "session.failed"
-	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	KindSessionInjected Kind = "session.injected"
+	// KindSessionPlacementRefused records a spawn marvel refused because the
+	// directory the session resolves to is missing or is not a directory.
+	// tmux would start the pane in $HOME without an error, so marvel refuses
+	// first. Emitted once per change, not once per reconcile tick.
+	KindSessionPlacementRefused Kind = "session.placement-refused"
+	KindSessionCreated          Kind = "session.created"
+	KindSessionDeleted          Kind = "session.deleted"
+	KindSessionCrashed          Kind = "session.crashed"
+	KindSessionRestarted        Kind = "session.restarted"
+	KindSessionFailed           Kind = "session.failed"
+	KindSessionSucceeded        Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
@@ -268,6 +273,7 @@ const (
 // here, so the catalog cannot fall behind the constants it describes.
 var allKinds = []Kind{
 	KindSessionInjected,
+	KindSessionPlacementRefused,
 	KindSessionCreated,
 	KindSessionDeleted,
 	KindSessionCrashed,
