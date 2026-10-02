@@ -62,10 +62,14 @@ seat holds the role now, so a supervisor that shifted still gets it.
   continues, plus one log line per escalation, `escalation has no
   recipient: team <ws/team> declares no supervisor role`. Never delivered to
   the escalated seat or to any other role.
-- A `supervisor` role with no running seat: publish anyway. The message
-  waits in the stream, and the next holder's new durable reads it
-  (`DeliverAllPolicy`), which is the point of a durable channel. The event
-  says `delivered: queued, no live holder`.
+- A `supervisor` role with no running seat: publish ONCE, and hold. The
+  message waits in the stream, and the next holder's new durable reads it
+  (`DeliverAllPolicy`). While no holder is live, marvel does not repeat the
+  delivery: AGENT_INBOX keeps 24h, the shim does not honor `expires_at`
+  (director `envelope.go`), and a late holder would otherwise read up to one
+  envelope per window for a day. marvel knows a holder is live from its own
+  session records; when one appears, the normal cadence resumes with an
+  immediate send. The event says `delivered: queued once, no live holder`.
 - **The escalated seat is a supervisor** (ruled 2026-10-02: "Deliver to
   other supervisors and director"). marvel never uses the role address here,
   since it would reach the escalated seat's own durable. Instead it sends the
@@ -73,7 +77,8 @@ seat holds the role now, so a supervisor that shifted still gets it.
   1. every other live replica of the same team's `supervisor` role, each by
      `agent://<team>/<session>` (its own inbox, which the shim always reads,
      so P1 does not gate this leg);
-  2. the `supervisor` role of every other team on this cluster that has one,
+  2. the `supervisor` role of every other team in the SAME WORKSPACE on this
+     cluster that has one,
      by `role://<team>/supervisor` (gated by P1, as in the normal case);
   3. the director, by `global://director`, published on
      `global.director.inbox` (gated by P2 below).
@@ -193,13 +198,37 @@ the operator already looks, so none can become the #453 silent hold by
 accident.
 
 **Who may run them.** The verbs require the admin scope at the daemon
-(`internal/daemon/scope.go`), local socket or an admin key over mrvl. Each
-requires `--reason`, and each records the actor (the caller's key
-fingerprint, or `local socket`), the time and the reason. A seat runs as the
-same OS user and could reach the local socket, so the boundary is the rule
-and the record, not the kernel: the verbs are not in any seat's allowed
-command set, and every use is printed in `marvel get sessions` and the
-event ring.
+(`internal/daemon/scope.go`): an admin key over mrvl, or the local socket,
+which is admin scope for any process of the daemon's OS user. Seats run as
+that user, so a seat can reach the socket. Three layers keep a seat from
+setting a control on itself, and the record shows which one held:
+
+1. **A rendered deny rule.** marvel adds `Bash(marvel autoshift:*)` to the
+   `permissions.deny` list of every claude seat's projected settings,
+   writing a projection file even for a role with no policy. It stops a
+   claude seat's Bash tool from running the verb by its plain name. It does
+   NOT stop a shell indirection (`sh -c`, a script, an alias), another
+   harness (codex, crush and opencode have no such rule), or a process
+   writing to the socket directly. It is a harness rule, not a kernel
+   boundary.
+2. **Peer attribution on the local socket.** The daemon reads the caller's
+   pid from the socket (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux)
+   and that process's controlling terminal. If the terminal is a marvel
+   pane's pty, the caller is that seat: the verb is refused and the refusal
+   names the session. If the caller has no controlling terminal (a
+   `setsid` or double-forked process, cron, launchd), the verb is refused
+   with "run it from a terminal, or over mrvl with an admin key", because
+   such a caller cannot be told apart from an escaped seat. Otherwise the
+   caller is recorded as `operator, tty <name>, pid <n>`.
+3. **The record.** Every use prints in `get sessions`, in `describe`, and in
+   the event ring, with the actor as attributed above, or the key
+   fingerprint over mrvl.
+
+Limit, stated plainly: under one OS user none of this is a kernel boundary.
+A seat that drives a terminal it does not own (for example by typing into
+the operator's own tmux server) is attributed to that terminal. Closing that
+needs a separate OS user per seat or a sandbox profile (aae-orc-ww33y); the
+attribution makes such a use visible, not impossible.
 
 | control | verb | scope | effect | persists across a restart | undone by | expires |
 |---|---|---|---|---|---|---|
@@ -214,7 +243,10 @@ the shared rate limit at once. Abort persists across a restart because an
 abort that a restart quietly lifts would resume shifting in the middle of the
 incident it was called for. Abort stops initiation only: a shift already in
 progress finishes or rolls back on its own timeout, and the operator's manual
-`marvel shift` still works under an abort.
+`marvel shift` still works under an abort. So the ring has no gap while an
+abort stands, marvel emits `autoshift.aborted-standing` once an hour per
+aborted scope, listing the seats it would have asked for a handoff, so a
+seat running far past its max age stays visible.
 
 **What the supervisor delivery says.**
 - On mute: one message, `muted by <actor> until <time>: <reason>`, then no
@@ -276,8 +308,9 @@ progress finishes or rolls back on its own timeout, and the operator's manual
    `message_id`; a shift ends the request and no further envelope follows.
 3. A team without a `supervisor` role: no publish, one log line, events
    continue; an inject spy on `Notify` records zero calls for any pane.
-4. A supervisor role with no live seat: the envelope is stored and a seat
-   started later reads it.
+4. A supervisor role with no live seat, across six windows: exactly one
+   envelope is published. A seat started later reads that one, then
+   receives an immediate send and the normal cadence after it.
 5. Restart: escalate, send, restart the daemon before the next boundary; no
    second envelope until the boundary. Kill between publish and store write,
    through a fault seam between the two: the re-send inside the stream's
@@ -288,7 +321,13 @@ progress finishes or rolls back on its own timeout, and the operator's manual
    ready a send follows within 35s (one 30s health tick plus slack), not a
    full window.
 7. A manifest declaring an agent id `marvel` is refused.
-8. **Mute.** `--forever`: one `muted forever` message; after a simulated 24h,
+8. **Who can set a control.** A projected claude seat's settings carry the
+   `Bash(marvel autoshift:*)` deny rule, including for a role with no
+   policy. A call on the local socket from a process whose controlling
+   terminal is a marvel pane is refused and names that session; a call from
+   a process with no controlling terminal is refused; a call from another
+   terminal is accepted and recorded with its tty and pid; a call over mrvl
+   with a non-admin key is refused. **Mute.** `--forever`: one `muted forever` message; after a simulated 24h,
    exactly one reminder line (and one per further 24h); `(muted forever)`
    shown in `get sessions` and in `describe` with actor and reason; it
    survives a restart; it ends when the request ends; `--forever` without
@@ -304,7 +343,8 @@ progress finishes or rolls back on its own timeout, and the operator's manual
    manual shift the successor is auto-shifted normally; `resume` restores it.
 10. **Abort.** `abort <ws/team>`: no new auto-shift in that team, others
     unaffected, pending requests dropped with one message each, the banner
-    shown, and it survives a restart; `abort --all` does the same for every
+    shown, `autoshift.aborted-standing` once per hour naming the over-age
+    seats, and it survives a restart; `abort --all` does the same for every
     team; a shift in progress is not interrupted; manual `marvel shift`
     still works; `resume` lifts each scope separately.
 11. **Supervisor escalated.** The escalated session's role is `supervisor`,
@@ -320,8 +360,10 @@ progress finishes or rolls back on its own timeout, and the operator's manual
     addressable`.
 13. **Precondition.** With delivery switched off (a build without SB-4),
     escalation publishes nothing and the event says `delivered: off`.
-14. **The director leg crosses the leaf.** On a test hub with a leaf user
-    whose permissions match the running hub's, an envelope marvel publishes
+14. **The director leg crosses the leaf.** On a test hub that mirrors the
+    running hub's ACCOUNT layout (which account the leaf user binds to, and
+    which account the director stream lives in) as well as the leaf user's
+    permissions, an envelope marvel publishes
     on the leaf's `global.director.inbox` with its admin connection is
     stored in the hub's director stream. With #457 absent, the leg reports
     `off` and publishes nothing.
