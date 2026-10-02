@@ -164,3 +164,39 @@ func TestMaxAgeAskIsRecordedAsAnInjectFromMarvel(t *testing.T) {
 		t.Errorf("message %q carries the text", got[0].Message)
 	}
 }
+
+// With literal off, tmux types a word it does not know as plain characters, so
+// a "key" can be text. Only a recognized key name is recorded; anything else is
+// recorded as unrecognized, without the word.
+func TestInjectDoesNotRecordAKeyThatIsReallyText(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := liveSession(t, d)
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "hunter2", false, true, Injector{}), localCaller()); resp.Error != "" {
+		t.Fatalf("inject: %s", resp.Error)
+	}
+	got := injectedEvents(d, sess.Name)
+	if len(got) != 1 {
+		t.Fatalf("events = %d, want 1", len(got))
+	}
+	if strings.Contains(got[0].Message, "hunter2") {
+		t.Errorf("message %q carries text sent as a key", got[0].Message)
+	}
+	if !strings.Contains(got[0].Message, "key (unrecognized)") {
+		t.Errorf("message %q, want the key shown as unrecognized", got[0].Message)
+	}
+}
+
+// The names an operator reaches for are recorded as they are.
+func TestRecognizedKeyNames(t *testing.T) {
+	t.Parallel()
+	for _, k := range []string{"Enter", "Escape", "C-c", "C-d", "M-x", "Up", "BSpace", "F5", "Tab", "Space", "PageDown"} {
+		if !recognizedKey(k) {
+			t.Errorf("%q not recognized as a key name", k)
+		}
+	}
+	for _, k := range []string{"hunter2", "password", "", "C-", "Enter now", "ls -la"} {
+		if recognizedKey(k) {
+			t.Errorf("%q recognized as a key name, want text", k)
+		}
+	}
+}

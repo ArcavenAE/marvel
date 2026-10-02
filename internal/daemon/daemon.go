@@ -3082,3 +3082,7 @@ func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin st
 		Message:   msg,
 	})
 }
+
+// recognizedKey reports whether s is a tmux key name this record may show.
+// Scaffold: not yet implemented.
+func recognizedKey(string) bool { return true }
