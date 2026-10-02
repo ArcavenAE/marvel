@@ -118,9 +118,29 @@ const (
 )
 
 // Confirms reports whether a composer state is the expected effect of an
-// intent. Unknown, MenuUnsafe and Shell never confirm anything. Scaffold.
-func Confirms(i Intent, s State) bool { return false }
+// intent. Unknown, MenuUnsafe and Shell never confirm anything: a reading that
+// cannot place the composer is not evidence that the inject landed.
+func Confirms(i Intent, s State) bool {
+	switch i {
+	case Submit:
+		return s == Empty || s == MidTurn
+	case Stage:
+		return s == HoldsText
+	}
+	return false
+}
 
 // CanClear says whether a clear may be sent to a composer a reader just read.
-// Scaffold.
-func CanClear(r Reader, s State) error { return errors.New("not implemented") }
+// It needs a clear key and a composer known to hold text. A composer that reads
+// anything else, Unknown included, is refused: on codex and opencode the clear
+// key exits the harness when the composer is really empty, so a misread would
+// end the seat.
+func CanClear(r Reader, s State) error {
+	if r.ClearKey() == "" {
+		return errors.New("no safe clear key is known for " + r.Name())
+	}
+	if s != HoldsText {
+		return errors.New("the composer reads " + string(s) + ", not " + string(HoldsText))
+	}
+	return nil
+}

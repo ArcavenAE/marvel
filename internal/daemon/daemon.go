@@ -28,6 +28,7 @@ import (
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
@@ -1998,17 +1999,144 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
+	origin := injectOrigin(c, p.Injector)
+	reader := composer.ReaderFor(sess.Runtime.Name)
+
+	// A clear is only sent where a reader can vouch for it. Where the harness
+	// has no safe clear key nothing is read and nothing is typed.
+	var clearKey string
+	if p.Clear {
+		key, why := d.clearKeyFor(sess, reader, p.SettleMS)
+		if why != "" {
+			return d.refuseInject(sess, p, origin, "refusing --clear: "+why)
+		}
+		clearKey = key
+	}
+
+	// A harness with a state where a keystroke is dangerous is read before any
+	// input. Escape alone passes: it is the key that dismisses such a menu.
+	if reader.Preflight() && !isDismissKey(p) {
+		content, err := d.driver.CapturePane(sess.PaneID)
+		if err == nil && reader.Read(content) == composer.MenuUnsafe {
+			return d.refuseInject(sess, p, origin, reader.Name()+" is showing its update menu, where Enter or a newline runs the vendor's installer; send Escape to skip it (marvel#477)")
+		}
+	}
+
+	if clearKey != "" {
+		if err := d.driver.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
+			return Response{Error: fmt.Sprintf("inject %s: clear: %v", p.SessionKey, err)}
+		}
+	}
 	if err := d.driver.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
-	recordInject(d.events, sess, p, injectOrigin(c, p.Injector))
+	recordInject(d.events, sess, p, origin)
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":  "injected",
 		"session": p.SessionKey,
-	})
+	}
+	if p.Verify {
+		d.verifyInject(sess, reader, p, out)
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
+}
+
+// isDismissKey reports whether an inject is a lone Escape.
+func isDismissKey(p injectParams) bool {
+	return !p.Literal && !p.Enter && p.Text == "Escape"
+}
+
+// refuseInject records that nothing was typed and returns the error. The
+// record never carries the text.
+func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) Response {
+	msg := fmt.Sprintf("inject refused: %s %s", why, origin)
+	log.Printf("inject: %s refused: %s", sess.Key(), why)
+	events.Emit(d.events, events.Event{
+		Kind:      events.KindSessionInjectRefused,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   msg,
+	})
+	return Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
+}
+
+// repaintSettled nudges a pane so its program redraws, holds for settle, and
+// waits for the restore's redraw. A failure to nudge is reported, not fatal.
+func (d *Daemon) repaintSettled(paneID string, settleMS int) (tmux.RepaintResult, error) {
+	settle := repaintSettle(settleMS)
+	res, err := d.driver.Repaint(paneID, settle)
+	if err == nil {
+		time.Sleep(settle)
+	}
+	return res, err
+}
+
+// readComposer repaints the pane, captures it, and places it in a composer
+// state. A shell in the foreground means no harness is running, whatever the
+// reader would make of the screen.
+func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS int) (composer.State, error) {
+	res, _ := d.repaintSettled(sess.PaneID, settleMS)
+	content, err := d.driver.CapturePane(sess.PaneID)
+	if err != nil {
+		return composer.Unknown, err
+	}
+	if composer.ShellTarget(res.Target) {
+		return composer.Shell, nil
+	}
+	return reader.Read(content), nil
+}
+
+// clearKeyFor returns the key to clear a staged draft, or the reason a clear
+// is refused.
+func (d *Daemon) clearKeyFor(sess api.Session, reader composer.Reader, settleMS int) (key, why string) {
+	if reader.ClearKey() == "" {
+		return "", composer.CanClear(reader, composer.Unknown).Error()
+	}
+	state, err := d.readComposer(sess, reader, settleMS)
+	if err != nil {
+		return "", "the composer could not be read: " + err.Error()
+	}
+	if err := composer.CanClear(reader, state); err != nil {
+		return "", err.Error()
+	}
+	return reader.ClearKey(), ""
+}
+
+// verifyInject reads the composer after the keys went in and records whether
+// the intended effect was seen.
+func (d *Daemon) verifyInject(sess api.Session, reader composer.Reader, p injectParams, out map[string]string) {
+	var intent composer.Intent
+	switch {
+	case p.Enter || (!p.Literal && p.Text == "Enter"):
+		intent = composer.Submit
+	case p.Literal && p.Text != "":
+		intent = composer.Stage
+	default:
+		out["verify"] = "skipped"
+		return
+	}
+	state, err := d.readComposer(sess, reader, p.SettleMS)
+	out["composer"] = string(state)
+	if err == nil && composer.Confirms(intent, state) {
+		out["verify"] = "confirmed"
+		return
+	}
+	out["verify"] = "unconfirmed"
+	events.Emit(d.events, events.Event{
+		Kind:      events.KindSessionInjectUnconfirmed,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   fmt.Sprintf("inject %s sent, effect not seen: composer reads %s", intent, state),
+	})
 }
 
 // Capture params — read a session's pane content.
@@ -2069,13 +2197,8 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	// beside the capture and never fails it.
 	repaint, target := "", ""
 	if p.Repaint {
-		settle := repaintSettle(p.SettleMS)
-		res, rerr := d.driver.Repaint(sess.PaneID, settle)
+		res, rerr := d.repaintSettled(sess.PaneID, p.SettleMS)
 		repaint, target = repaintStatus(res, rerr), res.Target
-		if rerr == nil {
-			// The nudge was held for settle; the restore repaints too.
-			time.Sleep(settle)
-		}
 	}
 
 	var content string
