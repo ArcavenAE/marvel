@@ -333,3 +333,90 @@ func TestMigrationRefusesANewerStore(t *testing.T) {
 		t.Fatalf("error = %v, want the newer-than-binary refusal", err)
 	}
 }
+
+const rootlessTOML = `
+[workspace]
+name = "wd"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "claude"
+`
+
+// stampedStore applies a root-less manifest, then marks its team the way the
+// migration would have.
+func stampedStore(t *testing.T) *Store {
+	t.Helper()
+	store := NewStore()
+	m, err := ParseManifestBytes([]byte(rootlessTOML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateTeam("wd/squad", func(live *Team) error {
+		live.WorkDir = "/srv/orc-root"
+		live.WorkDirSource = WorkDirSourceLegacy
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// A re-apply that still names no root keeps the stamp: the team stays where
+// its seats are, and the operator is told to declare a root.
+func TestReapplyWithoutARootKeepsTheLegacyStamp(t *testing.T) {
+	store := stampedStore(t)
+	m, _ := ParseManifestBytes([]byte(rootlessTOML))
+	notes := m.LegacyPlacementNotes(store)
+	if err := m.Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.GetTeam("wd/squad")
+	if got.WorkDir != "/srv/orc-root" || got.WorkDirSource != WorkDirSourceLegacy {
+		t.Fatalf("after a root-less re-apply: (%q, %q), want the stamp kept", got.WorkDir, got.WorkDirSource)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "placement: legacy daemon cwd") || !strings.Contains(notes[0], "/srv/orc-root") || !strings.Contains(notes[0], "declare a root") {
+		t.Fatalf("notes = %q, want one placement note naming the legacy directory and asking for a root", notes)
+	}
+}
+
+// A re-apply that declares a root replaces the stamp, so placement follows the
+// declaration from then on.
+func TestReapplyWithARootReplacesTheLegacyStamp(t *testing.T) {
+	store := stampedStore(t)
+	m, _ := ParseManifestBytes([]byte(rootlessTOML))
+	m.Workspace.Root = "/work/proj"
+	if notes := m.LegacyPlacementNotes(store); len(notes) != 0 {
+		t.Errorf("a re-apply that declares a root still got notes: %q", notes)
+	}
+	if err := m.Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.GetTeam("wd/squad")
+	if got.WorkDir != "" || got.WorkDirSource != "" {
+		t.Fatalf("after a re-apply with a root: (%q, %q), want the stamp replaced", got.WorkDir, got.WorkDirSource)
+	}
+}
+
+// A re-apply that declares the team's own workdir replaces the stamp too.
+func TestReapplyWithATeamWorkdirReplacesTheLegacyStamp(t *testing.T) {
+	store := stampedStore(t)
+	m, _ := ParseManifestBytes([]byte(rootlessTOML))
+	m.Teams[0].WorkDir = "/srv/declared"
+	if err := m.Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.GetTeam("wd/squad")
+	if got.WorkDir != "/srv/declared" || got.WorkDirSource != "" {
+		t.Fatalf("after declaring a team workdir: (%q, %q), want /srv/declared and no source", got.WorkDir, got.WorkDirSource)
+	}
+}

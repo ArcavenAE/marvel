@@ -3,9 +3,11 @@ package api
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -60,11 +62,12 @@ var (
 )
 
 // boltSchemaVersion is the on-disk schema version. Bumped when the
-// bucket layout or record format changes incompatibly. Rehydrate
-// refuses to load a database with a higher version than the binary
-// knows about; a lower version triggers a migration path (not yet
-// implemented — failing fast is the right behavior for the spike).
-const boltSchemaVersion uint64 = 1
+// bucket layout or record format changes incompatibly, or when a record
+// needs a one-time pass. OpenBolt refuses a database newer than the binary
+// and migrates a version-1 database; version 2 stamps the teams that had no
+// root so they keep their place (see migrateV1 and
+// docs/design/seat-bootstrap.md section 3).
+const boltSchemaVersion uint64 = 2
 
 // allBuckets is the canonical set of buckets bolt initializes on Open.
 // Listed here so test helpers can iterate them.
@@ -94,6 +97,11 @@ var allBuckets = [][]byte{
 // Concurrent OpenBolt calls are not safe. Single-host, single-daemon
 // assumption.
 func (s *Store) OpenBolt(path string) error {
+	return s.OpenBoltWithOptions(path, BoltOptions{})
+}
+
+// OpenBoltWithOptions is OpenBolt with the migration inputs.
+func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 	if s.bolt != nil {
 		return fmt.Errorf("bolt already open at %s", s.boltPath)
 	}
@@ -103,6 +111,28 @@ func (s *Store) OpenBolt(path string) error {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return fmt.Errorf("open bbolt at %s: %w", path, err)
+	}
+
+	version, err := onDiskSchemaVersion(db)
+	if err != nil {
+		_ = db.Close()
+		return err
+	}
+	var stamps []LegacyStamp
+	switch {
+	case version > boltSchemaVersion:
+		_ = db.Close()
+		return fmt.Errorf("on-disk schema version %d is newer than binary's %d — refusing to load",
+			version, boltSchemaVersion)
+	case version == 1:
+		stamps, err = migrateV1(db, path, opts)
+		if err != nil {
+			_ = db.Close()
+			return err
+		}
+	case version != 0 && version < boltSchemaVersion:
+		_ = db.Close()
+		return fmt.Errorf("on-disk schema version %d is older than binary's %d — no migration from it", version, boltSchemaVersion)
 	}
 
 	// Initialize buckets + write schema version on first open. Wrapped
@@ -115,21 +145,9 @@ func (s *Store) OpenBolt(path string) error {
 			}
 		}
 		meta := tx.Bucket(bucketMeta)
-		if v := meta.Get(metaKeySchemaVersion); v == nil {
+		if meta.Get(metaKeySchemaVersion) == nil {
 			if perr := meta.Put(metaKeySchemaVersion, encodeUint64(boltSchemaVersion)); perr != nil {
 				return fmt.Errorf("write schema version: %w", perr)
-			}
-		} else {
-			got := decodeUint64(v)
-			if got > boltSchemaVersion {
-				return fmt.Errorf("on-disk schema version %d is newer than binary's %d — refusing to load",
-					got, boltSchemaVersion)
-			}
-			// got < boltSchemaVersion would trigger migration; not
-			// implemented yet, fail fast.
-			if got < boltSchemaVersion {
-				return fmt.Errorf("on-disk schema version %d is older than binary's %d — migration not implemented",
-					got, boltSchemaVersion)
 			}
 		}
 		return nil
@@ -137,6 +155,7 @@ func (s *Store) OpenBolt(path string) error {
 		_ = db.Close()
 		return err
 	}
+	s.legacyStamps = stamps
 
 	s.bolt = db
 	s.boltPath = path
@@ -459,20 +478,167 @@ type LegacyStamp struct {
 	Dir     string
 }
 
+// LegacyStamps returns the teams the migration stamped when this store was
+// opened, so the daemon can announce them once the commit is durable.
+func (s *Store) LegacyStamps() []LegacyStamp {
+	return append([]LegacyStamp(nil), s.legacyStamps...)
+}
+
 // boltMigrationFault, when set by a test, is called at named stages of the
 // migration ("backup", "stamp") and its error aborts that stage.
 var boltMigrationFault func(stage string) error
 
-// OpenBoltWithOptions is OpenBolt with the migration inputs.
-func (s *Store) OpenBoltWithOptions(path string, _ BoltOptions) error {
-	if boltMigrationFault != nil {
-		_ = boltMigrationFault("")
+func migrationFault(stage string) error {
+	if boltMigrationFault == nil {
+		return nil
 	}
-	return s.OpenBolt(path)
+	return boltMigrationFault(stage)
 }
 
-// LegacyStamps returns the teams the migration stamped when this store was
-// opened, so the daemon can announce them once the commit is durable.
-func (s *Store) LegacyStamps() []LegacyStamp {
+// onDiskSchemaVersion reads the version a file carries: zero for a file with
+// no meta bucket or no version, which is a fresh store.
+func onDiskSchemaVersion(db *bolt.DB) (uint64, error) {
+	var v uint64
+	err := db.View(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(bucketMeta)
+		if meta == nil {
+			return nil
+		}
+		if raw := meta.Get(metaKeySchemaVersion); raw != nil {
+			v = decodeUint64(raw)
+		}
+		return nil
+	})
+	return v, err
+}
+
+// migrateV1 upgrades a version-1 store in place. It writes `<store>.v1.bak`
+// first, because the old binary refuses a newer store and nothing else keeps
+// a way back; then, in one transaction, stamps every team that resolves no
+// root with the directory the daemon started in and writes version 2. The
+// transaction commits whole or not at all. The backup is never overwritten:
+// an existing one means an earlier migration was interrupted or the file is
+// stale, and the daemon refuses to guess which.
+func migrateV1(db *bolt.DB, path string, opts BoltOptions) ([]LegacyStamp, error) {
+	bak := path + ".v1.bak"
+	if _, err := os.Lstat(bak); err == nil {
+		return nil, fmt.Errorf("%s exists beside a v1 store: a previous migration was interrupted, or the file is a stale backup. Move it aside and restart", bak)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("check for backup %s: %w", bak, err)
+	}
+	if err := writeV1Backup(db, bak); err != nil {
+		return nil, fmt.Errorf("back up the v1 store before migrating: %w", err)
+	}
+
+	cwd := opts.LegacyCwd
+	if cwd == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("migrate v1 store: the daemon's working directory is unknown: %w", err)
+		}
+		cwd = wd
+	}
+
+	var stamps []LegacyStamp
+	if err := db.Update(func(tx *bolt.Tx) error {
+		stamps = stamps[:0]
+		for _, name := range allBuckets {
+			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
+				return fmt.Errorf("create bucket %s: %w", string(name), err)
+			}
+		}
+		roots := map[string]string{}
+		if err := tx.Bucket(bucketWorkspaces).ForEach(func(_, v []byte) error {
+			var w Workspace
+			if err := json.Unmarshal(v, &w); err != nil {
+				return fmt.Errorf("unmarshal workspace: %w", err)
+			}
+			roots[w.Name] = w.Root
+			return nil
+		}); err != nil {
+			return err
+		}
+		teams := tx.Bucket(bucketTeams)
+		type pending struct {
+			key []byte
+			val []byte
+		}
+		var writes []pending
+		if err := teams.ForEach(func(k, v []byte) error {
+			var t Team
+			if err := json.Unmarshal(v, &t); err != nil {
+				return fmt.Errorf("unmarshal team %s: %w", string(k), err)
+			}
+			if t.WorkDir != "" || roots[t.Workspace] != "" {
+				return nil
+			}
+			t.WorkDir = cwd
+			t.WorkDirSource = WorkDirSourceLegacy
+			b, err := json.Marshal(t)
+			if err != nil {
+				return fmt.Errorf("marshal team %s: %w", string(k), err)
+			}
+			writes = append(writes, pending{key: append([]byte(nil), k...), val: b})
+			stamps = append(stamps, LegacyStamp{TeamKey: string(k), Dir: cwd})
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, w := range writes {
+			if err := teams.Put(w.key, w.val); err != nil {
+				return fmt.Errorf("stamp team %s: %w", string(w.key), err)
+			}
+		}
+		if err := migrationFault("stamp"); err != nil {
+			return err
+		}
+		return tx.Bucket(bucketMeta).Put(metaKeySchemaVersion, encodeUint64(2))
+	}); err != nil {
+		return nil, fmt.Errorf("migrate v1 store (backup kept at %s): %w", bak, err)
+	}
+	sort.Slice(stamps, func(i, j int) bool { return stamps[i].TeamKey < stamps[j].TeamKey })
+	return stamps, nil
+}
+
+// WorkDirSourceLegacy marks a Team.WorkDir stamped by the v1 to v2 migration.
+const WorkDirSourceLegacy = "legacy"
+
+// writeV1Backup writes a consistent copy of the store to bak with mode 0600
+// and fsyncs it. It goes through a temporary name and a rename, so a crash or
+// a failed write never leaves a partial file under the name the next start
+// would refuse on.
+func writeV1Backup(db *bolt.DB, bak string) (err error) {
+	if err := migrationFault("backup"); err != nil {
+		return err
+	}
+	tmp := bak + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err = db.View(func(tx *bolt.Tx) error {
+		_, werr := tx.WriteTo(f)
+		return werr
+	}); err != nil {
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, bak)
+}
+
+// LegacyPlacementNotes returns one note per team of this manifest that holds a
+// legacy stamp and still names no root, for the apply output.
+func (m *Manifest) LegacyPlacementNotes(_ *Store) []string {
 	return nil
 }
