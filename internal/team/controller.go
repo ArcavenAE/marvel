@@ -1843,6 +1843,7 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			}
 			live.Shift.HandoffRequests[r] = req
 			delete(live.ShiftRequests, r)
+			c.handoffProbes.forget(req.Session)
 		}
 		return nil
 	}); err != nil {
