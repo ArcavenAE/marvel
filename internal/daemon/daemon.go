@@ -2008,11 +2008,11 @@ type captureParams struct {
 	Start      *int   `json:"start,omitempty"`
 	End        *int   `json:"end,omitempty"`
 	// Repaint asks the program in the pane to redraw before the read, by
-	// signalling its foreground process group with SIGWINCH. Off by default:
-	// a plain capture is what was last painted.
+	// widening the pane's terminal one column and restoring it. Off by
+	// default: a plain capture is what was last painted.
 	Repaint bool `json:"repaint,omitempty"`
-	// SettleMS is how long to wait after the signal before reading. Zero
-	// means the default.
+	// SettleMS is how long the nudge is held, and then how long to wait for the
+	// restore's redraw before reading. Zero means the default.
 	SettleMS int `json:"settle_ms,omitempty"`
 }
 

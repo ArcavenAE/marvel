@@ -1605,13 +1605,17 @@ at the visible screen regardless of -S.
 
 A capture is what the program last painted, not necessarily what is on its
 screen now: a TUI may repaint only on input or on a resize. --repaint asks the
-program to redraw first, by sending SIGWINCH to the pane's foreground process
-group (what a terminal resize sends, with no input and no change to tmux), then
-waits --settle and reads. It reports "repaint: signalled" or "repaint:
-unavailable: <reason>" on stderr, with the name of the foreground program. A
-signal sent is not a redraw seen: whether a given harness repaints on SIGWINCH
-is its own behavior, and a seat sitting at a shell prompt receives it at the
-shell. A failed repaint never fails the capture.`,
+program to redraw first: marvel widens the pane's own terminal by one column,
+holds for --settle, puts the size back, waits --settle again, and then reads.
+The programs repaint on a change of size, not on a bare SIGWINCH, and nothing is
+signalled by process id or changed in tmux. It reports "repaint: signalled"
+(the size was nudged), "repaint: signalled, restore skipped: size changed
+underneath" (something else resized the pane meanwhile, so the original size
+was left alone) or "repaint: unavailable: <reason>" on stderr, with the name of
+the foreground program. A nudge is not a redraw seen: whether a given harness
+repaints is its own behavior (measured for claude, codex and opencode; not for
+others). A seat sitting at a shell prompt has nothing to repaint; the result
+names the shell. A failed repaint never fails the capture.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := map[string]any{"session_key": args[0]}
@@ -1657,7 +1661,7 @@ shell. A failed repaint never fails the capture.`,
 	}
 	cmd.Flags().IntVarP(&start, "start", "S", 0, "start line (negative for scrollback; default top of visible)")
 	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line (default bottom of visible)")
-	cmd.Flags().BoolVar(&repaint, "repaint", false, "ask the program to redraw first (SIGWINCH to its foreground process group), then read")
+	cmd.Flags().BoolVar(&repaint, "repaint", false, "ask the program to redraw first (widen the pane one column and restore it), then read")
 	cmd.Flags().DurationVar(&settle, "settle", 300*time.Millisecond, "with --repaint, how long to wait for the redraw before reading")
 	return cmd
 }
