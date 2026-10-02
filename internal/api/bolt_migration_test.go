@@ -407,8 +407,8 @@ func TestReapplyWithARootReplacesTheLegacyStamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := store.GetTeam("wd/squad")
-	if got.WorkDir != "" || got.WorkDirSource != "" {
-		t.Fatalf("after a re-apply with a root: (%q, %q), want the stamp replaced", got.WorkDir, got.WorkDirSource)
+	if got.WorkDir != "/work/proj" || got.WorkDirSource != "" {
+		t.Fatalf("after a re-apply with a root: (%q, %q), want the root as the anchor and the stamp cleared", got.WorkDir, got.WorkDirSource)
 	}
 }
 
