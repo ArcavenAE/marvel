@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -413,5 +414,59 @@ func TestCloneTeamCopiesShiftRequestsAndPolicy(t *testing.T) {
 	}
 	if live.Roles[0].Shift.Any[0].MaxAge != time.Hour || live.Roles[0].Shift.Handoff != "" {
 		t.Fatal("a snapshot's shift policy aliases the store's")
+	}
+}
+
+// A max-age request is keyed by role and asks one seat, but the shift it
+// starts drains every seat of the role, so on a role with several replicas it
+// would retire seats that were never asked for a handoff (marvel#452). Until
+// per-seat requests are designed, apply refuses it, as it does for headless.
+func TestMaxAgeRefusedOnAMultiReplicaRole(t *testing.T) {
+	maxAgeTOML := "    on = \"max-age\"\n    max_age = \"8h\"\n"
+	maxAgeYAML := "          on: max-age\n          max_age: 8h\n"
+	pressureTOML := "    on = \"context-pressure\"\n    headroom_tokens = 5\n"
+	pressureYAML := "          on: context-pressure\n          headroom_tokens: 5\n"
+	withReplicas := func(src string, n int, format string) string {
+		if format == "toml" {
+			return strings.Replace(src, "replicas = 1", fmt.Sprintf("replicas = %d", n), 1)
+		}
+		return strings.Replace(src, "replicas: 1", fmt.Sprintf("replicas: %d", n), 1)
+	}
+	cases := []struct {
+		name     string
+		replicas int
+		toml     string
+		yaml     string
+		want     string // empty means the manifest must be accepted
+	}{
+		{"max-age on three replicas is refused", 3, maxAgeTOML, maxAgeYAML, "replicas"},
+		{"max-age on one replica is accepted", 1, maxAgeTOML, maxAgeYAML, ""},
+		{"max-age on a parked role is accepted", 0, maxAgeTOML, maxAgeYAML, ""},
+		{"context-pressure on three replicas is accepted", 3, pressureTOML, pressureYAML, ""},
+	}
+	for _, tc := range cases {
+		for _, format := range []string{"toml", "yaml"} {
+			tc, format := tc, format
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				t.Parallel()
+				src := shiftTOML("", tc.toml)
+				if format == "yaml" {
+					src = shiftYAML("", tc.yaml)
+				}
+				_, err := ParseManifestBytes([]byte(withReplicas(src, tc.replicas, format)))
+				if tc.want == "" {
+					if err != nil {
+						t.Fatalf("parse: %v; want it accepted", err)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("parse succeeded; want an error containing %q", tc.want)
+				}
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "shift") {
+					t.Fatalf("error = %q, want it about the shift table and %q", err, tc.want)
+				}
+			})
+		}
 	}
 }
