@@ -104,6 +104,12 @@ func (claudeReader) Read(capture string) State {
 	}
 
 	if text != "" {
+		// A draft counts only beside idle evidence: a finished turn's done line,
+		// or a session that has run no turn at all. Text typed ahead of a streaming
+		// reply has neither, and a clear key sent there would interrupt the turn.
+		if !doneLine.MatchString(above) && turnSeen(clean) {
+			return Unknown
+		}
 		// The placeholder is the only dim text in a composer. Dim is read from the
 		// SGR parameters (so "2;37" is dim, "22" ends it, and "38;5;2" is a colour,
 		// not dim). A placeholder under spinner-less streaming text reads Empty:
@@ -178,4 +184,16 @@ func applySGR(dim bool, params string) bool {
 		}
 	}
 	return dim
+}
+
+// turnSeen reports whether the capture shows any turn at all: a reply marker,
+// or the echo of a submitted prompt (a plain space after the glyph, where the
+// live composer has a no-break space).
+func turnSeen(clean []string) bool {
+	for _, l := range clean {
+		if strings.HasPrefix(l, "⏺") || strings.HasPrefix(l, "❯ ") {
+			return true
+		}
+	}
+	return false
 }

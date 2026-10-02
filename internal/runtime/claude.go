@@ -222,3 +222,25 @@ func init() {
 	var _ StreamCapable = (*Claude)(nil)
 	var _ SessionIDAssigner = (*Claude)(nil)
 }
+
+// Composer is Claude Code's composer contract, measured on 2.1.288 (haiku).
+// The clear is gated on a reader seeing text in an idle composer
+// (internal/composer): C-c on an empty composer arms "press again to exit", and
+// in a running turn it interrupts the turn.
+func (*Claude) Composer() ComposerContract {
+	return ComposerContract{
+		Submit:   SubmitPasteEnter,
+		ClearKey: "C-c",
+		// Two presses on an empty composer 1 s apart did not exit; the reader gate
+		// still keeps the key off an empty composer.
+		ClearExitsWhenEmpty: false,
+		ClearExitsMidTurn:   false,
+		ClearSavesDraft:     false,
+		InterruptKeys:       []string{"Escape"},
+		Source: map[string]string{
+			"submit":    "marvel#355 (2026-09-25): bracketed paste, then Enter; restated by the aae-orc-6vcr2 probe on Claude Code 2.1.288",
+			"clear":     "aae-orc-6vcr2 (2026-10-02, Claude Code 2.1.288, haiku): one C-c cleared a staged 3-line draft and submitted nothing; C-u cleared about a line per two presses; Escape left the draft; C-c on an empty composer arms the exit prompt and in a turn interrupts it",
+			"interrupt": "not measured: Escape is Claude Code's interrupt key; the aae-orc-6vcr2 probe measured only that Escape leaves a staged draft alone",
+		},
+	}
+}
