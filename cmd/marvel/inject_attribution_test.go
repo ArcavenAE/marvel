@@ -5,14 +5,14 @@ import "testing"
 // The CLI declares the seat it runs in and the user, from its own environment,
 // so a seat's inject is traceable to that seat.
 func TestInjectRequestParamsDeclareTheCaller(t *testing.T) {
-	t.Setenv("MARVEL_SESSION", "aae-supervisor-g1-0")
+	t.Setenv("MARVEL_SESSION", "seat-x-g1-0")
 	t.Setenv("USER", "example-user")
 	p := injectRequestParams("ws/sess", injectStep{Text: "hi", Literal: true})
 	in, ok := p["injector"].(map[string]string)
 	if !ok {
 		t.Fatalf("params carry no injector: %v", p)
 	}
-	if in["session"] != "aae-supervisor-g1-0" || in["user"] != "example-user" {
+	if in["session"] != "seat-x-g1-0" || in["user"] != "example-user" {
 		t.Errorf("injector = %v, want the session and user from the environment", in)
 	}
 }

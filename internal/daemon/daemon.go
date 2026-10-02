@@ -20,6 +20,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -3043,17 +3044,26 @@ func injectOrigin(c caller, from Injector) string {
 // message.
 const declaredMax = 64
 
-// cleanDeclared makes caller-supplied text safe for a one-line message: control
-// characters are dropped and the length is capped. An absent value is "-".
+// cleanDeclared makes caller-supplied text one safe token in a line of key=value
+// pairs, so a declaration cannot write a field of its own. Format and
+// line-separator characters (which can reorder or break the display) are
+// dropped; whitespace and "=" (which would start another field) become "_";
+// other control characters are dropped; the length is capped. An absent value
+// is "-".
 func cleanDeclared(s string) string {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			continue
-		}
 		if n == declaredMax {
 			break
+		}
+		switch {
+		case unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r):
+			continue
+		case unicode.IsSpace(r) || r == '=':
+			r = '_'
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0):
+			continue
 		}
 		b.WriteRune(r)
 		n++
