@@ -38,10 +38,11 @@ const (
 )
 
 // firstSessionOverAge returns the first running session of role, at any
-// generation (a role's seats carry the generation of the last shift that
-// covered the role, not the team's counter, marvel#451), that is past cond.MaxAge and either quiet for cond.QuietFor (the quiet
-// stage) or past MaxAge+MaxDefer whatever its activity (the hard stage). Age
-// runs from CreatedAt, so it survives a daemon restart and starts over on a
+// generation, that is past cond.MaxAge and either quiet for cond.QuietFor (the
+// quiet stage) or past MaxAge+MaxDefer whatever its activity (the hard stage).
+// A role's seats carry the generation of the last shift that covered the role,
+// not the team's counter, so a team-generation filter hides them (marvel#451).
+// Age runs from CreatedAt, so it survives a daemon restart and starts over on a
 // health restart, which creates a new session (D3). Activity is the context
 // feed timestamp the activity advisory reads, or spawn when there is none.
 // Only running sessions count, so a finished headless run never ages out (D7).
