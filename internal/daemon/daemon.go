@@ -2009,6 +2009,21 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
+	// A repaint is a request, not a promise: a failure to signal is reported
+	// beside the capture and never fails it.
+	repaint, target := "", ""
+	if p.Repaint {
+		leader, rerr := d.driver.Repaint(sess.PaneID)
+		repaint, target = repaintStatus(rerr), leader
+		if rerr == nil {
+			settle := time.Duration(p.SettleMS) * time.Millisecond
+			if settle <= 0 {
+				settle = defaultRepaintSettle
+			}
+			time.Sleep(min(settle, repaintSettleMax))
+		}
+	}
+
 	var content string
 	if start, end, ranged := captureBounds(p); ranged {
 		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
@@ -2019,11 +2034,16 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("capture %s: %v", p.SessionKey, err)}
 	}
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":  "captured",
 		"session": p.SessionKey,
 		"content": content,
-	})
+	}
+	if p.Repaint {
+		out["repaint"] = repaint
+		out["repaint_target"] = target
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
 }
 
@@ -3013,5 +3033,17 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 }
 
 // repaintStatus names the outcome of a repaint request for the capture result.
-// Scaffold: not yet implemented.
-func repaintStatus(error) string { return "" }
+// "signalled" means a signal was sent, not that the program redrew.
+func repaintStatus(err error) string {
+	if err == nil {
+		return "signalled"
+	}
+	return "unavailable: " + strings.Join(strings.Fields(err.Error()), " ")
+}
+
+// defaultRepaintSettle is how long a repaint capture waits for the redraw to
+// land, and repaintSettleMax bounds what a caller may ask for.
+const (
+	defaultRepaintSettle = 300 * time.Millisecond
+	repaintSettleMax     = 10 * time.Second
+)

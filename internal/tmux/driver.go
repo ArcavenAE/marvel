@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/arcavenae/marvel/internal/api"
 
@@ -616,9 +618,53 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 // resize would, without sending it any input. It signals the pane tty's
 // foreground process group with SIGWINCH and returns the command name of that
 // group's leader, so a caller can tell a harness from a shell.
-// Scaffold: not yet implemented.
+//
+// It does not resize the window. resize-window works as a nudge but leaves the
+// window's window-size option on manual, which stops an attached client from
+// resizing the pane afterwards. A signal changes nothing in tmux.
+//
+// A nil error means a signal was sent, not that the program redrew: whether a
+// given harness repaints on SIGWINCH is the harness's business.
 func (d *Driver) Repaint(paneID string) (string, error) {
-	return "", nil
+	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_pid}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("pane pid %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 1 {
+		return "", fmt.Errorf("pane %s has no process", paneID)
+	}
+	pgid, err := foregroundGroup(pid)
+	if err != nil {
+		return "", fmt.Errorf("pane %s: %w", paneID, err)
+	}
+	if err := syscall.Kill(-pgid, syscall.SIGWINCH); err != nil {
+		return "", fmt.Errorf("signal pane %s foreground group %d: %w", paneID, pgid, err)
+	}
+	return commandName(pgid), nil
+}
+
+// foregroundGroup returns the foreground process group of the terminal a
+// process runs on, which is the group a terminal resize signals.
+func foregroundGroup(pid int) (int, error) {
+	out, err := exec.Command("ps", "-o", "tpgid=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0, fmt.Errorf("read the foreground process group of %d: %w", pid, err)
+	}
+	pgid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pgid <= 1 {
+		return 0, fmt.Errorf("process %d has no foreground process group", pid)
+	}
+	return pgid, nil
+}
+
+// commandName is the leader's command name, best effort; empty when unknown.
+func commandName(pid int) string {
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(filepath.Base(strings.TrimSpace(string(out))), "-")
 }
 
 // CapturePaneRange captures pane content with explicit start and end line
