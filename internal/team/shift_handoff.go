@@ -182,12 +182,17 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		return false
 	}
 	t.ShiftRequests[role.Name] = req
-	c.emitHandoffMissing(t, role, sess, req, now, false)
+	c.emitHandoffMissing(t, role, sess, req, now, false, false)
 	return false
 }
 
-// handoffMissingReason says why no marker was observed.
-func handoffMissingReason(role *api.Role, sess api.Session) string {
+// handoffMissingReason says why no marker was observed, or, when present, that
+// a repeat found it written after the window.
+func handoffMissingReason(role *api.Role, sess api.Session, present bool) string {
+	if present {
+		path, _ := handoffPath(role.Shift.Handoff, sess)
+		return fmt.Sprintf("the marker is now present at %s, written after the window", path)
+	}
 	if role.Shift.Handoff == "" {
 		return "no handoff path is declared, so marvel cannot observe one"
 	}
@@ -199,7 +204,7 @@ func handoffMissingReason(role *api.Role, sess api.Session) string {
 }
 
 // emitHandoffMissing emits the escalation and starts the repeat clock.
-func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Session, req api.ShiftRequest, now time.Time, repeat bool) {
+func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Session, req api.ShiftRequest, now time.Time, repeat, present bool) {
 	if c.missingEmitted == nil {
 		c.missingEmitted = make(map[string]time.Time)
 	}
@@ -217,18 +222,36 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Session:    sess.Key(),
 		Generation: t.Generation,
 		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift%s",
-			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess), again),
+			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, present), again),
 	})
 }
 
 // repeatHandoffMissing says it again once per handoff window while the request
-// stays escalated. The clock is in memory, so a daemon restart says it at once
-// on the next tick, which is the point.
+// stays escalated, reporting what the handoff file holds now: a seat that
+// writes after the window is held until the supervisor decides, and the repeat
+// must not claim the file is absent. It reads every tick (one bounded read per
+// escalated session) and speaks only from a read that began after the last
+// emission. It never clears the escalation or shifts: the supervisor decides.
+// The clock is in memory, so a daemon restart says it on the first tick with a
+// finished read.
 func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.Session, now time.Time) {
-	if last, ok := c.missingEmitted[sess.Key()]; ok && now.Sub(last) < role.Shift.HandoffWindowOrDefault() {
+	last, emitted := c.missingEmitted[sess.Key()]
+	due := !emitted || now.Sub(last) >= role.Shift.HandoffWindowOrDefault()
+	present := false
+	if role.Shift.Handoff != "" {
+		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
+			read, ok := c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+			if !due || !ok || !read.startedAt.After(last) {
+				return
+			}
+			present = read.complete
+			due = true
+		}
+	}
+	if !due {
 		return
 	}
-	c.emitHandoffMissing(t, role, sess, t.ShiftRequests[role.Name], now, true)
+	c.emitHandoffMissing(t, role, sess, t.ShiftRequests[role.Name], now, true, present)
 }
 
 func (c *Controller) dropShiftRequest(t *api.Team, role string) {
