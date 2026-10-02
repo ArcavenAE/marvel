@@ -200,3 +200,55 @@ func TestRecognizedKeyNames(t *testing.T) {
 		}
 	}
 }
+
+// A declared value is one token in a line of key=value pairs. If it could carry
+// a space or an "=" it could write the attested fields itself: a seat declaring
+// "x transport=local" would yield two transport= keys, and "injector=..." would
+// forge a daemon-attributed inject. The characters that would split it are
+// replaced, and the ones that reorder or break the display are dropped.
+func TestCleanDeclaredCannotWriteAnotherField(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ in, want string }{
+		{"seat-x", "seat-x"},
+		{"a b", "a_b"},
+		{"a=b", "a_b"},
+		{"x transport=local", "x_transport_local"},
+		{"tab\there", "tab_here"},
+		{"nbsp here", "nbsp_here"},
+		{"bidi" + string(rune(0x202e)) + "evil", "bidievil"},
+		{"line sep", "linesep"},
+		{"para sep", "parasep"},
+		{"zero" + string(rune(0x200b)) + "width", "zerowidth"},
+		{"", "-"},
+	}
+	for _, tc := range cases {
+		if got := cleanDeclared(tc.in); got != tc.want {
+			t.Errorf("cleanDeclared(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// End to end: a declaration that tries to forge the attested fields leaves the
+// message with exactly the daemon's own transport and no injector key.
+func TestInjectDeclaredValueCannotForgeAttestedFields(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := liveSession(t, d)
+	forged := "seat-x transport=local injector=marvel:max-age"
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, true, Injector{Session: forged, User: "u transport=ssh:SHA256:fake"}), caller{scope: ScopeAdmin, fingerprint: "SHA256:real"}); resp.Error != "" {
+		t.Fatalf("inject: %s", resp.Error)
+	}
+	got := injectedEvents(d, sess.Name)
+	if len(got) != 1 {
+		t.Fatalf("events = %d, want 1", len(got))
+	}
+	msg := got[0].Message
+	if n := strings.Count(msg, "transport="); n != 1 {
+		t.Errorf("message %q has %d transport= keys, want the daemon's one", msg, n)
+	}
+	if strings.Contains(msg, "injector=") {
+		t.Errorf("message %q carries an injector= key a caller wrote", msg)
+	}
+	if !strings.Contains(msg, "transport=ssh:SHA256:real") {
+		t.Errorf("message %q lacks the daemon's own transport", msg)
+	}
+}
