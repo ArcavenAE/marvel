@@ -190,3 +190,77 @@ func TestStampAnnouncementWarnsOfALinkedWorktree(t *testing.T) {
 		t.Errorf("severity = %v, want warning", got[0].Severity)
 	}
 }
+
+// A .git FILE is not enough to call a directory a linked worktree: a submodule
+// and a checkout made with --separate-git-dir have one too. What a worktree's
+// file points at is `<repo>/.git/worktrees/<name>`.
+func TestLinkedWorktreeTellsWorktreesFromSubmodules(t *testing.T) {
+	t.Parallel()
+	gitFile := func(content string) string {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	cases := []struct {
+		name string
+		file string
+		want bool
+	}{
+		{"a worktree, absolute gitdir", "gitdir: /r/main/.git/worktrees/feature\n", true},
+		{"a worktree, relative gitdir", "gitdir: ../main/.git/worktrees/feature\n", true},
+		{"a worktree of a submodule", "gitdir: /r/main/.git/modules/sub/worktrees/y\n", true},
+		{"a submodule", "gitdir: ../.git/modules/sub\n", false},
+		{"a nested submodule", "gitdir: ../../.git/modules/a/modules/b\n", false},
+		{"a separate git dir", "gitdir: /elsewhere/repo.git\n", false},
+		{"an unreadable pointer", "not a gitdir line\n", false},
+	}
+	for _, tc := range cases {
+		if got := linkedWorktree(gitFile(tc.file)); got != tc.want {
+			t.Errorf("%s: linkedWorktree = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A .git that is a symlink to a directory is an ordinary checkout, and a
+// symlinked cwd is judged by where it points, not by the link's own parent.
+func TestLinkedWorktreeFollowsSymlinks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+
+	realGit := filepath.Join(root, "real.git")
+	if err := os.Mkdir(realGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, "checkout")
+	if err := os.Mkdir(linked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realGit, filepath.Join(linked, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if linkedWorktree(linked) {
+		t.Error("a .git symlink to a directory was taken for a linked worktree")
+	}
+
+	wt := filepath.Join(root, "wt")
+	if err := os.Mkdir(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /r/main/.git/worktrees/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(wt, "pkg", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	link := filepath.Join(elsewhere, "cwd")
+	if err := os.Symlink(sub, link); err != nil {
+		t.Fatal(err)
+	}
+	if !linkedWorktree(link) {
+		t.Error("a symlinked cwd that points into a subdirectory of a linked worktree was not recognised")
+	}
+}
