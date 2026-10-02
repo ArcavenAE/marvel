@@ -43,6 +43,8 @@ type Store struct {
 	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
 	bolt     *bolt.DB
 	boltPath string
+	// legacyStamps are the teams the v1 to v2 migration stamped at open.
+	legacyStamps []LegacyStamp
 
 	// contextResolver walks the context-window ladder for the heartbeat
 	// path. Nil means no resolution: a heartbeat carrying a window is
