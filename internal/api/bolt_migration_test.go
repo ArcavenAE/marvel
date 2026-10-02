@@ -135,20 +135,23 @@ func TestMigrationStampsRootlessTeamsAndWritesV2(t *testing.T) {
 		t.Fatalf("open v1 store: %v", err)
 	}
 	stamps := s.LegacyStamps()
-	if len(stamps) != 1 || stamps[0].TeamKey != "legacy/squad" || stamps[0].Dir != cwdX {
-		t.Fatalf("LegacyStamps = %+v, want exactly legacy/squad at %s", stamps, cwdX)
+	if len(stamps) != 2 || stamps[0].TeamKey != "legacy/squad" || stamps[1].TeamKey != "rooted/squad" || stamps[0].Dir != cwdX || stamps[1].Dir != cwdX {
+		t.Fatalf("LegacyStamps = %+v, want legacy/squad and rooted/squad, both at %s", stamps, cwdX)
 	}
 	stamped, err := s.GetTeam("legacy/squad")
 	if err != nil || stamped.WorkDir != cwdX || stamped.WorkDirSource != "legacy" {
 		t.Fatalf("legacy/squad = (%q, %q, %v), want %s stamped legacy", stamped.WorkDir, stamped.WorkDirSource, err, cwdX)
 	}
-	// A team that declared a workdir, and a team whose workspace has a root,
-	// keep what they declared.
+	// A team that declared a workdir keeps it.
 	if d, _ := s.GetTeam("legacy/declared"); d.WorkDir != "/srv/declared" || d.WorkDirSource != "" {
 		t.Errorf("legacy/declared = (%q, %q), want its declared workdir untouched", d.WorkDir, d.WorkDirSource)
 	}
-	if r, _ := s.GetTeam("rooted/squad"); r.WorkDir != "" || r.WorkDirSource != "" {
-		t.Errorf("rooted/squad = (%q, %q), want unstamped: its workspace has a root", r.WorkDir, r.WorkDirSource)
+	// A v1 store can carry a workspace root (the root arrives in a release that
+	// does not bump the schema), but a team with no workdir of its own still
+	// resolves to the live root at spawn, which another team's apply can move.
+	// Every team with an empty workdir is stamped, whatever its workspace holds.
+	if r, _ := s.GetTeam("rooted/squad"); r.WorkDir != cwdX || r.WorkDirSource != "legacy" {
+		t.Errorf("rooted/squad = (%q, %q), want %s stamped legacy", r.WorkDir, r.WorkDirSource, cwdX)
 	}
 	_ = s.CloseBolt()
 
@@ -192,7 +195,7 @@ func TestMigrationTakesAPrivateBackupOfTheV1Store(t *testing.T) {
 	}
 }
 
-// A restart from another directory does not move the stamp, and says nothing.
+// A restart from another directory does not move the stamp, and announces it again.
 func TestMigrationStampSurvivesRestartFromAnotherDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "marvel.bolt")
 	writeV1(t, path, standardV1())
@@ -210,8 +213,10 @@ func TestMigrationStampSurvivesRestartFromAnotherDirectory(t *testing.T) {
 	if got, _ := s2.GetTeam("legacy/squad"); got.WorkDir != "/srv/orc-root" {
 		t.Errorf("stamp moved to %q on a restart from another directory", got.WorkDir)
 	}
-	if n := len(s2.LegacyStamps()); n != 0 {
-		t.Errorf("a second open reported %d stamps, want none", n)
+	// The announcement comes from the persisted field, so every start repeats
+	// it: a crash between the commit and the event loses nothing.
+	if st := s2.LegacyStamps(); len(st) != 2 || st[0].Dir != "/srv/orc-root" {
+		t.Errorf("a second open reported %+v, want both stamped teams at the persisted /srv/orc-root", st)
 	}
 }
 
@@ -418,5 +423,37 @@ func TestReapplyWithATeamWorkdirReplacesTheLegacyStamp(t *testing.T) {
 	got, _ := store.GetTeam("wd/squad")
 	if got.WorkDir != "/srv/declared" || got.WorkDirSource != "" {
 		t.Fatalf("after declaring a team workdir: (%q, %q), want /srv/declared and no source", got.WorkDir, got.WorkDirSource)
+	}
+}
+
+// A daemon started from / (launchd without a WorkingDirectory) would pin every
+// root-less team there. The migration refuses before it takes a backup or
+// writes anything, and says where to start from instead.
+func TestMigrationRefusesToStampTheFilesystemRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	writeV1(t, path, standardV1())
+	_, err := openMigrating(t, path, "/")
+	if err == nil || !strings.Contains(err.Error(), "seat directory") {
+		t.Fatalf("error = %v, want a refusal that names the seat directory", err)
+	}
+	if v, _ := readRaw(t, path); v != 1 {
+		t.Errorf("the refused start changed the store to version %d", v)
+	}
+	if _, err := os.Stat(path + ".v1.bak"); err == nil {
+		t.Error("a refused migration left a backup, which would block the next start")
+	}
+}
+
+// With nothing to stamp the directory is irrelevant, so / is no reason to refuse.
+func TestMigrationOfAStoreWithNothingToStampIgnoresTheDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	writeV1(t, path, v1Fixture{teams: []Team{{Name: "declared", Workspace: "ws", WorkDir: "/srv/declared", Generation: 1}}})
+	s, err := openMigrating(t, path, "/")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_ = s.CloseBolt()
+	if v, _ := readRaw(t, path); v != 2 {
+		t.Errorf("version = %d, want 2", v)
 	}
 }

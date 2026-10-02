@@ -50,8 +50,9 @@ func stampEvents(ring *events.Ring) []events.Event {
 	return ring.Snapshot(events.Filter{Kind: events.KindPlacementLegacyStamped}, 50)
 }
 
-// The migration's stamps are announced once, after the commit, one event per
-// team; a later start from another directory announces nothing and moves nothing.
+// The migration's stamps are announced after the commit, one event per team,
+// and again at every later start from the persisted field; a start from
+// another directory moves nothing.
 func TestMigrationAnnouncesEachStampOnceAndTheDirectoryIsFrozen(t *testing.T) {
 	skipIfNoTmux(t)
 	path := forgeV1Store(t)
@@ -79,8 +80,10 @@ func TestMigrationAnnouncesEachStampOnceAndTheDirectoryIsFrozen(t *testing.T) {
 		t.Fatalf("second start: %v", err)
 	}
 	defer func() { _ = d2.store.CloseBolt() }()
-	if n := len(stampEvents(ring2)); n != 0 {
-		t.Errorf("a second start announced %d stamps, want none", n)
+	// Announced from the persisted field at every start, so a crash after the
+	// commit but before the event loses nothing.
+	if got := stampEvents(ring2); len(got) != 1 || !strings.Contains(got[0].Message, "/srv/orc-root") {
+		t.Errorf("a second start announced %+v, want the one stamp at /srv/orc-root again", got)
 	}
 	if team, _ := d2.store.GetTeam("legacy/squad"); team.WorkDir != "/srv/orc-root" {
 		t.Errorf("the stamp moved to %q on a start from another directory", team.WorkDir)
