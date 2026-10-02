@@ -52,11 +52,11 @@ content: |
       is already tracked as aae-orc-ww33y (ADR-009's same-uid residual has no
       enforcement path).
 
-  CONFLICT TO RESOLVE. The parent's credential paragraph says marvel "holds
+  CONFLICT RESOLVED. The parent's credential paragraph said marvel "holds
   session state on the agent's behalf (for example the OAuth or
-  Claude-backend session)". ADR-009 (2026-09-04) forbids holding a refresh
-  token. This node follows ADR-009; the parent's wording needs an edit
-  through review.
+  Claude-backend session)", which ADR-009 (2026-09-04) forbids for a refresh
+  token. The parent was amended to match ADR-009 in the same PR that filed
+  this node; this node follows ADR-009.
 
   PROMOTION SIGNAL. One seat uses one custody-class MCP tool through a
   binding, the seat cannot read the credential (a planted read from inside
