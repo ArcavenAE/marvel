@@ -83,6 +83,40 @@ func TestInvalidInstanceRejectedByPattern(t *testing.T) {
 	}
 }
 
+// The global tier addresses its envelopes global://director and
+// global://{cluster}/supervisor (marvel#457). A global envelope that is
+// otherwise valid must validate, and a malformed global address must be refused
+// by recipient.address itself, not by some other field.
+func TestGlobalRecipientAddresses(t *testing.T) {
+	for _, name := range []string{"valid-global-director.json", "valid-global-cluster-supervisor.json"} {
+		data, err := os.ReadFile(filepath.Join(fixturesDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := Validate(data); err != nil {
+			t.Errorf("%s: expected valid, got: %v", name, err)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(fixturesDir, "invalid-global-*.json"))
+	if err != nil || len(files) != 4 {
+		t.Fatalf("want 4 invalid-global fixtures, found %d (%v)", len(files), err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		err = Validate(data)
+		if err == nil {
+			t.Errorf("%s: expected rejection, but validation passed", filepath.Base(f))
+			continue
+		}
+		if !strings.Contains(err.Error(), "/recipient/address") {
+			t.Errorf("%s: rejected, but not at /recipient/address: %v", filepath.Base(f), err)
+		}
+	}
+}
+
 // The generated types decode a real envelope, the typed enums carry the wire
 // values, and a marshal of the result still validates.
 func TestRoundTrip(t *testing.T) {

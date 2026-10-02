@@ -73,6 +73,10 @@ Locked now:
 - `sender.agent_id` is the address and nothing else, closed class
   `^[a-z0-9][a-z0-9-]{0,31}$` (R-76), the same class on every segment of
   `recipient.address`.
+- `recipient.address` is `agent://{team}/{id}`, `role://{team}/{role}`,
+  `broadcast://{workspace}[/{team}]`, or one of the global tier's two forms,
+  `global://director` and `global://{cluster}/supervisor`. No other
+  `global://` form is valid.
 - `sender.session` is the harness session UUID, nullable now, required once
   marvel sets it at spawn (R-73, R-84).
 - `sender.instance` is the sending shim process's ULID, minted at shim start
