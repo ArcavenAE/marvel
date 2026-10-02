@@ -452,8 +452,8 @@ type SessionMetrics struct {
 type Role struct {
 	// SettingsSources, when declared, is the list of Claude Code settings
 	// sources a bare claude seat loads (user, project, local), passed as
-	// given. Empty means the default for where the seat is placed
-	// (docs/design/seat-bootstrap.md section 4).
+	// given. Empty means every source today; SB-1 makes the default depend on
+	// where the seat is placed (docs/design/seat-bootstrap.md section 4).
 	SettingsSources []string      `toml:"settings_sources,omitempty"`
 	Name            string        `toml:"name"`
 	Replicas        int           `toml:"replicas"`

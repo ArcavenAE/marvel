@@ -114,8 +114,9 @@ func (b *ManifestBudget) Budget() Budget {
 // ManifestRole is a role section within a team.
 // Name is the job function. Persona and Identity are the costume and lens.
 type ManifestRole struct {
-	// SettingsSources opts a bare claude seat into settings sources beyond
-	// the default, from user, project and local.
+	// SettingsSources declares which settings sources a bare claude seat
+	// loads, from user, project and local. Omitted, every source loads, as
+	// before this key existed.
 	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
 	Name            string   `toml:"name"                          yaml:"name"`
 	Replicas        int      `toml:"replicas"                      yaml:"replicas"`
