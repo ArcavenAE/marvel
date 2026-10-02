@@ -816,7 +816,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Workspace:  m.Workspace.Name,
 			Roles:      roles,
 			Budget:     budget,
-			WorkDir:    joinWorkDir(m.Workspace.Root, mt.WorkDir),
+			WorkDir:    teamAnchor(m.Workspace.Root, mt.WorkDir),
 			Generation: 1,
 			CreatedAt:  now,
 		}
@@ -829,7 +829,11 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
-				live.WorkDir = team.WorkDir
+				// An apply that declares no placement leaves the anchor the
+				// team already has.
+				if m.Workspace.Root != "" || mt.WorkDir != "" {
+					live.WorkDir = team.WorkDir
+				}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)
