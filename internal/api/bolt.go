@@ -443,3 +443,36 @@ func ensureParentDir(path string) error {
 	}
 	return nil
 }
+
+// BoltOptions are the inputs the v1 to v2 migration needs that the file does
+// not hold.
+type BoltOptions struct {
+	// LegacyCwd is the directory a team with no resolvable root is stamped
+	// with. Empty means the process's working directory at the time of the
+	// migration.
+	LegacyCwd string
+}
+
+// LegacyStamp records one team stamped by the migration.
+type LegacyStamp struct {
+	TeamKey string
+	Dir     string
+}
+
+// boltMigrationFault, when set by a test, is called at named stages of the
+// migration ("backup", "stamp") and its error aborts that stage.
+var boltMigrationFault func(stage string) error
+
+// OpenBoltWithOptions is OpenBolt with the migration inputs.
+func (s *Store) OpenBoltWithOptions(path string, _ BoltOptions) error {
+	if boltMigrationFault != nil {
+		_ = boltMigrationFault("")
+	}
+	return s.OpenBolt(path)
+}
+
+// LegacyStamps returns the teams the migration stamped when this store was
+// opened, so the daemon can announce them once the commit is durable.
+func (s *Store) LegacyStamps() []LegacyStamp {
+	return nil
+}

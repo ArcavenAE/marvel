@@ -699,6 +699,11 @@ type Team struct {
 	// WorkDir is where the team's sessions run unless a role declares its
 	// own; empty means the workspace root. Absolute once applied.
 	WorkDir string `toml:"workdir,omitempty"`
+	// WorkDirSource says where WorkDir came from when it was not declared:
+	// "legacy" is the daemon's cwd, stamped once by the v1 to v2 store
+	// migration so a team that had no root keeps its place
+	// (docs/design/seat-bootstrap.md section 3). Empty for a declared WorkDir.
+	WorkDirSource string `toml:"workdir_source,omitempty"`
 	// Budget is the team's declared resource ceiling. The zero value
 	// declares no gate, which is every manifest written before this field
 	// existed. See budget.go and aae-orc-qiay.
