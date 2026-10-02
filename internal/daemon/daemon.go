@@ -3044,3 +3044,8 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 	}
 	return Response{Result: data}
 }
+
+// linkedWorktree reports whether dir sits inside a linked git worktree: walking
+// up to the first .git, a file (not a directory) means it. Scaffold: not yet
+// implemented.
+func linkedWorktree(dir string) bool { return false }
