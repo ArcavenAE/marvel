@@ -99,6 +99,29 @@ are random and never logged.** Enforcement:
   consumers with admin or hub credentials and a random name, and delete
   them when done.
 
+**Three reviewer questions, answered where known.**
+- *Can one supervisor's KV put or delete touch another's presence key?*
+  Yes, with a bucket-wide `$KV.GLOBAL_PRESENCE.>` grant. The shim's key is
+  `presence.<cluster>.<role>.<instance>` (director `global.go`
+  `presenceKey`), so the role user's grant narrows to
+  `$KV.GLOBAL_PRESENCE.presence.<cluster>.supervisor.>`. That keeps a
+  supervisor away from the director's and other clusters' rows. It does
+  not separate two supervisors on the same cluster, who share the role
+  word; that is the replica limit already stated, closed only by
+  per-session users (R-84). Test 3 asserts a put outside the prefix is
+  refused.
+- *Does 60s exceed the shim's reconnect backoff?* Yes. The shim connects
+  with nats.go defaults (director `bus.go` sets no reconnect options), and
+  nats.go v1.54.0 sets `DefaultReconnectWait` 2s and `DefaultMaxReconnect`
+  60, so a reconnecting shim retries about every 2s and is visible again
+  within seconds. After 60 failed attempts (about two minutes) it closes
+  for good and does not come back, so it cannot slip past the second check
+  either.
+- *Can a role user enumerate the random-name consumers?* Not with the
+  grant above: it carries no `CONSUMER.LIST` or `CONSUMER.NAMES`. The
+  builder keeps both out of the list, and test 10 asserts each is
+  refused for a role user.
+
 **Honest limit, restated.** Within a team, every role still shares
 `agent.<ws>.<team>.>`, so a worker can read a teammate's local role inbox.
 R-94 governs the global tier only; per-role local scoping is out of scope
