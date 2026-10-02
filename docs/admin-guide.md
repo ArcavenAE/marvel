@@ -17,7 +17,9 @@ idle-sleep.
 
 Display sleep is fine; only system sleep stops the cluster. Closing a
 laptop's lid is a separate case that the settings below do not address.
-Wake-on-LAN is not a remedy: it cannot be relied on to bring a cluster back.
+Wake-on-LAN is not a remedy: its magic packet has to reach the host on the
+same network segment, so a peer on another network, or across a router or a
+VPN, cannot send it.
 
 On macOS, either of these keeps the system awake (pick one):
 
@@ -29,7 +31,12 @@ On macOS, either of these keeps the system awake (pick one):
   ```
 
   The assertion lasts while the `caffeinate` process runs and is released
-  when it exits. No system setting changes.
+  when it exits. No system setting changes. To tie it to the daemon's
+  lifetime, pass the daemon's process id:
+
+  ```sh
+  caffeinate -i -w <daemon-pid>    # released when that process exits
+  ```
 - **Turn off system sleep on AC power:**
 
   ```sh
@@ -46,8 +53,17 @@ pmset -g assertions    # current power assertions, by process
 pmset -g log           # history of sleeps and wakes
 ```
 
-On Linux, run the daemon under `systemd-inhibit --what=idle:sleep`, or set
-`IdleAction=ignore` in `logind.conf`.
+On Linux, run the daemon under `systemd-inhibit --what=idle:sleep`, which
+holds an inhibitor lock for as long as the daemon runs. A desktop
+environment's own automatic suspend setting (GNOME's, for example) is
+separate and must also be off. To rule out sleep on the host entirely:
+
+```sh
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+```
+
+That changes a system setting until the targets are unmasked. These Linux
+lines were not verified on a Linux cluster host.
 
 ## Starting the daemon
 
