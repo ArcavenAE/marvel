@@ -22,14 +22,33 @@ escalation to the supervisor seat itself, over the bus it already reads.
 - The canonical envelope (`contracts/schema/director-envelope.schema.json`)
   accepts `role://{team}/{role}` as a recipient. marvel#457 concerns
   `global://` only; a local role address is valid today.
-- A director shim whose seat has a role reads its role inbox,
-  `agent.<ws>.<team>.role.<role>.inbox`, through its durable (director
-  `bus.go` `selfSubjects`). AGENT_INBOX is a durable stream.
+- A director shim reads its role inbox,
+  `agent.<ws>.<team>.role.<role>.inbox`, only when it was started with
+  `DIRECTOR_ROLE` (director `bus.go` `selfSubjects`). marvel's `baseEnv` does
+  not set it today (`internal/runtime/adapter.go`); `cast-launch.sh` sets it
+  for wrapped seats only, and `docs/design/seat-bootstrap.md` records that
+  `role://` delivery breaks until SB-4 adds it to `baseEnv`.
+- A new shim durable starts with `DeliverAllPolicy`, so a holder that starts
+  later reads role mail already stored. AGENT_INBOX keeps messages 24h and
+  dedupes on `Nats-Msg-Id` for 2 minutes (`internal/bus/declared.go`).
+- The shim refuses its own `role://` send when no live session holds the role
+  (R-92). marvel publishes on the subject directly, so that check does not
+  apply to it; H1 states what marvel does instead.
+- The canonical schema allows `[a-z0-9][a-z0-9-]{0,31}` in an address
+  segment; marvel accepts team and workspace names in `[A-Za-z0-9_-]`, so
+  some valid marvel teams cannot be addressed.
 - An escalated request persists with the team and ends when its session is
   gone or replaced (`advanceShiftRequest`, `dropShiftRequest`), which is
   what a shift does.
 
 ## 3. Design
+
+**Precondition P1.** Delivery ships off, and is switched on only in a build
+that also carries SB-4 (`DIRECTOR_ROLE` in `baseEnv`). Without it a
+marvel-spawned supervisor seat has no role subject in its durable, so a
+publish would be stored and read by no one, which is the silent hold again.
+A supervisor spawned before SB-4 without the wrapper receives once it
+respawns; until then the step-A event is the floor, as today.
 
 ### H1. The recipient
 
@@ -44,8 +63,21 @@ seat holds the role now, so a supervisor that shifted still gets it.
   recipient: team <ws/team> declares no supervisor role`. Never delivered to
   the escalated seat or to any other role.
 - A `supervisor` role with no running seat: publish anyway. The message
-  waits in the durable stream for the next holder, which is the point of a
-  durable channel. The event says `delivered: queued, no live holder`.
+  waits in the stream, and the next holder's new durable reads it
+  (`DeliverAllPolicy`), which is the point of a durable channel. The event
+  says `delivered: queued, no live holder`.
+- **The escalated seat is a supervisor.** When the escalated session's own
+  role is `supervisor`, marvel does not deliver: a role address would reach
+  every holder's durable, the escalated seat's included, which this section
+  forbids. The event says `delivered: none, escalated seat holds the
+  supervisor role`, one log line says the same, and the decision falls to the
+  operator through the event and `get sessions`. marvel cannot reach director
+  from here (it holds no global address, and marvel#457 keeps `global://`
+  out of the schema), so escalating to director is ruling 4.
+- **A team or workspace name the schema cannot address** (upper case, `_`,
+  or over 32 characters): no delivery, `delivered: none, team name not
+  addressable`, and one warning at `marvel work` naming the team. Not
+  refused at apply, since refusing would stop running teams.
 
 ### H2. The envelope
 
@@ -61,6 +93,7 @@ seat holds the role now, so a supervisor that shifted still gets it.
 | `correlation_id` | `handoff-missing/<ws>/<team>/<session>/<requested_at unix>`, the same on every repeat, so a reader can group them and the loop guard keys on it |
 | `message_id` | a fresh ULID per send, as the schema requires |
 | `reply_by` | the next repeat time |
+| `expires_at` | the next repeat time plus one window: a queued message lives 24h and a shift mints a new holder, so a stale escalation must not be read as current; every repeat supersedes it |
 
 No new performative or content type is needed: `REQUEST` with a `signal`
 content fits the schema as it stands. The build validates one sent envelope
@@ -69,6 +102,12 @@ against `contracts/go/envelope` in a test.
 `marvel` as a sender agent id must not collide with a seat: the build checks
 that no team declares an agent id `marvel`, the same way `director` is
 reserved (`config.ReservedBusUsers`).
+
+**The sender is a label, not authentication.** Any team principal that can
+publish to a role inbox can write an envelope that says it is from `marvel`.
+`authority: none` limits the harm: the message asks for a decision and
+grants nothing, and the action it names (`marvel shift`) is checked at the
+daemon against the caller's scope, not against the message.
 
 ### H3. The reply
 
@@ -173,7 +212,11 @@ progress finishes or rolls back on its own timeout, and the operator's manual
   `repeatHandoffMissing`; the delivered counter in `api.ShiftRequest`.
 - A small publisher on the daemon's existing admin connection, behind an
   interface the controller holds (nil when no managed bus, which means
-  event-only, as today).
+  event-only, as today). The interface is narrow because the admin
+  principal can publish to `>`: one method,
+  `PublishRoleInbox(ctx, ws, team, role string, env envelope.Envelope, msgID string) error`,
+  which builds the subject itself from validated tokens and can publish
+  nowhere else. It is the controller's only bus capability.
 - `config.ReservedBusUsers` (or the agent-id equivalent) reserves `marvel`.
 - The `marvel autoshift` verb (mute, unmute, cancel, resume, abort) with
   admin scope and a required `--reason`; fields on `api.ShiftRequest`
@@ -187,20 +230,26 @@ progress finishes or rolls back on its own timeout, and the operator's manual
 
 ## 5. Tests (red first)
 
-1. A team with a running supervisor: one envelope on
-   `agent.<ws>.<team>.role.supervisor.inbox` at escalation, valid against
-   the canonical schema, with the fields in H2.
+1. A team with a running supervisor whose seat was started with
+   `DIRECTOR_ROLE`: at escalation, the envelope is RECEIVED through a
+   role-filtered durable of the same shape the shim creates (not only
+   published), and it is valid against the canonical schema with the
+   fields in H2, `expires_at` included.
 2. A repeat after one window carries the same `correlation_id` and a new
    `message_id`; a shift ends the request and no further envelope follows.
 3. A team without a `supervisor` role: no publish, one log line, events
-   continue; no keystrokes into any pane.
+   continue; an inject spy on `Notify` records zero calls for any pane.
 4. A supervisor role with no live seat: the envelope is stored and a seat
    started later reads it.
 5. Restart: escalate, send, restart the daemon before the next boundary; no
-   second envelope until the boundary. Kill between publish and store write:
-   the re-send is dropped by `Nats-Msg-Id` within the dedupe window.
-6. Bus down: no blocking, `team.shift-handoff-undelivered` once, the event
-   repeats; on bus ready a send follows without waiting a full window.
+   second envelope until the boundary. Kill between publish and store write,
+   through a fault seam between the two: the re-send inside the stream's
+   2-minute dedupe window is dropped; one after it is received once more with
+   the same `correlation_id`.
+6. Bus down: the reconcile tick returns within the publish timeout (2s),
+   `team.shift-handoff-undelivered` fires once, the event repeats; after bus
+   ready a send follows within 35s (one 30s health tick plus slack), not a
+   full window.
 7. A manifest declaring an agent id `marvel` is refused.
 8. **Mute.** Mute an escalated request for 1h: one muted message, no further
    delivery, ring events marked muted, `(muted 59m)` shown; restart the
@@ -216,6 +265,14 @@ progress finishes or rolls back on its own timeout, and the operator's manual
     shown, and it survives a restart; `abort --all` does the same for every
     team; a shift in progress is not interrupted; manual `marvel shift`
     still works; `resume` lifts each scope separately.
+11. **Supervisor escalated.** The escalated session's role is `supervisor`:
+    no publish (with one and with two supervisor replicas), the event says
+    why, and the inject spy records zero calls.
+12. **Unaddressable team.** A fixture team `Team_A`: `marvel work` warns
+    once, escalation publishes nothing, and the event says `team name not
+    addressable`.
+13. **Precondition.** With delivery switched off (a build without SB-4),
+    escalation publishes nothing and the event says `delivered: off`.
 
 ## 6. Rulings needed (operator, via director)
 
@@ -224,3 +281,4 @@ progress finishes or rolls back on its own timeout, and the operator's manual
 | 1 | RULED 2026-10-02 yes: the recipient is the role named `supervisor` in the same team (a convention, not a declared field) | yes |
 | 2 | RULED 2026-10-02: add a mute, a per-session cancel and a general abort (H6). Open within it: the mute's default and cap | 4h default, 24h cap |
 | 3 | RULED 2026-10-02 yes: marvel publishes as `marvel` on its existing admin connection, not a new scoped principal (a scoped principal held by the same daemon adds no boundary) | yes |
+| 4 | When the escalated seat is the supervisor, deliver nowhere (operator decides from the event), or later escalate to director once marvel can address it | nowhere in this slice |
