@@ -138,6 +138,18 @@ func hubManager(t *testing.T, dir string, live *teams) *Manager {
 	return m
 }
 
+// acceptAll stands in for a broker that has loaded the rendered file.
+func acceptAll(context.Context, string, string, string) error { return nil }
+
+// confirmed marks every rendered per-role user as accepted by the broker.
+func confirmed(t *testing.T, m *Manager) {
+	t.Helper()
+	m.verify = acceptAll
+	if err := m.ConfirmRoleUsers(context.Background()); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+}
+
 func supervisedTeam() api.Team {
 	return api.Team{Name: "ops", Workspace: "acme", Roles: []api.Role{{Name: "supervisor"}, {Name: "worker"}}}
 }
@@ -150,6 +162,7 @@ func TestCredentialSelectsTheSupervisorUserByRole(t *testing.T) {
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
+	confirmed(t, m)
 	su, spw, ok := m.Credential("ops", "supervisor")
 	if !ok || su != "ops.supervisor" || spw == "" {
 		t.Fatalf("Credential(ops, supervisor) = %q %q %v, want the dotted user", su, spw, ok)
@@ -195,12 +208,14 @@ func TestSupervisorUserPasswordSurvivesARestartAndLeavesTheTeamUserAlone(t *test
 	if _, err := m1.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
+	confirmed(t, m1)
 	_, sup1, _ := m1.Credential("ops", "supervisor")
 	_, team1, _ := m1.Credential("ops", "worker")
 	m2 := hubManager(t, dir, live)
 	if _, err := m2.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
+	confirmed(t, m2)
 	if _, sup2, _ := m2.Credential("ops", "supervisor"); sup2 != sup1 {
 		t.Error("the supervisor user's password changed across a restart")
 	}
@@ -227,6 +242,7 @@ func TestUpgradeAddsTheSupervisorUserWithoutReminting(t *testing.T) {
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
+	confirmed(t, m)
 	if _, after, _ := m.Credential("ops", "worker"); after != before {
 		t.Error("the team user's password was reminted when the supervisor user was added")
 	}
@@ -245,6 +261,7 @@ func TestSupervisorUserIsPrunedWhenTheRoleGoes(t *testing.T) {
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
+	confirmed(t, m)
 	*live = teams{api.Team{Name: "ops", Workspace: "acme", Roles: []api.Role{{Name: "worker"}}}}
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)
@@ -292,7 +309,12 @@ func TestSupervisorUserAgainstARealBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	user, pw, _ := m.Credential("ops", "supervisor")
+	var user, pw string
+	eventually(t, "the supervisor user to be handed out once the broker accepts it", func() bool {
+		var ok bool
+		user, pw, ok = m.Credential("ops", "supervisor")
+		return ok && user == "ops.supervisor"
+	})
 	violations := make(chan string, 8)
 	nc, err := nats.Connect(m.URL(), nats.UserInfo(user, pw), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
 		violations <- err.Error()
