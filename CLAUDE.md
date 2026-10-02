@@ -394,6 +394,15 @@ its password to `<StateDir>/nats/director.pass`; `hub.ca_file` trusts a TLS
 hub from the leaf remote. `NewManager` recovers every password from the
 `authorization.conf` it rendered last time, so a restart or reexec keeps
 running sessions' credentials valid (`docs/design/bus-as-service.md` 8.2).
+A team that declares a `supervisor` role and has a hub also gets a second user,
+`<team>.supervisor`, rendered beside `<team>` (`docs/design/per-role-broker-users.md`,
+M9-3). New spawns of the supervisor role connect as it and subscribe only
+`global.<cluster>.supervisor.inbox`; seats already running keep the team user,
+which keeps its grants until the subtractive stage. **Do not downgrade the
+daemon below this change once a dotted user is rendered:** an older binary
+drops the dotted user at its next render and breaks every supervisor that
+rotated onto it. Revert the render first (rotate supervisors back to the team
+user), then downgrade.
 Ready on a managed broker is structural (`internal/bus/health.go`, design
 section 3): listener, pid, every declared service-scope object present,
 and `/varz` `auth_required`; read at start, after a reload, and on the 30s

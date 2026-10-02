@@ -74,6 +74,9 @@ type TeamUser struct {
 	Team       string
 	Password   string
 	Supervisor bool
+	// SupervisorPassword is the password of the `<team>.supervisor` user;
+	// empty means that user is not rendered.
+	SupervisorPassword string
 }
 
 // MonitorAddr returns the loopback monitoring address for a listen address:

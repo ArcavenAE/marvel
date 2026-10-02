@@ -55,7 +55,7 @@ type Manager struct {
 	hasLeafSeed func() bool
 	admin       User
 	seat        string            // the director seat's password; empty when no seat is declared
-	passwords   map[string]string // team name -> password
+	passwords   map[string]string // broker user name (a team, or <team>.supervisor) -> password
 
 	// leafAttached is the operator's connect/disconnect decision, persisted
 	// beside the conf and defaulting to attached. It is an atomic rather than
@@ -167,9 +167,18 @@ func (m *Manager) ConfPath() string { return filepath.Join(m.dir, ConfName) }
 // URL is what sessions receive as NATS_URL.
 func (m *Manager) URL() string { return m.bus.URL }
 
-// TeamCredential is the broker user and password for an applied team, the
-// session.BusEnv contract. The user is the team name (section 4).
-func (m *Manager) TeamCredential(team string) (string, string, bool) {
+// Credential is the broker user and password a seat of the given role presents,
+// the session.BusEnv contract. A role that holds a global address
+// (config.GlobalAddressRoles) gets its own `<team>.<role>` user when one is
+// rendered; every other role, and a global role with no such user (no hub, or
+// not yet rendered), gets the team user (section 4).
+func (m *Manager) Credential(team, role string) (string, string, bool) {
+	if slices.Contains(config.GlobalAddressRoles, role) {
+		user := team + "." + role
+		if pw, ok := m.TeamPassword(user); ok {
+			return user, pw, true
+		}
+	}
 	pw, ok := m.TeamPassword(team)
 	if !ok {
 		return "", "", false
@@ -188,8 +197,8 @@ func (m *Manager) Admin() User {
 	return m.admin
 }
 
-// TeamPassword returns the password minted for an applied team, if the team
-// has been rendered. The 1qyo3 spawn path injects it as DIRECTOR_NATS_PASS.
+// TeamPassword returns the password minted for a broker user (a team, or a
+// per-role `<team>.<role>` user), if it has been rendered. The 1qyo3 spawn path injects it as DIRECTOR_NATS_PASS.
 func (m *Manager) TeamPassword(team string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -251,12 +260,28 @@ func (m *Manager) Render() (bool, error) {
 			m.passwords[t.Name] = pw
 		}
 		live[t.Name] = true
-		spec.Teams = append(spec.Teams, TeamUser{
+		tu := TeamUser{
 			Workspace:  t.Workspace,
 			Team:       t.Name,
 			Password:   pw,
 			Supervisor: hasSupervisorRole(t),
-		})
+		}
+		if tu.Supervisor && m.bus.HubURL != "" {
+			// The supervisor role's own user, minted only when missing and
+			// keyed by user name like the team's.
+			user := t.Name + SupervisorUserSuffix
+			spw, ok := m.passwords[user]
+			if !ok {
+				var err error
+				if spw, err = NewPassword(); err != nil {
+					return false, err
+				}
+				m.passwords[user] = spw
+			}
+			live[user] = true
+			tu.SupervisorPassword = spw
+		}
+		spec.Teams = append(spec.Teams, tu)
 	}
 	for name := range m.passwords {
 		if !live[name] {
@@ -389,8 +414,8 @@ func (a Adopted) URL() string { return a.url }
 // Bus is the resolved section, for status.
 func (a Adopted) Bus() config.ResolvedBus { return a.bus }
 
-// TeamCredential is never available for an adopted broker.
-func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", false }
+// Credential is never available for an adopted broker.
+func (a Adopted) Credential(string, string) (string, string, bool) { return "", "", false }
 
 // leafEnrolled reports whether a leaf seed is in the store, so a rendered hub
 // link can actually come up. Nil hasLeafSeed means never enrolled.
