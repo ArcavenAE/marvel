@@ -176,7 +176,7 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 			return nil, fmt.Errorf("%s: max-age cannot apply to a headless role; a headless run past an age bound is a stuck run, and ending it is the kill branch, not a shift (design D7)", prefix)
 		}
 		if c.On == ShiftTriggerMaxAge && r.Replicas > 1 {
-			return nil, fmt.Errorf("%s: max-age cannot apply to a role with replicas > 1; its handoff request asks one seat but the shift drains every seat of the role, which would retire seats never asked for a handoff (marvel#452, design D5); use replicas = 1, or context-pressure", prefix)
+			return nil, MaxAgeReplicasError(prefix)
 		}
 		p.Any = append(p.Any, c)
 	}
@@ -263,4 +263,11 @@ func positiveDuration(field, v string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s %q must be positive", field, v)
 	}
 	return d, nil
+}
+
+// MaxAgeReplicasError is the refusal of a max-age condition on a role with
+// more than one replica, shared by apply and scale so both doors say the same
+// thing (marvel#452). where names the role's shift table.
+func MaxAgeReplicasError(where string) error {
+	return fmt.Errorf("%s: max-age cannot apply to a role with replicas > 1; its handoff request asks one seat but the shift drains every seat of the role, which would retire seats never asked for a handoff (marvel#452, design D5); use replicas = 1, or context-pressure", where)
 }
