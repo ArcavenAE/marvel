@@ -1,6 +1,9 @@
 package composer
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The menu is the one research captured on codex-cli 0.157.0: one Enter runs the
 // vendor's curl | sh installer.
@@ -40,19 +43,6 @@ func TestOnlyCodexIsPreflighted(t *testing.T) {
 	for name, want := range map[string]bool{"codex": true, "claude": false, "opencode": false, "forestage": false, "anything-else": false, "": false} {
 		if got := ReaderFor(name).Preflight(); got != want {
 			t.Errorf("ReaderFor(%q).Preflight() = %v, want %v", name, got, want)
-		}
-	}
-}
-
-// No reader has a clear key yet. Codex and opencode exit on C-c at an empty
-// composer, so a clear there must never be sent even when a capture says text;
-// claude's clear is grounded separately (aae-orc-g88i1) and an unknown harness
-// is never cleared.
-func TestNoReaderClearsYet(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"codex", "opencode", "claude", "forestage", "anything-else", ""} {
-		if key := ReaderFor(name).ClearKey(); key != "" {
-			t.Errorf("ReaderFor(%q).ClearKey() = %q, want none", name, key)
 		}
 	}
 }
@@ -121,28 +111,23 @@ func TestConfirms(t *testing.T) {
 	}
 }
 
-type clearable struct{ unknownReader }
-
-func (clearable) ClearKey() string { return "C-u" }
-
 // A clear is sent only to a composer known to hold text, and only where the
-// harness has a clear key. Anything a reader cannot place is Unknown and is
-// refused: a clear on a composer that is really empty exits codex and opencode.
+// contract names a key. Anything a reader cannot place is Unknown and is
+// refused: a clear on a composer that is really empty exits codex, opencode and
+// arms exit on claude, so a misread must never reach the key.
 func TestCanClear(t *testing.T) {
 	t.Parallel()
-	if err := CanClear(clearable{}, HoldsText); err != nil {
+	if err := CanClear("claude", "C-c", HoldsText); err != nil {
 		t.Errorf("a composer holding text with a clear key: %v", err)
 	}
 	for _, s := range []State{Empty, MidTurn, MenuUnsafe, Shell, Unknown} {
-		if err := CanClear(clearable{}, s); err == nil {
+		if err := CanClear("claude", "C-c", s); err == nil {
 			t.Errorf("a clear was allowed on a composer reading %q", s)
 		}
 	}
-	for _, name := range []string{"codex", "opencode", "claude", "anything-else", ""} {
-		err := CanClear(ReaderFor(name), HoldsText)
-		if err == nil {
-			t.Errorf("ReaderFor(%q): a clear was allowed with no clear key", name)
-		}
+	err := CanClear("forestage", "", HoldsText)
+	if err == nil || !strings.Contains(err.Error(), "forestage") {
+		t.Errorf("a clear with no key: error = %v, want a refusal naming the harness", err)
 	}
 }
 

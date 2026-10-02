@@ -49,11 +49,6 @@ type Reader interface {
 	// capture and refused on MenuUnsafe: true where the harness has a state in
 	// which a keystroke is dangerous.
 	Preflight() bool
-	// ClearKey is the tmux key that discards a staged draft, or "" when marvel
-	// must never clear this harness. Codex and opencode exit on C-c at an empty
-	// composer, so a clear there would end the seat if the capture were misread
-	// or the draft vanished between the read and the key: they have no clear key.
-	ClearKey() string
 }
 
 // ReaderFor returns the reader for a runtime (harness) name. A runtime without
@@ -88,7 +83,6 @@ func (unknownReader) Name() string      { return "unknown" }
 func (unknownReader) Read(string) State { return Unknown }
 func (unknownReader) Escapes() bool     { return false }
 func (unknownReader) Preflight() bool   { return false }
-func (unknownReader) ClearKey() string  { return "" }
 
 // codexHazards are the lines of codex's startup "Update available" menu and of
 // the installer it starts (measured on codex-cli 0.157.0, marvel#477). The
@@ -117,9 +111,8 @@ func (codexReader) Read(capture string) State {
 	return Unknown
 }
 
-func (codexReader) Escapes() bool    { return false }
-func (codexReader) Preflight() bool  { return true }
-func (codexReader) ClearKey() string { return "" }
+func (codexReader) Escapes() bool   { return false }
+func (codexReader) Preflight() bool { return true }
 
 // Intent is what an inject meant to do, so its effect can be checked.
 type Intent string
@@ -146,16 +139,8 @@ func Confirms(i Intent, s State) bool {
 }
 
 // CanClear says whether a clear may be sent to a composer a reader just read.
-// It needs a clear key and a composer known to hold text. A composer that reads
-// anything else, Unknown included, is refused: on codex and opencode the clear
-// key exits the harness when the composer is really empty, so a misread would
-// end the seat.
-func CanClear(r Reader, s State) error {
-	if r.ClearKey() == "" {
-		return errors.New("no safe clear key is known for " + r.Name())
-	}
-	if s != HoldsText {
-		return errors.New("the composer reads " + string(s) + ", not " + string(HoldsText))
-	}
-	return nil
+// clearKey is the harness's contract key (runtime.ComposerContract); harness
+// names it in the refusal. Scaffold.
+func CanClear(harness, clearKey string, s State) error {
+	return errors.New("not implemented: " + harness + clearKey + string(s))
 }

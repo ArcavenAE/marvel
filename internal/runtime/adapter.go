@@ -267,6 +267,51 @@ type Adapter interface {
 	ProjectionFor(ctx *LaunchContext, dir string) ProjectionTarget
 }
 
+// SubmitMode is how a message is sent to a harness's composer.
+type SubmitMode string
+
+// SubmitPasteEnter is a bracketed paste of the text, then Enter.
+const SubmitPasteEnter SubmitMode = "paste-enter"
+
+// ComposerContract is what marvel knows about driving one harness's input
+// composer, each line from a measurement named in Source. The zero value is no
+// contract: an adapter that has not been measured says nothing, and marvel
+// treats it as unknown.
+type ComposerContract struct {
+	// Submit is how a message is sent. Empty means not measured.
+	Submit SubmitMode
+	// ClearKey is the one tmux key that discards a staged draft, sent once and
+	// only after a reader has seen text in an idle composer. Empty means no
+	// safe key is known.
+	ClearKey string
+	// ClearExitsWhenEmpty is true where ClearKey on an empty composer ends the
+	// harness, so a clear is never sent on a misread.
+	ClearExitsWhenEmpty bool
+	// ClearExitsMidTurn is true where ClearKey during a turn ends the harness
+	// instead of interrupting it.
+	ClearExitsMidTurn bool
+	// ClearSavesDraft is true where a cleared draft is written to the harness's
+	// own history, so clearing is not a secret-erase.
+	ClearSavesDraft bool
+	// InterruptKeys are the keys, in order, that stop a running turn.
+	InterruptKeys []string
+	// Source cites the measurement behind each line, keyed submit, clear and
+	// interrupt, with the harness version it was measured on.
+	Source map[string]string
+}
+
+// ComposerCapable is implemented by an adapter that carries a measured
+// composer contract, the way StreamCapable marks a harness with a stream.
+type ComposerCapable interface {
+	Composer() ComposerContract
+}
+
+// ComposerFor returns the composer contract of a runtime, or the zero contract
+// when its adapter has none.
+func (r *Registry) ComposerFor(runtimeName string) ComposerContract {
+	return ComposerContract{}
+}
+
 // Registry maps runtime names to adapters.
 type Registry struct {
 	mu       sync.RWMutex

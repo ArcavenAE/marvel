@@ -1714,3 +1714,8 @@ func (m *Manager) now() time.Time {
 	}
 	return time.Now().UTC()
 }
+
+// ComposerContract returns what is known about driving a runtime's composer.
+func (m *Manager) ComposerContract(runtimeName string) runtime.ComposerContract {
+	return m.adapters.ComposerFor(runtimeName)
+}
