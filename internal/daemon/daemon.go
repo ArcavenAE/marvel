@@ -14,11 +14,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -269,14 +271,6 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Zero leaves the controller on its built-in default (10 minutes);
 	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.
 	teamCtrl.ShiftTimeout = opts.ShiftTimeout
-	// The max-age shift trigger asks a seat for its handoff the way an
-	// operator would, with literal keystrokes and Enter (marvel#437 D5).
-	teamCtrl.Notify = func(sess api.Session, text string) error {
-		if sess.PaneID == "" {
-			return fmt.Errorf("session %s has no pane", sess.Key())
-		}
-		return driver.SendKeys(sess.PaneID, text, true, true)
-	}
 	// Must follow OpenBolt: the controller reads its crash-loop state
 	// out of the same bolt file. Before this, a role frozen at
 	// MaxRestarts respawned on the first reconcile tick after restart.
@@ -296,6 +290,19 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
+	// The max-age shift trigger asks a seat for its handoff the way an
+	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
+	// a draft typed into a seat, so it is recorded like any inject, from marvel.
+	teamCtrl.Notify = func(sess api.Session, text string) error {
+		if sess.PaneID == "" {
+			return fmt.Errorf("session %s has no pane", sess.Key())
+		}
+		if err := driver.SendKeys(sess.PaneID, text, true, true); err != nil {
+			return err
+		}
+		recordInject(evRing, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
+		return nil
+	}
 	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
 		msg := "removed inherited session variables: " + strings.Join(scrubbed, ", ")
@@ -896,7 +903,7 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	case "reset-health":
 		return d.handleResetHealth(req.Params)
 	case "inject":
-		return d.handleInject(req.Params)
+		return d.handleInjectAs(req.Params, c)
 	case "capture":
 		return d.handleCapture(req.Params)
 	case "credential.put":
@@ -1130,6 +1137,12 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 // Apply params
 type applyParams struct {
 	ManifestData []byte `json:"manifest_data"`
+	// WorkspaceRoot is the absolute root marvel work resolved from the
+	// manifest file's directory. When present it replaces the manifest's own
+	// root, so the manifest bytes are posted untouched and the daemon never
+	// sees the manifest's path (docs/design/session-working-directory.md,
+	// decisions 2 and 3).
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
 func (d *Daemon) handleApply(params json.RawMessage) Response {
@@ -1145,6 +1158,16 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		// one), so return it as-is. Re-wrapping with "parse manifest: %v"
 		// doubled the prefix. Matches the ValidateRuntimes/ValidateBudgets
 		// pre-flight siblings below, which also surface err.Error() directly.
+		return Response{Error: err.Error()}
+	}
+
+	if p.WorkspaceRoot != "" {
+		m.Workspace.Root = p.WorkspaceRoot
+	}
+	// Pre-flight: placement. What the daemon cannot place it refuses before
+	// anything is stored; a missing root warns and places nothing.
+	workDirAdvisories, err := m.ValidateWorkDirs()
+	if err != nil {
 		return Response{Error: err.Error()}
 	}
 
@@ -1203,6 +1226,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
+	for _, a := range workDirAdvisories {
+		log.Printf("apply: %s", a)
+	}
 	for _, a := range scheduleAdvisories {
 		log.Printf("apply: %s", a)
 	}
@@ -1259,7 +1285,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
-		"advisories": append(advisories, scheduleAdvisories...),
+		"advisories": append(append(workDirAdvisories, advisories...), scheduleAdvisories...),
 	})
 	return Response{Result: result}
 }
@@ -1490,14 +1516,25 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 	// instead of "role not found". The scan reads the snapshot GetTeam
 	// already returned.
 	old := -1
+	var maxAge bool
 	for _, r := range t.Roles {
 		if r.Name == p.Role {
 			old = r.Replicas
+			for _, c := range r.Shift.Conditions() {
+				maxAge = maxAge || c.On == api.ShiftTriggerMaxAge
+			}
 			break
 		}
 	}
 	if old < 0 {
 		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+	}
+
+	// Apply refuses max-age on a role with several replicas; scale is the
+	// second door to the same drain, so it refuses the same thing (marvel#452).
+	// Scaling to zero or one stays allowed.
+	if maxAge && p.Replicas > 1 {
+		return Response{Error: api.MaxAgeReplicasError(fmt.Sprintf("team %s role %s shift", p.TeamKey, p.Role)).Error()}
 	}
 
 	// Structural validity first, before admission and before anything
@@ -1925,9 +1962,19 @@ type injectParams struct {
 	Text       string `json:"text"`
 	Literal    bool   `json:"literal"`
 	Enter      bool   `json:"enter"`
+	// Injector is what the CLI declares about itself: the seat it runs in
+	// and the user. It is a claim, not a proof; the daemon records it beside
+	// the transport it saw itself.
+	Injector Injector `json:"injector,omitempty"`
 }
 
-func (d *Daemon) handleInject(params json.RawMessage) Response {
+// Injector is the caller's own account of who it is.
+type Injector struct {
+	Session string `json:"session,omitempty"`
+	User    string `json:"user,omitempty"`
+}
+
+func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	var p injectParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
@@ -1946,7 +1993,7 @@ func (d *Daemon) handleInject(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
-	log.Printf("inject: %s <- %d bytes (literal=%v, enter=%v)", p.SessionKey, len(p.Text), p.Literal, p.Enter)
+	recordInject(d.events, sess, p, injectOrigin(c, p.Injector))
 
 	result, _ := json.Marshal(map[string]string{
 		"status":  "injected",
@@ -3028,6 +3075,100 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
 	}
 	return Response{Result: data}
+}
+
+// injectOrigin says who sent an inject: the transport the daemon itself saw,
+// then what the caller declared about itself. The two are labelled apart so a
+// reader can tell a verified key fingerprint from a claimed seat name. An
+// attested peer block (pid, tty, seat, chain; the resolver in
+// docs/design/handoff-missing-delivery.md layer 2) joins as peer_* keys without
+// renaming these.
+func injectOrigin(c caller, from Injector) string {
+	transport := "unknown"
+	switch {
+	case c.local:
+		transport = "local"
+	case c.fingerprint != "":
+		transport = "ssh:" + cleanDeclared(c.fingerprint)
+	}
+	return fmt.Sprintf("transport=%s declared_session=%s declared_user=%s",
+		transport, cleanDeclared(from.Session), cleanDeclared(from.User))
+}
+
+// declaredMax caps one declared value, so a caller cannot flood the one-line
+// message.
+const declaredMax = 64
+
+// cleanDeclared makes caller-supplied text one safe token in a line of key=value
+// pairs, so a declaration cannot write a field of its own. Format and
+// line-separator characters (which can reorder or break the display) are
+// dropped; whitespace and "=" (which would start another field) become "_";
+// other control characters are dropped; the length is capped. An absent value
+// is "-".
+func cleanDeclared(s string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if n == declaredMax {
+			break
+		}
+		switch {
+		case unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r):
+			continue
+		case unicode.IsSpace(r) || r == '=':
+			r = '_'
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0):
+			continue
+		}
+		b.WriteRune(r)
+		n++
+	}
+	if b.Len() == 0 {
+		return "-"
+	}
+	return b.String()
+}
+
+// recordInject emits session.injected for keystrokes that reached a pane. It
+// records how much was sent and, for a named key, the key; it never records
+// typed text.
+func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin string) {
+	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
+	if !p.Literal {
+		what = "key (unrecognized)"
+		if recognizedKey(p.Text) {
+			what = "key " + p.Text
+		}
+	}
+	msg := fmt.Sprintf("inject %s enter=%v %s", what, p.Enter, origin)
+	log.Printf("inject: %s <- %s", sess.Key(), msg)
+	events.Emit(ring, events.Event{
+		Kind:      events.KindSessionInjected,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   msg,
+	})
+}
+
+// namedKeys are the tmux key names, without modifiers, that an inject records.
+var namedKeys = map[string]bool{
+	"Enter": true, "Escape": true, "Tab": true, "BTab": true, "Space": true,
+	"BSpace": true, "DC": true, "Up": true, "Down": true, "Left": true,
+	"Right": true, "Home": true, "End": true, "PageUp": true, "PageDown": true,
+	"PgUp": true, "PgDn": true,
+}
+
+// keyChord matches a modifier chord on one character (C-c, M-x, C-M-a) or a
+// function key (F1 to F12).
+var keyChord = regexp.MustCompile(`^((C|M|S)-)+[A-Za-z0-9]$|^F([1-9]|1[0-2])$`)
+
+// recognizedKey reports whether s is a tmux key name this record may show. With
+// literal off tmux types a word it does not know as plain characters, so
+// anything else could be text and is not recorded.
+func recognizedKey(s string) bool {
+	return namedKeys[s] || keyChord.MatchString(s)
 }
 
 // repaintStatus names the outcome of a repaint request for the capture result.

@@ -167,7 +167,10 @@ file itself must be a regular file, not a symlink, FIFO or directory (a
 symlinked parent directory is still followed), its path may not contain `..`,
 and a session name that is not one path element is refused. marvel reads the
 file off the controller lock, so a marker is applied one tick after it is
-written; keep the file on a local filesystem. Refused on a headless role. Example: `examples/auto-shift-max-age.toml`.
+written; keep the file on a local filesystem. Refused at apply on a headless
+role and on a role with replicas > 1 (its shift would drain seats never asked
+for a handoff); `marvel scale` refuses raising such a role above 1 the same
+way, and scaling it to 0 or 1 is allowed. Example: `examples/auto-shift-max-age.toml`.
 
 Every shift's successor starts with `MARVEL_PREDECESSOR` (the old seat's key)
 and, when its predecessor was asked for a handoff,

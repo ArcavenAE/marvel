@@ -22,6 +22,10 @@ type Kind string
 // Canonical event kinds. New producers should add entries here rather
 // than inventing string literals at call sites.
 const (
+	// KindSessionInjected records keystrokes sent into a session's pane, with
+	// who sent them: the transport the daemon saw and what the caller declared.
+	// It never carries the text typed.
+	KindSessionInjected  Kind = "session.injected"
 	KindSessionCreated   Kind = "session.created"
 	KindSessionDeleted   Kind = "session.deleted"
 	KindSessionCrashed   Kind = "session.crashed"
@@ -263,6 +267,7 @@ const (
 // parses this file and fails when a declared Kind constant is missing
 // here, so the catalog cannot fall behind the constants it describes.
 var allKinds = []Kind{
+	KindSessionInjected,
 	KindSessionCreated,
 	KindSessionDeleted,
 	KindSessionCrashed,

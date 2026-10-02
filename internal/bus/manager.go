@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -335,9 +336,11 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 }
 
 // userLine matches one rendered user entry: `{ user: NAME, password: "PW",`.
+// NAME may carry a dot: the per-role user is `<team>.supervisor`, and a pattern
+// that stopped at the dot would remint its password on every restart.
 // The renderer writes exactly this shape and passwords are URL-safe base64,
 // so there is nothing to unescape.
-var userLine = regexp.MustCompile(`\{ user: ([A-Za-z0-9_-]+), password: "([^"]*)",`)
+var userLine = regexp.MustCompile(`\{ user: ([A-Za-z0-9_.-]+), password: "([^"]*)",`)
 
 // RecoverPasswords reads the passwords back from a rendered authorization
 // file, keyed by user. A missing or unreadable file recovers nothing, which
@@ -356,11 +359,12 @@ func RecoverPasswords(authPath string) map[string]string {
 	return out
 }
 
-// hasSupervisorRole reports whether a team declares the supervisor role, the
-// same name internal/team orders last in a shift.
+// hasSupervisorRole reports whether a team declares a role that holds a global
+// address (config.GlobalAddressRoles; today only supervisor, the same name
+// internal/team orders last in a shift).
 func hasSupervisorRole(t api.Team) bool {
 	for _, r := range t.Roles {
-		if r.Name == "supervisor" {
+		if slices.Contains(config.GlobalAddressRoles, r.Name) {
 			return true
 		}
 	}

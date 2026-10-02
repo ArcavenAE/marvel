@@ -98,8 +98,8 @@ func TestGlobalRecipientAddresses(t *testing.T) {
 		}
 	}
 	files, err := filepath.Glob(filepath.Join(fixturesDir, "invalid-global-*.json"))
-	if err != nil || len(files) != 4 {
-		t.Fatalf("want 4 invalid-global fixtures, found %d (%v)", len(files), err)
+	if err != nil || len(files) != 6 {
+		t.Fatalf("want 6 invalid-global fixtures, found %d (%v)", len(files), err)
 	}
 	for _, f := range files {
 		data, err := os.ReadFile(f)

@@ -889,7 +889,14 @@ func workCmd() *cobra.Command {
 				return fmt.Errorf("read manifest: %w", err)
 			}
 
-			params, _ := json.Marshal(map[string]any{"manifest_data": data})
+			// The bytes go up untouched. The workspace root marvel work
+			// resolves from the manifest file's directory rides beside them,
+			// so the daemon never sees the manifest's path.
+			p := map[string]any{"manifest_data": data}
+			if root := workspaceRootFor(args[0], declaredWorkspaceRoot(data)); root != "" {
+				p["workspace_root"] = root
+			}
+			params, _ := json.Marshal(p)
 			resp, err := send(daemon.Request{
 				Method: "apply",
 				Params: params,
@@ -1558,12 +1565,7 @@ characters rather than pressing the key. Use --key for a control key:
 				return err
 			}
 			for _, step := range steps {
-				params, _ := json.Marshal(map[string]any{
-					"session_key": args[0],
-					"text":        step.Text,
-					"literal":     step.Literal,
-					"enter":       step.Enter,
-				})
+				params, _ := json.Marshal(injectRequestParams(args[0], step))
 				resp, err := send(daemon.Request{
 					Method: "inject",
 					Params: params,

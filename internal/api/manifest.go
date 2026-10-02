@@ -67,13 +67,19 @@ type ManifestPolicy struct {
 // ManifestWorkspace is the workspace section of a manifest.
 type ManifestWorkspace struct {
 	Name string `toml:"name" yaml:"name"`
+	// Root is the filesystem root the workspace lives in; marvel work fills
+	// it from the manifest's directory when absent.
+	Root string `toml:"root,omitempty" yaml:"root,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
-	Name   string          `toml:"name" yaml:"name"`
-	Budget *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
-	Roles  []ManifestRole  `toml:"role"  yaml:"roles"`
+	Name string `toml:"name" yaml:"name"`
+	// WorkDir is where the team's sessions run unless a role declares its
+	// own. Relative values resolve against workspace.root only.
+	WorkDir string          `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	Budget  *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
+	Roles   []ManifestRole  `toml:"role"  yaml:"roles"`
 }
 
 // ManifestBudget is the budget section within a team — the operator's
@@ -114,8 +120,15 @@ func (b *ManifestBudget) Budget() Budget {
 // ManifestRole is a role section within a team.
 // Name is the job function. Persona and Identity are the costume and lens.
 type ManifestRole struct {
-	Name     string `toml:"name"                          yaml:"name"`
-	Replicas int    `toml:"replicas"                      yaml:"replicas"`
+	// SettingsSources declares which settings sources a bare claude seat
+	// loads, from user, project and local. Omitted, every source loads, as
+	// before this key existed.
+	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
+	Name            string   `toml:"name"                          yaml:"name"`
+	Replicas        int      `toml:"replicas"                      yaml:"replicas"`
+	// WorkDir is where this role's sessions run. Relative values resolve
+	// against workspace.root only.
+	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -399,6 +412,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// them so a misconfigured trigger is an error at apply, not a
 			// no-op at runtime (marvel#437 D2).
 			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			if err := validateSettingsSources(fmt.Sprintf("team[%d].role[%d]", i, j), r.SettingsSources); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if r.Schedule != nil {
@@ -685,10 +701,21 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, CreatedAt: now}
-	// Ignore already-exists for workspace (idempotent apply).
-	if err := store.CreateWorkspace(ws); err != nil && !isAlreadyExists(err) {
-		return fmt.Errorf("apply workspace: %w", err)
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	// Ignore already-exists for workspace (idempotent apply), but a re-applied
+	// root moves. An apply that names no root leaves a stored one alone.
+	if err := store.CreateWorkspace(ws); err != nil {
+		if !isAlreadyExists(err) {
+			return fmt.Errorf("apply workspace: %w", err)
+		}
+		if m.Workspace.Root != "" {
+			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
+				live.Root = m.Workspace.Root
+				return nil
+			}); err != nil {
+				return fmt.Errorf("apply workspace: %w", err)
+			}
+		}
 	}
 
 	// Policies first, so a role's policy reference resolves against
@@ -744,6 +771,8 @@ func (m *Manifest) Apply(store *Store) error {
 				Persona:              mr.Persona,
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
+				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
+				SettingsSources:      mr.SettingsSources,
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)
@@ -795,6 +824,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Workspace:  m.Workspace.Name,
 			Roles:      roles,
 			Budget:     budget,
+			WorkDir:    teamAnchor(m.Workspace.Root, mt.WorkDir),
 			Generation: 1,
 			CreatedAt:  now,
 		}
@@ -807,6 +837,11 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
+				// An apply that declares no placement leaves the anchor the
+				// team already has.
+				if m.Workspace.Root != "" || mt.WorkDir != "" {
+					live.WorkDir = team.WorkDir
+				}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)
@@ -847,4 +882,30 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// settingsSourceNames are the Claude Code settings sources a role may declare.
+// marvel passes them as given and does not interpret the files they name.
+var settingsSourceNames = map[string]bool{"user": true, "project": true, "local": true}
+
+// validateSettingsSources refuses a declaration the harness would reject or
+// that says nothing: an empty list, an unknown source, a repeat.
+func validateSettingsSources(where string, sources []string) error {
+	if sources == nil {
+		return nil
+	}
+	if len(sources) == 0 {
+		return fmt.Errorf("%s.settings_sources is empty; omit it for the default", where)
+	}
+	seen := make(map[string]bool, len(sources))
+	for _, v := range sources {
+		if !settingsSourceNames[v] {
+			return fmt.Errorf("%s.settings_sources: %q is not a settings source (valid: user, project, local)", where, v)
+		}
+		if seen[v] {
+			return fmt.Errorf("%s.settings_sources: %q appears twice", where, v)
+		}
+		seen[v] = true
+	}
+	return nil
 }

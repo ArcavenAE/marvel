@@ -132,7 +132,11 @@ type HealthCheck struct {
 
 // Workspace is an isolation boundary (namespace equivalent).
 type Workspace struct {
-	Name      string    `toml:"name"`
+	Name string `toml:"name"`
+	// Root is the absolute filesystem root the workspace lives in, the one
+	// anchor a relative workdir resolves against (docs/design/
+	// session-working-directory.md, decision 1).
+	Root      string    `toml:"root,omitempty"`
 	CreatedAt time.Time `toml:"-"`
 }
 
@@ -206,6 +210,14 @@ const ContextFeedStatusline = "statusline"
 // it exec'd. Resource readings are therefore a rollup over the pid's
 // subtree, not a read of the pid itself. See internal/procstat.
 type Session struct {
+	// SettingSources is the value passed to the harness as --setting-sources
+	// at launch, kept for describe and for a restart. Empty when marvel
+	// passed none (a wrapper owns its command line).
+	SettingSources string `toml:"setting_sources,omitempty"`
+	// WorkDir is the directory the session was placed in, copied from the
+	// role at spawn (marvel#255 build item 2). Empty on a session spawned
+	// before placement existed.
+	WorkDir       string       `toml:"workdir,omitempty"`
 	Name          string       `toml:"name"`
 	Workspace     string       `toml:"workspace"`
 	Team          string       `toml:"team"`
@@ -446,8 +458,16 @@ type SessionMetrics struct {
 // Name is the job function (reviewer, supervisor, probe-runner).
 // Persona and Identity are the costume and lens per finding-019.
 type Role struct {
-	Name          string        `toml:"name"`
-	Replicas      int           `toml:"replicas"`
+	// SettingsSources, when declared, is the list of Claude Code settings
+	// sources a bare claude seat loads (user, project, local), passed as
+	// given. Empty means every source today; SB-1 makes the default depend on
+	// where the seat is placed (docs/design/seat-bootstrap.md section 4).
+	SettingsSources []string `toml:"settings_sources,omitempty"`
+	Name            string   `toml:"name"`
+	Replicas        int      `toml:"replicas"`
+	// WorkDir is where this role's sessions run; empty means the team's
+	// workdir, then the workspace root. Absolute once applied.
+	WorkDir       string        `toml:"workdir,omitempty"`
 	Runtime       Runtime       `toml:"runtime"`
 	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
 	Permissions   string        `toml:"permissions,omitempty"`
@@ -676,6 +696,9 @@ type Team struct {
 	Name      string `toml:"name"`
 	Workspace string `toml:"workspace"`
 	Roles     []Role `toml:"role"`
+	// WorkDir is where the team's sessions run unless a role declares its
+	// own; empty means the workspace root. Absolute once applied.
+	WorkDir string `toml:"workdir,omitempty"`
 	// Budget is the team's declared resource ceiling. The zero value
 	// declares no gate, which is every manifest written before this field
 	// existed. See budget.go and aae-orc-qiay.
