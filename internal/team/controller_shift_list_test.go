@@ -531,3 +531,22 @@ func TestHandoffPathRefusesUnresolvableHome(t *testing.T) {
 		t.Fatalf("absolute template = (%q, %v), want /var/h/s.md", got, err)
 	}
 }
+
+// The template is checked for .. at apply, but {session} is filled from the
+// session name later. A name that is not one path element must not steer the
+// resolved path (marvel#444 item 2).
+func TestHandoffPathRefusesNameThatEscapesTheTemplate(t *testing.T) {
+	for _, name := range []string{"a/b", "..", ".", "../x", "x/..", `a\b`, ""} {
+		if p, err := handoffPath("/var/h/{session}.md", api.Session{Name: name}); err == nil {
+			t.Errorf("handoffPath with session name %q = %q, want an error", name, p)
+		}
+	}
+	// A name that merely contains dots is one path element and stays valid.
+	if _, err := handoffPath("/var/h/{session}.md", api.Session{Name: "team-role-g1-0"}); err != nil {
+		t.Errorf("handoffPath with an ordinary name: %v", err)
+	}
+	// A template with no {session} never reads the name.
+	if _, err := handoffPath("/var/h/fixed.md", api.Session{Name: "a/b"}); err != nil {
+		t.Errorf("handoffPath with no placeholder: %v", err)
+	}
+}
