@@ -56,7 +56,7 @@ across a restart the same way team passwords are.
 |---|---|---|
 | `<team>.<role>`, any role | `agent.<ws>.<team>.>`, `agent.audit`, plumbing | `agent.<ws>.<team>.>`, `agent.<ws>.broadcast`, plumbing |
 | plus, for `<team>.supervisor` on a cluster with a hub | `global.director.inbox`, `global.*.supervisor.inbox`, the narrowed JetStream API below | `global.<cluster>.supervisor.inbox` only |
-| plus, for a worker role in a supervisor team | none global (ruling 2) | none global |
+| plus, for every other role, in any team, on a cluster with a hub (the open door, ruling 2) | `global.director.inbox` only | none global |
 
 **Narrowed JetStream API for the supervisor role user.** In place of
 `$JS.global.API.>`, only what a supervisor's shim does across its whole
@@ -180,10 +180,29 @@ rather than marvel's records alone.
 
 ## 5. The director seat user
 
-Rendered deliberately: the per-cluster seat user carries no global grant,
-since the fleet has one director and it is not per-cluster, and the rendered
-file says so in a comment rather than by silence (6vy9x fix item 3, its
-named default). Ruling 3.
+The `director` user is rendered only on a cluster whose config declares a
+`seat`, the cluster the human's director seat runs on; it is that seat's
+credential on that cluster's broker. R-95 says the director publishes
+anywhere and reads only its own inbox, and the seat reaches the global tier
+through its own cluster's broker and leaf. So where a seat is declared, the
+`director` user carries, beside its existing local grants:
+- publish on `global.*.supervisor.inbox` and `global.director.inbox`;
+- subscribe on `global.director.inbox` only;
+- the JetStream API for its own consumer on the director stream, filtered to
+  its inbox, narrowed the way the supervisor's is in section 3.
+Where no seat is declared, no `director` user exists, so other clusters gain
+nothing. The rendered file states the grant in a comment (6vy9x fix item 3).
+Ruling 3, as corrected: the first draft gave this user no global grant on
+the reasoning that the fleet has one director, which would have left the
+director unable to reach the global tier through its own credential.
+
+**The open door, as convention (ruling 2).** Every role user can publish to
+`global.director.inbox` and nothing else global, so any seat can reach the
+director. The norm that governs its use lives in the role library, not the
+grant: route through the team's supervisor first; use the door when the
+supervisor has not acknowledged an ask within 30 minutes, or for an alarm;
+always copy the supervisor on the same message. The grant cannot enforce the
+norm, and is not meant to.
 
 ## 6. Custody check (SOUL section 3, ADR-009)
 
@@ -207,7 +226,10 @@ named default). Ruling 3.
    supervisor team, with no shim in the path: core subscribe to
    `global.<cluster>.supervisor.inbox` and to `global.<cluster>.>` is
    refused, and creating a JetStream consumer on `GLOBAL_TO_<cluster>` is
-   refused. The finding-179 interception cannot be reproduced.
+   refused. The finding-179 interception cannot be reproduced. The open
+   door holds: the same worker's acked publish to `global.director.inbox`
+   succeeds through the leaf, and a publish to any other global subject
+   (another cluster's supervisor inbox included) is refused by name.
 3. **The supervisor still works, end to end.** As `<team>.supervisor`, the
    shim's full global lifecycle succeeds against a scratch hub plus leaf:
    attach (stream info, presence bucket bind, its inbox consumer), a
@@ -233,8 +255,12 @@ named default). Ruling 3.
 8. **Names.** A role user name never collides with a team user name, and a
    team with no supervisor role renders role users with no global grant
    (the negative test #403 carries).
-9. **The seat user.** The rendered file states the seat user's global
-   grants, or their absence, in a comment.
+9. **The seat user.** On a cluster with a declared seat, the `director` user
+   can publish to another cluster's supervisor inbox and to
+   `global.director.inbox`, can consume its own inbox through a filtered
+   consumer, and is refused a subscribe on any other global subject; the
+   rendered file states the grant in a comment. On a cluster with no seat,
+   no `director` user is rendered.
 10. **The pull residual.** A broad consumer created on `GLOBAL_TO_<cluster>`
     with a guessable name raises `bus.global-broad-consumer`; a consumer
     created by the supervisor role user with a broad filter is refused; the
@@ -244,7 +270,7 @@ named default). Ruling 3.
 
 | # | question | default |
 |---|---|---|
-| 1 | Broker users per (team, role), named `<team>.<role>`, as the step before per-session users (R-84) | yes |
-| 2 | A worker role in a supervisor team publishes nothing on the global tier (the 2026-09-30 ruling extended from teams to roles), or keeps publish on `global.director.inbox` (sharpened R-94's upward send). It breaks no current shim path, but once S5 retires the team user it DOES cut: a hand-run client using the team password, and director#191's `unread --global` run by anyone without admin or hub credentials | nothing; an upward send goes through the supervisor |
-| 3 | The per-cluster director seat user carries no global grant, stated in the rendered file | yes |
-| 4 | S4 and S5 run per team, by the operator's verb, after a heads-up to director; never fleet-wide in one command | yes |
+| 1 | RULED 2026-10-02 yes: broker users per (team, role), named `<team>.<role>`, as the step before per-session users (R-84) | yes |
+| 2 | RULED 2026-10-02, "open door": every role user publishes on `global.director.inbox` and nothing else global; the norm (supervisor first, the door after a 30-minute no-ack or for an alarm, always copy the supervisor) lives in the role library. Noted for the record: once S5 retires a team user, a hand-run client using the team password and director#191's `unread --global` without admin or hub credentials stop working | open door |
+| 3 | RULED 2026-10-02, "as corrected": the `director` user, rendered only where a seat is declared, publishes on `global.*.supervisor.inbox` and `global.director.inbox`, subscribes on its own inbox only, and has its own filtered consumer (section 5) | as corrected |
+| 4 | RULED 2026-10-02 yes: S4 and S5 run per team, by the operator's verb, after a heads-up to director; never fleet-wide in one command | yes |
