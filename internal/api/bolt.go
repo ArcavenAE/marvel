@@ -118,15 +118,13 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 		_ = db.Close()
 		return err
 	}
-	var stamps []LegacyStamp
 	switch {
 	case version > boltSchemaVersion:
 		_ = db.Close()
 		return fmt.Errorf("on-disk schema version %d is newer than binary's %d: refusing to load",
 			version, boltSchemaVersion)
 	case version == 1:
-		stamps, err = migrateV1(db, path, opts)
-		if err != nil {
+		if err = migrateV1(db, path, opts); err != nil {
 			_ = db.Close()
 			return err
 		}
@@ -155,7 +153,6 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 		_ = db.Close()
 		return err
 	}
-	s.legacyStamps = stamps
 
 	s.bolt = db
 	s.boltPath = path
@@ -478,10 +475,22 @@ type LegacyStamp struct {
 	Dir     string
 }
 
-// LegacyStamps returns the teams the migration stamped when this store was
-// opened, so the daemon can announce them once the commit is durable.
+// LegacyStamps returns the teams that currently hold a legacy stamp, read from
+// the persisted records rather than from what this open migrated. The daemon
+// announces them at every start, so a crash between the migration's commit and
+// the announcement loses nothing, and a restart repeats the reminder to declare
+// a root until the operator does.
 func (s *Store) LegacyStamps() []LegacyStamp {
-	return append([]LegacyStamp(nil), s.legacyStamps...)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []LegacyStamp
+	for key, t := range s.teams {
+		if t.WorkDirSource == WorkDirSourceLegacy {
+			out = append(out, LegacyStamp{TeamKey: key, Dir: t.WorkDir})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TeamKey < out[j].TeamKey })
+	return out
 }
 
 // boltMigrationFault, when set by a test, is called at named stages of the
@@ -514,49 +523,52 @@ func onDiskSchemaVersion(db *bolt.DB) (uint64, error) {
 
 // migrateV1 upgrades a version-1 store in place. It writes `<store>.v1.bak`
 // first, because the old binary refuses a newer store and nothing else keeps
-// a way back; then, in one transaction, stamps every team that resolves no
-// root with the directory the daemon started in and writes version 2. The
-// transaction commits whole or not at all. The backup is never overwritten:
-// an existing one means an earlier migration was interrupted or the file is
-// stale, and the daemon refuses to guess which.
-func migrateV1(db *bolt.DB, path string, opts BoltOptions) ([]LegacyStamp, error) {
+// a way back; then, in one transaction, stamps every team that has no workdir
+// of its own with the directory the daemon started in and writes version 2.
+// The transaction commits whole or not at all. The backup is never
+// overwritten: an existing one means an earlier migration was interrupted or
+// the file is stale, and the daemon refuses to guess which.
+//
+// Every team with an empty workdir is stamped, whatever its workspace holds: a
+// v1 store can carry a workspace root, but a team that resolves to the live
+// root at spawn moves when another team's apply moves that root.
+func migrateV1(db *bolt.DB, path string, opts BoltOptions) error {
 	bak := path + ".v1.bak"
 	if _, err := os.Lstat(bak); err == nil {
-		return nil, fmt.Errorf("%s exists beside a v1 store: a previous migration was interrupted, or the file is a stale backup. Move it aside and restart", bak)
+		return fmt.Errorf("%s exists beside a v1 store: a previous migration was interrupted, or the file is a stale backup. Move it aside and restart", bak)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("check for backup %s: %w", bak, err)
-	}
-	if err := writeV1Backup(db, bak); err != nil {
-		return nil, fmt.Errorf("back up the v1 store before migrating: %w", err)
+		return fmt.Errorf("check for backup %s: %w", bak, err)
 	}
 
 	cwd := opts.LegacyCwd
 	if cwd == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("migrate v1 store: the daemon's working directory is unknown: %w", err)
+			return fmt.Errorf("migrate v1 store: the daemon's working directory is unknown: %w", err)
 		}
 		cwd = wd
 	}
+	// Refuse before the backup, so a refusal leaves nothing that blocks the
+	// next start. A daemon started from / (launchd without a WorkingDirectory)
+	// would pin every such team there.
+	if filepath.Clean(cwd) == string(filepath.Separator) {
+		n, err := teamsWithoutAWorkDir(db)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("migrate v1 store: the daemon's directory is /, which would place %d team(s) there. Restart the daemon from the seat directory (where the seats run today) and start again; nothing was changed", n)
+		}
+	}
+	if err := writeV1Backup(db, bak); err != nil {
+		return fmt.Errorf("back up the v1 store before migrating: %w", err)
+	}
 
-	var stamps []LegacyStamp
 	if err := db.Update(func(tx *bolt.Tx) error {
-		stamps = stamps[:0]
 		for _, name := range allBuckets {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return fmt.Errorf("create bucket %s: %w", string(name), err)
 			}
-		}
-		roots := map[string]string{}
-		if err := tx.Bucket(bucketWorkspaces).ForEach(func(_, v []byte) error {
-			var w Workspace
-			if err := json.Unmarshal(v, &w); err != nil {
-				return fmt.Errorf("unmarshal workspace: %w", err)
-			}
-			roots[w.Name] = w.Root
-			return nil
-		}); err != nil {
-			return err
 		}
 		teams := tx.Bucket(bucketTeams)
 		type pending struct {
@@ -569,7 +581,7 @@ func migrateV1(db *bolt.DB, path string, opts BoltOptions) ([]LegacyStamp, error
 			if err := json.Unmarshal(v, &t); err != nil {
 				return fmt.Errorf("unmarshal team %s: %w", string(k), err)
 			}
-			if t.WorkDir != "" || roots[t.Workspace] != "" {
+			if t.WorkDir != "" {
 				return nil
 			}
 			t.WorkDir = cwd
@@ -579,7 +591,6 @@ func migrateV1(db *bolt.DB, path string, opts BoltOptions) ([]LegacyStamp, error
 				return fmt.Errorf("marshal team %s: %w", string(k), err)
 			}
 			writes = append(writes, pending{key: append([]byte(nil), k...), val: b})
-			stamps = append(stamps, LegacyStamp{TeamKey: string(k), Dir: cwd})
 			return nil
 		}); err != nil {
 			return err
@@ -594,10 +605,31 @@ func migrateV1(db *bolt.DB, path string, opts BoltOptions) ([]LegacyStamp, error
 		}
 		return tx.Bucket(bucketMeta).Put(metaKeySchemaVersion, encodeUint64(2))
 	}); err != nil {
-		return nil, fmt.Errorf("migrate v1 store (backup kept at %s): %w", bak, err)
+		return fmt.Errorf("migrate v1 store (backup kept at %s): %w", bak, err)
 	}
-	sort.Slice(stamps, func(i, j int) bool { return stamps[i].TeamKey < stamps[j].TeamKey })
-	return stamps, nil
+	return nil
+}
+
+// teamsWithoutAWorkDir counts the teams the migration would stamp.
+func teamsWithoutAWorkDir(db *bolt.DB) (int, error) {
+	n := 0
+	err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTeams)
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(k, v []byte) error {
+			var t Team
+			if err := json.Unmarshal(v, &t); err != nil {
+				return fmt.Errorf("unmarshal team %s: %w", string(k), err)
+			}
+			if t.WorkDir == "" {
+				n++
+			}
+			return nil
+		})
+	})
+	return n, err
 }
 
 // WorkDirSourceLegacy marks a Team.WorkDir stamped by the v1 to v2 migration.
@@ -634,7 +666,16 @@ func writeV1Backup(db *bolt.DB, bak string) (err error) {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, bak)
+	if err = os.Rename(tmp, bak); err != nil {
+		return err
+	}
+	// Make the rename itself durable, so a crash right after cannot lose the
+	// backup the migration is about to rely on.
+	if dir, derr := os.Open(filepath.Dir(bak)); derr == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
 }
 
 // keepLegacyStamp reports whether a team's legacy stamp survives a re-apply
