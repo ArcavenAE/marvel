@@ -165,3 +165,22 @@ func init() {
 	var _ StreamCapable = (*Codex)(nil)
 	var _ SessionHomeAssigner = (*Codex)(nil)
 }
+
+// Composer is codex's composer contract, measured on codex-cli 0.157.0. C-c on
+// an empty composer exits codex at once, and the codex reader cannot yet read a
+// staged draft, so no clear is sent until a reader can.
+func (*Codex) Composer() ComposerContract {
+	return ComposerContract{
+		Submit:              SubmitPasteEnter,
+		ClearKey:            "C-c",
+		ClearExitsWhenEmpty: true,
+		ClearExitsMidTurn:   false,
+		ClearSavesDraft:     true,
+		InterruptKeys:       []string{"Escape"},
+		Source: map[string]string{
+			"submit":    "aae-orc-g88i1 probe (2026-10-02, codex-cli 0.157.0): bracketed paste, then Enter; literal newlines do not submit at the composer, but select the highlighted option at the startup update menu (marvel#477)",
+			"clear":     "aae-orc-g88i1 probe (2026-10-02, codex-cli 0.157.0): one C-c clears a staged draft, submits nothing, and writes the draft to history.jsonl; one C-c on an empty composer exits codex; C-u removes one line at a time; Escape leaves a draft alone",
+			"interrupt": "measured, aae-orc-g88i1 probe (2026-10-02, codex-cli 0.157.0): one Escape interrupts a running turn; C-c in a turn also interrupts and does not exit",
+		},
+	}
+}

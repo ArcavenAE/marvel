@@ -84,3 +84,22 @@ func init() {
 	var _ Adapter = (*OpenCode)(nil)
 	var _ StreamCapable = (*OpenCode)(nil)
 }
+
+// Composer is opencode's composer contract, measured on 1.18.15. C-c on an empty
+// composer, or in a running turn, exits opencode at once, so no clear is sent
+// until a reader can see a staged draft in an idle composer.
+func (*OpenCode) Composer() ComposerContract {
+	return ComposerContract{
+		Submit:              SubmitPasteEnter,
+		ClearKey:            "C-c",
+		ClearExitsWhenEmpty: true,
+		ClearExitsMidTurn:   true,
+		ClearSavesDraft:     false,
+		InterruptKeys:       []string{"Escape", "Escape"},
+		Source: map[string]string{
+			"submit":    "aae-orc-g88i1 probe (2026-10-02, opencode 1.18.15): bracketed paste, then Enter; literal newlines stay in the draft and do not submit",
+			"clear":     "aae-orc-g88i1 probe (2026-10-02, opencode 1.18.15): one C-c clears a staged draft of either form and submits nothing; one C-c on an empty composer or in a running turn exits opencode with no confirmation; C-u clears a pasted draft but not a typed multi-line one",
+			"interrupt": "measured, aae-orc-g88i1 probe (2026-10-02, opencode 1.18.15): Escape twice interrupts a running turn; one Escape only arms it",
+		},
+	}
+}
