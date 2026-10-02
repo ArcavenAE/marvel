@@ -140,8 +140,11 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	if role.Shift.Handoff != "" {
 		path, pathErr = handoffPath(role.Shift.Handoff, sess)
 	}
+	var read handoffProbeResult
+	var haveRead bool
 	if path != "" && pathErr == nil {
-		if c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker) {
+		read, haveRead = c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+		if haveRead && read.complete {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
 			}
@@ -153,6 +156,13 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	}
 	window := role.Shift.HandoffWindowOrDefault()
 	if now.Sub(req.RequestedAt) < window {
+		return false
+	}
+	// The read is applied a tick late, so a read that began before the
+	// deadline, finished or still in flight, cannot show the marker is absent:
+	// the seat may have written in time. Escalate only on a finished read that
+	// began at or after the deadline.
+	if path != "" && pathErr == nil && (!haveRead || read.startedAt.Before(req.RequestedAt.Add(window))) {
 		return false
 	}
 
@@ -278,27 +288,30 @@ type handoffProbes struct {
 
 	mu       sync.Mutex
 	done     map[string]handoffProbeResult
-	inflight map[string]*struct{}
+	inflight map[string]*handoffRead
 	wg       sync.WaitGroup
 }
 
 type handoffProbeResult struct {
 	path, marker string
 	complete     bool
+	startedAt    time.Time // when the read began, so a deadline can be checked against it
 }
 
-// complete reports the last finished read of path for session key, false while
-// none has finished, and starts a fresh read unless one is already running.
-func (p *handoffProbes) complete(key, path, marker string) bool {
+type handoffRead struct{ startedAt time.Time }
+
+// complete returns the last finished read of path for session key, and whether
+// there is one, and starts a fresh read at now unless one is already running.
+func (p *handoffProbes) complete(key, path, marker string, now time.Time) (handoffProbeResult, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	last, ok := p.done[key]
 	known := ok && last.path == path && last.marker == marker
 	if p.inflight[key] == nil {
 		if p.inflight == nil {
-			p.inflight = make(map[string]*struct{})
+			p.inflight = make(map[string]*handoffRead)
 		}
-		token := &struct{}{}
+		token := &handoffRead{startedAt: now}
 		p.inflight[key] = token
 		check := p.check
 		if check == nil {
@@ -317,10 +330,10 @@ func (p *handoffProbes) complete(key, path, marker string) bool {
 			if p.done == nil {
 				p.done = make(map[string]handoffProbeResult)
 			}
-			p.done[key] = handoffProbeResult{path: path, marker: marker, complete: got}
+			p.done[key] = handoffProbeResult{path: path, marker: marker, complete: got, startedAt: token.startedAt}
 		}()
 	}
-	return known && last.complete
+	return last, known
 }
 
 // forget drops what is held for session key, so a request that ended leaves

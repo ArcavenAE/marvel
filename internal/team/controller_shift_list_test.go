@@ -170,6 +170,12 @@ func TestMaxAgeRequestsHandoffThenShiftsOnMarker(t *testing.T) {
 	if _, pending := got.ShiftRequests[testShiftRole]; pending {
 		t.Fatal("the request should move into the shift when it starts")
 	}
+	f.ctrl.handoffProbes.mu.Lock()
+	held := len(f.ctrl.handoffProbes.done) + len(f.ctrl.handoffProbes.inflight)
+	f.ctrl.handoffProbes.mu.Unlock()
+	if held != 0 {
+		t.Fatalf("handoff probes still hold %d entries after the shift started", held)
+	}
 	if req := got.Shift.HandoffRequests[testShiftRole]; req.Session != s.Key() || !req.RequestedAt.Equal(listEpoch) {
 		t.Fatalf("Shift.HandoffRequests[%s] = %+v, want %s at %v", testShiftRole, req, s.Key(), listEpoch)
 	}
@@ -188,6 +194,11 @@ func TestMaxAgeEscalatesWithoutMarker(t *testing.T) {
 
 	f.evaluate()
 	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	// The first tick past the deadline starts a read; escalation needs a
+	// finished read that began after the deadline.
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
 	got := f.evaluate()
 	if got.Shift.Phase != api.ShiftNone {
 		t.Fatalf("phase = %q, want none: marvel never shifts unwatched", got.Shift.Phase)
