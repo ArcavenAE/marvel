@@ -50,6 +50,15 @@ const (
 	// without reconstructing it from the occupancy series. See
 	// api.ShiftPolicy.
 	KindShiftAutoTriggered Kind = "team.shift-autotriggered"
+	// KindShiftHandoffRequested records that a seat past its max age was
+	// asked for a handoff (design D5 step 1). Message carries the age, the
+	// stage (quiet or hard) and whether the notice reached the pane.
+	KindShiftHandoffRequested Kind = "team.shift-handoff-requested"
+	// KindShiftHandoffMissing is the escalation: a handoff request's window
+	// expired with no marker, or the role declares no handoff path, so marvel
+	// leaves the seat running and the team's supervisor decides whether to
+	// call the shift. marvel never shifts unwatched (design D5 step 3).
+	KindShiftHandoffMissing Kind = "team.shift-handoff-missing"
 	// KindShiftRoleReady records the instant the control plane decided a
 	// role's successor generation may take over: allReady returned true and
 	// the shift advanced from launching to draining. It is the boundary
@@ -267,6 +276,8 @@ var allKinds = []Kind{
 	KindShiftCompleted,
 	KindShiftTimedOut,
 	KindShiftAutoTriggered,
+	KindShiftHandoffRequested,
+	KindShiftHandoffMissing,
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
 	KindRoleSaturated,

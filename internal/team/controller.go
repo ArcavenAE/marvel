@@ -81,6 +81,12 @@ type Controller struct {
 	// keeps this package free of any usage import.
 	Snapshots Snapshotter
 
+	// Notify delivers a line of text to a session's pane, as `marvel inject`
+	// does. The max-age trigger uses it to ask a seat for its handoff
+	// (design D5 step 1). Nil means no delivery: the request is still
+	// recorded, and its event says the notice did not reach the pane.
+	Notify func(sess api.Session, text string) error
+
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
 }
