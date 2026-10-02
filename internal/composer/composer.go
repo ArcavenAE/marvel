@@ -9,6 +9,7 @@ package composer
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 )
 
@@ -55,7 +56,9 @@ type Reader interface {
 // a contract yet gets a reader that reads Unknown and never clears; Unknown is
 // never treated as safe by a caller.
 func ReaderFor(runtime string) Reader {
-	if runtime == "codex" {
+	// The harness is the program, so a path or a wrapper directory does not hide
+	// it: "/opt/homebrew/bin/codex" is codex.
+	if filepath.Base(strings.TrimSpace(runtime)) == "codex" {
 		return codexReader{}
 	}
 	return unknownReader{}
@@ -95,8 +98,11 @@ type codexReader struct{}
 func (codexReader) Name() string { return "codex" }
 
 func (codexReader) Read(capture string) State {
+	// Wrapping can break the menu's words across lines and indents; the words
+	// are matched with any run of whitespace between them taken as one space.
+	text := strings.Join(strings.Fields(capture), " ")
 	for _, h := range codexHazards {
-		if strings.Contains(capture, h) {
+		if strings.Contains(text, h) {
 			return MenuUnsafe
 		}
 	}
