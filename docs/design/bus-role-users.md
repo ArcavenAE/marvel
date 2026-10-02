@@ -69,8 +69,11 @@ global lifecycle (director `global.go`):
   and ack.
 - **Global presence** (`attachGlobal`, `writeGlobalPresence`, deregister,
   the roster scan): bind the `GLOBAL_PRESENCE` bucket (stream info on
-  `KV_GLOBAL_PRESENCE`), put and delete (publish on
-  `$KV.GLOBAL_PRESENCE.>`), list keys (a consumer create, info and delete
+  `KV_GLOBAL_PRESENCE`), put and delete on its OWN keys only (publish on
+  `$JS.global.API.$KV.GLOBAL_PRESENCE.presence.<cluster>.supervisor.*`: a
+  local user reaches a hub bucket through the domain prefix, nats.go
+  `kv.go` `useJSPfx`, so the unprefixed `$KV.GLOBAL_PRESENCE.>` denies the
+  supervisor's own put), list keys (a consumer create, info and delete
   on `KV_GLOBAL_PRESENCE`), and get (direct get and message get). This is
   the same set the hub's leaf users already allow.
 - **Acked publish** on `global.director.inbox` and
@@ -93,26 +96,36 @@ are random and never logged.** Enforcement:
   check on the 30s health tick where the leaf can list consumers on the hub
   (otherwise it is the hub operator's command, given in the doc): any
   consumer whose filter is broader than one inbox subject, or which has no
-  filter, raises `bus.global-broad-consumer` with its name, filter and
-  creator where known. It is a warning, not a gate.
-- director#191's `unread --global` and any audit reader create their
-  consumers with admin or hub credentials and a random name, and delete
-  them when done.
+  filter, raises `bus.global-broad-consumer` with its filter, creator where
+  known, and a short hash of its name, never the name itself, so the event
+  cannot leak what makes such a consumer safe. It is a warning, not a gate.
+- director#191's `unread --global` and any audit reader create no consumer
+  at all: they read with admin or hub credentials through
+  `MSG.GET` or `DIRECT.GET` by sequence, so no broad consumer exists for
+  anyone to pull from.
 
 **Three reviewer questions, answered where known.**
 - *Can one supervisor's KV put or delete touch another's presence key?*
-  Yes, with a bucket-wide `$KV.GLOBAL_PRESENCE.>` grant. The shim's key is
+  With a broad grant, yes: measured on a scratch hub plus leaf (review
+  5397040779), a broad prefixed grant overwrote another cluster's key and
+  deleted the director's. The unprefixed `$KV.GLOBAL_PRESENCE.>` is worse
+  in the other direction: it denies the supervisor's own put, so every
+  supervisor would read as dead after S2. The shim's key is
   `presence.<cluster>.<role>.<instance>` (director `global.go`
-  `presenceKey`), so the role user's grant narrows to
-  `$KV.GLOBAL_PRESENCE.presence.<cluster>.supervisor.>`. That keeps a
-  supervisor away from the director's and other clusters' rows. It does
+  `presenceKey`), and a local user reaches the hub bucket through the
+  domain prefix, so the grant is
+  `$JS.global.API.$KV.GLOBAL_PRESENCE.presence.<cluster>.supervisor.*`,
+  measured in the same review: its own put works and every other key is
+  denied. That keeps a supervisor away from the director's and other
+  clusters' rows. It does
   not separate two supervisors on the same cluster, who share the role
   word; that is the replica limit already stated, closed only by
-  per-session users (R-84). Test 3 asserts a put outside the prefix is
-  refused.
+  per-session users (R-84). Test 3, run through a leaf, asserts the own
+  put and delete succeed and a put or delete on another cluster's key or
+  the director's key is refused.
 - *Does 60s exceed the shim's reconnect backoff?* Yes. The shim connects
   with nats.go defaults (director `bus.go` sets no reconnect options), and
-  nats.go v1.54.0 sets `DefaultReconnectWait` 2s and `DefaultMaxReconnect`
+  director's pinned nats.go v1.53.1 (the same in v1.54.0) sets `DefaultReconnectWait` 2s and `DefaultMaxReconnect`
   60, so a reconnecting shim retries about every 2s and is visible again
   within seconds. After 60 failed attempts (about two minutes) it closes
   for good and does not come back, so it cannot slip past the second check
@@ -120,7 +133,10 @@ are random and never logged.** Enforcement:
 - *Can a role user enumerate the random-name consumers?* Not with the
   grant above: it carries no `CONSUMER.LIST` or `CONSUMER.NAMES`. The
   builder keeps both out of the list, and test 10 asserts each is
-  refused for a role user.
+  refused for a role user. The cost: the shim's roster floor lookups
+  (`seatFloor`) then run without NAMES and can take up to
+  `floorListTimeout`, 5s, per attach. That is a slower start, not a
+  failure, and test 3 records the attach time.
 
 **Honest limit, restated.** Within a team, every role still shares
 `agent.<ws>.<team>.>`, so a worker can read a teammate's local role inbox.
