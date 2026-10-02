@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -229,7 +230,7 @@ func TestNudgeWinsizeRestoresTheOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	var during winsize
-	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, func() error {
+	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, nil, func() error {
 		during, err = ttyWinsize(tty)
 		return err
 	})
@@ -255,7 +256,7 @@ func TestNudgeWinsizeLeavesAResizeThatHappenedUnderneath(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := winsize{Rows: orig.Rows, Cols: orig.Cols + 7}
-	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, func() error { return setTTYWinsize(tty, other) })
+	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, nil, func() error { return setTTYWinsize(tty, other) })
 	if err != nil {
 		t.Fatalf("nudge: %v", err)
 	}
@@ -274,7 +275,7 @@ func TestNudgeWinsizeRestoresWhenAStepFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = nudgeWinsize(tty, 10*time.Millisecond, func() error { return fmt.Errorf("injected failure") })
+	_, err = nudgeWinsize(tty, 10*time.Millisecond, nil, func() error { return fmt.Errorf("injected failure") })
 	if err == nil || !strings.Contains(err.Error(), "injected failure") {
 		t.Fatalf("error = %v, want the injected failure returned", err)
 	}
@@ -285,7 +286,7 @@ func TestNudgeWinsizeRestoresWhenAStepFails(t *testing.T) {
 
 func TestNudgeWinsizeOfAMissingTTYIsAnError(t *testing.T) {
 	t.Parallel()
-	if _, err := nudgeWinsize("/dev/does-not-exist", time.Millisecond, nil); err == nil {
+	if _, err := nudgeWinsize("/dev/does-not-exist", time.Millisecond, nil, nil); err == nil {
 		t.Fatal("nudge of a tty that does not exist returned no error")
 	}
 }
@@ -337,5 +338,112 @@ func TestValidateRepaintPane(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.wantErr)
 		}
+	}
+}
+
+// Two repaints of one pane must not interleave: the second would read the
+// first's widened size as the original and restore to it, leaving the pane one
+// column wide. Each takes the pane's repaint lock across widen, hold and
+// restore, so they run one after the other and the pane ends as it began.
+func TestConcurrentRepaintsLeaveThePaneAtItsOriginalSize(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	tty := paneTTYPath(t, d, pane)
+	before, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 4
+	results := make(chan RepaintResult, n)
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			res, err := d.Repaint(pane, testHold)
+			results <- res
+			errs <- err
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("Repaint: %v", err)
+		}
+		if res := <-results; res.RestoreSkipped {
+			t.Error("a repaint saw another repaint's widened size as a foreign change and skipped its restore")
+		}
+	}
+	after, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("size after %d concurrent repaints = %+v, want the original %+v", n, after, before)
+	}
+}
+
+// The pane is checked again after its terminal is opened and before the first
+// size is written: a pane that exited in between can have its pty path handed
+// to another pane. A failed check changes nothing.
+func TestNudgeWinsizeRevalidatesBeforeTheFirstWrite(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	tty := paneTTYPath(t, d, pane)
+	before, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawDuring *winsize
+	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, func() error {
+		ws, _ := ttyWinsize(tty)
+		sawDuring = &ws
+		return errors.New("the pane's terminal changed")
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "terminal changed") {
+		t.Fatalf("error = %v, want the revalidation failure returned", err)
+	}
+	if skipped {
+		t.Error("a refused nudge reported a skipped restore")
+	}
+	if sawDuring == nil || *sawDuring != before {
+		t.Errorf("size when revalidating = %v, want it untouched at %+v", sawDuring, before)
+	}
+	if after, _ := ttyWinsize(tty); after != before {
+		t.Errorf("size after a refused nudge = %+v, want %+v", after, before)
+	}
+}
+
+func TestPaneStillAt(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	tty := paneTTYPath(t, d, pane)
+	if err := d.paneStillAt(pane, tty); err != nil {
+		t.Errorf("a live pane at its own tty: %v", err)
+	}
+	if err := d.paneStillAt(pane, "/dev/ttys999"); err == nil || !strings.Contains(err.Error(), "terminal") {
+		t.Errorf("a pane at a different tty path: error = %v, want a refusal that names the terminal", err)
+	}
+	if err := d.paneStillAt("%99999", tty); err == nil {
+		t.Error("a pane that does not exist was reported as still there")
+	}
+
+	session := fmt.Sprintf("marvel-test-repaint-recheck-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = d.KillSession(session) })
+	if err := d.NewSession(session); err != nil {
+		t.Fatal(err)
+	}
+	dead, err := d.NewPane(session, "sh -c 'exit 0'", "repaint-recheck", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadTTY := paneTTYPath(t, d, dead)
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		out, _ := d.cmd("display-message", "-p", "-t", dead, "#{pane_dead}").CombinedOutput()
+		if strings.TrimSpace(string(out)) == "1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pane never reported dead")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := d.paneStillAt(dead, deadTTY); err == nil || !strings.Contains(err.Error(), "exited") {
+		t.Errorf("a dead pane at its old tty: error = %v, want a refusal that says it exited", err)
 	}
 }

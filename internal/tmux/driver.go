@@ -658,7 +658,7 @@ func (d *Driver) Repaint(paneID string, hold time.Duration) (RepaintResult, erro
 		return RepaintResult{}, fmt.Errorf("pane %s: %w", paneID, err)
 	}
 	res := RepaintResult{Target: foregroundCommand(paneTTY)}
-	res.RestoreSkipped, err = nudgeWinsize(paneTTY, hold, nil)
+	res.RestoreSkipped, err = nudgeWinsize(paneTTY, hold, nil, nil)
 	if err != nil {
 		return res, fmt.Errorf("pane %s: %w", paneID, err)
 	}
@@ -734,7 +734,8 @@ func setTTYWinsize(path string, ws winsize) error {
 // left undone on purpose. The restore runs however the hold ends, so a failed
 // step cannot leave the pane one column wide; if the restore itself fails, the
 // error says how wide the pane was left.
-func nudgeWinsize(path string, hold time.Duration, between func() error) (skipped bool, err error) {
+func nudgeWinsize(path string, hold time.Duration, revalidate, between func() error) (skipped bool, err error) {
+	_ = revalidate // scaffold: not yet called
 	f, err := openTTY(path)
 	if err != nil {
 		return false, fmt.Errorf("open the pane's terminal: %w", err)
@@ -857,3 +858,7 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 	}
 	return panes, nil
 }
+
+// paneStillAt re-reads a pane's state and reports whether it is alive and still
+// on the terminal path it was read with. Scaffold: always true.
+func (d *Driver) paneStillAt(paneID, ttyPath string) error { return nil }
