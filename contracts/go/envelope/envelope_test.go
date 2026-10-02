@@ -139,3 +139,30 @@ func TestRoundTripWithoutAuthority(t *testing.T) {
 		t.Errorf("re-validate after round-trip: %v", err)
 	}
 }
+
+// A reader treats a missing authority block exactly as strength none, and a
+// present one as stated.
+func TestEffectiveAuthority(t *testing.T) {
+	cases := map[string]Strength{
+		"valid-authority-absent.json": StrengthNone,
+		"valid-authority-none.json":   StrengthNone,
+		"valid-relayed-seat.json":     StrengthRelayed,
+	}
+	for name, want := range cases {
+		data, err := os.ReadFile(filepath.Join(fixturesDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		var e Envelope
+		if err := json.Unmarshal(data, &e); err != nil {
+			t.Fatalf("%s: unmarshal: %v", name, err)
+		}
+		if got := e.EffectiveAuthority().Strength; got != want {
+			t.Errorf("%s: EffectiveAuthority().Strength = %q, want %q", name, got, want)
+		}
+	}
+	var absent Envelope
+	if a := absent.EffectiveAuthority(); a.Seat != nil {
+		t.Errorf("absent authority has seat %v, want none", a.Seat)
+	}
+}

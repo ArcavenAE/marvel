@@ -79,8 +79,10 @@ Locked now:
   (`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`). Optional and nullable; informational
   and self-asserted, never a routing or authorization input. Strict readers
   learn it before any sender sets it (director#196).
-- `authority` is a top-level block (a sibling of `sender`, never inside
-  `content`): `strength` is a closed enum `direct | relayed | none` (stated,
+- `authority` is an optional top-level block (a sibling of `sender`, never
+  inside `content`). Absent means `{"strength": "none"}` with no seat
+  (director#197); Go readers apply that with `Envelope.EffectiveAuthority`.
+  When present: `strength` is a closed enum `direct | relayed | none` (stated,
   never inferred, R-02), and `seat` is `null` or `{role, key, epoch}` where
   `epoch` is a monotonic fencing token (R-55).
 - `content.type` is a closed enum, and content never carries authority
