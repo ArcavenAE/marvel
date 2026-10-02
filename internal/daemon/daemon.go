@@ -2013,8 +2013,8 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	// beside the capture and never fails it.
 	repaint, target := "", ""
 	if p.Repaint {
-		leader, rerr := d.driver.Repaint(sess.PaneID)
-		repaint, target = repaintStatus(rerr), leader
+		res, rerr := d.driver.Repaint(sess.PaneID, repaintHold(p.SettleMS))
+		repaint, target = repaintStatus(rerr), res.Target
 		if rerr == nil {
 			settle := time.Duration(p.SettleMS) * time.Millisecond
 			if settle <= 0 {
@@ -3047,3 +3047,6 @@ const (
 	defaultRepaintSettle = 300 * time.Millisecond
 	repaintSettleMax     = 10 * time.Second
 )
+
+// repaintHold is how long the one-column nudge is held. Scaffold.
+func repaintHold(settleMS int) time.Duration { return defaultRepaintSettle }

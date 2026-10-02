@@ -66,10 +66,11 @@ func TestRepaintSignalsAProgramThatRedrawsOnWinch(t *testing.T) {
 	if got, _ := d.CapturePane(pane); strings.Contains(got, "painted-") {
 		t.Fatalf("pane painted before any repaint:\n%s", got)
 	}
-	target, err := d.Repaint(pane)
+	res, err := d.Repaint(pane, testHold)
 	if err != nil {
 		t.Fatalf("Repaint: %v", err)
 	}
+	target := res.Target
 	waitFor(t, d, pane, "painted-1")
 	if target != "sh" {
 		t.Errorf("target = %q, want the foreground leader's command name, sh", target)
@@ -85,7 +86,7 @@ func TestRepaintReachesAProgramUnderAWrapper(t *testing.T) {
 	}
 	d, pane := repaintPane(t, "sh -c 'sh "+script+"; echo wrapper-done'")
 	waitFor(t, d, pane, "ready")
-	if _, err := d.Repaint(pane); err != nil {
+	if _, err := d.Repaint(pane, testHold); err != nil {
 		t.Fatalf("Repaint: %v", err)
 	}
 	waitFor(t, d, pane, "painted-1")
@@ -100,11 +101,11 @@ func TestRepaintOfAShellIsHarmlessAndNamesTheShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, d, pane, "shell-alive-1")
-	target, err := d.Repaint(pane)
+	res, err := d.Repaint(pane, testHold)
 	if err != nil {
 		t.Fatalf("Repaint of a shell: %v", err)
 	}
-	if target != "sh" {
+	if target := res.Target; target != "sh" {
 		t.Errorf("target = %q, want sh", target)
 	}
 	if err := d.SendKeys(pane, "echo shell-alive-2", true, true); err != nil {
@@ -121,7 +122,7 @@ func TestRepaintOfAMissingPaneIsAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Repaint("%99999"); err == nil {
+	if _, err := d.Repaint("%99999", testHold); err == nil {
 		t.Fatal("Repaint of a pane that does not exist returned no error")
 	}
 }
@@ -155,7 +156,7 @@ func TestRepaintRefusesAPaneThatHasExited(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	_, err = d.Repaint(pane)
+	_, err = d.Repaint(pane, testHold)
 	if err == nil || !strings.Contains(err.Error(), "exited") {
 		t.Fatalf("Repaint of a dead pane: error = %v, want a refusal that says the pane has exited", err)
 	}
@@ -191,6 +192,182 @@ func TestValidateRepaintTarget(t *testing.T) {
 		}
 		if err == nil || !strings.Contains(err.Error(), tc.wantInErr) {
 			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.wantInErr)
+		}
+	}
+}
+
+const testHold = 150 * time.Millisecond
+
+// A program like the harnesses research measured: it repaints when the terminal
+// SIZE changes, and a bare SIGWINCH with the same size does nothing.
+const sizeOnlyScript = `prev=""
+echo ready
+while :; do
+  s=$(stty size)
+  if [ "$s" != "$prev" ]; then
+    [ -n "$prev" ] && echo "painted-$s"
+    prev=$s
+  fi
+  sleep 0.05
+done
+`
+
+func paneTTYPath(t *testing.T, d *Driver, pane string) string {
+	t.Helper()
+	out, err := d.cmd("display-message", "-p", "-t", pane, "#{pane_tty}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("pane_tty: %v: %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Repaint changes the pane's size and puts it back, so a program that repaints
+// on a size change repaints, and no tmux option is touched.
+func TestRepaintNudgesTheSizeOfAProgramThatIgnoresASignal(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "size.sh")
+	if err := os.WriteFile(script, []byte(sizeOnlyScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d, pane := repaintPane(t, "sh "+script)
+	waitFor(t, d, pane, "ready")
+	tty := paneTTYPath(t, d, pane)
+	before, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Repaint(pane, testHold); err != nil {
+		t.Fatalf("Repaint: %v", err)
+	}
+	got := waitFor(t, d, pane, "painted-")
+	if n := strings.Count(got, "painted-"); n < 2 {
+		t.Errorf("painted %d time(s), want one for the nudge and one for the restore:\n%s", n, got)
+	}
+	after, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("size after = %+v, want the original %+v", after, before)
+	}
+}
+
+// The restore is compare-and-restore: it only writes the original size back if
+// the size is still the one the nudge set. A real resize during the hold wins.
+func TestNudgeWinsizeRestoresTheOriginal(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	tty := paneTTYPath(t, d, pane)
+	orig, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during winsize
+	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, func() error {
+		during, err = ttyWinsize(tty)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("nudge: %v", err)
+	}
+	if skipped {
+		t.Error("restore skipped with nothing else changing the size")
+	}
+	if during.Cols != orig.Cols+1 || during.Rows != orig.Rows {
+		t.Errorf("size during the hold = %+v, want one column wider than %+v", during, orig)
+	}
+	if after, _ := ttyWinsize(tty); after != orig {
+		t.Errorf("size after = %+v, want %+v", after, orig)
+	}
+}
+
+func TestNudgeWinsizeLeavesAResizeThatHappenedUnderneath(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	tty := paneTTYPath(t, d, pane)
+	orig, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := winsize{Rows: orig.Rows, Cols: orig.Cols + 7}
+	skipped, err := nudgeWinsize(tty, 10*time.Millisecond, func() error { return setTTYWinsize(tty, other) })
+	if err != nil {
+		t.Fatalf("nudge: %v", err)
+	}
+	if !skipped {
+		t.Error("restore not reported as skipped after the size changed underneath")
+	}
+	if after, _ := ttyWinsize(tty); after != other {
+		t.Errorf("size after = %+v, want the other writer's %+v left alone", after, other)
+	}
+}
+
+func TestNudgeWinsizeRestoresWhenAStepFails(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	tty := paneTTYPath(t, d, pane)
+	orig, err := ttyWinsize(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = nudgeWinsize(tty, 10*time.Millisecond, func() error { return fmt.Errorf("injected failure") })
+	if err == nil || !strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("error = %v, want the injected failure returned", err)
+	}
+	if after, _ := ttyWinsize(tty); after != orig {
+		t.Errorf("size after a failed step = %+v, want the original %+v restored", after, orig)
+	}
+}
+
+func TestNudgeWinsizeOfAMissingTTYIsAnError(t *testing.T) {
+	t.Parallel()
+	if _, err := nudgeWinsize("/dev/does-not-exist", time.Millisecond, nil); err == nil {
+		t.Fatal("nudge of a tty that does not exist returned no error")
+	}
+}
+
+// Repaint changes no tmux state: the window-size option stays unset and the
+// pane keeps its size.
+func TestRepaintLeavesTmuxOptionsAlone(t *testing.T) {
+	d, pane := repaintPane(t, "sleep 60")
+	read := func() string {
+		out, _ := d.cmd("display-message", "-p", "-t", pane, "#{pane_width}x#{pane_height} [#{window-size}]").CombinedOutput()
+		return strings.TrimSpace(string(out))
+	}
+	opt := func() string {
+		out, _ := d.cmd("show-options", "-w", "-t", pane, "window-size").CombinedOutput()
+		return strings.TrimSpace(string(out))
+	}
+	beforeSize, beforeOpt := read(), opt()
+	if _, err := d.Repaint(pane, testHold); err != nil {
+		t.Fatalf("Repaint: %v", err)
+	}
+	if got := read(); got != beforeSize {
+		t.Errorf("pane = %q, want %q unchanged", got, beforeSize)
+	}
+	if got := opt(); got != beforeOpt {
+		t.Errorf("window-size option = %q, want %q unchanged", got, beforeOpt)
+	}
+}
+
+func TestValidateRepaintPane(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		dead    bool
+		tty     string
+		wantErr string
+	}{
+		{"live pane with a terminal", false, "/dev/ttys003", ""},
+		{"dead pane", true, "/dev/ttys003", "exited"},
+		{"no terminal reported", false, "", "no terminal"},
+	}
+	for _, tc := range cases {
+		err := validateRepaintPane(tc.dead, tc.tty)
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("%s: error %v, want none", tc.name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.wantErr)
 		}
 	}
 }

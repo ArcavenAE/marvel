@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
+	"unsafe"
 
 	"github.com/arcavenae/marvel/internal/api"
 
@@ -625,7 +627,12 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 //
 // A nil error means a signal was sent, not that the program redrew: whether a
 // given harness repaints on SIGWINCH is the harness's business.
-func (d *Driver) Repaint(paneID string) (string, error) {
+func (d *Driver) Repaint(paneID string, hold time.Duration) (RepaintResult, error) {
+	target, err := d.repaintBySignal(paneID)
+	return RepaintResult{Target: target}, err
+}
+
+func (d *Driver) repaintBySignal(paneID string) (string, error) {
 	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_dead} #{pane_pid} #{pane_tty}").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
@@ -769,3 +776,47 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 	}
 	return panes, nil
 }
+
+// RepaintResult is what a repaint did. Scaffold.
+type RepaintResult struct {
+	Target         string
+	RestoreSkipped bool
+}
+
+// winsize mirrors struct winsize.
+type winsize struct{ Rows, Cols, X, Y uint16 }
+
+func ioctlWinsize(fd uintptr, req uintptr, ws *winsize) error {
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(unsafe.Pointer(ws))); e != 0 {
+		return e
+	}
+	return nil
+}
+
+func ttyWinsize(path string) (winsize, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return winsize{}, err
+	}
+	defer func() { _ = f.Close() }()
+	var ws winsize
+	return ws, ioctlWinsize(f.Fd(), syscall.TIOCGWINSZ, &ws)
+}
+
+func setTTYWinsize(path string, ws winsize) error {
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return ioctlWinsize(f.Fd(), syscall.TIOCSWINSZ, &ws)
+}
+
+// nudgeWinsize widens the terminal at path by one column, holds, then restores
+// the original size. Scaffold: not yet implemented.
+func nudgeWinsize(path string, hold time.Duration, between func() error) (skipped bool, err error) {
+	return false, nil
+}
+
+// validateRepaintPane refuses a pane that cannot be repainted. Scaffold.
+func validateRepaintPane(dead bool, paneTTY string) error { return nil }
