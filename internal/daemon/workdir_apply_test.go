@@ -117,3 +117,54 @@ func TestApplyRefusesWhatItCannotPlace(t *testing.T) {
 		}
 	}
 }
+
+// describe team shows a role whose spawn is refused for its directory, with the
+// path and the reason, so an operator is not left reading daemon logs.
+func TestDescribeTeamShowsAPlacementRefusal(t *testing.T) {
+	d := newHandlerDaemon(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := strings.Replace(strings.Replace(workDirManifestYAML, "replicas: 0", "replicas: 1", 1), "name: placed", "name: described", 1)
+	// Apply checks the directory, so it exists then and is removed after: the
+	// shape of a worktree deleted under a running team.
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if resp := applyWithRoot(t, d, manifest, root); resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	d.teamCtrl.ReconcileOnce()
+	for _, s := range d.store.ListSessions() {
+		if s.Workspace == "described" {
+			_ = d.sessMgr.Delete(s.Key())
+		}
+	}
+	if err := os.Remove(sub); err != nil {
+		t.Fatal(err)
+	}
+	d.teamCtrl.ReconcileOnce()
+
+	out := describeTeam(t, d, "described/crew")
+	conds, _ := out["Conditions"].([]any)
+	if len(conds) != 1 {
+		t.Fatalf("Conditions = %v, want one", out["Conditions"])
+	}
+	c, _ := conds[0].(map[string]any)
+	if c["role"] != "crew" || c["type"] != "PlacementRefused" || c["status"] != "True" {
+		t.Errorf("condition = %v, want role crew, type PlacementRefused, status True", c)
+	}
+	if msg, _ := c["message"].(string); !strings.Contains(msg, filepath.Join(root, "sub")) || !strings.Contains(msg, "does not exist") {
+		t.Errorf("message = %q, want the directory and the reason", msg)
+	}
+
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d.teamCtrl.ReconcileOnce()
+	if again := describeTeam(t, d, "described/crew"); again["Conditions"] != nil {
+		t.Errorf("Conditions after the directory returned = %v, want none", again["Conditions"])
+	}
+}

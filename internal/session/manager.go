@@ -32,6 +32,8 @@ type Manager struct {
 	// reconcile tick.
 	refusedMu sync.Mutex
 	refused   map[string]string
+	// Clock is the time source for refusal bookkeeping; nil means time.Now.
+	Clock func() time.Time
 
 	store      *api.Store
 	driver     *tmux.Driver
@@ -692,6 +694,7 @@ func (m *Manager) Create(sess *api.Session) error {
 // removed directory would silently run somewhere else, under a different trust
 // decision. A session with no directory is placed nowhere, as always.
 func (m *Manager) checkWorkDir(sess *api.Session) error {
+	_ = m.now() // scaffold: not yet used for the rate limits
 	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role
 	m.refusedMu.Lock()
 	defer m.refusedMu.Unlock()
@@ -1630,4 +1633,29 @@ func (m *Manager) CleanupWorkspace(workspace string) error {
 type BusEnv interface {
 	URL() string
 	TeamCredential(team string) (user, password string, ok bool)
+}
+
+// ErrPlacementRefused is wrapped by the error a refused spawn returns, so a
+// caller can tell a placement refusal, which the manager already reports, from
+// any other spawn failure.
+var ErrPlacementRefused = errors.New("placement refused")
+
+// PlacementRefusal is one role whose spawn is currently refused for its
+// directory.
+type PlacementRefusal struct {
+	Workspace, Team, Role string
+	WorkDir               string
+	Message               string
+	Since                 time.Time
+}
+
+// PlacementRefusals lists the roles whose last spawn was refused for a missing
+// directory. Scaffold.
+func (m *Manager) PlacementRefusals() []PlacementRefusal { return nil }
+
+func (m *Manager) now() time.Time {
+	if m.Clock != nil {
+		return m.Clock().UTC()
+	}
+	return time.Now().UTC()
 }

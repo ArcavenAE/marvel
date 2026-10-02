@@ -1,9 +1,12 @@
 package team
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -274,4 +277,128 @@ func TestShiftAfterEditingWorkDirMovesTheNewGeneration(t *testing.T) {
 	if got := waitCwd(t, out, next[0].Name); got != after {
 		t.Errorf("successor pane cwd = %q, want %q", got, after)
 	}
+}
+
+// A refused spawn is retried every reconcile tick (2s), so a missing anchor used
+// to log the same error about 1800 times an hour per role. The refusal is logged
+// when it starts and then at most every five minutes, once, by the manager; the
+// controller does not log it again.
+func TestPlacementRefusalLogIsRateLimited(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	clock := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	sessMgr.Clock = func() time.Time { return clock }
+	sessMgr.Events = events.NewRing(64)
+	gone := filepath.Join(realDir(t), "removed-for-log")
+	createPlacedTeam(t, store, "test-wd-log", "", gone, []api.Role{cwdRecorder(t, realDir(t), "seat", "")})
+
+	var buf syncBuffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	count := func() int { return strings.Count(buf.String(), gone) }
+
+	for i := 0; i < 5; i++ {
+		clock = clock.Add(2 * time.Second)
+		ctrl.ReconcileOnce()
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("%d log lines naming the missing directory over five ticks, want 1:\n%s", got, buf.String())
+	}
+	clock = clock.Add(6 * time.Minute)
+	ctrl.ReconcileOnce()
+	ctrl.ReconcileOnce()
+	if got := count(); got != 2 {
+		t.Errorf("%d log lines after five minutes, want one more (2):\n%s", got, buf.String())
+	}
+}
+
+// The event is emitted when the refusal starts and again at a low cadence while
+// it lasts, so it cannot roll off the ring unseen.
+func TestPlacementRefusalIsReEmittedAtALowCadence(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	clock := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	sessMgr.Clock = func() time.Time { return clock }
+	ring := events.NewRing(64)
+	sessMgr.Events = ring
+	gone := filepath.Join(realDir(t), "removed-for-events")
+	createPlacedTeam(t, store, "test-wd-reemit", "", gone, []api.Role{cwdRecorder(t, realDir(t), "seat", "")})
+
+	for i := 0; i < 3; i++ {
+		clock = clock.Add(2 * time.Second)
+		ctrl.ReconcileOnce()
+	}
+	if got := len(refusedEvents(ring)); got != 1 {
+		t.Fatalf("%d events over three ticks, want 1", got)
+	}
+	clock = clock.Add(10 * time.Minute)
+	ctrl.ReconcileOnce()
+	if got := len(refusedEvents(ring)); got != 1 {
+		t.Errorf("%d events after ten minutes, want still 1", got)
+	}
+	clock = clock.Add(6 * time.Minute)
+	ctrl.ReconcileOnce()
+	ctrl.ReconcileOnce()
+	if got := len(refusedEvents(ring)); got != 2 {
+		t.Errorf("%d events after sixteen minutes, want 2", got)
+	}
+}
+
+// The refusal is a standing condition the daemon can report, and it clears when
+// the directory returns.
+func TestPlacementRefusalIsAStandingCondition(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	clock := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	sessMgr.Clock = func() time.Time { return clock }
+	sessMgr.Events = events.NewRing(64)
+	gone := filepath.Join(realDir(t), "removed-for-condition")
+	createPlacedTeam(t, store, "test-wd-cond", "", gone, []api.Role{cwdRecorder(t, realDir(t), "seat", "")})
+
+	ctrl.ReconcileOnce()
+	got := sessMgr.PlacementRefusals()
+	if len(got) != 1 {
+		t.Fatalf("refusals = %+v, want one", got)
+	}
+	r := got[0]
+	if r.Workspace != "test-wd-cond" || r.Team != "squad" || r.Role != "seat" || r.WorkDir != gone || !r.Since.Equal(clock) {
+		t.Errorf("refusal = %+v, want workspace test-wd-cond, squad/seat, %s, since %s", r, gone, clock)
+	}
+	if !strings.Contains(r.Message, "does not exist") {
+		t.Errorf("message = %q, want the reason", r.Message)
+	}
+	clock = clock.Add(time.Minute)
+	ctrl.ReconcileOnce()
+	if again := sessMgr.PlacementRefusals(); len(again) != 1 || !again[0].Since.Equal(r.Since) {
+		t.Errorf("a repeated refusal moved Since: %+v", again)
+	}
+
+	if err := os.Mkdir(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.ReconcileOnce()
+	if left := sessMgr.PlacementRefusals(); len(left) != 0 {
+		t.Errorf("refusals after the directory returned = %+v, want none", left)
+	}
+}
+
+// syncBuffer is a log sink two goroutines can write.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
