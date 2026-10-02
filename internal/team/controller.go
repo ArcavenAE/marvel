@@ -1863,16 +1863,15 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 }
 
 // placement is where a new session of role runs: the role's workdir, else the
-// team's, else the workspace root, read from the applied team at spawn so a
-// restart or a shift places the successor from the current declaration and not
-// from the dead session's value (docs/design/session-working-directory.md,
-// decisions 4 and 7). Empty places nothing, as before placement existed.
+// team's, read from the applied team at spawn so a restart or a shift places the
+// successor from the current declaration and not from the dead session's value
+// (docs/design/session-working-directory.md, decisions 4 and 7). The team's
+// workdir is the anchor snapshotted when it was applied, and the workspace's
+// live root is deliberately not read here: it is one value per workspace, and
+// reading it at spawn would move a team whenever another team's apply moved it.
+// Empty places nothing, as before placement existed.
 func (c *Controller) placement(t *api.Team, role *api.Role) string {
-	root := ""
-	if ws, err := c.store.GetWorkspace(t.Workspace); err == nil {
-		root = ws.Root
-	}
-	return api.ResolveWorkDir(root, t.WorkDir, role.WorkDir)
+	return api.ResolveWorkDir("", t.WorkDir, role.WorkDir)
 }
 
 // shiftOrder returns role names sorted with "supervisor" last.

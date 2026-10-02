@@ -263,6 +263,10 @@ internal/
 Marvel manages agent processes through the tmux substrate:
 
 **Start:** create tmux pane → set environment → exec harness binary.
+A spawn whose resolved workdir is missing or is not a directory is refused, with a
+`session.placement-refused` event naming the team, role and path (once per change,
+not per tick), because tmux itself would start the pane in `$HOME` without an error.
+A session is placed from its team's applied anchor, never from the workspace's live root.
 **Stop:** send SIGTERM → wait grace period → SIGKILL → destroy pane.
 **Restart:** mark failed, delete the session, let the reconciler respawn it
 on a later tick. Names are `<team>-<role>-g<generation>-<index>` and the

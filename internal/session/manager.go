@@ -27,6 +27,12 @@ import (
 
 // Manager creates and destroys sessions.
 type Manager struct {
+	// refusedMu guards refused: the directory a spawn of each team and role was
+	// last refused for, so the event is emitted once per change and not once per
+	// reconcile tick.
+	refusedMu sync.Mutex
+	refused   map[string]string
+
 	store      *api.Store
 	driver     *tmux.Driver
 	adapters   *runtime.Registry
@@ -533,6 +539,9 @@ func (m *Manager) recordPanePID(sessKey, panePID string) {
 // Create creates a new session: registers it in the store, ensures the tmux
 // session exists, and spawns a pane running the runtime command.
 func (m *Manager) Create(sess *api.Session) error {
+	if err := m.checkWorkDir(sess); err != nil {
+		return err
+	}
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
@@ -675,6 +684,51 @@ func (m *Manager) Create(sess *api.Session) error {
 		Message:   fmt.Sprintf("pane %s", paneID),
 	})
 	return nil
+}
+
+// checkWorkDir refuses a spawn whose resolved directory is missing or is not a
+// directory, before any record or pane exists. tmux does not: new-window -c on a
+// missing directory exits 0 and starts the pane in $HOME, so a seat pinned to a
+// removed directory would silently run somewhere else, under a different trust
+// decision. A session with no directory is placed nowhere, as always.
+func (m *Manager) checkWorkDir(sess *api.Session) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	if sess.WorkDir == "" {
+		delete(m.refused, key)
+		return nil
+	}
+	info, err := os.Stat(sess.WorkDir)
+	if err == nil && info.IsDir() {
+		delete(m.refused, key)
+		return nil
+	}
+	why := "is not a directory"
+	if err != nil {
+		why = "cannot be read: " + err.Error()
+		if errors.Is(err, os.ErrNotExist) {
+			why = "does not exist"
+		}
+	}
+	if m.refused[key] != sess.WorkDir {
+		if m.refused == nil {
+			m.refused = map[string]string{}
+		}
+		m.refused[key] = sess.WorkDir
+		msg := fmt.Sprintf("not started: the directory %s for %s/%s %s; tmux would start it in $HOME", sess.WorkDir, sess.Team, sess.Role, why)
+		log.Printf("session %s: %s", sess.Key(), msg)
+		events.Emit(m.Events, events.Event{
+			Kind:      events.KindSessionPlacementRefused,
+			Severity:  events.SeverityWarning,
+			Workspace: sess.Workspace,
+			Team:      sess.Team,
+			Role:      sess.Role,
+			Session:   sess.Name,
+			Message:   msg,
+		})
+	}
+	return fmt.Errorf("refuse to start session %s: directory %s %s", sess.Key(), sess.WorkDir, why)
 }
 
 // launchPlan is what one session needs to come up: the shell command,
