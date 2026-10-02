@@ -131,11 +131,11 @@ func TestPlanLaunchRecordsTheSettingSources(t *testing.T) {
 
 	claude := sessionFor("reviewer", "claude")
 	plan := mgr.planLaunch(claude)
-	if !strings.Contains(plan.command, "--setting-sources user") {
-		t.Fatalf("command %q, want --setting-sources user", plan.command)
+	if !strings.Contains(plan.command, "--setting-sources user,project,local") {
+		t.Fatalf("command %q, want --setting-sources user,project,local", plan.command)
 	}
-	if claude.SettingSources != "user" {
-		t.Errorf("claude SettingSources = %q, want user", claude.SettingSources)
+	if claude.SettingSources != "user,project,local" {
+		t.Errorf("claude SettingSources = %q, want user,project,local", claude.SettingSources)
 	}
 
 	codex := sessionFor("coder", "codex")

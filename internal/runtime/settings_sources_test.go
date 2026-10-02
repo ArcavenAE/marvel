@@ -20,9 +20,11 @@ func claudeCtx(command string) *LaunchContext {
 	return ctx
 }
 
-// Without a placement concept on this base nothing is placed, so the default is
-// the operator's own settings; the placed default (user,project, design section
-// 4) arrives with SB-1, which is where a session first has a declared workdir.
+// A role that declares nothing keeps today's behavior: every source, so a seat
+// that relies on its directory's settings and CLAUDE.md is not changed by the
+// upgrade. The placed defaults (design section 4: user,project for a declared
+// workdir, user for a managed one) arrive with SB-1, where a session first has a
+// placement to tell apart.
 func TestClaudeSettingSourcesDefaults(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -30,8 +32,8 @@ func TestClaudeSettingSourcesDefaults(t *testing.T) {
 		declared []string
 		want     string
 	}{
-		{"default loads the operator's settings only", nil, "user"},
-		{"local only by declaration", []string{"user", "project", "local"}, "user,project,local"},
+		{"an undeclared role keeps every source", nil, "user,project,local"},
+		{"a declaration narrows it", []string{"user"}, "user"},
 		{"a declaration wins over the default", []string{"project"}, "project"},
 	}
 	for _, tc := range cases {
@@ -93,5 +95,27 @@ func TestClaudeSettingSourcesOnAHeadlessRun(t *testing.T) {
 	}
 	if !strings.Contains(result.Command, "--setting-sources user") {
 		t.Errorf("headless command %q, want --setting-sources user", result.Command)
+	}
+}
+
+// A flag written inside the command string is the role's own, as one in args is:
+// marvel adds none, so the command line never carries two.
+func TestClaudeSettingSourcesKeepsOneEmbeddedInTheCommand(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{
+		"claude --setting-sources project",
+		"/usr/local/bin/claude --setting-sources=project",
+	} {
+		ctx := claudeCtx(command)
+		result, err := (&Claude{}).Prepare(ctx)
+		if err != nil {
+			t.Fatalf("%q: %v", command, err)
+		}
+		if n := strings.Count(result.Command, "--setting-sources"); n != 1 {
+			t.Errorf("%q: %d --setting-sources in %q, want the role's one", command, n, result.Command)
+		}
+		if result.SettingSources != "" {
+			t.Errorf("%q: recorded %q, want none: marvel passed nothing", command, result.SettingSources)
+		}
 	}
 }
