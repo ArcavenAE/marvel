@@ -67,13 +67,19 @@ type ManifestPolicy struct {
 // ManifestWorkspace is the workspace section of a manifest.
 type ManifestWorkspace struct {
 	Name string `toml:"name" yaml:"name"`
+	// Root is the filesystem root the workspace lives in; marvel work fills
+	// it from the manifest's directory when absent.
+	Root string `toml:"root,omitempty" yaml:"root,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
-	Name   string          `toml:"name" yaml:"name"`
-	Budget *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
-	Roles  []ManifestRole  `toml:"role"  yaml:"roles"`
+	Name string `toml:"name" yaml:"name"`
+	// WorkDir is where the team's sessions run unless a role declares its
+	// own. Relative values resolve against workspace.root only.
+	WorkDir string          `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	Budget  *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
+	Roles   []ManifestRole  `toml:"role"  yaml:"roles"`
 }
 
 // ManifestBudget is the budget section within a team — the operator's
@@ -120,6 +126,9 @@ type ManifestRole struct {
 	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
 	Name            string   `toml:"name"                          yaml:"name"`
 	Replicas        int      `toml:"replicas"                      yaml:"replicas"`
+	// WorkDir is where this role's sessions run. Relative values resolve
+	// against workspace.root only.
+	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -692,10 +701,21 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, CreatedAt: now}
-	// Ignore already-exists for workspace (idempotent apply).
-	if err := store.CreateWorkspace(ws); err != nil && !isAlreadyExists(err) {
-		return fmt.Errorf("apply workspace: %w", err)
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	// Ignore already-exists for workspace (idempotent apply), but a re-applied
+	// root moves. An apply that names no root leaves a stored one alone.
+	if err := store.CreateWorkspace(ws); err != nil {
+		if !isAlreadyExists(err) {
+			return fmt.Errorf("apply workspace: %w", err)
+		}
+		if m.Workspace.Root != "" {
+			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
+				live.Root = m.Workspace.Root
+				return nil
+			}); err != nil {
+				return fmt.Errorf("apply workspace: %w", err)
+			}
+		}
 	}
 
 	// Policies first, so a role's policy reference resolves against
@@ -751,6 +771,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Persona:              mr.Persona,
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
+				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 				SettingsSources:      mr.SettingsSources,
 			}
 			if mr.RestartPolicy != "" {
@@ -803,6 +824,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Workspace:  m.Workspace.Name,
 			Roles:      roles,
 			Budget:     budget,
+			WorkDir:    teamAnchor(m.Workspace.Root, mt.WorkDir),
 			Generation: 1,
 			CreatedAt:  now,
 		}
@@ -815,6 +837,11 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
+				// An apply that declares no placement leaves the anchor the
+				// team already has.
+				if m.Workspace.Root != "" || mt.WorkDir != "" {
+					live.WorkDir = team.WorkDir
+				}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)

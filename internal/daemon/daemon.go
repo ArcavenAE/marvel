@@ -1130,6 +1130,12 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 // Apply params
 type applyParams struct {
 	ManifestData []byte `json:"manifest_data"`
+	// WorkspaceRoot is the absolute root marvel work resolved from the
+	// manifest file's directory. When present it replaces the manifest's own
+	// root, so the manifest bytes are posted untouched and the daemon never
+	// sees the manifest's path (docs/design/session-working-directory.md,
+	// decisions 2 and 3).
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
 func (d *Daemon) handleApply(params json.RawMessage) Response {
@@ -1145,6 +1151,16 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		// one), so return it as-is. Re-wrapping with "parse manifest: %v"
 		// doubled the prefix. Matches the ValidateRuntimes/ValidateBudgets
 		// pre-flight siblings below, which also surface err.Error() directly.
+		return Response{Error: err.Error()}
+	}
+
+	if p.WorkspaceRoot != "" {
+		m.Workspace.Root = p.WorkspaceRoot
+	}
+	// Pre-flight: placement. What the daemon cannot place it refuses before
+	// anything is stored; a missing root warns and places nothing.
+	workDirAdvisories, err := m.ValidateWorkDirs()
+	if err != nil {
 		return Response{Error: err.Error()}
 	}
 
@@ -1203,6 +1219,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
+	for _, a := range workDirAdvisories {
+		log.Printf("apply: %s", a)
+	}
 	for _, a := range scheduleAdvisories {
 		log.Printf("apply: %s", a)
 	}
@@ -1259,7 +1278,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	result, _ := json.Marshal(map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
-		"advisories": append(advisories, scheduleAdvisories...),
+		"advisories": append(append(workDirAdvisories, advisories...), scheduleAdvisories...),
 	})
 	return Response{Result: result}
 }
