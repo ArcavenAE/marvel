@@ -203,7 +203,17 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 // handoffPath fills the declared template for one session: {session} is the
 // session name the seat sees as MARVEL_SESSION, and a leading ~/ is the
 // daemon user's home.
+//
+// The template is checked for a .. element at apply, but {session} is filled
+// here from the session name, which carries the team and role names. A name
+// that is not exactly one path element is refused, so it cannot steer the
+// resolved path out of the directory the manifest declared (marvel#444).
 func handoffPath(template string, sess api.Session) (string, error) {
+	if strings.Contains(template, "{session}") {
+		if n := sess.Name; n == "" || n == "." || n == ".." || strings.ContainsAny(n, `/\`) {
+			return "", fmt.Errorf("session name %q is not one path element", n)
+		}
+	}
 	p := strings.ReplaceAll(template, "{session}", sess.Name)
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
 		home, err := os.UserHomeDir()
