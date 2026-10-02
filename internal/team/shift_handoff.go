@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -78,8 +79,9 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, age time.Duration, stage string, now time.Time) {
 	text := handoffNotice
 	if role.Shift.Handoff != "" {
-		path, _ := handoffPath(role.Shift.Handoff, sess)
-		text += fmt.Sprintf(" to %s, ending with the line %q", path, role.Shift.HandoffMarker)
+		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
+			text += fmt.Sprintf(" to %s, ending with the line %q", path, role.Shift.HandoffMarker)
+		}
 	}
 	delivery := "delivered"
 	if c.Notify == nil {
@@ -133,8 +135,11 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	if req.Escalated {
 		return false // the supervisor decides now (D5 step 3)
 	}
+	path, pathErr := "", error(nil)
 	if role.Shift.Handoff != "" {
-		path, _ := handoffPath(role.Shift.Handoff, sess)
+		path, pathErr = handoffPath(role.Shift.Handoff, sess)
+	}
+	if path != "" && pathErr == nil {
 		if handoffComplete(path, role.Shift.HandoffMarker) {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
@@ -149,10 +154,14 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		return false
 	}
 
-	reason := "no handoff path is declared, so marvel cannot observe one"
-	if role.Shift.Handoff != "" {
-		path, _ := handoffPath(role.Shift.Handoff, sess)
-		reason = fmt.Sprintf("no marker at the end of %s", path)
+	var reason string
+	switch {
+	case role.Shift.Handoff == "":
+		reason = "no handoff path is declared, so marvel cannot observe one"
+	case pathErr != nil:
+		reason = fmt.Sprintf("the handoff path cannot be resolved (%v)", pathErr)
+	default:
+		reason = fmt.Sprintf("no regular file at %s ends in the marker", path)
 	}
 	req.Escalated = true
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
@@ -206,27 +215,32 @@ func handoffPath(template string, sess api.Session) (string, error) {
 	return p, nil
 }
 
-// handoffComplete reports whether the file at path exists and its last
-// non-empty line is marker. It reads at most the file's last maxHandoffTail
-// bytes, and nothing else on the host (D5 step 2).
+// handoffComplete reports whether the file at path is a regular file whose
+// last non-empty line is marker. The path is written by the seat, and this
+// runs under c.mu, so it must not block: a FIFO would hold a plain open
+// forever and wedge every team (review 5392253372). So the path must be a
+// regular file, not a symlink; it is opened non-blocking without following
+// links, and the open file must be the regular file that was checked. It
+// reads at most the file's last maxHandoffTail bytes (D5 step 2).
 func handoffComplete(path, marker string) bool {
-	f, err := os.Open(path)
+	before, err := os.Lstat(path)
+	if err != nil || !before.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return false
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
-	if err != nil {
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) {
 		return false
 	}
 	off := info.Size() - maxHandoffTail
 	if off < 0 {
 		off = 0
 	}
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return false
-	}
-	tail, err := io.ReadAll(io.LimitReader(f, maxHandoffTail))
+	tail, err := io.ReadAll(io.NewSectionReader(f, off, maxHandoffTail))
 	if err != nil {
 		return false
 	}

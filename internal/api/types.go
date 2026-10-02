@@ -620,6 +620,10 @@ const (
 
 // ShiftRequest is a pending handoff request on one role: marvel asked a seat
 // past its max age for a handoff and is waiting for the marker (design D5).
+// It is per role, not per seat: while one replica's request is pending or
+// escalated, max age asks no other replica of that role. Context pressure
+// still applies to all of them. Slice 1 accepts this; per-seat requests can
+// follow if a multi-replica role needs them.
 // Status, not spec. It persists with the team so a daemon restart inside the
 // window resumes it.
 type ShiftRequest struct {

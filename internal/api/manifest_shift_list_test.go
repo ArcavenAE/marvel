@@ -278,6 +278,12 @@ func TestShiftListRejections(t *testing.T) {
 			want: "must be absolute",
 		},
 		{
+			name: "dot-dot in handoff path",
+			toml: "    on = \"max-age\"\n    max_age = \"8h\"\n    handoff = \"~/../../etc/{session}.md\"\n    handoff_marker = \"END\"\n",
+			yaml: "          on: max-age\n          max_age: 8h\n          handoff: ~/../../etc/{session}.md\n          handoff_marker: END\n",
+			want: "must not contain a .. element",
+		},
+		{
 			name: "max-age on a headless role",
 			toml: "    on = \"max-age\"\n    max_age = \"8h\"\n",
 			yaml: "          on: max-age\n          max_age: 8h\n",

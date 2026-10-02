@@ -158,7 +158,10 @@ the role declares in `handoff` (with `{session}` for the session name) ends in
 `team.shift-handoff-missing`, leaves the seat running, and the team's
 supervisor decides. Age runs from spawn: it survives a daemon restart and
 starts over on a health restart. A pending request persists with the team.
-Refused on a headless role. Example: `examples/auto-shift-max-age.toml`.
+It is one per role: while it is pending or escalated, max age asks no other
+replica of that role (context pressure still covers them all). The handoff
+file must be a regular file, not a symlink, FIFO or directory, and its path
+may not contain `..`. Refused on a headless role. Example: `examples/auto-shift-max-age.toml`.
 
 Every shift's successor starts with `MARVEL_PREDECESSOR` (the old seat's key)
 and, when its predecessor was asked for a handoff,

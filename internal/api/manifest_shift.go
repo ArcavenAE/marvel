@@ -188,6 +188,11 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 		if !filepath.IsAbs(s.Handoff) && !strings.HasPrefix(s.Handoff, "~/") {
 			return nil, fmt.Errorf("%s.handoff %q must be absolute (or start with ~/)", prefix, s.Handoff)
 		}
+		for _, el := range strings.Split(filepath.ToSlash(s.Handoff), "/") {
+			if el == ".." {
+				return nil, fmt.Errorf("%s.handoff %q must not contain a .. element", prefix, s.Handoff)
+			}
+		}
 		p.Handoff, p.HandoffMarker = s.Handoff, s.HandoffMarker
 	}
 	if s.HandoffWindow != "" {
