@@ -167,9 +167,9 @@ func (m *Manager) ConfPath() string { return filepath.Join(m.dir, ConfName) }
 // URL is what sessions receive as NATS_URL.
 func (m *Manager) URL() string { return m.bus.URL }
 
-// TeamCredential is the broker user and password for an applied team, the
-// session.BusEnv contract. The user is the team name (section 4).
-func (m *Manager) TeamCredential(team string) (string, string, bool) {
+// Credential is the broker user and password a seat of the given role presents,
+// the session.BusEnv contract. Scaffold: the role is not consulted yet.
+func (m *Manager) Credential(team, role string) (string, string, bool) {
 	pw, ok := m.TeamPassword(team)
 	if !ok {
 		return "", "", false
@@ -389,8 +389,8 @@ func (a Adopted) URL() string { return a.url }
 // Bus is the resolved section, for status.
 func (a Adopted) Bus() config.ResolvedBus { return a.bus }
 
-// TeamCredential is never available for an adopted broker.
-func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", false }
+// Credential is never available for an adopted broker.
+func (a Adopted) Credential(string, string) (string, string, bool) { return "", "", false }
 
 // leafEnrolled reports whether a leaf seed is in the store, so a rendered hub
 // link can actually come up. Nil hasLeafSeed means never enrolled.

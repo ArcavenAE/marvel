@@ -1,0 +1,73 @@
+package session
+
+import (
+	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/runtime"
+)
+
+const busRoleManifest = `
+[workspace]
+name = "acme"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "supervisor"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+
+  [[team.role]]
+  name = "reviewer"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+`
+
+// roleBus hands out a different user per role, the way the managed broker does
+// for a role that holds a global address.
+type roleBus struct{}
+
+func (roleBus) URL() string { return "nats://127.0.0.1:4222" }
+
+func (roleBus) Credential(team, role string) (string, string, bool) {
+	if role == "supervisor" {
+		return team + ".supervisor", "sup-pw", true
+	}
+	return team, "team-pw", true
+}
+
+// The spawn path asks for the credential of the seat's own role, so a
+// respawned supervisor connects as the dotted user and every other role as the
+// team user.
+func TestPlanLaunchPassesTheRoleToTheBusCredential(t *testing.T) {
+	t.Parallel()
+	mgr := &Manager{
+		store:         api.NewStore(),
+		adapters:      runtime.NewRegistry(),
+		ProjectionDir: t.TempDir(),
+		Events:        events.NewRing(16),
+		Bus:           roleBus{},
+	}
+	m, err := api.ParseManifestBytes([]byte(busRoleManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for role, want := range map[string]string{"supervisor": "squad.supervisor", "reviewer": "squad"} {
+		plan := mgr.planLaunch(sessionFor(role, "claude"))
+		if got := plan.env["DIRECTOR_NATS_USER"]; got != want {
+			t.Errorf("%s: DIRECTOR_NATS_USER = %q, want %q", role, got, want)
+		}
+	}
+}

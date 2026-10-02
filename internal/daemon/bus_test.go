@@ -145,7 +145,7 @@ func TestAttachBusAdoptedGivesSessionsTheURLOnly(t *testing.T) {
 	if d.sessMgr.Bus.URL() != "nats://127.0.0.1:4222" {
 		t.Errorf("session bus URL = %q", d.sessMgr.Bus.URL())
 	}
-	if _, _, ok := d.sessMgr.Bus.TeamCredential("ops"); ok {
+	if _, _, ok := d.sessMgr.Bus.Credential("ops", "worker"); ok {
 		t.Error("adopted broker handed a team credential to sessions")
 	}
 	if _, err := os.Stat(filepath.Join(home, ".marvel", "state", "nats")); !os.IsNotExist(err) {

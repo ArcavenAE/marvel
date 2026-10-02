@@ -436,12 +436,12 @@ func TestAdoptedGivesURLAndNoCredential(t *testing.T) {
 	if a.Bus().Mode != "adopted" {
 		t.Errorf("adopted provider lost its record: %+v", a.Bus())
 	}
-	if _, _, ok := a.TeamCredential("ops"); ok {
+	if _, _, ok := a.Credential("ops", "worker"); ok {
 		t.Error("adopted broker handed out a credential")
 	}
 }
 
-func TestManagerTeamCredentialIsTeamNameAndMintedPassword(t *testing.T) {
+func TestManagerCredentialIsTeamNameAndMintedPassword(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "nats")
 	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", URL: "nats://127.0.0.1:4222", StoreDir: dir}
@@ -452,20 +452,20 @@ func TestManagerTeamCredentialIsTeamNameAndMintedPassword(t *testing.T) {
 	if m.URL() != "nats://127.0.0.1:4222" {
 		t.Errorf("URL = %q", m.URL())
 	}
-	if _, _, ok := m.TeamCredential("ops"); ok {
+	if _, _, ok := m.Credential("ops", "worker"); ok {
 		t.Error("credential available before the team was rendered")
 	}
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
-	user, pw, ok := m.TeamCredential("ops")
+	user, pw, ok := m.Credential("ops", "worker")
 	if !ok || user != "ops" || pw == "" {
-		t.Fatalf("TeamCredential(ops) = %q %q %v", user, pw, ok)
+		t.Fatalf("Credential(ops, worker) = %q %q %v", user, pw, ok)
 	}
 	if got, _ := m.TeamPassword("ops"); got != pw {
-		t.Error("TeamCredential password differs from TeamPassword")
+		t.Error("Credential password differs from TeamPassword")
 	}
-	if _, _, ok := m.TeamCredential("nobody"); ok {
+	if _, _, ok := m.Credential("nobody", "worker"); ok {
 		t.Error("credential for an unapplied team")
 	}
 }

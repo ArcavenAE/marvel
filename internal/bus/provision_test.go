@@ -112,7 +112,7 @@ func TestProvisionAfterAdoptRecoversPasswords(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid := s1.Status().PID
-	_, opsPw, ok := m1.TeamCredential("ops")
+	_, opsPw, ok := m1.Credential("ops", "worker")
 	if !ok {
 		t.Fatal("test premise: ops has no credential before the restart")
 	}
@@ -127,7 +127,7 @@ func TestProvisionAfterAdoptRecoversPasswords(t *testing.T) {
 	if m2.Admin().Password != m1.Admin().Password {
 		t.Fatal("successor minted a fresh admin password instead of recovering it")
 	}
-	if _, pw, _ := m2.TeamCredential("ops"); pw != opsPw {
+	if _, pw, _ := m2.Credential("ops", "worker"); pw != opsPw {
 		t.Fatal("successor minted a fresh ops password; a running session's shim would be refused at its next reconnect")
 	}
 	if changed, err := m2.Regenerate(); err != nil {
