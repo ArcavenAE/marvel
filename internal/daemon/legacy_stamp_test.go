@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/binary"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,5 +125,68 @@ func TestRootlessReapplyOfAStampedTeamSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(string(resp.Result), "placement: legacy daemon cwd /srv/orc-root; declare a root") {
 		t.Fatalf("apply result = %s, want the legacy placement note", resp.Result)
+	}
+}
+
+// A linked git worktree has a .git FILE (a pointer), a normal checkout a .git
+// directory. The walk goes up to the first .git it finds.
+func TestLinkedWorktree(t *testing.T) {
+	t.Parallel()
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wt, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := t.TempDir()
+	if err := os.Mkdir(filepath.Join(main, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(main, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plain := t.TempDir()
+	cases := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"the worktree root", wt, true},
+		{"a subdirectory of a worktree", filepath.Join(wt, "a", "b"), true},
+		{"a normal checkout", main, false},
+		{"a subdirectory of a normal checkout", filepath.Join(main, "sub"), false},
+		{"no repository at all", plain, false},
+		{"a directory that does not exist", filepath.Join(plain, "gone"), false},
+	}
+	for _, tc := range cases {
+		if got := linkedWorktree(tc.dir); got != tc.want {
+			t.Errorf("%s: linkedWorktree(%q) = %v, want %v", tc.name, tc.dir, got, tc.want)
+		}
+	}
+}
+
+// The announcement says so when the pinned directory is a linked worktree, in
+// the event and the log: if it is removed later, new-window -c starts the seat
+// in $HOME without an error. It warns and does not refuse.
+func TestStampAnnouncementWarnsOfALinkedWorktree(t *testing.T) {
+	skipIfNoTmux(t)
+	path := forgeV1Store(t)
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ring := events.NewRing(events.DefaultCapacity)
+	d, err := NewWithOptions(Options{StateBolt: path, Events: ring, LegacyCwd: wt})
+	if err != nil {
+		t.Fatalf("a worktree directory must warn, not refuse: %v", err)
+	}
+	defer func() { _ = d.store.CloseBolt() }()
+	got := stampEvents(ring)
+	if len(got) != 1 || !strings.Contains(got[0].Message, "linked git worktree") {
+		t.Fatalf("events = %+v, want one that names the linked git worktree", got)
+	}
+	if got[0].Severity != events.SeverityWarning {
+		t.Errorf("severity = %v, want warning", got[0].Severity)
 	}
 }
