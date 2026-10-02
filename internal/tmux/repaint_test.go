@@ -125,3 +125,72 @@ func TestRepaintOfAMissingPaneIsAnError(t *testing.T) {
 		t.Fatal("Repaint of a pane that does not exist returned no error")
 	}
 }
+
+// A pane kept after its program exited keeps reporting the old pid. Pids are
+// reused, so signalling "its" foreground group could reach a process outside the
+// pane, and the repaint refuses a dead pane by name.
+func TestRepaintRefusesAPaneThatHasExited(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := fmt.Sprintf("marvel-test-repaint-dead-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = d.KillSession(session) })
+	if err := d.NewSession(session); err != nil {
+		t.Fatal(err)
+	}
+	pane, err := d.NewPane(session, "sh -c 'exit 0'", "repaint-dead", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		out, _ := d.cmd("display-message", "-p", "-t", pane, "#{pane_dead}").CombinedOutput()
+		if strings.TrimSpace(string(out)) == "1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pane never reported dead")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_, err = d.Repaint(pane)
+	if err == nil || !strings.Contains(err.Error(), "exited") {
+		t.Fatalf("Repaint of a dead pane: error = %v, want a refusal that says the pane has exited", err)
+	}
+}
+
+// The process behind a pane pid must still be on the pane's terminal, and a
+// process with no foreground group is never signalled.
+func TestValidateRepaintTarget(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name               string
+		dead               bool
+		paneTTY, procTTY   string
+		pgid               int
+		wantErr, wantInErr string
+	}{
+		{"live pane, same tty", false, "/dev/ttys003", "ttys003", 4242, "", ""},
+		{"same tty, linux form", false, "/dev/pts/3", "pts/3", 4242, "", ""},
+		{"dead pane", true, "/dev/ttys003", "ttys003", 4242, "x", "exited"},
+		{"pid now on another terminal", false, "/dev/ttys003", "ttys009", 4242, "x", "not on the pane's terminal"},
+		{"pid has no terminal", false, "/dev/ttys003", "??", 4242, "x", "not on the pane's terminal"},
+		{"empty pane tty", false, "", "ttys003", 4242, "x", "no terminal"},
+		{"no foreground group", false, "/dev/ttys003", "ttys003", 0, "x", "foreground process group"},
+		{"group 1 is never signalled", false, "/dev/ttys003", "ttys003", 1, "x", "foreground process group"},
+	}
+	for _, tc := range cases {
+		err := validateRepaintTarget(tc.dead, tc.paneTTY, tc.procTTY, tc.pgid)
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("%s: error %v, want none", tc.name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.wantInErr) {
+			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.wantInErr)
+		}
+	}
+}

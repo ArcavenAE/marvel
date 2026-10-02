@@ -722,3 +722,9 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 	}
 	return panes, nil
 }
+
+// validateRepaintTarget decides whether a pid read from a pane may have its
+// terminal's foreground group signalled. Scaffold: not yet implemented.
+func validateRepaintTarget(dead bool, paneTTY, procTTY string, pgid int) error {
+	return nil
+}
