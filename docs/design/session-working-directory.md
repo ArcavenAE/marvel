@@ -84,8 +84,9 @@ own checkout.
 here.** At apply (amended 2026-10-02, marvel#465):
 - A relative or `~` root is malformed and refused as not absolute; `~` is
   never expanded.
-- An absolute root that does not exist on the daemon's host may be a
-  client-side path, so it is dropped with a warning ("the root is ignored
+- An absolute root that does not exist on the daemon's host, or exists but
+  is not a directory, may be a client-side path, so it is dropped with a
+  warning ("the root is ignored
   and this apply places nothing"), unless a relative `workdir` needs it to
   resolve, which cannot be placed and is refused.
 - Every resolved `workdir` must exist on the daemon's host and be a
@@ -121,12 +122,15 @@ see placement without opening a pane. Adding a field to the persisted
 record is additive; whether the bolt schema version moves is the build
 lead's call at implementation.
 
-**7. Restart and shift re-resolve from the team's stored anchor.** A
-restart or a shift spawns with the role's `workdir` as stored at the last
-apply, resolved against the TEAM's snapshotted anchor (`Team.WorkDir`,
-decision 1), never against the workspace's current root and never from the
-dead session's persisted value. Editing a `workdir` or the root and
-re-applying the team, then rotating, is how a team moves.
+**7. Restart and shift place from what the last apply stored.** A restart
+or a shift places the role in its `workdir` as stored at the last apply
+(absolute, resolved then against that apply's root), else in the team's
+snapshotted anchor (`Team.WorkDir`); never the workspace's current root,
+and never the dead session's persisted value (marvel#466). Spawn checks
+that the directory exists and refuses if it does not: `tmux new-window -c`
+on a missing directory exits 0 and starts the pane in `$HOME` (measured
+2026-10-02), so the check cannot be left to tmux. Editing a `workdir` or
+the root and re-applying the team, then rotating, is how a team moves.
 
 **8. Ad-hoc runs place explicitly.** `marvel run` gains `--workdir
 <dir>`, default the caller's cwd made absolute by the CLI. An interactive
@@ -167,8 +171,9 @@ Flat bd tickets with dependency edges (labels `aae-orc`, `marvel`,
    parameter from `marvel work` (the manifest file's directory, bytes
    posted unchanged) and the team anchor snapshot into `Team.WorkDir`.
 2. Spawn wiring: `Session.WorkDir` set at spawn from the role, carried in
-   `LaunchContext`, `Driver.NewPane` start directory (`-c`),
-   `MARVEL_WORKDIR` in `baseEnv`, restart and shift re-resolve. After 1.
+   `LaunchContext`, `Driver.NewPaneAt` start directory (`-c`), a spawn-time
+   check that the directory exists, `MARVEL_WORKDIR` in `baseEnv`, restart
+   and shift placing from what the last apply stored. After 1.
 3. CLI surface: `marvel run --workdir`, the `get sessions` column, the
    apply-error text. After 1.
 4. Docs, examples, the twin: user guide and CLAUDE.md manifest table,
