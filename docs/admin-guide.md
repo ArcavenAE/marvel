@@ -3,6 +3,52 @@
 This guide covers daemon setup, remote access configuration, SSH key
 management, and operational concerns.
 
+## Host prerequisites
+
+### The host must stay awake
+
+A cluster host must not idle-sleep while it carries seats. A sleeping host
+stops everything at once: the daemon, the bus and its leaf link to a shared
+hub, and every session. Its peers see silence, not an error. Nothing on the
+bus says why, and another cluster cannot wake it.
+
+This matters most on laptops, whose power settings usually let them
+idle-sleep.
+
+Display sleep is fine; only system sleep stops the cluster. Closing a
+laptop's lid is a separate case that the settings below do not address.
+Wake-on-LAN is not a remedy: it cannot be relied on to bring a cluster back.
+
+On macOS, either of these keeps the system awake (pick one):
+
+- **Hold a power assertion** for as long as the cluster runs:
+
+  ```sh
+  caffeinate -s    # prevents system sleep; valid only on AC power
+  caffeinate -i    # prevents idle sleep, on battery as well
+  ```
+
+  The assertion lasts while the `caffeinate` process runs and is released
+  when it exits. No system setting changes.
+- **Turn off system sleep on AC power:**
+
+  ```sh
+  sudo pmset -c sleep 0
+  ```
+
+  This needs admin rights and changes a system setting that persists until
+  you set it back.
+
+To check what is holding the system awake, and when it last slept:
+
+```sh
+pmset -g assertions    # current power assertions, by process
+pmset -g log           # history of sleeps and wakes
+```
+
+On Linux, run the daemon under `systemd-inhibit --what=idle:sleep`, or set
+`IdleAction=ignore` in `logind.conf`.
+
 ## Starting the daemon
 
 ### Local only (default)
