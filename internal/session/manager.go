@@ -1576,3 +1576,8 @@ type BusEnv interface {
 	URL() string
 	TeamCredential(team string) (user, password string, ok bool)
 }
+
+// ComposerContract returns what is known about driving a runtime's composer.
+func (m *Manager) ComposerContract(runtimeName string) runtime.ComposerContract {
+	return m.adapters.ComposerFor(runtimeName)
+}

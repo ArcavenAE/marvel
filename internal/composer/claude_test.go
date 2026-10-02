@@ -49,9 +49,8 @@ func TestClaudeReaderReadsTheCapturedStates(t *testing.T) {
 func TestClaudeReaderContract(t *testing.T) {
 	t.Parallel()
 	r := ReaderFor("claude")
-	if r.Name() != "claude" || !r.Escapes() || r.Preflight() || r.ClearKey() != "" {
-		t.Errorf("claude reader = name %q escapes %v preflight %v clear %q, want claude, escapes, no preflight, no clear key",
-			r.Name(), r.Escapes(), r.Preflight(), r.ClearKey())
+	if r.Name() != "claude" || !r.Escapes() || r.Preflight() {
+		t.Errorf("claude reader = name %q escapes %v preflight %v, want claude, escapes, no preflight", r.Name(), r.Escapes(), r.Preflight())
 	}
 }
 
@@ -81,6 +80,11 @@ func TestClaudeReaderEdges(t *testing.T) {
 		{"a spinner with text typed ahead is the harness busy", frame("✳ Cooking… (3s · thinking)", "❯"+nb+"next thing"), MidTurn},
 		{"idle with text typed", frame("✻ Cooked for 1m 3s · done 5:23 PM", "❯"+nb+"a half written message"), HoldsText},
 		{"a multi line draft", frame("", "❯"+nb+"line one", "  line two", "  line three"), HoldsText},
+		// A clear key sent while a turn streams would interrupt it, so a draft
+		// typed ahead of streaming text is not reported as an idle draft.
+		{"text typed ahead of streaming text is not an idle draft", frame("⏺ Reply text still arriving", "❯"+nb+"typed ahead"), Unknown},
+		{"text typed ahead after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+"typed"), Unknown},
+		{"a draft in a session that has run no turn", frame("", "❯"+nb+"first message"), HoldsText},
 		{"a hint line right of the composer is not content", frame("✻ Worked for 2s · done 5:23 PM\n"+strings.Repeat(" ", 100)+"auto mode unavailable for this model", "❯"+nb), Empty},
 		{"streaming text over an older done marker", frame("✻ Worked for 2s · done 5:23 PM\n\n❯ next prompt\n\n⏺ Reply text still arriving", "❯"+nb), Unknown},
 		{"placeholder text with escapes is dim and so empty", frame("", "❯"+nb+dim+"Try \"fix the build\""+"\x1b[0m"), Empty},

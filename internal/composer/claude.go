@@ -21,14 +21,11 @@ import (
 //     streams there is no spinner and the composer is empty, so an empty
 //     composer is not evidence of idle: it is Empty only beside a finished turn's
 //     done line or the placeholder, and anything else reads Unknown.
-//
-// It has no clear key until aae-orc-g88i1 grounds one.
 type claudeReader struct{}
 
-func (claudeReader) Name() string     { return "claude" }
-func (claudeReader) Escapes() bool    { return true }
-func (claudeReader) Preflight() bool  { return false }
-func (claudeReader) ClearKey() string { return "" }
+func (claudeReader) Name() string    { return "claude" }
+func (claudeReader) Escapes() bool   { return true }
+func (claudeReader) Preflight() bool { return false }
 
 const (
 	claudePrompt = "❯ "
