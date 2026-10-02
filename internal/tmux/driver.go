@@ -626,16 +626,33 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 // A nil error means a signal was sent, not that the program redrew: whether a
 // given harness repaints on SIGWINCH is the harness's business.
 func (d *Driver) Repaint(paneID string) (string, error) {
-	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_pid}").CombinedOutput()
+	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_dead} #{pane_pid} #{pane_tty}").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("pane pid %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+		return "", fmt.Errorf("pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return "", fmt.Errorf("pane %s: unreadable pane state %q", paneID, strings.TrimSpace(string(out)))
+	}
+	dead := fields[0] == "1"
+	paneTTY := ""
+	if len(fields) >= 3 {
+		paneTTY = fields[2]
+	}
+	if dead {
+		// A pane kept after its program exited keeps its old pid, and pids
+		// are reused: refuse before the pid is looked at at all.
+		return "", validateRepaintTarget(true, paneTTY, "", 0)
+	}
+	pid, err := strconv.Atoi(fields[1])
 	if err != nil || pid <= 1 {
 		return "", fmt.Errorf("pane %s has no process", paneID)
 	}
-	pgid, err := foregroundGroup(pid)
+	procTTY, pgid, err := foregroundGroup(pid)
 	if err != nil {
+		return "", fmt.Errorf("pane %s: %w", paneID, err)
+	}
+	if err := validateRepaintTarget(false, paneTTY, procTTY, pgid); err != nil {
 		return "", fmt.Errorf("pane %s: %w", paneID, err)
 	}
 	if err := syscall.Kill(-pgid, syscall.SIGWINCH); err != nil {
@@ -644,18 +661,48 @@ func (d *Driver) Repaint(paneID string) (string, error) {
 	return commandName(pgid), nil
 }
 
-// foregroundGroup returns the foreground process group of the terminal a
-// process runs on, which is the group a terminal resize signals.
-func foregroundGroup(pid int) (int, error) {
-	out, err := exec.Command("ps", "-o", "tpgid=", "-p", strconv.Itoa(pid)).Output()
+// validateRepaintTarget decides whether the foreground group read for a pane's
+// pid may be signalled: the pane must be alive, the process must still be on the
+// pane's own terminal, and it must have a foreground group other than init's or
+// nothing. Without the terminal check a reused pid could point at another pane's
+// or the operator's terminal.
+//
+// The signal still goes out a moment after the group is read, so the group
+// could in principle exit and its id be reused in between. A resize signalled by
+// the kernel does not have that window; this does, and it is a few milliseconds.
+func validateRepaintTarget(dead bool, paneTTY, procTTY string, pgid int) error {
+	if dead {
+		return errors.New("the pane has exited; there is no program to repaint")
+	}
+	want := strings.TrimPrefix(paneTTY, "/dev/")
+	if want == "" {
+		return errors.New("the pane reports no terminal")
+	}
+	if procTTY != want {
+		return fmt.Errorf("its process is not on the pane's terminal (pane %s, process %q)", want, procTTY)
+	}
+	if pgid <= 1 {
+		return errors.New("its terminal has no foreground process group")
+	}
+	return nil
+}
+
+// foregroundGroup returns the terminal a process runs on and that terminal's
+// foreground process group, which is the group a terminal resize signals.
+func foregroundGroup(pid int) (string, int, error) {
+	out, err := exec.Command("ps", "-o", "tty=,tpgid=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
-		return 0, fmt.Errorf("read the foreground process group of %d: %w", pid, err)
+		return "", 0, fmt.Errorf("read the foreground process group of %d: %w", pid, err)
 	}
-	pgid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || pgid <= 1 {
-		return 0, fmt.Errorf("process %d has no foreground process group", pid)
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return "", 0, fmt.Errorf("process %d has no terminal or foreground process group", pid)
 	}
-	return pgid, nil
+	pgid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return "", 0, fmt.Errorf("process %d has no foreground process group", pid)
+	}
+	return strings.TrimPrefix(fields[0], "/dev/"), pgid, nil
 }
 
 // commandName is the leader's command name, best effort; empty when unknown.
@@ -721,10 +768,4 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 		panes = append(panes, p)
 	}
 	return panes, nil
-}
-
-// validateRepaintTarget decides whether a pid read from a pane may have its
-// terminal's foreground group signalled. Scaffold: not yet implemented.
-func validateRepaintTarget(dead bool, paneTTY, procTTY string, pgid int) error {
-	return nil
 }
