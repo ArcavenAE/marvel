@@ -221,8 +221,8 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift%s",
-			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, present), again),
+		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
+			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, present), t.Key(), role.Name, again),
 	})
 }
 
