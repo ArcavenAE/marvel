@@ -12,7 +12,7 @@ finding-166: marvel reported nine sessions running while their shims had
 exited on a bus with no streams, because nothing marvel reads knows whether a
 seat reached its bus. The shim already renews presence on its own 30s timer.
 If that same tick tells marvel "this seat is alive and its bus is writable",
-marvel's existing heartbeat health check turns a dead bus into an unhealthy
+a health check that reads that beat turns a dead bus into an unhealthy
 seat, with the restart and crash-loop backoff that already make failure loud.
 
 ## 2. Today (checked on marvel main and director main)
@@ -64,9 +64,15 @@ together. No new method and no new transport.
 
 - `kind` is new on `api.HeartbeatRequest`. Absent or `"reading"` means
   today's behavior. `"liveness"` means: authenticate exactly as today, stamp
-  `LastHeartbeat`, and leave `SessionContext` and `ContextAt` untouched. A
-  bus beat is not a context reading and not evidence of work, so it must not
-  clear CTX% or reset the stalled advisory.
+  a NEW field, `Session.LastLivenessAt`, and touch nothing else:
+  `LastHeartbeat`, `SessionContext` and `ContextAt` are left as they were.
+  A bus beat is not a context reading and not evidence that the harness is
+  working. If it stamped `LastHeartbeat`, every role already on
+  `type = "heartbeat"` (the README's and `examples/review-team.toml`'s
+  claude roles among them) would read a hung harness as healthy as long as
+  its shim kept beating, and shift readiness (`controller.go`) would count a
+  successor ready on its shim alone. Keeping the two signals in two fields
+  means existing heartbeat roles keep their meaning exactly.
 - `source` is a label for events and `describe`; it is not authorization.
 - `context_percent` is omitted. The struct field is a plain float, so the
   receiver must branch on `kind` before reading it.
@@ -95,10 +101,15 @@ behaves as today. A seat outside marvel is unaffected.
 
 ### C6. Refusals and an old daemon
 
-- `revoked`, `rotated`, `expired`, `stale`: re-read the #414 renewal file
-  once and retry on the next tick; if it is gone or refused again, stop the
-  feed and log once. The shim keeps serving the bus.
-- `unauthorized` with no token sent: a producer bug, logged once, feed stops.
+- **Interim, before #414's codes land on main** (today's daemon returns only
+  an error string): any refusal stops the feed and logs once. The shim keeps
+  serving the bus. A stopped feed shows as a liveness miss, which is the
+  honest reading.
+- **After #414:** `revoked`, `rotated`, `expired`, `stale`: re-read the
+  renewal file once and retry on the next tick; if it is gone or refused
+  again, stop the feed and log once. `unauthorized` with no token sent is a
+  producer bug, logged once, and the feed stops. The producer branches on
+  the code, never on the message text.
 - **A daemon without C2:** an older daemon ignores the unknown `kind` field
   and treats the beat as a reading with `context_percent` 0, which wipes
   CTX%. Its response has no `kind` echo. On a success with no echo, the
@@ -108,58 +119,76 @@ behaves as today. A seat outside marvel is unaffected.
 
 ### C7. What marvel does on a miss
 
-Nothing new. A role that wants bus liveness to count declares the existing
-check:
+A third health check type, `liveness`, reads `LastLivenessAt` with the same
+staleness logic the `heartbeat` type applies to `LastHeartbeat` (a grace of
+one `timeout` from creation, then `FailureCount` against
+`failure_threshold`, then the restart policy):
 
 ```toml
     [team.role.healthcheck]
-    type = "heartbeat"
+    type = "liveness"
     timeout = "90s"          # three missed 30s beats
     failure_threshold = 2
 ```
 
-A shim that never connects never beats, so after one `timeout` from
-creation the seat is unhealthy, and the restart policy and crash-loop backoff
-make it loud in `get sessions` and the events ring. That is the
-"never report running" half of z63a4. A role that does not declare
-`heartbeat` is not restarted on a miss; `describe session` shows the last
-liveness beat and its source either way.
+A shim that never connects never beats, so one `timeout` after creation
+the seat is unhealthy, and the restart policy and crash-loop backoff make it
+loud in `get sessions` and the events ring. That is the "never report
+running" half of z63a4. A role on `heartbeat` or `process-alive` is
+unchanged; `describe session` shows the last liveness beat and its source
+either way.
 
-`LastHeartbeat` also feeds shift readiness, so a successor counts as ready
-once its shim has reached the bus. That is the intended meaning here, and
-ruling 2 confirms it.
+**The cost, stated.** A shim that wedges on a seat whose harness is working
+also stops beating, and that seat is restarted, losing its context. A role
+that wants the signal without that risk sets `restart_policy = "never"`:
+the seat goes unhealthy and is marked in `get sessions` and the ring, and
+nothing restarts it. That is the alert-only option.
+
+Shift readiness for a `liveness` role requires a nonzero `LastLivenessAt`
+on each successor, so a successor is ready once its shim reaches the bus
+(ruling 2). Readiness for a `heartbeat` role is unchanged.
 
 ## 4. Rollout order (no live seat restarts by surprise)
 
 | step | change | risk to a running seat |
 |---|---|---|
-| R1 | marvel accepts `kind: liveness` (C2, C3) and shows the last liveness beat in `describe` | none: no producer sends it yet |
-| R2 | The shim sends liveness beats (C4 to C6) | none for a role on `process-alive`; for a statusline-fed role, the beat is liveness-only, so CTX% is untouched |
-| R3 | A role declares `healthcheck.type = "heartbeat"` | **yes, if its seats run a shim without R2**: they never beat and would be restarted after one timeout. So R3 is per role, and only after `describe` shows a liveness beat on every live seat of that role |
+| R0 | marvel#414's refusal codes land (prerequisite for C6's full form; until then the interim rule in C6 applies) | none |
+| R1 | marvel accepts `kind: liveness` (C2, C3), stores `LastLivenessAt`, adds the `liveness` check type, and shows the last liveness beat in `describe` | none: no producer sends it yet, and no role uses the type |
+| R2 | The shim sends liveness beats (C4 to C6) | none: the beat touches only `LastLivenessAt`, which nothing reads until R3 |
+| R3 | A role declares `healthcheck.type = "liveness"` | **yes, if its seats run a shim without R2**: they never beat and would be restarted after one timeout |
 
 R1 must merge and reach a host before R2 runs there (C6 covers the gap).
-`marvel work` warns when a role declares a `heartbeat` check and any live
-seat of that role has never sent a liveness beat.
+R3 is enforced, not advised: `marvel work` REFUSES a manifest that declares
+`type = "liveness"` on a role with any live seat that has never sent a
+liveness beat, and names the seats. `--allow-no-liveness` overrides it, and
+the override is recorded in the apply event. A role with no live seats
+applies without the check.
 
 ## 5. Tests (red first)
 
 Receiver (marvel):
-1. A `liveness` beat with a valid token stamps `LastHeartbeat` and leaves
-   `SessionContext`, `ContextAt` and CTX% exactly as a prior statusline
-   reading left them; the response echoes `kind`.
-2. A `liveness` beat with a wrong, missing, revoked or expired token is
-   refused with the #414 code, and `LastHeartbeat` does not move.
-3. A role on `heartbeat` with a seat that never beats goes unhealthy one
+1. A `liveness` beat with a valid token stamps `LastLivenessAt` and leaves
+   `LastHeartbeat`, `SessionContext`, `ContextAt` and CTX% exactly as a
+   prior statusline reading left them; the response echoes `kind`.
+2. A `liveness` beat with a wrong or missing token is refused and
+   `LastLivenessAt` does not move; after R0, revoked and expired tokens are
+   refused with their #414 codes.
+3. A role on `liveness` with a seat that never beats goes unhealthy one
    `timeout` after creation and enters the restart policy; with beats every
-   30s it stays healthy across 10 minutes.
-4. A beat with no `kind` behaves exactly as today (regression).
-5. `marvel work` warns on R3 while a live seat has no liveness beat.
-
+   30s it stays healthy across 10 minutes; with `restart_policy = "never"`
+   it goes unhealthy and is not restarted.
+4. A role on `heartbeat` whose seat's harness stops its own beats while the
+   shim keeps sending liveness beats goes unhealthy as today: hung-harness
+   detection is unchanged. A beat with no `kind` behaves exactly as today.
+5. `marvel work` refuses R3 while a live seat of the role has no liveness
+   beat, naming the seat; `--allow-no-liveness` applies it and the apply
+   event records the override.
 Producer (director shim):
 6. With all three env values set and a fake daemon socket: one request per
    tick, after a successful presence write, with the C2 body.
 7. A failed presence write sends no beat on that tick.
-8. A refusal stops the feed after one renewal-file retry; the bus keeps
+8. Before R0, any refusal stops the feed and logs once; after R0, a
+   refusal stops it after one renewal-file retry. In both, the bus keeps
    serving.
 9. A success with no `kind` echo stops the feed and logs once.
 10. With any env value missing, no socket is dialed and one start log line
@@ -168,9 +197,12 @@ Producer (director shim):
     still renews.
 
 End to end:
-12. The finding-166 shape: a broker with no streams, a role on `heartbeat`.
+12. The finding-166 shape: a broker with no streams, a role on `liveness`.
     The seat shows unhealthy within one `timeout` and the event names the
-    heartbeat miss; on a provisioned broker the same seat stays healthy.
+    liveness miss; on a provisioned broker the same seat stays healthy.
+13. Shift readiness: a successor in a `liveness` role is not ready until
+    its first liveness beat; a successor in a `heartbeat` role is not made
+    ready by a liveness beat alone.
 
 ## 6. Custody check (SOUL section 3, ADR-009)
 
@@ -185,6 +217,6 @@ End to end:
 | # | question | default |
 |---|---|---|
 | 1 | Extend the existing `heartbeat` method with `kind: liveness` rather than a new method | yes: one auth path, one refusal vocabulary |
-| 2 | A successor is shift-ready once its shim has reached the bus (`LastHeartbeat` from a liveness beat) | yes |
-| 3 | The recommended check for director-enabled roles: `timeout` 90s, `failure_threshold` 2 | yes, declared per role, never defaulted |
+| 2 | For a `liveness` role, a successor is shift-ready once its shim has reached the bus (`LastLivenessAt`); `heartbeat` roles keep today's readiness | yes |
+| 3 | A new check type `liveness` reading a separate `LastLivenessAt`, recommended at `timeout` 90s and `failure_threshold` 2, declared per role, never defaulted; `restart_policy = "never"` is the alert-only form | yes |
 | 4 | A global tier failure does not suppress the marvel beat | yes |
