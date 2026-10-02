@@ -210,3 +210,99 @@ func TestClearIsRefusedWhereNoReaderCanVouchForIt(t *testing.T) {
 		}
 	}
 }
+
+func sessionOf(t *testing.T, d *Daemon, key string) api.Session {
+	t.Helper()
+	s, err := d.store.GetSession(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// The max-age handoff types a request into a seat the way an operator would
+// (daemon Notify). A codex seat sitting on the update menu since spawn has no
+// activity and reads as quiet, which is exactly the seat that stage picks, so
+// Notify passes the same pre-flight as an inject: refused, nothing typed, and
+// the refusal recorded.
+func TestNotifyIsRefusedWhileCodexShowsTheUpdateMenu(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, codexMenuSeat, "codex", "Update now")
+
+	err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff")
+	if err == nil || !strings.Contains(err.Error(), "update menu") {
+		t.Fatalf("Notify error = %v, want a refusal that names the update menu", err)
+	}
+	neverShows(t, d, key, "got:please write your handoff")
+	refused := d.events.Snapshot(events.Filter{Kind: events.KindSessionInjectRefused}, 0)
+	if len(refused) != 1 || !strings.Contains(refused[0].Message, "max-age") {
+		t.Errorf("refusal events = %+v, want one attributed to marvel:max-age", refused)
+	}
+	if hasKind(d, events.KindSessionInjected) {
+		t.Error("a refused handoff was recorded as sent")
+	}
+}
+
+func TestNotifyToACodexSeatWithoutTheMenuIsDelivered(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, quietSeat, "codex", "composer ready")
+
+	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff"); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	waitCaptureHas(t, d, key, "got:please write your handoff")
+}
+
+// A runtime named by a path or a wrapper is the same program: the harness is
+// found by the base name, so "/opt/homebrew/bin/codex" is checked too.
+func TestPreflightMatchesTheRuntimeByItsBaseName(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, codexMenuSeat, "/opt/homebrew/bin/codex", "Update now")
+
+	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "hello", "literal": true, "enter": true})
+	if resp.Error == "" || !strings.Contains(resp.Error, "update menu") {
+		t.Errorf("error = %q, want a refusal that names the update menu", resp.Error)
+	}
+	neverShows(t, d, key, "got:")
+}
+
+// tmux wraps a long line at the pane's edge, which can split the words the menu
+// is recognized by. The read joins wrapped lines, so a split does not let an
+// inject through.
+func TestPreflightSeesTheMenuAcrossASoftWrap(t *testing.T) {
+	d := newHandlerDaemon(t)
+	seat := `stty -echo
+cols=$(stty size | cut -d' ' -f2)
+printf '%*s' $((cols-4)) ''
+printf 'Update available\n'
+printf '  2. Skip\n'
+while IFS= read -r line; do echo "got:$line"; done
+`
+	key := verifySeat(t, d, seat, "codex", "te available")
+
+	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "hello", "literal": true, "enter": true})
+	if resp.Error == "" || !strings.Contains(resp.Error, "update menu") {
+		t.Errorf("error = %q, want a refusal that names the update menu", resp.Error)
+	}
+	neverShows(t, d, key, "got:")
+}
+
+// If the pane cannot be read, a codex seat is not typed into blind.
+func TestPreflightFailsClosedWhenThePaneCannotBeRead(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, quietSeat, "codex", "composer ready")
+	if err := d.store.UpdateSession(key, func(s *api.Session) error { s.PaneID = "%99999"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "hello", "literal": true, "enter": true})
+	if resp.Error == "" || !strings.Contains(resp.Error, "could not be read") {
+		t.Errorf("error = %q, want a refusal that says the pane could not be read", resp.Error)
+	}
+	if !hasKind(d, events.KindSessionInjectRefused) {
+		t.Errorf("no refusal event; got %v", eventKinds(d))
+	}
+	if hasKind(d, events.KindSessionInjected) {
+		t.Error("an inject that could not be pre-flighted was recorded as sent")
+	}
+}
