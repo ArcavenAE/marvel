@@ -7,6 +7,8 @@
 // tmux and a harness upgrade changes one reader.
 package composer
 
+import "strings"
+
 // State is what a composer is showing.
 type State string
 
@@ -46,16 +48,25 @@ type Reader interface {
 	ClearKey() string
 }
 
-// ReaderFor returns the reader for a runtime (harness) name. An unrecognized
-// name gets a reader that reads Unknown and never clears.
+// ReaderFor returns the reader for a runtime (harness) name. A runtime without
+// a contract yet gets a reader that reads Unknown and never clears; Unknown is
+// never treated as safe by a caller.
 func ReaderFor(runtime string) Reader {
+	if runtime == "codex" {
+		return codexReader{}
+	}
 	return unknownReader{}
+}
+
+var shells = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "fish": true,
+	"ksh": true, "tcsh": true, "csh": true,
 }
 
 // ShellTarget reports whether a foreground command name is a shell, which
 // means no harness is running in the pane.
 func ShellTarget(name string) bool {
-	return false
+	return shells[strings.TrimPrefix(name, "-")]
 }
 
 type unknownReader struct{}
@@ -64,3 +75,30 @@ func (unknownReader) Name() string      { return "unknown" }
 func (unknownReader) Read(string) State { return Unknown }
 func (unknownReader) Preflight() bool   { return false }
 func (unknownReader) ClearKey() string  { return "" }
+
+// codexHazards are the lines of codex's startup "Update available" menu and of
+// the installer it starts (measured on codex-cli 0.157.0, marvel#477). The
+// menu's default option runs the vendor's curl | sh installer on one Enter, so a
+// capture that shows any of them is refused. A false positive (chat text that
+// quotes the menu) refuses an inject, which is the safe direction.
+var codexHazards = []string{"Update available", "Update now", "Updating Codex", "install.sh"}
+
+// codexReader reads codex. It recognizes the one state research has measured as
+// dangerous; every other capture is Unknown until the codex composer states are
+// grounded (aae-orc-g88i1). It has no clear key: C-c on an empty codex composer
+// exits the harness.
+type codexReader struct{}
+
+func (codexReader) Name() string { return "codex" }
+
+func (codexReader) Read(capture string) State {
+	for _, h := range codexHazards {
+		if strings.Contains(capture, h) {
+			return MenuUnsafe
+		}
+	}
+	return Unknown
+}
+
+func (codexReader) Preflight() bool  { return true }
+func (codexReader) ClearKey() string { return "" }
