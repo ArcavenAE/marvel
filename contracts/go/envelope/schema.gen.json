@@ -55,6 +55,11 @@
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
           "description": "The current harness session UUID, the key (R-71). Nullable now; required once marvel sets it at spawn (R-73, R-84). Nothing derives from it yet. The pattern applies only when the value is a string, so null still validates."
         },
+        "instance": {
+          "type": ["string", "null"],
+          "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "description": "The sending shim process's instance id, a ULID minted at shim start. It is the suffix of that process's durable, mcp_<agent>_<instance>. One harness session can span several instances (a shim restart) and one agent can run several at once. Informational: self-asserted by the sender, never a routing or authorization input (as role, R-71, R-82)."
+        },
         "principal": {
           "$comment": "RESERVED. The envelope MUST validate with principal null; nothing reads it yet. Its contents are deferred (R-53) until a principal writes the bus without a human launching it (the R-77 trigger). Do not freeze claim names: kind is an open string seeded with none and launcher, and the object stays extensible.",
           "oneOf": [

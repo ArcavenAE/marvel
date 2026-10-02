@@ -75,6 +75,10 @@ Locked now:
   `recipient.address`.
 - `sender.session` is the harness session UUID, nullable now, required once
   marvel sets it at spawn (R-73, R-84).
+- `sender.instance` is the sending shim process's ULID, minted at shim start
+  (`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`). Optional and nullable; informational
+  and self-asserted, never a routing or authorization input. Strict readers
+  learn it before any sender sets it (director#196).
 - `authority` is a top-level block (a sibling of `sender`, never inside
   `content`): `strength` is a closed enum `direct | relayed | none` (stated,
   never inferred, R-02), and `seat` is `null` or `{role, key, epoch}` where

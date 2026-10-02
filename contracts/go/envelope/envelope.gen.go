@@ -110,6 +110,13 @@ type Sender struct {
 	// subject (director#3).
 	AgentID string `json:"agent_id" yaml:"agent_id" mapstructure:"agent_id"`
 
+	// The sending shim process's instance id, a ULID minted at shim start. It is the
+	// suffix of that process's durable, mcp_<agent>_<instance>. One harness session
+	// can span several instances (a shim restart) and one agent can run several at
+	// once. Informational: self-asserted by the sender, never a routing or
+	// authorization input (as role, R-71, R-82).
+	Instance *string `json:"instance,omitempty" yaml:"instance,omitempty" mapstructure:"instance,omitempty"`
+
 	// Principal corresponds to the JSON schema field "principal".
 	Principal interface{} `json:"principal,omitempty" yaml:"principal,omitempty" mapstructure:"principal,omitempty"`
 
