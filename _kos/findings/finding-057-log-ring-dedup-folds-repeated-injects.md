@@ -17,9 +17,9 @@ rang the same seat twice with nothing logged in between, `marvel daemon logs`
 showed the first line with its timestamp and then `last message repeated
 N times`. The later injects had no time on them.
 
-Twice I read that as "my most recent inject never reached the daemon" and
-started to diagnose a failed doorbell. Both times the inject had landed; the
-log was folding it. A slice of the live ring (2026-10-01):
+I read that as "my most recent inject never reached the daemon" and
+started to diagnose a failed doorbell. The inject had landed; the log was
+folding it. A slice of the live ring (2026-10-01):
 
 ```
 2026/10/01 19:26:10 inject: aae/reviewer-reviewer-claude-g4-4 <- 65 bytes (literal=true, enter=true)
@@ -56,6 +56,6 @@ keeps the ring bounded and answers the operator's question.
 - `internal/logbuf/logbuf.go` lines 11 to 17 and 90 to 93 at ee7666d.
 - Live ring on mokuzai, 2026-10-01 18:48Z to 21:12Z: two fold markers (after 19:26:10 on g4-4, 2 repeats; after 20:40:23 on g4-1, 1 repeat)
   among reviewer-seat injects.
-- My handoff log for the reviewer team, 2026-10-01: two "doorbell may not
-  have landed" checks, both resolved by `marvel capture` showing the seat
-  had received the text.
+- The one misread, 2026-10-01: resolved by `marvel capture` showing the
+  seat had received the text. My handoff log does not record it; this
+  finding is the record.
