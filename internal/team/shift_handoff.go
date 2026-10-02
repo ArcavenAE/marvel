@@ -78,7 +78,8 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, age time.Duration, stage string, now time.Time) {
 	text := handoffNotice
 	if role.Shift.Handoff != "" {
-		text += fmt.Sprintf(" to %s, ending with the line %q", handoffPath(role.Shift.Handoff, sess), role.Shift.HandoffMarker)
+		path, _ := handoffPath(role.Shift.Handoff, sess)
+		text += fmt.Sprintf(" to %s, ending with the line %q", path, role.Shift.HandoffMarker)
 	}
 	delivery := "delivered"
 	if c.Notify == nil {
@@ -133,7 +134,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		return false // the supervisor decides now (D5 step 3)
 	}
 	if role.Shift.Handoff != "" {
-		path := handoffPath(role.Shift.Handoff, sess)
+		path, _ := handoffPath(role.Shift.Handoff, sess)
 		if handoffComplete(path, role.Shift.HandoffMarker) {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
@@ -150,7 +151,8 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 
 	reason := "no handoff path is declared, so marvel cannot observe one"
 	if role.Shift.Handoff != "" {
-		reason = fmt.Sprintf("no marker at the end of %s", handoffPath(role.Shift.Handoff, sess))
+		path, _ := handoffPath(role.Shift.Handoff, sess)
+		reason = fmt.Sprintf("no marker at the end of %s", path)
 	}
 	req.Escalated = true
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
@@ -192,14 +194,16 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 // handoffPath fills the declared template for one session: {session} is the
 // session name the seat sees as MARVEL_SESSION, and a leading ~/ is the
 // daemon user's home.
-func handoffPath(template string, sess api.Session) string {
+func handoffPath(template string, sess api.Session) (string, error) {
 	p := strings.ReplaceAll(template, "{session}", sess.Name)
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
-		if home, err := os.UserHomeDir(); err == nil {
-			p = filepath.Join(home, rest)
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve ~/ in handoff path: %w", err)
 		}
+		p = filepath.Join(home, rest)
 	}
-	return p
+	return p, nil
 }
 
 // handoffComplete reports whether the file at path exists and its last

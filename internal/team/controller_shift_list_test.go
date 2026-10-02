@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -475,5 +476,58 @@ func TestMaxAgeRequestDroppedWhenPolicyNoLongerDeclaresIt(t *testing.T) {
 	got := f.evaluate()
 	if len(got.ShiftRequests) != 0 {
 		t.Fatalf("ShiftRequests = %+v, want the request dropped", got.ShiftRequests)
+	}
+}
+
+// The handoff path is written by the seat, so marvel must not trust what is
+// there. A FIFO would block a plain open forever while the controller holds
+// c.mu, wedging every team; a directory or a symlink is not a handoff either.
+// handoffComplete must answer false for each, promptly (review 5392253372).
+func TestHandoffCompleteRefusesNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "fifo.md")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	sub := filepath.Join(dir, "dir.md")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "target.md")
+	if err := os.WriteFile(target, []byte("END HANDOFF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, path := range map[string]string{"fifo": fifo, "directory": sub, "symlink": link} {
+		done := make(chan bool, 1)
+		go func() { done <- handoffComplete(path, "END HANDOFF") }()
+		select {
+		case got := <-done:
+			if got {
+				t.Errorf("%s: handoffComplete = true, want false", name)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: handoffComplete blocked; a seat can wedge the controller", name)
+		}
+	}
+	if !handoffComplete(target, "END HANDOFF") {
+		t.Fatal("positive control: a regular file ending in the marker must count")
+	}
+}
+
+// A handoff path that cannot be resolved (no home directory for ~/) is not
+// observed, never read relative to the daemon's working directory.
+func TestHandoffPathRefusesUnresolvableHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if _, err := handoffPath("~/h/{session}.md", api.Session{Name: "s"}); err == nil {
+		t.Fatal("handoffPath with no home: want an error, not a relative path")
+	}
+	got, err := handoffPath("/var/h/{session}.md", api.Session{Name: "s"})
+	if err != nil || got != "/var/h/s.md" {
+		t.Fatalf("absolute template = (%q, %v), want /var/h/s.md", got, err)
 	}
 }
