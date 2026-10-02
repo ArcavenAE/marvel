@@ -220,6 +220,9 @@ func TestMaxAgeEscalatesWithoutMarker(t *testing.T) {
 			got.Shift.Phase, len(f.notices), f.count(events.KindShiftHandoffMissing))
 	}
 	f.clock.Advance(2 * time.Second)
+	f.evaluate() // the repeat speaks from a read that began after the last emission
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
 	got = f.evaluate()
 	if got.Shift.Phase != api.ShiftNone || len(f.notices) != 1 || f.count(events.KindShiftHandoffMissing) != 2 {
 		t.Fatalf("after a window: phase=%q notices=%d missing=%d, want none, 1, 2",
@@ -257,6 +260,9 @@ func TestMaxAgeEscalationIsRepeatedAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fresh.evaluateShiftTriggers(&team) // starts the read the repeat speaks from
+	fresh.handoffProbes.wait()
+	f.clock.Advance(time.Second)
 	fresh.evaluateShiftTriggers(&team)
 	if n := len(ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)); n != 1 {
 		t.Fatalf("handoff-missing events after restart = %d, want 1: the hold must not be silent", n)

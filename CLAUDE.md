@@ -157,7 +157,9 @@ the role declares in `handoff` (with `{session}` for the session name) ends in
 `handoff_window` (default 5m), or no declared file, marvel emits
 `team.shift-handoff-missing`, leaves the seat running, and the team's
 supervisor decides. The event repeats once per window while the request
-stands, and at once after a daemon restart, because the event ring is in memory. Age runs from spawn: it survives a daemon restart and
+stands, and after a daemon restart, because the event ring is in memory; each
+repeat reports what the handoff file holds now, including a marker written
+after the window, and never clears the escalation. Age runs from spawn: it survives a daemon restart and
 starts over on a health restart. A pending request persists with the team.
 It is one per role: while it is pending or escalated, max age asks no other
 replica of that role (context pressure still covers them all). The handoff
