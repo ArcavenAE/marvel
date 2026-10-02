@@ -402,3 +402,54 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// A standing refusal must not outlive the want behind it: a role scaled to
+// zero, a role removed from the team, and a deleted team are not being refused
+// any more, so the condition goes, whether or not the directory returns.
+func TestPlacementRefusalClearsWhenTheRoleStopsWantingReplicas(t *testing.T) {
+	skipIfNoTmux(t)
+	cases := map[string]func(t *testing.T, store *api.Store, ws string){
+		"scaled to zero": func(t *testing.T, store *api.Store, ws string) {
+			t.Helper()
+			if err := store.UpdateTeam(ws+"/squad", func(tm *api.Team) error {
+				for i := range tm.Roles {
+					tm.Roles[i].Replicas = 0
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"role removed": func(t *testing.T, store *api.Store, ws string) {
+			t.Helper()
+			if err := store.UpdateTeam(ws+"/squad", func(tm *api.Team) error { tm.Roles = nil; return nil }); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"team deleted": func(t *testing.T, store *api.Store, ws string) {
+			t.Helper()
+			if err := store.DeleteTeam(ws + "/squad"); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, change := range cases {
+		store, sessMgr, ctrl, cleanup := setup(t)
+		ws := "test-wd-stale-" + strings.ReplaceAll(name, " ", "-")
+		sessMgr.Events = events.NewRing(64)
+		gone := filepath.Join(realDir(t), "removed-for-stale")
+		createPlacedTeam(t, store, ws, "", gone, []api.Role{cwdRecorder(t, realDir(t), "seat", "")})
+
+		ctrl.ReconcileOnce()
+		if got := sessMgr.PlacementRefusals(); len(got) != 1 {
+			cleanup()
+			t.Fatalf("%s: refusals before = %+v, want one", name, got)
+		}
+		change(t, store, ws)
+		ctrl.ReconcileOnce()
+		if got := sessMgr.PlacementRefusals(); len(got) != 0 {
+			t.Errorf("%s: refusals after = %+v, want none", name, got)
+		}
+		cleanup()
+	}
+}
