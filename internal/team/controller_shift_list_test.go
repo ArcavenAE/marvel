@@ -209,6 +209,9 @@ func TestMaxAgeEscalatesWithoutMarker(t *testing.T) {
 	if !got.ShiftRequests[testShiftRole].Escalated {
 		t.Fatal("request should be marked escalated")
 	}
+	// The escalation tick started a read; let it finish so it cannot be in
+	// flight at the next tick.
+	f.ctrl.handoffProbes.wait()
 
 	// The supervisor owns it now, but the event ring is in memory and can lose
 	// it, so the escalation is repeated once per window while the request
@@ -219,6 +222,7 @@ func TestMaxAgeEscalatesWithoutMarker(t *testing.T) {
 		t.Fatalf("inside the window: phase=%q notices=%d missing=%d, want none, 1, 1",
 			got.Shift.Phase, len(f.notices), f.count(events.KindShiftHandoffMissing))
 	}
+	f.ctrl.handoffProbes.wait()
 	f.clock.Advance(2 * time.Second)
 	f.evaluate() // the repeat speaks from a read that began after the last emission
 	f.ctrl.handoffProbes.wait()
