@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -146,6 +147,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 			}
 			msg := fmt.Sprintf("cause=%s: session %s wrote its handoff (%s ends in the marker), requested %s",
 				req.Cause, sess.Key(), path, req.RequestedAt.Format(time.RFC3339))
+			c.handoffProbes.forget(sess.Key())
 			return c.autoShift(t, role, sess.Key(), msg)
 		}
 	}
@@ -190,6 +192,9 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 }
 
 func (c *Controller) dropShiftRequest(t *api.Team, role string) {
+	if req, ok := t.ShiftRequests[role]; ok {
+		c.handoffProbes.forget(req.Session)
+	}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		delete(live.ShiftRequests, role)
 		return nil
@@ -261,18 +266,71 @@ func handoffComplete(path, marker string) bool {
 	return strings.TrimSpace(string(tail)) == marker
 }
 
-// handoffProbes is the seam for the marker read (marvel#444 item 1).
+// handoffProbes runs the marker read off the controller lock (marvel#444).
+// The tick runs under c.mu, and the handoff file is written by the seat, so a
+// slow filesystem would stall every team for the read. complete starts at most
+// one read per session in the background and answers from the last finished
+// one, so a marker is applied one tick after it is written. The zero value is
+// ready to use. The handoff file is expected on a local filesystem.
 type handoffProbes struct {
 	// check reads the file; nil means handoffComplete.
 	check func(path, marker string) bool
+
+	mu       sync.Mutex
+	done     map[string]handoffProbeResult
+	inflight map[string]*struct{}
+	wg       sync.WaitGroup
 }
 
-func (p *handoffProbes) complete(_, path, marker string) bool {
-	if p.check != nil {
-		return p.check(path, marker)
+type handoffProbeResult struct {
+	path, marker string
+	complete     bool
+}
+
+// complete reports the last finished read of path for session key, false while
+// none has finished, and starts a fresh read unless one is already running.
+func (p *handoffProbes) complete(key, path, marker string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	last, ok := p.done[key]
+	known := ok && last.path == path && last.marker == marker
+	if p.inflight[key] == nil {
+		if p.inflight == nil {
+			p.inflight = make(map[string]*struct{})
+		}
+		token := &struct{}{}
+		p.inflight[key] = token
+		check := p.check
+		if check == nil {
+			check = handoffComplete
+		}
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			got := check(path, marker)
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			if p.inflight[key] != token {
+				return // forgotten while reading
+			}
+			delete(p.inflight, key)
+			if p.done == nil {
+				p.done = make(map[string]handoffProbeResult)
+			}
+			p.done[key] = handoffProbeResult{path: path, marker: marker, complete: got}
+		}()
 	}
-	return handoffComplete(path, marker)
+	return known && last.complete
+}
+
+// forget drops what is held for session key, so a request that ended leaves
+// nothing behind.
+func (p *handoffProbes) forget(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.done, key)
+	delete(p.inflight, key)
 }
 
 // wait blocks until no read is in flight. Tests use it.
-func (p *handoffProbes) wait() {}
+func (p *handoffProbes) wait() { p.wg.Wait() }

@@ -153,7 +153,15 @@ func TestMaxAgeRequestsHandoffThenShiftsOnMarker(t *testing.T) {
 		t.Fatalf("phase = %q, want none: the marker is not the last line", got.Shift.Phase)
 	}
 
+	f.ctrl.handoffProbes.wait()
 	writeHandoff(t, dir, s.Name, "notes\nEND HANDOFF\n")
+	f.clock.Advance(time.Minute)
+	// The read runs off the lock, so the marker is applied one tick after it
+	// is written (marvel#444).
+	if got = f.evaluate(); got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, want none: the read has not been applied yet", got.Shift.Phase)
+	}
+	f.ctrl.handoffProbes.wait()
 	f.clock.Advance(time.Minute)
 	got = f.evaluate()
 	if got.Shift.Phase != api.ShiftLaunching {
