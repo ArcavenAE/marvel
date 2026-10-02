@@ -334,8 +334,22 @@ home seeded with trust and onboarding; SB-3 r2 showed a private
 exit status; stdout and stderr are discarded unread, since they carry account
 identity. SB-3 r2 measured the contract on 2.1.288: 0 when logged in, 1 when
 not. Anything but 0 is `not-logged-in` (section 6). The call has a 10-second
-bound, as codex's one call does (`codexTrustTimeout`); when it fires the
-child is killed and the spawn is refused `login-check-timeout`. marvel never
+bound, the figure codex's one call uses (`codexTrustTimeout`), and it bounds
+the whole process tree, not only the child: `claude auth status` forks the
+`security` CLI to read the keychain (the reviewer's PATH stand-in was called
+twice as `find-generic-password`), so a keychain prompt or hang lives in a
+grandchild. The command runs with `Setpgid`, and on timeout marvel kills the
+group (`-pgid`). Its stdout and stderr go to `/dev/null`, so `Wait` cannot
+block on a pipe a surviving grandchild still holds. The spawn is refused
+`login-check-timeout`. codex's call (`codex_home.go:232`) kills only its
+child and keeps a pipe, so it is the figure's source, not the pattern's.
+
+**Order: trust first, then the CLI.** marvel reads trust first and runs
+`claude auth status` only for a spawn that passed it, so a spawn refused for
+trust never causes a CLI write. A spawn that passed trust and is logged out
+does cause one: the check's own writes land in the operator's config before
+the refusal. That case cannot be avoided by any check that asks the CLI, and
+it writes no more than the seat itself would have. marvel never
 logs in for a seat and never launches one into a login screen. The CLI is
 not read-only: it writes and locks its own config (section 5a).
 
@@ -539,8 +553,14 @@ launch.
    bytes and mtime are unchanged after every case. The `mcpServers` map
    decodes into `map[string]struct{}`: a fixture whose entry carries an env
    value leaves no trace of it in the decoded value, the session record, or
-   the log. A fake `claude auth status` that never exits is killed at 10
-   seconds and the spawn is refused `login-check-timeout`.
+   the log. The fixture's env value is a canary byte string, and `%#v` of
+   the decoded value does not contain it; that spec fails for both
+   `json.RawMessage` and `any`. A fake `claude auth status` that forks a
+   never-exiting child, which holds the inherited stdout, and then never
+   exits: within 10 seconds plus a small margin both processes are gone (the
+   group is killed), `Wait` returns, and the spawn is refused
+   `login-check-timeout`. With an untrusted workdir, the fake `claude` is
+   never invoked.
 5. The codex seed declares the resolved workdir untrusted, not the daemon cwd.
 6. A missing declared workdir: not launched, `bootstrap-refused`, restart
    count 0, not frozen under `restart_policy = never`, one event, no respawn
