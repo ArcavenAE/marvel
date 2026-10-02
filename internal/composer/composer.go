@@ -62,8 +62,11 @@ type Reader interface {
 func ReaderFor(runtime string) Reader {
 	// The harness is the program, so a path or a wrapper directory does not hide
 	// it: "/opt/homebrew/bin/codex" is codex.
-	if filepath.Base(strings.TrimSpace(runtime)) == "codex" {
+	switch filepath.Base(strings.TrimSpace(runtime)) {
+	case "codex":
 		return codexReader{}
+	case "claude":
+		return claudeReader{}
 	}
 	return unknownReader{}
 }

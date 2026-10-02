@@ -2114,7 +2114,11 @@ func (d *Daemon) repaintSettled(paneID string, settleMS int) (tmux.RepaintResult
 // reader would make of the screen.
 func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS int) (composer.State, error) {
 	res, _ := d.repaintSettled(sess.PaneID, settleMS)
-	content, err := d.driver.CapturePane(sess.PaneID)
+	capture := d.driver.CapturePane
+	if reader.Escapes() {
+		capture = d.driver.CapturePaneEscapes
+	}
+	content, err := capture(sess.PaneID)
 	if err != nil {
 		return composer.Unknown, err
 	}
