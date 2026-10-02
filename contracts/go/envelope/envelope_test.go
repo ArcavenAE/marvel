@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,30 @@ func TestInvalidFixturesRejected(t *testing.T) {
 		}
 		if err := Validate(data); err == nil {
 			t.Errorf("%s: expected rejection, but validation passed", filepath.Base(f))
+		}
+	}
+}
+
+// The bad sender.instance fixtures must be refused by the field's own pattern,
+// not by the closed sender object refusing an unknown key, or they would prove
+// nothing once the field exists (director#196 step 1, marvel#446).
+func TestInvalidInstanceRejectedByPattern(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(fixturesDir, "invalid-instance-*.json"))
+	if err != nil || len(files) != 4 {
+		t.Fatalf("want 4 invalid-instance fixtures, found %d (%v)", len(files), err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		err = Validate(data)
+		if err == nil {
+			t.Errorf("%s: expected rejection, but validation passed", filepath.Base(f))
+			continue
+		}
+		if !strings.Contains(err.Error(), "/sender/instance") {
+			t.Errorf("%s: rejected, but not at /sender/instance: %v", filepath.Base(f), err)
 		}
 	}
 }
