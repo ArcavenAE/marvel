@@ -59,13 +59,45 @@ across a restart the same way team passwords are.
 | plus, for a worker role in a supervisor team | none global (ruling 2) | none global |
 
 **Narrowed JetStream API for the supervisor role user.** In place of
-`$JS.global.API.>`, only what a supervisor's shim does: stream info on
-`GLOBAL_TO_<cluster>`, consumer create and info scoped to that stream and to
-the supervisor inbox filter (nats-server 2.10 and later can carry the filter
-in the create subject, `$JS.global.API.CONSUMER.CREATE.<stream>.<consumer>.<filter>`;
-INFERRED from the server's API, and test 3 checks it on the version in use),
-message next and ack. The exact list is the builder's, against the shim's
-calls, and test 3 proves it from both sides.
+`$JS.global.API.>`, only what a supervisor's shim does across its whole
+global lifecycle (director `global.go`):
+- **Its inbox consumer:** stream info on `GLOBAL_TO_<cluster>`; consumer
+  create and info scoped to that stream and to the supervisor inbox filter
+  (`$JS.global.API.CONSUMER.CREATE.<stream>.<consumer>.<filter>`; VERIFIED
+  on a scratch hub plus leaf in review 5396916719: with this grant a
+  supervisor can create only its own inbox-filtered consumer); message next
+  and ack.
+- **Global presence** (`attachGlobal`, `writeGlobalPresence`, deregister,
+  the roster scan): bind the `GLOBAL_PRESENCE` bucket (stream info on
+  `KV_GLOBAL_PRESENCE`), put and delete (publish on
+  `$KV.GLOBAL_PRESENCE.>`), list keys (a consumer create, info and delete
+  on `KV_GLOBAL_PRESENCE`), and get (direct get and message get). This is
+  the same set the hub's leaf users already allow.
+- **Acked publish** on `global.director.inbox` and
+  `global.*.supervisor.inbox`, with its reply on `_INBOX.>`.
+The exact subject list is the builder's, taken from the shim's calls, and
+test 3 runs the whole lifecycle, not a subset.
+
+**The pull residual, and the invariant that closes it.** Pulling from the
+inbox consumer needs `$JS.global.API.CONSUMER.MSG.NEXT.GLOBAL_TO_<cluster>.*`,
+because a shim's durable name carries its random instance id. That grant
+lets a supervisor pull from ANY consumer on the stream it can name, and the
+review VERIFIED a supervisor pulling another role's message from a broad
+consumer someone else had created. So the design rests on an invariant:
+**on `GLOBAL_TO_<cluster>`, every consumer is filtered to a single inbox
+subject, except consumers created by admin or hub credentials, whose names
+are random and never logged.** Enforcement:
+- No role user can create a broad consumer (the create grant above carries
+  the filter).
+- S3 adds a check, `marvel bus users --global-consumers`, and the same
+  check on the 30s health tick where the leaf can list consumers on the hub
+  (otherwise it is the hub operator's command, given in the doc): any
+  consumer whose filter is broader than one inbox subject, or which has no
+  filter, raises `bus.global-broad-consumer` with its name, filter and
+  creator where known. It is a warning, not a gate.
+- director#191's `unread --global` and any audit reader create their
+  consumers with admin or hub credentials and a random name, and delete
+  them when done.
 
 **Honest limit, restated.** Within a team, every role still shares
 `agent.<ws>.<team>.>`, so a worker can read a teammate's local role inbox.
@@ -85,8 +117,19 @@ per session (R-84) is the complete form.
 
 **How S4 and S5 are staged around.** Both are an operator verb, `marvel bus
 retire-team-user <ws/team> [--global-only]`, never automatic. The verb
-refuses while marvel's records show a live session spawned with that team
-user, or while the broker reports any connection as it, and names each one.
+refuses, and names each one, while any of these holds:
+- marvel's records show a live session of the team spawned with the team
+  user, OR with NO recorded bus user (every session spawned before S2 has
+  none, and it holds the team password);
+- the broker reports any connection as the team user (`/connz` with auth);
+- the second of two such checks, taken one reconnect interval apart (60s
+  by default, above the shim's maximum reconnect backoff), is not also
+  zero. A seat in reconnect backoff is absent from `/connz` for that time,
+  so one zero reading proves nothing.
+After it retires the user and reloads, the verb watches the broker's closed
+connections (`/connz?state=closed`) for authentication failures as the
+retired user for five minutes, and reports each one with its address, so a
+client the checks missed is named rather than silently cut.
 The operator clears them by shifting the team (`marvel shift`), which
 respawns every seat onto its role user, then runs the verb. A heads-up goes
 to director before any S4 or S5 run on a live cluster, and a fleet-wide run
@@ -126,19 +169,26 @@ named default). Ruling 3.
    `global.<cluster>.supervisor.inbox` and to `global.<cluster>.>` is
    refused, and creating a JetStream consumer on `GLOBAL_TO_<cluster>` is
    refused. The finding-179 interception cannot be reproduced.
-3. **The supervisor still works.** As `<team>.supervisor`, the shim's global
-   start succeeds (stream info, its consumer, receive and ack). A consumer
-   with a filter other than its inbox is refused.
+3. **The supervisor still works, end to end.** As `<team>.supervisor`, the
+   shim's full global lifecycle succeeds against a scratch hub plus leaf:
+   attach (stream info, presence bucket bind, its inbox consumer), a
+   presence put on each beat, a roster scan (list keys, get each), an acked
+   publish to `global.director.inbox` and to another cluster's supervisor
+   inbox, receive and ack from its inbox, and deregister (presence delete).
+   A consumer with a filter other than its inbox is refused.
 4. **Spawn uses the role user.** A seat spawned after S2 carries
    `DIRECTOR_NATS_USER=<team>.<role>`, and its record names it.
 5. **A running seat is untouched by S2.** A seat started before S2 keeps its
    team credential and stays connected; after `marvel shift` it is on its
    role user.
-6. **The retire verb refuses.** With one live session on the team user it
-   refuses and names the session; with a hand-run client connected as the
-   team user it refuses and names the broker count; after a shift and the
-   client gone, `--global-only` removes only the global grants, and a second
-   run removes the user.
+6. **The retire verb refuses.** It refuses and names: one live session on
+   the team user; one live session with no recorded bus user (a pre-S2
+   record); a hand-run client connected as the team user; a client that
+   disconnects just before the first check and reconnects inside the
+   interval (the second check catches it). After a shift and the client
+   gone, `--global-only` removes only the global grants and a second run
+   removes the user; a client that then reconnects with the old password
+   is reported as an authentication failure within five minutes.
 7. **Restart.** Role passwords survive a daemon restart and reexec; a seat
    connected as a role user stays connected.
 8. **Names.** A role user name never collides with a team user name, and a
@@ -146,12 +196,16 @@ named default). Ruling 3.
    (the negative test #403 carries).
 9. **The seat user.** The rendered file states the seat user's global
    grants, or their absence, in a comment.
+10. **The pull residual.** A broad consumer created on `GLOBAL_TO_<cluster>`
+    with a guessable name raises `bus.global-broad-consumer`; a consumer
+    created by the supervisor role user with a broad filter is refused; the
+    S3 check lists only inbox-filtered consumers on a clean stream.
 
 ## 8. Rulings needed (operator, via director)
 
 | # | question | default |
 |---|---|---|
 | 1 | Broker users per (team, role), named `<team>.<role>`, as the step before per-session users (R-84) | yes |
-| 2 | A worker role in a supervisor team publishes nothing on the global tier (the 2026-09-30 ruling extended from teams to roles), or keeps publish on `global.director.inbox` (sharpened R-94's upward send) | nothing; an upward send goes through the supervisor |
+| 2 | A worker role in a supervisor team publishes nothing on the global tier (the 2026-09-30 ruling extended from teams to roles), or keeps publish on `global.director.inbox` (sharpened R-94's upward send). It breaks no current shim path, but once S5 retires the team user it DOES cut: a hand-run client using the team password, and director#191's `unread --global` run by anyone without admin or hub credentials | nothing; an upward send goes through the supervisor |
 | 3 | The per-cluster director seat user carries no global grant, stated in the rendered file | yes |
 | 4 | S4 and S5 run per team, by the operator's verb, after a heads-up to director; never fleet-wide in one command | yes |
