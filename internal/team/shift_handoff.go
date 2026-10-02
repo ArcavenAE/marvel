@@ -37,8 +37,9 @@ const (
 	ageStageHard  = "hard"
 )
 
-// firstSessionOverAge returns the first running current-generation session of
-// role that is past cond.MaxAge and either quiet for cond.QuietFor (the quiet
+// firstSessionOverAge returns the first running session of role, at any
+// generation (a role's seats carry the generation of the last shift that
+// covered the role, not the team's counter, marvel#451), that is past cond.MaxAge and either quiet for cond.QuietFor (the quiet
 // stage) or past MaxAge+MaxDefer whatever its activity (the hard stage). Age
 // runs from CreatedAt, so it survives a daemon restart and starts over on a
 // health restart, which creates a new session (D3). Activity is the context
@@ -53,7 +54,7 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 	if maxDefer <= 0 {
 		maxDefer = api.DefaultShiftMaxDefer
 	}
-	for _, s := range c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation) {
+	for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name) {
 		if s.State != api.SessionRunning || s.CreatedAt.IsZero() {
 			continue
 		}
