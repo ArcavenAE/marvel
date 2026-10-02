@@ -122,7 +122,7 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 	switch {
 	case version > boltSchemaVersion:
 		_ = db.Close()
-		return fmt.Errorf("on-disk schema version %d is newer than binary's %d — refusing to load",
+		return fmt.Errorf("on-disk schema version %d is newer than binary's %d: refusing to load",
 			version, boltSchemaVersion)
 	case version == 1:
 		stamps, err = migrateV1(db, path, opts)
@@ -132,7 +132,7 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 		}
 	case version != 0 && version < boltSchemaVersion:
 		_ = db.Close()
-		return fmt.Errorf("on-disk schema version %d is older than binary's %d — no migration from it", version, boltSchemaVersion)
+		return fmt.Errorf("on-disk schema version %d is older than binary's %d: no migration from it", version, boltSchemaVersion)
 	}
 
 	// Initialize buckets + write schema version on first open. Wrapped
