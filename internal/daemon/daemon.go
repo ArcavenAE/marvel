@@ -1966,6 +1966,15 @@ type injectParams struct {
 	// and the user. It is a claim, not a proof; the daemon records it beside
 	// the transport it saw itself.
 	Injector Injector `json:"injector,omitempty"`
+	// Verify reads the composer after the keys are sent and reports whether
+	// the effect was seen. Off by default.
+	Verify bool `json:"verify,omitempty"`
+	// Clear discards a staged draft before the text is sent, only where the
+	// harness's composer is known and a clear is safe.
+	Clear bool `json:"clear,omitempty"`
+	// SettleMS is how long verification waits for a redraw. Zero means the
+	// default.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
