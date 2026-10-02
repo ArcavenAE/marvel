@@ -1698,6 +1698,16 @@ func (m *Manager) PlacementRefusals() []PlacementRefusal {
 	return out
 }
 
+// ClearPlacementRefusal drops a role's standing refusal. The controller calls it
+// when the role no longer wants a spawn (scaled to zero, or enough replicas
+// running) and when the role or its team is gone, so the condition does not
+// outlive the want behind it.
+func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	delete(m.refused, workspace+"/"+team+"/"+role)
+}
+
 func (m *Manager) now() time.Time {
 	if m.Clock != nil {
 		return m.Clock().UTC()

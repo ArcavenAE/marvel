@@ -485,10 +485,36 @@ func (c *Controller) ReconcileOnce() {
 	c.autoShiftsThisTick = 0
 
 	teams := c.store.ListTeams()
+	c.dropStaleRefusals(teams)
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}
 	c.reconcileScheduleFreshness(teams)
+}
+
+// dropStaleRefusals clears the standing placement refusal of a role whose team
+// or role no longer exists. A role that still exists is cleared by
+// applyRolePlan when it stops wanting a spawn.
+func (c *Controller) dropStaleRefusals(teams []api.Team) {
+	if c.sessMgr == nil {
+		return
+	}
+	for _, r := range c.sessMgr.PlacementRefusals() {
+		found := false
+		for i := range teams {
+			if teams[i].Workspace != r.Workspace || teams[i].Name != r.Team {
+				continue
+			}
+			for j := range teams[i].Roles {
+				if teams[i].Roles[j].Name == r.Role {
+					found = true
+				}
+			}
+		}
+		if !found {
+			c.sessMgr.ClearPlacementRefusal(r.Workspace, r.Team, r.Role)
+		}
+	}
 }
 
 // maxAutoShiftsPerTick caps how many automatic shifts the controller initiates
@@ -1237,6 +1263,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		c.clearAdmissionHold(t, plan.Role)
 	case admissionLatch:
 		c.latchAdmissionHold(t, plan.Role, plan.admission.key, plan.admission.reason)
+	}
+
+	if plan.Spawn == 0 && c.sessMgr != nil {
+		// Nothing to start for this role now, so nothing is being refused.
+		c.sessMgr.ClearPlacementRefusal(t.Workspace, t.Name, plan.Role)
 	}
 
 	if plan.Spawn > 0 {
