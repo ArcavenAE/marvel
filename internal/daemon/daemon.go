@@ -269,14 +269,6 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Zero leaves the controller on its built-in default (10 minutes);
 	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.
 	teamCtrl.ShiftTimeout = opts.ShiftTimeout
-	// The max-age shift trigger asks a seat for its handoff the way an
-	// operator would, with literal keystrokes and Enter (marvel#437 D5).
-	teamCtrl.Notify = func(sess api.Session, text string) error {
-		if sess.PaneID == "" {
-			return fmt.Errorf("session %s has no pane", sess.Key())
-		}
-		return driver.SendKeys(sess.PaneID, text, true, true)
-	}
 	// Must follow OpenBolt: the controller reads its crash-loop state
 	// out of the same bolt file. Before this, a role frozen at
 	// MaxRestarts respawned on the first reconcile tick after restart.
@@ -296,6 +288,19 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
+	// The max-age shift trigger asks a seat for its handoff the way an
+	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
+	// a draft typed into a seat, so it is recorded like any inject, from marvel.
+	teamCtrl.Notify = func(sess api.Session, text string) error {
+		if sess.PaneID == "" {
+			return fmt.Errorf("session %s has no pane", sess.Key())
+		}
+		if err := driver.SendKeys(sess.PaneID, text, true, true); err != nil {
+			return err
+		}
+		recordInject(evRing, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
+		return nil
+	}
 	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
 		msg := "removed inherited session variables: " + strings.Join(scrubbed, ", ")
@@ -1937,7 +1942,7 @@ type Injector struct {
 	User    string `json:"user,omitempty"`
 }
 
-func (d *Daemon) handleInjectAs(params json.RawMessage, _ caller) Response {
+func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	var p injectParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}
@@ -1956,7 +1961,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, _ caller) Response {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
-	log.Printf("inject: %s <- %d bytes (literal=%v, enter=%v)", p.SessionKey, len(p.Text), p.Literal, p.Enter)
+	recordInject(d.events, sess, p, injectOrigin(c, p.Injector))
 
 	result, _ := json.Marshal(map[string]string{
 		"status":  "injected",
@@ -3013,4 +3018,67 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
 	}
 	return Response{Result: data}
+}
+
+// injectOrigin says who sent an inject: the transport the daemon itself saw,
+// then what the caller declared about itself. The two are labelled apart so a
+// reader can tell a verified key fingerprint from a claimed seat name. An
+// attested peer block (pid, tty, seat, chain; the resolver in
+// docs/design/handoff-missing-delivery.md layer 2) joins as peer_* keys without
+// renaming these.
+func injectOrigin(c caller, from Injector) string {
+	transport := "unknown"
+	switch {
+	case c.local:
+		transport = "local"
+	case c.fingerprint != "":
+		transport = "ssh:" + cleanDeclared(c.fingerprint)
+	}
+	return fmt.Sprintf("transport=%s declared_session=%s declared_user=%s",
+		transport, cleanDeclared(from.Session), cleanDeclared(from.User))
+}
+
+// declaredMax caps one declared value, so a caller cannot flood the one-line
+// message.
+const declaredMax = 64
+
+// cleanDeclared makes caller-supplied text safe for a one-line message: control
+// characters are dropped and the length is capped. An absent value is "-".
+func cleanDeclared(s string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			continue
+		}
+		if n == declaredMax {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	if b.Len() == 0 {
+		return "-"
+	}
+	return b.String()
+}
+
+// recordInject emits session.injected for keystrokes that reached a pane. It
+// records how much was sent and, for a named key, the key; it never records
+// typed text.
+func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin string) {
+	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
+	if !p.Literal {
+		what = "key " + p.Text
+	}
+	msg := fmt.Sprintf("inject %s enter=%v %s", what, p.Enter, origin)
+	log.Printf("inject: %s <- %s", sess.Key(), msg)
+	events.Emit(ring, events.Event{
+		Kind:      events.KindSessionInjected,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   msg,
+	})
 }
