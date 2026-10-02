@@ -648,3 +648,27 @@ func TestHandoffReadRunsOffTheLock(t *testing.T) {
 		t.Fatalf("phase = %q, want launching: the finished read applies on the next tick", got.Shift.Phase)
 	}
 }
+
+// A role's seats carry the generation of the last shift that covered the role,
+// not the team's counter, so max age must look at the role's running seats at
+// any generation (marvel#451, the class of #345 and #387).
+func TestMaxAgeAsksSeatAtAnOlderGeneration(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-oldgen", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0) // generation 1
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		live.Generation = 4
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := f.evaluate()
+	req, ok := got.ShiftRequests[testShiftRole]
+	if !ok || req.Session != s.Key() {
+		t.Fatalf("ShiftRequests = %+v, want a request for %s: the seat is at generation 1 on a team at 4", got.ShiftRequests, s.Key())
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %d, want 1", len(f.notices))
+	}
+}
