@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -371,5 +372,73 @@ func TestVerifyConfirmsStagedTextAndDoesNotConfirmItAsSubmitted(t *testing.T) {
 	}
 	if !hasKind(d, events.KindSessionInjectUnconfirmed) {
 		t.Error("the unconfirmed submit emitted no event")
+	}
+}
+
+// pythonSeat paints a frame and then becomes python3, a program that is not a
+// shell, which counts each C-c it receives ("got-C-c") instead of dying, so a
+// clear that reached the pane is visible.
+func pythonSeat(t *testing.T, frame string) string {
+	t.Helper()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	path := filepath.Join(t.TempDir(), "frame.txt")
+	if err := os.WriteFile(path, []byte(frame), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return "stty -echo\ncat " + path + "\necho frame-painted\n" +
+		`exec python3 -c "import signal,time
+signal.signal(signal.SIGINT, lambda *a: print('got-C-c', flush=True))
+while True: time.sleep(0.2)"` + "\n"
+}
+
+func frameWith(above, composer string) string {
+	return "\n" + above + "\n\n" + testRule + "\n" + composer + "\n" + testRule + "\n  [Model] scratch\n"
+}
+
+// claude's clear is one C-c (aae-orc-6vcr2), sent once, only when a capture shows
+// text in an idle composer. The text that follows lands on a clean line.
+func TestClearSendsOneCtrlCToAnIdleClaudeComposerHoldingText(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, pythonSeat(t, frameWith("✻ Worked for 2s · done 5:23 PM", "❯"+testNB+"an old half draft")), "claude", "frame-painted")
+
+	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "new message", "literal": true, "clear": true, "settle_ms": 100})
+	if resp.Error != "" {
+		t.Fatalf("a clear on an idle composer holding text was refused: %s", resp.Error)
+	}
+	waitCaptureHas(t, d, key, "got-C-c")
+	time.Sleep(300 * time.Millisecond)
+	if c, _, _ := captureOf(t, d, key, false); strings.Count(c, "got-C-c") != 1 {
+		t.Errorf("want exactly one C-c to reach the pane:\n%s", c)
+	}
+}
+
+// Every other state refuses with nothing sent: an empty composer (C-c arms exit
+// on claude), a running turn (C-c interrupts it), streaming text with a draft
+// typed ahead (the same), and a harness whose reader cannot see a draft yet.
+func TestClearNeverReachesTheKeyOnAnyOtherReading(t *testing.T) {
+	cases := map[string]struct {
+		runtime string
+		frame   string
+	}{
+		"an empty composer":    {"claude", frameWith("✻ Worked for 2s · done 5:23 PM", "❯"+testNB)},
+		"a running turn":       {"claude", frameWith("✳ Cooking… (3s · thinking)", "❯"+testNB+"typed ahead")},
+		"streaming text":       {"claude", frameWith("⏺ Reply text still arriving", "❯"+testNB+"typed ahead")},
+		"codex, no reader yet": {"codex", frameWith("", "› a draft in codex's shape")},
+		"opencode, no reader":  {"opencode", frameWith("", "a draft in opencode's shape")},
+	}
+	for name, tc := range cases {
+		d := newHandlerDaemon(t)
+		key := verifySeat(t, d, pythonSeat(t, tc.frame), tc.runtime, "frame-painted")
+
+		resp := injectOf(t, d, map[string]any{"session_key": key, "text": "new", "literal": true, "clear": true, "settle_ms": 100})
+		if resp.Error == "" || !strings.Contains(resp.Error, "clear") {
+			t.Errorf("%s: error = %q, want a refusal that names the clear", name, resp.Error)
+		}
+		neverShows(t, d, key, "got-C-c")
+		if !hasKind(d, events.KindSessionInjectRefused) {
+			t.Errorf("%s: no refusal event", name)
+		}
 	}
 }
