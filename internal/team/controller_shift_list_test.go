@@ -715,3 +715,43 @@ func TestMaxAgeDoesNotEscalateOnAReadInFlightAtTheDeadline(t *testing.T) {
 		t.Fatal("escalated past the deadline while a read that began before it was still in flight")
 	}
 }
+
+// A seat that writes its marker after the window is escalated and stays held.
+// The repeat must report what is on disk now, not that no file exists
+// (review 5396464364).
+func TestMaxAgeRepeatReportsALateMarker(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-late", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	window := api.DefaultShiftHandoffWindow
+
+	f.evaluate()
+	f.clock.Advance(window + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	f.evaluate() // escalates
+	f.ctrl.handoffProbes.wait()
+	if n := f.count(events.KindShiftHandoffMissing); n != 1 {
+		t.Fatalf("handoff-missing events = %d, want 1", n)
+	}
+
+	writeHandoff(t, dir, s.Name, "notes\nEND HANDOFF\n") // late
+	f.clock.Advance(window + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	got := f.evaluate()
+	f.ctrl.handoffProbes.wait()
+
+	evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+	if len(evs) != 2 {
+		t.Fatalf("handoff-missing events = %d, want 2", len(evs))
+	}
+	if msg := evs[1].Message; strings.Contains(msg, "no regular file") || !strings.Contains(msg, "marker is now present") {
+		t.Fatalf("repeat = %q, want it to say the marker is now present", msg)
+	}
+	if got.Shift.Phase != api.ShiftNone || !got.ShiftRequests[testShiftRole].Escalated {
+		t.Fatalf("phase=%q escalated=%v, want none and still escalated: the supervisor decides", got.Shift.Phase, got.ShiftRequests[testShiftRole].Escalated)
+	}
+}
