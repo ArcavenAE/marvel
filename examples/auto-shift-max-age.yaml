@@ -1,0 +1,60 @@
+# Marvel example: automatic shift triggers as a list (marvel#437).
+#
+# This role shifts on context pressure, OR asks for a handoff once a seat is
+# older than max_age. The list is any-of: the first condition that holds, in
+# list order, acts. Max age is the backstop for a seat whose context marvel
+# cannot meter, or one wedged at a prompt that never fills its context.
+#
+# Max age never shifts a seat by itself (docs/design/shift-trigger-list.md D5):
+#
+# 1. Once a seat is past max_age and quiet for quiet_for (no context update),
+#    or past max_age + max_defer however busy, marvel types into its pane
+#    "shift: max age reached; write your handoff now" and records
+#    team.shift-handoff-requested.
+# 2. marvel watches the declared handoff file. When its last line is
+#    handoff_marker, the shift starts (team.shift-autotriggered, cause=max-age).
+# 3. With no marker by the end of handoff_window, marvel records
+#    team.shift-handoff-missing and leaves the seat running. The team's
+#    supervisor decides whether to call `marvel shift`. marvel never shifts
+#    a seat that wrote no handoff.
+#
+# The successor starts with MARVEL_PREDECESSOR (the old seat's key) and, when
+# a request was made, MARVEL_HANDOFF_REQUESTED_AT (RFC 3339, UTC).
+#
+# Defaults: quiet_for 2m, max_defer 30m, handoff_window 5m. max_age has a
+# floor of 15m. A max-age condition on a headless role is refused at apply.
+# Keys this marvel does not know (action, all, a nested any) are refused too.
+#
+# Setup:
+#   just build
+#   ./bin/marvel daemon &
+#   ./bin/marvel work examples/auto-shift-max-age.yaml
+#
+# Observe:
+#   ./bin/marvel events
+
+workspace:
+  name: long-run
+
+teams:
+  - name: researcher
+    roles:
+      - name: worker
+        replicas: 1
+        permissions: plan
+        runtime:
+          image: claude
+          command: claude
+          context_window: 1000000
+          context_feed: statusline
+        shift:
+          handoff: /tmp/marvel-handoffs/{session}.md
+          handoff_marker: END HANDOFF
+          handoff_window: 5m
+          any:
+            - on: context-pressure
+              headroom_tokens: 120000
+            - on: max-age
+              max_age: 8h
+              quiet_for: 2m
+              max_defer: 30m

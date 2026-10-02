@@ -129,6 +129,11 @@ func cloneRole(r Role) Role {
 		hc := *r.HealthCheck
 		out.HealthCheck = &hc
 	}
+	if r.Shift != nil {
+		sp := *r.Shift
+		sp.Any = slices.Clone(r.Shift.Any)
+		out.Shift = &sp
+	}
 	if r.Schedule != nil {
 		sc := *r.Schedule
 		if r.Schedule.History != nil {
@@ -153,6 +158,12 @@ func cloneTeam(t *Team) Team {
 	}
 	if len(t.Shift.Drained) > 0 {
 		out.Shift.Drained = maps.Clone(t.Shift.Drained)
+	}
+	if len(t.Shift.HandoffRequests) > 0 {
+		out.Shift.HandoffRequests = maps.Clone(t.Shift.HandoffRequests)
+	}
+	if len(t.ShiftRequests) > 0 {
+		out.ShiftRequests = maps.Clone(t.ShiftRequests)
 	}
 	return out
 }

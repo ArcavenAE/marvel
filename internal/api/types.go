@@ -531,8 +531,10 @@ const (
 // ShiftPolicy declares when marvel automatically shifts a role, replacing its
 // sessions with fresh ones before an external limit forces the harness to act.
 //
-// The one trigger implemented is context pressure, expressed as a token
-// REMAINDER, not a percentage. A shift fires for the role when a live session's
+// Two triggers exist. Max age (ShiftTriggerMaxAge) asks a seat past its bound
+// for a handoff and shifts only on an observed one; see ShiftCondition and
+// internal/team/shift_handoff.go. Context pressure is expressed as a token
+// REMAINDER, not a percentage. It fires for the role when a live session's
 // occupancy rises within HeadroomTokens of its resolved window:
 //
 //	ContextTokens > ContextLimit - HeadroomTokens   (ContextLimit > 0)
@@ -658,11 +660,11 @@ type ShiftState struct {
 	// to bolt with the shift and resets to nil when the shift clears. See
 	// aae-orc-094e.
 	Drained map[string]int
-	// HandoffRequestedAt carries, per role, when marvel asked the role's
-	// departing seat for a handoff, so the successor's environment can say
-	// so (MARVEL_HANDOFF_REQUESTED_AT). Moved here from Team.ShiftRequests
-	// when the shift starts; clears with the shift.
-	HandoffRequestedAt map[string]time.Time
+	// HandoffRequests carries, per role, the handoff request marvel made of
+	// the role's departing seat, so that seat's successor can be told when
+	// (MARVEL_HANDOFF_REQUESTED_AT). Moved here from Team.ShiftRequests when
+	// the shift starts; clears with the shift.
+	HandoffRequests map[string]ShiftRequest
 }
 
 // Team declares desired state: a cohesive unit of agents with heterogeneous roles.

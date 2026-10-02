@@ -161,8 +161,8 @@ func TestMaxAgeRequestsHandoffThenShiftsOnMarker(t *testing.T) {
 	if _, pending := got.ShiftRequests[testShiftRole]; pending {
 		t.Fatal("the request should move into the shift when it starts")
 	}
-	if at := got.Shift.HandoffRequestedAt[testShiftRole]; !at.Equal(listEpoch) {
-		t.Fatalf("Shift.HandoffRequestedAt[%s] = %v, want %v", testShiftRole, at, listEpoch)
+	if req := got.Shift.HandoffRequests[testShiftRole]; req.Session != s.Key() || !req.RequestedAt.Equal(listEpoch) {
+		t.Fatalf("Shift.HandoffRequests[%s] = %+v, want %s at %v", testShiftRole, req, s.Key(), listEpoch)
 	}
 	evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftAutoTriggered}, 0)
 	if len(evs) != 1 || !strings.Contains(evs[0].Message, "cause=max-age") {
@@ -431,5 +431,49 @@ func TestShiftStampsPredecessorOnSuccessor(t *testing.T) {
 	}
 	if !next[0].HandoffRequestedAt.Equal(asked) {
 		t.Fatalf("HandoffRequestedAt = %v, want %v", next[0].HandoffRequestedAt, asked)
+	}
+}
+
+// Design D6: a pending or escalated max-age request does not silence the
+// role's other conditions. Context pressure still shifts the seat, and the
+// shift carries the request to the successor.
+func TestContextPressureStillFiresWhileMaxAgeRequestPending(t *testing.T) {
+	role := maxAgeRole("",
+		api.ShiftCondition{On: api.ShiftTriggerMaxAge, MaxAge: testMaxAge},
+		api.ShiftCondition{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom},
+	)
+	f := newListFixture(t, "test-maxage-then-pressure", role)
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 100_000, 1_000_000)
+	f.evaluate()
+	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	if got := f.evaluate(); !got.ShiftRequests[testShiftRole].Escalated {
+		t.Fatalf("ShiftRequests = %+v, want an escalated request", got.ShiftRequests)
+	}
+
+	f.store.UpdateSessionContext(s.Key(), api.SessionContext{ContextTokens: 900_000, ContextLimit: 1_000_000, ContextAt: f.clock.Now()})
+	got := f.evaluate()
+	if got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching on context pressure", got.Shift.Phase)
+	}
+	if req := got.Shift.HandoffRequests[testShiftRole]; req.Session != s.Key() {
+		t.Fatalf("Shift.HandoffRequests = %+v, want the escalated request carried", got.Shift.HandoffRequests)
+	}
+}
+
+// A request outlives nothing it no longer applies to: when the role's policy
+// stops declaring max age, the request is dropped.
+func TestMaxAgeRequestDroppedWhenPolicyNoLongerDeclaresIt(t *testing.T) {
+	f := newListFixture(t, "test-maxage-policy-gone", maxAgeRole(""))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.evaluate()
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		live.Roles[0].Shift = &api.ShiftPolicy{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.evaluate()
+	if len(got.ShiftRequests) != 0 {
+		t.Fatalf("ShiftRequests = %+v, want the request dropped", got.ShiftRequests)
 	}
 }

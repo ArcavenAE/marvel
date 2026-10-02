@@ -1,6 +1,7 @@
 package api
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -306,5 +307,105 @@ func TestShiftListRejections(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A pending handoff request, the list policy and a successor's lineage live
+// in the durable record, so a daemon restart inside the window resumes the
+// request (design item 9) and an adopted successor keeps its lineage.
+func TestShiftRequestAndLineageSurviveBolt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	asked := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "ws", CreatedAt: asked}); err != nil {
+		t.Fatal(err)
+	}
+	policy := &ShiftPolicy{
+		Any:           []ShiftCondition{{On: ShiftTriggerMaxAge, MaxAge: 8 * time.Hour}},
+		Handoff:       "/var/h/{session}.md",
+		HandoffMarker: "END",
+	}
+	if err := s1.CreateTeam(&Team{
+		Name: "squad", Workspace: "ws", CreatedAt: asked,
+		Roles:         []Role{{Name: "worker", Replicas: 1, Runtime: Runtime{Command: "sleep"}, Shift: policy}},
+		ShiftRequests: map[string]ShiftRequest{"worker": {Session: "ws/squad-worker-g1-0", Cause: ShiftTriggerMaxAge, RequestedAt: asked}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CreateSession(&Session{
+		Name: "squad-worker-g2-0", Workspace: "ws", Team: "squad", Role: "worker", Generation: 2,
+		Runtime: Runtime{Command: "sleep"}, Predecessor: "ws/squad-worker-g1-0", HandoffRequestedAt: asked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	team, err := s2.GetTeam("ws/squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req := team.ShiftRequests["worker"]; req.Session != "ws/squad-worker-g1-0" || !req.RequestedAt.Equal(asked) {
+		t.Fatalf("ShiftRequests after rehydrate = %+v", team.ShiftRequests)
+	}
+	if got := team.Roles[0].Shift; got == nil || len(got.Any) != 1 || got.Any[0].MaxAge != 8*time.Hour || got.Handoff != policy.Handoff {
+		t.Fatalf("Shift policy after rehydrate = %+v", got)
+	}
+	sess, err := s2.GetSession("ws/squad-worker-g2-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Predecessor != "ws/squad-worker-g1-0" || !sess.HandoffRequestedAt.Equal(asked) {
+		t.Fatalf("lineage after rehydrate = (%q, %v)", sess.Predecessor, sess.HandoffRequestedAt)
+	}
+}
+
+// Snapshots of a team do not share the new maps or the policy's list with the
+// store (go.md rule 12).
+func TestCloneTeamCopiesShiftRequestsAndPolicy(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	if err := s.CreateWorkspace(&Workspace{Name: "ws", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateTeam(&Team{
+		Name: "squad", Workspace: "ws", CreatedAt: time.Now().UTC(),
+		Roles: []Role{{
+			Name: "worker", Replicas: 1, Runtime: Runtime{Command: "sleep"},
+			Shift: &ShiftPolicy{Any: []ShiftCondition{{On: ShiftTriggerMaxAge, MaxAge: time.Hour}}},
+		}},
+		ShiftRequests: map[string]ShiftRequest{"worker": {Session: "a"}},
+		Shift:         ShiftState{HandoffRequests: map[string]ShiftRequest{"worker": {Session: "a"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.GetTeam("ws/squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap.ShiftRequests["worker"] = ShiftRequest{Session: "mutated"}
+	snap.Shift.HandoffRequests["worker"] = ShiftRequest{Session: "mutated"}
+	snap.Roles[0].Shift.Any[0].MaxAge = 0
+	snap.Roles[0].Shift.Handoff = "mutated"
+
+	live, err := s.GetTeam("ws/squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ShiftRequests["worker"].Session != "a" || live.Shift.HandoffRequests["worker"].Session != "a" {
+		t.Fatal("a snapshot's request maps alias the store's")
+	}
+	if live.Roles[0].Shift.Any[0].MaxAge != time.Hour || live.Roles[0].Shift.Handoff != "" {
+		t.Fatal("a snapshot's shift policy aliases the store's")
 	}
 }
