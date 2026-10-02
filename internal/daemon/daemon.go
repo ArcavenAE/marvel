@@ -264,7 +264,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 
 	store := api.NewStore()
 	if opts.StateBolt != "" {
-		if oerr := store.OpenBolt(opts.StateBolt); oerr != nil {
+		if oerr := store.OpenBoltWithOptions(opts.StateBolt, api.BoltOptions{LegacyCwd: opts.LegacyCwd}); oerr != nil {
 			return nil, fmt.Errorf("open state bolt at %s: %w", opts.StateBolt, oerr)
 		}
 		log.Printf("daemon state file: %s (resource_version=%d)", opts.StateBolt, store.ResourceVersion())
@@ -301,6 +301,21 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
+	// The migration committed before this point; announce what it stamped,
+	// once, so an operator can see which teams were pinned to the old
+	// directory and declare a root for them.
+	for _, st := range store.LegacyStamps() {
+		ws, name, _ := strings.Cut(st.TeamKey, "/")
+		msg := "placement: legacy daemon cwd " + st.Dir + "; declare a root"
+		log.Printf("daemon: team %s: %s", st.TeamKey, msg)
+		events.Emit(evRing, events.Event{
+			Kind:      events.KindPlacementLegacyStamped,
+			Severity:  events.SeverityWarning,
+			Workspace: ws,
+			Team:      name,
+			Message:   msg,
+		})
+	}
 	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
 		msg := "removed inherited session variables: " + strings.Join(scrubbed, ", ")
@@ -1168,6 +1183,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	workDirAdvisories = append(workDirAdvisories, m.LegacyPlacementNotes(d.store)...)
 
 	// Pre-flight: refuse to apply if any role's runtime command/script
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
