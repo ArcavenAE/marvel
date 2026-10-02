@@ -244,6 +244,21 @@ func (s *Store) CreateWorkspace(w *Workspace) error {
 	return nil
 }
 
+// UpdateWorkspace applies fn to the named workspace under the store lock and
+// persists the result. A re-applied manifest moves the workspace root this way.
+func (s *Store) UpdateWorkspace(name string, fn func(*Workspace) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.workspaces[name]
+	if !ok {
+		return fmt.Errorf("workspace %s: %w", name, ErrNotFound)
+	}
+	if err := fn(w); err != nil {
+		return err
+	}
+	return s.persistPut(bucketWorkspaces, w.Key(), *w)
+}
+
 // GetWorkspace returns a snapshot of the named workspace.
 func (s *Store) GetWorkspace(name string) (Workspace, error) {
 	s.mu.RLock()

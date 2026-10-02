@@ -694,10 +694,21 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, CreatedAt: now}
-	// Ignore already-exists for workspace (idempotent apply).
-	if err := store.CreateWorkspace(ws); err != nil && !isAlreadyExists(err) {
-		return fmt.Errorf("apply workspace: %w", err)
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	// Ignore already-exists for workspace (idempotent apply), but a re-applied
+	// root moves. An apply that names no root leaves a stored one alone.
+	if err := store.CreateWorkspace(ws); err != nil {
+		if !isAlreadyExists(err) {
+			return fmt.Errorf("apply workspace: %w", err)
+		}
+		if m.Workspace.Root != "" {
+			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
+				live.Root = m.Workspace.Root
+				return nil
+			}); err != nil {
+				return fmt.Errorf("apply workspace: %w", err)
+			}
+		}
 	}
 
 	// Policies first, so a role's policy reference resolves against
@@ -753,6 +764,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Persona:              mr.Persona,
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
+				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)
@@ -804,6 +816,7 @@ func (m *Manifest) Apply(store *Store) error {
 			Workspace:  m.Workspace.Name,
 			Roles:      roles,
 			Budget:     budget,
+			WorkDir:    joinWorkDir(m.Workspace.Root, mt.WorkDir),
 			Generation: 1,
 			CreatedAt:  now,
 		}
@@ -816,6 +829,7 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
+				live.WorkDir = team.WorkDir
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply team %s: %w", mt.Name, err)
