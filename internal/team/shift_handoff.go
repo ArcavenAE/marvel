@@ -140,7 +140,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		path, pathErr = handoffPath(role.Shift.Handoff, sess)
 	}
 	if path != "" && pathErr == nil {
-		if handoffComplete(path, role.Shift.HandoffMarker) {
+		if c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker) {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
 			}
@@ -260,3 +260,19 @@ func handoffComplete(path, marker string) bool {
 	}
 	return strings.TrimSpace(string(tail)) == marker
 }
+
+// handoffProbes is the seam for the marker read (marvel#444 item 1).
+type handoffProbes struct {
+	// check reads the file; nil means handoffComplete.
+	check func(path, marker string) bool
+}
+
+func (p *handoffProbes) complete(_, path, marker string) bool {
+	if p.check != nil {
+		return p.check(path, marker)
+	}
+	return handoffComplete(path, marker)
+}
+
+// wait blocks until no read is in flight. Tests use it.
+func (p *handoffProbes) wait() {}

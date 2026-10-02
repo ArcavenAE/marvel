@@ -550,3 +550,52 @@ func TestHandoffPathRefusesNameThatEscapesTheTemplate(t *testing.T) {
 		t.Errorf("handoffPath with no placeholder: %v", err)
 	}
 }
+
+// The marker read must not run under c.mu, where a slow filesystem would stall
+// every team (marvel#444 item 1). A tick starts the read and returns; the
+// result is applied on the next tick.
+func TestHandoffReadRunsOffTheLock(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-offlock", maxAgeRole(dir))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.evaluate() // asks the seat
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	f.ctrl.handoffProbes.check = func(string, string) bool {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		return true
+	}
+
+	f.clock.Advance(time.Minute)
+	done := make(chan struct{})
+	go func() {
+		f.evaluate()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("the tick blocked on the handoff read")
+	}
+	<-started
+	got, err := f.store.GetTeam(f.teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, want none: the read has not finished", got.Shift.Phase)
+	}
+
+	close(release)
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Minute)
+	if got = f.evaluate(); got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching: the finished read applies on the next tick", got.Shift.Phase)
+	}
+}

@@ -36,6 +36,9 @@ type Controller struct {
 	// headroom the couple-second stagger is immaterial. Guarded by mu.
 	autoShiftsThisTick int
 
+	// handoffProbes runs the max-age handoff marker reads (shift_handoff.go).
+	handoffProbes handoffProbes
+
 	// roleHealth tracks per-role crash-loop state: restart count and
 	// next-allowed-restart deadline. Keyed by workspace/team/role so
 	// state survives session delete+recreate across restarts — the
