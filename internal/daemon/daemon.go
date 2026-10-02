@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -3069,7 +3070,10 @@ func cleanDeclared(s string) string {
 func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin string) {
 	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
 	if !p.Literal {
-		what = "key " + p.Text
+		what = "key (unrecognized)"
+		if recognizedKey(p.Text) {
+			what = "key " + p.Text
+		}
 	}
 	msg := fmt.Sprintf("inject %s enter=%v %s", what, p.Enter, origin)
 	log.Printf("inject: %s <- %s", sess.Key(), msg)
@@ -3083,6 +3087,21 @@ func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin st
 	})
 }
 
-// recognizedKey reports whether s is a tmux key name this record may show.
-// Scaffold: not yet implemented.
-func recognizedKey(string) bool { return true }
+// namedKeys are the tmux key names, without modifiers, that an inject records.
+var namedKeys = map[string]bool{
+	"Enter": true, "Escape": true, "Tab": true, "BTab": true, "Space": true,
+	"BSpace": true, "DC": true, "Up": true, "Down": true, "Left": true,
+	"Right": true, "Home": true, "End": true, "PageUp": true, "PageDown": true,
+	"PgUp": true, "PgDn": true,
+}
+
+// keyChord matches a modifier chord on one character (C-c, M-x, C-M-a) or a
+// function key (F1 to F12).
+var keyChord = regexp.MustCompile(`^((C|M|S)-)+[A-Za-z0-9]$|^F([1-9]|1[0-2])$`)
+
+// recognizedKey reports whether s is a tmux key name this record may show. With
+// literal off tmux types a word it does not know as plain characters, so
+// anything else could be text and is not recorded.
+func recognizedKey(s string) bool {
+	return namedKeys[s] || keyChord.MatchString(s)
+}
