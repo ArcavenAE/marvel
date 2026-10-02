@@ -1509,14 +1509,25 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 	// instead of "role not found". The scan reads the snapshot GetTeam
 	// already returned.
 	old := -1
+	var maxAge bool
 	for _, r := range t.Roles {
 		if r.Name == p.Role {
 			old = r.Replicas
+			for _, c := range r.Shift.Conditions() {
+				maxAge = maxAge || c.On == api.ShiftTriggerMaxAge
+			}
 			break
 		}
 	}
 	if old < 0 {
 		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+	}
+
+	// Apply refuses max-age on a role with several replicas; scale is the
+	// second door to the same drain, so it refuses the same thing (marvel#452).
+	// Scaling to zero or one stays allowed.
+	if maxAge && p.Replicas > 1 {
+		return Response{Error: api.MaxAgeReplicasError(fmt.Sprintf("team %s role %s shift", p.TeamKey, p.Role)).Error()}
 	}
 
 	// Structural validity first, before admission and before anything
