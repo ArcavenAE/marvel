@@ -67,13 +67,19 @@ type ManifestPolicy struct {
 // ManifestWorkspace is the workspace section of a manifest.
 type ManifestWorkspace struct {
 	Name string `toml:"name" yaml:"name"`
+	// Root is the filesystem root the workspace lives in; marvel work fills
+	// it from the manifest's directory when absent.
+	Root string `toml:"root,omitempty" yaml:"root,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
 type ManifestTeam struct {
-	Name   string          `toml:"name" yaml:"name"`
-	Budget *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
-	Roles  []ManifestRole  `toml:"role"  yaml:"roles"`
+	Name string `toml:"name" yaml:"name"`
+	// WorkDir is where the team's sessions run unless a role declares its
+	// own. Relative values resolve against workspace.root only.
+	WorkDir string          `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	Budget  *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
+	Roles   []ManifestRole  `toml:"role"  yaml:"roles"`
 }
 
 // ManifestBudget is the budget section within a team — the operator's
@@ -116,6 +122,9 @@ func (b *ManifestBudget) Budget() Budget {
 type ManifestRole struct {
 	Name     string `toml:"name"                          yaml:"name"`
 	Replicas int    `toml:"replicas"                      yaml:"replicas"`
+	// WorkDir is where this role's sessions run. Relative values resolve
+	// against workspace.root only.
+	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
