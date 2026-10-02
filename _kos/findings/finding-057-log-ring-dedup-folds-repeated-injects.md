@@ -22,11 +22,11 @@ started to diagnose a failed doorbell. The inject had landed; the log was
 folding it. A slice of the live ring (2026-10-01):
 
 ```
-2026/10/01 19:26:10 inject: aae/reviewer-reviewer-claude-g4-4 <- 65 bytes (literal=true, enter=true)
+2026/10/01 19:26:10 inject: aae/<seat-a> <- 65 bytes (literal=true, enter=true)
 last message repeated 2 times
 ```
 
-That says three injects reached g4-4 starting at 19:26:10, but not when the
+That says three injects reached one seat starting at 19:26:10, but not when the
 second and third arrived.
 
 ## Why
@@ -54,7 +54,7 @@ keeps the ring bounded and answers the operator's question.
 ## Evidence
 
 - `internal/logbuf/logbuf.go` lines 11 to 17 and 90 to 93 at ee7666d.
-- Live ring on mokuzai, 2026-10-01 18:48Z to 21:12Z: two fold markers (after 19:26:10 on g4-4, 2 repeats; after 20:40:23 on g4-1, 1 repeat)
+- Live ring on mokuzai, 2026-10-01 18:48Z to 21:12Z: two fold markers (after 19:26:10 on seat A, 2 repeats; after 20:40:23 on seat B, 1 repeat)
   among reviewer-seat injects.
 - The one misread, 2026-10-01: resolved by `marvel capture` showing the
   seat had received the text. My handoff log does not record it; this
