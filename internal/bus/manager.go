@@ -2,6 +2,7 @@ package bus
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -66,7 +67,20 @@ type Manager struct {
 
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
+
+	// known is the set of per-role users the broker has been seen to accept.
+	// Scaffold: not yet consulted.
+	known map[string]bool
+	// verify dials the broker as one user; nil means a real connection.
+	verify func(ctx context.Context, url, user, password string) error
 }
+
+// ConfirmRoleUsers dials the broker as each rendered per-role user not yet
+// known to be accepted. Scaffold: does nothing yet.
+func (m *Manager) ConfirmRoleUsers(ctx context.Context) error { return nil }
+
+// confirmAsync runs ConfirmRoleUsers off the caller's path. Scaffold.
+func (m *Manager) confirmAsync() {}
 
 // SeatPassName is the file beside the rendered conf that holds the director
 // seat's password, 0600, rewritten atomically on every render that mints
@@ -98,6 +112,7 @@ func NewManager(dir, domain string, rb config.ResolvedBus, teams TeamLister, has
 		teams:       teams,
 		hasLeafSeed: hasLeafSeed,
 		passwords:   map[string]string{},
+		known:       map[string]bool{},
 	}
 	pw, ok := recovered[AdminUser]
 	if !ok {
@@ -222,6 +237,9 @@ func (m *Manager) Regenerate() (bool, error) {
 		if err := m.Reloader.Reload(); err != nil {
 			return changed, fmt.Errorf("reload broker after rewrite: %w", err)
 		}
+	}
+	if m.Reloader != nil {
+		m.confirmAsync()
 	}
 	return changed, nil
 }
