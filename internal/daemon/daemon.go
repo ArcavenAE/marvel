@@ -3052,14 +3052,24 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 	return Response{Result: data}
 }
 
-// linkedWorktree reports whether dir sits inside a linked git worktree: walking
-// up to the first .git, a file (a pointer to the real repository) means it, and
-// a directory means an ordinary checkout. A directory that does not exist, or
-// no repository at all, is not a worktree.
+// linkedWorktree reports whether dir sits inside a linked git worktree. It
+// resolves symlinks in dir first, so a symlinked cwd is judged by where it
+// points, then walks up to the first .git. A .git that is a directory (or a
+// symlink to one, hence Stat and not Lstat) is an ordinary checkout. A .git
+// that is a file holds a `gitdir:` pointer, and only a pointer into
+// `<repo>/.git/worktrees/<name>` is a linked worktree: a submodule's points
+// into `.git/modules/<name>` and a --separate-git-dir checkout's elsewhere. A
+// directory that does not exist, or no repository at all, is not a worktree.
 func linkedWorktree(dir string) bool {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	for d := filepath.Clean(dir); ; {
-		if info, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
-			return !info.IsDir()
+		if info, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			if info.IsDir() {
+				return false
+			}
+			return worktreePointer(filepath.Join(d, ".git"))
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
@@ -3067,4 +3077,18 @@ func linkedWorktree(dir string) bool {
 		}
 		d = parent
 	}
+}
+
+// worktreePointer reports whether the .git file at path points into a
+// repository's worktrees directory.
+func worktreePointer(path string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(body)), "gitdir:")
+	if !ok {
+		return false
+	}
+	return filepath.Base(filepath.Dir(filepath.Clean(strings.TrimSpace(target)))) == "worktrees"
 }
