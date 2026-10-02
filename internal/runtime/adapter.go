@@ -306,9 +306,18 @@ type ComposerCapable interface {
 	Composer() ComposerContract
 }
 
+var (
+	_ ComposerCapable = (*Claude)(nil)
+	_ ComposerCapable = (*Codex)(nil)
+	_ ComposerCapable = (*OpenCode)(nil)
+)
+
 // ComposerFor returns the composer contract of a runtime, or the zero contract
 // when its adapter has none.
 func (r *Registry) ComposerFor(runtimeName string) ComposerContract {
+	if c, ok := r.Resolve(runtimeName).(ComposerCapable); ok {
+		return c.Composer()
+	}
 	return ComposerContract{}
 }
 
