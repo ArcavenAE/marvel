@@ -26,11 +26,6 @@ import (
 func hubSpec() Spec {
 	s := baseSpec()
 	s.HubURL = "tls://hub.example:7422"
-	for i := range s.Teams {
-		if s.Teams[i].Supervisor {
-			s.Teams[i].SupervisorPassword = "suppw"
-		}
-	}
 	return s
 }
 

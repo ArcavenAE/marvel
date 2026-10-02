@@ -25,7 +25,7 @@ func baseSpec() Spec {
 		LeafAttached: true,
 		Admin:        User{Name: AdminUser, Password: "adminpw"},
 		Teams: []TeamUser{
-			{Workspace: "aae-orc", Team: "ops", Password: "opspw", Supervisor: true},
+			{Workspace: "aae-orc", Team: "ops", Password: "opspw", Supervisor: true, SupervisorPassword: "suppw"},
 			{Workspace: "aae-orc", Team: "fleet", Password: "fleetpw"},
 		},
 	}
@@ -136,8 +136,10 @@ func TestRenderAuthConfinesTeamsAndGrantsSupervisorOnlyWithHub(t *testing.T) {
 	if !strings.Contains(auth, `"global.*.supervisor.inbox"`) {
 		t.Errorf("supervisor team lacks publish on every cluster's supervisor inbox:\n%s", auth)
 	}
-	if n := strings.Count(auth, "global."); n != 4 {
-		t.Errorf("global subjects appear %d times, want 4 (supervisor team only)", n)
+	// Four for the team user and four for the supervisor user (Stage 2 is
+	// additive, so both carry global subjects); none for the ordinary team.
+	if n := strings.Count(auth, "global."); n != 8 {
+		t.Errorf("global subjects appear %d times, want 8 (the supervisor team's two users only)", n)
 	}
 }
 
