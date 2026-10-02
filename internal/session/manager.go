@@ -607,6 +607,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		Panes:       m.driver,
 		TmuxSession: tmuxSess,
 		Title:       sess.Name,
+		Dir:         sess.WorkDir,
 		Command:     plan.command,
 		Env:         plan.env,
 		Stream:      plan.stream,
