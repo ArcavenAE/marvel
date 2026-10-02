@@ -210,6 +210,10 @@ const ContextFeedStatusline = "statusline"
 // it exec'd. Resource readings are therefore a rollup over the pid's
 // subtree, not a read of the pid itself. See internal/procstat.
 type Session struct {
+	// SettingSources is the value passed to the harness as --setting-sources
+	// at launch, kept for describe and for a restart. Empty when marvel
+	// passed none (a wrapper owns its command line).
+	SettingSources string `toml:"setting_sources,omitempty"`
 	// WorkDir is the directory the session was placed in, copied from the
 	// role at spawn (marvel#255 build item 2). Empty on a session spawned
 	// before placement existed.
@@ -454,8 +458,13 @@ type SessionMetrics struct {
 // Name is the job function (reviewer, supervisor, probe-runner).
 // Persona and Identity are the costume and lens per finding-019.
 type Role struct {
-	Name     string `toml:"name"`
-	Replicas int    `toml:"replicas"`
+	// SettingsSources, when declared, is the list of Claude Code settings
+	// sources a bare claude seat loads (user, project, local), passed as
+	// given. Empty means every source today; SB-1 makes the default depend on
+	// where the seat is placed (docs/design/seat-bootstrap.md section 4).
+	SettingsSources []string `toml:"settings_sources,omitempty"`
+	Name            string   `toml:"name"`
+	Replicas        int      `toml:"replicas"`
 	// WorkDir is where this role's sessions run; empty means the team's
 	// workdir, then the workspace root. Absolute once applied.
 	WorkDir       string        `toml:"workdir,omitempty"`

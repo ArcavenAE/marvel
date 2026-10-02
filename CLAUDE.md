@@ -156,12 +156,18 @@ the role declares in `handoff` (with `{session}` for the session name) ends in
 `handoff_marker`, the shift starts. With no marker by the end of
 `handoff_window` (default 5m), or no declared file, marvel emits
 `team.shift-handoff-missing`, leaves the seat running, and the team's
-supervisor decides. Age runs from spawn: it survives a daemon restart and
+supervisor decides. The event repeats once per window while the request
+stands, and after a daemon restart, because the event ring is in memory; each
+repeat reports what the handoff file holds now, including a marker written
+after the window, and never clears the escalation. Age runs from spawn: it survives a daemon restart and
 starts over on a health restart. A pending request persists with the team.
 It is one per role: while it is pending or escalated, max age asks no other
 replica of that role (context pressure still covers them all). The handoff
-file must be a regular file, not a symlink, FIFO or directory, and its path
-may not contain `..`. Refused on a headless role. Example: `examples/auto-shift-max-age.toml`.
+file itself must be a regular file, not a symlink, FIFO or directory (a
+symlinked parent directory is still followed), its path may not contain `..`,
+and a session name that is not one path element is refused. marvel reads the
+file off the controller lock, so a marker is applied one tick after it is
+written; keep the file on a local filesystem. Refused on a headless role. Example: `examples/auto-shift-max-age.toml`.
 
 Every shift's successor starts with `MARVEL_PREDECESSOR` (the old seat's key)
 and, when its predecessor was asked for a handoff,

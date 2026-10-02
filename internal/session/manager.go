@@ -655,6 +655,8 @@ func (m *Manager) Create(sess *api.Session) error {
 		// survives a daemon restart. Empty when the runtime shares the
 		// operator's own home.
 		live.HarnessHome = sess.HarnessHome
+		// What the harness was told to load, kept for describe and restart.
+		live.SettingSources = sess.SettingSources
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -790,6 +792,10 @@ func (m *Manager) assignSessionID(lctx *runtime.LaunchContext, adapter runtime.A
 // harness's structured output, planLaunch creates the sink first and
 // hands the path down; the adapter reports back whether it used it.
 func (m *Manager) planLaunch(sess *api.Session) launchPlan {
+	// What this launch passes the harness as --setting-sources is recorded
+	// below. A fallback to the direct command passes none, and a re-plan must
+	// not carry the previous launch's value forward.
+	sess.SettingSources = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this
@@ -864,6 +870,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 
 	plan := launchPlan{command: result.Command, env: result.Env}
+	sess.SettingSources = result.SettingSources
 	switch {
 	case result.Stream != nil && fifo != nil:
 		parser, perr := runtime.NewStreamParser(result.Stream.Format, runtime.StreamParserConfig{

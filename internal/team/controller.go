@@ -36,6 +36,14 @@ type Controller struct {
 	// headroom the couple-second stagger is immaterial. Guarded by mu.
 	autoShiftsThisTick int
 
+	// handoffProbes runs the max-age handoff marker reads (shift_handoff.go).
+	handoffProbes handoffProbes
+
+	// missingEmitted is when each escalated session's handoff-missing event
+	// was last emitted, so it repeats once per window (shift_handoff.go).
+	// In memory, deliberately: a restart repeats it at once. Guarded by mu.
+	missingEmitted map[string]time.Time
+
 	// roleHealth tracks per-role crash-loop state: restart count and
 	// next-allowed-restart deadline. Keyed by workspace/team/role so
 	// state survives session delete+recreate across restarts — the
@@ -1835,6 +1843,8 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			}
 			live.Shift.HandoffRequests[r] = req
 			delete(live.ShiftRequests, r)
+			c.handoffProbes.forget(req.Session)
+			delete(c.missingEmitted, req.Session)
 		}
 		return nil
 	}); err != nil {
