@@ -41,6 +41,10 @@ type Reader interface {
 	// Read places a plain pane capture in a State. A reader that cannot tell
 	// returns Unknown, never a guess.
 	Read(capture string) State
+	// Escapes reports whether Read needs the capture taken with escape
+	// sequences (tmux capture-pane -e): a reader that tells a placeholder from
+	// typed text by its attributes does.
+	Escapes() bool
 	// Preflight reports whether every inject to this harness is preceded by a
 	// capture and refused on MenuUnsafe: true where the harness has a state in
 	// which a keystroke is dangerous.
@@ -79,6 +83,7 @@ type unknownReader struct{}
 
 func (unknownReader) Name() string      { return "unknown" }
 func (unknownReader) Read(string) State { return Unknown }
+func (unknownReader) Escapes() bool     { return false }
 func (unknownReader) Preflight() bool   { return false }
 func (unknownReader) ClearKey() string  { return "" }
 
@@ -109,6 +114,7 @@ func (codexReader) Read(capture string) State {
 	return Unknown
 }
 
+func (codexReader) Escapes() bool    { return false }
 func (codexReader) Preflight() bool  { return true }
 func (codexReader) ClearKey() string { return "" }
 
