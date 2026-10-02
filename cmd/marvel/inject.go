@@ -106,3 +106,13 @@ func describeInject(sessionKey string, steps []injectStep) string {
 		return fmt.Sprintf("injected %d bytes into %s", bytes, sessionKey)
 	}
 }
+
+// injectRequestParams builds the params for one inject step.
+func injectRequestParams(sessionKey string, step injectStep) map[string]any {
+	return map[string]any{
+		"session_key": sessionKey,
+		"text":        step.Text,
+		"literal":     step.Literal,
+		"enter":       step.Enter,
+	}
+}

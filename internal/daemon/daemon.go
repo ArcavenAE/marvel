@@ -896,7 +896,7 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	case "reset-health":
 		return d.handleResetHealth(req.Params)
 	case "inject":
-		return d.handleInject(req.Params)
+		return d.handleInjectAs(req.Params, c)
 	case "capture":
 		return d.handleCapture(req.Params)
 	case "credential.put":
@@ -1925,9 +1925,19 @@ type injectParams struct {
 	Text       string `json:"text"`
 	Literal    bool   `json:"literal"`
 	Enter      bool   `json:"enter"`
+	// Injector is what the CLI declares about itself: the seat it runs in
+	// and the user. It is a claim, not a proof; the daemon records it beside
+	// the transport it saw itself.
+	Injector Injector `json:"injector,omitempty"`
 }
 
-func (d *Daemon) handleInject(params json.RawMessage) Response {
+// Injector is the caller's own account of who it is.
+type Injector struct {
+	Session string `json:"session,omitempty"`
+	User    string `json:"user,omitempty"`
+}
+
+func (d *Daemon) handleInjectAs(params json.RawMessage, _ caller) Response {
 	var p injectParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return Response{Error: fmt.Sprintf("bad params: %v", err)}

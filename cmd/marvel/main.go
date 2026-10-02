@@ -1558,12 +1558,7 @@ characters rather than pressing the key. Use --key for a control key:
 				return err
 			}
 			for _, step := range steps {
-				params, _ := json.Marshal(map[string]any{
-					"session_key": args[0],
-					"text":        step.Text,
-					"literal":     step.Literal,
-					"enter":       step.Enter,
-				})
+				params, _ := json.Marshal(injectRequestParams(args[0], step))
 				resp, err := send(daemon.Request{
 					Method: "inject",
 					Params: params,
