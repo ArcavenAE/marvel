@@ -224,6 +224,13 @@ setting a control on itself, and the record shows which one held:
    the event ring, with the actor as attributed above, or the key
    fingerprint over mrvl.
 
+**The operator path, intended.** The controls are run from a real terminal
+on the daemon's host, or over mrvl with an admin key from anywhere. A Claude
+Code Bash tool runs its commands without a controlling terminal, so no
+harness can run them, the director's seat included: a seat proposes a mute,
+cancel or abort, and the operator runs it. That matches the rule that no
+seat or automation sets these controls.
+
 Limit, stated plainly: under one OS user none of this is a kernel boundary.
 A seat that drives a terminal it does not own (for example by typing into
 the operator's own tmux server) is attributed to that terminal. Closing that
