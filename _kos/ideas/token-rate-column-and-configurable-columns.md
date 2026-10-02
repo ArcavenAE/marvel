@@ -4,7 +4,8 @@
   cause: `marvel get sessions` has no token-throughput signal and a rigid,
   hardcoded column layout. Extended 2026-09-25 by operator ruling with a
   third (Feature C, account budget, reset, and credit columns), which rides
-  the same substrate.
+  the same substrate. Extended 2026-10-02 with a fourth (Feature D, an AGE
+  column), on the same substrate.
 - **Date:** 2026-09-16
 - **Origin:** commission via director. The rate column is the forcing
   function; first-class column definitions are the substrate it drags in.
@@ -16,7 +17,8 @@
   (why a numeric column must be commensurable and sortable). aae-orc-vdcwm
   (a WORKDIR column, an instance of "one more hardcoded column" this idea
   generalizes). aae-orc-dc1j (CTX% acquisition for interactive sessions,
-  the same three-state discipline).
+  the same three-state discipline). [[max-session-age]] (the clock Feature D
+  displays).
 
 ## The two features
 
@@ -223,6 +225,45 @@ every metric stays displayable as the ruling asks.
 something marvel can see without holding an account identifier (for codex,
 a seat's rollout home; for Claude Code, nothing yet). That key is a
 prerequisite for options 2 and 3 and for de-duplicating reporters.
+
+## Feature D: an AGE column (operator ask 2026-10-02)
+
+The operator's words, verbatim:
+
+> "kos idea marvel include agent runtime age option for columns"
+
+**Director's reading, not the operator's words:** an optional AGE column in
+`marvel get sessions`, showing time since spawn, offered through `-o wide` or
+the Feature B column selector. Possibly also a time-to-max-age column when a
+role sets a max-age shift trigger.
+
+**The clock.** The column should show the same age the max-age trigger acts
+on, so the operator reads the number the shift will fire on. That age runs
+from the session's `CreatedAt`: it survives a daemon restart, because
+`CreatedAt` is persisted, and starts over on a health restart, which creates
+a new session (`internal/team/shift_handoff.go`, the comment on
+`firstSessionOverAge`). A column computed from any other start time would
+disagree with the trigger.
+
+**Why now.** Two observations from 2026-10-02:
+
+- Seat age had to be derived by hand for that day's max-age waves; nothing in
+  the listing shows it.
+- The claude-reviewer seat reported (its N1 finding) that filtering by team
+  generation hid 9 of 14 over-age seats. GEN is the team's generation, not
+  the session's age, so it cannot stand in for this column.
+
+**Shape.** One duration column, AGE, right-aligned and sorted by its value in
+seconds, never by its text (the mis-sort trap in "The display trap" above).
+A compact unit form like `kubectl`'s (`45m`, `7h`, `3d`) keeps it narrow; its
+width priority belongs to [[get-sessions-width-and-truncation]]. The
+time-to-max-age column, if it exists, is empty for a role with no max-age
+trigger and shows the remainder, or how far past the bound, for one that has
+it.
+
+**Open for this feature:** is AGE in the default set or only in `-o wide`?
+Does `describe session` also show the spawn time and the trigger's stage
+(quiet or hard)?
 
 ## Width and truncation (2026-09-25)
 
