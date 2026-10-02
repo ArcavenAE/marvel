@@ -1,0 +1,94 @@
+id: question-marvel-mcp-service-provider
+type: question
+confidence: frontier
+title: "How can marvel provide MCP servers to seats while the credential stays out of the seat's reach?"
+content: |
+  Operator request, 2026-10-02 (verbatim in
+  _kos/ideas/mcp-service-provider-and-credential-custody.md). A child of
+  question-marvel-service-provider-shape, not a sharpening of it: the parent
+  asks how marvel extends any service over a service plane; this asks one
+  service class (MCP tools) and one hard part of it (where the vendor
+  credential rests and who can read it). Examples: Perplexity (a static API
+  key, bearer at the vendor) and Atmos Pro (OAuth for one workspace, where
+  the refresh token is the durable artifact), as the operator's relay states
+  them; the probe checks both.
+
+  GOVERNING RULE. SOUL section 3 and ADR-009: the boundary is audience, not
+  format, applied to the most durable artifact held. A static key and an
+  OAuth refresh token are custody: marvel never holds them, not even at call
+  time. Brokering means a vault minting a short-lived scoped credential that
+  marvel hands on (ADR-009); where no such mint exists (a static key), the
+  holder of the key is a front marvel does not run (a vault-side proxy), and
+  a marvel-run front would need its own ruling. A JWT marvel mints and can
+  revoke is issuance and is free.
+
+  THE SIX SUB-QUESTIONS.
+  (a) Binding scope. Workspace, team, role or seat, and how a binding at one
+      scope is inherited by the scopes below it, overridden, or withheld.
+      The parent's Binding resource is the candidate carrier.
+  (b) Delivery. An MCP front over a local socket, run and held by something
+      other than marvel (a marvel-run front holding a static key is custody
+      and would need its own ruling); harness MCP
+      config written at spawn (marvel already does this for codex,
+      runtime/codex_home.go); a stdio sidecar child; or delegation to the
+      harness's own remote-MCP OAuth. Projection's inject mode is the
+      parent's name for the second.
+  (c) Where the secret rests and how it refreshes and is revoked. A store
+      outside marvel (the OS keychain, a vault) is the candidate holder of
+      every custody artifact, but a store the seat's OS user can query is
+      not out of the seat's reach (a same-user keychain read returns the
+      item without a prompt); what refreshes an OAuth token, and what
+      revokes access when a binding is withdrawn or a seat is retired.
+  (d) Per-seat audit attribution. Which seat called which tool with which
+      binding, recorded where the call passes (the front, if there is one)
+      and keyed by seat, not instance (R-151).
+  (e) Harness differences. How claude, codex, crush and opencode each take MCP
+      config (file, flag, env), whether each does remote OAuth itself, and
+      what marvel must write for each.
+  (f) The sandbox. Seats run as the daemon's OS user, so a file or env value
+      marvel can read, a seat can read, unless a sandbox profile (curtain)
+      denies it. Which shapes keep the secret out of the seat's reach, and
+      which only keep it out of the model's context. The same-uid residual
+      is already tracked as aae-orc-ww33y (ADR-009's same-uid residual has no
+      enforcement path).
+
+  CONFLICT RESOLVED. The parent's credential paragraph said marvel "holds
+  session state on the agent's behalf (for example the OAuth or
+  Claude-backend session)", which ADR-009 (2026-09-04) forbids for a refresh
+  token. The parent was amended to match ADR-009 in the same PR that filed
+  this node; this node follows ADR-009.
+
+  PROMOTION SIGNAL. One seat uses one custody-class MCP tool through a
+  binding, the seat cannot read the credential (a planted read from inside
+  the seat fails), the call is attributed to the seat, and withdrawing the
+  binding stops the next call without touching the vendor console.
+edges:
+  - target: question-marvel-service-provider-shape
+    type: derives
+    note: "Child of the service-provider plane: one service class (MCP) and its credential custody, through the parent's Binding and Projection inject mode."
+  - target: question-agent-communication-broker
+    type: supports
+    note: "The per-session credential injected at launch for the bus is the precedent for delivering a credential to a seat."
+  - target: question-bd-managed-extended-service
+    type: supports
+    note: "Shares the custody rule: broker or front, never hold the long-lived credential."
+  - target: question-role-tools-field-projection
+    type: supports
+    note: "Which tools a role is given is the projection a binding attaches to; an MCP binding is one such tool surface."
+  - target: question-permission-model
+    type: derives
+    note: "Keeping the secret out of the seat's reach is a sandbox and permission question."
+provenance:
+  created_by: agent
+  session: "architect role, 2026-10-02, operator request relayed via the team supervisor"
+  created_at: "2026-10-02"
+  reviewed_by: null
+tags:
+  - service-provider
+  - mcp
+  - credentials
+  - custody
+notes: >
+  Probe brief: _kos/probes/brief-marvel-mcp-service-provider.md. Idea:
+  _kos/ideas/mcp-service-provider-and-credential-custody.md. Design only; no
+  build is asked for.

@@ -74,12 +74,17 @@ content: |
     enrollment), curtain (sandbox profile). Conflating the two lifecycles is
     a category error.
 
-  Credential boundary: marvel is not the long-term secret store, but it
-  brokers access, holds session state on the agent's behalf (for example the
-  OAuth or Claude-backend session), and connects agents to a vault that mints
-  short-lived scoped credentials. The one thing crossing the wall from the
-  agent side is its minted, attenuable identity; token exchange at the
-  binding boundary. Corrects SOUL section 3 (too narrow); bd aae-orc-dqhf.
+  Credential boundary: marvel is not the long-term secret store. It brokers
+  access by connecting agents to a vault that mints short-lived scoped
+  credentials, and it mints and revokes its own tokens (issuance). It does
+  not hold an artifact that is bearer authority at a third party, including
+  an OAuth refresh token or a model-backend session, per ADR-009 (2026-09-04:
+  the boundary is audience, not format, applied to the most durable artifact
+  held; it granted the brokering half of aae-orc-dqhf and declined the
+  OAuth-session half). The one thing crossing the wall from the agent side is
+  its minted, attenuable identity; token exchange at the binding boundary.
+  Amended 2026-10-02 from the pre-ADR-009 wording, which had marvel holding
+  the OAuth session (see question-marvel-mcp-service-provider).
 
   Absence has two honest projections: unprovisioned (invisible in the agent's
   world) vs bound-but-down (honest unavailable). Component-independence at the
