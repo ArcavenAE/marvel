@@ -79,10 +79,8 @@ marvel observes the action:
   --role <role>`. The shift replaces the seat, the request is dropped, and
   delivery stops.
 - **Leave it running:** the supervisor does nothing, and the repeats
-  continue once per window until the request ends some other way. A way to
-  quiet the repeats without shifting (for example `marvel shift --dismiss`)
-  is ruling 2; the default is none in this slice, because a standing
-  escalation that is quiet is the silent hold #453 was about.
+  continue once per window until the request ends some other way, or until
+  the operator uses one of the controls in H6.
 
 Making marvel a bus consumer to read replies would be a larger change
 (a subscription, its own durable, parsing intent from text) for no gain over
@@ -115,6 +113,59 @@ stays the supervisor's business.
   short outage does not wait a whole window.
 - It never falls back to keystrokes into any pane.
 
+### H6. Operator controls: mute, cancel, abort
+
+The operator ruled on 2026-10-02: "let's add a mute button option, a cancel
+autoshift change for that agent session or a general abort option". Each
+control is an explicit operator act through one CLI verb, `marvel autoshift`.
+None is ever set by a seat or by automation, and each one is visible where
+the operator already looks, so none can become the #453 silent hold by
+accident.
+
+**Who may run them.** The verbs require the admin scope at the daemon
+(`internal/daemon/scope.go`), local socket or an admin key over mrvl. Each
+requires `--reason`, and each records the actor (the caller's key
+fingerprint, or `local socket`), the time and the reason. A seat runs as the
+same OS user and could reach the local socket, so the boundary is the rule
+and the record, not the kernel: the verbs are not in any seat's allowed
+command set, and every use is printed in `marvel get sessions` and the
+event ring.
+
+| control | verb | scope | effect | persists across a restart | undone by | expires |
+|---|---|---|---|---|---|---|
+| (a) mute | `marvel autoshift mute <session> --reason R [--for D]` | one escalated request | supervisor delivery and the repeating event pause | yes, on the persisted request | `marvel autoshift unmute <session>`, the expiry, or the request ending | yes: default 4h, `--for` up to 24h, no "forever" |
+| (b) cancel | `marvel autoshift cancel <session> --reason R` | one session | that session is never auto-shifted, by either trigger, for its life; any pending request for it is dropped | yes, on the session record | `marvel autoshift resume <session>` | no; it ends with the session, and a successor starts with auto-shift on |
+| (c) abort | `marvel autoshift abort <ws/team> --reason R`, or `abort --all` | a team, or the whole daemon | no new auto-shift is initiated for that scope; pending requests in the scope are dropped | yes: team-scope on the team record, daemon-scope in the store's meta bucket | `marvel autoshift resume <ws/team>` or `resume --all` | no |
+
+**Why both scopes for abort.** Team scope is for one team behaving badly
+(a manifest error, a role that shifts in a loop). Daemon scope is the
+incident switch: a bad release, or correlated shifts across teams spending
+the shared rate limit at once. Abort persists across a restart because an
+abort that a restart quietly lifts would resume shifting in the middle of the
+incident it was called for. Abort stops initiation only: a shift already in
+progress finishes or rolls back on its own timeout, and the operator's manual
+`marvel shift` still works under an abort.
+
+**What the supervisor delivery says.**
+- On mute: one message, `muted by <actor> until <time>: <reason>`, then no
+  more deliveries for that request until the mute ends. On expiry: one
+  message, `mute expired`, and the normal cadence resumes. The ring event is
+  not silent while muted: it repeats once per window marked `muted until
+  <time>`, so the ring never shows a gap with no reason.
+- On cancel: one message, `auto-shift canceled for <session> by <actor>:
+  <reason>`, and the request ends.
+- On abort: one message per dropped request in the scope, `auto-shift
+  aborted for <scope> by <actor>: <reason>`, and one per team when it is
+  resumed.
+
+**How `marvel get sessions` shows it.**
+- A per-session suffix on the HEALTH cell, beside `(stalled)`: `(muted 3h12m)`
+  or `(autoshift off)`.
+- A banner line above the table while any abort stands: `auto-shift aborted:
+  <scope> by <actor> at <time>: <reason>`, one line per abort.
+- `marvel describe session` and `describe team` print the actor, time and
+  reason.
+
 ## 4. Builder changes
 
 - `internal/team/shift_handoff.go`: a `deliverHandoffMissing` beside
@@ -124,7 +175,13 @@ stays the supervisor's business.
   interface the controller holds (nil when no managed bus, which means
   event-only, as today).
 - `config.ReservedBusUsers` (or the agent-id equivalent) reserves `marvel`.
-- Events `team.shift-handoff-undelivered`; the existing event gains a
+- The `marvel autoshift` verb (mute, unmute, cancel, resume, abort) with
+  admin scope and a required `--reason`; fields on `api.ShiftRequest`
+  (mute), `api.Session` (cancel), `api.Team` and the meta bucket (abort);
+  the HEALTH suffixes and the abort banner.
+- Events `team.shift-handoff-undelivered`, `autoshift.muted`,
+  `autoshift.unmuted`, `autoshift.canceled`, `autoshift.aborted`,
+  `autoshift.resumed`; the existing event gains a
   `delivered:` field (`sent`, `queued, no live holder`, `no recipient`,
   `undelivered: <error>`).
 
@@ -145,11 +202,25 @@ stays the supervisor's business.
 6. Bus down: no blocking, `team.shift-handoff-undelivered` once, the event
    repeats; on bus ready a send follows without waiting a full window.
 7. A manifest declaring an agent id `marvel` is refused.
+8. **Mute.** Mute an escalated request for 1h: one muted message, no further
+   delivery, ring events marked muted, `(muted 59m)` shown; restart the
+   daemon and the mute holds; at expiry one `mute expired` message and the
+   cadence resumes; `unmute` resumes it at once; mute without `--reason`, or
+   with `--for 25h`, is refused; mute from a non-admin key is refused.
+9. **Cancel.** Cancel a session past max age with a pending request: the
+   request is dropped with one message, no auto-shift by either trigger
+   fires for it, `(autoshift off)` shown, and it survives a restart; after a
+   manual shift the successor is auto-shifted normally; `resume` restores it.
+10. **Abort.** `abort <ws/team>`: no new auto-shift in that team, others
+    unaffected, pending requests dropped with one message each, the banner
+    shown, and it survives a restart; `abort --all` does the same for every
+    team; a shift in progress is not interrupted; manual `marvel shift`
+    still works; `resume` lifts each scope separately.
 
 ## 6. Rulings needed (operator, via director)
 
 | # | question | default |
 |---|---|---|
-| 1 | The recipient is the role named `supervisor` in the same team (a convention, not a declared field) | yes |
-| 2 | A way to quiet the repeats without shifting | none in this slice |
-| 3 | marvel publishes as `marvel` on its existing admin connection, not a new scoped principal (a scoped principal held by the same daemon adds no boundary) | yes |
+| 1 | RULED 2026-10-02 yes: the recipient is the role named `supervisor` in the same team (a convention, not a declared field) | yes |
+| 2 | RULED 2026-10-02: add a mute, a per-session cancel and a general abort (H6). Open within it: the mute's default and cap | 4h default, 24h cap |
+| 3 | RULED 2026-10-02 yes: marvel publishes as `marvel` on its existing admin connection, not a new scoped principal (a scoped principal held by the same daemon adds no boundary) | yes |
