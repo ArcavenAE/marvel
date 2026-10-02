@@ -15,23 +15,30 @@ content: |
 
   GOVERNING RULE. SOUL section 3 and ADR-009: the boundary is audience, not
   format, applied to the most durable artifact held. A static key and an
-  OAuth refresh token are custody: marvel brokers them from a store it does
-  not own, or fronts the call, and never stores them. A JWT marvel mints and
-  can revoke is issuance and is free.
+  OAuth refresh token are custody: marvel never holds them, not even at call
+  time. Brokering means a vault minting a short-lived scoped credential that
+  marvel hands on (ADR-009); where no such mint exists (a static key), the
+  holder of the key is a front marvel does not run (a vault-side proxy), and
+  a marvel-run front would need its own ruling. A JWT marvel mints and can
+  revoke is issuance and is free.
 
   THE SIX SUB-QUESTIONS.
   (a) Binding scope. Workspace, team, role or seat, and how a binding at one
       scope is inherited by the scopes below it, overridden, or withheld.
       The parent's Binding resource is the candidate carrier.
-  (b) Delivery. A marvel-run MCP front over a local socket; harness MCP
+  (b) Delivery. An MCP front over a local socket, run and held by something
+      other than marvel (a marvel-run front holding a static key is custody
+      and would need its own ruling); harness MCP
       config written at spawn (marvel already does this for codex,
       runtime/codex_home.go); a stdio sidecar child; or delegation to the
       harness's own remote-MCP OAuth. Projection's inject mode is the
       parent's name for the second.
   (c) Where the secret rests and how it refreshes and is revoked. A store
-      outside marvel (the OS keychain, a vault) holds every custody artifact;
-      what refreshes an OAuth token, and what revokes access when a binding
-      is withdrawn or a seat is retired.
+      outside marvel (the OS keychain, a vault) is the candidate holder of
+      every custody artifact, but a store the seat's OS user can query is
+      not out of the seat's reach (a same-user keychain read returns the
+      item without a prompt); what refreshes an OAuth token, and what
+      revokes access when a binding is withdrawn or a seat is retired.
   (d) Per-seat audit attribution. Which seat called which tool with which
       binding, recorded where the call passes (the front, if there is one)
       and keyed by seat, not instance (R-151).
@@ -41,7 +48,9 @@ content: |
   (f) The sandbox. Seats run as the daemon's OS user, so a file or env value
       marvel can read, a seat can read, unless a sandbox profile (curtain)
       denies it. Which shapes keep the secret out of the seat's reach, and
-      which only keep it out of the model's context.
+      which only keep it out of the model's context. The same-uid residual
+      is already tracked as aae-orc-ww33y (ADR-009's same-uid residual has no
+      enforcement path).
 
   CONFLICT TO RESOLVE. The parent's credential paragraph says marvel "holds
   session state on the agent's behalf (for example the OAuth or
@@ -63,6 +72,9 @@ edges:
   - target: question-bd-managed-extended-service
     type: supports
     note: "Shares the custody rule: broker or front, never hold the long-lived credential."
+  - target: question-role-tools-field-projection
+    type: supports
+    note: "Which tools a role is given is the projection a binding attaches to; an MCP binding is one such tool surface."
   - target: question-permission-model
     type: derives
     note: "Keeping the secret out of the seat's reach is a sandbox and permission question."

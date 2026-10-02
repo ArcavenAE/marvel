@@ -7,8 +7,8 @@
 
 ## Hypothesis
 
-A marvel-run MCP front on a local socket, bound per scope and fetching the
-vendor credential from a store marvel does not own at call time, lets a seat
+An MCP front on a local socket that something other than marvel runs and
+holds (a vault-side proxy), bound per scope by marvel, lets a seat
 use a custody-class tool (a static API key; an OAuth token whose refresh
 token stays out of marvel) while a read from inside the seat cannot recover
 the credential, and every call is attributed to the seat. Injecting the
@@ -16,8 +16,11 @@ credential into the harness config, or a stdio sidecar, keeps it out of the
 model's context but not out of the seat's reach without a sandbox profile.
 
 **What would refute it:** a planted read from inside the seat recovers the
-key through the front (its process env, its socket, a file it opens), or the
-OAuth refresh can only happen with the refresh token in marvel's hands.
+key through the front (its process env, its socket, a file it opens) **or
+from the store the front reads** (a same-user keychain or vault query), or
+the OAuth refresh can only happen with the refresh token in marvel's hands.
+The store path is expected to refute it without a sandbox; the probe
+measures whether a sandbox profile closes it.
 
 ## Method, in order (each step one command or one small fixture)
 
@@ -38,7 +41,9 @@ OAuth refresh can only happen with the refresh token in marvel's hands.
    stdio sidecar's env, (iv) a front on a local socket that reads the key
    from the keychain at call time. From inside the seat, try to read it with
    the seat's ordinary tools (`env`, `cat`, `ps eww`, reading the sidecar's
-   `/proc` or `ps` env, connecting to the socket and asking). Repeat under a
+   `/proc` or `ps` env, connecting to the socket and asking), and query the
+   store directly (`security find-generic-password -w` for the dummy item,
+   or the vault's CLI with whatever the seat's user can reach). Repeat under a
    curtain sandbox profile that denies the store and the daemon's state
    directory. Record which shapes leak with and without the sandbox.
 4. **Refresh and revoke.** For the OAuth example, with a mock OAuth server:
