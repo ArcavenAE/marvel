@@ -7,7 +7,10 @@
 // tmux and a harness upgrade changes one reader.
 package composer
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // State is what a composer is showing.
 type State string
@@ -102,3 +105,22 @@ func (codexReader) Read(capture string) State {
 
 func (codexReader) Preflight() bool  { return true }
 func (codexReader) ClearKey() string { return "" }
+
+// Intent is what an inject meant to do, so its effect can be checked.
+type Intent string
+
+const (
+	// Submit sends the draft: the composer should read empty afterwards, or the
+	// harness should be mid-turn.
+	Submit Intent = "submit"
+	// Stage types text without sending it: the composer should hold it.
+	Stage Intent = "stage"
+)
+
+// Confirms reports whether a composer state is the expected effect of an
+// intent. Unknown, MenuUnsafe and Shell never confirm anything. Scaffold.
+func Confirms(i Intent, s State) bool { return false }
+
+// CanClear says whether a clear may be sent to a composer a reader just read.
+// Scaffold.
+func CanClear(r Reader, s State) error { return errors.New("not implemented") }

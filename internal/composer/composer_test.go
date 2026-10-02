@@ -92,3 +92,56 @@ func TestStateNames(t *testing.T) {
 		}
 	}
 }
+
+func TestConfirms(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		i    Intent
+		s    State
+		want bool
+	}{
+		{Submit, Empty, true},
+		{Submit, MidTurn, true},
+		{Submit, HoldsText, false},
+		{Submit, MenuUnsafe, false},
+		{Submit, Shell, false},
+		{Submit, Unknown, false},
+		{Stage, HoldsText, true},
+		{Stage, Empty, false},
+		{Stage, MidTurn, false},
+		{Stage, MenuUnsafe, false},
+		{Stage, Shell, false},
+		{Stage, Unknown, false},
+		{Intent("other"), Empty, false},
+	}
+	for _, tc := range cases {
+		if got := Confirms(tc.i, tc.s); got != tc.want {
+			t.Errorf("Confirms(%q, %q) = %v, want %v", tc.i, tc.s, got, tc.want)
+		}
+	}
+}
+
+type clearable struct{ unknownReader }
+
+func (clearable) ClearKey() string { return "C-u" }
+
+// A clear is sent only to a composer known to hold text, and only where the
+// harness has a clear key. Anything a reader cannot place is Unknown and is
+// refused: a clear on a composer that is really empty exits codex and opencode.
+func TestCanClear(t *testing.T) {
+	t.Parallel()
+	if err := CanClear(clearable{}, HoldsText); err != nil {
+		t.Errorf("a composer holding text with a clear key: %v", err)
+	}
+	for _, s := range []State{Empty, MidTurn, MenuUnsafe, Shell, Unknown} {
+		if err := CanClear(clearable{}, s); err == nil {
+			t.Errorf("a clear was allowed on a composer reading %q", s)
+		}
+	}
+	for _, name := range []string{"codex", "opencode", "claude", "anything-else", ""} {
+		err := CanClear(ReaderFor(name), HoldsText)
+		if err == nil {
+			t.Errorf("ReaderFor(%q): a clear was allowed with no clear key", name)
+		}
+	}
+}
