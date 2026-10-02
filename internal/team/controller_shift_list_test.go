@@ -153,7 +153,15 @@ func TestMaxAgeRequestsHandoffThenShiftsOnMarker(t *testing.T) {
 		t.Fatalf("phase = %q, want none: the marker is not the last line", got.Shift.Phase)
 	}
 
+	f.ctrl.handoffProbes.wait()
 	writeHandoff(t, dir, s.Name, "notes\nEND HANDOFF\n")
+	f.clock.Advance(time.Minute)
+	// The read runs off the lock, so the marker is applied one tick after it
+	// is written (marvel#444).
+	if got = f.evaluate(); got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, want none: the read has not been applied yet", got.Shift.Phase)
+	}
+	f.ctrl.handoffProbes.wait()
 	f.clock.Advance(time.Minute)
 	got = f.evaluate()
 	if got.Shift.Phase != api.ShiftLaunching {
@@ -161,6 +169,12 @@ func TestMaxAgeRequestsHandoffThenShiftsOnMarker(t *testing.T) {
 	}
 	if _, pending := got.ShiftRequests[testShiftRole]; pending {
 		t.Fatal("the request should move into the shift when it starts")
+	}
+	f.ctrl.handoffProbes.mu.Lock()
+	held := len(f.ctrl.handoffProbes.done) + len(f.ctrl.handoffProbes.inflight)
+	f.ctrl.handoffProbes.mu.Unlock()
+	if held != 0 {
+		t.Fatalf("handoff probes still hold %d entries after the shift started", held)
 	}
 	if req := got.Shift.HandoffRequests[testShiftRole]; req.Session != s.Key() || !req.RequestedAt.Equal(listEpoch) {
 		t.Fatalf("Shift.HandoffRequests[%s] = %+v, want %s at %v", testShiftRole, req, s.Key(), listEpoch)
@@ -180,6 +194,11 @@ func TestMaxAgeEscalatesWithoutMarker(t *testing.T) {
 
 	f.evaluate()
 	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	// The first tick past the deadline starts a read; escalation needs a
+	// finished read that began after the deadline.
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
 	got := f.evaluate()
 	if got.Shift.Phase != api.ShiftNone {
 		t.Fatalf("phase = %q, want none: marvel never shifts unwatched", got.Shift.Phase)
@@ -529,5 +548,126 @@ func TestHandoffPathRefusesUnresolvableHome(t *testing.T) {
 	got, err := handoffPath("/var/h/{session}.md", api.Session{Name: "s"})
 	if err != nil || got != "/var/h/s.md" {
 		t.Fatalf("absolute template = (%q, %v), want /var/h/s.md", got, err)
+	}
+}
+
+// The template is checked for .. at apply, but {session} is filled from the
+// session name later. A name that is not one path element must not steer the
+// resolved path (marvel#444 item 2).
+func TestHandoffPathRefusesNameThatEscapesTheTemplate(t *testing.T) {
+	for _, name := range []string{"a/b", "..", ".", "../x", "x/..", `a\b`, ""} {
+		if p, err := handoffPath("/var/h/{session}.md", api.Session{Name: name}); err == nil {
+			t.Errorf("handoffPath with session name %q = %q, want an error", name, p)
+		}
+	}
+	// A name that merely contains dots is one path element and stays valid.
+	if _, err := handoffPath("/var/h/{session}.md", api.Session{Name: "team-role-g1-0"}); err != nil {
+		t.Errorf("handoffPath with an ordinary name: %v", err)
+	}
+	// A template with no {session} never reads the name.
+	if _, err := handoffPath("/var/h/fixed.md", api.Session{Name: "a/b"}); err != nil {
+		t.Errorf("handoffPath with no placeholder: %v", err)
+	}
+}
+
+// The marker read must not run under c.mu, where a slow filesystem would stall
+// every team (marvel#444 item 1). A tick starts the read and returns; the
+// result is applied on the next tick.
+func TestHandoffReadRunsOffTheLock(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-offlock", maxAgeRole(dir))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.evaluate() // asks the seat
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	f.ctrl.handoffProbes.check = func(string, string) bool {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		return true
+	}
+
+	f.clock.Advance(time.Minute)
+	done := make(chan struct{})
+	go func() {
+		f.evaluate()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("the tick blocked on the handoff read")
+	}
+	<-started
+	got, err := f.store.GetTeam(f.teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, want none: the read has not finished", got.Shift.Phase)
+	}
+
+	close(release)
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Minute)
+	if got = f.evaluate(); got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching: the finished read applies on the next tick", got.Shift.Phase)
+	}
+}
+
+// The marker read is applied one tick late, so the window check must not
+// escalate on a read that began before the deadline: the seat may have written
+// in time (review 5396405990). The reviewer's sequence: ask, tick at W-2s,
+// write the marker, tick at W. Main shifts on the next tick; an escalation here
+// would stick and hold the seat.
+func TestMaxAgeDoesNotEscalateOnAReadThatPredatesTheDeadline(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-deadline", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	window := api.DefaultShiftHandoffWindow
+
+	f.evaluate() // asks at t0
+	f.clock.Advance(window - 2*time.Second)
+	f.evaluate() // reads: absent
+	f.ctrl.handoffProbes.wait()
+	writeHandoff(t, dir, s.Name, "notes\nEND HANDOFF\n")
+	f.clock.Advance(2 * time.Second) // the deadline
+	got := f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	if got.ShiftRequests[testShiftRole].Escalated || f.count(events.KindShiftHandoffMissing) != 0 {
+		t.Fatal("escalated at the deadline on a read that began before it, though the marker was written in time")
+	}
+	f.clock.Advance(time.Second)
+	if got = f.evaluate(); got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching: the marker was written inside the window", got.Shift.Phase)
+	}
+}
+
+// A read still in flight at the deadline began before it, so it cannot ground
+// an escalation either.
+func TestMaxAgeDoesNotEscalateOnAReadInFlightAtTheDeadline(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-inflight", maxAgeRole(dir))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	window := api.DefaultShiftHandoffWindow
+	f.evaluate() // asks at t0
+
+	release := make(chan struct{})
+	f.ctrl.handoffProbes.check = func(string, string) bool {
+		<-release
+		return false
+	}
+	f.clock.Advance(window - time.Second)
+	f.evaluate() // starts a read that stays in flight
+	f.clock.Advance(2 * time.Second)
+	got := f.evaluate()
+	close(release)
+	f.ctrl.handoffProbes.wait()
+	if got.ShiftRequests[testShiftRole].Escalated || f.count(events.KindShiftHandoffMissing) != 0 {
+		t.Fatal("escalated past the deadline while a read that began before it was still in flight")
 	}
 }

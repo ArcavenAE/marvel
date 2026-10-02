@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -139,18 +140,29 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	if role.Shift.Handoff != "" {
 		path, pathErr = handoffPath(role.Shift.Handoff, sess)
 	}
+	var read handoffProbeResult
+	var haveRead bool
 	if path != "" && pathErr == nil {
-		if handoffComplete(path, role.Shift.HandoffMarker) {
+		read, haveRead = c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+		if haveRead && read.complete {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
 			}
 			msg := fmt.Sprintf("cause=%s: session %s wrote its handoff (%s ends in the marker), requested %s",
 				req.Cause, sess.Key(), path, req.RequestedAt.Format(time.RFC3339))
+			c.handoffProbes.forget(sess.Key())
 			return c.autoShift(t, role, sess.Key(), msg)
 		}
 	}
 	window := role.Shift.HandoffWindowOrDefault()
 	if now.Sub(req.RequestedAt) < window {
+		return false
+	}
+	// The read is applied a tick late, so a read that began before the
+	// deadline, finished or still in flight, cannot show the marker is absent:
+	// the seat may have written in time. Escalate only on a finished read that
+	// began at or after the deadline.
+	if path != "" && pathErr == nil && (!haveRead || read.startedAt.Before(req.RequestedAt.Add(window))) {
 		return false
 	}
 
@@ -190,6 +202,9 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 }
 
 func (c *Controller) dropShiftRequest(t *api.Team, role string) {
+	if req, ok := t.ShiftRequests[role]; ok {
+		c.handoffProbes.forget(req.Session)
+	}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		delete(live.ShiftRequests, role)
 		return nil
@@ -203,7 +218,17 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 // handoffPath fills the declared template for one session: {session} is the
 // session name the seat sees as MARVEL_SESSION, and a leading ~/ is the
 // daemon user's home.
+//
+// The template is checked for a .. element at apply, but {session} is filled
+// here from the session name, which carries the team and role names. A name
+// that is not exactly one path element is refused, so it cannot steer the
+// resolved path out of the directory the manifest declared (marvel#444).
 func handoffPath(template string, sess api.Session) (string, error) {
+	if strings.Contains(template, "{session}") {
+		if n := sess.Name; n == "" || n == "." || n == ".." || strings.ContainsAny(n, `/\`) {
+			return "", fmt.Errorf("session name %q is not one path element", n)
+		}
+	}
 	p := strings.ReplaceAll(template, "{session}", sess.Name)
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
 		home, err := os.UserHomeDir()
@@ -250,3 +275,75 @@ func handoffComplete(path, marker string) bool {
 	}
 	return strings.TrimSpace(string(tail)) == marker
 }
+
+// handoffProbes runs the marker read off the controller lock (marvel#444).
+// The tick runs under c.mu, and the handoff file is written by the seat, so a
+// slow filesystem would stall every team for the read. complete starts at most
+// one read per session in the background and answers from the last finished
+// one, so a marker is applied one tick after it is written. The zero value is
+// ready to use. The handoff file is expected on a local filesystem.
+type handoffProbes struct {
+	// check reads the file; nil means handoffComplete.
+	check func(path, marker string) bool
+
+	mu       sync.Mutex
+	done     map[string]handoffProbeResult
+	inflight map[string]*handoffRead
+	wg       sync.WaitGroup
+}
+
+type handoffProbeResult struct {
+	path, marker string
+	complete     bool
+	startedAt    time.Time // when the read began, so a deadline can be checked against it
+}
+
+type handoffRead struct{ startedAt time.Time }
+
+// complete returns the last finished read of path for session key, and whether
+// there is one, and starts a fresh read at now unless one is already running.
+func (p *handoffProbes) complete(key, path, marker string, now time.Time) (handoffProbeResult, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	last, ok := p.done[key]
+	known := ok && last.path == path && last.marker == marker
+	if p.inflight[key] == nil {
+		if p.inflight == nil {
+			p.inflight = make(map[string]*handoffRead)
+		}
+		token := &handoffRead{startedAt: now}
+		p.inflight[key] = token
+		check := p.check
+		if check == nil {
+			check = handoffComplete
+		}
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			got := check(path, marker)
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			if p.inflight[key] != token {
+				return // forgotten while reading
+			}
+			delete(p.inflight, key)
+			if p.done == nil {
+				p.done = make(map[string]handoffProbeResult)
+			}
+			p.done[key] = handoffProbeResult{path: path, marker: marker, complete: got, startedAt: token.startedAt}
+		}()
+	}
+	return last, known
+}
+
+// forget drops what is held for session key, so a request that ended leaves
+// nothing behind.
+func (p *handoffProbes) forget(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.done, key)
+	delete(p.inflight, key)
+}
+
+// wait blocks until no read is in flight. Tests use it.
+func (p *handoffProbes) wait() { p.wg.Wait() }
