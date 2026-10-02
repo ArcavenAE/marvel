@@ -114,8 +114,12 @@ func (b *ManifestBudget) Budget() Budget {
 // ManifestRole is a role section within a team.
 // Name is the job function. Persona and Identity are the costume and lens.
 type ManifestRole struct {
-	Name     string `toml:"name"                          yaml:"name"`
-	Replicas int    `toml:"replicas"                      yaml:"replicas"`
+	// SettingsSources declares which settings sources a bare claude seat
+	// loads, from user, project and local. Omitted, every source loads, as
+	// before this key existed.
+	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
+	Name            string   `toml:"name"                          yaml:"name"`
+	Replicas        int      `toml:"replicas"                      yaml:"replicas"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -399,6 +403,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// them so a misconfigured trigger is an error at apply, not a
 			// no-op at runtime (marvel#437 D2).
 			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			if err := validateSettingsSources(fmt.Sprintf("team[%d].role[%d]", i, j), r.SettingsSources); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if r.Schedule != nil {
@@ -744,6 +751,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Persona:              mr.Persona,
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
+				SettingsSources:      mr.SettingsSources,
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)
@@ -847,4 +855,30 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// settingsSourceNames are the Claude Code settings sources a role may declare.
+// marvel passes them as given and does not interpret the files they name.
+var settingsSourceNames = map[string]bool{"user": true, "project": true, "local": true}
+
+// validateSettingsSources refuses a declaration the harness would reject or
+// that says nothing: an empty list, an unknown source, a repeat.
+func validateSettingsSources(where string, sources []string) error {
+	if sources == nil {
+		return nil
+	}
+	if len(sources) == 0 {
+		return fmt.Errorf("%s.settings_sources is empty; omit it for the default", where)
+	}
+	seen := make(map[string]bool, len(sources))
+	for _, v := range sources {
+		if !settingsSourceNames[v] {
+			return fmt.Errorf("%s.settings_sources: %q is not a settings source (valid: user, project, local)", where, v)
+		}
+		if seen[v] {
+			return fmt.Errorf("%s.settings_sources: %q appears twice", where, v)
+		}
+		seen[v] = true
+	}
+	return nil
 }

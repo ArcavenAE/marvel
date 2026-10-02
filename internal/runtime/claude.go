@@ -140,14 +140,32 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--append-system-prompt", prompt)
 	}
 
+	// Tell the harness which settings sources to load, so what applies is a
+	// declaration and not a consequence of the directory it starts in
+	// (docs/design/seat-bootstrap.md section 4). Only for the bare harness: a
+	// wrapper owns its command line and passes its own, and a role that already
+	// names the sources, in args or inside its command string, keeps them. A
+	// role that declares nothing keeps today's behavior, every source, so an
+	// upgrade does not change what a seat loads from its directory; the placed
+	// defaults arrive with SB-1.
+	settingSources := ""
+	if isBareClaude(binary) && !hasAnyFlag(args, "--setting-sources") && !hasAnyFlag(commandArgs(binary), "--setting-sources") {
+		settingSources = "user,project,local"
+		if len(ctx.Role.SettingsSources) > 0 {
+			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+		}
+		args = append(args, "--setting-sources", settingSources)
+	}
+
 	// The request goes last, as the positional argument.
 	if headless {
 		args = append(args, ctx.Session.Runtime.Prompt)
 	}
 
 	result := &LaunchResult{
-		Command: buildCommand(binary, args),
-		Env:     baseEnv(ctx),
+		Command:        buildCommand(binary, args),
+		Env:            baseEnv(ctx),
+		SettingSources: settingSources,
 	}
 	if headless && ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)
@@ -171,6 +189,16 @@ func isBareClaude(command string) bool {
 		return false
 	}
 	return filepath.Base(fields[0]) == "claude"
+}
+
+// commandArgs returns the words of a command string after the program, which is
+// where a role that writes `command = "claude --flag value"` keeps its flags.
+func commandArgs(command string) []string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields[1:]
 }
 
 // hasAnyFlag reports whether args carry any of the named flags, in either

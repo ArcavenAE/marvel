@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -36,10 +37,12 @@ const (
 	ageStageHard  = "hard"
 )
 
-// firstSessionOverAge returns the first running current-generation session of
-// role that is past cond.MaxAge and either quiet for cond.QuietFor (the quiet
-// stage) or past MaxAge+MaxDefer whatever its activity (the hard stage). Age
-// runs from CreatedAt, so it survives a daemon restart and starts over on a
+// firstSessionOverAge returns the first running session of role, at any
+// generation, that is past cond.MaxAge and either quiet for cond.QuietFor (the
+// quiet stage) or past MaxAge+MaxDefer whatever its activity (the hard stage).
+// A role's seats carry the generation of the last shift that covered the role,
+// not the team's counter, so a team-generation filter hides them (marvel#451).
+// Age runs from CreatedAt, so it survives a daemon restart and starts over on a
 // health restart, which creates a new session (D3). Activity is the context
 // feed timestamp the activity advisory reads, or spawn when there is none.
 // Only running sessions count, so a finished headless run never ages out (D7).
@@ -52,7 +55,7 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 	if maxDefer <= 0 {
 		maxDefer = api.DefaultShiftMaxDefer
 	}
-	for _, s := range c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation) {
+	for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name) {
 		if s.State != api.SessionRunning || s.CreatedAt.IsZero() {
 			continue
 		}
@@ -133,19 +136,27 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		return false
 	}
 	if req.Escalated {
-		return false // the supervisor decides now (D5 step 3)
+		// The supervisor decides now (D5 step 3), and marvel keeps saying so:
+		// the event ring is in memory, so one emission can be lost to a
+		// restart or a wrap, and the escalation is sticky (marvel#453).
+		c.repeatHandoffMissing(t, role, sess, now)
+		return false
 	}
 	path, pathErr := "", error(nil)
 	if role.Shift.Handoff != "" {
 		path, pathErr = handoffPath(role.Shift.Handoff, sess)
 	}
+	var read handoffProbeResult
+	var haveRead bool
 	if path != "" && pathErr == nil {
-		if handoffComplete(path, role.Shift.HandoffMarker) {
+		read, haveRead = c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+		if haveRead && read.complete {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
 			}
 			msg := fmt.Sprintf("cause=%s: session %s wrote its handoff (%s ends in the marker), requested %s",
 				req.Cause, sess.Key(), path, req.RequestedAt.Format(time.RFC3339))
+			c.handoffProbes.forget(sess.Key())
 			return c.autoShift(t, role, sess.Key(), msg)
 		}
 	}
@@ -153,16 +164,14 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	if now.Sub(req.RequestedAt) < window {
 		return false
 	}
-
-	var reason string
-	switch {
-	case role.Shift.Handoff == "":
-		reason = "no handoff path is declared, so marvel cannot observe one"
-	case pathErr != nil:
-		reason = fmt.Sprintf("the handoff path cannot be resolved (%v)", pathErr)
-	default:
-		reason = fmt.Sprintf("no regular file at %s ends in the marker", path)
+	// The read is applied a tick late, so a read that began before the
+	// deadline, finished or still in flight, cannot show the marker is absent:
+	// the seat may have written in time. Escalate only on a finished read that
+	// began at or after the deadline.
+	if path != "" && pathErr == nil && (!haveRead || read.startedAt.Before(req.RequestedAt.Add(window))) {
+		return false
 	}
+
 	req.Escalated = true
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		if live.ShiftRequests == nil {
@@ -175,6 +184,37 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		return false
 	}
 	t.ShiftRequests[role.Name] = req
+	c.emitHandoffMissing(t, role, sess, req, now, false, false)
+	return false
+}
+
+// handoffMissingReason says why no marker was observed, or, when present, that
+// a repeat found it written after the window.
+func handoffMissingReason(role *api.Role, sess api.Session, present bool) string {
+	if present {
+		path, _ := handoffPath(role.Shift.Handoff, sess)
+		return fmt.Sprintf("the marker is now present at %s, written after the window", path)
+	}
+	if role.Shift.Handoff == "" {
+		return "no handoff path is declared, so marvel cannot observe one"
+	}
+	path, err := handoffPath(role.Shift.Handoff, sess)
+	if err != nil {
+		return fmt.Sprintf("the handoff path cannot be resolved (%v)", err)
+	}
+	return fmt.Sprintf("no regular file at %s ends in the marker", path)
+}
+
+// emitHandoffMissing emits the escalation and starts the repeat clock.
+func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Session, req api.ShiftRequest, now time.Time, repeat, present bool) {
+	if c.missingEmitted == nil {
+		c.missingEmitted = make(map[string]time.Time)
+	}
+	c.missingEmitted[sess.Key()] = now
+	again := ""
+	if repeat {
+		again = " (repeated: the request is still escalated)"
+	}
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftHandoffMissing,
 		Severity:   events.SeverityWarning,
@@ -183,13 +223,44 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift",
-			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), window, reason),
+		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
+			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, present), t.Key(), role.Name, again),
 	})
-	return false
+}
+
+// repeatHandoffMissing says it again once per handoff window while the request
+// stays escalated, reporting what the handoff file holds now: a seat that
+// writes after the window is held until the supervisor decides, and the repeat
+// must not claim the file is absent. It reads every tick (one bounded read per
+// escalated session) and speaks only from a read that began after the last
+// emission. It never clears the escalation or shifts: the supervisor decides.
+// The clock is in memory, so a daemon restart says it on the first tick with a
+// finished read.
+func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.Session, now time.Time) {
+	last, emitted := c.missingEmitted[sess.Key()]
+	due := !emitted || now.Sub(last) >= role.Shift.HandoffWindowOrDefault()
+	present := false
+	if role.Shift.Handoff != "" {
+		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
+			read, ok := c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+			if !due || !ok || !read.startedAt.After(last) {
+				return
+			}
+			present = read.complete
+			due = true
+		}
+	}
+	if !due {
+		return
+	}
+	c.emitHandoffMissing(t, role, sess, t.ShiftRequests[role.Name], now, true, present)
 }
 
 func (c *Controller) dropShiftRequest(t *api.Team, role string) {
+	if req, ok := t.ShiftRequests[role]; ok {
+		c.handoffProbes.forget(req.Session)
+		delete(c.missingEmitted, req.Session)
+	}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		delete(live.ShiftRequests, role)
 		return nil
@@ -203,7 +274,17 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 // handoffPath fills the declared template for one session: {session} is the
 // session name the seat sees as MARVEL_SESSION, and a leading ~/ is the
 // daemon user's home.
+//
+// The template is checked for a .. element at apply, but {session} is filled
+// here from the session name, which carries the team and role names. A name
+// that is not exactly one path element is refused, so it cannot steer the
+// resolved path out of the directory the manifest declared (marvel#444).
 func handoffPath(template string, sess api.Session) (string, error) {
+	if strings.Contains(template, "{session}") {
+		if n := sess.Name; n == "" || n == "." || n == ".." || strings.ContainsAny(n, `/\`) {
+			return "", fmt.Errorf("session name %q is not one path element", n)
+		}
+	}
 	p := strings.ReplaceAll(template, "{session}", sess.Name)
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
 		home, err := os.UserHomeDir()
@@ -250,3 +331,75 @@ func handoffComplete(path, marker string) bool {
 	}
 	return strings.TrimSpace(string(tail)) == marker
 }
+
+// handoffProbes runs the marker read off the controller lock (marvel#444).
+// The tick runs under c.mu, and the handoff file is written by the seat, so a
+// slow filesystem would stall every team for the read. complete starts at most
+// one read per session in the background and answers from the last finished
+// one, so a marker is applied one tick after it is written. The zero value is
+// ready to use. The handoff file is expected on a local filesystem.
+type handoffProbes struct {
+	// check reads the file; nil means handoffComplete.
+	check func(path, marker string) bool
+
+	mu       sync.Mutex
+	done     map[string]handoffProbeResult
+	inflight map[string]*handoffRead
+	wg       sync.WaitGroup
+}
+
+type handoffProbeResult struct {
+	path, marker string
+	complete     bool
+	startedAt    time.Time // when the read began, so a deadline can be checked against it
+}
+
+type handoffRead struct{ startedAt time.Time }
+
+// complete returns the last finished read of path for session key, and whether
+// there is one, and starts a fresh read at now unless one is already running.
+func (p *handoffProbes) complete(key, path, marker string, now time.Time) (handoffProbeResult, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	last, ok := p.done[key]
+	known := ok && last.path == path && last.marker == marker
+	if p.inflight[key] == nil {
+		if p.inflight == nil {
+			p.inflight = make(map[string]*handoffRead)
+		}
+		token := &handoffRead{startedAt: now}
+		p.inflight[key] = token
+		check := p.check
+		if check == nil {
+			check = handoffComplete
+		}
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			got := check(path, marker)
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			if p.inflight[key] != token {
+				return // forgotten while reading
+			}
+			delete(p.inflight, key)
+			if p.done == nil {
+				p.done = make(map[string]handoffProbeResult)
+			}
+			p.done[key] = handoffProbeResult{path: path, marker: marker, complete: got, startedAt: token.startedAt}
+		}()
+	}
+	return last, known
+}
+
+// forget drops what is held for session key, so a request that ended leaves
+// nothing behind.
+func (p *handoffProbes) forget(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.done, key)
+	delete(p.inflight, key)
+}
+
+// wait blocks until no read is in flight. Tests use it.
+func (p *handoffProbes) wait() { p.wg.Wait() }
