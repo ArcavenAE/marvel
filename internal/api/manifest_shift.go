@@ -175,6 +175,9 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 		if c.On == ShiftTriggerMaxAge && r.Runtime.Mode == RuntimeModeHeadless {
 			return nil, fmt.Errorf("%s: max-age cannot apply to a headless role; a headless run past an age bound is a stuck run, and ending it is the kill branch, not a shift (design D7)", prefix)
 		}
+		if c.On == ShiftTriggerMaxAge && r.Replicas > 1 {
+			return nil, fmt.Errorf("%s: max-age cannot apply to a role with replicas > 1; its handoff request asks one seat but the shift drains every seat of the role, which would retire seats never asked for a handoff (marvel#452, design D5); use replicas = 1, or context-pressure", prefix)
+		}
 		p.Any = append(p.Any, c)
 	}
 	if single {
