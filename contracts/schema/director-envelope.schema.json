@@ -5,7 +5,7 @@
   "title": "Director Envelope",
   "description": "Intentional agent speech carried over the bus, peer to peer including the human. This is an A2A v1.0 compatible profile: the fields here map onto A2A v1.0 message semantics (the FIPA-ACL performative subset maps to A2A message intent), and codegen emits Go and Rust types plus validators from this one schema so the bound consumers cannot drift. Bound consumers: marvel (Go) and beadle (Rust). See contracts/README.md for the A2A mapping and the codegen targets. Time and UUID fields carry both a format annotation and an always-enforced pattern, so validation does not depend on the validator running in format-assertion mode.",
   "type": "object",
-  "required": ["schema_version", "message_id", "sender", "recipient", "performative", "authority", "content", "sent_at"],
+  "required": ["schema_version", "message_id", "sender", "recipient", "performative", "content", "sent_at"],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
@@ -109,7 +109,8 @@
       "type": "object",
       "required": ["strength"],
       "additionalProperties": false,
-      "$comment": "A sibling of sender, never inside content (R-58, R-67). Authority is stated, never inferred (R-02). epoch is a monotonic fencing token (R-55; a NATS KV revision serves). A receiver rejects a stale epoch loudly (R-69), which is receiver logic, not schema.",
+      "$comment": "A sibling of sender, never inside content (R-58, R-67). Authority is stated, never inferred (R-02). epoch is a monotonic fencing token (R-55; a NATS KV revision serves). A receiver rejects a stale epoch loudly (R-69), which is receiver logic, not schema. Optional since director#197: the default is stated here and in description rather than with the default keyword, because a defaulted object generates a non-pointer Go field that re-marshals an absent block as an invalid {\"strength\": \"\"}. Go readers use Envelope.EffectiveAuthority.",
+      "description": "Optional. An absent block means {\"strength\": \"none\"} with no seat: no authority (operator ruling, director#197). When present, strength is required and seat keeps its shape.",
       "properties": {
         "strength": {
           "type": "string",

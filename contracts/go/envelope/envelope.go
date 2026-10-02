@@ -12,3 +12,15 @@ package envelope
 // callers write envelope.Envelope rather than the generator's derived name. The
 // alias is the one hand-written type name here; everything else is generated.
 type Envelope = DirectorEnvelopeSchemaJson
+
+// EffectiveAuthority returns the envelope's authority, reading an absent block
+// as strength none with no seat. Authority is optional and its absence carries
+// no authority (operator ruling, director#197); the schema states that default
+// in prose because the generated field is a pointer, and this is where Go
+// readers apply it.
+func (e *Envelope) EffectiveAuthority() Authority {
+	if e.Authority == nil {
+		return Authority{Strength: StrengthNone}
+	}
+	return *e.Authority
+}

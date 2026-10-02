@@ -4,6 +4,9 @@ package envelope
 
 import "time"
 
+// Optional. An absent block means {"strength": "none"} with no seat: no authority
+// (operator ruling, director#197). When present, strength is required and seat
+// keeps its shape.
 type Authority struct {
 	// The authority-bearing seat, or null (the common case).
 	Seat interface{} `json:"seat,omitempty" yaml:"seat,omitempty" mapstructure:"seat,omitempty"`
@@ -33,8 +36,10 @@ type Content struct {
 // UUID fields carry both a format annotation and an always-enforced pattern, so
 // validation does not depend on the validator running in format-assertion mode.
 type DirectorEnvelopeSchemaJson struct {
-	// Authority corresponds to the JSON schema field "authority".
-	Authority Authority `json:"authority" yaml:"authority" mapstructure:"authority"`
+	// Optional. An absent block means {"strength": "none"} with no seat: no authority
+	// (operator ruling, director#197). When present, strength is required and seat
+	// keeps its shape.
+	Authority *Authority `json:"authority,omitempty" yaml:"authority,omitempty" mapstructure:"authority,omitempty"`
 
 	// Content corresponds to the JSON schema field "content".
 	Content Content `json:"content" yaml:"content" mapstructure:"content"`
