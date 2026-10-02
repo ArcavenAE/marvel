@@ -607,3 +607,56 @@ func TestHandoffReadRunsOffTheLock(t *testing.T) {
 		t.Fatalf("phase = %q, want launching: the finished read applies on the next tick", got.Shift.Phase)
 	}
 }
+
+// The marker read is applied one tick late, so the window check must not
+// escalate on a read that began before the deadline: the seat may have written
+// in time (review 5396405990). The reviewer's sequence: ask, tick at W-2s,
+// write the marker, tick at W. Main shifts on the next tick; an escalation here
+// would stick and hold the seat.
+func TestMaxAgeDoesNotEscalateOnAReadThatPredatesTheDeadline(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-deadline", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	window := api.DefaultShiftHandoffWindow
+
+	f.evaluate() // asks at t0
+	f.clock.Advance(window - 2*time.Second)
+	f.evaluate() // reads: absent
+	f.ctrl.handoffProbes.wait()
+	writeHandoff(t, dir, s.Name, "notes\nEND HANDOFF\n")
+	f.clock.Advance(2 * time.Second) // the deadline
+	got := f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	if got.ShiftRequests[testShiftRole].Escalated || f.count(events.KindShiftHandoffMissing) != 0 {
+		t.Fatal("escalated at the deadline on a read that began before it, though the marker was written in time")
+	}
+	f.clock.Advance(time.Second)
+	if got = f.evaluate(); got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching: the marker was written inside the window", got.Shift.Phase)
+	}
+}
+
+// A read still in flight at the deadline began before it, so it cannot ground
+// an escalation either.
+func TestMaxAgeDoesNotEscalateOnAReadInFlightAtTheDeadline(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-inflight", maxAgeRole(dir))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	window := api.DefaultShiftHandoffWindow
+	f.evaluate() // asks at t0
+
+	release := make(chan struct{})
+	f.ctrl.handoffProbes.check = func(string, string) bool {
+		<-release
+		return false
+	}
+	f.clock.Advance(window - time.Second)
+	f.evaluate() // starts a read that stays in flight
+	f.clock.Advance(2 * time.Second)
+	got := f.evaluate()
+	close(release)
+	f.ctrl.handoffProbes.wait()
+	if got.ShiftRequests[testShiftRole].Escalated || f.count(events.KindShiftHandoffMissing) != 0 {
+		t.Fatal("escalated past the deadline while a read that began before it was still in flight")
+	}
+}
