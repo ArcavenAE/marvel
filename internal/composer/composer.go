@@ -134,7 +134,16 @@ func Confirms(i Intent, s State) bool {
 
 // CanClear says whether a clear may be sent to a composer a reader just read.
 // clearKey is the harness's contract key (runtime.ComposerContract); harness
-// names it in the refusal. Scaffold.
+// names it in a refusal. It needs a key and a composer known to hold text. A
+// composer that reads anything else, Unknown included, is refused: the key
+// exits codex and opencode on an empty composer, arms exit on claude, and
+// interrupts a running turn, so a misread must never reach it.
 func CanClear(harness, clearKey string, s State) error {
-	return errors.New("not implemented: " + harness + clearKey + string(s))
+	if clearKey == "" {
+		return errors.New("no safe clear key is known for " + harness)
+	}
+	if s != HoldsText {
+		return errors.New("the composer reads " + string(s) + ", not " + string(HoldsText))
+	}
+	return nil
 }

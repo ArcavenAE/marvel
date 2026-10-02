@@ -93,6 +93,12 @@ func (claudeReader) Read(capture string) State {
 	}
 
 	if text != "" {
+		// A draft counts only beside idle evidence: a finished turn's done line,
+		// or a session that has run no turn at all. Text typed ahead of a streaming
+		// reply has neither, and a clear key sent there would interrupt the turn.
+		if !doneLine.MatchString(above) && turnSeen(clean) {
+			return Unknown
+		}
 		dim := strings.Contains(raw[top], "\x1b[2m") && len(draft) == 1
 		if placeholder.MatchString(text) {
 			if dim {
@@ -110,4 +116,16 @@ func (claudeReader) Read(capture string) State {
 		return Empty
 	}
 	return Unknown
+}
+
+// turnSeen reports whether the capture shows any turn at all: a reply marker,
+// or the echo of a submitted prompt (a plain space after the glyph, where the
+// live composer has a no-break space).
+func turnSeen(clean []string) bool {
+	for _, l := range clean {
+		if strings.HasPrefix(l, "⏺") || strings.HasPrefix(l, "❯ ") {
+			return true
+		}
+	}
+	return false
 }
