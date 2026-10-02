@@ -97,8 +97,12 @@ are random and never logged.** Enforcement:
   (otherwise it is the hub operator's command, given in the doc): any
   consumer whose filter is broader than one inbox subject, or which has no
   filter, raises `bus.global-broad-consumer` with its filter, creator where
-  known, and a short hash of its name, never the name itself, so the event
-  cannot leak what makes such a consumer safe. It is a warning, not a gate.
+  known, and its creation time, never its name or an unkeyed hash of it. A
+  short unkeyed hash could be brute-forced offline, and a flagged consumer
+  is likely to carry a human-chosen name. Where an event must tell two
+  consumers apart, it uses an HMAC of the name under a secret the daemon
+  holds and never logs. It is a warning, not a gate. The invariant's random
+  names carry at least 128 bits from a CSPRNG.
 - director#191's `unread --global` and any audit reader create no consumer
   at all: they read with admin or hub credentials through
   `MSG.GET` or `DIRECT.GET` by sequence, so no broad consumer exists for
@@ -142,7 +146,11 @@ are random and never logged.** Enforcement:
 `agent.<ws>.<team>.>`, so a worker can read a teammate's local role inbox.
 R-94 governs the global tier only; per-role local scoping is out of scope
 here. And a role user is still shared by that role's replicas: a broker user
-per session (R-84) is the complete form.
+per session (R-84) is the complete form. Under the open door (ruling 2),
+the sender fields of an envelope on `global.director.inbox` are
+self-asserted: the broker sees only `<team>.<role>`, so the director cannot
+tell a worker from its supervisor there, or one replica from another, until
+per-session users (R-84) bind the sender to a credential.
 
 ## 4. The rollout: additive first, subtractive only when nothing uses it
 

@@ -61,11 +61,15 @@ reason about. The TOML key is `workdir`, the Go field `WorkDir`; no alias
 (`cwd`, `dir`), because the loader drops unknown keys silently and an
 alias that half-works is a second spelling to reconcile.
 
-**2. The default is the manifest's own directory, filled by the CLI.**
-`marvel work` resolves `workspace.root` before posting: if the manifest
-sets it, the CLI makes it absolute against the manifest file's directory;
-if it does not, the CLI sets it to that directory. The daemon never sees
-a manifest without an absolute root. A project applies its manifest from
+**2. The default is the manifest's own directory, sent beside the bytes.**
+`marvel work` posts the manifest file's bytes unchanged (a rewrite would
+lose comments, key order and the raw-document checks), and sends the
+absolute directory of the manifest FILE, not the caller's cwd, as the
+`workspace_root` apply parameter. The daemon resolves against that one
+absolute root: a relative `workspace.root` joins it, an absolute one wins,
+and with none the root is that directory. The observable result is the one
+first designed, where the CLI made the root absolute (amended 2026-10-02,
+marvel#465). A project applies its manifest from
 its own checkout, which is the directory the operator trusts; a bare `.`
 or `~` never reaches a session. This is what makes another operator's
 manifest portable: skippy's manifest names no path at all and lands in his
@@ -74,9 +78,11 @@ own checkout.
 **3. The daemon refuses what it cannot place.** At apply, `workspace.root`
 must be present and absolute; every resolved `workdir` must exist on the
 daemon's host and be a directory; `~` is not expanded and is refused as
-not absolute. A manifest posted through the raw API without a root is
-refused with `workspace.root is required (marvel work fills it from the
-manifest's directory)`. Validation is placement, not trust: marvel does
+not absolute. A manifest posted through the raw API with neither a root
+nor `workspace_root` is, for now, accepted with a warning, so running
+tooling does not break; such a team falls to the
+seat-bootstrap managed directory (`docs/design/seat-bootstrap.md`). The
+refusal is the later state (amended 2026-10-02). Validation is placement, not trust: marvel does
 not read the harness's trust store, and does not claim to.
 
 **4. Placement rides into the pane through tmux, uniformly.** The role's
