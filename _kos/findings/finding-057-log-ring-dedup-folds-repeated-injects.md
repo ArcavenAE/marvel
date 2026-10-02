@@ -54,7 +54,7 @@ keeps the ring bounded and answers the operator's question.
 ## Evidence
 
 - `internal/logbuf/logbuf.go` lines 11 to 17 and 90 to 93 at ee7666d.
-- Live ring on mokuzai, 2026-10-01 18:48Z to 21:12Z: three fold markers
+- Live ring on mokuzai, 2026-10-01 18:48Z to 21:12Z: two fold markers (after 19:26:10 on g4-4, 2 repeats; after 20:40:23 on g4-1, 1 repeat)
   among reviewer-seat injects.
 - My handoff log for the reviewer team, 2026-10-01: two "doorbell may not
   have landed" checks, both resolved by `marvel capture` showing the seat
