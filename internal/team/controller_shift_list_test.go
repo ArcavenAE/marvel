@@ -199,12 +199,53 @@ func TestMaxAgeEscalatesWithoutMarker(t *testing.T) {
 		t.Fatal("request should be marked escalated")
 	}
 
-	// Later ticks stay quiet: the supervisor owns it now.
-	f.clock.Advance(time.Hour)
+	// The supervisor owns it now, but the event ring is in memory and can lose
+	// it, so the escalation is repeated once per window while the request
+	// stands (marvel#453). Ticks inside a window stay quiet.
+	f.clock.Advance(api.DefaultShiftHandoffWindow - time.Second)
 	got = f.evaluate()
 	if got.Shift.Phase != api.ShiftNone || len(f.notices) != 1 || f.count(events.KindShiftHandoffMissing) != 1 {
-		t.Fatalf("after escalation: phase=%q notices=%d missing=%d, want none, 1, 1",
+		t.Fatalf("inside the window: phase=%q notices=%d missing=%d, want none, 1, 1",
 			got.Shift.Phase, len(f.notices), f.count(events.KindShiftHandoffMissing))
+	}
+	f.clock.Advance(2 * time.Second)
+	got = f.evaluate()
+	if got.Shift.Phase != api.ShiftNone || len(f.notices) != 1 || f.count(events.KindShiftHandoffMissing) != 2 {
+		t.Fatalf("after a window: phase=%q notices=%d missing=%d, want none, 1, 2",
+			got.Shift.Phase, len(f.notices), f.count(events.KindShiftHandoffMissing))
+	}
+	if !got.ShiftRequests[testShiftRole].Escalated {
+		t.Fatal("the request should stay escalated")
+	}
+}
+
+// A daemon restart empties the event ring. The escalated request is durable,
+// so the next tick must say so again rather than leave a silent hold
+// (marvel#453).
+func TestMaxAgeEscalationIsRepeatedAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-restart", maxAgeRole(dir))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.evaluate()
+	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	f.evaluate()
+	if n := f.count(events.KindShiftHandoffMissing); n != 1 {
+		t.Fatalf("handoff-missing events = %d, want 1", n)
+	}
+
+	// The restart: a fresh controller and an empty ring over the same store.
+	fresh := NewController(f.store, f.ctrl.sessMgr)
+	fresh.now = f.clock.Now
+	ring := events.NewRing(0)
+	fresh.Events = ring
+	f.clock.Advance(time.Minute)
+	team, err := f.store.GetTeam(f.teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.evaluateShiftTriggers(&team)
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)); n != 1 {
+		t.Fatalf("handoff-missing events after restart = %d, want 1: the hold must not be silent", n)
 	}
 }
 
