@@ -114,8 +114,11 @@ func (b *ManifestBudget) Budget() Budget {
 // ManifestRole is a role section within a team.
 // Name is the job function. Persona and Identity are the costume and lens.
 type ManifestRole struct {
-	Name     string `toml:"name"                          yaml:"name"`
-	Replicas int    `toml:"replicas"                      yaml:"replicas"`
+	// SettingsSources opts a bare claude seat into settings sources beyond
+	// the default, from user, project and local.
+	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
+	Name            string   `toml:"name"                          yaml:"name"`
+	Replicas        int      `toml:"replicas"                      yaml:"replicas"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
