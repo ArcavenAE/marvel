@@ -59,7 +59,7 @@ func TestInjectEmitsAnAttributedEventWithoutTheText(t *testing.T) {
 	sess := liveSession(t, d)
 	const secret = "hunter2-do-not-log"
 
-	resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), secret, true, true, Injector{Session: "aae-supervisor-g1-0", User: "avi"}), localCaller())
+	resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), secret, true, true, Injector{Session: "aae-supervisor-g1-0", User: "example-user"}), localCaller())
 	if resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
@@ -71,7 +71,7 @@ func TestInjectEmitsAnAttributedEventWithoutTheText(t *testing.T) {
 	if ev.Workspace != "injectws" || ev.Team != "squad" || ev.Role != "worker" || ev.Session != sess.Name {
 		t.Errorf("event subject = %s/%s/%s %s, want the session's own", ev.Workspace, ev.Team, ev.Role, ev.Session)
 	}
-	for _, want := range []string{"18 bytes", "enter=true", "transport=local", "declared_session=aae-supervisor-g1-0", "declared_user=avi"} {
+	for _, want := range []string{"18 bytes", "enter=true", "transport=local", "declared_session=aae-supervisor-g1-0", "declared_user=example-user"} {
 		if !strings.Contains(ev.Message, want) {
 			t.Errorf("message %q lacks %q", ev.Message, want)
 		}
