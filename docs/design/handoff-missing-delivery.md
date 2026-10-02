@@ -211,15 +211,33 @@ setting a control on itself, and the record shows which one held:
    harness (codex, crush and opencode have no such rule), or a process
    writing to the socket directly. It is a harness rule, not a kernel
    boundary.
-2. **Peer attribution on the local socket.** The daemon reads the caller's
-   pid from the socket (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux)
-   and that process's controlling terminal. If the terminal is a marvel
-   pane's pty, the caller is that seat: the verb is refused and the refusal
-   names the session. If the caller has no controlling terminal (a
-   `setsid` or double-forked process, cron, launchd), the verb is refused
-   with "run it from a terminal, or over mrvl with an admin key", because
-   such a caller cannot be told apart from an escaped seat. Otherwise the
-   caller is recorded as `operator, tty <name>, pid <n>`.
+2. **Peer attribution on the local socket, by ancestry.** At accept time,
+   before reading the request, the daemon takes the caller's pid from the
+   socket (`LOCAL_PEERPID` on macOS; `SO_PEERCRED`, through x/sys
+   `GetsockoptUcred`, on Linux) and resolves, in that same moment, the
+   caller's controlling terminal and its whole parent chain up to pid 1,
+   with each ancestor's pid, start time and terminal. Resolving at accept
+   time and keying on pid plus start time keeps a reused pid from being
+   attributed to a different process. Then:
+   - **Seat terminals** are the ptys of every pane on every tmux server
+     marvel drives (listed with `list-panes -a` on marvel's sockets), not
+     only the panes marvel spawned sessions into. So a seat that opens
+     `tmux new-window` on marvel's server, escaping its own ancestry, is
+     still on a seat terminal.
+   - **Refused, naming the seat,** when the caller OR ANY ANCESTOR is on a
+     seat terminal. `script -q /dev/null marvel autoshift ...` gives the
+     command a fresh pty, but its chain (sh, script, zsh, claude) still
+     reaches the seat's pane tty, so it is refused and the refusal names
+     that session.
+   - **Refused, "run it from a terminal on this host, or over mrvl with an
+     admin key",** when the caller has no controlling terminal, or the
+     chain cannot be read completely, since such a caller cannot be told
+     apart from an escaped seat.
+   - **Recorded as `operator`** only when established: the caller has a
+     controlling terminal, it is not a seat terminal, and no ancestor is on
+     one. The record carries the tty, the pid and the full chain.
+   Whether the operator's own Claude Code session counts as the operator is
+   ruling 5, open; the default is no.
 3. **The record.** Every use prints in `get sessions`, in `describe`, and in
    the event ring, with the actor as attributed above, or the key
    fingerprint over mrvl.
@@ -232,8 +250,14 @@ cancel or abort, and the operator runs it. That matches the rule that no
 seat or automation sets these controls.
 
 Limit, stated plainly: under one OS user none of this is a kernel boundary.
-A seat that drives a terminal it does not own (for example by typing into
-the operator's own tmux server) is attributed to that terminal. Closing that
+Three ways a seat can still look like the operator:
+- typing into a terminal it does not own (the operator's own tmux server,
+  or a terminal app it can drive), so the call starts from that terminal;
+- `ssh localhost`, which gives a fresh session whose chain runs through
+  sshd, not the seat (a host where the seat's user can ssh to itself);
+- any route that starts a process outside the seat's tree with its own
+  terminal.
+Each is recorded with its tty and chain, so it is visible afterward. Closing that
 needs a separate OS user per seat or a sandbox profile (aae-orc-ww33y); the
 attribution makes such a use visible, not impossible.
 
@@ -330,11 +354,15 @@ seat running far past its max age stays visible.
 7. A manifest declaring an agent id `marvel` is refused.
 8. **Who can set a control.** A projected claude seat's settings carry the
    `Bash(marvel autoshift:*)` deny rule, including for a role with no
-   policy. A call on the local socket from a process whose controlling
-   terminal is a marvel pane is refused and names that session; a call from
-   a process with no controlling terminal is refused; a call from another
-   terminal is accepted and recorded with its tty and pid; a call over mrvl
-   with a non-admin key is refused. **Mute.** `--forever`: one `muted forever` message; after a simulated 24h,
+   policy. On the local socket: a caller on a marvel pane tty is refused and
+   named; `script -q /dev/null marvel autoshift ...` run from a seat (fresh
+   pty, seat ancestor) is refused and names the seat; a caller in a pane
+   opened by `tmux new-window` on marvel's server is refused; a caller with
+   no controlling terminal is refused; a caller whose chain cannot be read
+   is refused; a caller whose pid is reused between connect and check
+   (simulated by a seam) is not attributed to the new process; a caller on
+   another terminal with no seat ancestor is accepted and recorded with its
+   tty, pid and chain. Over mrvl, a non-admin key is refused. **Mute.** `--forever`: one `muted forever` message; after a simulated 24h,
    exactly one reminder line (and one per further 24h); `(muted forever)`
    shown in `get sessions` and in `describe` with actor and reason; it
    survives a restart; it ends when the request ends; `--forever` without
@@ -383,3 +411,4 @@ seat running far past its max age stays visible.
 | 2 | RULED 2026-10-02: add a mute, a per-session cancel and a general abort (H6); "allow forever mute". The timed mute keeps a 4h default and a 24h cap; a forever mute sends a daily reminder | as written |
 | 3 | RULED 2026-10-02 yes: marvel publishes as `marvel` on its existing admin connection, not a new scoped principal (a scoped principal held by the same daemon adds no boundary) | yes |
 | 4 | RULED 2026-10-02: "Deliver to other supervisors and director". Other replicas of the same role, every other team's supervisor on this cluster, and `global://director` after #457 (H1, P2) | as written |
+| 5 | Does the operator's own Claude Code session (its Bash tool, on a terminal the operator owns) count as the operator for these controls | no: only a real terminal on the daemon host, or mrvl with an admin key |
