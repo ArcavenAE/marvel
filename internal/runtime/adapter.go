@@ -236,6 +236,9 @@ type StatuslineFeeder interface {
 type LaunchResult struct {
 	Command string
 	Env     map[string]string
+	// SettingSources is the value the adapter passed as --setting-sources,
+	// empty when it passed none.
+	SettingSources string
 	// Stream is set only when the adapter actually wired its harness's
 	// structured output into LaunchContext.StreamPath. Nil means the
 	// session produces no parseable stream and is observed by
