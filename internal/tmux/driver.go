@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -616,109 +617,189 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 	return string(out), nil
 }
 
-// Repaint asks the program in a pane to redraw itself, the way a terminal
-// resize would, without sending it any input. It signals the pane tty's
-// foreground process group with SIGWINCH and returns the command name of that
-// group's leader, so a caller can tell a harness from a shell.
+// Repaint asks the program in a pane to redraw itself without sending it any
+// input. The harnesses repaint on a change of terminal SIZE, not on a bare
+// SIGWINCH (measured on claude and opencode), so it widens the pane's own tty
+// by one column, holds for `hold`, and puts the size back. The kernel signals
+// the tty's foreground group on each change, so no pid or process group is
+// looked up and nothing is signalled by id. Nothing in tmux changes: no
+// window option, no resize-window, so an attached client still resizes the pane
+// afterwards and the other panes of the window do not move.
 //
-// It does not resize the window. resize-window works as a nudge but leaves the
-// window's window-size option on manual, which stops an attached client from
-// resizing the pane afterwards. A signal changes nothing in tmux.
+// The restore is compare-and-restore: if the size is no longer the one the
+// nudge set (a client resized, tmux re-asserted it) it is left alone and the
+// result says so. The restore runs on every path out, including an error.
 //
-// A nil error means a signal was sent, not that the program redrew: whether a
-// given harness repaints on SIGWINCH is the harness's business.
+// The result's Target is the command name of the tty's foreground process
+// group, so a caller can tell a harness from a shell. It is read for display
+// only. A nil error means the size was nudged, not that the program redrew.
+//
+// Between the widening and the restore the program draws one column too many
+// into the pane, a frame nobody should read. A caller captures only after
+// Repaint returns and after its own settle for the restore's redraw, never
+// between the steps; hold covers the first redraw and the caller's settle the
+// second.
 func (d *Driver) Repaint(paneID string, hold time.Duration) (RepaintResult, error) {
-	target, err := d.repaintBySignal(paneID)
-	return RepaintResult{Target: target}, err
-}
-
-func (d *Driver) repaintBySignal(paneID string) (string, error) {
-	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_dead} #{pane_pid} #{pane_tty}").CombinedOutput()
+	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_dead} #{pane_tty}").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+		return RepaintResult{}, fmt.Errorf("pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
 	}
 	fields := strings.Fields(string(out))
-	if len(fields) < 2 {
-		return "", fmt.Errorf("pane %s: unreadable pane state %q", paneID, strings.TrimSpace(string(out)))
+	if len(fields) < 1 {
+		return RepaintResult{}, fmt.Errorf("pane %s: unreadable pane state %q", paneID, strings.TrimSpace(string(out)))
 	}
-	dead := fields[0] == "1"
 	paneTTY := ""
-	if len(fields) >= 3 {
-		paneTTY = fields[2]
+	if len(fields) >= 2 {
+		paneTTY = fields[1]
 	}
-	if dead {
-		// A pane kept after its program exited keeps its old pid, and pids
-		// are reused: refuse before the pid is looked at at all.
-		return "", validateRepaintTarget(true, paneTTY, "", 0)
+	// A pane kept after its program exited keeps its old tty path, and a pty
+	// number can be handed to another pane: refuse before the path is opened.
+	if err := validateRepaintPane(fields[0] == "1", paneTTY); err != nil {
+		return RepaintResult{}, fmt.Errorf("pane %s: %w", paneID, err)
 	}
-	pid, err := strconv.Atoi(fields[1])
-	if err != nil || pid <= 1 {
-		return "", fmt.Errorf("pane %s has no process", paneID)
-	}
-	procTTY, pgid, err := foregroundGroup(pid)
+	res := RepaintResult{Target: foregroundCommand(paneTTY)}
+	res.RestoreSkipped, err = nudgeWinsize(paneTTY, hold, nil)
 	if err != nil {
-		return "", fmt.Errorf("pane %s: %w", paneID, err)
+		return res, fmt.Errorf("pane %s: %w", paneID, err)
 	}
-	if err := validateRepaintTarget(false, paneTTY, procTTY, pgid); err != nil {
-		return "", fmt.Errorf("pane %s: %w", paneID, err)
-	}
-	if err := syscall.Kill(-pgid, syscall.SIGWINCH); err != nil {
-		return "", fmt.Errorf("signal pane %s foreground group %d: %w", paneID, pgid, err)
-	}
-	return commandName(pgid), nil
+	return res, nil
 }
 
-// validateRepaintTarget decides whether the foreground group read for a pane's
-// pid may be signalled: the pane must be alive, the process must still be on the
-// pane's own terminal, and it must have a foreground group other than init's or
-// nothing. Without the terminal check a reused pid could point at another pane's
-// or the operator's terminal.
-//
-// The signal still goes out a moment after the group is read, so the group
-// could in principle exit and its id be reused in between. A resize signalled by
-// the kernel does not have that window; this does, and it is a few milliseconds.
-func validateRepaintTarget(dead bool, paneTTY, procTTY string, pgid int) error {
+// RepaintResult is what a repaint did.
+type RepaintResult struct {
+	// Target is the command name of the tty's foreground process group, empty
+	// when it could not be read.
+	Target string
+	// RestoreSkipped is true when the size had changed during the hold, so the
+	// original size was not written back over it.
+	RestoreSkipped bool
+}
+
+// validateRepaintPane refuses a pane that cannot be repainted: one whose program
+// has exited, or that reports no terminal.
+func validateRepaintPane(dead bool, paneTTY string) error {
 	if dead {
 		return errors.New("the pane has exited; there is no program to repaint")
 	}
-	want := strings.TrimPrefix(paneTTY, "/dev/")
-	if want == "" {
+	if paneTTY == "" {
 		return errors.New("the pane reports no terminal")
-	}
-	if procTTY != want {
-		return fmt.Errorf("its process is not on the pane's terminal (pane %s, process %q)", want, procTTY)
-	}
-	if pgid <= 1 {
-		return errors.New("its terminal has no foreground process group")
 	}
 	return nil
 }
 
-// foregroundGroup returns the terminal a process runs on and that terminal's
-// foreground process group, which is the group a terminal resize signals.
-func foregroundGroup(pid int) (string, int, error) {
-	out, err := exec.Command("ps", "-o", "tty=,tpgid=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return "", 0, fmt.Errorf("read the foreground process group of %d: %w", pid, err)
+// winsize mirrors struct winsize.
+type winsize struct{ Rows, Cols, X, Y uint16 }
+
+func ioctl(fd, req uintptr, arg unsafe.Pointer) error {
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(arg)); e != 0 {
+		return e
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) != 2 {
-		return "", 0, fmt.Errorf("process %d has no terminal or foreground process group", pid)
-	}
-	pgid, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return "", 0, fmt.Errorf("process %d has no foreground process group", pid)
-	}
-	return strings.TrimPrefix(fields[0], "/dev/"), pgid, nil
+	return nil
 }
 
-// commandName is the leader's command name, best effort; empty when unknown.
-func commandName(pid int) string {
-	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+func getWinsize(f *os.File) (winsize, error) {
+	var ws winsize
+	return ws, ioctl(f.Fd(), syscall.TIOCGWINSZ, unsafe.Pointer(&ws))
+}
+
+func setWinsize(f *os.File, ws winsize) error {
+	return ioctl(f.Fd(), syscall.TIOCSWINSZ, unsafe.Pointer(&ws))
+}
+
+func openTTY(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
+}
+
+func ttyWinsize(path string) (winsize, error) {
+	f, err := openTTY(path)
+	if err != nil {
+		return winsize{}, err
+	}
+	defer func() { _ = f.Close() }()
+	return getWinsize(f)
+}
+
+func setTTYWinsize(path string, ws winsize) error {
+	f, err := openTTY(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return setWinsize(f, ws)
+}
+
+// nudgeWinsize widens the terminal at path by one column, runs between (if any)
+// and holds for hold, then restores the original size, but only if the size is
+// still the one it set. skipped reports that it was not and the restore was
+// left undone on purpose. The restore runs however the hold ends, so a failed
+// step cannot leave the pane one column wide; if the restore itself fails, the
+// error says how wide the pane was left.
+func nudgeWinsize(path string, hold time.Duration, between func() error) (skipped bool, err error) {
+	f, err := openTTY(path)
+	if err != nil {
+		return false, fmt.Errorf("open the pane's terminal: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	orig, err := getWinsize(f)
+	if err != nil {
+		return false, fmt.Errorf("read the pane's size: %w", err)
+	}
+	widened := orig
+	if widened.Cols == math.MaxUint16 {
+		widened.Cols--
+	} else {
+		widened.Cols++
+	}
+	if err := setWinsize(f, widened); err != nil {
+		return false, fmt.Errorf("widen the pane: %w", err)
+	}
+	defer func() {
+		cur, gerr := getWinsize(f)
+		switch {
+		case gerr != nil:
+			err = errors.Join(err, fmt.Errorf("restore failed, pane left at %d columns: read size: %w", widened.Cols, gerr))
+		case cur.Cols != widened.Cols || cur.Rows != widened.Rows:
+			skipped = true
+		default:
+			if serr := setWinsize(f, orig); serr != nil {
+				err = errors.Join(err, fmt.Errorf("restore failed, pane left at %d columns: %w", widened.Cols, serr))
+			}
+		}
+	}()
+	if between != nil {
+		if err := between(); err != nil {
+			return false, err
+		}
+	}
+	time.Sleep(hold)
+	return false, nil
+}
+
+// foregroundCommand names the program in a tty's foreground process group, for
+// display only: it never decides what is signalled, because nothing is. It reads
+// the terminal's process table with ps (tcgetpgrp would need the tty to be this
+// process's controlling terminal) and takes the group leader, or failing that
+// any member, of the foreground group. Best effort; empty when unknown.
+func foregroundCommand(path string) string {
+	out, err := exec.Command("ps", "-t", strings.TrimPrefix(path, "/dev/"), "-o", "pid=,pgid=,tpgid=,comm=").Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimPrefix(filepath.Base(strings.TrimSpace(string(out))), "-")
+	member := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[1] != f[2] || f[2] == "0" || f[2] == "-1" {
+			continue
+		}
+		name := strings.TrimPrefix(filepath.Base(strings.Join(f[3:], " ")), "-")
+		if f[0] == f[2] {
+			return name
+		}
+		if member == "" {
+			member = name
+		}
+	}
+	return member
 }
 
 // CapturePaneRange captures pane content with explicit start and end line
@@ -776,47 +857,3 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 	}
 	return panes, nil
 }
-
-// RepaintResult is what a repaint did. Scaffold.
-type RepaintResult struct {
-	Target         string
-	RestoreSkipped bool
-}
-
-// winsize mirrors struct winsize.
-type winsize struct{ Rows, Cols, X, Y uint16 }
-
-func ioctlWinsize(fd uintptr, req uintptr, ws *winsize) error {
-	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(unsafe.Pointer(ws))); e != 0 {
-		return e
-	}
-	return nil
-}
-
-func ttyWinsize(path string) (winsize, error) {
-	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
-	if err != nil {
-		return winsize{}, err
-	}
-	defer func() { _ = f.Close() }()
-	var ws winsize
-	return ws, ioctlWinsize(f.Fd(), syscall.TIOCGWINSZ, &ws)
-}
-
-func setTTYWinsize(path string, ws winsize) error {
-	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	return ioctlWinsize(f.Fd(), syscall.TIOCSWINSZ, &ws)
-}
-
-// nudgeWinsize widens the terminal at path by one column, holds, then restores
-// the original size. Scaffold: not yet implemented.
-func nudgeWinsize(path string, hold time.Duration, between func() error) (skipped bool, err error) {
-	return false, nil
-}
-
-// validateRepaintPane refuses a pane that cannot be repainted. Scaffold.
-func validateRepaintPane(dead bool, paneTTY string) error { return nil }

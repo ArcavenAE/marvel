@@ -2013,14 +2013,12 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	// beside the capture and never fails it.
 	repaint, target := "", ""
 	if p.Repaint {
-		res, rerr := d.driver.Repaint(sess.PaneID, repaintHold(p.SettleMS))
-		repaint, target = repaintStatus(rerr), res.Target
+		settle := repaintSettle(p.SettleMS)
+		res, rerr := d.driver.Repaint(sess.PaneID, settle)
+		repaint, target = repaintStatus(res, rerr), res.Target
 		if rerr == nil {
-			settle := time.Duration(p.SettleMS) * time.Millisecond
-			if settle <= 0 {
-				settle = defaultRepaintSettle
-			}
-			time.Sleep(min(settle, repaintSettleMax))
+			// The nudge was held for settle; the restore repaints too.
+			time.Sleep(settle)
 		}
 	}
 
@@ -3033,12 +3031,25 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 }
 
 // repaintStatus names the outcome of a repaint request for the capture result.
-// "signalled" means a signal was sent, not that the program redrew.
-func repaintStatus(err error) string {
-	if err == nil {
-		return "signalled"
+// "signalled" means the pane's size was nudged, not that the program redrew.
+func repaintStatus(res tmux.RepaintResult, err error) string {
+	if err != nil {
+		return "unavailable: " + strings.Join(strings.Fields(err.Error()), " ")
 	}
-	return "unavailable: " + strings.Join(strings.Fields(err.Error()), " ")
+	if res.RestoreSkipped {
+		return "signalled, restore skipped: size changed underneath"
+	}
+	return "signalled"
+}
+
+// repaintSettle is how long the nudge is held and then how long the capture
+// waits for the restore's redraw: the caller's value, bounded.
+func repaintSettle(settleMS int) time.Duration {
+	settle := time.Duration(settleMS) * time.Millisecond
+	if settle <= 0 {
+		settle = defaultRepaintSettle
+	}
+	return min(settle, repaintSettleMax)
 }
 
 // defaultRepaintSettle is how long a repaint capture waits for the redraw to
@@ -3047,6 +3058,3 @@ const (
 	defaultRepaintSettle = 300 * time.Millisecond
 	repaintSettleMax     = 10 * time.Second
 )
-
-// repaintHold is how long the one-column nudge is held. Scaffold.
-func repaintHold(settleMS int) time.Duration { return defaultRepaintSettle }

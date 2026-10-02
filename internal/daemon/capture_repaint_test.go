@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 const winchSeat = `trap 'n=$((n+1)); echo painted-$n' WINCH
@@ -102,11 +104,15 @@ func TestCaptureRepaintShowsWhatAPlainCaptureDoesNot(t *testing.T) {
 
 func TestRepaintStatusNamesTheOutcome(t *testing.T) {
 	t.Parallel()
-	if got := repaintStatus(nil); got != "signalled" {
-		t.Errorf("repaintStatus(nil) = %q, want signalled", got)
+	if got := repaintStatus(tmux.RepaintResult{}, nil); got != "signalled" {
+		t.Errorf("repaintStatus(ok) = %q, want signalled", got)
 	}
-	got := repaintStatus(errors.New("no foreground process group"))
-	if got != "unavailable: no foreground process group" {
+	got := repaintStatus(tmux.RepaintResult{}, errors.New("the pane has exited"))
+	if got != "unavailable: the pane has exited" {
 		t.Errorf("repaintStatus(err) = %q, want unavailable: <reason>", got)
+	}
+	got = repaintStatus(tmux.RepaintResult{RestoreSkipped: true}, nil)
+	if got != "signalled, restore skipped: size changed underneath" {
+		t.Errorf("repaintStatus(skipped) = %q, want the restore-skipped wording", got)
 	}
 }

@@ -162,40 +162,6 @@ func TestRepaintRefusesAPaneThatHasExited(t *testing.T) {
 	}
 }
 
-// The process behind a pane pid must still be on the pane's terminal, and a
-// process with no foreground group is never signalled.
-func TestValidateRepaintTarget(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name               string
-		dead               bool
-		paneTTY, procTTY   string
-		pgid               int
-		wantErr, wantInErr string
-	}{
-		{"live pane, same tty", false, "/dev/ttys003", "ttys003", 4242, "", ""},
-		{"same tty, linux form", false, "/dev/pts/3", "pts/3", 4242, "", ""},
-		{"dead pane", true, "/dev/ttys003", "ttys003", 4242, "x", "exited"},
-		{"pid now on another terminal", false, "/dev/ttys003", "ttys009", 4242, "x", "not on the pane's terminal"},
-		{"pid has no terminal", false, "/dev/ttys003", "??", 4242, "x", "not on the pane's terminal"},
-		{"empty pane tty", false, "", "ttys003", 4242, "x", "no terminal"},
-		{"no foreground group", false, "/dev/ttys003", "ttys003", 0, "x", "foreground process group"},
-		{"group 1 is never signalled", false, "/dev/ttys003", "ttys003", 1, "x", "foreground process group"},
-	}
-	for _, tc := range cases {
-		err := validateRepaintTarget(tc.dead, tc.paneTTY, tc.procTTY, tc.pgid)
-		if tc.wantErr == "" {
-			if err != nil {
-				t.Errorf("%s: error %v, want none", tc.name, err)
-			}
-			continue
-		}
-		if err == nil || !strings.Contains(err.Error(), tc.wantInErr) {
-			t.Errorf("%s: error %v, want one containing %q", tc.name, err, tc.wantInErr)
-		}
-	}
-}
-
 const testHold = 150 * time.Millisecond
 
 // A program like the harnesses research measured: it repaints when the terminal
@@ -238,7 +204,9 @@ func TestRepaintNudgesTheSizeOfAProgramThatIgnoresASignal(t *testing.T) {
 	if _, err := d.Repaint(pane, testHold); err != nil {
 		t.Fatalf("Repaint: %v", err)
 	}
-	got := waitFor(t, d, pane, "painted-")
+	// The nudge paints at the widened size and the restore paints at the
+	// original one; wait for the second, which lands after Repaint returns.
+	got := waitFor(t, d, pane, fmt.Sprintf("painted-%d %d", before.Rows, before.Cols))
 	if n := strings.Count(got, "painted-"); n < 2 {
 		t.Errorf("painted %d time(s), want one for the nudge and one for the restore:\n%s", n, got)
 	}
