@@ -612,6 +612,15 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 	return string(out), nil
 }
 
+// Repaint asks the program in a pane to redraw itself, the way a terminal
+// resize would, without sending it any input. It signals the pane tty's
+// foreground process group with SIGWINCH and returns the command name of that
+// group's leader, so a caller can tell a harness from a shell.
+// Scaffold: not yet implemented.
+func (d *Driver) Repaint(paneID string) (string, error) {
+	return "", nil
+}
+
 // CapturePaneRange captures pane content with explicit start and end line
 // numbers. Negative values reference the scrollback buffer (e.g., -100 for
 // 100 lines of history). This allows capturing scrollback beyond the visible area.

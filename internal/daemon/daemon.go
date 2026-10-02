@@ -1960,6 +1960,13 @@ type captureParams struct {
 	SessionKey string `json:"session_key"`
 	Start      *int   `json:"start,omitempty"`
 	End        *int   `json:"end,omitempty"`
+	// Repaint asks the program in the pane to redraw before the read, by
+	// signalling its foreground process group with SIGWINCH. Off by default:
+	// a plain capture is what was last painted.
+	Repaint bool `json:"repaint,omitempty"`
+	// SettleMS is how long to wait after the signal before reading. Zero
+	// means the default.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
 
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
@@ -3004,3 +3011,7 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 	}
 	return Response{Result: data}
 }
+
+// repaintStatus names the outcome of a repaint request for the capture result.
+// Scaffold: not yet implemented.
+func repaintStatus(error) string { return "" }
