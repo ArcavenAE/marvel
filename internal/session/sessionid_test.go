@@ -121,3 +121,26 @@ func TestPlanLaunchLeavesUnpinnableRuntimesUnnamed(t *testing.T) {
 		t.Errorf("codex command should carry no --session-id, got: %s", plan.command)
 	}
 }
+
+// The sources passed to the harness are kept on the session, so describe and a
+// restart can say what the seat was told (SB-2). A harness marvel passed none
+// to records none.
+func TestPlanLaunchRecordsTheSettingSources(t *testing.T) {
+	t.Parallel()
+	mgr := sessionIDManager(t)
+
+	claude := sessionFor("reviewer", "claude")
+	plan := mgr.planLaunch(claude)
+	if !strings.Contains(plan.command, "--setting-sources user") {
+		t.Fatalf("command %q, want --setting-sources user", plan.command)
+	}
+	if claude.SettingSources != "user" {
+		t.Errorf("claude SettingSources = %q, want user", claude.SettingSources)
+	}
+
+	codex := sessionFor("coder", "codex")
+	mgr.planLaunch(codex)
+	if codex.SettingSources != "" {
+		t.Errorf("codex SettingSources = %q, want empty", codex.SettingSources)
+	}
+}

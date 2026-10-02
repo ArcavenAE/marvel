@@ -140,14 +140,30 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, "--append-system-prompt", prompt)
 	}
 
+	// Tell the harness which settings sources to load, so what applies is a
+	// declaration and not a consequence of the directory it starts in
+	// (docs/design/seat-bootstrap.md section 4). Only for the bare harness: a
+	// wrapper owns its command line and passes its own, and a role whose args
+	// already name the sources keeps them. The default is the operator's own
+	// settings; project and local arrive by declaration.
+	settingSources := ""
+	if isBareClaude(binary) && !hasAnyFlag(args, "--setting-sources") {
+		settingSources = "user"
+		if len(ctx.Role.SettingsSources) > 0 {
+			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+		}
+		args = append(args, "--setting-sources", settingSources)
+	}
+
 	// The request goes last, as the positional argument.
 	if headless {
 		args = append(args, ctx.Session.Runtime.Prompt)
 	}
 
 	result := &LaunchResult{
-		Command: buildCommand(binary, args),
-		Env:     baseEnv(ctx),
+		Command:        buildCommand(binary, args),
+		Env:            baseEnv(ctx),
+		SettingSources: settingSources,
 	}
 	if headless && ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)
