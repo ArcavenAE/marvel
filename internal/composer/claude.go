@@ -35,6 +35,8 @@ const (
 	// claudeHintIndent is how far right the hint lines above the composer
 	// ("auto mode unavailable", "ctrl+g to edit in VS Code") are pushed.
 	claudeHintIndent = 20
+	// claudeTipMark begins the line Claude draws under the spinner for a tip.
+	claudeTipMark = "⎿"
 )
 
 var (
@@ -85,11 +87,16 @@ func (claudeReader) Read(capture string) State {
 	text := strings.TrimSpace(strings.Join(draft, "\n"))
 
 	// What the turn is doing: the first line above the composer that is not a
-	// blank or a right-aligned hint.
+	// blank, a right-aligned hint, or a "⎿" line. Claude draws a "⎿  Tip: ..."
+	// line between the spinner and the composer, so without skipping it a frame
+	// that is plainly mid-turn reads as something else. Only skipped: the
+	// spinner is still matched by its own glyph at the margin, so text in a "⎿"
+	// line cannot stand in for it.
 	above := ""
 	for i := top - 2; i >= 0; i-- {
 		l := clean[i]
-		if strings.TrimSpace(l) == "" || len(l)-len(strings.TrimLeft(l, " ")) >= claudeHintIndent {
+		if strings.TrimSpace(l) == "" || len(l)-len(strings.TrimLeft(l, " ")) >= claudeHintIndent ||
+			strings.HasPrefix(strings.TrimSpace(l), claudeTipMark) {
 			continue
 		}
 		above = l
