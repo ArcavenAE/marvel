@@ -65,6 +65,15 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 That changes a system setting until the targets are unmasked. These Linux
 lines were not verified on a Linux cluster host.
 
+### macOS: grant the terminal Local Network access
+
+On macOS, an app needs the Local Network permission (System Settings, Privacy
+& Security, Local Network) before it can reach hosts on the LAN. Without it,
+every LAN connection from that terminal fails with `No route to host`, which
+reads as a routing problem. The permission prompt can sit unanswered on a
+fresh machine, so grant it to the terminal that will run the daemon and its
+checks before testing any LAN path.
+
 ## Starting the daemon
 
 ### Local only (default)
@@ -424,6 +433,32 @@ marvel bus leaf disconnect     # detach without bouncing the broker
 Connect and disconnect are reload-only: marvel renders the leaf block and
 reloads, so agents on the broker keep running.
 
+The hub itself is declared in the cluster's bus config, before the daemon
+starts:
+
+```yaml
+bus:
+  hub:
+    url: nats-leaf://<hub-address>:7442
+```
+
+The daemon reads its client config once, at start, and there is no reload
+verb (marvel#514). A hub block added to a running daemon's config is not
+seen: `marvel bus leaf connect` answers that the cluster declares no hub. If
+that happens, `marvel daemon reexec` re-reads the config, and the leaf seed
+has to be pushed again afterwards, because a reexec drops it.
+
+The seed does not have to live on the cluster. The hub operator can push it
+from the hub's host, over the cluster's remote admin listener, once that host
+is enrolled (see SSH key management):
+
+```sh
+marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
+```
+
+So the cluster holds no copy, and after every daemon stop, start or reexec
+the push comes from the hub's side.
+
 The exception is the leaf seed, which rides in the broker's environment and is
 read once at start. A broker already running with the seed takes a connect on
 a reload. A broker that booted without one, or one whose stored seed has since
@@ -565,6 +600,13 @@ Pin to a specific version:
 ```bash
 marvel upgrade --version v0.2.0
 ```
+
+On a Homebrew install, `marvel upgrade` delegates to `brew upgrade`, and a tap
+offers only its latest formula, so an exact pin cannot be held there once a
+newer alpha ships (marvel#485). For an exact version, install with mise (see
+the README). If a host ends up with both, the first `marvel` on `PATH` is the
+one that runs, which may be the stale one; check it with `command -v marvel`
+and `marvel version`, or call the pinned binary by its full path.
 
 ## Monitoring
 
