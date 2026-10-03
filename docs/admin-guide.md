@@ -433,24 +433,36 @@ marvel bus leaf disconnect     # detach without bouncing the broker
 Connect and disconnect are reload-only: marvel renders the leaf block and
 reloads, so agents on the broker keep running.
 
-The hub itself is declared in the cluster's bus config, before the daemon
-starts:
+The hub itself is declared on the cluster's bus entry, before the daemon
+starts. In the Services spelling from "Declaring it", it goes inside the
+entry:
 
 ```yaml
-bus:
-  hub:
-    url: nats-leaf://<hub-address>:7442
+services:
+  - name: bus
+    class: message-bus
+    provider: nats-server
+    mode: managed
+    listen: 127.0.0.1:4222
+    hub:
+      url: nats-leaf://<hub-address>:7442
 ```
+
+A cluster written in the older `bus:` block spelling puts the same `hub:` key
+under its `bus:` block instead; the third cluster's bring-up (aae-orc#461)
+used that spelling. Use one spelling per cluster, never both: a cluster that
+declares a `bus:` block and a message-bus Services entry is refused at load
+("keep one spelling"), and a `hub:` key at the top of the file is ignored.
 
 The daemon reads its client config once, at start, and there is no reload
 verb (marvel#514). A hub block added to a running daemon's config is not
 seen: `marvel bus leaf connect` answers that the cluster declares no hub. If
 that happens, `marvel daemon reexec` re-reads the config, and the leaf seed
-has to be pushed again afterwards, because a reexec drops it.
+has to be pushed again afterwards, because a reexec drops it (marvel#339).
 
 The seed does not have to live on the cluster. The hub operator can push it
-from the hub's host, over the cluster's remote admin listener, once that host
-is enrolled (see SSH key management):
+from the hub's host, over the cluster's `mrvl://` listener, once that host is
+enrolled (see SSH key management):
 
 ```sh
 marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
@@ -458,6 +470,10 @@ marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
 
 So the cluster holds no copy, and after every daemon stop, start or reexec
 the push comes from the hub's side.
+
+Check the cluster name before you push. While marvel#502 is open, an unknown
+`--cluster` name only warns and then acts on the local daemon, so a typo
+stores the seed in the hub host's own daemon rather than the cluster's.
 
 The exception is the leaf seed, which rides in the broker's environment and is
 read once at start. A broker already running with the seed takes a connect on
