@@ -105,13 +105,22 @@ func installedBinary(method installMethod, self string) string {
 	}
 	data, err := exec.Command("brew", "--prefix", homebrewFormula).Output()
 	if err != nil {
+		fallbackNote(self, fmt.Sprintf("brew --prefix %s failed (%v)", homebrewFormula, err))
 		return self
 	}
 	stable := filepath.Join(strings.TrimSpace(string(data)), "bin", "marvel")
 	if _, err := os.Stat(stable); err != nil {
+		fallbackNote(self, fmt.Sprintf("brew's stable binary %s cannot be read (%v)", stable, err))
 		return self
 	}
 	return stable
+}
+
+// fallbackNote says the running binary stands in for the installed one, which
+// can be the wrong file (on Linux it is the resolved keg brew retargets away from).
+func fallbackNote(self, why string) {
+	_, _ = fmt.Fprintf(errOut, "note: %s, so the running binary %s stands in for the installed one "+
+		"when checking whether the upgrade changed anything\n", why, self)
 }
 
 // ReexecRefusal says why --daemon cannot adopt an upgrade on this install, or
@@ -130,7 +139,7 @@ func reexecRefusal(goos string, method installMethod) error {
 	return errors.New("--daemon refused: marvel is installed with Homebrew on Linux, where the running daemon " +
 		"re-executes the keg it started from, and a brew upgrade leaves that keg old or removes it, " +
 		"so the daemon cannot adopt the new build. Nothing was upgraded. " +
-		"Run marvel upgrade without --daemon, then restart the daemon with 'marvel stop' and 'marvel daemon' " +
+		"Run marvel upgrade without --daemon, then restart the daemon with 'marvel stop --keep-bus' and 'marvel daemon' " +
 		"(agents keep running)")
 }
 
@@ -196,7 +205,7 @@ func upgradeViaHomebrew(channel, targetVersion string) error {
 	_ = channel
 	formula := homebrewFormula
 
-	say("Installed via Homebrew. Running: brew upgrade %s", formula)
+	say("Installed via Homebrew.")
 
 	// Update tap first to get latest formula.
 	update := exec.Command("brew", "update")
@@ -209,6 +218,8 @@ func upgradeViaHomebrew(channel, targetVersion string) error {
 	if err := checkBrewVersion(channel, targetVersion); err != nil {
 		return err
 	}
+
+	say("Running: brew upgrade %s", formula)
 
 	// Upgrade the formula. A non-zero exit is a failure: measured on Homebrew
 	// 7.0.7, `brew upgrade` on a formula that is already current exits 0 with an
@@ -260,22 +271,26 @@ func upgradeDirectBinary(channel, targetVersion string) error {
 // is enough to find the latest. With a want it pages until the listing holds
 // that exact tag or ends, so an older build beyond the first page is found.
 func fetchReleases(base, want string) ([]githubRelease, error) {
+	all, _, err := fetchReleasesCapped(base, want)
+	return all, err
+}
+
+// fetchReleasesCapped is fetchReleases that also says whether it stopped at the
+// page cap with the listing still going and the tag not seen, in which case a
+// missing tag is not evidence the tag does not exist.
+func fetchReleasesCapped(base, want string) (all []githubRelease, capped bool, err error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	var all []githubRelease
 	for page := 1; page <= maxReleasePages; page++ {
 		batch, err := fetchReleasePage(client, base, page)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		all = append(all, batch...)
-		if want == "" || len(batch) < releasesPerPage {
-			break
-		}
-		if holdsTag(batch, want) {
-			break
+		if want == "" || len(batch) < releasesPerPage || holdsTag(batch, want) {
+			return all, false, nil
 		}
 	}
-	return all, nil
+	return all, true, nil
 }
 
 func holdsTag(releases []githubRelease, tag string) bool {
@@ -288,13 +303,21 @@ func holdsTag(releases []githubRelease, tag string) bool {
 }
 
 // lookupRelease finds the release to install: the latest for the channel, or
-// the exact tag asked for. Scaffold.
+// the exact tag asked for. A tag missing from a listing that was cut off at the
+// page cap is reported as an unfinished search, not as a tag that is absent: the
+// repo cuts several alphas a day, so the cap is reachable.
 func lookupRelease(base, channel, targetVersion string) (*githubRelease, error) {
-	releases, err := fetchReleases(base, targetVersion)
+	releases, capped, err := fetchReleasesCapped(base, targetVersion)
 	if err != nil {
 		return nil, err
 	}
-	return findRelease(releases, channel, targetVersion)
+	release, err := findRelease(releases, channel, targetVersion)
+	if err != nil && capped {
+		return nil, fmt.Errorf("%q was not found in the %d most recent releases and the search was capped at %d pages, "+
+			"so the tag may exist further back: look for it on the releases page https://github.com/%s/%s/releases/tag/%s",
+			targetVersion, len(releases), maxReleasePages, repoOwner, repoName, targetVersion)
+	}
+	return release, err
 }
 
 func fetchReleasePage(client *http.Client, base string, page int) ([]githubRelease, error) {
