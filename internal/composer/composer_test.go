@@ -152,6 +152,7 @@ func TestReaderForMatchesByBaseName(t *testing.T) {
 	t.Parallel()
 	for name, want := range map[string]string{
 		"codex": "codex", "/opt/homebrew/bin/codex": "codex", "./bin/codex": "codex",
+		"claude": "claude", "/usr/local/bin/claude": "claude", "claude-wrapper": "unknown",
 		"codex-wrapper": "unknown", "/opt/codex/run": "unknown", "mycodex": "unknown", "": "unknown",
 	} {
 		if got := ReaderFor(name).Name(); got != want {
