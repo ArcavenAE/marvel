@@ -238,3 +238,55 @@ func TestConstructedEnvCarriesDirectorAddress(t *testing.T) {
 		t.Errorf("role-declared DIRECTOR_TEAM = %q, want the role's ops", got)
 	}
 }
+
+// codex's "Update available" menu defaults to running the vendor's
+// self-updater, and a seat at that menu is stuck or, worse, updating. The
+// operator approved turning the startup check off for every seat (marvel#483),
+// so the seeded config says so whatever else it carries, and a value in the
+// operator's own file is not read: the allowlist only ever writes false.
+func TestSeededConfigTurnsOffTheStartupUpdateCheck(t *testing.T) {
+	t.Parallel()
+	source := writeOperatorConfig(t)
+	cases := map[string]codexSeed{
+		"minimal": {HookCommand: "/opt/homebrew/bin/marvel codex-ctx"},
+		"full": {
+			HookCommand: "/opt/homebrew/bin/marvel codex-ctx",
+			Director:    operatorDirector(source),
+			EnvVars:     []string{"MARVEL_SESSION"},
+			Untrusted:   "/work/start",
+			Trusted:     map[string]string{"/h/config.toml:session_start:0:0": "sha256:abc"},
+		},
+	}
+	for name, seed := range cases {
+		data, err := renderCodexConfig(seed)
+		if err != nil {
+			t.Fatalf("%s: render: %v", name, err)
+		}
+		var got map[string]any
+		if _, err := toml.Decode(string(data), &got); err != nil {
+			t.Fatalf("%s: seeded config does not parse: %v\n%s", name, err, data)
+		}
+		v, present := got["check_for_update_on_startup"]
+		if !present || v != false {
+			t.Errorf("%s: check_for_update_on_startup = %v (present %v), want false\n%s", name, v, present, data)
+		}
+	}
+}
+
+// The key sits at the top level of the file the pane reads, not inside a table
+// that codex would ignore.
+func TestStartupUpdateCheckIsWrittenToTheSeededFile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), codexConfigFile)
+	if err := writeSeedFile(path, codexSeed{HookCommand: "marvel codex-ctx"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := strings.SplitN(string(body), "\n[", 2)[0]
+	if !strings.Contains(top, "check_for_update_on_startup = false") {
+		t.Errorf("the top level of the seeded file does not set check_for_update_on_startup = false:\n%s", body)
+	}
+}

@@ -73,6 +73,10 @@ together. No new method and no new transport.
   its shim kept beating, and shift readiness (`controller.go`) would count a
   successor ready on its shim alone. Keeping the two signals in two fields
   means existing heartbeat roles keep their meaning exactly.
+- A liveness beat for a session record with no token hash (one written
+  before tokens existed) is admitted as unbound, exactly as a reading is
+  today, and emits `heartbeat.unbound`; that exemption drains as those
+  sessions end, and a session spawned now always carries a hash.
 - `source` is a label for events and `describe`; it is not authorization.
 - `context_percent` is omitted. The struct field is a plain float, so the
   receiver must branch on `kind` before reading it.

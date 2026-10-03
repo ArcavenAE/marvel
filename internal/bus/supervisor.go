@@ -235,6 +235,9 @@ func (s *Supervisor) becomeReady(ctx context.Context, how string) error {
 		}
 	}
 	s.ready = true
+	// The broker now has the file it started or reloaded with: ask whether it
+	// accepts the per-role users, off this path.
+	s.mgr.confirmAsync()
 	// First structural reading, under the lock the caller holds, so ready
 	// means listener, pid, provisioned, and authorized from the first
 	// moment anything asks.
@@ -568,6 +571,9 @@ func (s *Supervisor) checkStructure(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.checkStructureLocked(ctx)
+	// The structural tick also retries a per-role user the broker had not yet
+	// accepted, so a confirmation that missed its window heals on its own.
+	s.mgr.confirmAsync()
 }
 
 // checkStructureLocked is checkStructure with s.mu held. It releases the

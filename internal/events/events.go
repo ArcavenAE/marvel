@@ -22,6 +22,10 @@ type Kind string
 // Canonical event kinds. New producers should add entries here rather
 // than inventing string literals at call sites.
 const (
+	// KindPlacementLegacyStamped announces a team the v1 to v2 store
+	// migration stamped with the daemon's directory so it keeps its place
+	// (docs/design/seat-bootstrap.md section 3).
+	KindPlacementLegacyStamped Kind = "placement.legacy-stamped"
 	// KindSessionInjected records keystrokes sent into a session's pane, with
 	// who sent them: the transport the daemon saw and what the caller declared.
 	// It never carries the text typed.
@@ -31,12 +35,19 @@ const (
 	// tmux would start the pane in $HOME without an error, so marvel refuses
 	// first. Emitted once per change, not once per reconcile tick.
 	KindSessionPlacementRefused Kind = "session.placement-refused"
-	KindSessionCreated          Kind = "session.created"
-	KindSessionDeleted          Kind = "session.deleted"
-	KindSessionCrashed          Kind = "session.crashed"
-	KindSessionRestarted        Kind = "session.restarted"
-	KindSessionFailed           Kind = "session.failed"
-	KindSessionSucceeded        Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindSessionInjectRefused records an inject the daemon would not type:
+	// the composer reader found the pane in a state where a keystroke is
+	// dangerous, or a clear was asked for where none is safe. Nothing was sent.
+	KindSessionInjectRefused Kind = "session.inject-refused"
+	// KindSessionInjectUnconfirmed records a verified inject whose effect was
+	// not seen: the keys were sent, the composer did not read as expected.
+	KindSessionInjectUnconfirmed Kind = "session.inject-unconfirmed"
+	KindSessionCreated           Kind = "session.created"
+	KindSessionDeleted           Kind = "session.deleted"
+	KindSessionCrashed           Kind = "session.crashed"
+	KindSessionRestarted         Kind = "session.restarted"
+	KindSessionFailed            Kind = "session.failed"
+	KindSessionSucceeded         Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
@@ -272,8 +283,11 @@ const (
 // parses this file and fails when a declared Kind constant is missing
 // here, so the catalog cannot fall behind the constants it describes.
 var allKinds = []Kind{
+	KindPlacementLegacyStamped,
 	KindSessionInjected,
 	KindSessionPlacementRefused,
+	KindSessionInjectRefused,
+	KindSessionInjectUnconfirmed,
 	KindSessionCreated,
 	KindSessionDeleted,
 	KindSessionCrashed,

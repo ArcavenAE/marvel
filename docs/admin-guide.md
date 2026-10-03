@@ -3,6 +3,68 @@
 This guide covers daemon setup, remote access configuration, SSH key
 management, and operational concerns.
 
+## Host prerequisites
+
+### The host must stay awake
+
+A cluster host must not idle-sleep while it carries seats. A sleeping host
+stops everything at once: the daemon, the bus and its leaf link to a shared
+hub, and every session. Its peers see silence, not an error. Nothing on the
+bus says why, and another cluster cannot wake it.
+
+This matters most on laptops, whose power settings usually let them
+idle-sleep.
+
+Display sleep is fine; only system sleep stops the cluster. Closing a
+laptop's lid is a separate case that the settings below do not address.
+Wake-on-LAN is not a remedy: its magic packet has to reach the host on the
+same network segment, so a peer on another network, or across a router or a
+VPN, cannot send it.
+
+On macOS, either of these keeps the system awake (pick one):
+
+- **Hold a power assertion** for as long as the cluster runs:
+
+  ```sh
+  caffeinate -s    # prevents system sleep; valid only on AC power
+  caffeinate -i    # prevents idle sleep, on battery as well
+  ```
+
+  The assertion lasts while the `caffeinate` process runs and is released
+  when it exits. No system setting changes. To tie it to the daemon's
+  lifetime, pass the daemon's process id:
+
+  ```sh
+  caffeinate -i -w <daemon-pid>    # released when that process exits
+  ```
+- **Turn off system sleep on AC power:**
+
+  ```sh
+  sudo pmset -c sleep 0
+  ```
+
+  This needs admin rights and changes a system setting that persists until
+  you set it back.
+
+To check what is holding the system awake, and when it last slept:
+
+```sh
+pmset -g assertions    # current power assertions, by process
+pmset -g log           # history of sleeps and wakes
+```
+
+On Linux, run the daemon under `systemd-inhibit --what=idle:sleep`, which
+holds an inhibitor lock for as long as the daemon runs. A desktop
+environment's own automatic suspend setting (GNOME's, for example) is
+separate and must also be off. To rule out sleep on the host entirely:
+
+```sh
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+```
+
+That changes a system setting until the targets are unmasked. These Linux
+lines were not verified on a Linux cluster host.
+
 ## Starting the daemon
 
 ### Local only (default)

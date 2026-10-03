@@ -270,6 +270,7 @@ Examples:
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
 				Reclaim:      reclaim,
+				Build:        daemon.Build{Version: version, Channel: channel, Commit: daemon.VerifiedCommit(version, daemon.VCSRevision())},
 			})
 			if err != nil {
 				return err
@@ -1540,7 +1541,8 @@ restart_policy=never, short of deleting and re-applying the whole team.`,
 }
 
 func injectCmd() *cobra.Command {
-	var literal, enter bool
+	var literal, enter, verify, clearDraft bool
+	var settle time.Duration
 	var keys []string
 	cmd := &cobra.Command{
 		Use:   "inject <session-key> [text]",
@@ -1552,7 +1554,25 @@ characters rather than pressing the key. Use --key for a control key:
 
   marvel inject <session-key> --key Enter        press Enter
   marvel inject <session-key> '' --enter         submit an existing draft
-  marvel inject <session-key> 'hello' --key Enter   type, then press Enter`,
+  marvel inject <session-key> 'hello' --key Enter   type, then press Enter
+
+A codex seat is checked before any input: while it shows its "Update available"
+menu, where one Enter or a newline runs the vendor's installer, the inject is
+refused and nothing is typed. Escape alone is delivered, and skips the update
+once (marvel#477).
+
+--verify reads the composer after the keys went in (a nudge to repaint, a
+settle, a capture) and says whether the effect was seen: submitted text should
+leave the composer empty or the harness mid-turn, staged text should leave it
+holding the text. It prints "confirmed" or exits non-zero with the composer
+state ("unconfirmed"), and the daemon records session.inject-unconfirmed. A
+harness without a reader reads "unknown", which never confirms, and a shell in
+the foreground reads "shell" (no harness is running).
+
+--clear discards a staged draft before the text is sent, but only where a
+reader knows the composer holds text and the harness has a clear key that is
+safe. None does yet: codex and opencode exit on C-c in an empty composer, so
+every --clear is refused today and nothing is typed.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var text string
@@ -1564,6 +1584,8 @@ characters rather than pressing the key. Use --key for a control key:
 			if err != nil {
 				return err
 			}
+			steps = applyInjectOptions(steps, verify, clearDraft, settle)
+			var unconfirmed error
 			for _, step := range steps {
 				params, _ := json.Marshal(injectRequestParams(args[0], step))
 				resp, err := send(daemon.Request{
@@ -1576,11 +1598,18 @@ characters rather than pressing the key. Use --key for a control key:
 				if resp.Error != "" {
 					return fmt.Errorf("%s", resp.Error)
 				}
+				if step.Verify {
+					unconfirmed = unconfirmedError(args[0], resp.Result)
+					fmt.Fprintln(os.Stderr, verifyLine(resp.Result))
+				}
 			}
 			fmt.Println(describeInject(args[0], steps))
-			return nil
+			return unconfirmed
 		},
 	}
+	cmd.Flags().BoolVar(&verify, "verify", false, "read the composer afterwards and exit non-zero if the effect was not seen")
+	cmd.Flags().BoolVar(&clearDraft, "clear", false, "clear a staged draft first (refused wherever no reader can vouch for it)")
+	cmd.Flags().DurationVar(&settle, "settle", 0, "with --verify or --clear, how long to wait for a redraw (default is the repaint default)")
 	cmd.Flags().BoolVarP(&literal, "literal", "l", true, "send keys literally (no special key interpretation)")
 	cmd.Flags().BoolVarP(&enter, "enter", "e", false, "append Enter keystroke after text")
 	cmd.Flags().StringArrayVarP(&keys, "key", "k", nil, "press a tmux key by name (Enter, Escape, C-c); repeatable, never sent as literal text")
@@ -1589,6 +1618,8 @@ characters rather than pressing the key. Use --key for a control key:
 
 func captureCmd() *cobra.Command {
 	var start, end int
+	var repaint bool
+	var settle time.Duration
 	cmd := &cobra.Command{
 		Use:   "capture <session-key>",
 		Short: "Capture a session's pane content",
@@ -1599,7 +1630,21 @@ into scrollback; an omitted -E defaults to the bottom of the visible area.
 
 Full-screen TUI harnesses (interactive claude and friends) run on the tmux
 alternate screen, which has no scrollback — captures of those sessions cap
-at the visible screen regardless of -S.`,
+at the visible screen regardless of -S.
+
+A capture is what the program last painted, not necessarily what is on its
+screen now: a TUI may repaint only on input or on a resize. --repaint asks the
+program to redraw first: marvel widens the pane's own terminal by one column,
+holds for --settle, puts the size back, waits --settle again, and then reads.
+The programs repaint on a change of size, not on a bare SIGWINCH, and nothing is
+signalled by process id or changed in tmux. It reports "repaint: signalled"
+(the size was nudged), "repaint: signalled, restore skipped: size changed
+underneath" (something else resized the pane meanwhile, so the original size
+was left alone) or "repaint: unavailable: <reason>" on stderr, with the name of
+the foreground program. A nudge is not a redraw seen: whether a given harness
+repaints is its own behavior (measured for claude, codex and opencode; not for
+others). A seat sitting at a shell prompt has nothing to repaint; the result
+names the shell. A failed repaint never fails the capture.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := map[string]any{"session_key": args[0]}
@@ -1610,6 +1655,12 @@ at the visible screen regardless of -S.`,
 			}
 			if cmd.Flags().Changed("end") {
 				p["end"] = end
+			}
+			if repaint {
+				p["repaint"] = true
+				if cmd.Flags().Changed("settle") {
+					p["settle_ms"] = settle.Milliseconds()
+				}
 			}
 			params, _ := json.Marshal(p)
 			resp, err := send(daemon.Request{
@@ -1628,11 +1679,19 @@ at the visible screen regardless of -S.`,
 				return fmt.Errorf("parse result: %w", err)
 			}
 			fmt.Print(result["content"])
+			if status := result["repaint"]; status != "" {
+				if target := result["repaint_target"]; target != "" {
+					status += " (foreground: " + target + ")"
+				}
+				_, _ = fmt.Fprintf(os.Stderr, "repaint: %s\n", status)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().IntVarP(&start, "start", "S", 0, "start line (negative for scrollback; default top of visible)")
 	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line (default bottom of visible)")
+	cmd.Flags().BoolVar(&repaint, "repaint", false, "ask the program to redraw first (widen the pane one column and restore it), then read")
+	cmd.Flags().DurationVar(&settle, "settle", 300*time.Millisecond, "with --repaint, how long to wait for the redraw before reading")
 	return cmd
 }
 
@@ -1641,7 +1700,10 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print marvel version and channel",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("marvel %s (%s)\n", version, channel)
+			versionReport(cmd.OutOrStdout(), daemon.Build{Version: version, Channel: channel},
+				func() (*daemon.BuildInfo, error) {
+					return boundedQuery(versionQueryTimeout, queryDaemonBuild)
+				})
 		},
 	}
 }
@@ -1660,23 +1722,32 @@ Otherwise downloads the latest release from GitHub.
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
 re-exec in place after the install, adopting its live panes so agents
-keep running (see 'marvel daemon reexec').`,
+keep running (see 'marvel daemon reexec'). The daemon is re-executed only
+when the installed binary actually changed.
+
+A failed brew upgrade, and a binary owned by a system package manager,
+exit non-zero. --daemon is refused, before anything is upgraded, on a
+Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := upgrade.Run(channel, targetVersion); err != nil {
+			if reexecDaemon {
+				if err := upgrade.ReexecRefusal(); err != nil {
+					return err
+				}
+			}
+			res, err := upgrade.Run(channel, targetVersion)
+			if err != nil {
 				return err
 			}
-			if !reexecDaemon {
+			return afterUpgrade(res, reexecDaemon, func() error {
+				resp, err := send(daemon.Request{Method: "reexec"})
+				if err != nil {
+					return fmt.Errorf("sending daemon re-exec: %w", err)
+				}
+				if resp.Error != "" {
+					return fmt.Errorf("%s", resp.Error)
+				}
 				return nil
-			}
-			resp, err := send(daemon.Request{Method: "reexec"})
-			if err != nil {
-				return fmt.Errorf("binary upgraded, but sending daemon re-exec failed: %w", err)
-			}
-			if resp.Error != "" {
-				return fmt.Errorf("binary upgraded, but daemon re-exec failed: %s", resp.Error)
-			}
-			fmt.Println("running daemon re-executing in place; agents keep running")
-			return nil
+			}, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")

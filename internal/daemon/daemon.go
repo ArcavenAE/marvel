@@ -28,6 +28,7 @@ import (
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
@@ -115,6 +116,8 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	build     Build
+	startedAt time.Time
 	store     *api.Store
 	sessMgr   *session.Manager
 	teamCtrl  *team.Controller
@@ -220,6 +223,11 @@ type Options struct {
 	// this to layout.DaemonBolt() (~/.marvel/state/marvel.bolt).
 	// See orc finding-050 / aae-orc-k4e4.
 	StateBolt string
+	// LegacyCwd is the directory the v1 to v2 store migration stamps on
+	// every team that had no root, so it keeps its place. Empty means the
+	// daemon's working directory at that start. It matters once: the stamp is
+	// written on the first start after the upgrade and never re-read.
+	LegacyCwd string
 	// ShiftTimeout bounds how long a single shift may run before the team
 	// controller declares it stuck, aborts it, and rolls back with a
 	// team.shift-timed-out event. Zero keeps the controller's built-in
@@ -237,6 +245,9 @@ type Options struct {
 	// table the usage accountant resolves denominators against. Tests set
 	// it so a fixture's model does not have to be a real shipped entry.
 	ContextLimits usage.Table
+	// Build is the build this daemon reports over MethodVersion and in its
+	// startup log line. The CLI stamps it from its own -ldflags values.
+	Build Build
 }
 
 // New creates a new daemon with default options.
@@ -259,9 +270,14 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("init tmux driver: %w", err)
 	}
 
+	// The first line an operator reads after a restart or a reexec: which build
+	// this process is. startedAt changes on a reexec and the pid does not, so
+	// the two together show that a reexec happened (marvel#497).
+	log.Printf("marvel daemon %s", opts.Build.Describe(os.Getpid()))
+
 	store := api.NewStore()
 	if opts.StateBolt != "" {
-		if oerr := store.OpenBolt(opts.StateBolt); oerr != nil {
+		if oerr := store.OpenBoltWithOptions(opts.StateBolt, api.BoltOptions{LegacyCwd: opts.LegacyCwd}); oerr != nil {
 			return nil, fmt.Errorf("open state bolt at %s: %w", opts.StateBolt, oerr)
 		}
 		log.Printf("daemon state file: %s (resource_version=%d)", opts.StateBolt, store.ResourceVersion())
@@ -297,11 +313,40 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		if sess.PaneID == "" {
 			return fmt.Errorf("session %s has no pane", sess.Key())
 		}
+		// The handoff request is typed text like any inject, so it passes the same
+		// pre-flight: a codex seat on its update menu since spawn reads as quiet,
+		// which is the seat this stage picks.
+		if why := preflightRefusal(driver, sess, composer.ReaderFor(sess.Runtime.Name)); why != "" {
+			emitInjectRefused(evRing, sess, why, "transport=daemon injector=marvel:max-age")
+			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		}
 		if err := driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 			return err
 		}
 		recordInject(evRing, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
 		return nil
+	}
+	// The migration committed before this point; announce what it stamped,
+	// once, so an operator can see which teams were pinned to the old
+	// directory and declare a root for them.
+	for _, st := range store.LegacyStamps() {
+		ws, name, _ := strings.Cut(st.TeamKey, "/")
+		msg := "placement: legacy daemon cwd " + st.Dir + "; declare a root"
+		if linkedWorktree(st.Dir) {
+			// Warn, never refuse: the stamp is correct today. But new-window -c
+			// on a directory that has since been removed exits 0 and starts the
+			// seat in $HOME, with a different cwd and a different trust
+			// decision, so the operator should know what the stamp rests on.
+			msg += "; this directory is a linked git worktree, and if it is removed the seats will silently start in $HOME"
+		}
+		log.Printf("daemon: team %s: %s", st.TeamKey, msg)
+		events.Emit(evRing, events.Event{
+			Kind:      events.KindPlacementLegacyStamped,
+			Severity:  events.SeverityWarning,
+			Workspace: ws,
+			Team:      name,
+			Message:   msg,
+		})
 	}
 	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
@@ -350,18 +395,20 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		store:    store,
-		sessMgr:  sessMgr,
-		teamCtrl: teamCtrl,
-		driver:   driver,
-		pidFile:  opts.PidFile,
-		reclaim:  opts.Reclaim,
-		home:     home,
-		logs:     buf,
-		events:   evRing,
-		usage:    acct,
-		orphans:  newOrphanRegistry(),
-		reexec:   syscall.Exec,
+		build:     opts.Build,
+		startedAt: time.Now().UTC(),
+		store:     store,
+		sessMgr:   sessMgr,
+		teamCtrl:  teamCtrl,
+		driver:    driver,
+		pidFile:   opts.PidFile,
+		reclaim:   opts.Reclaim,
+		home:      home,
+		logs:      buf,
+		events:    evRing,
+		usage:     acct,
+		orphans:   newOrphanRegistry(),
+		reexec:    syscall.Exec,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
@@ -937,6 +984,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		// path do not use for this method; handleRWCAs routes it to the
 		// streaming handler before dispatch.
 		return Response{Error: fmt.Sprintf("%s streams many responses on one connection; use daemon.WatchEventsWith", MethodEventsWatch)}
+	case MethodVersion:
+		return d.handleVersion()
 	case "orphans":
 		return d.handleOrphans()
 	case "plan":
@@ -1170,6 +1219,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	workDirAdvisories = append(workDirAdvisories, m.LegacyPlacementNotes(d.store)...)
 
 	// Pre-flight: refuse to apply if any role's runtime command/script
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
@@ -1966,6 +2016,15 @@ type injectParams struct {
 	// and the user. It is a claim, not a proof; the daemon records it beside
 	// the transport it saw itself.
 	Injector Injector `json:"injector,omitempty"`
+	// Verify reads the composer after the keys are sent and reports whether
+	// the effect was seen. Off by default.
+	Verify bool `json:"verify,omitempty"`
+	// Clear discards a staged draft before the text is sent, only where the
+	// harness's composer is known and a clear is safe.
+	Clear bool `json:"clear,omitempty"`
+	// SettleMS is how long verification waits for a redraw. Zero means the
+	// default.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
@@ -1989,17 +2048,169 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
+	origin := injectOrigin(c, p.Injector)
+	reader := composer.ReaderFor(sess.Runtime.Name)
+
+	// A clear is only sent where a reader can vouch for it. Where the harness
+	// has no safe clear key nothing is read and nothing is typed.
+	var clearKey string
+	if p.Clear {
+		key, why := d.clearKeyFor(sess, reader, p.SettleMS)
+		if why != "" {
+			return d.refuseInject(sess, p, origin, "refusing --clear: "+why)
+		}
+		clearKey = key
+	}
+
+	// A harness with a state where a keystroke is dangerous is read before any
+	// input. Escape alone passes: it is the key that dismisses such a menu.
+	if !isDismissKey(p) {
+		if why := preflightRefusal(d.driver, sess, reader); why != "" {
+			return d.refuseInject(sess, p, origin, why)
+		}
+	}
+
+	if clearKey != "" {
+		if err := d.driver.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
+			return Response{Error: fmt.Sprintf("inject %s: clear: %v", p.SessionKey, err)}
+		}
+	}
 	if err := d.driver.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
-	recordInject(d.events, sess, p, injectOrigin(c, p.Injector))
+	recordInject(d.events, sess, p, origin)
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":  "injected",
 		"session": p.SessionKey,
-	})
+	}
+	if p.Verify {
+		d.verifyInject(sess, reader, p, out)
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
+}
+
+// isDismissKey reports whether an inject is a lone Escape.
+func isDismissKey(p injectParams) bool {
+	return !p.Literal && !p.Enter && p.Text == "Escape"
+}
+
+// preflightRefusal reads a pane before keystrokes go in and returns why they
+// must not, or "" when they may. It applies to a harness whose reader has a state
+// where a keystroke is dangerous, and it fails closed: a pane that cannot be read
+// is not typed into blind.
+//
+// It is a check, not a lock. The pane can change between this read and the
+// keystrokes (a seat still starting can draw its menu just after the capture),
+// and nothing here holds it still.
+func preflightRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader) string {
+	if !reader.Preflight() {
+		return ""
+	}
+	content, err := driver.CapturePaneJoined(sess.PaneID)
+	if err != nil {
+		return "the pane could not be read, so " + reader.Name() + " is not typed into blind: " + err.Error()
+	}
+	if reader.Read(content) == composer.MenuUnsafe {
+		return reader.Name() + " is showing its update menu, where Enter or a newline runs the vendor's installer; send Escape to skip it (marvel#477)"
+	}
+	return ""
+}
+
+// emitInjectRefused records that nothing was typed. The record never carries
+// the text.
+func emitInjectRefused(ring *events.Ring, sess api.Session, why, origin string) {
+	log.Printf("inject: %s refused: %s", sess.Key(), why)
+	events.Emit(ring, events.Event{
+		Kind:      events.KindSessionInjectRefused,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   fmt.Sprintf("inject refused: %s %s", why, origin),
+	})
+}
+
+// refuseInject records the refusal and returns the error.
+func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) Response {
+	emitInjectRefused(d.events, sess, why, origin)
+	return Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
+}
+
+// repaintSettled nudges a pane so its program redraws, holds for settle, and
+// waits for the restore's redraw. A failure to nudge is reported, not fatal.
+func (d *Daemon) repaintSettled(paneID string, settleMS int) (tmux.RepaintResult, error) {
+	settle := repaintSettle(settleMS)
+	res, err := d.driver.Repaint(paneID, settle)
+	if err == nil {
+		time.Sleep(settle)
+	}
+	return res, err
+}
+
+// readComposer repaints the pane, captures it, and places it in a composer
+// state. A shell in the foreground means no harness is running, whatever the
+// reader would make of the screen.
+func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS int) (composer.State, error) {
+	res, _ := d.repaintSettled(sess.PaneID, settleMS)
+	content, err := d.driver.CapturePane(sess.PaneID)
+	if err != nil {
+		return composer.Unknown, err
+	}
+	if composer.ShellTarget(res.Target) {
+		return composer.Shell, nil
+	}
+	return reader.Read(content), nil
+}
+
+// clearKeyFor returns the key to clear a staged draft, or the reason a clear
+// is refused.
+func (d *Daemon) clearKeyFor(sess api.Session, reader composer.Reader, settleMS int) (key, why string) {
+	if reader.ClearKey() == "" {
+		return "", composer.CanClear(reader, composer.Unknown).Error()
+	}
+	state, err := d.readComposer(sess, reader, settleMS)
+	if err != nil {
+		return "", "the composer could not be read: " + err.Error()
+	}
+	if err := composer.CanClear(reader, state); err != nil {
+		return "", err.Error()
+	}
+	return reader.ClearKey(), ""
+}
+
+// verifyInject reads the composer after the keys went in and records whether
+// the intended effect was seen.
+func (d *Daemon) verifyInject(sess api.Session, reader composer.Reader, p injectParams, out map[string]string) {
+	var intent composer.Intent
+	switch {
+	case p.Enter || (!p.Literal && p.Text == "Enter"):
+		intent = composer.Submit
+	case p.Literal && p.Text != "":
+		intent = composer.Stage
+	default:
+		out["verify"] = "skipped"
+		return
+	}
+	state, err := d.readComposer(sess, reader, p.SettleMS)
+	out["composer"] = string(state)
+	if err == nil && composer.Confirms(intent, state) {
+		out["verify"] = "confirmed"
+		return
+	}
+	out["verify"] = "unconfirmed"
+	events.Emit(d.events, events.Event{
+		Kind:      events.KindSessionInjectUnconfirmed,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   fmt.Sprintf("inject %s sent, effect not seen: composer reads %s", intent, state),
+	})
 }
 
 // Capture params — read a session's pane content.
@@ -2007,6 +2218,13 @@ type captureParams struct {
 	SessionKey string `json:"session_key"`
 	Start      *int   `json:"start,omitempty"`
 	End        *int   `json:"end,omitempty"`
+	// Repaint asks the program in the pane to redraw before the read, by
+	// widening the pane's terminal one column and restoring it. Off by
+	// default: a plain capture is what was last painted.
+	Repaint bool `json:"repaint,omitempty"`
+	// SettleMS is how long the nudge is held, and then how long to wait for the
+	// restore's redraw before reading. Zero means the default.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
 
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
@@ -2049,6 +2267,14 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
+	// A repaint is a request, not a promise: a failure to signal is reported
+	// beside the capture and never fails it.
+	repaint, target := "", ""
+	if p.Repaint {
+		res, rerr := d.repaintSettled(sess.PaneID, p.SettleMS)
+		repaint, target = repaintStatus(res, rerr), res.Target
+	}
+
 	var content string
 	if start, end, ranged := captureBounds(p); ranged {
 		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
@@ -2059,11 +2285,16 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("capture %s: %v", p.SessionKey, err)}
 	}
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":  "captured",
 		"session": p.SessionKey,
 		"content": content,
-	})
+	}
+	if p.Repaint {
+		out["repaint"] = repaint
+		out["repaint_target"] = target
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
 }
 
@@ -3145,3 +3376,73 @@ var keyChord = regexp.MustCompile(`^((C|M|S)-)+[A-Za-z0-9]$|^F([1-9]|1[0-2])$`)
 func recognizedKey(s string) bool {
 	return namedKeys[s] || keyChord.MatchString(s)
 }
+
+// linkedWorktree reports whether dir sits inside a linked git worktree. It
+// resolves symlinks in dir first, so a symlinked cwd is judged by where it
+// points, then walks up to the first .git. A .git that is a directory (or a
+// symlink to one, hence Stat and not Lstat) is an ordinary checkout. A .git
+// that is a file holds a `gitdir:` pointer, and only a pointer into
+// `<repo>/.git/worktrees/<name>` is a linked worktree: a submodule's points
+// into `.git/modules/<name>` and a --separate-git-dir checkout's elsewhere. A
+// directory that does not exist, or no repository at all, is not a worktree.
+func linkedWorktree(dir string) bool {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	for d := filepath.Clean(dir); ; {
+		if info, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			if info.IsDir() {
+				return false
+			}
+			return worktreePointer(filepath.Join(d, ".git"))
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
+}
+
+// worktreePointer reports whether the .git file at path points into a
+// repository's worktrees directory.
+func worktreePointer(path string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(body)), "gitdir:")
+	if !ok {
+		return false
+	}
+	return filepath.Base(filepath.Dir(filepath.Clean(strings.TrimSpace(target)))) == "worktrees"
+}
+
+// repaintStatus names the outcome of a repaint request for the capture result.
+// "signalled" means the pane's size was nudged, not that the program redrew.
+func repaintStatus(res tmux.RepaintResult, err error) string {
+	if err != nil {
+		return "unavailable: " + strings.Join(strings.Fields(err.Error()), " ")
+	}
+	if res.RestoreSkipped {
+		return "signalled, restore skipped: size changed underneath"
+	}
+	return "signalled"
+}
+
+// repaintSettle is how long the nudge is held and then how long the capture
+// waits for the restore's redraw: the caller's value, bounded.
+func repaintSettle(settleMS int) time.Duration {
+	settle := time.Duration(settleMS) * time.Millisecond
+	if settle <= 0 {
+		settle = defaultRepaintSettle
+	}
+	return min(settle, repaintSettleMax)
+}
+
+// defaultRepaintSettle is how long a repaint capture waits for the redraw to
+// land, and repaintSettleMax bounds what a caller may ask for.
+const (
+	defaultRepaintSettle = 300 * time.Millisecond
+	repaintSettleMax     = 10 * time.Second
+)

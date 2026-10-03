@@ -220,7 +220,9 @@ setting a control on itself, and the record shows which one held:
    time and keying on pid plus start time keeps a reused pid from being
    attributed to a different process. Then:
    - **Seat terminals** are the ptys of every pane on every tmux server
-     marvel drives (listed with `list-panes -a` on marvel's sockets), not
+     marvel drives (listed with `list-panes -a` on marvel's sockets, at
+     each accept, after the peer pid is read, and never cached, so a pane
+     opened a moment before the call is already on the list), not
      only the panes marvel spawned sessions into. So a seat that opens
      `tmux new-window` on marvel's server, escaping its own ancestry, is
      still on a seat terminal.
@@ -234,10 +236,12 @@ setting a control on itself, and the record shows which one held:
      chain cannot be read completely, since such a caller cannot be told
      apart from an escaped seat.
    - **Recorded as `operator`** only when established: the caller has a
-     controlling terminal, it is not a seat terminal, and no ancestor is on
-     one. The record carries the tty, the pid and the full chain.
-   Whether the operator's own Claude Code session counts as the operator is
-   ruling 5, open; the default is no.
+     controlling terminal on a terminal outside marvel's tmux servers, and no
+     ancestor is on a seat terminal. The record carries the tty, the pid
+     and the full chain.
+   The operator's own Claude Code session does not count as the operator
+   (ruling 5): no agent can run these controls, the director's seat
+   included.
 3. **The record.** Every use prints in `get sessions`, in `describe`, and in
    the event ring, with the actor as attributed above, or the key
    fingerprint over mrvl.
@@ -357,7 +361,8 @@ seat running far past its max age stays visible.
    policy. On the local socket: a caller on a marvel pane tty is refused and
    named; `script -q /dev/null marvel autoshift ...` run from a seat (fresh
    pty, seat ancestor) is refused and names the seat; a caller in a pane
-   opened by `tmux new-window` on marvel's server is refused; a caller with
+   opened by `tmux new-window` on a scratch marvel server, calling
+   immediately after the window opens, is refused; a caller with
    no controlling terminal is refused; a caller whose chain cannot be read
    is refused; a caller whose pid is reused between connect and check
    (simulated by a seam) is not attributed to the new process; a caller on
@@ -411,4 +416,4 @@ seat running far past its max age stays visible.
 | 2 | RULED 2026-10-02: add a mute, a per-session cancel and a general abort (H6); "allow forever mute". The timed mute keeps a 4h default and a 24h cap; a forever mute sends a daily reminder | as written |
 | 3 | RULED 2026-10-02 yes: marvel publishes as `marvel` on its existing admin connection, not a new scoped principal (a scoped principal held by the same daemon adds no boundary) | yes |
 | 4 | RULED 2026-10-02: "Deliver to other supervisors and director". Other replicas of the same role, every other team's supervisor on this cluster, and `global://director` after #457 (H1, P2) | as written |
-| 5 | Does the operator's own Claude Code session (its Bash tool, on a terminal the operator owns) count as the operator for these controls | no: only a real terminal on the daemon host, or mrvl with an admin key |
+| 5 | RULED 2026-10-02 "no": the operator's own Claude Code session does not count as the operator; only a real terminal on the daemon host, or mrvl with an admin key, runs these controls, and every agent is excluded, the director's seat included | no |

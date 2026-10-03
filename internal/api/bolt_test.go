@@ -511,8 +511,8 @@ func TestBoltStore_BudgetRoundTripsAndOldRecordsStayOpen(t *testing.T) {
 // directions, so this slice does not touch the version.
 func TestBoltSchemaVersionUnchangedByBudget(t *testing.T) {
 	t.Parallel()
-	if boltSchemaVersion != 1 {
-		t.Errorf("boltSchemaVersion = %d; adding the Budget field must not bump it, because Rehydrate refuses a lower on-disk version too", boltSchemaVersion)
+	if boltSchemaVersion != 2 {
+		t.Errorf("boltSchemaVersion = %d; adding the Budget field must not bump it (the bump to 2 is the legacy-stamp migration)", boltSchemaVersion)
 	}
 }
 
