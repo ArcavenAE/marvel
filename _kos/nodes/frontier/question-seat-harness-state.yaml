@@ -1,0 +1,67 @@
+id: question-seat-harness-state
+type: question
+confidence: frontier
+title: "How marvel prepares a seat's harness state before launch (trust, settings, MCP, login)"
+content: |
+  A seat launched into a directory Claude Code has not trusted stops at the
+  folder-trust dialog, unattended (finding-045). The operator ruled that
+  marvel should prepare that state before launch and should actively manage
+  harness files (2026-09-30 and 2026-10-03, recorded in
+  docs/design/seat-bootstrap.md section 11). The design is marvel#490
+  (SB-4M); three of its rulings are open with the operator, so this node
+  records only what is measured.
+
+  MEASURED, Claude Code 2.1.288 unless noted:
+
+  1. A private CLAUDE_CONFIG_DIR loses the login on macOS; a trust key at the
+     workdir's realpath clears the dialog (finding-063). Claude Code keys
+     trust by realpath.
+  2. The trust walk: Claude Code walks up from the cwd and accepts the first
+     trusted key, but stops at the enclosing git root; outside a repository
+     it walks to `/`. So a key at directory D trusts D and every descendant
+     not inside a git repository rooted below D, and a git-repo child of a
+     trusted directory still gets the dialog. (Reviewer measurement,
+     marvel#490 review 5398538029. Refines finding-045, which says only
+     "Claude records acceptance per git root".) That on accepting the dialog
+     it writes the key for the path, its realpath and their NFC forms was
+     read from the binary in the same review, not measured on an
+     acceptance.
+  3. Claude Code writes its config under proper-lockfile: a `<path>.lock`
+     directory beside the path it opens (the link's path when the config is a
+     symlink), with a 10-second stale window (locks 5 and 8 seconds old were
+     kept; 12 and 20 seconds old were taken over). A symlinked config stays a
+     link, and the target keeps its mode. (Review 5398538029.)
+  4. Taking over a stale lock is not atomic: the inode check and the rmdir
+     are separate calls, and rmdir works by path. Two takers released
+     together at a 60-second-old lock, 3000 trials: both mkdirs succeeded in
+     995, and in 26 more a taker's fresh lock vanished just after its mkdir.
+     Any writer that shares the lock, marvel included, must re-check before
+     its rename. (Review 5398636009.)
+  5. `claude auth status` is not read-only: in a fresh config it created
+     .claude.json and a file under backups/ and left the lock directory
+     (2.1.286). It forks the `security` CLI to read the keychain (called
+     twice as find-generic-password), so a keychain prompt or hang sits in a
+     grandchild process. Its exit status tracks loggedIn: 0 and 1 (r2).
+     (Reviews 5397875624 and 5397939721.)
+  6. Claude Code 2.1.288 has no subcommand that sets folder trust (its
+     commands: agents, attach, auth, auto-mode, doctor, gateway, import,
+     install, logs, mcp, plugin, purge, respawn, rm, setup-token, stop,
+     ultrareview, update). Read from `claude --help`, recorded in
+     docs/design/seat-bootstrap.md ruling 12(c) on marvel#490's head
+     (6e33245, lines 923-926). Version-bound: re-check on each release.
+
+  OPEN: whether exit 0 means a valid login or only a present one, and
+  whether an expired token makes the check refresh (SB-0 line 15); whether
+  Claude Code takes the lock for every write it makes (SB-0 line 16); the
+  same questions on a host where the login is a file.
+edges:
+  - target: question-permission-model
+    type: derives
+    note: "What a seat may load and run is decided partly by the trust and settings state prepared here"
+  - target: elem-runtime-adapter-framework
+    type: derives
+provenance:
+  created_by: agent
+  session: harvest-2026-10-03
+  created_at: "2026-10-03"
+  extracted_from: "marvel#490 (seat bootstrap r1 to r9) and its reviews"
