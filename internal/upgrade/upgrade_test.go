@@ -193,3 +193,165 @@ func TestRunWithFailsWhenTheInstalledBinaryCannotBeRead(t *testing.T) {
 		t.Errorf("a binary that vanished: %+v, %v, want an error and no change", res, err)
 	}
 }
+
+// kegLayout builds the Homebrew layout on Linux in a temp dir: the version
+// lives in Cellar/marvel/<v>, opt/marvel is the stable link brew retargets on
+// upgrade, and `brew --prefix` answers with that link. The fake brew's upgrade
+// installs 0.2, retargets the link, and with cleanup removes 0.1 the way brew's
+// default does. It returns the path the running process would report as its
+// own: on Linux os.Executable() is readlink(/proc/self/exe), the resolved keg.
+func kegLayout(t *testing.T, cleanup bool) (self string) {
+	t.Helper()
+	root := t.TempDir()
+	old := filepath.Join(root, "Cellar", "marvel", "0.1", "bin")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	self = filepath.Join(old, "marvel")
+	writeBinary(t, self, "marvel 0.1")
+	opt := filepath.Join(root, "opt", "marvel")
+	if err := os.MkdirAll(filepath.Dir(opt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "Cellar", "marvel", "0.1"), opt); err != nil {
+		t.Fatal(err)
+	}
+
+	rm := ""
+	if cleanup {
+		rm = "rm -rf '" + filepath.Join(root, "Cellar", "marvel", "0.1") + "'\n"
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  --prefix) echo '" + opt + "' ;;\n" +
+		"  update) ;;\n" +
+		"  upgrade)\n" +
+		"    mkdir -p '" + filepath.Join(root, "Cellar", "marvel", "0.2", "bin") + "'\n" +
+		"    echo 'marvel 0.2' > '" + filepath.Join(root, "Cellar", "marvel", "0.2", "bin", "marvel") + "'\n" +
+		"    chmod +x '" + filepath.Join(root, "Cellar", "marvel", "0.2", "bin", "marvel") + "'\n" +
+		"    ln -sfn '" + filepath.Join(root, "Cellar", "marvel", "0.2") + "' '" + opt + "'\n" +
+		rm +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "brew"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return self
+}
+
+// The Linux case from the review of #498. The running process's own path is the
+// old keg, which brew never retargets: without cleanup it still holds the old
+// build, so the upgrade read as "did not change", and with cleanup (brew's
+// default) it is gone, so a successful upgrade read as an error. The path that
+// tracks what is installed is brew's stable link.
+func TestHomebrewOnLinuxFingerprintsTheStableLink(t *testing.T) {
+	for _, cleanup := range []bool{false, true} {
+		name := "without cleanup"
+		if cleanup {
+			name = "with cleanup"
+		}
+		t.Run(name, func(t *testing.T) {
+			self := kegLayout(t, cleanup)
+			captureOut(t)
+
+			res, err := runInstall(methodHomebrew, installedBinary(methodHomebrew, self), "alpha", "")
+			if err != nil {
+				t.Fatalf("a successful upgrade failed: %v", err)
+			}
+			if !res.Changed {
+				t.Error("the upgrade installed 0.2 and was reported as unchanged")
+			}
+		})
+	}
+}
+
+// Off Homebrew the running binary is the installed one, so nothing changes.
+func TestInstalledBinaryIsTheRunningOneOffHomebrew(t *testing.T) {
+	for _, m := range []installMethod{methodDirect, methodPackage} {
+		if got := installedBinary(m, "/usr/local/bin/marvel"); got != "/usr/local/bin/marvel" {
+			t.Errorf("method %d: installedBinary = %q", m, got)
+		}
+	}
+}
+
+// Without brew's answer there is no stable link to read, and the running
+// binary is the best remaining guess (macOS reports the invoked symlink).
+func TestInstalledBinaryFallsBackWhenBrewCannotSayWhere(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if got := installedBinary(methodHomebrew, "/opt/homebrew/bin/marvel"); got != "/opt/homebrew/bin/marvel" {
+		t.Errorf("installedBinary = %q, want the running binary", got)
+	}
+}
+
+// With no baseline there is nothing to lose: a binary that cannot be read
+// before or after is not known to have changed, and that is not an error,
+// because the upgrade itself succeeded.
+func TestRunWithHasNoErrorWithoutABaseline(t *testing.T) {
+	exe := filepath.Join(t.TempDir(), "never-installed")
+
+	res, err := runWith(exe, func() error { return nil })
+	if err != nil || res.Changed {
+		t.Errorf("got %+v, %v, want no change and no error", res, err)
+	}
+}
+
+// brew can fail after it has relinked, leaving a new binary on disk. The
+// operator is told, because the exit code alone says nothing was installed.
+func TestFailedUpgradeThatChangedTheBinaryIsSaid(t *testing.T) {
+	var buf bytes.Buffer
+	prev := errOut
+	errOut = &buf
+	t.Cleanup(func() { errOut = prev })
+	exe := filepath.Join(t.TempDir(), "marvel")
+	writeBinary(t, exe, "build one")
+
+	_, err := runWith(exe, func() error {
+		writeBinary(t, exe, "build two")
+		return os.ErrInvalid
+	})
+	if err == nil {
+		t.Fatal("the failure was swallowed")
+	}
+	for _, want := range []string{"changed", "failure", exe} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("note %q lacks %q", buf.String(), want)
+		}
+	}
+
+	buf.Reset()
+	_, _ = runWith(exe, func() error { return os.ErrInvalid })
+	if buf.Len() != 0 {
+		t.Errorf("a failure that changed nothing printed %q", buf.String())
+	}
+}
+
+// The daemon re-executes its OWN os.Executable, which on Linux is the resolved
+// keg it started from. After a brew upgrade that keg is the old build or gone,
+// so --daemon can never adopt the new one there, and exec after detach leaves
+// the daemon not serving. The honest answer is to refuse before upgrading.
+func TestReexecIsRefusedOnLinuxHomebrew(t *testing.T) {
+	err := reexecRefusal("linux", methodHomebrew)
+	if err == nil {
+		t.Fatal("--daemon was allowed on a Linux Homebrew install")
+	}
+	for _, want := range []string{"Linux", "Homebrew", "Nothing was upgraded", "without --daemon", "marvel stop", "marvel daemon"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	for _, tc := range []struct {
+		goos   string
+		method installMethod
+	}{
+		{"darwin", methodHomebrew},
+		{"linux", methodDirect},
+		{"linux", methodPackage},
+	} {
+		if err := reexecRefusal(tc.goos, tc.method); err != nil {
+			t.Errorf("%s method %d was refused: %v", tc.goos, tc.method, err)
+		}
+	}
+}

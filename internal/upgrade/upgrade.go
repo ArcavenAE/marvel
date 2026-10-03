@@ -40,6 +40,9 @@ type githubAsset struct {
 // out is where progress is written; tests replace it.
 var out io.Writer = os.Stdout
 
+// errOut is where notes about the state of the install are written.
+var errOut io.Writer = os.Stderr
+
 // say writes one line of progress. A write error to the terminal is not an
 // upgrade failure.
 func say(format string, args ...any) {
@@ -64,13 +67,34 @@ const (
 // Run performs the upgrade and reports whether the binary on disk changed. The
 // caller re-executes a running daemon only into a binary that changed.
 func Run(channel, targetVersion string) (Result, error) {
-	exe, err := os.Executable()
+	self, err := os.Executable()
 	if err != nil {
 		return Result{}, fmt.Errorf("find the running binary: %w", err)
 	}
+	method := detectInstallMethod()
+	return runInstall(method, installedBinary(method, self), channel, targetVersion)
+}
+
+// runInstall performs the upgrade and reports whether the binary at exe changed.
+func runInstall(method installMethod, exe, channel, targetVersion string) (Result, error) {
 	return runWith(exe, func() error {
-		return runMethod(detectInstallMethod(), channel, targetVersion)
+		return runMethod(method, channel, targetVersion)
 	})
+}
+
+// installedBinary is the path whose contents track what is installed. Scaffold.
+func installedBinary(method installMethod, self string) string {
+	_ = method
+	return self
+}
+
+// ReexecRefusal says why --daemon cannot adopt an upgrade on this install, or
+// nil. Scaffold.
+func ReexecRefusal() error { return reexecRefusal(runtime.GOOS, detectInstallMethod()) }
+
+func reexecRefusal(goos string, method installMethod) error {
+	_, _ = goos, method
+	return nil
 }
 
 // runMethod performs the upgrade for one install method.
