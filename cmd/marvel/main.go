@@ -1660,23 +1660,26 @@ Otherwise downloads the latest release from GitHub.
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
 re-exec in place after the install, adopting its live panes so agents
-keep running (see 'marvel daemon reexec').`,
+keep running (see 'marvel daemon reexec'). The daemon is re-executed only
+when the installed binary actually changed.
+
+A failed brew upgrade, and a binary owned by a system package manager,
+exit non-zero.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := upgrade.Run(channel, targetVersion); err != nil {
+			res, err := upgrade.Run(channel, targetVersion)
+			if err != nil {
 				return err
 			}
-			if !reexecDaemon {
+			return afterUpgrade(res, reexecDaemon, func() error {
+				resp, err := send(daemon.Request{Method: "reexec"})
+				if err != nil {
+					return fmt.Errorf("sending daemon re-exec: %w", err)
+				}
+				if resp.Error != "" {
+					return fmt.Errorf("%s", resp.Error)
+				}
 				return nil
-			}
-			resp, err := send(daemon.Request{Method: "reexec"})
-			if err != nil {
-				return fmt.Errorf("binary upgraded, but sending daemon re-exec failed: %w", err)
-			}
-			if resp.Error != "" {
-				return fmt.Errorf("binary upgraded, but daemon re-exec failed: %s", resp.Error)
-			}
-			fmt.Println("running daemon re-executing in place; agents keep running")
-			return nil
+			}, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")

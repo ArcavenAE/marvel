@@ -4,7 +4,10 @@
 package upgrade
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,9 +61,16 @@ const (
 	methodPackage                // Linux package manager
 )
 
-// Run performs the upgrade.
-func Run(channel, targetVersion string) error {
-	return runMethod(detectInstallMethod(), channel, targetVersion)
+// Run performs the upgrade and reports whether the binary on disk changed. The
+// caller re-executes a running daemon only into a binary that changed.
+func Run(channel, targetVersion string) (Result, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return Result{}, fmt.Errorf("find the running binary: %w", err)
+	}
+	return runWith(exe, func() error {
+		return runMethod(detectInstallMethod(), channel, targetVersion)
+	})
 }
 
 // runMethod performs the upgrade for one install method.
@@ -69,9 +79,9 @@ func runMethod(method installMethod, channel, targetVersion string) error {
 	case methodHomebrew:
 		return upgradeViaHomebrew(channel)
 	case methodPackage:
-		fmt.Println("marvel was installed via a system package manager.")
-		fmt.Println("Use your package manager to upgrade (e.g., apt upgrade, dnf upgrade).")
-		return nil
+		// Not a success: nothing was upgraded, and a rollout script must see that.
+		return errors.New("marvel was installed via a system package manager, so marvel cannot upgrade it; " +
+			"use your package manager (for example apt upgrade or dnf upgrade)")
 	default:
 		return upgradeDirectBinary(channel, targetVersion)
 	}
@@ -135,17 +145,17 @@ func upgradeViaHomebrew(channel string) error {
 		return fmt.Errorf("brew update failed: %w", err)
 	}
 
-	// Upgrade the formula.
+	// Upgrade the formula. A non-zero exit is a failure: measured on Homebrew
+	// 7.0.7, `brew upgrade` on a formula that is already current exits 0 with an
+	// "already installed" warning, and a real failure exits 1 (marvel#486).
 	cmd := exec.Command("brew", "upgrade", formula)
 	cmd.Stdout = out
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		// brew upgrade exits non-zero if already up to date.
-		say("Already up to date (or brew upgrade returned an error).")
-		return nil
+		return fmt.Errorf("brew upgrade %s failed: %w", formula, err)
 	}
 
-	say("Upgrade complete.")
+	say("brew upgrade finished.")
 	return nil
 }
 
@@ -349,11 +359,37 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	return nil
 }
 
-// fingerprint identifies the binary at path by its contents. Scaffold.
-func fingerprint(path string) (string, error) { return "", nil }
+// fingerprint identifies the binary at path by its contents, following a
+// symlink the way brew moves the active build.
+func fingerprint(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(resolved)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
-// runWith runs do and reports whether the binary at exe changed across it.
-// Scaffold.
+// runWith runs do and reports whether the binary at exe changed across it. An
+// error from do is returned and never reports a change. If the installed binary
+// cannot be read afterwards nothing is known about it, so that is an error too,
+// and no change is reported.
 func runWith(exe string, do func() error) (Result, error) {
-	return Result{}, do()
+	before, beforeErr := fingerprint(exe)
+	if err := do(); err != nil {
+		return Result{}, err
+	}
+	after, err := fingerprint(exe)
+	if err != nil {
+		return Result{}, fmt.Errorf("the upgrade ran, but the installed binary %s cannot be read afterwards, so it is not known to have changed: %w", exe, err)
+	}
+	return Result{Changed: beforeErr == nil && before != after}, nil
 }
