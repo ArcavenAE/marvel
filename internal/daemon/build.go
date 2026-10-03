@@ -26,13 +26,26 @@ type Build struct {
 	Dirty bool `json:"dirty,omitempty"`
 }
 
-// Describe renders the build for a log line or a version report.
-func (b Build) Describe(pid int) string {
+// Label renders the build for a log line or a version report: version and
+// channel, then the commit when one is known, marked when nothing confirms it,
+// and "(dirty)" when the tree had uncommitted changes.
+func (b Build) Label() string {
 	s := fmt.Sprintf("%s (%s)", b.Version, b.Channel)
 	if b.Commit != "" {
 		s += " commit " + b.Commit
+		if b.CommitUnconfirmed {
+			s += " (unconfirmed)"
+		}
 	}
-	return fmt.Sprintf("%s pid %d", s, pid)
+	if b.Dirty {
+		s += " (dirty)"
+	}
+	return s
+}
+
+// Describe is Label with the process id, for the startup log line.
+func (b Build) Describe(pid int) string {
+	return fmt.Sprintf("%s pid %d", b.Label(), pid)
 }
 
 // BuildInfo is what a running daemon reports about itself. StartedAt is when
@@ -41,21 +54,6 @@ type BuildInfo struct {
 	Build
 	StartedAt time.Time `json:"started_at"`
 	PID       int       `json:"pid"`
-}
-
-// VCSRevision returns the commit this binary was built from, or "" when the
-// toolchain did not record one (a build outside a git tree, or -buildvcs=false).
-func VCSRevision() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ""
-	}
-	for _, kv := range info.Settings {
-		if kv.Key == "vcs.revision" {
-			return kv.Value
-		}
-	}
-	return ""
 }
 
 func (d *Daemon) handleVersion() Response {
@@ -101,12 +99,42 @@ func trailingSHA(version string) string {
 }
 
 // BuildFor assembles a Build from the stamped version and channel and what the
-// toolchain recorded. Scaffold.
+// toolchain recorded. A version that names its sha confirms the revision or
+// contradicts it, and a contradicted revision is dropped, because Go can stamp
+// an enclosing repository's commit on a build made in a linked worktree and a
+// wrong commit is worse than none. A version that names no sha (a dev build, a
+// stable tag) confirms nothing, so the revision is shown, marked unconfirmed,
+// which is what tells two dev builds apart. The dirty flag follows the commit it
+// describes: with the commit dropped it goes too.
 func BuildFor(version, channel, revision string, modified bool) Build {
-	_, _ = revision, modified
-	return Build{Version: version, Channel: channel}
+	b := Build{Version: version, Channel: channel}
+	switch {
+	case revision == "":
+	case trailingSHA(version) != "":
+		b.Commit = VerifiedCommit(version, revision)
+	default:
+		b.Commit = revision
+		b.CommitUnconfirmed = true
+	}
+	b.Dirty = modified && b.Commit != ""
+	return b
 }
 
-// VCSInfo returns the toolchain's recorded revision and whether the tree was
-// modified. Scaffold.
-func VCSInfo() (revision string, modified bool) { return VCSRevision(), false }
+// VCSInfo returns the revision the toolchain recorded and whether the tree had
+// uncommitted changes (vcs.modified). Both are empty or false when the build
+// carries no VCS stamp.
+func VCSInfo() (revision string, modified bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", false
+	}
+	for _, kv := range info.Settings {
+		switch kv.Key {
+		case "vcs.revision":
+			revision = kv.Value
+		case "vcs.modified":
+			modified = kv.Value == "true"
+		}
+	}
+	return revision, modified
+}
