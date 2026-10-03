@@ -270,6 +270,7 @@ Examples:
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
 				Reclaim:      reclaim,
+				Build:        daemon.Build{Version: version, Channel: channel, Commit: daemon.VCSRevision()},
 			})
 			if err != nil {
 				return err
@@ -1641,7 +1642,10 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print marvel version and channel",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("marvel %s (%s)\n", version, channel)
+			versionReport(cmd.OutOrStdout(), daemon.Build{Version: version, Channel: channel},
+				func() (*daemon.BuildInfo, error) {
+					return boundedQuery(versionQueryTimeout, queryDaemonBuild)
+				})
 		},
 	}
 }

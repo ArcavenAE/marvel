@@ -115,6 +115,8 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	build     Build
+	startedAt time.Time
 	store     *api.Store
 	sessMgr   *session.Manager
 	teamCtrl  *team.Controller
@@ -262,6 +264,11 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("init tmux driver: %w", err)
 	}
 
+	// The first line an operator reads after a restart or a reexec: which build
+	// this process is. startedAt changes on a reexec and the pid does not, so
+	// the two together show that a reexec happened (marvel#497).
+	log.Printf("marvel daemon %s", opts.Build.Describe(os.Getpid()))
+
 	store := api.NewStore()
 	if opts.StateBolt != "" {
 		if oerr := store.OpenBolt(opts.StateBolt); oerr != nil {
@@ -353,18 +360,20 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		store:    store,
-		sessMgr:  sessMgr,
-		teamCtrl: teamCtrl,
-		driver:   driver,
-		pidFile:  opts.PidFile,
-		reclaim:  opts.Reclaim,
-		home:     home,
-		logs:     buf,
-		events:   evRing,
-		usage:    acct,
-		orphans:  newOrphanRegistry(),
-		reexec:   syscall.Exec,
+		build:     opts.Build,
+		startedAt: time.Now().UTC(),
+		store:     store,
+		sessMgr:   sessMgr,
+		teamCtrl:  teamCtrl,
+		driver:    driver,
+		pidFile:   opts.PidFile,
+		reclaim:   opts.Reclaim,
+		home:      home,
+		logs:      buf,
+		events:    evRing,
+		usage:     acct,
+		orphans:   newOrphanRegistry(),
+		reexec:    syscall.Exec,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
