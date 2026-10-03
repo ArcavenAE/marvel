@@ -2,7 +2,9 @@ package bus
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/config"
@@ -71,5 +73,63 @@ func TestSeedFingerprintDistinguishesSeeds(t *testing.T) {
 	}
 	if a == "" {
 		t.Error("fingerprint is empty")
+	}
+}
+
+// TestManagerRenderCarriesTheHubCAFileToTheLeafRemote covers the link between
+// config and render: bus.hub.ca_file resolves into ResolvedBus.HubCAFile, and
+// Manager.Render must hand it to the renderer, or a managed broker cannot join
+// a TLS hub (marvel#278). The config tests stop at the resolved value and the
+// render tests start from a hand-built Spec, so this is the one place the copy
+// between them is exercised. It is a coverage test, not red-first: the code it
+// covers shipped in #285.
+func TestManagerRenderCarriesTheHubCAFileToTheLeafRemote(t *testing.T) {
+	dir := t.TempDir()
+	const ca = "/etc/marvel/hub-ca.pem"
+	rb := config.ResolvedBus{
+		Managed:   true,
+		Listen:    "127.0.0.1:4222",
+		StoreDir:  dir,
+		HubURL:    "tls://hub.example:7442",
+		HubCAFile: ca,
+	}
+	m, err := NewManager(dir, "kinu", rb, &teams{}, func() bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Render(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ConfName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := string(raw)
+	want := `{ urls: ["tls://hub.example:7442"], nkey: $DIRECTOR_LEAF_NKEY, tls { ca_file: "` + ca + `" } }`
+	if !strings.Contains(conf, want) {
+		t.Errorf("the rendered leaf remote lacks the hub CA:\n%s", conf)
+	}
+	if n := strings.Count(conf, "ca_file"); n != 1 {
+		t.Errorf("ca_file appears %d times, want once, in the leaf remote:\n%s", n, conf)
+	}
+
+	// Control: with no CA configured the same render carries no tls block, so
+	// the assertion above is about the field and not about the hub URL.
+	rb.HubCAFile = ""
+	dir2 := t.TempDir()
+	rb.StoreDir = dir2
+	m2, err := NewManager(dir2, "kinu", rb, &teams{}, func() bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m2.Render(); err != nil {
+		t.Fatal(err)
+	}
+	raw2, err := os.ReadFile(filepath.Join(dir2, ConfName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw2), "ca_file") {
+		t.Errorf("a render with no hub CA still carries ca_file:\n%s", raw2)
 	}
 }
