@@ -630,7 +630,7 @@ and `marvel version`, or call the pinned binary by its full path.
 own path (`os.Executable`). That picks up an upgrade only when the new binary
 replaces the old one at the same path. mise installs each version in its own
 directory and leaves the old one in place, so after `mise use` a reexec
-restarts the old version. A marvel issue tracks this.
+restarts the old version (marvel#523).
 
 Under mise, detach the old daemon and start the new one from its mise path:
 
