@@ -30,6 +30,11 @@ const (
 	// who sent them: the transport the daemon saw and what the caller declared.
 	// It never carries the text typed.
 	KindSessionInjected Kind = "session.injected"
+	// KindSessionPlacementRefused records a spawn marvel refused because the
+	// directory the session resolves to is missing or is not a directory.
+	// tmux would start the pane in $HOME without an error, so marvel refuses
+	// first. Emitted once per change, not once per reconcile tick.
+	KindSessionPlacementRefused Kind = "session.placement-refused"
 	// KindSessionInjectRefused records an inject the daemon would not type:
 	// the composer reader found the pane in a state where a keystroke is
 	// dangerous, or a clear was asked for where none is safe. Nothing was sent.
@@ -280,6 +285,7 @@ const (
 var allKinds = []Kind{
 	KindPlacementLegacyStamped,
 	KindSessionInjected,
+	KindSessionPlacementRefused,
 	KindSessionInjectRefused,
 	KindSessionInjectUnconfirmed,
 	KindSessionCreated,

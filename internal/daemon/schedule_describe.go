@@ -13,6 +13,19 @@ import (
 type teamDescription struct {
 	api.Team
 	Schedules []scheduleDescription `json:"Schedules,omitempty"`
+	// Conditions are standing conditions of the team's roles, such as a spawn
+	// refused for its directory. Omitted when there are none.
+	Conditions []roleCondition `json:"Conditions,omitempty"`
+}
+
+// roleCondition is one standing condition on a role, in the shape of a
+// kubernetes condition: a type, a status, a message, and since when.
+type roleCondition struct {
+	Role    string    `json:"role"`
+	Type    string    `json:"type"`
+	Status  string    `json:"status"`
+	Message string    `json:"message"`
+	Since   time.Time `json:"since,omitzero"`
 }
 
 // scheduleDescription is one scheduled role's block. NextDue stays null
@@ -46,6 +59,13 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		return teamDescription{}, err
 	}
 	out := teamDescription{Team: t}
+	for _, r := range d.sessMgr.PlacementRefusals() {
+		if r.Workspace == t.Workspace && r.Team == t.Name {
+			out.Conditions = append(out.Conditions, roleCondition{
+				Role: r.Role, Type: "PlacementRefused", Status: "True", Message: r.Message, Since: r.Since,
+			})
+		}
+	}
 	for _, role := range t.Roles {
 		if role.Schedule == nil {
 			continue

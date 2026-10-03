@@ -741,3 +741,21 @@ func TestBaseEnvStampsLineageOnlyWhenSet(t *testing.T) {
 		t.Errorf("%s = %q, want RFC 3339 UTC", api.HandoffRequestedAtEnv, got)
 	}
 }
+
+// MARVEL_WORKDIR is the declared placement, stamped beside MARVEL_SESSION for
+// wrappers and hooks; informational, since the pane is already there
+// (docs/design/session-working-directory.md, decision 5). A session placed
+// nowhere carries no such name.
+func TestBaseEnvStampsMarvelWorkDir(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.Session.WorkDir = "/work/proj/sub"
+	if got := baseEnv(ctx)["MARVEL_WORKDIR"]; got != "/work/proj/sub" {
+		t.Errorf("MARVEL_WORKDIR = %q, want /work/proj/sub", got)
+	}
+	ctx.Session.WorkDir = ""
+	if got, ok := baseEnv(ctx)["MARVEL_WORKDIR"]; ok {
+		t.Errorf("MARVEL_WORKDIR = %q on a session placed nowhere, want it absent", got)
+	}
+}

@@ -316,6 +316,12 @@ type PaneInfo struct {
 // creation, and a pane that exits inside that gap merely persists dead
 // until ReapDead kills it.
 func (d *Driver) NewPane(session, command, title string, envs map[string]string, keepOnExit bool) (string, error) {
+	return d.NewPaneAt(session, command, title, "", envs, keepOnExit)
+}
+
+// NewPaneAt is NewPane with a start directory (new-window -c). An empty dir
+// starts the pane where the tmux server is, as NewPane always did.
+func (d *Driver) NewPaneAt(session, command, title, dir string, envs map[string]string, keepOnExit bool) (string, error) {
 	args := []string{
 		"new-window", "-t", session,
 		"-d",
@@ -323,6 +329,9 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string,
 	}
 	if title != "" {
 		args = append(args, "-n", title)
+	}
+	if dir != "" {
+		args = append(args, "-c", dir)
 	}
 	for k, v := range envs {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))

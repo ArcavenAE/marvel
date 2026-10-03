@@ -5,6 +5,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -484,10 +485,36 @@ func (c *Controller) ReconcileOnce() {
 	c.autoShiftsThisTick = 0
 
 	teams := c.store.ListTeams()
+	c.dropStaleRefusals(teams)
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}
 	c.reconcileScheduleFreshness(teams)
+}
+
+// dropStaleRefusals clears the standing placement refusal of a role whose team
+// or role no longer exists. A role that still exists is cleared by
+// applyRolePlan when it stops wanting a spawn.
+func (c *Controller) dropStaleRefusals(teams []api.Team) {
+	if c.sessMgr == nil {
+		return
+	}
+	for _, r := range c.sessMgr.PlacementRefusals() {
+		found := false
+		for i := range teams {
+			if teams[i].Workspace != r.Workspace || teams[i].Name != r.Team {
+				continue
+			}
+			for j := range teams[i].Roles {
+				if teams[i].Roles[j].Name == r.Role {
+					found = true
+				}
+			}
+		}
+		if !found {
+			c.sessMgr.ClearPlacementRefusal(r.Workspace, r.Team, r.Role)
+		}
+	}
 }
 
 // maxAutoShiftsPerTick caps how many automatic shifts the controller initiates
@@ -1238,6 +1265,14 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		c.latchAdmissionHold(t, plan.Role, plan.admission.key, plan.admission.reason)
 	}
 
+	if c.sessMgr != nil && (plan.Action == RoleSteady || plan.Action == RoleScaleDown) {
+		// Steady or scaling down: the role wants no spawn, so nothing is being
+		// refused. A hold (bus gate, backoff, admission, schedule) spawns nothing
+		// this tick too, but the role still wants a replica; clearing there would
+		// let a flapping gate reset the refusal's start time and re-emit it.
+		c.sessMgr.ClearPlacementRefusal(t.Workspace, t.Name, plan.Role)
+	}
+
 	if plan.Spawn > 0 {
 		// Crash markers from the reap path have done their observability job by
 		// now (operators saw them during the backoff window). The fresh session
@@ -1255,8 +1290,10 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Role:       plan.Role,
 				Generation: plan.Generation,
 				Runtime:    role.Runtime,
+				WorkDir:    c.placement(t, role),
 			}
-			if err := c.sessMgr.Create(sess); err != nil {
+			// A refused placement is reported, at a low rate, by the manager.
+			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
@@ -1861,6 +1898,18 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	return nil
 }
 
+// placement is where a new session of role runs: the role's workdir, else the
+// team's, read from the applied team at spawn so a restart or a shift places the
+// successor from the current declaration and not from the dead session's value
+// (docs/design/session-working-directory.md, decisions 4 and 7). The team's
+// workdir is the anchor snapshotted when it was applied, and the workspace's
+// live root is deliberately not read here: it is one value per workspace, and
+// reading it at spawn would move a team whenever another team's apply moved it.
+// Empty places nothing, as before placement existed.
+func (c *Controller) placement(t *api.Team, role *api.Role) string {
+	return api.ResolveWorkDir("", t.WorkDir, role.WorkDir)
+}
+
 // shiftOrder returns role names sorted with "supervisor" last.
 func shiftOrder(roles []api.Role) []string {
 	names := make([]string, 0, len(roles))
@@ -2173,6 +2222,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				Role:       role.Name,
 				Generation: t.Generation,
 				Runtime:    role.Runtime,
+				WorkDir:    c.placement(t, role),
 			}
 			if i < len(predecessors) {
 				sess.Predecessor = predecessors[len(predecessors)-1-i].Key()
@@ -2181,7 +2231,9 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				}
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
-				log.Printf("shift: create session %s: %v", name, err)
+				if !errors.Is(err, session.ErrPlacementRefused) {
+					log.Printf("shift: create session %s: %v", name, err)
+				}
 				return
 			}
 		}

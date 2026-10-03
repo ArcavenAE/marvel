@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,14 @@ import (
 
 // Manager creates and destroys sessions.
 type Manager struct {
+	// refusedMu guards refused: the directory a spawn of each team and role was
+	// last refused for, so the event is emitted once per change and not once per
+	// reconcile tick.
+	refusedMu sync.Mutex
+	refused   map[string]*refusal
+	// Clock is the time source for refusal bookkeeping; nil means time.Now.
+	Clock func() time.Time
+
 	store      *api.Store
 	driver     *tmux.Driver
 	adapters   *runtime.Registry
@@ -533,6 +542,9 @@ func (m *Manager) recordPanePID(sessKey, panePID string) {
 // Create creates a new session: registers it in the store, ensures the tmux
 // session exists, and spawns a pane running the runtime command.
 func (m *Manager) Create(sess *api.Session) error {
+	if err := m.checkWorkDir(sess); err != nil {
+		return err
+	}
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
@@ -607,6 +619,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		Panes:       m.driver,
 		TmuxSession: tmuxSess,
 		Title:       sess.Name,
+		Dir:         sess.WorkDir,
 		Command:     plan.command,
 		Env:         plan.env,
 		Stream:      plan.stream,
@@ -674,6 +687,70 @@ func (m *Manager) Create(sess *api.Session) error {
 		Message:   fmt.Sprintf("pane %s", paneID),
 	})
 	return nil
+}
+
+// checkWorkDir refuses a spawn whose resolved directory is missing or is not a
+// directory, before any record or pane exists. tmux does not: new-window -c on a
+// missing directory exits 0 and starts the pane in $HOME, so a seat pinned to a
+// removed directory would silently run somewhere else, under a different trust
+// decision. A session with no directory is placed nowhere, as always.
+func (m *Manager) checkWorkDir(sess *api.Session) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	if sess.WorkDir == "" {
+		delete(m.refused, key)
+		return nil
+	}
+	info, err := os.Stat(sess.WorkDir)
+	if err == nil && info.IsDir() {
+		delete(m.refused, key)
+		return nil
+	}
+	why := "is not a directory"
+	if err != nil {
+		why = "cannot be read: " + err.Error()
+		if errors.Is(err, os.ErrNotExist) {
+			why = "does not exist"
+		}
+	}
+	now := m.now()
+	msg := fmt.Sprintf("not started: the directory %s for %s/%s %s; tmux would start it in $HOME", sess.WorkDir, sess.Team, sess.Role, why)
+	r := m.refused[key]
+	if r == nil || r.WorkDir != sess.WorkDir {
+		if m.refused == nil {
+			m.refused = map[string]*refusal{}
+		}
+		r = &refusal{PlacementRefusal: PlacementRefusal{
+			Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role,
+			WorkDir: sess.WorkDir, Since: now,
+		}}
+		m.refused[key] = r
+	} else {
+		r.Message = msg
+	}
+	r.Message = msg
+	// The reconcile loop retries every tick, so the refusal is reported when it
+	// starts and then at a low cadence for as long as it lasts: the log at most
+	// every refusalLogEvery, the event every refusalEmitEvery (so it cannot roll
+	// off the ring unseen). describe reads the standing record.
+	if r.lastLog.IsZero() || now.Sub(r.lastLog) >= refusalLogEvery {
+		r.lastLog = now
+		log.Printf("session %s: %s", sess.Key(), msg)
+	}
+	if r.lastEmit.IsZero() || now.Sub(r.lastEmit) >= refusalEmitEvery {
+		r.lastEmit = now
+		events.Emit(m.Events, events.Event{
+			Kind:      events.KindSessionPlacementRefused,
+			Severity:  events.SeverityWarning,
+			Workspace: sess.Workspace,
+			Team:      sess.Team,
+			Role:      sess.Role,
+			Session:   sess.Name,
+			Message:   msg,
+		})
+	}
+	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
 }
 
 // launchPlan is what one session needs to come up: the shell command,
@@ -1575,4 +1652,65 @@ func (m *Manager) CleanupWorkspace(workspace string) error {
 type BusEnv interface {
 	URL() string
 	Credential(team, role string) (user, password string, ok bool)
+}
+
+// ErrPlacementRefused is wrapped by the error a refused spawn returns, so a
+// caller can tell a placement refusal, which the manager already reports, from
+// any other spawn failure.
+var ErrPlacementRefused = errors.New("placement refused")
+
+// PlacementRefusal is one role whose spawn is currently refused for its
+// directory.
+type PlacementRefusal struct {
+	Workspace, Team, Role string
+	WorkDir               string
+	Message               string
+	Since                 time.Time
+}
+
+// refusal is the standing record of one refused role, with when it was last
+// logged and emitted.
+type refusal struct {
+	PlacementRefusal
+	lastLog, lastEmit time.Time
+}
+
+const (
+	refusalLogEvery  = 5 * time.Minute
+	refusalEmitEvery = 15 * time.Minute
+)
+
+// PlacementRefusals lists the roles whose last spawn was refused for a missing
+// directory, ordered by team and role. An entry goes when the directory is back.
+func (m *Manager) PlacementRefusals() []PlacementRefusal {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	out := make([]PlacementRefusal, 0, len(m.refused))
+	for _, r := range m.refused {
+		out = append(out, r.PlacementRefusal)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Team != out[j].Team {
+			return out[i].Team < out[j].Team
+		}
+		return out[i].Role < out[j].Role
+	})
+	return out
+}
+
+// ClearPlacementRefusal drops a role's standing refusal. The controller calls it
+// when the role no longer wants a spawn (scaled to zero, or enough replicas
+// running) and when the role or its team is gone, so the condition does not
+// outlive the want behind it.
+func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	delete(m.refused, workspace+"/"+team+"/"+role)
+}
+
+func (m *Manager) now() time.Time {
+	if m.Clock != nil {
+		return m.Clock().UTC()
+	}
+	return time.Now().UTC()
 }

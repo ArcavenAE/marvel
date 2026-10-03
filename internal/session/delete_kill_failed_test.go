@@ -25,7 +25,7 @@ type failingPanes struct {
 	killed []string
 }
 
-func (f *failingPanes) NewPane(_, _, _ string, _ map[string]string, _ bool) (string, error) {
+func (f *failingPanes) NewPaneAt(_, _, _, _ string, _ map[string]string, _ bool) (string, error) {
 	return "%7", nil
 }
 
