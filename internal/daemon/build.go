@@ -19,6 +19,11 @@ type Build struct {
 	Version string `json:"version"`
 	Channel string `json:"channel"`
 	Commit  string `json:"commit,omitempty"`
+	// CommitUnconfirmed is set when Commit came from the toolchain and nothing
+	// in the version confirms it (a dev build, a stable tag).
+	CommitUnconfirmed bool `json:"commit_unconfirmed,omitempty"`
+	// Dirty is set when the build had uncommitted changes (vcs.modified).
+	Dirty bool `json:"dirty,omitempty"`
 }
 
 // Describe renders the build for a log line or a version report.
@@ -94,3 +99,14 @@ func trailingSHA(version string) string {
 	}
 	return last
 }
+
+// BuildFor assembles a Build from the stamped version and channel and what the
+// toolchain recorded. Scaffold.
+func BuildFor(version, channel, revision string, modified bool) Build {
+	_, _ = revision, modified
+	return Build{Version: version, Channel: channel}
+}
+
+// VCSInfo returns the toolchain's recorded revision and whether the tree was
+// modified. Scaffold.
+func VCSInfo() (revision string, modified bool) { return VCSRevision(), false }
