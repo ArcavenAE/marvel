@@ -234,7 +234,8 @@ Appended after the run. The pre-registration above is not edited.
   window. It confirmed the two `bus.rendered` events and the absence of
   any probe team or session after teardown. A second read at about
   02:2xZ recovered the `agent.session.started` and `agent.session.ended`
-  lines quoted below, tagged "ring check (supervisor), session.started".
+  lines quoted below, tagged "ring check (supervisor)" with the event
+  kind.
   It did not see the ContextModel values or the daemon log.
 - Nothing in this section was run by its author.
 
@@ -244,7 +245,7 @@ Appended after the run. The pre-registration above is not edited.
 |---|---|---|
 | apply | 00:40:51 | director; ring check |
 | three sessions start | 00:40:59 | ring check (supervisor), session.started |
-| last session ends | 00:41:10 | ring check (supervisor), session.started |
+| last session ends | 00:41:10 | ring check (supervisor), session.ended |
 | teardown | 00:55:03 | director; ring check |
 
 ### Candidates
@@ -260,8 +261,11 @@ All three are headless roles from the scratch manifest, one turn each.
 Sources: the arg is the manifest; exit and ContextModel are the director's
 report; init model is the ring check (supervisor), session.started.
 
-The ring lines, verbatim except that the working directory is replaced
-with `<orc dir>` (ring check (supervisor), session.started):
+The ring lines (ring check (supervisor), session.started and
+session.ended). The three `agent.session.started` lines are verbatim except
+that the working directory is replaced with `<orc dir>`. The three
+`agent.session.ended` lines are abridged: session names are shortened and
+the token, turn and duration fields are elided as `...`.
 
 ```
 00:40:59  info  agent.session.started  probe/probe-model-args-alias-sonnet-g1-0  model claude-sonnet-5-5 in <orc dir>
