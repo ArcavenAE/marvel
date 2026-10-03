@@ -104,8 +104,8 @@ func TestClaudeReaderEdges(t *testing.T) {
 		{"a reply that imitates the spinner", frame("⏺ Cooking… (3s · thinking)", "❯"+nb), Unknown},
 		{"an indented line that imitates the spinner", frame("  ✳ Cooking… (3s · thinking)", "❯"+nb), Unknown},
 		{"a combined dim attribute marks the placeholder", frame("", "❯"+nb+"\x1b[2;37mTry \"fix the build\"\x1b[0m"), Empty},
-		{"a colour index of 2 is not dim", "\x1b[39m" + frame("", "❯"+nb+"\x1b[38;5;2mTry \"fix the build\"\x1b[0m"), HoldsText},
-		{"reset to normal intensity ends dim", "\x1b[39m" + frame("", "❯"+nb+"\x1b[2m\x1b[22mTry \"fix the build\""), HoldsText},
+		{"a colour index of 2 is not dim", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"\x1b[38;5;2mTry \"fix the build\"\x1b[0m"), HoldsText},
+		{"reset to normal intensity ends dim", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"\x1b[2m\x1b[22mTry \"fix the build\""), HoldsText},
 		// The dim placeholder is checked before the idle rule: it is no draft, so a
 		// placeholder after an earlier turn still reads empty and not unknown.
 		{"a dim placeholder after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+dim+"Try \"fix the build\"\x1b[0m"), Empty},

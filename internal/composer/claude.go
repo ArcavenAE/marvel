@@ -113,10 +113,13 @@ func (claudeReader) Read(capture string) State {
 				return Unknown
 			}
 		}
-		// A draft counts only beside idle evidence: a finished turn's done line,
-		// or a session that has run no turn at all. Text typed ahead of a streaming
-		// reply has neither, and a clear key sent there would interrupt the turn.
-		if !doneLine.MatchString(above) && turnSeen(clean) {
+		// A draft counts only beside positive evidence of idle: a finished turn's
+		// done line. The absence of turn markers is not evidence: the capture is the
+		// visible pane, so a reply taller than the pane scrolls its own markers off
+		// the top and leaves indented text with no spinner and no done line, which
+		// looks exactly like a fresh session. A clear key sent there interrupts the
+		// turn and clears nothing. A first-message draft therefore reads Unknown.
+		if !doneLine.MatchString(above) {
 			return Unknown
 		}
 		return HoldsText
@@ -125,18 +128,6 @@ func (claudeReader) Read(capture string) State {
 		return Empty
 	}
 	return Unknown
-}
-
-// turnSeen reports whether the capture shows any turn at all: a reply marker,
-// or the echo of a submitted prompt (a plain space after the glyph, where the
-// live composer has a no-break space).
-func turnSeen(clean []string) bool {
-	for _, l := range clean {
-		if strings.HasPrefix(l, "⏺") || strings.HasPrefix(l, "❯ ") {
-			return true
-		}
-	}
-	return false
 }
 
 // dimAtText reports whether the first visible character after the composer's
