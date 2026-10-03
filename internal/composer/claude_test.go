@@ -108,3 +108,65 @@ func TestClaudeReaderEdges(t *testing.T) {
 		}
 	}
 }
+
+const tipLine = "  ⎿  Tip: Use /clear to start fresh when switching topics"
+
+// insertAfter returns frame with line added after the first line containing
+// marker. A frame is built from a real capture so the rest of it stays real.
+func insertAfter(t *testing.T, frame, marker, line string) string {
+	t.Helper()
+	lines := strings.Split(frame, "\n")
+	for i, l := range lines {
+		if strings.Contains(l, marker) {
+			out := append(append(append([]string{}, lines[:i+1]...), line), lines[i+1:]...)
+			return strings.Join(out, "\n")
+		}
+	}
+	t.Fatalf("no line containing %q in the fixture", marker)
+	return ""
+}
+
+// While a turn runs, Claude draws a "⎿  Tip: ..." line between the spinner and
+// the composer. The first line above the composer is then the tip, not the
+// spinner, and a frame that is plainly mid-turn stopped reading as mid_turn.
+func TestClaudeReaderSeesPastTheTipLineUnderTheSpinner(t *testing.T) {
+	t.Parallel()
+	r := ReaderFor("claude")
+	for _, name := range []string{"3a-mid-turn-1s5.txt", "3a-mid-turn-1s5.ansi.txt"} {
+		frame := insertAfter(t, fixture(t, name), "Boogieing", tipLine)
+		if got := r.Read(frame); got != MidTurn {
+			t.Errorf("%s with a tip line: Read = %q, want %q", name, got, MidTurn)
+		}
+	}
+}
+
+// With a draft in the composer the same frame read as holds_text, which would
+// let a clear key or a stage through in the middle of a turn.
+func TestClaudeReaderReadsATipFrameWithADraftAsMidTurn(t *testing.T) {
+	t.Parallel()
+	frame := insertAfter(t, fixture(t, "3a-mid-turn-1s5.txt"), "Boogieing", tipLine)
+	frame = strings.Replace(frame, "❯ \n", "❯ a draft\n", 1)
+	if !strings.Contains(frame, "a draft") {
+		t.Fatal("the draft was not placed in the composer")
+	}
+	if got := ReaderFor("claude").Read(frame); got != MidTurn {
+		t.Errorf("Read = %q, want %q", got, MidTurn)
+	}
+}
+
+// A hint line is skipped, and only skipped: text in it that looks like a
+// spinner is not one (the spinner is a glyph at the margin), so it never makes
+// an idle frame read as mid-turn. The finished turn's done line above it is
+// what the frame is read from.
+func TestClaudeReaderDoesNotTakeAHintLineForASpinner(t *testing.T) {
+	t.Parallel()
+	imitation := "  ⎿  ✻ Boogieing… (1s · thinking)"
+	frame := insertAfter(t, fixture(t, "4-idle-after-submit.txt"), "Worked for", imitation)
+	got := ReaderFor("claude").Read(frame)
+	if got == MidTurn {
+		t.Fatalf("a hint line imitating a spinner read as %q", got)
+	}
+	if got != Empty {
+		t.Errorf("Read = %q, want %q: the done line above the hint line is what the frame says", got, Empty)
+	}
+}
