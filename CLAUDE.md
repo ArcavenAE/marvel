@@ -438,16 +438,32 @@ its password to `<StateDir>/nats/director.pass`; `hub.ca_file` trusts a TLS
 hub from the leaf remote. `NewManager` recovers every password from the
 `authorization.conf` it rendered last time, so a restart or reexec keeps
 running sessions' credentials valid (`docs/design/bus-as-service.md` 8.2).
-A team that declares a `supervisor` role and has a hub also gets a second user,
-`<team>.supervisor`, rendered beside `<team>` (`docs/design/per-role-broker-users.md`,
-M9-3). New spawns of the supervisor role connect as it, once the broker has
-accepted it (marvel logs in as the user to find out; until then a spawn uses the
-team user, which works), and it subscribes only `global.<cluster>.supervisor.inbox`; seats already running keep the team user,
-which keeps its grants until the subtractive stage. **Do not downgrade the
-daemon below this change once a dotted user is rendered:** an older binary
-drops the dotted user at its next render and breaks every supervisor that
-rotated onto it. Revert the render first (rotate supervisors back to the team
-user), then downgrade.
+A team that has a hub gets one more user for each role that holds the global
+tier, `<team>.<role>`, rendered beside `<team>` (`docs/design/global-role-declaration.md`,
+marvel#518; the per-role shape is `docs/design/per-role-broker-users.md`, M9-3).
+A role holds the tier when two keys agree: its manifest declares
+`global_role = "supervisor"` (or `"none"` to opt out; a role named `supervisor`
+holds it by default when it declares nothing), and the cluster admits its name,
+`global_roles: [<role>, ...]` on the message-bus entry of the client config
+(`supervisor` is admitted without being listed). One resolver,
+`config.ResolvedGlobalRole`, answers for the renderer, `Credential` and the seat
+env, with the admitted set the daemon loaded, so a stored declaration whose name
+is no longer admitted loses its user at the next render and emits
+`bus.global-role-unadmitted`; apply also refuses such a declaration early, and
+with no bus a declaration is inert. New spawns of a global role connect as its
+user, once the broker has accepted it (marvel logs in as the user to find out;
+until then a spawn uses the team user, which works), and it subscribes only
+`global.<cluster>.supervisor.inbox`. Its seat env carries
+`DIRECTOR_GLOBAL_ROLE=supervisor`; that holds for a FRESH spawn only, because a
+seat already running keeps the environment and the team user it started with,
+whose grants stay until the subtractive stage. Revoking or de-admitting a role
+closes its live connection at the broker reload (measured with a nats CLI
+subscriber on nats-server v2.14.6, loopback scratch, which stayed disconnected
+and retrying). Whether the director shim retries or exits on that auth refusal
+is UNMEASURED. **Do not downgrade the daemon below this change once a dotted
+user is rendered:** an older binary drops the dotted user at its next render and
+breaks every role that rotated onto it. Revert the render first (rotate those
+roles back to the team user), then downgrade.
 Ready on a managed broker is structural (`internal/bus/health.go`, design
 section 3): listener, pid, every declared service-scope object present,
 and `/varz` `auth_required`; read at start, after a reload, and on the 30s
