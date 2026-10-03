@@ -36,6 +36,19 @@ just lint           # golangci-lint run ./...
 just fmt            # gofumpt formatting
 ```
 
+### Testing a daemon by hand
+
+When testing a daemon by hand, unset every `MARVEL_*` variable and pass
+`--socket` explicitly. A seat's `MARVEL_SOCKET` overrides `HOME` (the order
+is `--socket`, then `MARVEL_SOCKET`, then the cluster config, then the
+default under `HOME`), so pointing `HOME` at a scratch directory does not
+isolate you from the live daemon. Before sending anything, confirm the
+socket path is one you started.
+
+Why: on 2026-10-03 a test meant for a throwaway daemon reached the live
+one, because the seat running it inherited `MARVEL_SOCKET`. No harm came of
+it (#504).
+
 ## Resource Model
 
 **Model-only, not implemented:** Pack (ConfigMap), Vault (Secret), Volume
