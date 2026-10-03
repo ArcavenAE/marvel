@@ -15,7 +15,8 @@ Design for review. No code lands until this doc is reviewed.
   harness internals, runtime substrate, AI finops, AI security). The record,
   with every seat's replies, the per-round checks and the vote, is in the
   orc's `_bmad-output/party-mode/marvel-dry-run-2026-10-03/`.
-- Checked against marvel `origin/main` 03dd483.
+- Checked against marvel `origin/main` 03dd483; the cited lines are
+  unchanged at 889e49a.
 
 ## 1. The problem, verified
 
@@ -209,7 +210,7 @@ second by most seats.
   and live session ids of the teams the manifest names, plus the daemon's
   start time), so drift is visible. It does not bind the apply.
 
-## 6. Exit codes (ruling needed)
+## 6. Exit codes (OPEN: ruling (a), section 10)
 
 The vote split (section 9).
 
@@ -220,8 +221,8 @@ Agreed:
   unreachable daemon, a daemon without `plan_manifest`, and a pre-flight
   that errored.
 
-Default, which takes the plurality on numbering and the majority on the
-flag:
+Default, OPEN until ruled, which takes the plurality on numbering and the
+majority on the flag:
 - 0: evaluated, no refusal;
 - 1: apply would refuse;
 - 3: could not evaluate;
@@ -257,8 +258,10 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
   `exec.LookPath`s the whole string (`manifest.go:618`, `:633-646`; no
   `strings.Fields` in the file). The claude adapter splits the same string
   (`internal/runtime/claude.go:186-196`). So `command = "claude --flag
-  value"` is refused at apply although the adapter would run it. This was
-  found by reading the code, not by running it.
+  value"` is refused at apply although the adapter would run it. A
+  throwaway unit-level probe at 889e49a confirmed it: `validateCommand("claude")`
+  returns nil and `validateCommand("claude --flag value")` returns "not on
+  PATH"; `ValidateRuntimes` refuses a role with `sh -c true` the same way.
 - **Apply's check-then-commit is not serialized.** Each connection runs in
   its own goroutine (`daemon.go:582`), and I found no apply-level lock. Two
   concurrent `marvel work` calls can both pass the name-clash check.
@@ -296,14 +299,14 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
 
 ## 10. Open items and rulings needed
 
-1. **Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
+1. **(a) OPEN. Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
    (2 seats), 0/2/1-error/3-refusal (1), 0/2/1-refusal/3-not-evaluated (2).
    - On the underlying question, refusal and "could not evaluate" get
      distinct codes, 3-2.
    - On whether exit 2 is the default, `--detailed-exitcode` wins 3-2. The
      minority's reason: a forgotten flag reads "changes" as 0.
    - Default: section 6.
-2. **Home paths in output (V4), split 2-2.**
+2. **(b) OPEN. Home paths in output (V4), split 2-2.**
    - (a) Collapse the home prefix to `~` for display. This shows which
      binary resolved, for every role.
    - (b) Redact home paths except the one resolved binary path per role.
