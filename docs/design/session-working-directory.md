@@ -60,29 +60,53 @@ the enclosing team's `workdir`, so there is one anchor and no chain to
 reason about. The TOML key is `workdir`, the Go field `WorkDir`; no alias
 (`cwd`, `dir`), because the loader drops unknown keys silently and an
 alias that half-works is a second spelling to reconcile.
+At apply, each team's anchor is snapshotted into `Team.WorkDir`: the
+team's `workdir` resolved against the root, or the root itself when the
+team declares none. Every later spawn of that team reads the snapshot,
+never the workspace's current root, so applying one team never moves
+another (amended 2026-10-02, marvel#465).
 
-**2. The default is the manifest's own directory, filled by the CLI.**
-`marvel work` resolves `workspace.root` before posting: if the manifest
-sets it, the CLI makes it absolute against the manifest file's directory;
-if it does not, the CLI sets it to that directory. The daemon never sees
-a manifest without an absolute root. A project applies its manifest from
+**2. The default is the manifest's own directory, sent beside the bytes.**
+`marvel work` posts the manifest file's bytes unchanged (a rewrite would
+lose comments, key order and the raw-document checks), and sends the
+absolute directory of the manifest FILE, not the caller's cwd, as the
+`workspace_root` apply parameter. The daemon resolves against that one
+absolute root: a relative `workspace.root` joins it, an absolute one wins,
+and with none the root is that directory. The observable result is the one
+first designed, where the CLI made the root absolute (amended 2026-10-02,
+marvel#465). A project applies its manifest from
 its own checkout, which is the directory the operator trusts; a bare `.`
 or `~` never reaches a session. This is what makes another operator's
 manifest portable: skippy's manifest names no path at all and lands in his
 own checkout.
 
-**3. The daemon refuses what it cannot place.** At apply, `workspace.root`
-must be present and absolute; every resolved `workdir` must exist on the
-daemon's host and be a directory; `~` is not expanded and is refused as
-not absolute. A manifest posted through the raw API without a root is
-refused with `workspace.root is required (marvel work fills it from the
-manifest's directory)`. Validation is placement, not trust: marvel does
-not read the harness's trust store, and does not claim to.
+**3. The daemon refuses what it cannot place, and drops what is not
+here.** At apply (amended 2026-10-02, marvel#465):
+- A relative or `~` root is malformed and refused as not absolute; `~` is
+  never expanded.
+- An absolute root that does not exist on the daemon's host, or exists but
+  is not a directory, may be a client-side path, so it is dropped with a
+  warning ("the root is ignored
+  and this apply places nothing"), unless a relative `workdir` needs it to
+  resolve, which cannot be placed and is refused.
+- Every resolved `workdir` must exist on the daemon's host and be a
+  directory.
+- A root that exists is resolved through symlinks, so a symlinked checkout
+  is stored and compared by its real path.
+- A manifest posted through the raw API with neither a root nor
+  `workspace_root` is accepted with a warning, so running tooling does not
+  break. Today such a new team gets no placement, and an existing team
+  keeps its anchor (and its legacy stamp once marvel#471 lands). A managed
+  directory for a new root-less team is seat-bootstrap's SB-1b
+  (`docs/design/seat-bootstrap.md`), not built yet. Refusing the
+  root-less raw-API case is the later state.
+Validation is placement, not trust: marvel does not read the harness's
+trust store, and does not claim to.
 
 **4. Placement rides into the pane through tmux, uniformly.** The role's
 resolved `WorkDir` is copied onto the `Session` at spawn, carried in
-`LaunchContext`, and passed to `Driver.NewPane` as a start directory
-(`new-window -c <dir>`). This places every harness the same way with no
+`LaunchContext`, and passed to `Driver.NewPaneAt` as a start directory
+(`new-window -c <dir>`; marvel#466). This places every harness the same way with no
 adapter code, which is why no adapter gains a flag in this design; a
 harness-specific flag (`codex -C`) can follow if a harness ignores its
 pane cwd, and none of the four measured does.
@@ -98,11 +122,15 @@ see placement without opening a pane. Adding a field to the persisted
 record is additive; whether the bolt schema version moves is the build
 lead's call at implementation.
 
-**7. Restart and shift re-resolve.** A restart or a shift spawns with the
-role's current `workdir` from the applied manifest, not the dead
-session's persisted value, the same way every other role field applies on
-respawn. Editing a `workdir` and re-applying then rotating is how a team
-moves.
+**7. Restart and shift place from what the last apply stored.** A restart
+or a shift places the role in its `workdir` as stored at the last apply
+(absolute, resolved then against that apply's root), else in the team's
+snapshotted anchor (`Team.WorkDir`); never the workspace's current root,
+and never the dead session's persisted value (marvel#466). Spawn checks
+that the directory exists and refuses if it does not: `tmux new-window -c`
+on a missing directory exits 0 and starts the pane in `$HOME` (measured
+2026-10-02), so the check cannot be left to tmux. Editing a `workdir` or
+the root and re-applying the team, then rotating, is how a team moves.
 
 **8. Ad-hoc runs place explicitly.** `marvel run` gains `--workdir
 <dir>`, default the caller's cwd made absolute by the CLI. An interactive
@@ -137,12 +165,15 @@ Flat bd tickets with dependency edges (labels `aae-orc`, `marvel`,
 
 1. Types, manifest, validation: `WorkDir` on `Team`, `Role`, `Session`,
    `Root` on `Workspace`; parse `workdir` and `root`; daemon-side
-   validation (absolute, exists, directory, root required); CLI-side
-   resolution in `marvel work` (root from the manifest's directory,
-   relative fields against root, posted absolute).
+   validation (decision 3: a relative or `~` root refused, an absent
+   absolute root dropped with a warning unless a relative `workdir` needs
+   it, directories checked, symlinks resolved); the `workspace_root` apply
+   parameter from `marvel work` (the manifest file's directory, bytes
+   posted unchanged) and the team anchor snapshot into `Team.WorkDir`.
 2. Spawn wiring: `Session.WorkDir` set at spawn from the role, carried in
-   `LaunchContext`, `Driver.NewPane` start directory (`-c`),
-   `MARVEL_WORKDIR` in `baseEnv`, restart and shift re-resolve. After 1.
+   `LaunchContext`, `Driver.NewPaneAt` start directory (`-c`), a spawn-time
+   check that the directory exists, `MARVEL_WORKDIR` in `baseEnv`, restart
+   and shift placing from what the last apply stored. After 1.
 3. CLI surface: `marvel run --workdir`, the `get sessions` column, the
    apply-error text. After 1.
 4. Docs, examples, the twin: user guide and CLAUDE.md manifest table,

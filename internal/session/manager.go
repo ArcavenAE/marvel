@@ -832,7 +832,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 	if m.Bus != nil {
 		lctx.BusURL = m.Bus.URL()
-		if user, pass, ok := m.Bus.TeamCredential(team.Name); ok {
+		if user, pass, ok := m.Bus.Credential(team.Name, sess.Role); ok {
 			lctx.BusUser, lctx.BusPassword = user, pass
 		}
 	}
@@ -1569,10 +1569,10 @@ func (m *Manager) CleanupWorkspace(workspace string) error {
 }
 
 // BusEnv is what the session environment needs from a cluster's bus: the
-// URL sessions connect to, and the team credential when the broker carries
+// URL sessions connect to, and the credential for a seat's team and role when the broker carries
 // authorization. An adopted anonymous broker returns ok=false for every
 // team and sessions connect as they do today (brief 10 section 4).
 type BusEnv interface {
 	URL() string
-	TeamCredential(team string) (user, password string, ok bool)
+	Credential(team, role string) (user, password string, ok bool)
 }

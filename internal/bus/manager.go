@@ -2,6 +2,7 @@ package bus
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -9,9 +10,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -55,7 +58,7 @@ type Manager struct {
 	hasLeafSeed func() bool
 	admin       User
 	seat        string            // the director seat's password; empty when no seat is declared
-	passwords   map[string]string // team name -> password
+	passwords   map[string]string // broker user name (a team, or <team>.supervisor) -> password
 
 	// leafAttached is the operator's connect/disconnect decision, persisted
 	// beside the conf and defaulting to attached. It is an atomic rather than
@@ -66,6 +69,88 @@ type Manager struct {
 
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
+
+	// known is the set of per-role users the broker has been seen to accept: a
+	// real login as the user succeeded. Render mints a user and writes the file,
+	// but the broker reads it on a reload that lands later, so Credential hands
+	// a per-role user out only from this set and falls back to the team user
+	// until then. It is not persisted: after a restart the broker is asked again.
+	known map[string]bool
+	// verify dials the broker as one user; nil means a real connection.
+	verify func(ctx context.Context, url, user, password string) error
+	// confirming and confirmAgain single-flight the background confirmation.
+	confirming   atomic.Bool
+	confirmAgain atomic.Bool
+}
+
+// ConfirmRoleUsers logs in to the broker as each rendered per-role user that is
+// not yet known to be accepted, with that user's own password, and records the
+// ones that succeed. The dial retries an authorization refusal for a few
+// seconds, since the reload that makes the broker read the new file is
+// asynchronous. It returns an error naming every user the broker did not accept.
+func (m *Manager) ConfirmRoleUsers(ctx context.Context) error {
+	type candidate struct{ user, password string }
+	m.mu.Lock()
+	url, verify := m.bus.URL, m.verify
+	var pending []candidate
+	for user, pw := range m.passwords {
+		if strings.Contains(user, ".") && !m.known[user] {
+			pending = append(pending, candidate{user, pw})
+		}
+	}
+	m.mu.Unlock()
+	if verify == nil {
+		verify = dialAs
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].user < pending[j].user })
+	var errs []error
+	for _, c := range pending {
+		if err := verify(ctx, url, c.user, c.password); err != nil {
+			errs = append(errs, fmt.Errorf("the broker does not accept %s yet: %w", c.user, err))
+			continue
+		}
+		m.mu.Lock()
+		// The password may have changed, or the user gone, while the dial ran.
+		if m.passwords[c.user] == c.password {
+			m.known[c.user] = true
+		}
+		m.mu.Unlock()
+	}
+	return errors.Join(errs...)
+}
+
+// dialAs opens and closes one connection as user.
+func dialAs(ctx context.Context, url, user, password string) error {
+	nc, err := connectAdmin(ctx, url, user, password)
+	if err != nil {
+		return err
+	}
+	nc.Close()
+	return nil
+}
+
+// confirmAsync runs ConfirmRoleUsers off the caller's path (the caller is often
+// the apply RPC under the manager lock). One runs at a time; a request that
+// arrives while one is running makes it go round once more.
+func (m *Manager) confirmAsync() {
+	if !m.confirming.CompareAndSwap(false, true) {
+		m.confirmAgain.Store(true)
+		return
+	}
+	go func() {
+		defer m.confirming.Store(false)
+		for {
+			m.confirmAgain.Store(false)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			if err := m.ConfirmRoleUsers(ctx); err != nil {
+				log.Printf("bus: %v; a supervisor keeps the team user until it does", err)
+			}
+			cancel()
+			if !m.confirmAgain.Load() {
+				return
+			}
+		}
+	}()
 }
 
 // SeatPassName is the file beside the rendered conf that holds the director
@@ -98,6 +183,7 @@ func NewManager(dir, domain string, rb config.ResolvedBus, teams TeamLister, has
 		teams:       teams,
 		hasLeafSeed: hasLeafSeed,
 		passwords:   map[string]string{},
+		known:       map[string]bool{},
 	}
 	pw, ok := recovered[AdminUser]
 	if !ok {
@@ -167,9 +253,25 @@ func (m *Manager) ConfPath() string { return filepath.Join(m.dir, ConfName) }
 // URL is what sessions receive as NATS_URL.
 func (m *Manager) URL() string { return m.bus.URL }
 
-// TeamCredential is the broker user and password for an applied team, the
-// session.BusEnv contract. The user is the team name (section 4).
-func (m *Manager) TeamCredential(team string) (string, string, bool) {
+// Credential is the broker user and password a seat of the given role presents,
+// the session.BusEnv contract. A role that holds a global address
+// (config.GlobalAddressRoles) gets its own `<team>.<role>` user once the broker
+// has accepted it (ConfirmRoleUsers); every other role, and a global role whose
+// user is absent, not yet written or not yet accepted, gets the team user
+// (section 4).
+func (m *Manager) Credential(team, role string) (string, string, bool) {
+	if slices.Contains(config.GlobalAddressRoles, role) {
+		user := team + "." + role
+		m.mu.Lock()
+		pw, ok := m.passwords[user]
+		known := m.known[user]
+		m.mu.Unlock()
+		// Only a user the broker has been seen to accept: until then, and
+		// after a failed write, the team user is the one that works.
+		if ok && known {
+			return user, pw, true
+		}
+	}
 	pw, ok := m.TeamPassword(team)
 	if !ok {
 		return "", "", false
@@ -188,8 +290,8 @@ func (m *Manager) Admin() User {
 	return m.admin
 }
 
-// TeamPassword returns the password minted for an applied team, if the team
-// has been rendered. The 1qyo3 spawn path injects it as DIRECTOR_NATS_PASS.
+// TeamPassword returns the password minted for a broker user (a team, or a
+// per-role `<team>.<role>` user), if it has been rendered. The 1qyo3 spawn path injects it as DIRECTOR_NATS_PASS.
 func (m *Manager) TeamPassword(team string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,6 +315,9 @@ func (m *Manager) Regenerate() (bool, error) {
 		if err := m.Reloader.Reload(); err != nil {
 			return changed, fmt.Errorf("reload broker after rewrite: %w", err)
 		}
+	}
+	if m.Reloader != nil {
+		m.confirmAsync()
 	}
 	return changed, nil
 }
@@ -251,16 +356,33 @@ func (m *Manager) Render() (bool, error) {
 			m.passwords[t.Name] = pw
 		}
 		live[t.Name] = true
-		spec.Teams = append(spec.Teams, TeamUser{
+		tu := TeamUser{
 			Workspace:  t.Workspace,
 			Team:       t.Name,
 			Password:   pw,
 			Supervisor: hasSupervisorRole(t),
-		})
+		}
+		if tu.Supervisor && m.bus.HubURL != "" {
+			// The supervisor role's own user, minted only when missing and
+			// keyed by user name like the team's.
+			user := t.Name + SupervisorUserSuffix
+			spw, ok := m.passwords[user]
+			if !ok {
+				var err error
+				if spw, err = NewPassword(); err != nil {
+					return false, err
+				}
+				m.passwords[user] = spw
+			}
+			live[user] = true
+			tu.SupervisorPassword = spw
+		}
+		spec.Teams = append(spec.Teams, tu)
 	}
 	for name := range m.passwords {
 		if !live[name] {
 			delete(m.passwords, name)
+			delete(m.known, name)
 		}
 	}
 
@@ -389,8 +511,8 @@ func (a Adopted) URL() string { return a.url }
 // Bus is the resolved section, for status.
 func (a Adopted) Bus() config.ResolvedBus { return a.bus }
 
-// TeamCredential is never available for an adopted broker.
-func (a Adopted) TeamCredential(string) (string, string, bool) { return "", "", false }
+// Credential is never available for an adopted broker.
+func (a Adopted) Credential(string, string) (string, string, bool) { return "", "", false }
 
 // leafEnrolled reports whether a leaf seed is in the store, so a rendered hub
 // link can actually come up. Nil hasLeafSeed means never enrolled.
