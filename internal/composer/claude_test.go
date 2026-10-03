@@ -98,6 +98,9 @@ func TestClaudeReaderEdges(t *testing.T) {
 		{"text typed ahead of streaming text is not an idle draft", frame("⏺ Reply text still arriving", "❯"+nb+"typed ahead"), Unknown},
 		{"text typed ahead after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+"typed"), Unknown},
 		{"a draft in a session that has run no turn", frame("", "❯"+nb+"first message"), HoldsText},
+		// The dim placeholder is checked before the idle rule: it is no draft, so a
+		// placeholder after an earlier turn still reads empty and not unknown.
+		{"a dim placeholder after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+dim+"Try \"fix the build\"\x1b[0m"), Empty},
 		{"a hint line right of the composer is not content", frame("✻ Worked for 2s · done 5:23 PM\n"+strings.Repeat(" ", 100)+"auto mode unavailable for this model", "❯"+nb), Empty},
 		{"streaming text over an older done marker", frame("✻ Worked for 2s · done 5:23 PM\n\n❯ next prompt\n\n⏺ Reply text still arriving", "❯"+nb), Unknown},
 		{"placeholder text with escapes is dim and so empty", frame("", "❯"+nb+dim+"Try \"fix the build\""+"\x1b[0m"), Empty},
