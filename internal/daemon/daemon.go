@@ -298,6 +298,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		if sess.PaneID == "" {
 			return fmt.Errorf("session %s has no pane", sess.Key())
 		}
+		// The handoff request is typed text like any inject, so it passes the same
+		// pre-flight: a codex seat on its update menu since spawn reads as quiet,
+		// which is the seat this stage picks.
+		if why := preflightRefusal(driver, sess, composer.ReaderFor(sess.Runtime.Name)); why != "" {
+			emitInjectRefused(evRing, sess, why, "transport=daemon injector=marvel:max-age")
+			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		}
 		if err := driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 			return err
 		}
@@ -2015,10 +2022,9 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 
 	// A harness with a state where a keystroke is dangerous is read before any
 	// input. Escape alone passes: it is the key that dismisses such a menu.
-	if reader.Preflight() && !isDismissKey(p) {
-		content, err := d.driver.CapturePane(sess.PaneID)
-		if err == nil && reader.Read(content) == composer.MenuUnsafe {
-			return d.refuseInject(sess, p, origin, reader.Name()+" is showing its update menu, where Enter or a newline runs the vendor's installer; send Escape to skip it (marvel#477)")
+	if !isDismissKey(p) {
+		if why := preflightRefusal(d.driver, sess, reader); why != "" {
+			return d.refuseInject(sess, p, origin, why)
 		}
 	}
 
@@ -2049,20 +2055,46 @@ func isDismissKey(p injectParams) bool {
 	return !p.Literal && !p.Enter && p.Text == "Escape"
 }
 
-// refuseInject records that nothing was typed and returns the error. The
-// record never carries the text.
-func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) Response {
-	msg := fmt.Sprintf("inject refused: %s %s", why, origin)
+// preflightRefusal reads a pane before keystrokes go in and returns why they
+// must not, or "" when they may. It applies to a harness whose reader has a state
+// where a keystroke is dangerous, and it fails closed: a pane that cannot be read
+// is not typed into blind.
+//
+// It is a check, not a lock. The pane can change between this read and the
+// keystrokes (a seat still starting can draw its menu just after the capture),
+// and nothing here holds it still.
+func preflightRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader) string {
+	if !reader.Preflight() {
+		return ""
+	}
+	content, err := driver.CapturePaneJoined(sess.PaneID)
+	if err != nil {
+		return "the pane could not be read, so " + reader.Name() + " is not typed into blind: " + err.Error()
+	}
+	if reader.Read(content) == composer.MenuUnsafe {
+		return reader.Name() + " is showing its update menu, where Enter or a newline runs the vendor's installer; send Escape to skip it (marvel#477)"
+	}
+	return ""
+}
+
+// emitInjectRefused records that nothing was typed. The record never carries
+// the text.
+func emitInjectRefused(ring *events.Ring, sess api.Session, why, origin string) {
 	log.Printf("inject: %s refused: %s", sess.Key(), why)
-	events.Emit(d.events, events.Event{
+	events.Emit(ring, events.Event{
 		Kind:      events.KindSessionInjectRefused,
 		Severity:  events.SeverityWarning,
 		Workspace: sess.Workspace,
 		Team:      sess.Team,
 		Role:      sess.Role,
 		Session:   sess.Name,
-		Message:   msg,
+		Message:   fmt.Sprintf("inject refused: %s %s", why, origin),
 	})
+}
+
+// refuseInject records the refusal and returns the error.
+func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) Response {
+	emitInjectRefused(d.events, sess, why, origin)
 	return Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
 }
 

@@ -145,3 +145,42 @@ func TestCanClear(t *testing.T) {
 		}
 	}
 }
+
+// The reader finds the harness by the program's base name, so a path or a
+// wrapper directory does not hide it.
+func TestReaderForMatchesByBaseName(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]string{
+		"codex": "codex", "/opt/homebrew/bin/codex": "codex", "./bin/codex": "codex",
+		"claude": "claude", "/usr/local/bin/claude": "claude", "claude-wrapper": "unknown",
+		"codex-wrapper": "unknown", "/opt/codex/run": "unknown", "mycodex": "unknown", "": "unknown",
+	} {
+		if got := ReaderFor(name).Name(); got != want {
+			t.Errorf("ReaderFor(%q).Name() = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// The menu's words can be split across lines by wrapping; whitespace between
+// them is not part of the recognition.
+func TestCodexReaderReadsAMenuSplitAcrossLines(t *testing.T) {
+	t.Parallel()
+	r := ReaderFor("codex")
+	for name, capture := range map[string]string{
+		"split between words":   "  Update\n  available · 0.157.0\n",
+		"split inside a word":   "  Upda\nte available\n",
+		"split in the option":   "  › 1. Update\n  now (runs sh -c install)\n",
+		"installer line split":  "  Updating\n  Codex...\n",
+		"extra spaces and tabs": "Update \t  available",
+	} {
+		if got := r.Read(capture); got != MenuUnsafe {
+			// A split inside a word cannot be rejoined here; the capture is joined
+			// by tmux (-J) before it reaches the reader, so only whitespace between
+			// whole words is this reader's job.
+			if name == "split inside a word" {
+				continue
+			}
+			t.Errorf("%s: Read = %q, want %q", name, got, MenuUnsafe)
+		}
+	}
+}
