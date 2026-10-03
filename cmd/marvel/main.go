@@ -1708,6 +1708,11 @@ func versionCmd() *cobra.Command {
 	}
 }
 
+// runUpgrade is the install step of marvel upgrade. A variable so a test can
+// prove a refusal comes before it, without ever reaching the network or the
+// running binary.
+var runUpgrade = upgrade.Run
+
 func upgradeCmd() *cobra.Command {
 	var targetVersion string
 	var reexecDaemon bool
@@ -1716,8 +1721,10 @@ func upgradeCmd() *cobra.Command {
 		Short: "Upgrade marvel to the latest version",
 		Long: `Upgrade marvel to the latest version.
 
-If installed via Homebrew, delegates to brew upgrade.
-Otherwise downloads the latest release from GitHub.
+If installed via Homebrew, delegates to brew upgrade. Homebrew installs only
+the tap's current formula, so --version is refused there unless it names that
+build. Otherwise downloads the latest release from GitHub; --version takes an
+exact release tag and nothing else. A dev build is not upgraded.
 
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
@@ -1729,12 +1736,15 @@ A failed brew upgrade, and a binary owned by a system package manager,
 exit non-zero. --daemon is refused, before anything is upgraded, on a
 Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := upgrade.RefuseDev(version); err != nil {
+				return err
+			}
 			if reexecDaemon {
 				if err := upgrade.ReexecRefusal(); err != nil {
 					return err
 				}
 			}
-			res, err := upgrade.Run(channel, targetVersion)
+			res, err := runUpgrade(channel, targetVersion)
 			if err != nil {
 				return err
 			}
@@ -1750,7 +1760,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 			}, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")
+	cmd.Flags().StringVar(&targetVersion, "version", "", "exact release tag to install (default: latest)")
 	cmd.Flags().BoolVar(&reexecDaemon, "daemon", false,
 		"after installing, tell the running daemon to re-exec in place so it adopts the new binary without stopping agents")
 	return cmd
