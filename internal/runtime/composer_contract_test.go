@@ -78,3 +78,23 @@ func TestEveryExitingClearKeyCarriesItsHazard(t *testing.T) {
 		}
 	}
 }
+
+// An adapter is found by the program's base name here too, as the reader is, so
+// a runtime named by a path or a wrapper directory has the contract of its
+// harness and not none.
+func TestComposerForMatchesByBaseName(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	for name, want := range map[string]string{
+		"/opt/homebrew/bin/codex": "0.157.0", "./bin/opencode": "1.18.15", "/usr/local/bin/claude": "2.1.288",
+	} {
+		if got := r.ComposerFor(name).Source["clear"]; !strings.Contains(got, want) {
+			t.Errorf("ComposerFor(%q) clear source = %q, want the contract measured on %s", name, got, want)
+		}
+	}
+	for _, name := range []string{"codex-wrapper", "/opt/codex/run", "mycodex"} {
+		if c := r.ComposerFor(name); c.ClearKey != "" {
+			t.Errorf("ComposerFor(%q) has a contract it is not the harness for: %+v", name, c)
+		}
+	}
+}
