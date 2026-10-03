@@ -167,19 +167,23 @@ func TestCodexReaderReadsAMenuSplitAcrossLines(t *testing.T) {
 	r := ReaderFor("codex")
 	for name, capture := range map[string]string{
 		"split between words":   "  Update\n  available · 0.157.0\n",
-		"split inside a word":   "  Upda\nte available\n",
 		"split in the option":   "  › 1. Update\n  now (runs sh -c install)\n",
 		"installer line split":  "  Updating\n  Codex...\n",
 		"extra spaces and tabs": "Update \t  available",
 	} {
 		if got := r.Read(capture); got != MenuUnsafe {
-			// A split inside a word cannot be rejoined here; the capture is joined
-			// by tmux (-J) before it reaches the reader, so only whitespace between
-			// whole words is this reader's job.
-			if name == "split inside a word" {
-				continue
-			}
 			t.Errorf("%s: Read = %q, want %q", name, got, MenuUnsafe)
 		}
+	}
+}
+
+// A word split inside itself cannot be rejoined here: the capture is joined by
+// tmux (-J) before it reaches the reader, so only whitespace between whole words
+// is this reader's job. The reader must still not read it as safe: unknown
+// refuses every send, where a state that confirms would let one through.
+func TestCodexReaderDoesNotReadAWordSplitInsideItselfAsSafe(t *testing.T) {
+	t.Parallel()
+	if got := ReaderFor("codex").Read("  Upda\nte available\n"); got != Unknown {
+		t.Errorf("Read = %q, want %q", got, Unknown)
 	}
 }
