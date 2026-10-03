@@ -25,6 +25,9 @@ Design for review. No code lands until this doc is reviewed.
   with a pre-rename check; ruling 12 gains the dialog-answering option; the
   temp sweep runs under the lock; the shift cooldown lives in `autoShift`
   and persists.
+- r8, 2026-10-03, after review 5398695921: ruling 12 states the shared
+  trade once and gives (d) its benefits; the pre-rename check hashes the
+  target; the cooldown's persistence traps; SB-1 marked landed as #482.
 
 ## 1. The problem, verified
 
@@ -94,8 +97,11 @@ edits before SB-1 cannot prevent the move: the first respawn after the SB-1
 daemon starts would relocate those seats whatever the files say. The fix is in
 code:
 
-- **Stamp once, as the store's v1 to v2 migration.** SB-1 bumps
-  `boltSchemaVersion` from 1 to 2 (`internal/api/bolt.go:64`); no separate
+- **Stamp once, as the store's v1 to v2 migration.** Landed as #482
+  (1cc0a84): `boltSchemaVersion` is 2 (`internal/api/bolt.go:70`) and
+  `migrateV1` writes `<store>.v1.bak` and stamps `legacy` (`bolt.go:524-588`).
+  Where #482 differs from the design text below, the code is the record. The
+  design as written: SB-1 bumps `boltSchemaVersion` from 1 to 2; no separate
   marker. Today `Open` fails fast on an older on-disk version ("migration not
   implemented", `bolt.go:126-129`). SB-1 replaces that branch with the
   migration: inside the same `db.Update` transaction, before the daemon
@@ -502,8 +508,16 @@ What that means for a grant, stated plainly:
    Immediately before the rename, marvel re-checks two things and aborts
    (removing its temp file) and retries from step 3 if either changed: the
    lock directory's inode and mtime are still the ones marvel set, and the
-   target's inode, size and mtime are still the ones marvel read. Only then
-   is the temp file renamed over the target. The second check is what
+   target is unchanged since marvel read it. For the target, marvel compares
+   inode, size and mtime, and also re-reads the target and compares a hash
+   of its bytes with the hash of what it read. The metadata alone is enough
+   against Claude Code's own writes, which always go by rename and so always
+   change the inode (measured by the reviewer on APFS: 5000 same-size
+   in-place rewrites gave 0 identical tuples). It is not enough against an
+   in-place write of the same size inside one mtime tick on a filesystem
+   with coarse timestamps (HFS+ at 1 second, some ext4 setups; from their
+   documented granularity, not measured), and the hash covers that case.
+   Only then is the temp file renamed over the target. The second check is what
    catches a Claude Code write that landed during a takeover or a pause,
    which step 5 alone would miss, since it checks only marvel's key. A
    window remains between that re-check and the rename; it is narrow, and
@@ -581,7 +595,15 @@ SB-4M changes both:
   through `shift_handoff.go:160`. The cooldown's end time and failure count
   persist with the role's other health state (`RoleHealth`, written through
   to the bolt `role_health` bucket), so a daemon restart or a reexec does
-  not reset it. The hold emits `shift.cooldown` with its end time, and
+  not reset it. The record is plain JSON, so two new fields need no schema
+  migration (the `Budget` field set the precedent). Two traps for the
+  builder: `persistRoleHealth` rebuilds the record from its fields
+  (`controller.go:229-238`) and `RehydrateRoleHealth` copies them back
+  (`:212-217`), and both must carry the new fields, or the next crash-loop
+  write zeroes the cooldown. The whole record is deleted
+  (`forgetRoleHealth`) by `marvel reset-health`, by deleting the team or
+  workspace, and by removing the role, and that is intended: each is the
+  operator saying the role starts over, so the cooldown goes with it. The hold emits `shift.cooldown` with its end time, and
   `describe team` shows it. An operator `marvel shift` is not held.
 - **A refused successor ends the shift.** `shiftLaunch` counts only live
   successor rows (`:2141-2147`), so a successor refused at bootstrap would
@@ -638,7 +660,8 @@ too, and the ledger makes every such change visible and attributable.
 | SB-0 | rollout probe | runs SB-1, SB-2 and SB-4M; lines 9 and 10 revised, line 13 kept, lines 14 to 16 added (section 4a) |
 | SB-7 | fleet manifests declare `settings_sources` | unchanged; gated on SB-0 with SB-4M. A wrapped role's trust is unchecked today (ruling 8, open) |
 
-SB-1 and SB-2 are unchanged; SB-2 landed as #467.
+SB-1 and SB-2 are unchanged and both have landed: SB-1 as #482, SB-2 as
+#467.
 
 ## 6. Refuse, and say why
 
@@ -800,7 +823,7 @@ directory marvel trusted (path, time, reason, the session that caused it).
 
 | # | Edit | Depends on |
 |---|---|---|
-| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`, preceded by the `<store>.v1.bak` backup; `new-session -c`; `WorkDirSource` | aae-orc-5as2e |
+| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`, preceded by the `<store>.v1.bak` backup; `new-session -c`; `WorkDirSource`. **Landed as #482** (the migration and stamp; the managed directory fallback is not checked here) | aae-orc-5as2e |
 | SB-7a | Cleanup: every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) and is re-applied on each cluster that runs it; a team with no file gets a manifest | SB-1 |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run). **Done 2026-10-02, red** (section 5a) | none |
@@ -811,8 +834,8 @@ directory marvel trusted (path, time, reason, the session that caused it).
 | SB-0 | Rollout probe: one bare-claude seat, the section 4a checklist, a written pass or fail per line | SB-1, SB-2, SB-4M |
 | SB-7 | Fleet and example manifests declare `settings_sources` (for wrapped roles, inside `cast-launch.sh`, a director PR), and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2, SB-0 passed |
 
-The shortest path to an unblocked step 0 is SB-1, then SB-4M; SB-2 (#467) and
-SB-3 are done. SB-1 carries its own guard (the `legacy` stamp), so no host state has to
+The shortest path to an unblocked step 0 is SB-4M; SB-1 (#482), SB-2 (#467)
+and SB-3 are done. SB-1 carries its own guard (the `legacy` stamp), so no host state has to
 change first.
 
 ## 11. Rulings needed
@@ -877,7 +900,9 @@ change first.
     length of step 4 it holds every value in it, including per-path MCP env
     values that may be third-party tokens, plus a temp copy on disk until
     the rename. ADR-009 tests what a component holds and rejects a time
-    limit as an answer. The options as I see them:
+    limit as an answer. One thing is common to (a) through (d): marvel, not
+    a person, decides to trust each directory. Ruling 4 accepted that for
+    all of them; only (e) avoids it. The options as I see them:
     - (a) Rule the transient hold acceptable under stated constraints: the
       values are never decoded for any decision, logged, persisted beyond
       the rewritten config, or sent anywhere; the temp copy lives in the
@@ -899,12 +924,17 @@ change first.
     - (d) Answer Claude Code's trust dialog in the pane. marvel launches the
       seat, sees the dialog, and accepts it with a keystroke, so Claude Code
       writes its own key through its own locked path and marvel holds
-      nothing. Its costs: it is screen scraping (marvel matches dialog text
-      that can change in any release, and it inherits the
-      composer-suggestion and timing problems of reading a pane); every
-      new directory's seat starts blocked on a dialog until marvel answers
-      it; and marvel, not a person, is the one deciding to trust, which is
-      exactly the act the dialog exists to put in front of a person.
+      nothing. Its benefits: Claude Code's own lock and merge path does the
+      write, so marvel has no race at all; Claude Code writes every key
+      form it uses (path, realpath, NFC), where (a) writes the realpath
+      only; if Claude Code moves where it stores trust, (d) keeps working,
+      where (a) would write a key nothing reads and step 5 would still
+      pass; and it acts only when trust is actually needed, because the
+      dialog appears only then. Its costs: it is screen scraping (marvel
+      matches dialog text that can change in any release, and it inherits
+      the composer-suggestion and timing problems of reading a pane), and
+      every new directory's seat starts blocked on a dialog until marvel
+      answers it.
     - (e) Fall back to `trust = "require"` everywhere: marvel holds nothing
       but the decision fields, and the operator trusts each directory once
       by hand. This undoes most of ruling 4.
