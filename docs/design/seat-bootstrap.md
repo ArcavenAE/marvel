@@ -21,6 +21,10 @@ Design for review. No code lands until this doc is reviewed.
 - r6, 2026-10-03, after review 5398538029: Claude Code's lock protocol,
   values-not-bytes, symlinked configs, the shift cooldown, the measured trust
   walk, and the hold in step 4 as ruling 12.
+- r7, 2026-10-03, after review 5398636009: takeover stated as not atomic,
+  with a pre-rename check; ruling 12 gains the dialog-answering option; the
+  temp sweep runs under the lock; the shift cooldown lives in `autoShift`
+  and persists.
 
 ## 1. The problem, verified
 
@@ -478,14 +482,33 @@ What that means for a grant, stated plainly:
    taking it with `mkdir`. While marvel holds the lock it finishes inside 10
    seconds, refreshing the lock's mtime if it runs past 5. It releases only
    a lock whose inode is the one it created.
+
+   **Takeover is not atomic.** The inode check and the `rmdir` are separate
+   calls, and `rmdir` works by path, so two takers released together can
+   both succeed. The reviewer ran r6's algorithm with two forked takers at a
+   60-second-old lock, 3000 trials: both `mkdir`s succeeded in 995, and in 26
+   more a taker's fresh lock vanished just after its `mkdir`. Claude Code's
+   proper-lockfile has the same shape, so a marvel taker and a Claude Code
+   taker can pair the same way. And a daemon that is stopped (asleep,
+   `SIGSTOP`) cannot refresh its mtime, so Claude Code takes the lock over
+   while marvel is paused mid-write. The lock is therefore a courtesy that
+   lowers the odds, not a guarantee, and step 4 carries its own check.
 4. Under the lock, read the config, set the one key (creating
    `projects.<realpath>` with only that field if it is absent), and write it
    back. When the config path is a symlink, the write goes to the link's
    target, the link stays a link, and the target keeps its mode, as Claude
    Code does. The temp file is created in the target's directory with the
-   target's mode, named `<target>.marvel-tmp-<pid>-<random>`, fsynced, and
-   renamed over the target. Encoding follows Claude Code's own: an
-   `Encoder` with `SetEscapeHTML(false)` and a 2-space indent.
+   target's mode, named `<target>.marvel-tmp-<pid>-<random>`, and fsynced.
+   Immediately before the rename, marvel re-checks two things and aborts
+   (removing its temp file) and retries from step 3 if either changed: the
+   lock directory's inode and mtime are still the ones marvel set, and the
+   target's inode, size and mtime are still the ones marvel read. Only then
+   is the temp file renamed over the target. The second check is what
+   catches a Claude Code write that landed during a takeover or a pause,
+   which step 5 alone would miss, since it checks only marvel's key. A
+   window remains between that re-check and the rename; it is narrow, and
+   it is stated rather than claimed closed. Encoding follows Claude Code's
+   own: an `Encoder` with `SetEscapeHTML(false)` and a 2-space indent.
 5. Release the lock, read the config once more, and confirm the key. A
    running Claude Code that rewrites the file from an older copy can drop
    it; marvel retries steps 3 to 5 up to 3 times, then the outcome is
@@ -502,10 +525,13 @@ string. Test 4 compares decoded values, never bytes.
 
 **Temp-file cleanup.** A crash between step 4's write and its rename leaves
 a temp file holding a full copy of the config, a second on-disk copy of
-every value in it. marvel removes its own temp files on every error path
-in step 4, and at daemon start and before each grant it removes any file
-matching `<target>.marvel-tmp-*` in the target's directory. These are files
-marvel created, so removing them is not a deletion of the operator's files.
+every value in it. marvel removes its own temp file on every error path in
+step 4. It also sweeps leftovers, but only while it holds the lock (step 3)
+and only files matching `<target>.marvel-tmp-<pid>-*` whose `<pid>` is not
+a live process: outside the lock, or for a live pid, the file may be
+another marvel daemon's write in flight (a second daemon home on the same
+host uses the same config). These are files a marvel process created, so
+removing them is not a deletion of the operator's files.
 
 Each spawn re-asserts trust this way, so a key a running Claude Code dropped
 between spawns comes back at the next one. SB-0 line 16 measures how often
@@ -550,8 +576,13 @@ SB-4M changes both:
   shift for a role ends timed out, or with a successor refused, that role's
   automatic triggers are held for a cooldown: 15 minutes, doubling on each
   consecutive failure up to 2 hours, reset by a completed shift. The hold
-  emits `shift.cooldown` with its end time, and `describe team` shows it.
-  An operator `marvel shift` is not held.
+  lives in `autoShift` (`controller.go:1972`), the one path both automatic
+  triggers take: context pressure calls it directly, and max age reaches it
+  through `shift_handoff.go:160`. The cooldown's end time and failure count
+  persist with the role's other health state (`RoleHealth`, written through
+  to the bolt `role_health` bucket), so a daemon restart or a reexec does
+  not reset it. The hold emits `shift.cooldown` with its end time, and
+  `describe team` shows it. An operator `marvel shift` is not held.
 - **A refused successor ends the shift.** `shiftLaunch` counts only live
   successor rows (`:2141-2147`), so a successor refused at bootstrap would
   be respawned every tick. A successor row recorded `bootstrap-refused`
@@ -693,8 +724,12 @@ directory marvel trusted (path, time, reason, the session that caused it).
    removed; a lock 12 seconds old is taken over; a lock whose inode changes
    between the stale check and the removal is left in place. A fake
    rewriter that restores the old file after each write ends
-   `trust-write-lost` after 3 attempts. A write killed between temp file and
-   rename leaves a `marvel-tmp` file, which the next grant removes. `require`
+   `trust-write-lost` after 3 attempts. A fake writer that changes the
+   target between marvel's read and its rename (or a lock whose inode or
+   mtime changes in that span) makes marvel abort the rename, remove its
+   temp file, and retry; the other writer's change survives. A write killed between temp file and
+   rename leaves a `marvel-tmp` file, which the next grant removes under
+   the lock; a `marvel-tmp` file whose pid is alive is left alone. `require`
    refuses `trust-absent` and writes nothing; `off` neither reads nor
    writes. `trust_match = "walk"` with a trusted plain parent writes
    nothing, and with a trusted parent of a git-root workdir writes the
@@ -716,7 +751,9 @@ directory marvel trusted (path, time, reason, the session that caused it).
    when the check starts returning 0 the shift completes. After the
    timeout, a role over its context-pressure threshold is not auto-shifted
    again for 15 minutes, then 30 after a second failure, and a completed
-   shift resets it; an operator `marvel shift` still runs. Under `refuse`,
+   shift resets it; an operator `marvel shift` still runs. The cooldown
+   survives a daemon restart and a reexec, and holds a max-age trigger as
+   well as a context-pressure one. Under `refuse`,
    a successor refused at bootstrap stops the shift once and is not
    respawned on the next tick.
 5. The codex seed declares the resolved workdir untrusted, not the daemon cwd.
@@ -845,23 +882,31 @@ change first.
       values are never decoded for any decision, logged, persisted beyond
       the rewritten config, or sent anywhere; the temp copy lives in the
       config's own directory with the config's own mode and is removed on
-      every error path and at the next start (section 5a).
-    - (b) Narrow it: a streaming rewrite that copies the file token by token
-      and holds one value at a time, never the whole file. Every value still
-      passes through marvel, so this lowers exposure without changing the
-      answer to the ADR's question, and it costs a hand-written JSON
-      rewriter.
-    - (c) Let the harness write its own key. Claude Code 2.1.288 has no
-      subcommand that sets trust (its commands are agents, attach, auth,
-      auto-mode, doctor, gateway, import, install, logs, mcp, plugin,
-      purge, respawn, rm, setup-token, stop, ultrareview, update), so this
-      is not available today. If a later version adds one, marvel should
-      switch to it, as it does for the login check.
-    - (d) Fall back to `trust = "require"` everywhere: marvel holds nothing
+      every error path and by the locked sweep (section 5a). The case for
+      it: under these constraints the hold is no different in kind from the
+      operator's own editor or `jq` rewriting the file, and marvel keeps
+      nothing afterwards.
+    - (b) A streaming rewrite that copies the file token by token and holds
+      one value at a time in memory. It still writes a full temp copy on
+      disk, the same as (a), so it narrows only the in-memory hold, and it
+      costs a hand-written JSON rewriter.
+    - (c) Let the harness write its own key through a command. Verified
+      unavailable today: Claude Code 2.1.288 has no subcommand that sets
+      trust (its commands are agents, attach, auth, auto-mode, doctor,
+      gateway, import, install, logs, mcp, plugin, purge, respawn, rm,
+      setup-token, stop, ultrareview, update). If a later version adds one,
+      marvel should switch to it.
+    - (d) Answer Claude Code's trust dialog in the pane. marvel launches the
+      seat, sees the dialog, and accepts it with a keystroke, so Claude Code
+      writes its own key through its own locked path and marvel holds
+      nothing. Its costs: it is screen scraping (marvel matches dialog text
+      that can change in any release, and it inherits the
+      composer-suggestion and timing problems of reading a pane); every
+      new directory's seat starts blocked on a dialog until marvel answers
+      it; and marvel, not a person, is the one deciding to trust, which is
+      exactly the act the dialog exists to put in front of a person.
+    - (e) Fall back to `trust = "require"` everywhere: marvel holds nothing
       but the decision fields, and the operator trusts each directory once
       by hand. This undoes most of ruling 4.
 
-    Default offered: (a), with (c) adopted whenever Claude Code offers it.
-    The constraints in (a) are what make the hold no different in kind from
-    the operator's own editor or `jq` rewriting the file, and marvel keeps
-    nothing afterwards.
+    Default offered: (a), switching to (c) whenever Claude Code offers it.
