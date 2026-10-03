@@ -82,19 +82,50 @@ func runInstall(method installMethod, exe, channel, targetVersion string) (Resul
 	})
 }
 
-// installedBinary is the path whose contents track what is installed. Scaffold.
+// homebrewFormula is the tap formula marvel installs and upgrades through.
+const homebrewFormula = "arcavenae/tap/marvel"
+
+// installedBinary is the path whose contents track what is installed. For a
+// Homebrew install that is brew's stable link, <prefix>/bin/marvel under the
+// formula's opt link, which brew retargets on every upgrade. The running
+// binary's own path is not that: on Linux os.Executable() is
+// readlink(/proc/self/exe), the resolved keg, which never retargets and which
+// brew's cleanup removes. Everywhere else the running binary is the installed
+// one. If brew cannot say where the link is, the running binary is the best
+// remaining guess.
 func installedBinary(method installMethod, self string) string {
-	_ = method
-	return self
+	if method != methodHomebrew {
+		return self
+	}
+	data, err := exec.Command("brew", "--prefix", homebrewFormula).Output()
+	if err != nil {
+		return self
+	}
+	stable := filepath.Join(strings.TrimSpace(string(data)), "bin", "marvel")
+	if _, err := os.Stat(stable); err != nil {
+		return self
+	}
+	return stable
 }
 
 // ReexecRefusal says why --daemon cannot adopt an upgrade on this install, or
-// nil. Scaffold.
+// nil. It is checked before anything is upgraded.
 func ReexecRefusal() error { return reexecRefusal(runtime.GOOS, detectInstallMethod()) }
 
+// reexecRefusal: a daemon re-executes its own os.Executable. On Linux that is
+// the resolved keg it started from, so after a brew upgrade it is the old build
+// or, once brew's cleanup has run, gone, and exec after detach would leave the
+// daemon not serving. The CLI cannot see or change that target, so it refuses
+// rather than claim an adoption it cannot deliver.
 func reexecRefusal(goos string, method installMethod) error {
-	_, _ = goos, method
-	return nil
+	if goos != "linux" || method != methodHomebrew {
+		return nil
+	}
+	return errors.New("--daemon refused: marvel is installed with Homebrew on Linux, where the running daemon " +
+		"re-executes the keg it started from, and a brew upgrade leaves that keg old or removes it, " +
+		"so the daemon cannot adopt the new build. Nothing was upgraded. " +
+		"Run marvel upgrade without --daemon, then restart the daemon with 'marvel stop' and 'marvel daemon' " +
+		"(agents keep running)")
 }
 
 // runMethod performs the upgrade for one install method.
@@ -157,7 +188,7 @@ func upgradeViaHomebrew(channel string) error {
 	// threedoors-a, jr-a), route the alpha channel back here.
 	// The `channel` parameter is retained for that future fork.
 	_ = channel
-	formula := "arcavenae/tap/marvel"
+	formula := homebrewFormula
 
 	say("Installed via Homebrew. Running: brew upgrade %s", formula)
 
@@ -403,16 +434,27 @@ func fingerprint(path string) (string, error) {
 }
 
 // runWith runs do and reports whether the binary at exe changed across it. An
-// error from do is returned and never reports a change. If the installed binary
-// cannot be read afterwards nothing is known about it, so that is an error too,
-// and no change is reported.
+// error from do is returned and never reports a change; if the binary changed
+// anyway (brew can fail after it has relinked) that is said on errOut, because
+// the exit code alone would say nothing was installed. With no readable
+// baseline there is nothing to lose: the binary is not known to have changed,
+// and that is not an error. If a baseline was read and the binary cannot be
+// read afterwards, nothing is known about it, so that is an error, and no
+// change is reported.
 func runWith(exe string, do func() error) (Result, error) {
 	before, beforeErr := fingerprint(exe)
 	if err := do(); err != nil {
+		if after, aerr := fingerprint(exe); beforeErr == nil && aerr == nil && after != before {
+			_, _ = fmt.Fprintf(errOut, "note: the installed binary %s changed even though the upgrade reported a failure; "+
+				"run 'marvel version' to see which build is installed\n", exe)
+		}
 		return Result{}, err
 	}
 	after, err := fingerprint(exe)
 	if err != nil {
+		if beforeErr != nil {
+			return Result{}, nil
+		}
 		return Result{}, fmt.Errorf("the upgrade ran, but the installed binary %s cannot be read afterwards, so it is not known to have changed: %w", exe, err)
 	}
 	return Result{Changed: beforeErr == nil && before != after}, nil

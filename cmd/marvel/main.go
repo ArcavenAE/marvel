@@ -1664,8 +1664,14 @@ keep running (see 'marvel daemon reexec'). The daemon is re-executed only
 when the installed binary actually changed.
 
 A failed brew upgrade, and a binary owned by a system package manager,
-exit non-zero.`,
+exit non-zero. --daemon is refused, before anything is upgraded, on a
+Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if reexecDaemon {
+				if err := upgrade.ReexecRefusal(); err != nil {
+					return err
+				}
+			}
 			res, err := upgrade.Run(channel, targetVersion)
 			if err != nil {
 				return err
