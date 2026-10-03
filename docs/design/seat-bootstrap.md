@@ -28,6 +28,8 @@ Design for review. No code lands until this doc is reviewed.
 - r8, 2026-10-03, after review 5398695921: ruling 12 states the shared
   trade once and gives (d) its benefits; the pre-rename check hashes the
   target; the cooldown's persistence traps; SB-1 marked landed as #482.
+- r9, 2026-10-03: the default's reason in ruling 12, and code cites
+  refreshed to `origin/main` 33fb22a with function names beside them.
 
 ## 1. The problem, verified
 
@@ -585,35 +587,37 @@ running. Today two things would turn a failing successor into a loop, and
 SB-4M changes both:
 
 - **A cooldown after a failed shift.** Context-pressure auto-shift has no
-  cooldown after `KindShiftTimedOut` (`internal/team/controller.go:1935-1947`,
-  `:1972-1987`), so the next tick triggers the same shift again. After a
+  cooldown after `KindShiftTimedOut` (`abortStuckShift` emits it,
+  `internal/team/controller.go:2160`; `evaluateShiftTriggers`, from `:1952`,
+  re-triggers through `autoShift`, `:2021`), so the next tick triggers the
+  same shift again. After a
   shift for a role ends timed out, or with a successor refused, that role's
   automatic triggers are held for a cooldown: 15 minutes, doubling on each
   consecutive failure up to 2 hours, reset by a completed shift. The hold
-  lives in `autoShift` (`controller.go:1972`), the one path both automatic
-  triggers take: context pressure calls it directly, and max age reaches it
-  through `shift_handoff.go:160`. The cooldown's end time and failure count
+  lives in `autoShift` (`controller.go:2021`), the one path both automatic
+  triggers take: context pressure calls it directly from
+  `evaluateShiftTriggers` (`:1994`), and max age reaches it through
+  `shift_handoff.go:163`. The cooldown's end time and failure count
   persist with the role's other health state (`RoleHealth`, written through
   to the bolt `role_health` bucket), so a daemon restart or a reexec does
   not reset it. The record is plain JSON, so two new fields need no schema
   migration (the `Budget` field set the precedent). Two traps for the
-  builder: `persistRoleHealth` rebuilds the record from its fields
-  (`controller.go:229-238`) and `RehydrateRoleHealth` copies them back
-  (`:212-217`), and both must carry the new fields, or the next crash-loop
+  builder: `persistRoleHealth` (`controller.go:230`) rebuilds the record
+  from its fields and `RehydrateRoleHealth` (from `:206`) copies them back, and both must carry the new fields, or the next crash-loop
   write zeroes the cooldown. The whole record is deleted
   (`forgetRoleHealth`) by `marvel reset-health`, by deleting the team or
   workspace, and by removing the role, and that is intended: each is the
   operator saying the role starts over, so the cooldown goes with it. The hold emits `shift.cooldown` with its end time, and
   `describe team` shows it. An operator `marvel shift` is not held.
 - **A refused successor ends the shift.** `shiftLaunch` counts only live
-  successor rows (`:2141-2147`), so a successor refused at bootstrap would
+  successor rows (from `:2189`; the live filter is at `:2196`), so a successor refused at bootstrap would
   be respawned every tick. A successor row recorded `bootstrap-refused`
   counts as launched-and-failed for that shift: the shift stops, as at its
   timeout, and the cooldown starts.
 
 The roll-back scope is today's, stated, not changed: `abortStuckShift`
 restores the old generation only when the first role was still launching
-(`:2100`). For a later role it stops "with k of m roles shifted": the roles
+(the `rollback` test, `:2149`). For a later role it stops "with k of m roles shifted": the roles
 already shifted keep their successors, which passed their own checks, and
 the failing role keeps its predecessors, which were never drained.
 
@@ -823,7 +827,7 @@ directory marvel trusted (path, time, reason, the session that caused it).
 
 | # | Edit | Depends on |
 |---|---|---|
-| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`, preceded by the `<store>.v1.bak` backup; `new-session -c`; `WorkDirSource`. **Landed as #482** (the migration and stamp; the managed directory fallback is not checked here) | aae-orc-5as2e |
+| SB-1 | Managed directory fallback for records created after SB-1; `boltSchemaVersion` 2 with the `legacy` stamp as the v1 to v2 migration in `Open`, preceded by the `<store>.v1.bak` backup; `new-session -c`; `WorkDirSource`. **Landed as #482** (the migration and stamp; the managed directory fallback is not checked here). #488 (merged 413288c, placement at spawn and refusal of a missing workdir) may also bear on section 3; not checked here either | aae-orc-5as2e |
 | SB-7a | Cleanup: every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) and is re-applied on each cluster that runs it; a team with no file gets a manifest | SB-1 |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run). **Done 2026-10-02, red** (section 5a) | none |
@@ -940,3 +944,5 @@ change first.
       by hand. This undoes most of ruling 4.
 
     Default offered: (a), switching to (c) whenever Claude Code offers it.
+    Why (a) over (d): (a) never blocks a seat's start and reads no screen
+    text, and (d) does both.
