@@ -426,6 +426,13 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 			env["DIRECTOR_NATS_USER"] = ctx.BusUser
 			env["DIRECTOR_NATS_PASS"] = ctx.BusPassword
 		}
+		// The resolved global role, so director's launcher reads the
+		// declaration and not the role name. Set only when the role holds the
+		// tier on this cluster; a seat already running keeps the environment
+		// it started with until it is respawned.
+		if ctx.GlobalRole != "" {
+			env["DIRECTOR_GLOBAL_ROLE"] = ctx.GlobalRole
+		}
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath

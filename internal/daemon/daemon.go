@@ -3028,6 +3028,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 	if serr != nil {
 		return serr
 	}
+	mgr.Events = d.events
 	d.bus = mgr
 	d.sessMgr.Bus = mgr
 	// Render before start so the child reads a current conf; wire the
@@ -3458,9 +3459,26 @@ const (
 	repaintSettleMax     = 10 * time.Second
 )
 
-// refuseUnadmittedGlobalRoles is the early, loud half of the two-key guard:
-// scaffold, refuses nothing yet.
+// refuseUnadmittedGlobalRoles is the early, loud half of the two-key guard
+// (global-role-declaration.md section 6): a role whose manifest declares the
+// global tier on a cluster that does not admit its name is refused before
+// anything is stored, naming the role and the config key. The guard itself is
+// the resolver, which runs at every render; this lets an author see the mistake
+// at apply. With no bus there is no global tier to widen, so a declaration is
+// inert there and nothing is refused.
 func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
-	_, _ = m, b
+	if b == nil {
+		return nil
+	}
+	for _, mt := range m.Teams {
+		for _, r := range mt.Roles {
+			if r.GlobalRole != api.GlobalRoleSupervisor {
+				continue
+			}
+			if b.GlobalRole(api.Role{Name: r.Name, GlobalRole: r.GlobalRole}) == "" {
+				return fmt.Errorf("apply manifest: team %s role %s declares global_role %q but the cluster does not admit it: list %q under global_roles on the message-bus entry of the client config", mt.Name, r.Name, r.GlobalRole, r.Name)
+			}
+		}
+	}
 	return nil
 }
