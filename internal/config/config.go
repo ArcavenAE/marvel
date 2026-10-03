@@ -609,6 +609,11 @@ func ValidateBus(cluster string, b *Bus) error {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.ca_file %q must be an absolute path (or ~-relative); the broker resolves it, not the daemon", ErrInvalidBus, cluster, b.Hub.CAFile))
 		}
 	}
+	for _, name := range b.GlobalRoles {
+		if err := validSubjectToken("global_roles entry", name); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: %v", ErrInvalidBus, cluster, err))
+		}
+	}
 	if b.Seat != nil {
 		if !managed {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: seat renders a director user, which only a managed bus can carry; this bus is %s", ErrInvalidBus, cluster, mode))

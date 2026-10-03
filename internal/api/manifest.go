@@ -427,6 +427,12 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// value means "unset" and is allowed, but a non-empty typo
 			// silently breaks the session, so reject it here. Orthogonal
 			// to dangerous_permissions (see canonicalPermissionModes).
+			// global_role names the global role the role holds, as the address
+			// word. Empty is absent and "none" opts out; anything else is a
+			// typo, and a typo would silently hold nothing, so refuse it.
+			if r.GlobalRole != "" && r.GlobalRole != GlobalRoleSupervisor && r.GlobalRole != GlobalRoleNone {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].global_role %q is not a valid global role (valid: %s, %s)", i, j, r.GlobalRole, GlobalRoleNone, GlobalRoleSupervisor)
+			}
 			if r.Permissions != "" && !canonicalPermissionModes[r.Permissions] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].permissions %q is not a valid permission mode (valid: %s)", i, j, r.Permissions, permissionModeList())
 			}
@@ -770,6 +776,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Permissions:          mr.Permissions,
 				DangerousPermissions: mr.DangerousPermissions,
 				Persona:              mr.Persona,
+				GlobalRole:           mr.GlobalRole,
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
