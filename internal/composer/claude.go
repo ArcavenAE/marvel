@@ -21,14 +21,11 @@ import (
 //     streams there is no spinner and the composer is empty, so an empty
 //     composer is not evidence of idle: it is Empty only beside a finished turn's
 //     done line or the placeholder, and anything else reads Unknown.
-//
-// It has no clear key until aae-orc-g88i1 grounds one.
 type claudeReader struct{}
 
-func (claudeReader) Name() string     { return "claude" }
-func (claudeReader) Escapes() bool    { return true }
-func (claudeReader) Preflight() bool  { return false }
-func (claudeReader) ClearKey() string { return "" }
+func (claudeReader) Name() string    { return "claude" }
+func (claudeReader) Escapes() bool   { return true }
+func (claudeReader) Preflight() bool { return false }
 
 const (
 	claudePrompt = "❯ "
@@ -122,6 +119,15 @@ func (claudeReader) Read(capture string) State {
 				// a message someone typed in its shape.
 				return Unknown
 			}
+		}
+		// A draft counts only beside positive evidence of idle: a finished turn's
+		// done line. The absence of turn markers is not evidence: the capture is the
+		// visible pane, so a reply taller than the pane scrolls its own markers off
+		// the top and leaves indented text with no spinner and no done line, which
+		// looks exactly like a fresh session. A clear key sent there interrupts the
+		// turn and clears nothing. A first-message draft therefore reads Unknown.
+		if !doneLine.MatchString(above) {
+			return Unknown
 		}
 		return HoldsText
 	}

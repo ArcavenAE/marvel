@@ -2173,17 +2173,18 @@ func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS
 // clearKeyFor returns the key to clear a staged draft, or the reason a clear
 // is refused.
 func (d *Daemon) clearKeyFor(sess api.Session, reader composer.Reader, settleMS int) (key, why string) {
-	if reader.ClearKey() == "" {
-		return "", composer.CanClear(reader, composer.Unknown).Error()
+	key = d.sessMgr.ComposerContract(sess.Runtime.Name).ClearKey
+	if key == "" {
+		return "", composer.CanClear(reader.Name(), "", composer.Unknown).Error()
 	}
 	state, err := d.readComposer(sess, reader, settleMS)
 	if err != nil {
 		return "", "the composer could not be read: " + err.Error()
 	}
-	if err := composer.CanClear(reader, state); err != nil {
+	if err := composer.CanClear(reader.Name(), key, state); err != nil {
 		return "", err.Error()
 	}
-	return reader.ClearKey(), ""
+	return key, ""
 }
 
 // verifyInject reads the composer after the keys went in and records whether

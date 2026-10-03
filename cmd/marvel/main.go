@@ -1569,10 +1569,14 @@ state ("unconfirmed"), and the daemon records session.inject-unconfirmed. A
 harness without a reader reads "unknown", which never confirms, and a shell in
 the foreground reads "shell" (no harness is running).
 
---clear discards a staged draft before the text is sent, but only where a
-reader knows the composer holds text and the harness has a clear key that is
-safe. None does yet: codex and opencode exit on C-c in an empty composer, so
-every --clear is refused today and nothing is typed.`,
+--clear discards a staged draft before the text is sent, with one C-c, and only
+when a reader sees text in an idle composer. That works for claude today
+(measured on 2.1.288), and only for a draft beside a finished turn's done line:
+a pane whose reply has scrolled off carries no marker that shows it idle, so it
+reads unknown. It is refused, with nothing typed, whenever the composer reads
+empty (C-c would arm the exit prompt), mid-turn or streaming (C-c would
+interrupt the turn), or unknown, and for codex and opencode, which exit on C-c
+at an empty composer and have no reader that can see a draft yet.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var text string
