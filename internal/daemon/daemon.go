@@ -237,6 +237,9 @@ type Options struct {
 	// table the usage accountant resolves denominators against. Tests set
 	// it so a fixture's model does not have to be a real shipped entry.
 	ContextLimits usage.Table
+	// Build is the build this daemon reports over MethodVersion and in its
+	// startup log line. The CLI stamps it from its own -ldflags values.
+	Build Build
 }
 
 // New creates a new daemon with default options.
@@ -937,6 +940,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		// path do not use for this method; handleRWCAs routes it to the
 		// streaming handler before dispatch.
 		return Response{Error: fmt.Sprintf("%s streams many responses on one connection; use daemon.WatchEventsWith", MethodEventsWatch)}
+	case MethodVersion:
+		return d.handleVersion()
 	case "orphans":
 		return d.handleOrphans()
 	case "plan":
