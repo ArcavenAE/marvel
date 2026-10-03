@@ -28,6 +28,7 @@ import (
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
@@ -301,6 +302,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	teamCtrl.Notify = func(sess api.Session, text string) error {
 		if sess.PaneID == "" {
 			return fmt.Errorf("session %s has no pane", sess.Key())
+		}
+		// The handoff request is typed text like any inject, so it passes the same
+		// pre-flight: a codex seat on its update menu since spawn reads as quiet,
+		// which is the seat this stage picks.
+		if why := preflightRefusal(driver, sess, composer.ReaderFor(sess.Runtime.Name)); why != "" {
+			emitInjectRefused(evRing, sess, why, "transport=daemon injector=marvel:max-age")
+			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
 		}
 		if err := driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 			return err
@@ -1994,6 +2002,15 @@ type injectParams struct {
 	// and the user. It is a claim, not a proof; the daemon records it beside
 	// the transport it saw itself.
 	Injector Injector `json:"injector,omitempty"`
+	// Verify reads the composer after the keys are sent and reports whether
+	// the effect was seen. Off by default.
+	Verify bool `json:"verify,omitempty"`
+	// Clear discards a staged draft before the text is sent, only where the
+	// harness's composer is known and a clear is safe.
+	Clear bool `json:"clear,omitempty"`
+	// SettleMS is how long verification waits for a redraw. Zero means the
+	// default.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
@@ -2017,17 +2034,169 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
+	origin := injectOrigin(c, p.Injector)
+	reader := composer.ReaderFor(sess.Runtime.Name)
+
+	// A clear is only sent where a reader can vouch for it. Where the harness
+	// has no safe clear key nothing is read and nothing is typed.
+	var clearKey string
+	if p.Clear {
+		key, why := d.clearKeyFor(sess, reader, p.SettleMS)
+		if why != "" {
+			return d.refuseInject(sess, p, origin, "refusing --clear: "+why)
+		}
+		clearKey = key
+	}
+
+	// A harness with a state where a keystroke is dangerous is read before any
+	// input. Escape alone passes: it is the key that dismisses such a menu.
+	if !isDismissKey(p) {
+		if why := preflightRefusal(d.driver, sess, reader); why != "" {
+			return d.refuseInject(sess, p, origin, why)
+		}
+	}
+
+	if clearKey != "" {
+		if err := d.driver.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
+			return Response{Error: fmt.Sprintf("inject %s: clear: %v", p.SessionKey, err)}
+		}
+	}
 	if err := d.driver.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
-	recordInject(d.events, sess, p, injectOrigin(c, p.Injector))
+	recordInject(d.events, sess, p, origin)
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":  "injected",
 		"session": p.SessionKey,
-	})
+	}
+	if p.Verify {
+		d.verifyInject(sess, reader, p, out)
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
+}
+
+// isDismissKey reports whether an inject is a lone Escape.
+func isDismissKey(p injectParams) bool {
+	return !p.Literal && !p.Enter && p.Text == "Escape"
+}
+
+// preflightRefusal reads a pane before keystrokes go in and returns why they
+// must not, or "" when they may. It applies to a harness whose reader has a state
+// where a keystroke is dangerous, and it fails closed: a pane that cannot be read
+// is not typed into blind.
+//
+// It is a check, not a lock. The pane can change between this read and the
+// keystrokes (a seat still starting can draw its menu just after the capture),
+// and nothing here holds it still.
+func preflightRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader) string {
+	if !reader.Preflight() {
+		return ""
+	}
+	content, err := driver.CapturePaneJoined(sess.PaneID)
+	if err != nil {
+		return "the pane could not be read, so " + reader.Name() + " is not typed into blind: " + err.Error()
+	}
+	if reader.Read(content) == composer.MenuUnsafe {
+		return reader.Name() + " is showing its update menu, where Enter or a newline runs the vendor's installer; send Escape to skip it (marvel#477)"
+	}
+	return ""
+}
+
+// emitInjectRefused records that nothing was typed. The record never carries
+// the text.
+func emitInjectRefused(ring *events.Ring, sess api.Session, why, origin string) {
+	log.Printf("inject: %s refused: %s", sess.Key(), why)
+	events.Emit(ring, events.Event{
+		Kind:      events.KindSessionInjectRefused,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   fmt.Sprintf("inject refused: %s %s", why, origin),
+	})
+}
+
+// refuseInject records the refusal and returns the error.
+func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) Response {
+	emitInjectRefused(d.events, sess, why, origin)
+	return Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
+}
+
+// repaintSettled nudges a pane so its program redraws, holds for settle, and
+// waits for the restore's redraw. A failure to nudge is reported, not fatal.
+func (d *Daemon) repaintSettled(paneID string, settleMS int) (tmux.RepaintResult, error) {
+	settle := repaintSettle(settleMS)
+	res, err := d.driver.Repaint(paneID, settle)
+	if err == nil {
+		time.Sleep(settle)
+	}
+	return res, err
+}
+
+// readComposer repaints the pane, captures it, and places it in a composer
+// state. A shell in the foreground means no harness is running, whatever the
+// reader would make of the screen.
+func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS int) (composer.State, error) {
+	res, _ := d.repaintSettled(sess.PaneID, settleMS)
+	content, err := d.driver.CapturePane(sess.PaneID)
+	if err != nil {
+		return composer.Unknown, err
+	}
+	if composer.ShellTarget(res.Target) {
+		return composer.Shell, nil
+	}
+	return reader.Read(content), nil
+}
+
+// clearKeyFor returns the key to clear a staged draft, or the reason a clear
+// is refused.
+func (d *Daemon) clearKeyFor(sess api.Session, reader composer.Reader, settleMS int) (key, why string) {
+	if reader.ClearKey() == "" {
+		return "", composer.CanClear(reader, composer.Unknown).Error()
+	}
+	state, err := d.readComposer(sess, reader, settleMS)
+	if err != nil {
+		return "", "the composer could not be read: " + err.Error()
+	}
+	if err := composer.CanClear(reader, state); err != nil {
+		return "", err.Error()
+	}
+	return reader.ClearKey(), ""
+}
+
+// verifyInject reads the composer after the keys went in and records whether
+// the intended effect was seen.
+func (d *Daemon) verifyInject(sess api.Session, reader composer.Reader, p injectParams, out map[string]string) {
+	var intent composer.Intent
+	switch {
+	case p.Enter || (!p.Literal && p.Text == "Enter"):
+		intent = composer.Submit
+	case p.Literal && p.Text != "":
+		intent = composer.Stage
+	default:
+		out["verify"] = "skipped"
+		return
+	}
+	state, err := d.readComposer(sess, reader, p.SettleMS)
+	out["composer"] = string(state)
+	if err == nil && composer.Confirms(intent, state) {
+		out["verify"] = "confirmed"
+		return
+	}
+	out["verify"] = "unconfirmed"
+	events.Emit(d.events, events.Event{
+		Kind:      events.KindSessionInjectUnconfirmed,
+		Severity:  events.SeverityWarning,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Name,
+		Message:   fmt.Sprintf("inject %s sent, effect not seen: composer reads %s", intent, state),
+	})
 }
 
 // Capture params — read a session's pane content.
@@ -2088,13 +2257,8 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	// beside the capture and never fails it.
 	repaint, target := "", ""
 	if p.Repaint {
-		settle := repaintSettle(p.SettleMS)
-		res, rerr := d.driver.Repaint(sess.PaneID, settle)
+		res, rerr := d.repaintSettled(sess.PaneID, p.SettleMS)
 		repaint, target = repaintStatus(res, rerr), res.Target
-		if rerr == nil {
-			// The nudge was held for settle; the restore repaints too.
-			time.Sleep(settle)
-		}
 	}
 
 	var content string

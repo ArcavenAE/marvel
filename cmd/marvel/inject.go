@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	osuser "os/user"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // injectStep is one send-keys request the inject command will issue. A bare
@@ -14,6 +16,12 @@ type injectStep struct {
 	Text    string
 	Literal bool
 	Enter   bool
+	// Clear asks the daemon to clear a staged draft first, where it can do so
+	// safely. Verify asks it to read the composer afterwards and say whether the
+	// effect was seen. SettleMS is how long it waits for a redraw.
+	Clear    bool
+	Verify   bool
+	SettleMS int
 }
 
 // namedTmuxKeys are the key names a person is most likely to type as if they
@@ -111,13 +119,23 @@ func describeInject(sessionKey string, steps []injectStep) string {
 
 // injectRequestParams builds the params for one inject step.
 func injectRequestParams(sessionKey string, step injectStep) map[string]any {
-	return map[string]any{
+	p := map[string]any{
 		"session_key": sessionKey,
 		"text":        step.Text,
 		"literal":     step.Literal,
 		"enter":       step.Enter,
 		"injector":    injectorDeclaration(),
 	}
+	if step.Clear {
+		p["clear"] = true
+	}
+	if step.Verify {
+		p["verify"] = true
+	}
+	if step.SettleMS > 0 {
+		p["settle_ms"] = step.SettleMS
+	}
+	return p
 }
 
 // injectorDeclaration is what this process claims about itself: the seat it
@@ -138,4 +156,51 @@ func injectorDeclaration() map[string]string {
 		d["user"] = user
 	}
 	return d
+}
+
+// applyInjectOptions sets the verification options on the steps: a clear goes
+// with the first step, and verification with the last, so it reads the composer
+// after everything was sent. The settle applies to every step that uses it.
+func applyInjectOptions(steps []injectStep, verify, clearDraft bool, settle time.Duration) []injectStep {
+	if len(steps) == 0 || (!verify && !clearDraft) {
+		return steps
+	}
+	out := append([]injectStep(nil), steps...)
+	ms := int(settle / time.Millisecond)
+	for i := range out {
+		out[i].SettleMS = ms
+	}
+	out[0].Clear = clearDraft
+	out[len(out)-1].Verify = verify
+	return out
+}
+
+// unconfirmedError turns an inject result into an error when the daemon sent the
+// keys but did not see their effect. Any other result, including one that does
+// not parse, is no error: the command's own success stands.
+func unconfirmedError(sessionKey string, result []byte) error {
+	var r struct {
+		Verify   string `json:"verify"`
+		Composer string `json:"composer"`
+	}
+	if json.Unmarshal(result, &r) != nil || r.Verify != "unconfirmed" {
+		return nil
+	}
+	return fmt.Errorf("injected into %s but the effect was not confirmed: the composer reads %s", sessionKey, r.Composer)
+}
+
+// verifyLine is the line --verify prints on stderr: the verdict and the state
+// the composer read as.
+func verifyLine(result []byte) string {
+	var r struct {
+		Verify   string `json:"verify"`
+		Composer string `json:"composer"`
+	}
+	if json.Unmarshal(result, &r) != nil || r.Verify == "" {
+		return "verify: no verdict from the daemon"
+	}
+	if r.Composer == "" {
+		return "verify: " + r.Verify
+	}
+	return "verify: " + r.Verify + " (composer " + r.Composer + ")"
 }

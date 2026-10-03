@@ -1,6 +1,7 @@
 package team
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -787,5 +788,71 @@ func TestMaxAgeAsksSeatAtAnOlderGeneration(t *testing.T) {
 	}
 	if len(f.notices) != 1 {
 		t.Fatalf("notices = %d, want 1", len(f.notices))
+	}
+}
+
+// A notice that never reached the seat is the usual reason no handoff came, and
+// the event that said so (the refusal) is in an in-memory ring that wraps and
+// empties on a restart. The escalation must carry the cause itself, so the
+// supervisor reading handoff-missing alone is not told only that a file is
+// absent.
+func TestHandoffMissingCarriesTheRefusalCause(t *testing.T) {
+	const cause = "refused: codex is showing its update menu, so nothing was typed"
+	f := newListFixture(t, "test-maxage-refused", maxAgeRole(t.TempDir()))
+	f.ctrl.Notify = func(api.Session, string) error { return errors.New(cause) }
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+
+	f.evaluate()
+	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	f.evaluate()
+
+	evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+	if len(evs) != 1 {
+		t.Fatalf("handoff-missing events = %d, want 1", len(evs))
+	}
+	for _, want := range []string{"never delivered", cause} {
+		if !strings.Contains(evs[0].Message, want) {
+			t.Errorf("handoff-missing lacks %q:\n%s", want, evs[0].Message)
+		}
+	}
+
+	// The restart empties the ring; the request is durable, and so is the cause.
+	fresh := NewController(f.store, f.ctrl.sessMgr)
+	fresh.now = f.clock.Now
+	ring := events.NewRing(0)
+	fresh.Events = ring
+	f.clock.Advance(time.Minute)
+	team, err := f.store.GetTeam(f.teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.evaluateShiftTriggers(&team)
+	fresh.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	fresh.evaluateShiftTriggers(&team)
+	again := ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+	if len(again) != 1 || !strings.Contains(again[0].Message, cause) {
+		t.Fatalf("after a restart the repeat = %+v, want it to carry %q", again, cause)
+	}
+}
+
+// A notice that was delivered must not be reported as undelivered.
+func TestHandoffMissingDoesNotBlameADeliveredNotice(t *testing.T) {
+	f := newListFixture(t, "test-maxage-delivered", maxAgeRole(t.TempDir()))
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+
+	f.evaluate()
+	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	f.evaluate()
+
+	evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+	if len(evs) != 1 || strings.Contains(evs[0].Message, "never delivered") {
+		t.Fatalf("handoff-missing = %+v, want one that does not say the notice was never delivered", evs)
 	}
 }

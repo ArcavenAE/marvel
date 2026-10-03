@@ -29,13 +29,20 @@ const (
 	// KindSessionInjected records keystrokes sent into a session's pane, with
 	// who sent them: the transport the daemon saw and what the caller declared.
 	// It never carries the text typed.
-	KindSessionInjected  Kind = "session.injected"
-	KindSessionCreated   Kind = "session.created"
-	KindSessionDeleted   Kind = "session.deleted"
-	KindSessionCrashed   Kind = "session.crashed"
-	KindSessionRestarted Kind = "session.restarted"
-	KindSessionFailed    Kind = "session.failed"
-	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	KindSessionInjected Kind = "session.injected"
+	// KindSessionInjectRefused records an inject the daemon would not type:
+	// the composer reader found the pane in a state where a keystroke is
+	// dangerous, or a clear was asked for where none is safe. Nothing was sent.
+	KindSessionInjectRefused Kind = "session.inject-refused"
+	// KindSessionInjectUnconfirmed records a verified inject whose effect was
+	// not seen: the keys were sent, the composer did not read as expected.
+	KindSessionInjectUnconfirmed Kind = "session.inject-unconfirmed"
+	KindSessionCreated           Kind = "session.created"
+	KindSessionDeleted           Kind = "session.deleted"
+	KindSessionCrashed           Kind = "session.crashed"
+	KindSessionRestarted         Kind = "session.restarted"
+	KindSessionFailed            Kind = "session.failed"
+	KindSessionSucceeded         Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
@@ -273,6 +280,8 @@ const (
 var allKinds = []Kind{
 	KindPlacementLegacyStamped,
 	KindSessionInjected,
+	KindSessionInjectRefused,
+	KindSessionInjectUnconfirmed,
 	KindSessionCreated,
 	KindSessionDeleted,
 	KindSessionCrashed,
