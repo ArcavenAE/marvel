@@ -608,3 +608,98 @@ func TestReexecIsRefusedOnLinuxHomebrew(t *testing.T) {
 		}
 	}
 }
+
+// The cap on pages is reachable: the repo cuts several alphas a day. A tag not
+// found inside the cap must not read as a tag that does not exist.
+func TestLookupSaysWhenTheSearchWasCapped(t *testing.T) {
+	base, _ := serveReleases(t, maxReleasePages*releasesPerPage+100)
+
+	_, err := lookupRelease(base, "alpha", "alpha-99999999")
+	if err == nil {
+		t.Fatal("a tag that is not in the listing was found")
+	}
+	for _, want := range []string{"capped", "20 pages", "alpha-99999999", "releases page"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "no release tagged") {
+		t.Errorf("a capped search claimed the tag does not exist: %q", err)
+	}
+}
+
+// Inside the cap the whole listing was read, so absent means absent.
+func TestLookupSaysNoReleaseWhenTheWholeListingWasRead(t *testing.T) {
+	base, _ := serveReleases(t, 250)
+
+	_, err := lookupRelease(base, "alpha", "alpha-99999999")
+	if err == nil || !strings.Contains(err.Error(), "no release tagged") || !strings.Contains(err.Error(), "250") {
+		t.Fatalf("error = %v, want no release tagged, naming the 250 releases read", err)
+	}
+	if strings.Contains(err.Error(), "capped") {
+		t.Errorf("a full read was called capped: %q", err)
+	}
+}
+
+// "Running: brew upgrade" is printed when the upgrade runs, not before a
+// refusal that means it never will.
+func TestBrewDoesNotAnnounceAnUpgradeItRefuses(t *testing.T) {
+	fakeBrewInfo(t)
+	buf := captureOut(t)
+
+	if err := upgradeViaHomebrew("alpha", olderTag); err == nil {
+		t.Fatal("the older tag was not refused")
+	}
+	if strings.Contains(buf.String(), "Running: brew upgrade") {
+		t.Errorf("a refused upgrade announced that it was running:\n%s", buf)
+	}
+}
+
+func TestBrewAnnouncesTheUpgradeItRuns(t *testing.T) {
+	fakeBrewInfo(t)
+	buf := captureOut(t)
+
+	if err := upgradeViaHomebrew("alpha", releaseTag); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Running: brew upgrade arcavenae/tap/marvel") {
+		t.Errorf("the upgrade that ran was not announced:\n%s", buf)
+	}
+}
+
+// Plain `marvel stop` also stops the managed broker; a reexec keeps it. The
+// advice to restart the daemon must keep it too.
+func TestReexecRefusalAdvisesKeepingTheBroker(t *testing.T) {
+	err := reexecRefusal("linux", methodHomebrew)
+	if err == nil || !strings.Contains(err.Error(), "marvel stop --keep-bus") {
+		t.Fatalf("error = %v, want advice to run marvel stop --keep-bus", err)
+	}
+}
+
+// When brew cannot say where the installed binary is, the running binary is
+// used instead, which can be the wrong one. Say so.
+func TestFallbackToTheRunningBinaryIsSaid(t *testing.T) {
+	var buf bytes.Buffer
+	prev := errOut
+	errOut = &buf
+	t.Cleanup(func() { errOut = prev })
+
+	t.Setenv("PATH", t.TempDir())
+	installedBinary(methodHomebrew, "/opt/homebrew/bin/marvel")
+	for _, want := range []string{"/opt/homebrew/bin/marvel", "running binary"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("note %q lacks %q", buf.String(), want)
+		}
+	}
+
+	buf.Reset()
+	self := kegLayout(t, false)
+	installedBinary(methodHomebrew, self)
+	if buf.Len() != 0 {
+		t.Errorf("brew answered, yet a fallback was reported: %q", buf.String())
+	}
+	installedBinary(methodDirect, "/usr/local/bin/marvel")
+	if buf.Len() != 0 {
+		t.Errorf("a direct install reported a fallback: %q", buf.String())
+	}
+}

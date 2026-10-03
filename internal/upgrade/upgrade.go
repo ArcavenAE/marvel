@@ -227,12 +227,7 @@ func upgradeViaHomebrew(channel, targetVersion string) error {
 func upgradeDirectBinary(channel, targetVersion string) error {
 	fmt.Println("Checking for updates...")
 
-	releases, err := fetchReleases(apiBase, targetVersion)
-	if err != nil {
-		return err
-	}
-
-	release, err := findRelease(releases, channel, targetVersion)
+	release, err := lookupRelease(apiBase, channel, targetVersion)
 	if err != nil {
 		return err
 	}
@@ -290,6 +285,16 @@ func holdsTag(releases []githubRelease, tag string) bool {
 		}
 	}
 	return false
+}
+
+// lookupRelease finds the release to install: the latest for the channel, or
+// the exact tag asked for. Scaffold.
+func lookupRelease(base, channel, targetVersion string) (*githubRelease, error) {
+	releases, err := fetchReleases(base, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	return findRelease(releases, channel, targetVersion)
 }
 
 func fetchReleasePage(client *http.Client, base string, page int) ([]githubRelease, error) {
