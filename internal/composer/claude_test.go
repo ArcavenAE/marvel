@@ -28,7 +28,10 @@ func TestClaudeReaderReadsTheCapturedStates(t *testing.T) {
 	}{
 		// Plain cannot tell the dim placeholder from typed text, so it is unknown.
 		{"1-empty-idle", Unknown, Empty},
-		{"2-staged-draft", HoldsText, HoldsText},
+		// A staged draft in a session with no done line above it is not provably
+		// idle: a long reply that scrolled off the pane looks the same, and a clear
+		// key sent there interrupts the turn instead of clearing the draft.
+		{"2-staged-draft", Unknown, Unknown},
 		{"3a-mid-turn-1s5", MidTurn, MidTurn},
 		// Text streaming: no spinner and an empty composer. That is neither
 		// idle nor empty, so the reader says unknown.
@@ -79,7 +82,13 @@ func TestClaudeReaderEdges(t *testing.T) {
 		{"a spinner with another verb and a token count", frame("✶ Pondering… (12s · ↓ 300 tokens · thinking)", "❯"+nb), MidTurn},
 		{"a spinner with text typed ahead is the harness busy", frame("✳ Cooking… (3s · thinking)", "❯"+nb+"next thing"), MidTurn},
 		{"idle with text typed", frame("✻ Cooked for 1m 3s · done 5:23 PM", "❯"+nb+"a half written message"), HoldsText},
-		{"a multi line draft", frame("", "❯"+nb+"line one", "  line two", "  line three"), HoldsText},
+		{"a multi line draft beside a finished turn", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"line one", "  line two", "  line three"), HoldsText},
+		{"a multi line draft with nothing above it is not provably idle", frame("", "❯"+nb+"line one", "  line two", "  line three"), Unknown},
+		// A reply taller than the pane scrolls its own markers off the top: what is
+		// left is indented reply text and the composer, with no spinner and no done
+		// line. A draft typed then is not idle, and a clear key would interrupt.
+		{"a streaming reply scrolled past its markers, with a draft typed", frame("  Lighthouses stand as enduring monuments to humanity's struggle against the sea,\n  their rotating beams cutting through darkness to guide sailors safely to shore.", "❯"+nb+"a draft typed mid-stream"), Unknown},
+		{"a first message with nothing above it is not provably idle", frame("", "❯"+nb+"first message"), Unknown},
 		// The reply text is model-controlled, so a reply must not be able to
 		// pass for the harness's own idle marker or spinner. Only the done line's
 		// and spinner's own glyphs count; the reply bullet and tool-output marker
@@ -97,14 +106,13 @@ func TestClaudeReaderEdges(t *testing.T) {
 		// typed ahead of streaming text is not reported as an idle draft.
 		{"text typed ahead of streaming text is not an idle draft", frame("⏺ Reply text still arriving", "❯"+nb+"typed ahead"), Unknown},
 		{"text typed ahead after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+"typed"), Unknown},
-		{"a draft in a session that has run no turn", frame("", "❯"+nb+"first message"), HoldsText},
 		// The dim placeholder is checked before the idle rule: it is no draft, so a
 		// placeholder after an earlier turn still reads empty and not unknown.
 		{"a dim placeholder after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+dim+"Try \"fix the build\"\x1b[0m"), Empty},
 		{"a hint line right of the composer is not content", frame("✻ Worked for 2s · done 5:23 PM\n"+strings.Repeat(" ", 100)+"auto mode unavailable for this model", "❯"+nb), Empty},
 		{"streaming text over an older done marker", frame("✻ Worked for 2s · done 5:23 PM\n\n❯ next prompt\n\n⏺ Reply text still arriving", "❯"+nb), Unknown},
 		{"placeholder text with escapes is dim and so empty", frame("", "❯"+nb+dim+"Try \"fix the build\""+"\x1b[0m"), Empty},
-		{"typed text shaped like the placeholder, with escapes elsewhere, is text", "\x1b[39m" + frame("", "❯"+nb+"Try \"fix the build\""), HoldsText},
+		{"typed text shaped like the placeholder, with escapes elsewhere, is text", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"Try \"fix the build\""), HoldsText},
 		{"the same shape in a plain capture is ambiguous", frame("", "❯"+nb+"Try \"fix the build\""), Unknown},
 		{"a prompt with a plain space is not the live composer", frame("", "❯ Try something"), Unknown},
 		{"a composer with no closing rule", "\n" + rule + "\n❯" + nb + "typed\n", Unknown},
