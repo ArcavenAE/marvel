@@ -19,8 +19,12 @@ import (
 const (
 	repoOwner = "ArcavenAE"
 	repoName  = "marvel"
-	apiBase   = "https://api.github.com/repos/" + repoOwner + "/" + repoName
+	// releasesPerPage is the page size asked of the GitHub releases API (its maximum).
+	releasesPerPage = 100
 )
+
+// apiBase is the releases API root; tests point it at a local server.
+var apiBase = "https://api.github.com/repos/" + repoOwner + "/" + repoName
 
 type githubRelease struct {
 	TagName     string        `json:"tag_name"`
@@ -49,7 +53,7 @@ func Run(channel, targetVersion string) error {
 
 	switch method {
 	case methodHomebrew:
-		return upgradeViaHomebrew(channel)
+		return upgradeViaHomebrew(channel, targetVersion)
 	case methodPackage:
 		fmt.Println("marvel was installed via a system package manager.")
 		fmt.Println("Use your package manager to upgrade (e.g., apt upgrade, dnf upgrade).")
@@ -96,7 +100,7 @@ func isOwnedByPackageManager(path string) bool {
 	return false
 }
 
-func upgradeViaHomebrew(channel string) error {
+func upgradeViaHomebrew(channel, targetVersion string) error {
 	// Note: marvel currently ships a single homebrew formula (`marvel`)
 	// covering both alpha and stable builds — goreleaser publishes
 	// alpha-tagged bottles to the same formula. The ArcavenAE/tap
@@ -117,6 +121,10 @@ func upgradeViaHomebrew(channel string) error {
 		return fmt.Errorf("brew update failed: %w", err)
 	}
 
+	if err := checkBrewVersion(channel, targetVersion); err != nil {
+		return err
+	}
+
 	// Upgrade the formula.
 	cmd := exec.Command("brew", "upgrade", formula)
 	cmd.Stdout = os.Stdout
@@ -134,7 +142,7 @@ func upgradeViaHomebrew(channel string) error {
 func upgradeDirectBinary(channel, targetVersion string) error {
 	fmt.Println("Checking for updates...")
 
-	releases, err := fetchReleases()
+	releases, err := fetchReleases(apiBase, targetVersion)
 	if err != nil {
 		return err
 	}
@@ -168,9 +176,10 @@ func upgradeDirectBinary(channel, targetVersion string) error {
 	return downloadAndReplace(asset, release.TagName)
 }
 
-func fetchReleases() ([]githubRelease, error) {
+func fetchReleases(base, want string) ([]githubRelease, error) {
+	_ = want
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", apiBase+"/releases", nil)
+	req, err := http.NewRequest("GET", base+"/releases", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -330,3 +339,14 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	fmt.Printf("Upgraded to %s\n", tag)
 	return nil
 }
+
+// sameBuild reports whether a release tag and a Homebrew formula version name
+// the same build. Scaffold.
+func sameBuild(tag, formulaVersion string) bool { return false }
+
+// checkBrewVersion refuses a --version the tap's formula cannot install
+// exactly. Scaffold.
+func checkBrewVersion(channel, targetVersion string) error { return nil }
+
+// RefuseDev refuses to self-upgrade a dev build. Scaffold.
+func RefuseDev(current string) error { return nil }
