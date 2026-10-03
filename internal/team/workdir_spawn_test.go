@@ -453,3 +453,56 @@ func TestPlacementRefusalClearsWhenTheRoleStopsWantingReplicas(t *testing.T) {
 		cleanup()
 	}
 }
+
+// A hold (bus gate, crash backoff, admission, schedule) spawns nothing this tick
+// but the role still wants a replica, so a standing refusal stays and keeps its
+// start time; a flapping gate must not clear it and make it re-emit. Only a
+// role that is steady or scaling down is not being refused any more.
+func TestPlacementRefusalSurvivesHoldsAndClearsOnlyOnSteadyOrScaleDown(t *testing.T) {
+	skipIfNoTmux(t)
+	store, sessMgr, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	clock := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	sessMgr.Clock = func() time.Time { return clock }
+	sessMgr.Events = events.NewRing(64)
+	ws := "test-wd-holds"
+	gone := filepath.Join(realDir(t), "removed-for-holds")
+	createPlacedTeam(t, store, ws, "", gone, []api.Role{cwdRecorder(t, realDir(t), "seat", "")})
+
+	ctrl.ReconcileOnce()
+	first := sessMgr.PlacementRefusals()
+	if len(first) != 1 {
+		t.Fatalf("refusals before = %+v, want one", first)
+	}
+	apply := func(plan RolePlan) {
+		t.Helper()
+		tm, err := store.GetTeam(ws + "/squad")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctrl.mu.Lock()
+		defer ctrl.mu.Unlock()
+		ctrl.applyRolePlan(&tm, &tm.Roles[0], plan)
+	}
+
+	clock = clock.Add(time.Minute)
+	apply(RolePlan{Role: "seat", Action: RoleHold})
+	kept := sessMgr.PlacementRefusals()
+	if len(kept) != 1 || !kept[0].Since.Equal(first[0].Since) {
+		t.Fatalf("a hold changed the standing refusal: %+v, want it kept with Since %s", kept, first[0].Since)
+	}
+
+	apply(RolePlan{Role: "seat", Action: RoleSteady})
+	if left := sessMgr.PlacementRefusals(); len(left) != 0 {
+		t.Errorf("refusals after a steady plan = %+v, want none", left)
+	}
+
+	ctrl.ReconcileOnce()
+	if again := sessMgr.PlacementRefusals(); len(again) != 1 {
+		t.Fatalf("refusal did not return on the next spawn attempt: %+v", again)
+	}
+	apply(RolePlan{Role: "seat", Action: RoleScaleDown})
+	if left := sessMgr.PlacementRefusals(); len(left) != 0 {
+		t.Errorf("refusals after a scale-down plan = %+v, want none", left)
+	}
+}
