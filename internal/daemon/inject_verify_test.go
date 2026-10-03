@@ -326,11 +326,13 @@ func TestClearNeverReachesTheKeyOnAnyOtherReading(t *testing.T) {
 		runtime string
 		frame   string
 	}{
-		"an empty composer":    {"claude", frameWith("✻ Worked for 2s · done 5:23 PM", "❯"+testNB)},
-		"a running turn":       {"claude", frameWith("✳ Cooking… (3s · thinking)", "❯"+testNB+"typed ahead")},
-		"streaming text":       {"claude", frameWith("⏺ Reply text still arriving", "❯"+testNB+"typed ahead")},
-		"codex, no reader yet": {"codex", frameWith("", "› a draft in codex's shape")},
-		"opencode, no reader":  {"opencode", frameWith("", "a draft in opencode's shape")},
+		"an empty composer":                 {"claude", frameWith("✻ Worked for 2s · done 5:23 PM", "❯"+testNB)},
+		"a running turn":                    {"claude", frameWith("✳ Cooking… (3s · thinking)", "❯"+testNB+"typed ahead")},
+		"streaming text":                    {"claude", frameWith("⏺ Reply text still arriving", "❯"+testNB+"typed ahead")},
+		"a reply scrolled past its markers": {"claude", frameWith("  Lighthouses stand as enduring monuments to humanity's struggle\n  against the sea, their rotating beams cutting through darkness", "❯"+testNB+"typed mid-stream")},
+		"a first message, nothing above":    {"claude", frameWith("", "❯"+testNB+"typed")},
+		"codex, no reader yet":              {"codex", frameWith("", "› a draft in codex's shape")},
+		"opencode, no reader":               {"opencode", frameWith("", "a draft in opencode's shape")},
 	}
 	for name, tc := range cases {
 		d := newHandlerDaemon(t)
