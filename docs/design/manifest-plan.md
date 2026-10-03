@@ -26,7 +26,7 @@ Design for review. No code lands until this doc is reviewed.
 | The plan/apply split exists inside the controller | `internal/team/controller.go` around :960-1330 (`RolePlan`, `HoldDetail`, `plan.Delete`); aae-orc-nf0w and aae-orc-nrk1, both closed | true: the seam this design reuses |
 | `marvel work` has no preview | `apply` params are `manifest_data` and `workspace_root` only (`daemon.go:1186-1195`); no dry-run, diff, preview, validate or check flag under `cmd/marvel` | true |
 | Handing `plan` a manifest misleads | #334 (open): "no teams to plan", exit 0 | true |
-| The workaround is itself an apply | load at `replicas: 0`, then plan: it stores the manifest, and the plan shows desired 0 and spawn 0 | true; it also skips admission, since a request that adds nothing is never refused (`internal/admission/admission.go:273-276`) |
+| The workaround is itself an apply | load at `replicas: 0`, then plan: it stores the manifest, and the plan shows desired 0 and spawn 0 | true; it also skips admission, since a request that adds nothing is never refused (`internal/admission/admission.go:277-280`) |
 
 What `handleApply` runs today, in order, before it commits (`daemon.go:1197-1300`):
 parse; `ValidateWorkDirs` (placement); `ValidateRuntimes` (the command
@@ -149,9 +149,19 @@ second by most seats.
    also refuses when `MARVEL_SOCKET` overrides a named cluster (5-0). A
    clean "0 changes" from the wrong daemon reads as a green light for the
    right one.
+
+   The client resolves its daemon four ways (`resolveDaemonAddr`,
+   `cmd/marvel/main.go:64-90`), and the party voted on two of them. The
+   other two are open (section 10, item 4):
+   - `--socket` (`:65-67`) is the operator naming a socket outright. The
+     proposal is to print "socket given by flag" in the banner, not to
+     refuse.
+   - A `config.Load` failure (`:71-73`) falls back to the local daemon with
+     NO warning. The proposal is to refuse when `--cluster` was given, and
+     otherwise print "config unreadable, local daemon" in the banner.
 2. **Gross adds, gross kills, and the net the gate sees, with a kill
    list.** The admission gate sees one net `want` per team and admits
-   `want <= 0`. So a manifest that lowers one role and raises another can
+   `want <= 0` (`internal/admission/admission.go:277-280`). So a manifest that lowers one role and raises another can
    pass the gate while it still kills seats. The plan names each kill
    candidate. The controller already picks them, oldest first, as a pure
    function of the store (`controller.go:1216-1232`, the #348 fix). The
@@ -221,8 +231,9 @@ Agreed:
   unreachable daemon, a daemon without `plan_manifest`, and a pre-flight
   that errored.
 
-Default, OPEN until ruled, which takes the plurality on numbering and the
-majority on the flag:
+Default, OPEN until ruled. It rests on the 3-2 vote that refusal and "could
+not evaluate" get distinct codes; the numbering itself tied 2-1-2, so the
+numbers below are a choice, not a vote. The flag follows its 3-2 vote:
 - 0: evaluated, no refusal;
 - 1: apply would refuse;
 - 3: could not evaluate;
@@ -230,6 +241,14 @@ majority on the flag:
 
 Under the flag, 0 also means no changes. Without it, `marvel plan -f m &&
 marvel work m` keeps working.
+
+The cost of this default: today every error exits 1
+(`cmd/marvel/main.go:169-170`, `os.Exit(1)` on any error from
+`root.Execute`). A dial failure, an unreachable daemon or a mistyped flag
+would therefore exit 1 and read as "apply would refuse", unless `plan` maps
+its own exits and returns 3 for every failure to evaluate. The mapping is
+work this default adds; the 1-for-both option (refusal and failure both
+exit 1) avoids that work.
 
 ## 7. Edits, in order (none made by this PR)
 
@@ -251,9 +270,9 @@ marvel work m` keeps working.
 
 Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
 
-## 8. Defects this work surfaced (separate issues; none filed by this PR)
+## 8. Defects this work surfaced (separate issues; this PR files none)
 
-- **A command with inline args fails apply's pre-flight.** `ValidateRuntimes`
+- **A command with inline args fails apply's pre-flight (marvel#517).** `ValidateRuntimes`
   passes `Runtime.Command` whole to `validateCommand`, which `os.Stat`s or
   `exec.LookPath`s the whole string (`manifest.go:618`, `:633-646`; no
   `strings.Fields` in the file). The claude adapter splits the same string
@@ -262,6 +281,9 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
   throwaway unit-level probe at 889e49a confirmed it: `validateCommand("claude")`
   returns nil and `validateCommand("claude --flag value")` returns "not on
   PATH"; `ValidateRuntimes` refuses a role with `sh -c true` the same way.
+  A working form exists today: the arguments go in `args`
+  (`ManifestRuntime.Args`, `internal/api/manifest.go:201`). A role with
+  `command = "sh"` and `args = ["-c", "true"]` passes. Filed as marvel#517.
 - **Apply's check-then-commit is not serialized.** Each connection runs in
   its own goroutine (`daemon.go:582`), and I found no apply-level lock. Two
   concurrent `marvel work` calls can both pass the name-clash check.
@@ -299,24 +321,32 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
 
 ## 10. Open items and rulings needed
 
+Five seats voted in the last round. A seat could abstain on an item
+outside its expertise, and an abstention counts as no vote, so some
+tallies (3-1, 4-0, 2-2) sum to four.
+
 1. **(a) OPEN. Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
    (2 seats), 0/2/1-error/3-refusal (1), 0/2/1-refusal/3-not-evaluated (2).
    - On the underlying question, refusal and "could not evaluate" get
      distinct codes, 3-2.
    - On whether exit 2 is the default, `--detailed-exitcode` wins 3-2. The
      minority's reason: a forgotten flag reads "changes" as 0.
-   - Default: section 6.
+   - Default: section 6, with its cost (every error exits 1 today).
 2. **(b) OPEN. Home paths in output (V4), split 2-2.**
-   - (a) Collapse the home prefix to `~` for display. This shows which
+   - (x) Collapse the home prefix to `~` for display. This shows which
      binary resolved, for every role.
-   - (b) Redact home paths except the one resolved binary path per role.
+   - (y) Redact home paths except the one resolved binary path per role.
      This keeps another user's directory names out of CI logs.
 
    The redaction design (`describe-redaction.md`, #421) covers values, not
-   paths. Default: (b), the stricter one, until #421 rules on paths.
+   paths. Default: (y), the stricter one, until #421 rules on paths.
 3. **Recorded dissent (V2).** The finops seat: without any figure the plan
    shows counts and nothing about cost, and operators will invent their own
    number. Reopen when `usage.Baseline` exists.
+4. **OPEN, not voted: the other two wrong-daemon paths** (section 4, item
+   1). The proposal is to put `--socket` in the banner and to refuse a
+   `config.Load` failure when `--cluster` was given. The party voted only on
+   the unknown cluster and the `MARVEL_SOCKET` override.
 
 ## 11. Prior art weighed
 
