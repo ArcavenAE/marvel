@@ -35,10 +35,14 @@ const (
 )
 
 var (
-	ansiSeq     = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
-	ruleLine    = regexp.MustCompile(`^─{10,}$`)
-	spinnerLine = regexp.MustCompile(`^\S\s+\S+…\s+\(\d`)
-	doneLine    = regexp.MustCompile(`^\S\s+\S+ for (?:\d+[hms]\s*)+· done\b`)
+	ansiSeq  = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+	ruleLine = regexp.MustCompile(`^─{10,}$`)
+	// The spinner and done lines are matched by their own glyphs, at the margin.
+	// A reply's text is model-controlled and starts with the reply bullet (or is
+	// indented), so a reply that imitates either line must not read as the
+	// harness's own marker: that would turn an unsent submit into "confirmed".
+	spinnerLine = regexp.MustCompile(`^[·✢✳✶✻✽]\s+\S+…\s+\(\d`)
+	doneLine    = regexp.MustCompile(`^✻\s+\S+ for (?:\d+[hms]\s*)+· done\b`)
 	placeholder = regexp.MustCompile(`^Try ".*"$`)
 )
 
@@ -93,13 +97,12 @@ func (claudeReader) Read(capture string) State {
 	}
 
 	if text != "" {
-		// A draft counts only beside idle evidence: a finished turn's done line,
-		// or a session that has run no turn at all. Text typed ahead of a streaming
-		// reply has neither, and a clear key sent there would interrupt the turn.
-		if !doneLine.MatchString(above) && turnSeen(clean) {
-			return Unknown
-		}
-		dim := strings.Contains(raw[top], "\x1b[2m") && len(draft) == 1
+		// The placeholder is the only dim text in a composer. Dim is read from the
+		// SGR parameters (so "2;37" is dim, "22" ends it, and "38;5;2" is a colour,
+		// not dim). A placeholder under spinner-less streaming text reads Empty:
+		// that relies on claude never drawing the placeholder mid-turn, which held
+		// in every real capture reviewed and is not a guarantee.
+		dim := dimAtText(raw[top]) && len(draft) == 1
 		if placeholder.MatchString(text) {
 			if dim {
 				return Empty
@@ -109,6 +112,12 @@ func (claudeReader) Read(capture string) State {
 				// a message someone typed in its shape.
 				return Unknown
 			}
+		}
+		// A draft counts only beside idle evidence: a finished turn's done line,
+		// or a session that has run no turn at all. Text typed ahead of a streaming
+		// reply has neither, and a clear key sent there would interrupt the turn.
+		if !doneLine.MatchString(above) && turnSeen(clean) {
+			return Unknown
 		}
 		return HoldsText
 	}
@@ -128,4 +137,56 @@ func turnSeen(clean []string) bool {
 		}
 	}
 	return false
+}
+
+// dimAtText reports whether the first visible character after the composer's
+// prompt is drawn dim (SGR 2), reading the escape sequences that precede it.
+func dimAtText(line string) bool {
+	i := strings.Index(line, claudePrompt)
+	if i < 0 {
+		return false
+	}
+	rest := line[i+len(claudePrompt):]
+	dim := false
+	for len(rest) > 0 {
+		loc := sgrSeq.FindStringIndex(rest)
+		if loc == nil || loc[0] != 0 {
+			if loc != nil && strings.TrimLeft(rest[:loc[0]], " ") == "" {
+				rest = rest[loc[0]:]
+				continue
+			}
+			return dim
+		}
+		dim = applySGR(dim, rest[2:loc[1]-1])
+		rest = rest[loc[1]:]
+	}
+	return dim
+}
+
+var sgrSeq = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// applySGR returns the dim state after one SGR sequence's parameters.
+func applySGR(dim bool, params string) bool {
+	if params == "" {
+		return false
+	}
+	p := strings.Split(params, ";")
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
+		case "0", "":
+			dim = false
+		case "2":
+			dim = true
+		case "22":
+			dim = false
+		case "38", "48", "58":
+			// An extended colour: 5;n or 2;r;g;b. Its numbers are not attributes.
+			if i+1 < len(p) && p[i+1] == "5" {
+				i += 2
+			} else if i+1 < len(p) && p[i+1] == "2" {
+				i += 4
+			}
+		}
+	}
+	return dim
 }
