@@ -5,6 +5,7 @@ package upgrade
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,8 @@ const (
 	repoName  = "marvel"
 	// releasesPerPage is the page size asked of the GitHub releases API (its maximum).
 	releasesPerPage = 100
+	// maxReleasePages bounds a lookup for one exact tag.
+	maxReleasePages = 20
 )
 
 // apiBase is the releases API root; tests point it at a local server.
@@ -176,10 +179,40 @@ func upgradeDirectBinary(channel, targetVersion string) error {
 	return downloadAndReplace(asset, release.TagName)
 }
 
+// fetchReleases lists releases. With no want it reads the first page, which
+// is enough to find the latest. With a want it pages until the listing holds
+// that exact tag or ends, so an older build beyond the first page is found.
 func fetchReleases(base, want string) ([]githubRelease, error) {
-	_ = want
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", base+"/releases", nil)
+	var all []githubRelease
+	for page := 1; page <= maxReleasePages; page++ {
+		batch, err := fetchReleasePage(client, base, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, batch...)
+		if want == "" || len(batch) < releasesPerPage {
+			break
+		}
+		if holdsTag(batch, want) {
+			break
+		}
+	}
+	return all, nil
+}
+
+func holdsTag(releases []githubRelease, tag string) bool {
+	for i := range releases {
+		if releases[i].TagName == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func fetchReleasePage(client *http.Client, base string, page int) ([]githubRelease, error) {
+	url := fmt.Sprintf("%s/releases?per_page=%d&page=%d", base, releasesPerPage, page)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -209,18 +242,15 @@ func findRelease(releases []githubRelease, channel, targetVersion string) (*gith
 	}
 
 	if targetVersion != "" {
+		// Exact tag only. A partial match used to resolve to the first release
+		// that contained the text, which may be a different build (marvel#485).
 		for i := range releases {
 			if releases[i].TagName == targetVersion {
 				return &releases[i], nil
 			}
 		}
-		// Partial match.
-		for i := range releases {
-			if strings.Contains(releases[i].TagName, targetVersion) {
-				return &releases[i], nil
-			}
-		}
-		return nil, fmt.Errorf("no release matching %q", targetVersion)
+		return nil, fmt.Errorf("no release tagged %q (looked through %d releases; --version takes an exact tag)",
+			targetVersion, len(releases))
 	}
 
 	// Find latest for channel.
@@ -340,13 +370,96 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	return nil
 }
 
+// buildKey reduces a release tag or a Homebrew formula version to the part
+// that names the build. The tap spells it 0.1.0-alpha.20261002.232554.bc327df
+// and GitHub spells it alpha-20261002-232554-bc327df, so both are split on
+// dots and dashes and compared from the channel word onward.
+func buildKey(v string) string {
+	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
+	parts := strings.FieldsFunc(v, func(r rune) bool { return r == '-' || r == '.' })
+	for i, p := range parts {
+		if p == "alpha" {
+			parts = parts[i:]
+			break
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
 // sameBuild reports whether a release tag and a Homebrew formula version name
-// the same build. Scaffold.
-func sameBuild(tag, formulaVersion string) bool { return false }
+// the same build. An empty or partial tag names none.
+func sameBuild(tag, formulaVersion string) bool {
+	k := buildKey(tag)
+	return k != "" && k == buildKey(formulaVersion)
+}
+
+// brewFormula is the part of `brew info --json=v2` that --version needs.
+type brewFormula struct {
+	Versions struct {
+		Stable string `json:"stable"`
+	} `json:"versions"`
+	VersionedFormulae []string `json:"versioned_formulae"`
+}
+
+func brewInfo(formula string) (brewFormula, error) {
+	cmd := exec.Command("brew", "info", "--json=v2", formula)
+	cmd.Stderr = os.Stderr
+	data, err := cmd.Output()
+	if err != nil {
+		return brewFormula{}, fmt.Errorf("brew info %s: %w", formula, err)
+	}
+	var doc struct {
+		Formulae []brewFormula `json:"formulae"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return brewFormula{}, fmt.Errorf("parse brew info %s: %w", formula, err)
+	}
+	if len(doc.Formulae) != 1 || doc.Formulae[0].Versions.Stable == "" {
+		return brewFormula{}, fmt.Errorf("brew info %s: no formula version in the output", formula)
+	}
+	return doc.Formulae[0], nil
+}
 
 // checkBrewVersion refuses a --version the tap's formula cannot install
-// exactly. Scaffold.
-func checkBrewVersion(channel, targetVersion string) error { return nil }
+// exactly. brew installs only the formula's current version, so the request
+// must name that build. Anything marvel cannot confirm is refused: a pin that
+// is silently ignored defeats the reason to pin (marvel#485).
+func checkBrewVersion(channel, targetVersion string) error {
+	if targetVersion == "" {
+		return nil
+	}
+	const formula = "arcavenae/tap/marvel"
+	info, err := brewInfo(formula)
+	if err != nil {
+		return fmt.Errorf("--version %s refused: marvel is installed with Homebrew (channel %s) "+
+			"and cannot confirm what the tap installs: %w", targetVersion, channel, err)
+	}
+	if sameBuild(targetVersion, info.Versions.Stable) {
+		return nil
+	}
+	versioned := formula + "@" + targetVersion
+	for _, name := range info.VersionedFormulae {
+		if name == versioned {
+			return fmt.Errorf("--version %s refused: marvel is installed with Homebrew (channel %s), "+
+				"and marvel upgrade installs only the tap's current formula %s; "+
+				"the tap has a formula for that build, so install it with: brew install %s",
+				targetVersion, channel, info.Versions.Stable, versioned)
+		}
+	}
+	return fmt.Errorf("--version %s refused: marvel is installed with Homebrew (channel %s), "+
+		"and the tap's formula installs only %s; "+
+		"run marvel upgrade without --version to take that build, "+
+		"or install the exact build from its release at https://github.com/%s/%s/releases/tag/%s",
+		targetVersion, channel, info.Versions.Stable, repoOwner, repoName, targetVersion)
+}
 
-// RefuseDev refuses to self-upgrade a dev build. Scaffold.
-func RefuseDev(current string) error { return nil }
+// RefuseDev refuses to self-upgrade a dev build. A dev build is one made from
+// source with no version stamped in; upgrading it would overwrite a local
+// build with a release.
+func RefuseDev(current string) error {
+	if current != "dev" {
+		return nil
+	}
+	return errors.New("this is a dev build (channel dev), so marvel upgrade would overwrite your local build with a release; " +
+		"rebuild from source (go build ./cmd/marvel), or install a release with Homebrew or from the releases page")
+}

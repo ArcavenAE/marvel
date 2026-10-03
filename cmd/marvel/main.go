@@ -1654,14 +1654,19 @@ func upgradeCmd() *cobra.Command {
 		Short: "Upgrade marvel to the latest version",
 		Long: `Upgrade marvel to the latest version.
 
-If installed via Homebrew, delegates to brew upgrade.
-Otherwise downloads the latest release from GitHub.
+If installed via Homebrew, delegates to brew upgrade. Homebrew installs only
+the tap's current formula, so --version is refused there unless it names that
+build. Otherwise downloads the latest release from GitHub; --version takes an
+exact release tag and nothing else. A dev build is not upgraded.
 
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
 re-exec in place after the install, adopting its live panes so agents
 keep running (see 'marvel daemon reexec').`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := upgrade.RefuseDev(version); err != nil {
+				return err
+			}
 			if err := upgrade.Run(channel, targetVersion); err != nil {
 				return err
 			}
@@ -1679,7 +1684,7 @@ keep running (see 'marvel daemon reexec').`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&targetVersion, "version", "", "target version (default: latest)")
+	cmd.Flags().StringVar(&targetVersion, "version", "", "exact release tag to install (default: latest)")
 	cmd.Flags().BoolVar(&reexecDaemon, "daemon", false,
 		"after installing, tell the running daemon to re-exec in place so it adopts the new binary without stopping agents")
 	return cmd
