@@ -24,7 +24,7 @@
 
    claude's clear is measured: one C-c cleared a staged draft of any line count and submitted nothing (2.1.288, marvel#511).
 
-4. **A claude composer reads as idle only beside a finished turn's done line.** No spinner shows while a reply streams, so the absence of a spinner is not evidence of idle. Model-controlled text can carry the same marker shapes: a reviewer had the model echo `✻ Worked for 3s · done …`, `· Cooking… (3s · thinking)` and similar lines, and they rendered indented under the reply's `⏺` bullet, not at the margin. So the reader trusts a marker only at the margin, and a pane whose done line has scrolled off reads `unknown` (marvel#508, its review thread, and #511's tightening of `holds_text`).
+4. **A claude composer reads as idle only beside a finished turn's done line.** No spinner shows while a reply streams, so the absence of a spinner is not evidence of idle. Model-controlled text can carry the same marker shapes: a reviewer had the model echo `✻ Worked for 3s · done …`, `· Cooking… (3s · thinking)` and similar lines, and they rendered indented under the reply's `⏺` bullet, not at the margin. So the reader trusts a marker only at the margin, and a pane whose done line has scrolled off reads `unknown` (the mimicry measurement is in #492's approval review 5398089990; also #494's reviews 5398108634 and 5398161520, #507's review 5398646684 for the scrolled-off case, and #511's tightening of `holds_text`).
 
 5. **Repaint needs a real size change.**
    - A tty `TIOCSWINSZ` of cols+1 and back, sent from outside the pane, repaints claude, opencode and codex. tmux `pane_width` is unchanged throughout, and the restored screen is identical to the pre-stale one.

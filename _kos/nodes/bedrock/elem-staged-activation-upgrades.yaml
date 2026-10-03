@@ -65,14 +65,35 @@ content: |
 
   RUNNING BUILD NOW REPORTED (marvel#500, #510, 2026-10-03). The daemon
   reports its build and `marvel version` shows it beside the client's,
-  answering the gap finding-061 named. One measured trap shaped it: Go's VCS
-  stamping walks past a linked worktree's `.git` FILE to an enclosing
-  repository, so a build made in a worktree can be stamped with the wrong
-  repository's revision. marvel therefore shows a commit only when the
-  version string's trailing sha confirms it, and shows any other stamped
-  revision as "unconfirmed" (`internal/daemon/build.go`). `vcs.modified`
+  answering the gap finding-061 named. One possible trap shaped it: that
+  Go's VCS stamping walks past a linked worktree's `.git` FILE to an
+  enclosing repository, so a build made in a worktree is stamped with the
+  wrong repository's revision. Its author observed this once (#500); review
+  did not reproduce it (5398542318 on go 1.27.0, again in #510's 5398696555).
+  The guard is kept because it can only withhold a commit, never show a
+  wrong one: marvel shows a commit only when the version string's trailing
+  sha confirms it, and any other stamped revision as "unconfirmed"
+  (`internal/daemon/build.go`). `vcs.modified`
   also counts untracked files, so a "dirty" mark can mean untracked files
   alone.
+
+  READ-ONLY OPEN OF A LIVE STORE (finding-062's review note, sharpened;
+  #496 review 5398475889, bbolt v1.5.0). A ReadOnly bbolt Open takes a
+  shared flock with non-blocking retries every 50ms. Against a running
+  daemon's exclusive lock, Timeout 0 (bbolt's default) blocks forever and
+  Timeout N returns ErrTimeout after N; reexec frees the lock only inside
+  Detach(). So a staged binary must be handed the store's facts or a
+  snapshot, and any read-only open must set a timeout.
+
+  THE KEG PATH ON LINUX (#498 review 5398478335). The finding-042 result
+  above, that a deleted old keg does not strand reexec, holds on macOS
+  only. There `os.Executable()` returns the path as invoked, symlink kept,
+  so brew's retargeted link is followed. On Linux it returns
+  Readlink("/proc/self/exe"), the fully resolved `Cellar/marvel/<old>/...`
+  path, which never retargets, and `brew upgrade` runs `brew cleanup` unless
+  HOMEBREW_NO_INSTALL_CLEANUP is set. #498 fixed the upgrade's change
+  fingerprint for this. Whether reexec's own `selfExecPath` on a Linux brew
+  host lands on the new keg is not checked here.
 
 edges:
   - target: elem-release-pipeline

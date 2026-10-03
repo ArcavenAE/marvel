@@ -20,10 +20,12 @@ content: |
      trusted key, but stops at the enclosing git root; outside a repository
      it walks to `/`. So a key at directory D trusts D and every descendant
      not inside a git repository rooted below D, and a git-repo child of a
-     trusted directory still gets the dialog. On accepting the dialog it
-     writes the key for the path, its realpath and their NFC forms.
-     (Reviewer measurement, marvel#490 review 5398538029. Refines
-     finding-045, which says only "Claude records acceptance per git root".)
+     trusted directory still gets the dialog. (Reviewer measurement,
+     marvel#490 review 5398538029. Refines finding-045, which says only
+     "Claude records acceptance per git root".) That on accepting the dialog
+     it writes the key for the path, its realpath and their NFC forms was
+     read from the binary in the same review, not measured on an
+     acceptance.
   3. Claude Code writes its config under proper-lockfile: a `<path>.lock`
      directory beside the path it opens (the link's path when the config is a
      symlink), with a 10-second stale window (locks 5 and 8 seconds old were
@@ -44,7 +46,9 @@ content: |
   6. Claude Code 2.1.288 has no subcommand that sets folder trust (its
      commands: agents, attach, auth, auto-mode, doctor, gateway, import,
      install, logs, mcp, plugin, purge, respawn, rm, setup-token, stop,
-     ultrareview, update). Version-bound: re-check on each release.
+     ultrareview, update). Read from `claude --help`, recorded in
+     docs/design/seat-bootstrap.md ruling 12(c) on marvel#490's head
+     (6e33245, lines 923-926). Version-bound: re-check on each release.
 
   OPEN: whether exit 0 means a valid login or only a present one, and
   whether an expired token makes the check refresh (SB-0 line 15); whether

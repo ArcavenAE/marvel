@@ -169,8 +169,10 @@ content: |
   (marvel#311) supplies the allowlist that is the stronger end state.
 
   STATE 2026-10-03 (harvest). The denylist holds in the field: on 30 live
-  kinu seats, none of the ten names was present in a pane's environment
-  (the aae-orc#418 verification, bd aae-orc-31mlk). The ten are
+  kinu seats, none of the ten names was present in a pane's environment.
+  Reported by the builder seat on the bus, 2026-10-02 (a names-only ps
+  check, with PATH and a made-up name as controls); not committed elsewhere.
+  aae-orc#418 holds the verification steps, not this count. The ten are
   CLAUDE_CODE_MESSAGING_TOKEN, CLAUDE_CODE_MESSAGING_SOCKET,
   CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_BRIDGE_SESSION_ID,
   CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ATTENDED,
