@@ -632,6 +632,16 @@ func (d *Driver) CapturePaneEscapes(paneID string) (string, error) {
 	return string(out), nil
 }
 
+// CapturePaneJoined is CapturePane with wrapped lines joined (capture-pane -J),
+// so a phrase the terminal wrapped at the pane's edge reads as one line.
+func (d *Driver) CapturePaneJoined(paneID string) (string, error) {
+	out, err := d.cmd("capture-pane", "-t", paneID, "-p", "-J").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+	}
+	return string(out), nil
+}
+
 // Repaint asks the program in a pane to redraw itself without sending it any
 // input. The harnesses repaint on a change of terminal SIZE, not on a bare
 // SIGWINCH (measured on claude and opencode), so it widens the pane's own tty
