@@ -92,15 +92,42 @@ See [CLAUDE.md](CLAUDE.md) for the complete coding standards.
 ## Testing a daemon by hand
 
 When testing a daemon by hand, unset every `MARVEL_*` variable and pass
-`--socket` explicitly. A seat's `MARVEL_SOCKET` overrides `HOME` (the order
-is `--socket`, then `MARVEL_SOCKET`, then the cluster config, then the
-default under `HOME`), so pointing `HOME` at a scratch directory does not
-isolate you from the live daemon. Before sending anything, confirm the
-socket path is one you started.
+`--socket` explicitly. Before sending anything, confirm the socket path is
+one you started.
+
+A seat carries `MARVEL_*` variables that point at the live fleet, and each
+one redirects something:
+
+- `MARVEL_SOCKET` sends your client to the live daemon. The client resolves
+  its socket as `--socket`, then `MARVEL_SOCKET`, then the selected
+  cluster's entry, then the default under `HOME`
+  (`cmd/marvel/main.go:62-97`), so pointing `HOME` at a scratch directory
+  does not isolate it. A hand-run daemon resolves its own listen path as
+  `--socket`, then `MARVEL_SOCKET`, then the default under `HOME`, with no
+  cluster step (`main.go:232-235`). It cannot take over the live socket:
+  it takes the socket lock before unlinking and fails if the lock is held
+  (`internal/daemon/daemon.go:447-457`).
+- `MARVEL_TMUX_SOCKET` points a hand-run daemon at the live tmux server
+  (`internal/tmux/driver.go:117-133`), where it would adopt or kill the
+  fleet's panes. This is the worst of them.
+- `MARVEL_BACKEND_OVERLAY_DIR` points it at another overlay directory
+  (`internal/session/manager.go:183`).
+
+Unsetting the whole prefix covers these and any added later.
+
+Confirm before the first real request. The home-mismatch warning prints
+only after a request has run, so make the first call read-only (`$D` is
+a scratch directory you created, and the daemon you started listens on
+`$D/m.sock`):
+
+```sh
+env | grep '^MARVEL_'                          # must print nothing
+HOME="$D" marvel --socket "$D/m.sock" bus status   # read-only; no "is rooted at" warning
+```
 
 Why: on 2026-10-03 a test meant for a throwaway daemon reached the live
-one, because the seat running it inherited `MARVEL_SOCKET`. No harm came of
-it (#504).
+one, because the seat running it inherited `MARVEL_SOCKET`. It was the
+client that crossed over, and no harm came of it (#504).
 
 ## What NOT to Contribute
 
