@@ -653,6 +653,11 @@ type ShiftRequest struct {
 	Cause string
 	// RequestedAt is when the notice was sent.
 	RequestedAt time.Time
+	// NoticeUndelivered is why the notice never reached the seat, empty when
+	// it did. It is kept on the request, not only in the event that reported
+	// the refusal, because that ring wraps and empties on a restart, and the
+	// escalation must still say the seat may never have been asked.
+	NoticeUndelivered string
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.

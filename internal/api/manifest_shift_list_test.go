@@ -339,7 +339,7 @@ func TestShiftRequestAndLineageSurviveBolt(t *testing.T) {
 	if err := s1.CreateTeam(&Team{
 		Name: "squad", Workspace: "ws", CreatedAt: asked,
 		Roles:         []Role{{Name: "worker", Replicas: 1, Runtime: Runtime{Command: "sleep"}, Shift: policy}},
-		ShiftRequests: map[string]ShiftRequest{"worker": {Session: "ws/squad-worker-g1-0", Cause: ShiftTriggerMaxAge, RequestedAt: asked}},
+		ShiftRequests: map[string]ShiftRequest{"worker": {Session: "ws/squad-worker-g1-0", Cause: ShiftTriggerMaxAge, RequestedAt: asked, NoticeUndelivered: "refused: update menu"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestShiftRequestAndLineageSurviveBolt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req := team.ShiftRequests["worker"]; req.Session != "ws/squad-worker-g1-0" || !req.RequestedAt.Equal(asked) {
+	if req := team.ShiftRequests["worker"]; req.Session != "ws/squad-worker-g1-0" || !req.RequestedAt.Equal(asked) || req.NoticeUndelivered != "refused: update menu" {
 		t.Fatalf("ShiftRequests after rehydrate = %+v", team.ShiftRequests)
 	}
 	if got := team.Roles[0].Shift; got == nil || len(got.Any) != 1 || got.Any[0].MaxAge != 8*time.Hour || got.Handoff != policy.Handoff {

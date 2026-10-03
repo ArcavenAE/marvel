@@ -86,14 +86,17 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 			text += fmt.Sprintf(" to %s, ending with the line %q", path, role.Shift.HandoffMarker)
 		}
 	}
-	delivery := "delivered"
+	delivery, undelivered := "delivered", ""
 	if c.Notify == nil {
-		delivery = "not delivered (no notifier)"
+		undelivered = "no notifier"
 	} else if err := c.Notify(sess, text); err != nil {
-		delivery = fmt.Sprintf("not delivered (%v)", err)
+		undelivered = err.Error()
+	}
+	if undelivered != "" {
+		delivery = fmt.Sprintf("not delivered (%s)", undelivered)
 	}
 
-	req := api.ShiftRequest{Session: sess.Key(), Cause: cond.On, RequestedAt: now}
+	req := api.ShiftRequest{Session: sess.Key(), Cause: cond.On, RequestedAt: now, NoticeUndelivered: undelivered}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		if live.ShiftRequests == nil {
 			live.ShiftRequests = make(map[string]api.ShiftRequest)
@@ -189,20 +192,25 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 }
 
 // handoffMissingReason says why no marker was observed, or, when present, that
-// a repeat found it written after the window.
-func handoffMissingReason(role *api.Role, sess api.Session, present bool) string {
+// a repeat found it written after the window. When the notice never reached the
+// seat it says so first: the seat may not have been asked.
+func handoffMissingReason(role *api.Role, sess api.Session, req api.ShiftRequest, present bool) string {
 	if present {
 		path, _ := handoffPath(role.Shift.Handoff, sess)
 		return fmt.Sprintf("the marker is now present at %s, written after the window", path)
 	}
+	never := ""
+	if req.NoticeUndelivered != "" {
+		never = fmt.Sprintf("the notice was never delivered (%s), so the seat may not have been asked; ", req.NoticeUndelivered)
+	}
 	if role.Shift.Handoff == "" {
-		return "no handoff path is declared, so marvel cannot observe one"
+		return never + "no handoff path is declared, so marvel cannot observe one"
 	}
 	path, err := handoffPath(role.Shift.Handoff, sess)
 	if err != nil {
-		return fmt.Sprintf("the handoff path cannot be resolved (%v)", err)
+		return never + fmt.Sprintf("the handoff path cannot be resolved (%v)", err)
 	}
-	return fmt.Sprintf("no regular file at %s ends in the marker", path)
+	return never + fmt.Sprintf("no regular file at %s ends in the marker", path)
 }
 
 // emitHandoffMissing emits the escalation and starts the repeat clock.
@@ -224,7 +232,7 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Session:    sess.Key(),
 		Generation: t.Generation,
 		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
-			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, present), t.Key(), role.Name, again),
+			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), t.Key(), role.Name, again),
 	})
 }
 
