@@ -65,6 +65,15 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 That changes a system setting until the targets are unmasked. These Linux
 lines were not verified on a Linux cluster host.
 
+### macOS: grant the terminal Local Network access
+
+On macOS, an app needs the Local Network permission (System Settings, Privacy
+& Security, Local Network) before it can reach hosts on the LAN. Without it,
+every LAN connection from that terminal fails with `No route to host`, which
+reads as a routing problem. The permission prompt can sit unanswered on a
+fresh machine, so grant it to the terminal that will run the daemon and its
+checks before testing any LAN path.
+
 ## Starting the daemon
 
 ### Local only (default)
@@ -424,6 +433,48 @@ marvel bus leaf disconnect     # detach without bouncing the broker
 Connect and disconnect are reload-only: marvel renders the leaf block and
 reloads, so agents on the broker keep running.
 
+The hub itself is declared on the cluster's bus entry, before the daemon
+starts. In the Services spelling from "Declaring it", it goes inside the
+entry:
+
+```yaml
+services:
+  - name: bus
+    class: message-bus
+    provider: nats-server
+    mode: managed
+    listen: 127.0.0.1:4222
+    hub:
+      url: nats-leaf://<hub-address>:7442
+```
+
+A cluster written in the older `bus:` block spelling puts the same `hub:` key
+under its `bus:` block instead; the third cluster's bring-up (aae-orc#461)
+used that spelling. Use one spelling per cluster, never both: a cluster that
+declares a `bus:` block and a message-bus Services entry is refused at load
+("keep one spelling"), and a `hub:` key at the top of the file is ignored.
+
+The daemon reads its client config once, at start, and there is no reload
+verb (marvel#514). A hub block added to a running daemon's config is not
+seen: `marvel bus leaf connect` answers that the cluster declares no hub. If
+that happens, `marvel daemon reexec` re-reads the config, and the leaf seed
+has to be pushed again afterwards, because a reexec drops it (marvel#339).
+
+The seed does not have to live on the cluster. The hub operator can push it
+from the hub's host, over the cluster's `mrvl://` listener, once that host is
+enrolled (see SSH key management):
+
+```sh
+marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
+```
+
+So the cluster holds no copy, and after every daemon stop, start or reexec
+the push comes from the hub's side.
+
+Check the cluster name before you push. While marvel#502 is open, an unknown
+`--cluster` name only warns and then acts on the local daemon, so a typo
+stores the seed in the hub host's own daemon rather than the cluster's.
+
 The exception is the leaf seed, which rides in the broker's environment and is
 read once at start. A broker already running with the seed takes a connect on
 a reload. A broker that booted without one, or one whose stored seed has since
@@ -565,6 +616,13 @@ Pin to a specific version:
 ```bash
 marvel upgrade --version v0.2.0
 ```
+
+On a Homebrew install, `marvel upgrade` delegates to `brew upgrade`, and a tap
+offers only its latest formula, so an exact pin cannot be held there once a
+newer alpha ships (marvel#485). For an exact version, install with mise (see
+the README). If a host ends up with both, the first `marvel` on `PATH` is the
+one that runs, which may be the stale one; check it with `command -v marvel`
+and `marvel version`, or call the pinned binary by its full path.
 
 ## Monitoring
 
