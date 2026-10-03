@@ -219,10 +219,13 @@ hard-coded name director ruled out. Two costs:
 - With no bus at all, a declaration is inert. Apply gives no early error,
   because there is no global tier to widen and no admitted list to check, so
   a manifest written for a fleet still applies on a machine without a bus.
-  Nothing renders and no seat env is exported. Once a bus exists, the resolver
-  gates the stored declaration at every render, and `bus.global-role-unadmitted`
-  fires at the first render if the config does not admit the name. Director
-  accepted this default on marvel#518.
+  Nothing renders and no seat env is exported. Once a MANAGED bus exists, the
+  resolver gates the stored declaration at every render, and
+  `bus.global-role-unadmitted` fires at the first render if the config does
+  not admit the name. With an ADOPTED bus nothing renders and that event never
+  fires, but apply still refuses an unadmitted declaration early and the seat
+  env is still gated by the same resolver. Judged safe in review 5401081754 on
+  marvel#520.
 
 ### The launcher, as defense in depth
 
