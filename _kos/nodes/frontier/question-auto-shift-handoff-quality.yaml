@@ -1,0 +1,43 @@
+id: question-auto-shift-handoff-quality
+type: question
+confidence: frontier
+title: "May automatic shifts be turned on: is a handoff good enough to replace a working seat?"
+content: |
+  marvel can shift a seat automatically on context pressure or age
+  (question-shift-triggers). Whether that should be turned on depends on
+  whether the successor carries forward what the predecessor knew. The
+  measurement plan is the orc brief
+  `aae-orc/_kos/probes/brief-handoff-quality-measurement.md`; its first
+  results (aae-orc#463, all kinu only) are:
+
+  - Headroom term A (aae-orc/_kos/findings/finding-208-headroom-term-a.md):
+    the largest single-turn occupancy growth per session is about 32k tokens
+    at the 90th percentile and about 108k at the worst, over 61 sessions in
+    12 roles. The brief's section 7 refusal (a headroom too large to be
+    workable) is not triggered on term A. Terms B (handoff authoring growth)
+    and C (fire to KillPane growth) are not measured.
+  - A hard kill mid-turn (aae-orc/_kos/findings/finding-207-hard-kill-transcript.md):
+    marvel's KillPane leaves the transcript JSONL well-formed but loses the
+    in-flight turn whole, with no partial record to show it was lost.
+  - Organic re-entry (aae-orc/_kos/findings/finding-206-organic-prohibition-rate.md):
+    when a predecessor's unrecorded ruling or dead end comes up again, the
+    successor re-enters it about one time in six (18 of 110, 0.16).
+  - Overhead (aae-orc/_kos/findings/finding-209-work-overhead-fraction.md):
+    prior-turn thinking IS re-sent, which refutes the brief's assumption that
+    it is not. A floor for voiding near-empty trials (2,000 essential
+    tokens, the "6a floor") is proposed and awaits the operator.
+
+  OPEN: terms B and C; the mokuzai half of every measurement; arm A's
+  result against the 0.16 organic base rate; the operator's ruling on the
+  6a floor.
+edges:
+  - target: question-shift-triggers
+    type: supports
+    note: "Whether an automatic trigger may fire depends on the handoff it forces"
+  - target: question-shifts
+    type: derives
+provenance:
+  created_by: agent
+  session: harvest-2026-10-03
+  created_at: "2026-10-03"
+  extracted_from: "aae-orc#463 (orc findings 206 to 209), via the author seat's harvest report"

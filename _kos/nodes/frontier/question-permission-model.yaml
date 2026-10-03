@@ -161,11 +161,23 @@ content: |
   (enforcement locus 1) gains a denylist. A daemon started from a Claude
   Code session carried that session's messaging token, socket and identity,
   and a tmux server it started handed them to every pane.
-  `api.InheritedSessionEnv` names nine variables, stripped at daemon start,
+  `api.InheritedSessionEnv` names ten variables (corrected 2026-10-03; it
+  read nine), stripped at daemon start,
   in the tmux driver's exec, and by an `env -u` prefix on every pane
   command. Backend selectors and config-shaped names are kept knowingly,
   CLAUDE_CODE_AUTO_COMPACT_WINDOW among them, until per-role env
   (marvel#311) supplies the allowlist that is the stronger end state.
+
+  STATE 2026-10-03 (harvest). The denylist holds in the field: on 30 live
+  kinu seats, none of the ten names was present in a pane's environment
+  (the aae-orc#418 verification, bd aae-orc-31mlk). The ten are
+  CLAUDE_CODE_MESSAGING_TOKEN, CLAUDE_CODE_MESSAGING_SOCKET,
+  CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_BRIDGE_SESSION_ID,
+  CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ATTENDED,
+  CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_EXECPATH, CLAUDECODE and CLAUDE_PID
+  (`internal/api/seat_env.go`). Folder trust and settings sources, which also
+  decide what a seat may load, are tracked in `question-seat-harness-state`.
+
 edges:
   - target: elem-runtime-adapter-framework
     type: derives

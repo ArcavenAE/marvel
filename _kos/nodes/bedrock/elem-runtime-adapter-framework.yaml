@@ -108,6 +108,15 @@ content: |
   uncleared folder-trust, finding-045), and marvel injects no codex sandbox,
   so the reviewer inherited codex's read-only workspace and its output landed
   in the ring rather than on disk.
+
+  COMPOSER CONTRACT MEASURED (finding-064, 2026-10-03). The interactive half
+  of the adapters is now measured per harness: submit is a bracketed paste
+  then Enter for all three; one C-c clears a non-empty composer, but on an
+  EMPTY codex or opencode composer it exits the harness; codex writes a
+  cleared draft to history.jsonl; interrupt is one Escape for codex and two
+  for opencode; repaint needs a real size change. marvel#511 records it per
+  adapter. A harness upgrade needs the probes re-run.
+
 edges:
   - target: elem-console-agnostic
     type: implements

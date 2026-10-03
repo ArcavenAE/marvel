@@ -292,6 +292,21 @@ content: |
   and an emergency-shift path on a runaway detector plus a peer verdict, the
   verdict envelope splitting to director. Proposed flat bd tasks relate to
   aae-orc-hpeu, not a new epic.
+
+  STATE 2026-10-03 (harvest). A measured defect in the automatic triggers,
+  read in code at 33fb22a and confirmed by the marvel#490 reviewer: nothing
+  holds a role's automatic triggers after a shift fails. `abortStuckShift`
+  emits KindShiftTimedOut (`internal/team/controller.go`, around :2160), and
+  on the next tick `evaluateShiftTriggers` fires the same shift again through
+  `autoShift`, so a successor that cannot become ready loops. Separately,
+  `shiftLaunch` counts only live successor rows, so a successor refused at
+  launch would be respawned every tick. Rollback restores the old generation
+  only when the first role was still launching. marvel#490 (SB-4M) specifies
+  a backed-off cooldown in `autoShift`, persisted in RoleHealth, and a stop
+  on a refused successor. The defect exists today, independent of that
+  design, for any successor that cannot pass readiness. Whether it is
+  turned on at all: `question-auto-shift-handoff-quality`.
+
 edges:
   - target: question-shifts
     type: derives

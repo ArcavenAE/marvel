@@ -90,6 +90,19 @@ content: |
   not clear, and a long payload can arrive in part. marvel#357 fixed the
   submit half (bracketed paste); the remaining behaviors are why dispatch
   belongs on the bus, not on keystrokes.
+
+  STATE 2026-10-03 (harvest, marvel#461). A grant on the hub's KV, made to a
+  leaf user, must carry the hub's JetStream domain prefix: a local user
+  reaches the hub's presence bucket only as
+  `$JS.global.API.$KV.GLOBAL_PRESENCE...`, because nats.go routes a domain
+  KV call through that prefix. A grant written without it fails at the
+  first call, not at apply. The reviewer's measurement caught the missing
+  prefix in the supervisor's presence grant, and it was fixed (d1b805b). The
+  #461 grants for a supervisor, an open-door worker and the director seat
+  user were then re-measured end to end on a scratch hub plus leaf and
+  behaved as written (review 5397145046). Design:
+  docs/design/bus-role-users.md.
+
 edges:
   - target: aae-orc::finding-166-dead-bus-session-reports-running
     type: derives

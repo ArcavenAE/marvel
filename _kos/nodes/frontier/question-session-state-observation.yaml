@@ -179,6 +179,17 @@ content: |
   interactive seat can also be idle by construction: `runtime.prompt` is
   headless-only, so a respawned interactive seat starts with no first
   message and waits for a nudge (marvel#391).
+
+  STATE 2026-10-03 (harvest, finding-064). The composer contract of claude,
+  codex and opencode is measured for submit, clear and repaint, and for the
+  codex and opencode interrupt keys. Two rules for reading a claude pane:
+  it is idle only beside a finished turn's done line, since no spinner
+  shows while a reply streams; and model-controlled text can carry the same
+  marker shapes, which render indented under the reply bullet, so a marker
+  counts only at the margin. Still open: claude's interrupt key (the probe
+  showed only that Escape leaves a staged draft alone), and approval-menu
+  cancel for codex and opencode.
+
 edges:
   - target: elem-agentic-resource-matrix
     type: supports

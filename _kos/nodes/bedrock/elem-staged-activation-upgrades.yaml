@@ -62,6 +62,18 @@ content: |
   and orders ten candidate PRs, the first three against filed issues
   (#485, #486, finding-061). The two-plane model stands; this node is
   unchanged except for this pointer.
+
+  RUNNING BUILD NOW REPORTED (marvel#500, #510, 2026-10-03). The daemon
+  reports its build and `marvel version` shows it beside the client's,
+  answering the gap finding-061 named. One measured trap shaped it: Go's VCS
+  stamping walks past a linked worktree's `.git` FILE to an enclosing
+  repository, so a build made in a worktree can be stamped with the wrong
+  repository's revision. marvel therefore shows a commit only when the
+  version string's trailing sha confirms it, and shows any other stamped
+  revision as "unconfirmed" (`internal/daemon/build.go`). `vcs.modified`
+  also counts untracked files, so a "dirty" mark can mean untracked files
+  alone.
+
 edges:
   - target: elem-release-pipeline
     type: derives

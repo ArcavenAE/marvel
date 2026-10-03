@@ -1,0 +1,30 @@
+id: grv-private-claude-config-home-macos
+type: graveyard
+confidence: graveyard
+title: "A private Claude Code config home per seat, on macOS"
+content: |
+  Evaluated giving each interactive claude seat its own CLAUDE_CONFIG_DIR,
+  seeded with folder trust and onboarding and with the credential linked in,
+  so marvel could prepare first-run state without touching the operator's
+  config (seat-bootstrap SB-4, marvel#422).
+
+  Ruled out on macOS by measurement (finding-063, SB-3 r2, Claude Code
+  2.1.288): under a private CLAUDE_CONFIG_DIR, seeded or not, `claude auth
+  status` exits 1 and an interactive seat lands on the login screen. The
+  login lives in the macOS login keychain, and the private directory does
+  not reach it. Seeding the realpath trust key did clear the trust dialog,
+  so the approach failed on the login alone.
+graveyard:
+  approach: "A private CLAUDE_CONFIG_DIR per interactive claude seat on a macOS host"
+  ruling: "Measured: the seat loses the operator's login (finding-063). marvel manages the needed keys in the operator's own config instead (SB-4M, marvel#490)."
+  reopener: "Claude Code finds the login under a relocated config directory on macOS, or a host where the login is a file (Linux, a container) passes the same r2-style probe."
+edges:
+  - target: question-seat-harness-state
+    type: supports
+    note: "Ruling this out is what moved the seat-bootstrap design to managing the operator's config in place"
+provenance:
+  created_by: agent
+  session: harvest-2026-10-03
+  created_at: "2026-10-03"
+  tested_by: finding-063-private-claude-config-loses-the-login
+  tested_at: "2026-10-02"
