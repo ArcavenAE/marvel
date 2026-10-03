@@ -127,3 +127,53 @@ func TestBoundedQueryReturnsAnAnswerInTime(t *testing.T) {
 		t.Fatalf("got %v, %v", info, err)
 	}
 }
+
+var (
+	devA = daemon.Build{Version: "dev", Channel: "dev", Revision: "aaaaaaa1111"}
+	devB = daemon.Build{Version: "dev", Channel: "dev", Revision: "bbbbbbb2222"}
+)
+
+// Two dev builds have the same version string. The recorded commits tell them
+// apart, and the warning names both so the operator sees which is stale.
+func TestVersionReportFlagsTwoDevBuildsAtDifferentCommits(t *testing.T) {
+	out := report(devA, answer(devB))
+	for _, want := range []string{"warning", "different build", "aaaaaaa1111 (unconfirmed)", "bbbbbbb2222 (unconfirmed)", "marvel daemon reexec"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestVersionReportAcceptsTwoDevBuildsAtTheSameCommit(t *testing.T) {
+	out := report(devA, answer(devA))
+	if strings.Contains(out, "warning") || strings.Contains(out, "note:") {
+		t.Errorf("identical dev builds were flagged:\n%s", out)
+	}
+}
+
+// At one commit a dirty build can still differ from a clean one, or from another
+// dirty one. That is said, as a note, not as a proven mismatch.
+func TestVersionReportNotesADirtyBuildAtTheSameCommit(t *testing.T) {
+	dirty := devA
+	dirty.Dirty = true
+	out := report(devA, answer(dirty))
+	if !strings.Contains(out, "note:") || !strings.Contains(out, "uncommitted") || !strings.Contains(out, "untracked") {
+		t.Errorf("a dirty build at the same commit was not noted:\n%s", out)
+	}
+	if strings.Contains(out, "warning") {
+		t.Errorf("a possible difference was reported as a proven mismatch:\n%s", out)
+	}
+}
+
+// With no commit on either side, two dev builds cannot be told apart, and the
+// report says that instead of staying quiet.
+func TestVersionReportSaysDevBuildsWithoutACommitCannotBeToldApart(t *testing.T) {
+	bare := daemon.Build{Version: "dev", Channel: "dev"}
+	out := report(bare, answer(bare))
+	if !strings.Contains(out, "note:") || !strings.Contains(out, "cannot be told apart") {
+		t.Errorf("two bare dev builds were not noted:\n%s", out)
+	}
+	if strings.Contains(out, "warning") {
+		t.Errorf("an unknowable difference was reported as a mismatch:\n%s", out)
+	}
+}
