@@ -220,6 +220,11 @@ type Options struct {
 	// this to layout.DaemonBolt() (~/.marvel/state/marvel.bolt).
 	// See orc finding-050 / aae-orc-k4e4.
 	StateBolt string
+	// LegacyCwd is the directory the v1 to v2 store migration stamps on
+	// every team that had no root, so it keeps its place. Empty means the
+	// daemon's working directory at that start. It matters once: the stamp is
+	// written on the first start after the upgrade and never re-read.
+	LegacyCwd string
 	// ShiftTimeout bounds how long a single shift may run before the team
 	// controller declares it stuck, aborts it, and rolls back with a
 	// team.shift-timed-out event. Zero keeps the controller's built-in
@@ -261,7 +266,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 
 	store := api.NewStore()
 	if opts.StateBolt != "" {
-		if oerr := store.OpenBolt(opts.StateBolt); oerr != nil {
+		if oerr := store.OpenBoltWithOptions(opts.StateBolt, api.BoltOptions{LegacyCwd: opts.LegacyCwd}); oerr != nil {
 			return nil, fmt.Errorf("open state bolt at %s: %w", opts.StateBolt, oerr)
 		}
 		log.Printf("daemon state file: %s (resource_version=%d)", opts.StateBolt, store.ResourceVersion())
@@ -302,6 +307,28 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		}
 		recordInject(evRing, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
 		return nil
+	}
+	// The migration committed before this point; announce what it stamped,
+	// once, so an operator can see which teams were pinned to the old
+	// directory and declare a root for them.
+	for _, st := range store.LegacyStamps() {
+		ws, name, _ := strings.Cut(st.TeamKey, "/")
+		msg := "placement: legacy daemon cwd " + st.Dir + "; declare a root"
+		if linkedWorktree(st.Dir) {
+			// Warn, never refuse: the stamp is correct today. But new-window -c
+			// on a directory that has since been removed exits 0 and starts the
+			// seat in $HOME, with a different cwd and a different trust
+			// decision, so the operator should know what the stamp rests on.
+			msg += "; this directory is a linked git worktree, and if it is removed the seats will silently start in $HOME"
+		}
+		log.Printf("daemon: team %s: %s", st.TeamKey, msg)
+		events.Emit(evRing, events.Event{
+			Kind:      events.KindPlacementLegacyStamped,
+			Severity:  events.SeverityWarning,
+			Workspace: ws,
+			Team:      name,
+			Message:   msg,
+		})
 	}
 	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
@@ -1170,6 +1197,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	workDirAdvisories = append(workDirAdvisories, m.LegacyPlacementNotes(d.store)...)
 
 	// Pre-flight: refuse to apply if any role's runtime command/script
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
@@ -3169,6 +3197,47 @@ var keyChord = regexp.MustCompile(`^((C|M|S)-)+[A-Za-z0-9]$|^F([1-9]|1[0-2])$`)
 // anything else could be text and is not recorded.
 func recognizedKey(s string) bool {
 	return namedKeys[s] || keyChord.MatchString(s)
+}
+
+// linkedWorktree reports whether dir sits inside a linked git worktree. It
+// resolves symlinks in dir first, so a symlinked cwd is judged by where it
+// points, then walks up to the first .git. A .git that is a directory (or a
+// symlink to one, hence Stat and not Lstat) is an ordinary checkout. A .git
+// that is a file holds a `gitdir:` pointer, and only a pointer into
+// `<repo>/.git/worktrees/<name>` is a linked worktree: a submodule's points
+// into `.git/modules/<name>` and a --separate-git-dir checkout's elsewhere. A
+// directory that does not exist, or no repository at all, is not a worktree.
+func linkedWorktree(dir string) bool {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	for d := filepath.Clean(dir); ; {
+		if info, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			if info.IsDir() {
+				return false
+			}
+			return worktreePointer(filepath.Join(d, ".git"))
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
+}
+
+// worktreePointer reports whether the .git file at path points into a
+// repository's worktrees directory.
+func worktreePointer(path string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(body)), "gitdir:")
+	if !ok {
+		return false
+	}
+	return filepath.Base(filepath.Dir(filepath.Clean(strings.TrimSpace(target)))) == "worktrees"
 }
 
 // repaintStatus names the outcome of a repaint request for the capture result.

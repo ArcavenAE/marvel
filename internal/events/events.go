@@ -22,6 +22,10 @@ type Kind string
 // Canonical event kinds. New producers should add entries here rather
 // than inventing string literals at call sites.
 const (
+	// KindPlacementLegacyStamped announces a team the v1 to v2 store
+	// migration stamped with the daemon's directory so it keeps its place
+	// (docs/design/seat-bootstrap.md section 3).
+	KindPlacementLegacyStamped Kind = "placement.legacy-stamped"
 	// KindSessionInjected records keystrokes sent into a session's pane, with
 	// who sent them: the transport the daemon saw and what the caller declared.
 	// It never carries the text typed.
@@ -267,6 +271,7 @@ const (
 // parses this file and fails when a declared Kind constant is missing
 // here, so the catalog cannot fall behind the constants it describes.
 var allKinds = []Kind{
+	KindPlacementLegacyStamped,
 	KindSessionInjected,
 	KindSessionCreated,
 	KindSessionDeleted,
