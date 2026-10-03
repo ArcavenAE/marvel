@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,21 +99,26 @@ func thisBuild() daemon.Build {
 
 // compareBuilds says whether the daemon is a different build than the client.
 // A warning is a difference that was shown: the versions or channels differ, or
-// the versions match and both sides recorded commits that differ. A note is a
-// difference that cannot be ruled out: a dirty tree at the same commit, or dev
-// builds with no commit recorded, which the version string cannot tell apart.
+// the versions match and both sides recorded revisions that differ. A note is a
+// difference that cannot be ruled out: a changed tree at the same revision, or
+// dev builds with no revision recorded, which the version string cannot tell
+// apart. A revision with no sha in the version to confirm it can be the wrong
+// repository's, so it is printed marked unconfirmed.
 func compareBuilds(client, d daemon.Build) (warning, note string) {
 	const adopt = "'marvel daemon reexec' adopts the installed binary"
+	rev := func(b daemon.Build) string { return cmp.Or(b.Commit, b.Revision) }
+	cr, dr := rev(client), rev(d)
 	switch {
 	case d.Version != client.Version || d.Channel != client.Channel:
 		return fmt.Sprintf("the running daemon is a different build (%s, %s) than this client; %s",
 			d.Version, d.Channel, adopt), ""
-	case client.Commit != "" && d.Commit != "" && client.Commit != d.Commit:
+	case cr != "" && dr != "" && cr != dr:
 		return fmt.Sprintf("the running daemon is a different build: the same version %s, but commit %s, "+
-			"and this client is commit %s; %s", d.Version, d.Commit, client.Commit, adopt), ""
-	case client.Commit != "" && d.Commit != "" && (client.Dirty || d.Dirty):
-		return "", "the client or the daemon was built with uncommitted changes, so builds at the same commit can still differ"
-	case client.Version == "dev" && (client.Commit == "" || d.Commit == ""):
+			"and this client is commit %s; %s", d.Version, d.CommitLabel(), client.CommitLabel(), adopt), ""
+	case cr != "" && dr != "" && (client.Dirty || d.Dirty):
+		return "", "the client or the daemon was built with uncommitted or untracked changes, " +
+			"so builds at the same commit can still differ"
+	case client.Version == "dev" && (cr == "" || dr == ""):
 		return "", "dev builds with no commit recorded cannot be told apart; build from a git checkout, or stamp a version"
 	}
 	return "", ""

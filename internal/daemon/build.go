@@ -14,41 +14,49 @@ import (
 // which this process holds under an exclusive bbolt lock.
 const MethodVersion = "version"
 
-// Build names a marvel build.
+// Build names a marvel build. Commit is a revision the version confirms, and it
+// keeps the meaning it had when the version report first shipped: a client that
+// predates Revision and Dirty reads Commit and nothing else, so an unconfirmed
+// revision must never be put there.
 type Build struct {
 	Version string `json:"version"`
 	Channel string `json:"channel"`
 	Commit  string `json:"commit,omitempty"`
-	// Revision is the toolchain's recorded revision when nothing in the version
-	// confirms it. Scaffold.
+	// Revision is the revision the toolchain recorded when nothing in the
+	// version confirms it (a dev build, a stable tag). It is what tells two dev
+	// builds apart, and it can be the wrong repository's when the build was made
+	// in a linked worktree, so it is always shown as unconfirmed.
 	Revision string `json:"revision,omitempty"`
-	// CommitUnconfirmed is set when Commit came from the toolchain and nothing
-	// in the version confirms it (a dev build, a stable tag).
-	CommitUnconfirmed bool `json:"commit_unconfirmed,omitempty"`
-	// Dirty is set when the build had uncommitted changes (vcs.modified).
+	// Dirty is set when the build's tree had changes vcs.modified counts:
+	// uncommitted edits and also untracked files.
 	Dirty bool `json:"dirty,omitempty"`
 }
 
+// CommitLabel renders the commit alone, or the unconfirmed revision marked as
+// such, or "" when neither is known.
+func (b Build) CommitLabel() string {
+	switch {
+	case b.Commit != "":
+		return b.Commit
+	case b.Revision != "":
+		return b.Revision + " (unconfirmed)"
+	}
+	return ""
+}
+
 // Label renders the build for a log line or a version report: version and
-// channel, then the commit when one is known, marked when nothing confirms it,
-// and "(dirty)" when the tree had uncommitted changes.
+// channel, then the commit when one is known, and "(dirty)" when the tree had
+// changes vcs.modified counts.
 func (b Build) Label() string {
 	s := fmt.Sprintf("%s (%s)", b.Version, b.Channel)
-	if b.Commit != "" {
-		s += " commit " + b.Commit
-		if b.CommitUnconfirmed {
-			s += " (unconfirmed)"
-		}
+	if c := b.CommitLabel(); c != "" {
+		s += " commit " + c
 	}
 	if b.Dirty {
 		s += " (dirty)"
 	}
 	return s
 }
-
-// CommitLabel renders the commit alone, marked when unconfirmed, or "" when
-// none is known. Scaffold.
-func (b Build) CommitLabel() string { return "" }
 
 // Describe is Label with the process id, for the startup log line.
 func (b Build) Describe(pid int) string {
@@ -110,9 +118,9 @@ func trailingSHA(version string) string {
 // contradicts it, and a contradicted revision is dropped, because Go can stamp
 // an enclosing repository's commit on a build made in a linked worktree and a
 // wrong commit is worse than none. A version that names no sha (a dev build, a
-// stable tag) confirms nothing, so the revision is shown, marked unconfirmed,
-// which is what tells two dev builds apart. The dirty flag follows the commit it
-// describes: with the commit dropped it goes too.
+// stable tag) confirms nothing, so the revision goes in Revision, never in
+// Commit. The dirty flag follows whatever revision survives: with it dropped
+// the flag goes too.
 func BuildFor(version, channel, revision string, modified bool) Build {
 	b := Build{Version: version, Channel: channel}
 	switch {
@@ -120,10 +128,9 @@ func BuildFor(version, channel, revision string, modified bool) Build {
 	case trailingSHA(version) != "":
 		b.Commit = VerifiedCommit(version, revision)
 	default:
-		b.Commit = revision
-		b.CommitUnconfirmed = true
+		b.Revision = revision
 	}
-	b.Dirty = modified && b.Commit != ""
+	b.Dirty = modified && (b.Commit != "" || b.Revision != "")
 	return b
 }
 
