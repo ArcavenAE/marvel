@@ -41,7 +41,9 @@ that line.
 manifest names the global role (the address word) a role holds, and marvel
 renders grants, picks the broker user, and sets the seat's environment from
 that one declaration. The role's name stops mattering, except as the default
-for a manifest that declares nothing.
+for a manifest that declares nothing. A declaration widens a role only if the
+cluster's own config admits that role name as well (section 6): one wrong
+line in a manifest cannot give a worker the global tier.
 
 ## 3. The declaration
 
@@ -55,7 +57,9 @@ global_role = "supervisor"
 ```
 
 - **Values:** `"supervisor"` or `"none"`. Anything else is refused at apply,
-  with the allowed set in the error. `director` is not a manifest value: the
+  with the allowed set in the error. An empty string is the same as absent
+  (the field is a Go string, so `global_role = ""` and no field cannot be told
+  apart); the explicit opt-out is `"none"`. `director` is not a manifest value: the
   director seat is rendered from the client config's `seat:` block, not from
   a team role.
 - **The word is the address word, not a role class.** It is the same token
@@ -82,31 +86,38 @@ caller below reads it. No caller compares a role name.
 
 ## 4. Broker users and grants
 
-**The per-role user is keyed by the global role, not by the role name.** One
-user per team and global role, `<team>.supervisor`, presented by every seat
-whose role resolves to `supervisor`. This matches the address model (one
-supervisor inbox per cluster, which every supervisor-type seat reads) and
-removes the lookup mismatch in section 1.
+**One broker user per global role-holding role, named `<team>.<role>`.** The
+renderer mints a user for each role whose `ResolvedGlobalRole()` is
+`supervisor`, with the grants `<team>.supervisor` carries today. For the role
+named `supervisor` this is the same user, by the same name, so nothing that
+runs today changes. A research-supervisor gets `<team>.research-supervisor`.
 
 | Code | Today | After |
 |---|---|---|
 | `hasSupervisorRole(t)` (`manager.go:487-494`) | a role name is in `GlobalAddressRoles` | any role's `ResolvedGlobalRole() == "supervisor"` |
-| renderer, `TeamUser.Supervisor` (`manager.go:363`) | from `hasSupervisorRole` | unchanged call, new meaning |
-| `declared.go:217-251` | grants on `<team>` and a `<team>.supervisor` user when `t.Supervisor` | unchanged |
-| `Credential(team, role)` (`manager.go:262-279`) | `<team>.<role>` if the role name is listed | `<team>.<resolved global role>` if it resolves to one, else the team user |
+| renderer, minting (`manager.go:363-379`) | one `<team>.supervisor` user when `hasSupervisorRole` | one `<team>.<role>` user per role that resolves to `supervisor` |
+| `declared.go:217-251` | grants on `<team>`, and one `<team>.supervisor` principal | grants on `<team>` (until stage 3), and one principal per such role, same grants |
+| `Credential(team, role)` (`manager.go:262-279`) | `<team>.<role>` if the role name is listed | `<team>.<role>` if the role resolves to a global role, else the team user |
 
-`Credential` needs the role's resolved global role, not its name. The
-signature changes to `Credential(team string, globalRole string)`. The one
-caller, `internal/session/manager.go:912`, passes the role's
-`ResolvedGlobalRole()` from the stored team spec. The `BusEnv` interface
-(`session/manager.go:1654`) changes with it.
+`Credential` keeps its signature: it already looks up `team + "." + role`,
+which is now the name the renderer mints, so the section 1 mismatch closes
+without changing the caller. It needs the role's resolved global role, which
+it reads from the stored team spec through the resolver instead of the name
+list. `SupervisorUserSuffix` (`declared.go:85`) goes away, since the suffix is
+now the role name. The user name is `<team>.<role>`, and both parts are
+already held to the R-76 class.
 
-**Option, not the default:** a user per role (`<team>.research-supervisor`
-beside `<team>.supervisor`) with identical grants. It gives each role its own
-revocation and audit line, at the price of one more password per role, and a
-second place where the renderer and `Credential` must agree on a name. The
-default is one user per global role, since both roles hold one address. This
-is ruling 1.
+**Why per role, not one shared user per global role** (ruling 1). A shared
+`<team>.supervisor` for every supervisor-type role would match the one inbox
+per cluster, but it cannot be revoked one role at a time. The renderer mints
+a password only when it is missing (`manager.go:368-376`) and drops it only
+when the user leaves (`:382-386`); there is no rotation. With a shared user,
+turning `research-supervisor` to `"none"` while `supervisor` stays would
+leave the same live password in that seat, and the running research-supervisor
+would keep its global reach. With a user per role, that user leaves the
+rendered set at the next reload. Whether nats-server closes an existing
+connection whose user was removed at reload is UNVERIFIED here; the builder
+PR checks it, and if it does not, a revocation also needs the seat restarted.
 
 ## 5. What per-role-users stage 3 does to it
 
@@ -114,8 +125,8 @@ Stage 3 (phase 2 in `per-role-broker-users.md` section 7) strips the global
 grants from `<team>`. After this change:
 
 - Every seat whose role resolves to `supervisor`, research-supervisor
-  included, connects as `<team>.supervisor` once the broker accepts it, so
-  stage 3 removes nothing it uses.
+  included, connects as its own `<team>.<role>` user once the broker accepts
+  it, so stage 3 removes nothing it uses.
 - The rotation step before stage 3 must rotate research-supervisor seats as
   well as supervisors, and the observational check (`/connz?auth=true`, the
   same design's section 7, step 3) must look for any global-role seat still connected
@@ -129,36 +140,75 @@ A research-supervisor in a team with no `supervisor` role gains the global
 grants at the first reload after its manifest declares `global_role`. That is
 the intended widening, and it happens only by declaration.
 
-## 6. Not a second source of truth with the launcher
+## 6. A wrong declaration, and the launcher
 
-There are two decisions about one fact, and the design keeps them from
-drifting rather than pretending there is one:
+### The hazard
 
-- **marvel decides grants** from the manifest declaration. It never reads
-  wardrobe: marvel stays independent of the role library (SOUL section 2),
-  and it could not do it anyway, because the manifest role name is not the
-  wardrobe role id (`cast-launch.sh:58-66` maps between them).
-- **The launcher decides the seat's global address** from the cast
-  (`cast-launch.sh:119-130`, "derived from the cast, never read from the
-  environment").
+A manifest that declares a worker `global_role = "supervisor"` would make
+marvel mint that worker a global user and hand it the credential: publish on
+`global.director.inbox`, `global.*.supervisor.inbox` and `$JS.global.API.>`
+(`declared.go:216`, `:240-243`). director's launcher does NOT catch it. For a
+worker cast `GROLE` is empty (`cast-launch.sh:129`), the contradiction test
+(`:143-145`) sits inside `if [[ -n "$DIRECTOR_GLOBAL_DOMAIN" && -n "$GROLE" ]]`
+(`:132`), and the `else` branch (`:157`) unsets `DIRECTOR_GLOBAL_ROLE` and
+launches. The broker credential is not touched, so the seat connects with
+global grants and nothing reports it. One wrong line would be a silent
+widening.
 
-They are tied by a check that already exists. marvel exports
-`DIRECTOR_GLOBAL_ROLE=<resolved>` into every seat whose role resolves to a
-global role, through the adapter's base env (`internal/runtime/adapter.go`,
-beside `DIRECTOR_TEAM`), and leaves it unset otherwise. The launcher already
-refuses a `DIRECTOR_GLOBAL_ROLE` that contradicts the cast
-(`cast-launch.sh:143-145`), before the harness starts. So a manifest that
-declares a role global, when the cast says it is not, fails at launch,
-loudly, and marvel records a failed session.
+### The guard is in marvel: two keys
 
-One direction is not covered today: the cast says global and the manifest
-declares nothing. The env is unset, the launcher derives `supervisor`, and
-the seat connects as the team user. Before stage 3 that still works in a team
-that also has a `supervisor`; after stage 3 the bus pre-flight
-(`cast-launch.sh:290-292`) fails, which is loud. Closing it earlier needs one
-line in director: refuse when the cast derives a global role, marvel set a
-bus user, and `DIRECTOR_GLOBAL_ROLE` is absent. That is director's change to
-make; this design proposes it and does not depend on it (ruling 2).
+marvel must stay safe without depending on a director change, so a
+declaration widens a role only when two keys agree:
+
+1. **The manifest declares** the role `global_role = "supervisor"`.
+2. **The cluster admits** that role name, in the operator's client config,
+   on the message-bus service entry:
+
+   ```yaml
+   services:
+     - name: bus
+       class: message-bus
+       global_roles: [research-supervisor]
+   ```
+
+   `supervisor` is admitted without being listed, which keeps today's
+   behavior.
+
+A declaration on a role name the cluster does not admit is refused at apply,
+before anything is stored, naming the role and the config key. So a manifest
+author cannot widen a role by one line, and the operator who owns the cluster
+decides which names may hold the global tier. The admitted list is
+operator-owned data in the cluster config, not a name in marvel's code, so it
+is not the second hard-coded name director ruled out. Two costs:
+- The config is read once at daemon start, with no reload (#514). Admitting
+  a new role name takes a daemon reexec.
+- On a cluster with a manifest that already declares a role, removing that
+  role name from `global_roles` makes the next apply of that manifest fail
+  until the declaration is removed. That is the intended fail-closed
+  direction.
+
+### The launcher, as defense in depth
+
+marvel exports `DIRECTOR_GLOBAL_ROLE=<resolved>` into a global-role seat's
+environment (`internal/runtime/adapter.go`, beside `DIRECTOR_TEAM`) and
+leaves it unset otherwise. Two one-line director changes would make the
+launcher a second check in both directions:
+
+- move the contradiction test ahead of `:132`, so a cast that derives no
+  global role refuses a set `DIRECTOR_GLOBAL_ROLE`;
+- refuse when the cast derives a global role and `DIRECTOR_GLOBAL_ROLE` is
+  absent, which catches a cast that is global under a manifest that declares
+  nothing. Today that seat connects as the team user and fails loudly only
+  after stage 3, at the bus pre-flight (`cast-launch.sh:290-292`).
+
+This design proposes both to director and does not depend on them: the
+two-key guard holds without them.
+
+marvel never reads wardrobe. It stays independent of the role library (SOUL
+section 2), and it could not anyway, since the manifest role name is not the
+wardrobe role id (`cast-launch.sh:58-66` maps between them). The launcher
+derives its answer from the cast on purpose (`:119-121`). The two answers are
+tied by the env check above, not merged into one.
 
 ## 7. The other hard-coded name
 
@@ -178,9 +228,9 @@ The pin at `global_roles_test.go:22-27` is replaced, not loosened:
    named `research-supervisor` with no `global_role` resolves to none. This
    keeps the old test's negative half, so nothing widens by name.
 2. **A declaration grants.** `research-supervisor` with
-   `global_role = "supervisor"` in a team with no `supervisor` role: the team
-   is `Supervisor`, the renderer emits `<team>.supervisor`, and `Credential`
-   returns it once confirmed.
+   `global_role = "supervisor"`, admitted by the cluster, in a team with no
+   `supervisor` role: the team is `Supervisor`, the renderer emits
+   `<team>.research-supervisor`, and `Credential` returns it once confirmed.
 3. **Opt out.** A role named `supervisor` with `global_role = "none"` gets no
    grant and the team user.
 4. **The renderer and Credential agree** for every role in a table of
@@ -197,31 +247,46 @@ The pin at `global_roles_test.go:22-27` is replaced, not loosened:
    list" assertion.
 8. **Persistence.** `GlobalRole` survives a daemon restart (bolt rehydrate)
    on a stored team.
+9. **The two-key guard.** A worker role declaring `global_role = "supervisor"`
+   on a cluster whose config does not admit its name is refused at apply,
+   and nothing is stored. The same manifest applies once the name is
+   admitted.
+10. **Revocation.** A role turned from `"supervisor"` to `"none"` leaves the
+    rendered principals at the next render, and its password is dropped,
+    while a `supervisor` in the same team keeps its own user.
 
 ## 9. Edits, in order (none made by this PR)
 
 1. `api.Role` / `ManifestRole` gain `GlobalRole`, with validation and
    `ResolvedGlobalRole()`; the default map replaces `GlobalAddressRoles`.
    Tests 1, 3, 5, 7, 8.
-2. `hasSupervisorRole` and `Credential` read the resolver; `Credential`'s
-   signature and its caller change. Tests 2 and 4.
-3. The adapter base env exports `DIRECTOR_GLOBAL_ROLE`. Test 6.
-4. Fleet manifests declare `global_role = "supervisor"` on every
-   research-supervisor role, then those seats rotate onto
-   `<team>.supervisor`. That is an operator step, run by director.
-5. `per-role-broker-users.md` is updated: line 33 is superseded, and the
-   stage 3 check covers every global-role seat.
+2. The cluster config gains `global_roles` on the message-bus entry, and
+   apply refuses an unadmitted declaration. Test 9.
+3. `hasSupervisorRole`, the renderer and `Credential` read the resolver; one
+   user per such role. Tests 2, 4 and 10.
+4. The adapter base env exports `DIRECTOR_GLOBAL_ROLE`. Test 6.
+5. Operator steps, run by director: admit `research-supervisor` in each
+   cluster's config and reexec; declare `global_role = "supervisor"` on every
+   research-supervisor role; rotate those seats onto their own user.
+6. `per-role-broker-users.md` and marvel's CLAUDE.md are updated: line 33
+   of the former is superseded, and the stage 3 check covers every
+   global-role seat.
 
-Steps 1 to 3 can be one builder PR. Step 4 must precede per-role-users
+Steps 1 to 4 can be one builder PR. Step 5 must precede per-role-users
 stage 3.
 
 ## 10. Rulings needed
 
-1. **One user per global role, or one per role** (section 4). Default: one
-   per global role, `<team>.supervisor`.
-2. **The launcher's missing-env refusal** (section 6): propose it to
-   director, or accept that the gap closes only at stage 3. Default: propose
-   it as a director issue; this design does not wait on it.
+1. **One user per role, or one shared user per global role** (section 4).
+   Default: one per role, `<team>.<role>`, so one role can be revoked at a
+   reload. The cost of the shared alternative: no rotation exists, so a role
+   turned to `"none"` keeps the shared password and its global reach while
+   another role in the team still holds the global role.
+2. **The guard against a wrong declaration** (section 6). Default: the
+   two-key guard in marvel, which does not depend on director. Also propose
+   the two launcher changes to director as defense in depth. Alternative:
+   rely on the launcher alone, which needs director's change to land first
+   and leaves marvel unsafe until it does.
 3. **`shiftOrder`** (section 7): leave it, or read the resolver. Default:
    leave it and file it separately.
 
@@ -233,4 +298,6 @@ stage 3.
 | Match role names ending in `supervisor` | convention as code: a role named `notes-supervisor` would gain global reach by its name |
 | marvel reads the wardrobe role's class | marvel would depend on the role library, and the manifest role name is not the wardrobe role id, so marvel would need the launcher's mapping table as well |
 | The launcher reads marvel's env instead of the cast | director's launcher derives the role from the cast on purpose (`cast-launch.sh:119-121`); changing that is director's design, not marvel's |
+| One shared `<team>.supervisor` user for every supervisor-type role | not revocable per role (section 4) |
+| The manifest declaration alone, with no cluster admission | one wrong line gives a worker the global tier, and the launcher does not catch it (section 6) |
 | A boolean `global = true` | the address word is what both sides exchange (`DIRECTOR_GLOBAL_ROLE`); a boolean would hard-code `supervisor` again, one level down |
