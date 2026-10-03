@@ -624,6 +624,29 @@ the README). If a host ends up with both, the first `marvel` on `PATH` is the
 one that runs, which may be the stale one; check it with `command -v marvel`
 and `marvel version`, or call the pinned binary by its full path.
 
+### Under mise: stop and start, not reexec
+
+`marvel daemon reexec` re-executes the marvel binary at the running daemon's
+own path (`os.Executable`). That picks up an upgrade only when the new binary
+replaces the old one at the same path. mise installs each version in its own
+directory and leaves the old one in place, so after `mise use` a reexec
+restarts the old version (marvel#523).
+
+Under mise, detach the old daemon and start the new one from its mise path:
+
+```sh
+mise use -g github:ArcavenAE/marvel@<tag>
+marvel --cluster <name> stop --keep-bus     # agents keep running; the broker stays up
+"$(mise where github:ArcavenAE/marvel@<tag>)/marvel" daemon --mrvl
+```
+
+The new daemon adopts the running sessions and the broker. On the third
+cluster's bring-up (aae-orc#461) that path took one second between the stop
+and the start, adopted all four sessions and the running broker, and the
+daemon then reported the new version. Start it from the same working
+directory and with the same flags as before. Then push the leaf seed again,
+because the new daemon starts without it (see "Connecting to a shared hub").
+
 ## Monitoring
 
 ### Watch mode

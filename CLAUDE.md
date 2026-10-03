@@ -533,7 +533,7 @@ marvel stop                                          # stop daemon, agents keep 
 marvel stop --teardown                               # stop daemon, delete sessions, kill panes
 marvel daemon                                        # start the daemon (foreground)
 marvel daemon logs [-n N]                            # daemon log ring (works over mrvl://)
-marvel daemon reexec                                 # adopt a freshly installed binary, agents keep running
+marvel daemon reexec                                 # re-exec the binary at its own path (an in-place upgrade, not a new mise version), agents keep running
 marvel events                                        # structured event ring (control-plane + agent.*)
 marvel capture <session-key>                         # capture a session's pane content
 marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (--key presses a key, text is literal)
