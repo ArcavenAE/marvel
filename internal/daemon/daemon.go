@@ -1238,6 +1238,12 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
+	// Pre-flight: a global role declaration the cluster does not admit is
+	// refused before anything is stored (global-role-declaration.md section 6).
+	if err := refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus); err != nil {
+		return Response{Error: err.Error()}
+	}
+
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
 	if err := m.ValidateTeamNames(d.store.ListTeams()); err != nil {
@@ -3451,3 +3457,10 @@ const (
 	defaultRepaintSettle = 300 * time.Millisecond
 	repaintSettleMax     = 10 * time.Second
 )
+
+// refuseUnadmittedGlobalRoles is the early, loud half of the two-key guard:
+// scaffold, refuses nothing yet.
+func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
+	_, _ = m, b
+	return nil
+}
