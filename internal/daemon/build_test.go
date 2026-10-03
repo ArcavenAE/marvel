@@ -111,27 +111,26 @@ func TestVerifiedCommit(t *testing.T) {
 
 // Two dev builds both read "dev (dev)", which is the stale-local-daemon case
 // the version report most needs to catch. The revision the toolchain recorded
-// tells them apart, shown as unconfirmed because nothing in a dev version names
-// the build. A version that does name its sha still has its commit confirmed,
-// or dropped when the revision contradicts it (the worktree hazard).
-func TestBuildForPresentsTheCommitHonestly(t *testing.T) {
+// tells them apart, carried apart from `commit`, which stays confirmed-only: a
+// version that names its sha confirms the revision or contradicts it (the
+// worktree hazard, dropped), and one that names no sha confirms nothing.
+func TestBuildForKeepsCommitConfirmedAndRevisionApart(t *testing.T) {
 	const full = "b533ca5d1e2f4a6b8c9d0e1f2a3b4c5d6e7f8091"
 	const alpha = "0.1.0-alpha.20261002.231214.b533ca5"
 	cases := []struct {
 		name, version, revision string
-		wantCommit              string
-		wantUnconfirmed         bool
+		wantCommit, wantRev     string
 	}{
-		{"alpha confirmed by its revision", alpha, full, full, false},
-		{"alpha contradicted by the revision is dropped", alpha, "dc6392a84fcdcce1ec02a574bbd09835ef330bb5", "", false},
-		{"dev build shows the revision, unconfirmed", "dev", full, full, true},
-		{"stable tag shows the revision, unconfirmed", "1.2.3", full, full, true},
-		{"nothing recorded, nothing shown", "dev", "", "", false},
+		{"alpha confirmed by its revision", alpha, full, full, ""},
+		{"alpha contradicted by the revision is dropped", alpha, "dc6392a84fcdcce1ec02a574bbd09835ef330bb5", "", ""},
+		{"dev build carries the revision, not a commit", "dev", full, "", full},
+		{"stable tag carries the revision, not a commit", "1.2.3", full, "", full},
+		{"nothing recorded, nothing shown", "dev", "", "", ""},
 	}
 	for _, tc := range cases {
 		b := BuildFor(tc.version, "alpha", tc.revision, false)
-		if b.Commit != tc.wantCommit || b.CommitUnconfirmed != tc.wantUnconfirmed {
-			t.Errorf("%s: commit = %q unconfirmed = %v, want %q and %v", tc.name, b.Commit, b.CommitUnconfirmed, tc.wantCommit, tc.wantUnconfirmed)
+		if b.Commit != tc.wantCommit || b.Revision != tc.wantRev {
+			t.Errorf("%s: commit = %q revision = %q, want %q and %q", tc.name, b.Commit, b.Revision, tc.wantCommit, tc.wantRev)
 		}
 		if b.Version != tc.version || b.Channel != "alpha" {
 			t.Errorf("%s: version and channel not carried: %+v", tc.name, b)
@@ -153,9 +152,9 @@ func TestBuildForMarksADirtyBuild(t *testing.T) {
 }
 
 func TestDescribeSaysUnconfirmedAndDirty(t *testing.T) {
-	b := Build{Version: "dev", Channel: "dev", Commit: "b533ca5", CommitUnconfirmed: true, Dirty: true}
+	b := Build{Version: "dev", Channel: "dev", Revision: "b533ca5", Dirty: true}
 	got := b.Describe(42)
-	for _, want := range []string{"commit b533ca5", "(unconfirmed)", "(dirty)", "pid 42"} {
+	for _, want := range []string{"commit b533ca5 (unconfirmed)", "(dirty)", "pid 42"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Describe = %q, lacks %q", got, want)
 		}
@@ -166,6 +165,66 @@ func TestDescribeSaysUnconfirmedAndDirty(t *testing.T) {
 	}
 }
 
+func TestCommitLabel(t *testing.T) {
+	cases := map[string]Build{
+		"abc1234":                   {Commit: "abc1234"},
+		"abc1234 (unconfirmed)":     {Revision: "abc1234"},
+		"":                          {},
+		"abc1234 (unconfirmed) bis": {},
+	}
+	delete(cases, "abc1234 (unconfirmed) bis")
+	for want, b := range cases {
+		if got := b.CommitLabel(); got != want {
+			t.Errorf("CommitLabel(%+v) = %q, want %q", b, got, want)
+		}
+	}
+}
+
+// The #500 client is released and decodes only the fields it knew: version,
+// channel and commit, where `commit` meant a commit the version confirms. A
+// daemon of this build must therefore never put an unconfirmed revision in
+// `commit`, or that client prints it as if it were confirmed.
+func TestAnOldClientReadsANewDaemonsBuild(t *testing.T) {
+	type build500 struct {
+		Version string `json:"version"`
+		Channel string `json:"channel"`
+		Commit  string `json:"commit,omitempty"`
+	}
+	type info500 struct {
+		build500
+		StartedAt time.Time `json:"started_at"`
+		PID       int       `json:"pid"`
+	}
+	const full = "1111111111111111111111111111111111111111"
+	dev, err := json.Marshal(BuildInfo{Build: BuildFor("dev", "dev", full, true), PID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got info500
+	if err := json.Unmarshal(dev, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Commit != "" {
+		t.Errorf("a dev daemon's unconfirmed revision reached an old client as its commit: %q (%s)", got.Commit, dev)
+	}
+	if !strings.Contains(string(dev), `"revision"`) {
+		t.Errorf("the revision is not on the wire for a new client: %s", dev)
+	}
+
+	const alpha = "0.1.0-alpha.20261002.231214.b533ca5"
+	conf, err := json.Marshal(BuildInfo{Build: BuildFor(alpha, "alpha", "b533ca5d1e2f4a6b8c9d0e1f2a3b4c5d6e7f8091", false), PID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got2 info500
+	if err := json.Unmarshal(conf, &got2); err != nil {
+		t.Fatal(err)
+	}
+	if got2.Commit != "b533ca5d1e2f4a6b8c9d0e1f2a3b4c5d6e7f8091" {
+		t.Errorf("a confirmed commit did not reach an old client: %q (%s)", got2.Commit, conf)
+	}
+}
+
 // The new fields cross the socket additively: a client that predates them
 // decodes the rest, and a build without them decodes as confirmed and clean.
 func TestBuildNewFieldsAreAdditiveOnTheWire(t *testing.T) {
@@ -173,14 +232,14 @@ func TestBuildNewFieldsAreAdditiveOnTheWire(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"version":"v","channel":"alpha","commit":"abc1234"}`), &old); err != nil {
 		t.Fatal(err)
 	}
-	if old.CommitUnconfirmed || old.Dirty || old.Commit != "abc1234" {
+	if old.Revision != "" || old.Dirty || old.Commit != "abc1234" {
 		t.Errorf("an old-shape build decoded as %+v", old)
 	}
 	out, err := json.Marshal(Build{Version: "v", Channel: "alpha"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(out), "dirty") || strings.Contains(string(out), "unconfirmed") {
+	if strings.Contains(string(out), "dirty") || strings.Contains(string(out), "revision") {
 		t.Errorf("zero values were written: %s", out)
 	}
 }

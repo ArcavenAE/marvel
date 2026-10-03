@@ -129,15 +129,15 @@ func TestBoundedQueryReturnsAnAnswerInTime(t *testing.T) {
 }
 
 var (
-	devA = daemon.Build{Version: "dev", Channel: "dev", Commit: "aaaaaaa1111", CommitUnconfirmed: true}
-	devB = daemon.Build{Version: "dev", Channel: "dev", Commit: "bbbbbbb2222", CommitUnconfirmed: true}
+	devA = daemon.Build{Version: "dev", Channel: "dev", Revision: "aaaaaaa1111"}
+	devB = daemon.Build{Version: "dev", Channel: "dev", Revision: "bbbbbbb2222"}
 )
 
 // Two dev builds have the same version string. The recorded commits tell them
 // apart, and the warning names both so the operator sees which is stale.
 func TestVersionReportFlagsTwoDevBuildsAtDifferentCommits(t *testing.T) {
 	out := report(devA, answer(devB))
-	for _, want := range []string{"warning", "different build", "aaaaaaa1111", "bbbbbbb2222", "marvel daemon reexec"} {
+	for _, want := range []string{"warning", "different build", "aaaaaaa1111 (unconfirmed)", "bbbbbbb2222 (unconfirmed)", "marvel daemon reexec"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report lacks %q:\n%s", want, out)
 		}
@@ -157,7 +157,7 @@ func TestVersionReportNotesADirtyBuildAtTheSameCommit(t *testing.T) {
 	dirty := devA
 	dirty.Dirty = true
 	out := report(devA, answer(dirty))
-	if !strings.Contains(out, "note:") || !strings.Contains(out, "uncommitted") {
+	if !strings.Contains(out, "note:") || !strings.Contains(out, "uncommitted") || !strings.Contains(out, "untracked") {
 		t.Errorf("a dirty build at the same commit was not noted:\n%s", out)
 	}
 	if strings.Contains(out, "warning") {

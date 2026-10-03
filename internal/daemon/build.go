@@ -19,6 +19,9 @@ type Build struct {
 	Version string `json:"version"`
 	Channel string `json:"channel"`
 	Commit  string `json:"commit,omitempty"`
+	// Revision is the toolchain's recorded revision when nothing in the version
+	// confirms it. Scaffold.
+	Revision string `json:"revision,omitempty"`
 	// CommitUnconfirmed is set when Commit came from the toolchain and nothing
 	// in the version confirms it (a dev build, a stable tag).
 	CommitUnconfirmed bool `json:"commit_unconfirmed,omitempty"`
@@ -42,6 +45,10 @@ func (b Build) Label() string {
 	}
 	return s
 }
+
+// CommitLabel renders the commit alone, marked when unconfirmed, or "" when
+// none is known. Scaffold.
+func (b Build) CommitLabel() string { return "" }
 
 // Describe is Label with the process id, for the startup log line.
 func (b Build) Describe(pid int) string {
