@@ -1265,8 +1265,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		c.latchAdmissionHold(t, plan.Role, plan.admission.key, plan.admission.reason)
 	}
 
-	if plan.Spawn == 0 && c.sessMgr != nil {
-		// Nothing to start for this role now, so nothing is being refused.
+	if c.sessMgr != nil && (plan.Action == RoleSteady || plan.Action == RoleScaleDown) {
+		// Steady or scaling down: the role wants no spawn, so nothing is being
+		// refused. A hold (bus gate, backoff, admission, schedule) spawns nothing
+		// this tick too, but the role still wants a replica; clearing there would
+		// let a flapping gate reset the refusal's start time and re-emit it.
 		c.sessMgr.ClearPlacementRefusal(t.Workspace, t.Name, plan.Role)
 	}
 
