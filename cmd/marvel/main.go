@@ -270,7 +270,7 @@ Examples:
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
 				Reclaim:      reclaim,
-				Build:        daemon.Build{Version: version, Channel: channel, Commit: daemon.VCSRevision()},
+				Build:        daemon.Build{Version: version, Channel: channel, Commit: daemon.VerifiedCommit(version, daemon.VCSRevision())},
 			})
 			if err != nil {
 				return err

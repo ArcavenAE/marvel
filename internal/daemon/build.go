@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -64,5 +65,32 @@ func (d *Daemon) handleVersion() Response {
 // stamping skips a linked worktree's .git file and walks up to an enclosing
 // repository, so a build made in a worktree can carry the wrong repository's
 // commit; a wrong commit is worse than none. An alpha version ends in the
-// short sha it was built from, and the revision must start with it. Scaffold.
-func VerifiedCommit(version, revision string) string { return "" }
+// short sha it was built from, and the revision must start with it. A version
+// that names no sha (a dev build, a stable tag) confirms nothing, so no commit
+// is reported for it.
+func VerifiedCommit(version, revision string) string {
+	sha := trailingSHA(version)
+	if sha == "" || revision == "" || !strings.HasPrefix(strings.ToLower(revision), sha) {
+		return ""
+	}
+	return revision
+}
+
+// trailingSHA returns the last dot- or dash-separated part of version when it
+// looks like a short git sha (7 to 40 lower-case hex digits), else "".
+func trailingSHA(version string) string {
+	parts := strings.FieldsFunc(strings.ToLower(version), func(r rune) bool { return r == '.' || r == '-' })
+	if len(parts) == 0 {
+		return ""
+	}
+	last := parts[len(parts)-1]
+	if len(last) < 7 || len(last) > 40 {
+		return ""
+	}
+	for _, r := range last {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return ""
+		}
+	}
+	return last
+}
