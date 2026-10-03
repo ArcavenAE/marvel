@@ -67,7 +67,13 @@ type codexSeed struct {
 // renderCodexConfig renders a seed as config.toml. Pure, so the allowlist
 // is testable without codex.
 func renderCodexConfig(s codexSeed) ([]byte, error) {
-	doc := map[string]any{}
+	doc := map[string]any{
+		// codex's startup "Update available" menu defaults to running the
+		// vendor's self-updater. A fleet seat must never sit at it, so the check
+		// is off for every seat (operator-approved, marvel#483). A constant:
+		// the operator's own file is not read for it.
+		"check_for_update_on_startup": false,
+	}
 
 	hooks := map[string]any{}
 	for _, event := range codexHookEvents {

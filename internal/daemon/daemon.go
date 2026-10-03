@@ -2007,6 +2007,13 @@ type captureParams struct {
 	SessionKey string `json:"session_key"`
 	Start      *int   `json:"start,omitempty"`
 	End        *int   `json:"end,omitempty"`
+	// Repaint asks the program in the pane to redraw before the read, by
+	// widening the pane's terminal one column and restoring it. Off by
+	// default: a plain capture is what was last painted.
+	Repaint bool `json:"repaint,omitempty"`
+	// SettleMS is how long the nudge is held, and then how long to wait for the
+	// restore's redraw before reading. Zero means the default.
+	SettleMS int `json:"settle_ms,omitempty"`
 }
 
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
@@ -2049,6 +2056,19 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
+	// A repaint is a request, not a promise: a failure to signal is reported
+	// beside the capture and never fails it.
+	repaint, target := "", ""
+	if p.Repaint {
+		settle := repaintSettle(p.SettleMS)
+		res, rerr := d.driver.Repaint(sess.PaneID, settle)
+		repaint, target = repaintStatus(res, rerr), res.Target
+		if rerr == nil {
+			// The nudge was held for settle; the restore repaints too.
+			time.Sleep(settle)
+		}
+	}
+
 	var content string
 	if start, end, ranged := captureBounds(p); ranged {
 		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
@@ -2059,11 +2079,16 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("capture %s: %v", p.SessionKey, err)}
 	}
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":  "captured",
 		"session": p.SessionKey,
 		"content": content,
-	})
+	}
+	if p.Repaint {
+		out["repaint"] = repaint
+		out["repaint_target"] = target
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
 }
 
@@ -3145,3 +3170,32 @@ var keyChord = regexp.MustCompile(`^((C|M|S)-)+[A-Za-z0-9]$|^F([1-9]|1[0-2])$`)
 func recognizedKey(s string) bool {
 	return namedKeys[s] || keyChord.MatchString(s)
 }
+
+// repaintStatus names the outcome of a repaint request for the capture result.
+// "signalled" means the pane's size was nudged, not that the program redrew.
+func repaintStatus(res tmux.RepaintResult, err error) string {
+	if err != nil {
+		return "unavailable: " + strings.Join(strings.Fields(err.Error()), " ")
+	}
+	if res.RestoreSkipped {
+		return "signalled, restore skipped: size changed underneath"
+	}
+	return "signalled"
+}
+
+// repaintSettle is how long the nudge is held and then how long the capture
+// waits for the restore's redraw: the caller's value, bounded.
+func repaintSettle(settleMS int) time.Duration {
+	settle := time.Duration(settleMS) * time.Millisecond
+	if settle <= 0 {
+		settle = defaultRepaintSettle
+	}
+	return min(settle, repaintSettleMax)
+}
+
+// defaultRepaintSettle is how long a repaint capture waits for the redraw to
+// land, and repaintSettleMax bounds what a caller may ask for.
+const (
+	defaultRepaintSettle = 300 * time.Millisecond
+	repaintSettleMax     = 10 * time.Second
+)

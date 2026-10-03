@@ -396,8 +396,9 @@ hub from the leaf remote. `NewManager` recovers every password from the
 running sessions' credentials valid (`docs/design/bus-as-service.md` 8.2).
 A team that declares a `supervisor` role and has a hub also gets a second user,
 `<team>.supervisor`, rendered beside `<team>` (`docs/design/per-role-broker-users.md`,
-M9-3). New spawns of the supervisor role connect as it and subscribe only
-`global.<cluster>.supervisor.inbox`; seats already running keep the team user,
+M9-3). New spawns of the supervisor role connect as it, once the broker has
+accepted it (marvel logs in as the user to find out; until then a spawn uses the
+team user, which works), and it subscribes only `global.<cluster>.supervisor.inbox`; seats already running keep the team user,
 which keeps its grants until the subtractive stage. **Do not downgrade the
 daemon below this change once a dotted user is rendered:** an older binary
 drops the dotted user at its next render and breaks every supervisor that
