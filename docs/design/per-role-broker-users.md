@@ -30,7 +30,7 @@ Verified against marvel `origin/main` b1f4953 (#403), each with its command:
 | Global grants ride that user | same, lines 206-212 | when `t.Supervisor && s.HubURL != ""`: pub `global.director.inbox`, `global.*.supervisor.inbox`, `$JS.global.API.>`; sub `global.<domain>.>` |
 | Every seat gets the team user | `git show origin/main:internal/session/manager.go`, lines 826-831 | `m.Bus.TeamCredential(team.Name)` feeds `lctx.BusUser/BusPassword` for every role |
 | Injected as env | `internal/runtime/adapter.go:351-355` | `DIRECTOR_NATS_USER`, `DIRECTOR_NATS_PASS` |
-| "Supervisor team" means an exact role name | `internal/bus/manager.go:361-368` | `r.Name == "supervisor"`; `research-supervisor` does not count, which is correct under R-94 |
+| "Supervisor team" means an exact role name | `internal/bus/manager.go:361-368` | `r.Name == "supervisor"`; `research-supervisor` does not count, which was correct under R-94 as first written. Superseded: R-94 as amended (director#77) and the 2026-10-03 ruling make every supervisor-type role global; see `global-role-declaration.md` (#518) |
 | #403 widened worker publish | `gh pr view 403 -R ArcavenAE/marvel` | MERGED b1f4953; adds `global.*.supervisor.inbox` to the same shared team user |
 | Live teams affected | `marvel get teams` on the operator host | two applied teams, the operator's own team and one client team, each hold `supervisor` plus six or more worker roles |
 
@@ -66,7 +66,7 @@ Keep marvel-builder's starting shape, with three changes marked **(changed)**.
 | User | Holders | Publish | Subscribe |
 |---|---|---|---|
 | `<team>` | every role that holds no global address | `agent.<ws>.<team>.>`, `agent.audit`, plumbing | `agent.<ws>.<team>.>`, `agent.<ws>.broadcast`, plumbing |
-| `<team>.supervisor` (only when the team declares `supervisor` and a hub is set) | the `supervisor` role only | the team user's grants, plus `global.director.inbox`, `global.*.supervisor.inbox`, `$JS.global.API.>` | the team user's grants, plus `global.<domain>.supervisor.inbox` **(changed: narrowed from `global.<domain>.>`)** |
+| `<team>.<role>`, one per role that holds the global role, when a hub is set (originally `<team>.supervisor` for the `supervisor` role only; generalized by `global-role-declaration.md`, #518) | that role only | the team user's grants, plus `global.director.inbox`, `global.*.supervisor.inbox`, `$JS.global.API.>` | the team user's grants, plus `global.<domain>.supervisor.inbox` **(changed: narrowed from `global.<domain>.>`)** |
 
 **The global-address role set** is one declared list,
 `GlobalAddressRoles = ["supervisor"]`, next to `ReservedBusUsers` in
@@ -85,8 +85,9 @@ breaks every running supervisor's credential. The regex widens to
 `[A-Za-z0-9_.-]+` in the same change, with a test that recovers a dotted user.
 
 **Credential lookup becomes role-keyed.** `TeamCredential(team)` becomes
-`Credential(team, role)`: it returns `<team>.supervisor` when `role` is in the
-global set and the user exists, and `<team>` otherwise. The spawn path at
+`Credential(team, role)`: it returns `<team>.<role>` when `role` resolves to a
+global role (`global-role-declaration.md` section 3, admission included) and
+the user exists, and `<team>` otherwise. The spawn path at
 session/manager.go:828 passes `sess.Role`. `Adopted` keeps returning nothing.
 The password map in `Manager` is keyed by user name, not team name.
 

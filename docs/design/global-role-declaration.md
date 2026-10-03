@@ -81,8 +81,12 @@ for what it now is:
   declares it. Nothing widens silently at upgrade.
 - `global_role = "none"` lets a role named `supervisor` opt out.
 
-There is one resolver, `api.Role.ResolvedGlobalRole() string`, and every
-caller below reads it. No caller compares a role name.
+There is one resolver, and admission is part of it (section 6):
+`ResolvedGlobalRole(role api.Role, admitted []string) string`. It returns the
+declared or default global role only when the role's name is admitted, and
+none otherwise. Every caller below reads it with the cluster's current
+admitted set. No caller compares a role name, and no caller reads the stored
+declaration directly.
 
 ## 4. Broker users and grants
 
@@ -115,9 +119,14 @@ when the user leaves (`:382-386`); there is no rotation. With a shared user,
 turning `research-supervisor` to `"none"` while `supervisor` stays would
 leave the same live password in that seat, and the running research-supervisor
 would keep its global reach. With a user per role, that user leaves the
-rendered set at the next reload. Whether nats-server closes an existing
-connection whose user was removed at reload is UNVERIFIED here; the builder
-PR checks it, and if it does not, a revocation also needs the seat restarted.
+rendered set at the next reload. Revocation then takes effect at once. The
+reviewer measured it on review 5400892009 (local nats-server v2.14.6 on
+loopback scratch ports, with a scratch config and HOME, no fleet broker):
+removing user `t.research-supervisor` and reloading dropped its live
+subscriber immediately (EOF), `/connz` listed only `t` afterwards, the
+removed user's reconnects and publishes were refused, and user `t` was
+untouched. So the revoked seat stays disconnected and retrying until it is
+restarted.
 
 ## 5. What per-role-users stage 3 does to it
 
@@ -174,18 +183,39 @@ declaration widens a role only when two keys agree:
    `supervisor` is admitted without being listed, which keeps today's
    behavior.
 
-A declaration on a role name the cluster does not admit is refused at apply,
-before anything is stored, naming the role and the config key. So a manifest
-author cannot widen a role by one line, and the operator who owns the cluster
-decides which names may hold the global tier. The admitted list is
-operator-owned data in the cluster config, not a name in marvel's code, so it
-is not the second hard-coded name director ruled out. Two costs:
+Admission is checked in two places, and only the second is the guard:
+
+- **At resolution, every time (the guard).** `ResolvedGlobalRole` takes the
+  admitted set, and the renderer, `Credential` and the seat env all resolve
+  through it with the set the daemon loaded. The renderer builds from STORED
+  teams (`internal/bus/manager.go:349`, `m.teams.ListTeams()`), and a daemon
+  start rehydrates teams without an apply, so a check at apply alone would
+  not hold: an operator who removed a name from `global_roles` and
+  reexeced would still see stored declarations resolve, the user minted and
+  the grants rendered, until someone re-applied. With admission in the
+  resolver, the first render after the reexec drops the user, its live
+  connection is closed at reload (section 4, measured), and `Credential`
+  hands any new spawn of that role the team user.
+- **At apply (an early, loud refusal).** A declaration on a role name the
+  cluster does not admit is refused before anything is stored, naming the
+  role and the config key, so a manifest author sees the mistake at once
+  rather than at a render.
+
+A stored declaration whose name is no longer admitted is reported, not
+silently ignored: the render emits `bus.global-role-unadmitted` (team, role)
+once per change, so a de-admission that strips a role reads in `marvel
+events`.
+
+So a manifest author cannot widen a role by one line, and the operator who
+owns the cluster decides which names may hold the global tier, at every
+render and not only at apply. The admitted list is operator-owned data in the
+cluster config, not a name in marvel's code, so it is not the second
+hard-coded name director ruled out. Two costs:
 - The config is read once at daemon start, with no reload (#514). Admitting
-  a new role name takes a daemon reexec.
-- On a cluster with a manifest that already declares a role, removing that
-  role name from `global_roles` makes the next apply of that manifest fail
-  until the declaration is removed. That is the intended fail-closed
-  direction.
+  or removing a role name takes a daemon reexec, and takes effect at that
+  reexec's first render.
+- A manifest that still declares a de-admitted role fails at its next apply,
+  until the declaration is removed or the name is admitted again.
 
 ### The launcher, as defense in depth
 
@@ -254,6 +284,13 @@ The pin at `global_roles_test.go:22-27` is replaced, not loosened:
 10. **Revocation.** A role turned from `"supervisor"` to `"none"` leaves the
     rendered principals at the next render, and its password is dropped,
     while a `supervisor` in the same team keeps its own user.
+11. **De-admit, then restart.** A stored team whose research-supervisor
+    declares `global_role = "supervisor"` under an admitting config; the
+    daemon restarts (rehydrate, no apply) with a config that no longer
+    admits the name. The first render emits no `<team>.research-supervisor`
+    principal, `Credential` returns the team user for that role, the seat env
+    has no `DIRECTOR_GLOBAL_ROLE`, and `bus.global-role-unadmitted` is
+    emitted once.
 
 ## 9. Edits, in order (none made by this PR)
 
@@ -261,16 +298,17 @@ The pin at `global_roles_test.go:22-27` is replaced, not loosened:
    `ResolvedGlobalRole()`; the default map replaces `GlobalAddressRoles`.
    Tests 1, 3, 5, 7, 8.
 2. The cluster config gains `global_roles` on the message-bus entry, and
-   apply refuses an unadmitted declaration. Test 9.
+   `ResolvedGlobalRole` takes the admitted set; apply refuses an unadmitted
+   declaration early. Tests 9 and 11.
 3. `hasSupervisorRole`, the renderer and `Credential` read the resolver; one
    user per such role. Tests 2, 4 and 10.
 4. The adapter base env exports `DIRECTOR_GLOBAL_ROLE`. Test 6.
 5. Operator steps, run by director: admit `research-supervisor` in each
    cluster's config and reexec; declare `global_role = "supervisor"` on every
    research-supervisor role; rotate those seats onto their own user.
-6. `per-role-broker-users.md` and marvel's CLAUDE.md are updated: line 33
-   of the former is superseded, and the stage 3 check covers every
-   global-role seat.
+6. marvel's CLAUDE.md is updated in the builder PR. This PR updates
+   `per-role-broker-users.md` itself (line 33, the section 3 principal table
+   and its `Credential` paragraph).
 
 Steps 1 to 4 can be one builder PR. Step 5 must precede per-role-users
 stage 3.
@@ -299,5 +337,6 @@ stage 3.
 | marvel reads the wardrobe role's class | marvel would depend on the role library, and the manifest role name is not the wardrobe role id, so marvel would need the launcher's mapping table as well |
 | The launcher reads marvel's env instead of the cast | director's launcher derives the role from the cast on purpose (`cast-launch.sh:119-121`); changing that is director's design, not marvel's |
 | One shared `<team>.supervisor` user for every supervisor-type role | not revocable per role (section 4) |
+| Admission checked at apply only | stored teams rehydrate without an apply, so a de-admitted name keeps its grants until a re-apply (section 6) |
 | The manifest declaration alone, with no cluster admission | one wrong line gives a worker the global tier, and the launcher does not catch it (section 6) |
 | A boolean `global = true` | the address word is what both sides exchange (`DIRECTOR_GLOBAL_ROLE`); a boolean would hard-code `supervisor` again, one level down |
