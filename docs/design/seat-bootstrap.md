@@ -16,6 +16,8 @@ Design for review. No code lands until this doc is reviewed.
 - Revised 2026-10-02 after the SB-3 r2 probe (section 5a): SB-4F replaces
   SB-4. Checked against marvel `origin/main` 2f4e306 and Claude Code
   2.1.288.
+- Revised again 2026-10-03 (r5) after the operator's rulings on section 11:
+  SB-4M (marvel manages trust actively, section 5a) replaces SB-4F.
 
 ## 1. The problem, verified
 
@@ -53,7 +55,7 @@ type Bootstrapper interface {
 ```
 
 `BootstrapResult` names what was checked or written (for claude: the trust
-read, the login check, the MCP projection), the settings sources passed, and
+read or write, the login check, the MCP projection), the settings sources passed, and
 the config file read. An error with
 `ErrBootstrapRefused` is the refusal path. An adapter that does not implement
 it gets placement and nothing else, which is correct for a harness with no
@@ -190,13 +192,13 @@ role command already declares it. The rule covers both:
   path and has no single operator-level value to read. With no configured
   entry, nothing is projected, and the session logs it and records `mcp: none`.
 - **Unless the operator's config already gives that directory the server
-  (SB-4F).** A seat now runs under the operator's own config, where Claude
+  (SB-4M).** A seat now runs under the operator's own config, where Claude
   Code also loads `projects.<realpath>.mcpServers` for the seat's directory.
   If that entry names the same server as the projection (on kinu, the orc
   root's `director-mcp`), marvel projects nothing and records
   `mcp: operator-config`. marvel reads the server names there and nothing
   else (section 5a). Which of two same-named servers Claude Code keeps was
-  not checked, so marvel never creates the pair (ruling 7).
+  not checked, so marvel never creates the pair (ruling 7, accepted).
 - **No env in the file.** Only `command` and `args` are written. That is
   enough only if Claude Code hands its process environment, including the
   `DIRECTOR_NATS_*` names marvel injects
@@ -242,7 +244,7 @@ visible and reviewed with the rest of that command line.
 | Director function | Needs | From the projection? | Verdict |
 |---|---|---|---|
 | Local send and receive | `DIRECTOR_AGENT_ID`, `DIRECTOR_WORKSPACE`, `DIRECTOR_TEAM`, `NATS_URL`, and broker credentials when the broker requires them | marvel's `baseEnv` sets all of these (`internal/runtime/adapter.go:323-358`); the file carries `command` and `args` only | works **if** Claude Code hands its process environment to a stdio MCP child. **Not shown yet**: the mokuzai seats authenticate, but `director-mcp-seat` falls back to the seat's own credentials, so that does not prove inheritance; on kinu my own seat's environment carries no broker credentials. SB-0 line 11 tests it |
-| `role://` delivery | `DIRECTOR_ROLE`: the shim subscribes to the role subject only when it is set (director `probe/nats-phase-0/director-mcp/bus.go:234-235`) | **not set by marvel today**; `cast-launch.sh` sets it | **breaks**: messages to `role://<team>/<role>` would not reach the seat. SB-4F adds `DIRECTOR_ROLE` to `baseEnv` |
+| `role://` delivery | `DIRECTOR_ROLE`: the shim subscribes to the role subject only when it is set (director `probe/nats-phase-0/director-mcp/bus.go:234-235`) | **not set by marvel today**; `cast-launch.sh` sets it | **breaks**: messages to `role://<team>/<role>` would not reach the seat. SB-4M adds `DIRECTOR_ROLE` to `baseEnv` |
 | Placement of seats whose manifest names no root | the orc root as cwd, so the project `CLAUDE.md` and the tracked settings load | rule 3 would give a managed directory | **stays**: SB-1 stamps each existing root-less record `legacy` with the daemon's cwd at first start, so no seat moves; only teams created after SB-1 get a managed directory. SB-0 line 12 checks both a never re-applied record and a re-applied one |
 | Global address | `DIRECTOR_GLOBAL_DOMAIN`, `DIRECTOR_CLUSTER`, `DIRECTOR_GLOBAL_ROLE`; unset means the global tier is off (`global.go:78`) | not set by marvel (`cast-aae.sh:14-17` says marvel does not pass them through) | off. Correct for most roles (R-94 gives global addresses to supervisors only). A supervisor keeps the wrapper until marvel carries the global levers, which is out of scope here |
 
@@ -251,7 +253,7 @@ works for local traffic once `DIRECTOR_ROLE` is injected, subject to the one
 unverified inheritance claim, and the rollout probe checks it first.
 
 **Rollout probe (SB-0), one seat before any wider rollout.** The builder
-applies one throwaway bare-claude seat with the SB-1, SB-2 and SB-4F behaviour, in its
+applies one throwaway bare-claude seat with the SB-1, SB-2 and SB-4M behaviour, in its
 own workspace, and records pass or fail for each line. Nothing wider rolls
 out until every line passes or is ruled acceptable:
 
@@ -271,11 +273,14 @@ out until every line passes or is ruled acceptable:
    under `project`.
 9. Login: under the operator's config the seat reaches its prompt logged
    in, and the pre-launch `claude auth status` exited 0 (SB-3 r2 measured 0
-   and 1 on 2.1.288; record the version).
+   and 1 on 2.1.288; record the version). Under `warn`, a seat whose check
+   fails comes up at its login screen with `session.login-unverified`.
 10. Placement and trust: the pane's cwd is the managed or declared
-    directory, and no trust dialog appears. A second seat in a directory the
-    operator has not trusted is refused `trust-absent`, naming the realpath,
-    and is never launched.
+    directory, and no trust dialog appears. For a directory that had no key,
+    the operator's config now carries `projects.<realpath>.hasTrustDialogAccepted`
+    true, the ledger names the grant, and every other key in the file is
+    unchanged (compared by value, before and after). Under `require` the same
+    seat is refused `trust-absent` and nothing is written.
 11. Env inheritance, by what the fallback would change: the seat appears in
     `list_roster` under its session name, not the fallback id
     `director-seat`, and the broker's connection list shows its
@@ -292,8 +297,9 @@ out until every line passes or is ruled acceptable:
 13. Trust by ancestor, operator-run by hand with marvel not involved: open
     Claude Code in a new child of a trusted directory that has no key of its
     own (`<orc root>/sb0-child`) and record whether the trust dialog
-    appears. Under ruling 5's default marvel refuses such a seat either way;
-    this record decides whether an ancestor rule is offered. On kinu, 9
+    appears. marvel's default, `exact`, writes the child's own key either
+    way; this record decides whether `trust_match = "ancestor"` is safe to
+    use. On kinu, 9
     directories under the trusted orc root carry their own untrusted entry
     today, so the answer matters.
 14. MCP: a seat in the orc root shows one director server, not two, and
@@ -306,6 +312,11 @@ out until every line passes or is ruled acceptable:
     whether the refresh writes the credential store and reaches the
     network. If exit 0 means only "present", the check catches a missing
     login and not an expired one, and the doc says so.
+16. The lock and lost writes, operator-run: with an interactive Claude Code
+    open in another directory, spawn three seats into new directories.
+    Record whether Claude Code creates `.claude.json.lock` around its own
+    writes, whether any grant needed a retry or ended `trust-write-lost`, and
+    whether any seat showed the trust dialog (the residual in section 5a).
 
 The probe reports what broke, as a list, before SB-7 touches any fleet
 manifest.
@@ -314,45 +325,47 @@ manifest.
 
 | Harness | First-run state | What marvel does |
 |---|---|---|
-| claude, interactive | folder trust per path; onboarding flags; per-path MCP; the login | runs it under the operator's own config; reads, by key name, whether the realpath of the resolved workdir is trusted, and refuses if not; checks the login by exit status; writes none of it (section 5a) |
+| claude, interactive | folder trust per path; onboarding flags; per-path MCP; the login | manages trust for the seat's directory (writes the one key when it is absent, under Claude Code's lock), delivers settings and MCP as per-session files, checks the login in the mode the role sets, and never moves or touches the login (section 5a) |
 | claude, headless | none shown (`-p` skips the dialog) | placement and settings sources only |
 | codex | trust per path in `config.toml` | existing seed (#308, #359); `Untrusted` becomes the resolved workdir instead of `os.Getwd()` |
 | opencode, generic, forestage | none known | placement only; recorded as `none` |
 
-**Which config a claude seat uses: the operator's own.** marvel gives an
-interactive claude seat no private config home. The seat uses the file Claude
-Code would use for the operator: `$CLAUDE_CONFIG_DIR/.claude.json` when the
-seat's environment carries `CLAUDE_CONFIG_DIR`, else `.claude.json` in the
-daemon user's home. marvel seeds nothing there, links nothing for it, and
-writes nothing to it. The first form of this design gave each seat a private
-home seeded with trust and onboarding; SB-3 r2 showed a private
-`CLAUDE_CONFIG_DIR` does not carry the login, so that mechanism is dropped
-(section 5a).
+**Which config a claude seat uses: the operator's own.** On a macOS host a
+seat uses the file Claude Code would use for the operator:
+`$CLAUDE_CONFIG_DIR/.claude.json` when the seat's environment carries
+`CLAUDE_CONFIG_DIR`, else `.claude.json` in the daemon user's home. SB-3 r2
+showed that a private `CLAUDE_CONFIG_DIR` there loses the login, so the first
+form of this design (a private home per seat) is not the macOS mechanism.
+marvel manages the keys it needs inside that file (section 5a) rather than
+giving the seat a copy of it.
 
-**The login is checked, never made.** Before launch marvel runs
-`claude auth status` under the config the seat will use and reads only its
-exit status; stdout and stderr are discarded unread, since they carry account
-identity. SB-3 r2 measured the contract on 2.1.288: 0 when logged in, 1 when
-not. Anything but 0 is `not-logged-in` (section 6). The call has a 10-second
-bound, the figure codex's one call uses (`codexTrustTimeout`), and it bounds
-the whole process tree, not only the child: `claude auth status` forks the
-`security` CLI to read the keychain (the reviewer's PATH stand-in was called
-twice as `find-generic-password`), so a keychain prompt or hang lives in a
+**The login check.** Before launch marvel runs `claude auth status` under
+the config the seat will use and reads only its exit status; stdout and
+stderr go to `/dev/null` unread, since they carry account identity. SB-3 r2
+measured the contract on 2.1.288: 0 when logged in, 1 when not. What a
+nonzero result does depends on the role's `login_check` mode (section 5a):
+refuse, warn, or off. The call has a 10-second bound, the figure codex's one
+call uses (`codexTrustTimeout`), and it bounds the whole process tree, not
+only the child: `claude auth status` forks the `security` CLI to read the
+keychain (the reviewer's PATH stand-in was called twice as
+`find-generic-password`), so a keychain prompt or hang lives in a
 grandchild. The command runs with `Setpgid`, and on timeout marvel kills the
 group (`-pgid`), only after a successful `Start` and only for a pid greater
-than 1; it never calls `kill(0)` or `kill(-1)`. Its stdout and stderr go to `/dev/null`, so `Wait` cannot
-block on a pipe a surviving grandchild still holds. The spawn is refused
-`login-check-timeout`. codex's call (`codex_home.go:232`) kills only its
-child and keeps a pipe, so it is the figure's source, not the pattern's.
+than 1; it never calls `kill(0)` or `kill(-1)`. Its stdout and stderr go to
+`/dev/null`, so `Wait` cannot block on a pipe a surviving grandchild still
+holds. codex's call (`codex_home.go:232`) kills only its child and keeps a
+pipe, so it is the figure's source, not the pattern's. The check always runs
+the harness binary the new session will run (the resolved command), so a
+harness upgrade is judged by the new binary, never by the old session's.
 
-**Order: trust first, then the CLI.** marvel reads trust first and runs
-`claude auth status` only for a spawn that passed it, so a spawn refused for
-trust never causes a CLI write. A spawn that passed trust and is logged out
-does cause one: the check's own writes land in the operator's config before
-the refusal. That case cannot be avoided by any check that asks the CLI, and
-it writes no more than the seat itself would have. marvel never
-logs in for a seat and never launches one into a login screen. The CLI is
-not read-only: it writes and locks its own config (section 5a).
+**Order: trust first, then the CLI.** marvel settles trust first (section
+5a), and runs `claude auth status` only for a spawn that passed that step, so
+a spawn refused for trust never causes a CLI write. A spawn that passed and
+is logged out does cause one: the CLI writes and locks its own config
+(measured by the reviewer on 2.1.286: `.claude.json`, a file under
+`backups/`, and a `.claude.json.lock` directory). Any check that asks the CLI
+has that cost, and it is no more than the seat itself writes a second later.
+marvel never logs in for a seat.
 
 **A link must stay a link (codex).** codex links its `auth.json` into a
 private home (`LinkIn`) rather than copying it. A harness that refreshes a
@@ -366,19 +379,20 @@ deletes nothing (the no-deletion convention): the operator removes the copy
 and re-applies. `Session.Bootstrap` records the check. The same check also
 runs when a session exits or is reaped, so a replaced link is reported (event
 `bootstrap.link-replaced`, naming the path) when it happens rather than at
-the next spawn; it deletes nothing there either. Under SB-4F claude links
-nothing, so the check never fires for a claude seat.
+the next spawn; it deletes nothing there either. On a macOS host claude
+links nothing, so the check never fires for a claude seat there.
 
-**Trust stays the operator's act.** marvel reads whether the resolved workdir
-is trusted and refuses if it is not; it never writes the key. The
-settings-sources rule (section 4) still matters: trusting a directory lets its
-project settings load, and `local` loads only by declaration.
+## 5a. SB-4M: marvel manages the seat's harness state (r5, 2026-10-03)
 
-## 5a. SB-4F: the redesign after SB-3 r2 (2026-10-02)
+**History.** SB-3 r2 (below) ruled out a private config on macOS, and r4
+answered with SB-4F: read trust, refuse when absent, write nothing. The
+operator rejected that on 2026-10-03 (ruling 4, verbatim in section 11):
+marvel should manage these files actively. SB-4M is the design that does,
+without moving the login.
 
-**The r2 result.** Operator-run on kinu, Claude Code 2.1.288, in a fresh
-`0700` temp tree that the run removed at the end. I read the operator's
-terminal record of the run; it is not published.
+**The r2 result (a fact this design keeps).** Operator-run on kinu, Claude
+Code 2.1.288, in a fresh `0700` temp tree that the run removed at the end. I
+read the operator's terminal record of the run; it is not published.
 
 | Case | `claude auth status` exit | `loggedIn` |
 |---|---|---|
@@ -392,102 +406,141 @@ on the pane (1 match), with no trust dialog, no theme screen, and no prompt
 footer (0 matches each). The seeded `projects` key was the workdir's realpath
 (`/private/tmp/...`, not `/tmp/...`), and Claude Code added its own keys to
 the private file (`firstStartTime`, `autoUpdates`, `machineID`, `userID` and
-others; names read only).
+others; names read only). Director judged it outcome C: the trust seed works,
+and a private `CLAUDE_CONFIG_DIR` does not carry the login.
 
-The reading, as director judged it: outcome C, fail. Seeding the trust key
-at the realpath does remove the trust dialog, but a private
-`CLAUDE_CONFIG_DIR` does not carry the login. It is not outcome D: the status
-check and the screen agree. Per the probe's outcome table, SB-4F replaces
-SB-4.
+**What marvel manages, and by which path.** Each piece of harness state goes
+by the path that delivers it without touching the login:
 
-**The decision.** marvel stops giving claude seats a private config. Seats
-run under the operator's own config. marvel only reads, by key name, whether
-the realpath of the seat's workdir is trusted; if it is not, marvel refuses
-the spawn and names the directory. It never writes the trust key. F1, writing
-the key into the operator's file, stays rejected: every running Claude Code
-rewrites that file, so a marvel write would race the fleet's, and it would
-change the operator's own interactive trust as a side effect.
+| State | Where Claude Code keeps it | Path marvel uses |
+|---|---|---|
+| settings and permissions | `--settings` and the settings sources | a per-session file (the policy projection, today) and `--setting-sources` (SB-2) |
+| MCP servers | `--mcp-config`, or per-path entries in the config | a per-session file, with the duplicate rule (section 4) |
+| folder trust | `projects.<realpath>.hasTrustDialogAccepted` in the config file only | **managed in place** in the operator's config, below |
+| onboarding | top-level flags in the config file | not written: the operator's own config has already completed it |
+| the login | the macOS login keychain; on Linux a file under the config directory (per Claude Code's layout, not verified here) | **never touched** |
 
-**What marvel reads, and never writes (the custody boundary, ADR-009).**
+Container injection and submounts are named delivery paths for the same
+contract, not built here: marvel has no container placement yet
+(`_kos/probes/brief-container-session-placement.md`). Where the login is a
+file, as on Linux and in a container, a per-session config view (a private
+directory with the trust key seeded and the credential mounted or linked,
+which is SB-4's original shape) becomes possible. It needs its own r2-style
+probe on Linux before it is offered.
 
-Reads, from the config file section 5 names:
-- `projects.<realpath>.hasTrustDialogAccepted`, where the realpath is the
-  resolved workdir through `filepath.EvalSymlinks`, because Claude Code keys
-  by realpath (r2). It is decoded into a struct that names `projects` and
-  that one field, so no other value is held past the parse.
-- The server names under `projects.<realpath>.mcpServers`, for the duplicate
-  rule in section 4 (ruling 7). Names only: the map is decoded as
-  `map[string]struct{}`, never `json.RawMessage` or `any`, because a
-  per-path entry stores env values. The entries' commands, args and env are
-  never decoded. This is the same declared-fields-only rule codex's decoder
-  follows (`codexMCPServer`, `internal/runtime/codex_home.go:36-43`, which
-  drops the operator's env table).
-- The exit status of `claude auth status`, run under the seat's config.
-  Output discarded unread.
+**Managing trust in place.** For each interactive claude spawn whose role's
+`trust` mode is `manage` (the default):
 
-Records: the config path, the realpath, the trust boolean, the exit status.
+1. Resolve the workdir's realpath (`filepath.EvalSymlinks`; Claude Code keys
+   by realpath, r2).
+2. Read the key under the role's match rule (ruling 5): `exact` (the
+   default) reads `projects.<realpath>.hasTrustDialogAccepted`; `ancestor`
+   also accepts a trusted ancestor. If it is trusted, nothing is written.
+3. Otherwise take Claude Code's own lock, the `.claude.json.lock` directory
+   beside the file (created with `mkdir`, so taking it is atomic), with a
+   5-second wait. marvel removes only a lock directory it created. If the
+   lock is not free in time, the outcome is `config-locked`.
+4. Re-read the file under the lock, set that one key (creating
+   `projects.<realpath>` with only that field if it is absent), write a
+   temp file in the same directory at `0600`, fsync it, and rename it over
+   the config. Every other value is carried through as the bytes it had:
+   the top level and `projects` decode as `map[string]json.RawMessage`, and
+   only the one project entry is re-encoded. Key order may change; values do
+   not.
+5. Release the lock, read the file once more, and confirm the key. A
+   running Claude Code that rewrites the file from an older copy can drop
+   it; marvel retries steps 3 to 5 up to 3 times, then the outcome is
+   `trust-write-lost`.
+6. Record the grant in marvel's own ledger (path, time, and why: `managed`,
+   `declared`, or `listed`), and emit `trust.granted`.
 
-marvel's own code never: writes, renames, or locks the operator's config;
-opens the credential store (the macOS login keychain, or `.credentials.json`
-on Linux); logs in or runs Claude Code interactively on a seat's behalf;
-copies any part of the config elsewhere; logs or persists a value from it
-other than the trust boolean.
+Each spawn re-asserts trust this way, so a key a running Claude Code dropped
+between spawns comes back at the next one. Whether Claude Code itself takes
+`.claude.json.lock` for its own writes is not verified; SB-0 line 16
+measures it. If it does not, the lock still serializes marvel's own
+spawns, and step 5 is what catches a lost write. A residual is stated: a
+rewrite that lands after step 5 and before the seat's own startup read can
+still show the dialog once. SB-0 line 16 measures how often.
 
-**The CLI marvel invokes does write.** Measured by the reviewer on 2.1.286
-under a scratch `CLAUDE_CONFIG_DIR`: `claude auth status` created
-`.claude.json` and a file under `backups/`, and left a `.claude.json.lock`
-directory. Under SB-4F that config is the operator's. Whether, on an
-expired token, it also refreshes (a network call and a credential store
-write) is not measured; SB-0 line 15 records it. The design accepts these
-writes. The reason: the seat marvel is about to launch is the same CLI
-against the same config, and it does the same writes, plus any refresh, a
-second later. The check adds no new writer, only an earlier one, and it is
-the harness writing its own file, never marvel. That does not change
-ADR-009's reading: custody turns on what marvel holds, and marvel holds no
-credential and keeps nothing the CLI writes. The alternative, a login check
-that does not invoke the CLI, has no source marvel may read: the login
-lives in the credential store. So the choice left is whether to check at
-all (ruling 9).
+The other modes: `require` refuses `trust-absent`, naming the realpath, and
+never writes (the r4 behavior, kept as an option); `off` neither reads nor
+writes (a headless role, or a wrapped one, ruling 8).
 
-The login is bearer authority at the vendor, and under SB-4F it stays where
-the operator's own login put it. marvel holds no credential, links none, and
-creates no home where a login could write one. That is less than SB-4 held:
-SB-4 linked the credential under `StateDir` and needed the `link-replaced`
-guard to stop a copy forming there.
+**Which directories marvel trusts (ruling 6).** marvel establishes trust
+itself for every managed directory it creates (section 3, rule 3), and for
+each seat's resolved workdir whatever its source, under `manage`. The user
+can name more: `claude.trust_dirs` in the cluster config (trusted at daemon
+start and re-asserted at each spawn), and per role a `trust` mode and a
+`trust_match` that override the cluster defaults (`claude.trust` and
+`claude.trust_match`). Whether a declared workdir, rather than only a managed
+one, should default to `manage` is ruling 11.
 
-**The cost, stated.** Seats share the operator's config, as today's fleet
-seats already do. Per-path state Claude Code writes for a seat's directory
-(trust, per-project MCP servers, history) is the operator's, and the
-operator's own interactive sessions see it. And a directory needs trusting
-once, by the operator, before marvel launches an interactive seat there.
+**The login check modes (ruling 9).** Per role, `login_check`, with the
+cluster default `claude.login_check`:
 
-**Managed directories.** A managed directory (section 3, rule 3) is new, so
-it is never trusted. Under SB-4F a new root-less team running interactive
-claude is refused `trust-absent` on its first spawn, naming
-`<StateDir>/seats/<ws>/<team>/<role>`. The operator trusts it once by opening
-Claude Code there and accepting; the path is stable across restarts, so that
-is once per role per host (ruling 6).
+- `warn` (the default): a nonzero exit or a timeout launches the seat
+  anyway, emits `session.login-unverified` with the reason, and shows it in
+  `describe session`. A logged-out seat comes up at its login screen, where
+  the operator can log in as they would by hand.
+- `refuse`: a nonzero exit refuses `not-logged-in`; a timeout refuses
+  `login-check-timeout`.
+- `off`: no check.
+
+**Login health in the handoff.** Under `warn` and `refuse`, a shift's
+successor is not counted ready until its login check has returned 0. A
+successor that launched under `warn` with a nonzero result is re-checked every
+30 seconds while the shift waits; the predecessor keeps running, and the
+shift's existing timeout rolls it back if the successor never passes. The
+check runs the successor's harness binary, so a harness upgrade that breaks
+the old session's auth never blocks the new session from starting, and a new
+binary that cannot authenticate never replaces a working seat.
+
+**What marvel reads and writes (the custody boundary, ADR-009).**
+
+- Writes, to the operator's config: the one trust key per directory it
+  trusts, under steps 3 to 5. Nothing else.
+- Reads, for decisions: the trust key; the server names under
+  `projects.<realpath>.mcpServers` for the duplicate rule (ruling 7). Both
+  through structs that name only those fields: the server map decodes as
+  `map[string]struct{}`, never `json.RawMessage` or `any`, because per-path
+  entries store env values (the declared-fields-only rule codex's decoder
+  follows, `codexMCPServer`, `internal/runtime/codex_home.go:36-43`).
+- Holds, during step 4 only: the file's other values as opaque bytes, to
+  write them back unchanged. They are never decoded, logged, persisted, or
+  copied elsewhere; marvel keeps no backup of the file.
+- Runs: `claude auth status`, exit status only.
+- Never: opens the credential store (the macOS login keychain, or a
+  credential file); logs in for a seat; writes any key but the trust key.
+
+Folder trust is not bearer authority at a third party: it tells the local
+harness it may load a directory's project settings. So writing it is not
+custody, and the login stays where the operator's own login put it. The
+cost is the one F1 named and the operator's ruling accepts: marvel's writes
+change the operator's own interactive trust for those directories too. The
+ledger makes every such change visible and attributable.
 
 **The re-scope.**
 
-| Item | Before | Under SB-4F |
+| Item | Before | Under SB-4M |
 |---|---|---|
 | SB-3 | probe | done 2026-10-02, red (outcome C) |
-| SB-4 | private home, trust and onboarding seed, MCP projection, `DIRECTOR_ROLE` | **dropped**. Gone: the private `CLAUDE_CONFIG_DIR`, the trust and onboarding seed and its golden file, the claude credential links, and the claude half of `link-replaced`. Moved to SB-4F: the MCP projection and `DIRECTOR_ROLE` in `baseEnv` |
-| SB-4F | F2 alone | the claude `Bootstrapper`: the workdir's realpath; the trust read and refusal; the login check by exit status; the MCP projection with the duplicate rule (section 4); `DIRECTOR_ROLE` in `baseEnv` |
+| SB-4 | private home, trust and onboarding seed, MCP projection, `DIRECTOR_ROLE` | **dropped on macOS**. Its per-session config view returns only for hosts where the login is a file, after a Linux probe. The MCP projection and `DIRECTOR_ROLE` move to SB-4M |
+| SB-4F | read trust, refuse, write nothing | **rejected** (ruling 4); its reader, the timeout and the trust-first order carry into SB-4M, and its refusal stays as the `require` mode |
+| SB-4M | (new) | the claude `Bootstrapper`: realpath; trust managed in place under the lock with verify and ledger; `trust`, `trust_match`, `trust_dirs`; the login check with `login_check` modes and the handoff readiness rule; the MCP projection with the duplicate rule; `DIRECTOR_ROLE` in `baseEnv` |
 | SB-5 | codex seed uses the resolved workdir | unchanged |
-| SB-6 | refusal path, record, events, `describe` | reasons change: no seed step, so no seed failure; adds `trust-absent` and `config-unreadable`; `not-logged-in` and `link-replaced` (codex) stay. `Session.Bootstrap` records the config read and the trust result, not a home; adds `login-check-timeout` |
-| SB-0 | rollout probe | runs SB-1, SB-2 and SB-4F; lines 9 and 10 revised, line 13 replaced, lines 14 and 15 added (section 4a) |
-| SB-7 | fleet manifests declare `settings_sources` | unchanged; gated on SB-0 with SB-4F. a wrapped role's trust is unchecked today: `cast-launch.sh` changes to its own `TWIN_CWD` (`:273-282`) and never reads trust, and marvel's workdir is not where that claude runs (ruling 8) |
+| SB-6 | refusal path, record, events, `describe` | reasons: `trust-absent` (`require` only), `config-locked`, `trust-write-lost`, `config-unreadable`, `not-logged-in` and `login-check-timeout` (`refuse` only), `link-replaced` (codex); events `trust.granted` and `session.login-unverified` |
+| SB-0 | rollout probe | runs SB-1, SB-2 and SB-4M; lines 9 and 10 revised, line 13 kept, lines 14 to 16 added (section 4a) |
+| SB-7 | fleet manifests declare `settings_sources` | unchanged; gated on SB-0 with SB-4M. A wrapped role's trust is unchecked today (ruling 8, open) |
 
 SB-1 and SB-2 are unchanged; SB-2 landed as #467.
 
 ## 6. Refuse, and say why
 
 When a bootstrap step the harness needs fails (the declared workdir is
-missing, the managed directory cannot be created, the seat would come up
-logged out or the login check timed out, a codex `LinkIn` entry is no longer a link, the workdir's realpath
-is not trusted in the operator's config, or that config cannot be read):
+missing; the managed directory cannot be created; trust cannot be granted
+because the config stayed locked or a write kept being lost; trust is absent
+under `require`; the config cannot be read; the login check failed or timed
+out under `refuse`; or a codex `LinkIn` entry is no longer a link):
 
 - the session is not launched. It is recorded `failed` with condition
   `bootstrap-refused` and the reason, and it is **not** charged to the restart
@@ -498,11 +551,12 @@ is not trusted in the operator's config, or that config cannot be read):
 - `session.bootstrap-refused` is emitted once, with the session, adapter,
   directory and missing step;
 - `describe session` shows the same.
-- a `trust-absent` refusal names the realpath and the one-time step: open
-  Claude Code there and accept the dialog, then re-apply.
+- a `trust-absent` refusal (only under `require`) names the realpath and the
+  one-time step: open Claude Code there and accept the dialog, then
+  re-apply. `config-locked` and `trust-write-lost` name the config path.
 - a config that fails to parse (a running Claude Code may be rewriting it) is
   read once more after one second; a second failure is `config-unreadable`
-  (ruling 10).
+  (ruling 10, accepted).
 
 A best-effort step (the MCP projection when the operator has no director
 server configured) logs and continues, as the codex seed does today.
@@ -511,10 +565,11 @@ server configured) logs and continues, as the codex seed does today.
 
 - "Creating the directory": #255 left it out. marvel now creates **managed**
   directories only; declared ones must still exist.
-- "Trust itself. The harness decides trust from its own store": still so.
-  marvel now reads trust for the directory it placed an interactive claude
-  seat in and refuses the spawn when it is absent. It never writes trust and
-  claims nothing about other directories.
+- "Trust itself. The harness decides trust from its own store": still so,
+  and marvel now writes to that store. For the directory it placed an
+  interactive claude seat in, and the directories the user lists, marvel
+  grants trust in the operator's config when it is absent, records each
+  grant, and claims nothing about other directories (section 5a).
 - Decision 3's refusal of a manifest with no `workspace.root`: unchanged for
   `marvel work`, which always fills it. A raw API apply with no root, for a
   team created after SB-1, gets a managed directory instead of the daemon's
@@ -528,12 +583,14 @@ server configured) logs and continues, as the codex seed does today.
 ```
 Bootstrap: workdir <StateDir>/seats/<ws>/<team>/<role> (managed)
            settings user   mcp director (projected)
-           config <the .claude.json read>   trust yes   login ok
+           config <the .claude.json>   trust granted (manage, exact)   login ok (warn)
 ```
 
 `get sessions` gains nothing (the table stays narrow; #255's `WORKDIR` column
 is its own ticket). The event ring gets `session.bootstrapped` once per
-launch.
+launch, `trust.granted` per grant, and `session.login-unverified` when a
+`warn` check fails. The trust ledger lives in marvel's store, one record per
+directory marvel trusted (path, time, reason, the session that caused it).
 
 ## 9. Tests (red first on 9009e89)
 
@@ -544,25 +601,35 @@ launch.
    `--setting-sources user,project`; `local` appears only when declared.
 3. The managed directory is created `0700`, is the same path after a
    restart, and nothing in it was copied from elsewhere.
-4. The trust read. With `projects.<realpath>.hasTrustDialogAccepted` true
-   the seat launches; false or absent, it is refused `trust-absent`, naming
-   the realpath, and never launched. A workdir reached through a symlink is
-   looked up by its realpath. With `CLAUDE_CONFIG_DIR` in the seat's env,
-   that directory's `.claude.json` is read instead. A config that fails to
-   parse is read once more, then refused `config-unreadable`. With a fake
-   `claude` (so only marvel's own code touches the file), the config file's
-   bytes and mtime are unchanged after every case. The `mcpServers` map
-   decodes into `map[string]struct{}`: a fixture whose entry carries an env
-   value leaves no trace of it in the decoded value, the session record, or
-   the log. The fixture's env value is a canary byte string, and
-   `json.Marshal` of the decoded value does not contain it. That spec fails
-   for both `json.RawMessage` and `any` and passes for `struct{}` (`%#v`
-   alone would miss `json.RawMessage`; the reviewer measured both). A fake `claude auth status` that forks a
-   never-exiting child, which holds the inherited stdout, and then never
-   exits: within 10 seconds plus a small margin both processes are gone (the
-   group is killed), `Wait` returns, and the spawn is refused
-   `login-check-timeout`. With an untrusted workdir, the fake `claude` is
-   never invoked.
+4. Trust, managed. With a fixture config whose workdir key is absent, a
+   `manage` spawn writes `projects.<realpath>.hasTrustDialogAccepted` true
+   and nothing else: every other value in the file is byte-identical before
+   and after (a fixture whose other projects carry a canary in an MCP env
+   value keeps the canary in the file, and it appears nowhere in the log,
+   the session record, or the ledger). A key already true causes no write
+   (mtime unchanged). The workdir through a symlink is written by its
+   realpath. With `CLAUDE_CONFIG_DIR` in the seat's env, that file is the
+   one written. A lock directory held by another process is waited on for
+   5 seconds, never removed, and ends `config-locked`. A fake rewriter that
+   restores the old file after each write ends `trust-write-lost` after 3
+   attempts. `require` refuses `trust-absent` and writes nothing; `off`
+   neither reads nor writes. `trust_match = "ancestor"` with a trusted
+   parent writes nothing. A config that fails to parse is read once more,
+   then refused `config-unreadable`. The `mcpServers` decision map decodes
+   into `map[string]struct{}`, and `json.Marshal` of the decoded value does
+   not contain the canary. That spec fails for both `json.RawMessage` and
+   `any` and passes for `struct{}` (`%#v` alone would miss
+   `json.RawMessage`; the reviewer measured both).
+4a. The login check. A fake `claude auth status` that forks a never-exiting
+   child, which holds the inherited stdout, and then never exits: within 10
+   seconds plus a small margin both processes are gone (the group is
+   killed), `Wait` returns, and the result is a timeout. With a spawn
+   refused at the trust step, the fake `claude` is never invoked. Exit 1
+   under `warn` launches the seat and emits `session.login-unverified`;
+   under `refuse` it refuses `not-logged-in`; under `off` the fake is never
+   run. A shift whose successor's check returns 1 keeps the predecessor
+   running, re-checks every 30 seconds, and rolls back at the shift timeout;
+   when the check starts returning 0 the shift completes.
 5. The codex seed declares the resolved workdir untrusted, not the daemon cwd.
 6. A missing declared workdir: not launched, `bootstrap-refused`, restart
    count 0, not frozen under `restart_policy = never`, one event, no respawn
@@ -571,10 +638,10 @@ launch.
    no env, and is `0600`. A role whose command already declares
    `--mcp-config` or `--strict-mcp-config` gets no projection and no second
    flag, and its declaration reaches the command line unchanged.
-8. Custody. A fake `claude auth status` that exits 1 refuses
-   `not-logged-in` and nothing launches; its output is never read or logged;
-   the fake's argv shows only `auth status`. No file under `StateDir` is
-   created for a claude seat's config or credential. For codex, a `LinkIn`
+8. Custody. The fake `claude auth status`'s output is never read or
+   logged, and its argv shows only `auth status`. No file under `StateDir`
+   holds any part of a claude seat's config or credential, and marvel makes
+   no copy of the config anywhere. For codex, a `LinkIn`
    entry replaced by a regular file is refused `link-replaced` and nothing is
    deleted, and a link replaced during a session is reported at its exit.
 9. A headless claude run gets placement and settings sources, and no trust
@@ -611,14 +678,14 @@ launch.
 | SB-7a | Cleanup: every fleet manifest with no `workspace.root` or `workdir` declares one (the orc root, where its seats run today) and is re-applied on each cluster that runs it; a team with no file gets a manifest | SB-1 |
 | SB-2 | Explicit `--setting-sources`, `settings_sources` on the role, the defaults in section 4 | none |
 | SB-3 | Probe: does a private `CLAUDE_CONFIG_DIR` keep the login (operator-run). **Done 2026-10-02, red** (section 5a) | none |
-| SB-4 | **Dropped** (section 5a) | |
-| SB-4F | claude `Bootstrapper` under the operator's config: realpath, trust read and refusal, login check by exit status, MCP projection with the duplicate rule, `DIRECTOR_ROLE` in `baseEnv` | SB-1 |
+| SB-4 | **Dropped on macOS** (section 5a) | |
+| SB-4M | claude `Bootstrapper` under the operator's config: realpath; trust managed in place (lock, verify, retry, ledger); `trust`, `trust_match`, `trust_dirs`; the login check with `login_check` modes and the handoff readiness rule; MCP projection with the duplicate rule; `DIRECTOR_ROLE` in `baseEnv` | SB-1 |
 | SB-5 | codex seed uses the resolved workdir | SB-1 |
-| SB-6 | Refusal path (with `trust-absent` and `config-unreadable`), `Session.Bootstrap`, events, `describe` | SB-1 |
-| SB-0 | Rollout probe: one bare-claude seat, the section 4a checklist, a written pass or fail per line | SB-1, SB-2, SB-4F |
+| SB-6 | Refusal path (with the SB-4M reasons), `Session.Bootstrap`, the trust ledger, events, `describe` | SB-1 |
+| SB-0 | Rollout probe: one bare-claude seat, the section 4a checklist, a written pass or fail per line | SB-1, SB-2, SB-4M |
 | SB-7 | Fleet and example manifests declare `settings_sources` (for wrapped roles, inside `cast-launch.sh`, a director PR), and carry forward the roles' existing `--mcp-config` and `--strict-mcp-config` flags unchanged | SB-2, SB-0 passed |
 
-The shortest path to an unblocked step 0 is SB-1, then SB-4F; SB-2 (#467) and
+The shortest path to an unblocked step 0 is SB-1, then SB-4M; SB-2 (#467) and
 SB-3 are done. SB-1 carries its own guard (the `legacy` stamp), so no host state has to
 change first.
 
@@ -632,21 +699,24 @@ change first.
    servers. A role that declares strict (as the mokuzai seats do) keeps it; the
    default never overrides a role.
 3. **The #255 amendments in section 7.** Default offered: adopt as written.
-4. **Adopt SB-4F** (section 5a). Default offered: yes. Seats run under the
-   operator's config; marvel reads trust and the login status and writes
-   neither.
-5. **Trust by exact path or by ancestor.** Default offered: the exact
-   realpath key only. It can refuse a directory Claude Code would accept,
-   never the reverse. SB-0 line 13 records whether Claude Code honours an
-   ancestor's trust; if it does, an ancestor rule can be offered then.
-6. **Managed directories under SB-4F** (section 5a). Default offered: refuse
-   `trust-absent` naming the managed directory, and the operator trusts it
-   once. Alternative: refuse managed placement for interactive claude
-   outright and require a declared workdir.
-7. **The MCP duplicate rule** (section 4). Default offered: when the
-   operator's per-path entry for the workdir names the director server, do
-   not project; otherwise project as before.
-8. **Wrapped claude roles.** Today nobody checks trust for them:
+4. **Adopt SB-4F. RULED 2026-10-03: rejected.** The operator, verbatim:
+   "4 rejected. marvel SHOULD manage these kinds of files actively, when
+   called for, a key mission for marvel is to actively manage these and other
+   settings, directly on local host file system, as injected per-session
+   virtual files, injecting into containers, as submounts, and in other
+   ways". This revision answers with SB-4M (section 5a).
+5. **Trust by exact path or by ancestor. RULED 2026-10-03:** "5 this should
+   be an option, with overrides". Applied as `trust_match`, `exact` (the
+   default) or `ancestor`, set by `claude.trust_match` in the cluster config
+   and overridden per role.
+6. **Managed directories. RULED 2026-10-03:** "6 marvel should actively
+   manage these, and the user can specify". Applied: marvel grants trust for
+   the directories it manages, and the user lists more with
+   `claude.trust_dirs` and sets `trust` per role (section 5a).
+7. **The MCP duplicate rule. RULED 2026-10-03:** "7 accepted".
+8. **Wrapped claude roles. OPEN.** The operator: "8 i dont understand this
+   yet. expand some with examples". Director is expanding it for the
+   operator; the text below is unchanged. Today nobody checks trust for them:
    `cast-launch.sh:273-282` requires `TWIN_CWD` and changes into it but never
    reads trust, and marvel's workdir is not where that claude runs. The
    session records `trust: unchecked (wrapper)`. Two fixes: (a) marvel reads
@@ -654,11 +724,21 @@ change first.
    key-name read to `cast-launch.sh`. Default offered: (b). The wrapper owns
    its directory and command line (section 4a), and (a) would couple marvel
    to a director variable it does not otherwise know.
-9. **The login check before each interactive claude spawn.** Default
-   offered: on, every spawn, exit status only, 10-second bound; 0 launches,
-   a timeout refuses `login-check-timeout`, and anything else refuses
-   `not-logged-in`. It accepts that the CLI writes and locks the operator's
-   config (section 5a). Alternative: off, and a logged-out seat shows the
-   login screen, as it does today.
-10. **An unreadable config.** Default offered: read once more after one
-    second, then refuse `config-unreadable`.
+9. **The login check. RULED 2026-10-03:** "9 make it a configurable option,
+   but i can imagine a situation where a change to the harness means that
+   the old session cannot auth and the new harness needed to auto is
+   prevented from starting. we may need a middle situation also. we might
+   handle this better with healthchecks as part of the handoff, and this
+   might be part of it". Applied: `login_check` is `warn` (the default, the
+   middle mode), `refuse`, or `off`; the check runs the new session's
+   binary; and a shift's successor is not ready until its check passes
+   (section 5a).
+10. **An unreadable config. RULED 2026-10-03:** "10 accepted". Read once
+    more after one second, then refuse `config-unreadable`.
+11. **Declared workdirs under `manage` (new).** Ruling 6 covers the
+    directories marvel creates. A declared workdir is named by a manifest,
+    and trusting it lets its project settings and hooks load without the
+    dialog. Default offered: `manage` for declared workdirs too, since the
+    manifest author is the operator naming the directory, and each grant is
+    in the ledger. Alternative: `require` for declared workdirs unless the
+    role sets `trust = "manage"`.
