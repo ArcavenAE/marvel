@@ -59,3 +59,10 @@ func (d *Daemon) handleVersion() Response {
 	}
 	return Response{Result: result}
 }
+
+// VerifiedCommit returns revision only when the version confirms it. Go's VCS
+// stamping skips a linked worktree's .git file and walks up to an enclosing
+// repository, so a build made in a worktree can carry the wrong repository's
+// commit; a wrong commit is worse than none. An alpha version ends in the
+// short sha it was built from, and the revision must start with it. Scaffold.
+func VerifiedCommit(version, revision string) string { return "" }

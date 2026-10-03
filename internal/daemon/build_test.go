@@ -84,3 +84,27 @@ func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+// Observed 2026-10-03: a marvel binary built in a linked worktree under the
+// orchestrator carried the orchestrator's HEAD as vcs.revision, because Go
+// skipped the worktree's .git file and found the enclosing repository.
+func TestVerifiedCommit(t *testing.T) {
+	const full = "b533ca5d1e2f4a6b8c9d0e1f2a3b4c5d6e7f8091"
+	cases := []struct {
+		name, version, revision, want string
+	}{
+		{"alpha version confirmed by the revision", "0.1.0-alpha.20261002.231214.b533ca5", full, full},
+		{"tag spelling of the same build", "alpha-20261002-231214-b533ca5", full, full},
+		{"upper-case revision", "0.1.0-alpha.20261002.231214.b533ca5", strings.ToUpper(full), strings.ToUpper(full)},
+		{"another repository's commit", "0.1.0-alpha.20261002.231214.b533ca5", "dc6392a84fcdcce1ec02a574bbd09835ef330bb5", ""},
+		{"no revision recorded", "0.1.0-alpha.20261002.231214.b533ca5", "", ""},
+		{"dev build names no sha to confirm", "dev", full, ""},
+		{"stable version names no sha to confirm", "1.2.3", full, ""},
+		{"revision shorter than the sha", "0.1.0-alpha.20261002.231214.b533ca5", "b533", ""},
+	}
+	for _, tc := range cases {
+		if got := VerifiedCommit(tc.version, tc.revision); got != tc.want {
+			t.Errorf("%s: VerifiedCommit(%q, %q) = %q, want %q", tc.name, tc.version, tc.revision, got, tc.want)
+		}
+	}
+}
