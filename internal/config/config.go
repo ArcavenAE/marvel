@@ -457,11 +457,6 @@ type Hub struct {
 // seat by either name is refused, never merged.
 var ReservedBusUsers = []string{"director", "marvel_admin"}
 
-// GlobalAddressRoles are the role names that hold an address on the global
-// tier (R-94). A seat in one of these roles gets the global grants; every
-// other role does not. One declared list, so the rule has one place to change.
-var GlobalAddressRoles = []string{"supervisor"}
-
 // DefaultGlobalRoleByName is the global role a role holds when its manifest
 // declares none, keyed by role name. It is read only when global_role is
 // absent, so an old manifest behaves as it always did and nothing widens at

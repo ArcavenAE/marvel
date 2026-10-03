@@ -80,10 +80,6 @@ type SeatUser struct {
 	Password  string
 }
 
-// SupervisorUserSuffix names the per-role user: `<team>.supervisor`. A team name
-// cannot hold a dot (the token class), so the user cannot collide with a team.
-const SupervisorUserSuffix = ".supervisor"
-
 // SeatUserName is the broker user the seat presents. Reserved: a team by
 // this name is refused (config.ReservedBusUsers).
 const SeatUserName = "director"
@@ -230,20 +226,25 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 			Origin:   "brief 10 section 3 (aae-orc-e9g8i): one confined user per applied team (director#4 shape); supervisor global grants per global-bus-tier.md 4.1, plus publish on every cluster's supervisor inbox per director#155",
 			Password: t.Password,
 		})
-		if hasGlobal {
-			// Scaffold: only the first global role renders, under the old name.
-			ru := t.GlobalRoles[0]
-			if ru.Password == "" {
-				return nil, fmt.Errorf("team %s/%s declares a supervisor but its supervisor user has no password", t.Workspace, t.Team)
+		for _, ru := range t.GlobalRoles {
+			if !hasGlobal {
+				break
 			}
-			// The per-role user (per-role-broker-users.md section 3): the team
-			// user's own-subtree grants, the global publishes, and a subscribe
+			if err := validToken("role", ru.Role); err != nil {
+				return nil, err
+			}
+			if ru.Password == "" {
+				return nil, fmt.Errorf("team %s/%s declares global role %s but its user has no password", t.Workspace, t.Team, ru.Role)
+			}
+			// The per-role user (per-role-broker-users.md section 3, named by
+			// role in global-role-declaration.md section 4): the team user's
+			// own-subtree grants, the global publishes, and a subscribe
 			// narrowed to the cluster's supervisor inbox, not global.<domain>.>.
 			out = append(out, Principal{
-				Name: t.Team + SupervisorUserSuffix, Scope: ScopeBinding, Team: t.Team,
+				Name: t.Team + "." + ru.Role, Scope: ScopeBinding, Team: t.Team,
 				Publish:   append(slices.Clone(basePub), globalPub...),
 				Subscribe: append(slices.Clone(baseSub), fmt.Sprintf("global.%s.supervisor.inbox", s.Domain)),
-				Origin:    "per-role-broker-users.md section 3 (aae-orc-6vy9x, M9-3): the supervisor role's own user, so its global reach no longer rides the team user",
+				Origin:    "global-role-declaration.md section 4 (marvel#518): the role's own user, so its global reach does not ride the team user",
 				Password:  ru.Password,
 			})
 		}
