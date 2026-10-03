@@ -34,6 +34,21 @@ type githubAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
+// out is where progress is written; tests replace it.
+var out io.Writer = os.Stdout
+
+// say writes one line of progress. A write error to the terminal is not an
+// upgrade failure.
+func say(format string, args ...any) {
+	_, _ = fmt.Fprintf(out, format+"\n", args...)
+}
+
+// Result is what an upgrade did to the binary on disk.
+type Result struct {
+	// Changed is true only when the installed binary differs after the upgrade.
+	Changed bool
+}
+
 // installMethod describes how marvel was installed.
 type installMethod int
 
@@ -45,8 +60,11 @@ const (
 
 // Run performs the upgrade.
 func Run(channel, targetVersion string) error {
-	method := detectInstallMethod()
+	return runMethod(detectInstallMethod(), channel, targetVersion)
+}
 
+// runMethod performs the upgrade for one install method.
+func runMethod(method installMethod, channel, targetVersion string) error {
 	switch method {
 	case methodHomebrew:
 		return upgradeViaHomebrew(channel)
@@ -107,11 +125,11 @@ func upgradeViaHomebrew(channel string) error {
 	_ = channel
 	formula := "arcavenae/tap/marvel"
 
-	fmt.Printf("Installed via Homebrew. Running: brew upgrade %s\n", formula)
+	say("Installed via Homebrew. Running: brew upgrade %s", formula)
 
 	// Update tap first to get latest formula.
 	update := exec.Command("brew", "update")
-	update.Stdout = os.Stdout
+	update.Stdout = out
 	update.Stderr = os.Stderr
 	if err := update.Run(); err != nil {
 		return fmt.Errorf("brew update failed: %w", err)
@@ -119,15 +137,15 @@ func upgradeViaHomebrew(channel string) error {
 
 	// Upgrade the formula.
 	cmd := exec.Command("brew", "upgrade", formula)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = out
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		// brew upgrade exits non-zero if already up to date.
-		fmt.Println("Already up to date (or brew upgrade returned an error).")
+		say("Already up to date (or brew upgrade returned an error).")
 		return nil
 	}
 
-	fmt.Println("Upgrade complete.")
+	say("Upgrade complete.")
 	return nil
 }
 
@@ -329,4 +347,13 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 
 	fmt.Printf("Upgraded to %s\n", tag)
 	return nil
+}
+
+// fingerprint identifies the binary at path by its contents. Scaffold.
+func fingerprint(path string) (string, error) { return "", nil }
+
+// runWith runs do and reports whether the binary at exe changed across it.
+// Scaffold.
+func runWith(exe string, do func() error) (Result, error) {
+	return Result{}, do()
 }
