@@ -6,12 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
+	"unsafe"
 
 	"github.com/arcavenae/marvel/internal/api"
 
@@ -49,7 +54,12 @@ type Driver struct {
 	// not reaped: pane ids are cheap and the shim-in-pane path (kxce)
 	// retires this whole class, so a reaper would be discarded work.
 	paneMuGuard sync.Mutex
-	paneMu      map[string]*sync.Mutex
+	// repaintMu holds one mutex per pane, taken across a whole repaint so two
+	// repaints of a pane never interleave (the second would read the first's
+	// widened size as the original). It is separate from paneMu so a repaint
+	// does not hold up an inject.
+	repaintMu sync.Map
+	paneMu    map[string]*sync.Mutex
 }
 
 // NewDriver creates a tmux driver, verifying tmux is available.
@@ -612,6 +622,225 @@ func (d *Driver) CapturePane(paneID string) (string, error) {
 	return string(out), nil
 }
 
+// CapturePaneJoined is CapturePane with wrapped lines joined (capture-pane -J),
+// so a phrase the terminal wrapped at the pane's edge reads as one line.
+func (d *Driver) CapturePaneJoined(paneID string) (string, error) {
+	out, err := d.cmd("capture-pane", "-t", paneID, "-p", "-J").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+	}
+	return string(out), nil
+}
+
+// Repaint asks the program in a pane to redraw itself without sending it any
+// input. The harnesses repaint on a change of terminal SIZE, not on a bare
+// SIGWINCH (measured on claude and opencode), so it widens the pane's own tty
+// by one column, holds for `hold`, and puts the size back. The kernel signals
+// the tty's foreground group on each change, so no pid or process group is
+// looked up and nothing is signalled by id. Nothing in tmux changes: no
+// window option, no resize-window, so an attached client still resizes the pane
+// afterwards and the other panes of the window do not move.
+//
+// The restore is compare-and-restore: if the size is no longer the one the
+// nudge set (a client resized, tmux re-asserted it) it is left alone and the
+// result says so. The restore runs on every path out, including an error.
+//
+// The result's Target is the command name of the tty's foreground process
+// group, so a caller can tell a harness from a shell. It is read for display
+// only. A nil error means the size was nudged, not that the program redrew.
+//
+// Repaints of one pane run one at a time (a per-pane lock held across widen,
+// hold and restore), so overlapping callers cannot leave the pane wide. The
+// pane is read once to choose the terminal and again, by pane id, after that
+// terminal is opened and before the first size is written; a pane that has
+// exited, or whose terminal path changed, is refused.
+//
+// A resize by someone else during the hold to exactly one column wider than the
+// original cannot be told from the nudge, so it is taken for it and the restore
+// overwrites it; any other size is left alone.
+//
+// Between the widening and the restore the program draws one column too many
+// into the pane, a frame nobody should read. A caller captures only after
+// Repaint returns and after its own settle for the restore's redraw, never
+// between the steps; hold covers the first redraw and the caller's settle the
+// second.
+func (d *Driver) Repaint(paneID string, hold time.Duration) (RepaintResult, error) {
+	mu, _ := d.repaintMu.LoadOrStore(paneID, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+
+	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_dead} #{pane_tty}").CombinedOutput()
+	if err != nil {
+		return RepaintResult{}, fmt.Errorf("pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 1 {
+		return RepaintResult{}, fmt.Errorf("pane %s: unreadable pane state %q", paneID, strings.TrimSpace(string(out)))
+	}
+	paneTTY := ""
+	if len(fields) >= 2 {
+		paneTTY = fields[1]
+	}
+	// A pane kept after its program exited keeps its old tty path, and a pty
+	// number can be handed to another pane: refuse before the path is opened.
+	if err := validateRepaintPane(fields[0] == "1", paneTTY); err != nil {
+		return RepaintResult{}, fmt.Errorf("pane %s: %w", paneID, err)
+	}
+	res := RepaintResult{Target: foregroundCommand(paneTTY)}
+	res.RestoreSkipped, err = nudgeWinsize(paneTTY, hold, func() error { return d.paneStillAt(paneID, paneTTY) }, nil)
+	if err != nil {
+		return res, fmt.Errorf("pane %s: %w", paneID, err)
+	}
+	return res, nil
+}
+
+// RepaintResult is what a repaint did.
+type RepaintResult struct {
+	// Target is the command name of the tty's foreground process group, empty
+	// when it could not be read.
+	Target string
+	// RestoreSkipped is true when the size had changed during the hold, so the
+	// original size was not written back over it.
+	RestoreSkipped bool
+}
+
+// validateRepaintPane refuses a pane that cannot be repainted: one whose program
+// has exited, or that reports no terminal.
+func validateRepaintPane(dead bool, paneTTY string) error {
+	if dead {
+		return errors.New("the pane has exited; there is no program to repaint")
+	}
+	if paneTTY == "" {
+		return errors.New("the pane reports no terminal")
+	}
+	return nil
+}
+
+// winsize mirrors struct winsize.
+type winsize struct{ Rows, Cols, X, Y uint16 }
+
+func ioctl(fd, req uintptr, arg unsafe.Pointer) error {
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(arg)); e != 0 {
+		return e
+	}
+	return nil
+}
+
+func getWinsize(f *os.File) (winsize, error) {
+	var ws winsize
+	return ws, ioctl(f.Fd(), syscall.TIOCGWINSZ, unsafe.Pointer(&ws))
+}
+
+func setWinsize(f *os.File, ws winsize) error {
+	return ioctl(f.Fd(), syscall.TIOCSWINSZ, unsafe.Pointer(&ws))
+}
+
+func openTTY(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|syscall.O_NOCTTY, 0)
+}
+
+func ttyWinsize(path string) (winsize, error) {
+	f, err := openTTY(path)
+	if err != nil {
+		return winsize{}, err
+	}
+	defer func() { _ = f.Close() }()
+	return getWinsize(f)
+}
+
+func setTTYWinsize(path string, ws winsize) error {
+	f, err := openTTY(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return setWinsize(f, ws)
+}
+
+// nudgeWinsize widens the terminal at path by one column, runs between (if any)
+// and holds for hold, then restores the original size, but only if the size is
+// still the one it set. skipped reports that it was not and the restore was
+// left undone on purpose. The restore runs however the hold ends, so a failed
+// step cannot leave the pane one column wide; if the restore itself fails, the
+// error says how wide the pane was left.
+func nudgeWinsize(path string, hold time.Duration, revalidate, between func() error) (skipped bool, err error) {
+	f, err := openTTY(path)
+	if err != nil {
+		return false, fmt.Errorf("open the pane's terminal: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	orig, err := getWinsize(f)
+	if err != nil {
+		return false, fmt.Errorf("read the pane's size: %w", err)
+	}
+	// The pane is checked again now that its terminal is open and before
+	// anything is written to it: a pane that exited since it was read can have
+	// its pty path handed to another pane, and writing a size to that would
+	// resize someone else's terminal. Pane ids are never reused, so the check
+	// is by id.
+	if revalidate != nil {
+		if err := revalidate(); err != nil {
+			return false, err
+		}
+	}
+	widened := orig
+	if widened.Cols == math.MaxUint16 {
+		widened.Cols--
+	} else {
+		widened.Cols++
+	}
+	if err := setWinsize(f, widened); err != nil {
+		return false, fmt.Errorf("widen the pane: %w", err)
+	}
+	defer func() {
+		cur, gerr := getWinsize(f)
+		switch {
+		case gerr != nil:
+			err = errors.Join(err, fmt.Errorf("restore failed, pane left at %d columns: read size: %w", widened.Cols, gerr))
+		case cur.Cols != widened.Cols || cur.Rows != widened.Rows:
+			skipped = true
+		default:
+			if serr := setWinsize(f, orig); serr != nil {
+				err = errors.Join(err, fmt.Errorf("restore failed, pane left at %d columns: %w", widened.Cols, serr))
+			}
+		}
+	}()
+	if between != nil {
+		if err := between(); err != nil {
+			return false, err
+		}
+	}
+	time.Sleep(hold)
+	return false, nil
+}
+
+// foregroundCommand names the program in a tty's foreground process group, for
+// display only: it never decides what is signalled, because nothing is. It reads
+// the terminal's process table with ps (tcgetpgrp would need the tty to be this
+// process's controlling terminal) and takes the group leader, or failing that
+// any member, of the foreground group. Best effort; empty when unknown.
+func foregroundCommand(path string) string {
+	out, err := exec.Command("ps", "-t", strings.TrimPrefix(path, "/dev/"), "-o", "pid=,pgid=,tpgid=,comm=").Output()
+	if err != nil {
+		return ""
+	}
+	member := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[1] != f[2] || f[2] == "0" || f[2] == "-1" {
+			continue
+		}
+		name := strings.TrimPrefix(filepath.Base(strings.Join(f[3:], " ")), "-")
+		if f[0] == f[2] {
+			return name
+		}
+		if member == "" {
+			member = name
+		}
+	}
+	return member
+}
+
 // CapturePaneRange captures pane content with explicit start and end line
 // numbers. Negative values reference the scrollback buffer (e.g., -100 for
 // 100 lines of history). This allows capturing scrollback beyond the visible area.
@@ -666,4 +895,28 @@ func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
 		panes = append(panes, p)
 	}
 	return panes, nil
+}
+
+// paneStillAt re-reads a pane's state and reports whether it is alive and still
+// on the terminal path it was read with.
+func (d *Driver) paneStillAt(paneID, ttyPath string) error {
+	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_dead} #{pane_tty}").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 1 {
+		return fmt.Errorf("pane %s: unreadable pane state %q", paneID, strings.TrimSpace(string(out)))
+	}
+	now := ""
+	if len(fields) >= 2 {
+		now = fields[1]
+	}
+	if err := validateRepaintPane(fields[0] == "1", now); err != nil {
+		return err
+	}
+	if now != ttyPath {
+		return fmt.Errorf("the pane's terminal changed from %s to %s", ttyPath, now)
+	}
+	return nil
 }

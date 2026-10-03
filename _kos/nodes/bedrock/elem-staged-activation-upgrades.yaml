@@ -51,6 +51,17 @@ content: |
   without a reexec, installed and running differ silently. A daemon
   build field (log line plus status RPC) is a precondition of the
   version store's active-vs-present flag.
+
+  MEASURED AGAINST TODAY'S CODE (finding-062, 2026-10-03). The study
+  `_kos/probes/brief-marvel-upgrade-intelligence.md` read `marvel
+  upgrade` at bc327df: one plane, not two (fetch, replace and activate
+  in one step, and the direct path deletes the prior binary); failure
+  reported as success on the brew and package paths; nothing verified
+  before activation; agent continuity across reexec already present,
+  control-plane recovery absent. It answers the open questions above
+  and orders ten candidate PRs, the first three against filed issues
+  (#485, #486, finding-061). The two-plane model stands; this node is
+  unchanged except for this pointer.
 edges:
   - target: elem-release-pipeline
     type: derives

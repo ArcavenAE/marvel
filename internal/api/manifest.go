@@ -838,9 +838,12 @@ func (m *Manifest) Apply(store *Store) error {
 				live.Roles = roles
 				live.Budget = budget
 				// An apply that declares no placement leaves the anchor the
-				// team already has.
+				// team already has, a legacy stamp (the v1 to v2 migration's
+				// record of where a root-less team already ran) included. Any
+				// declaration replaces the anchor and so ends the stamp.
 				if m.Workspace.Root != "" || mt.WorkDir != "" {
 					live.WorkDir = team.WorkDir
+					live.WorkDirSource = ""
 				}
 				return nil
 			}); err != nil {
