@@ -214,7 +214,7 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 		pub := slices.Clone(basePub)
 		sub := slices.Clone(baseSub)
 		globalPub := []string{"global.director.inbox", "global.*.supervisor.inbox", "$JS.global.API.>"}
-		hasGlobal := t.Supervisor && s.HubURL != ""
+		hasGlobal := len(t.GlobalRoles) > 0 && s.HubURL != ""
 		if hasGlobal {
 			// global.*.supervisor.inbox: any supervisor may publish to every
 			// cluster's supervisor inbox (director#155, operator-granted).
@@ -231,7 +231,9 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 			Password: t.Password,
 		})
 		if hasGlobal {
-			if t.SupervisorPassword == "" {
+			// Scaffold: only the first global role renders, under the old name.
+			ru := t.GlobalRoles[0]
+			if ru.Password == "" {
 				return nil, fmt.Errorf("team %s/%s declares a supervisor but its supervisor user has no password", t.Workspace, t.Team)
 			}
 			// The per-role user (per-role-broker-users.md section 3): the team
@@ -242,7 +244,7 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 				Publish:   append(slices.Clone(basePub), globalPub...),
 				Subscribe: append(slices.Clone(baseSub), fmt.Sprintf("global.%s.supervisor.inbox", s.Domain)),
 				Origin:    "per-role-broker-users.md section 3 (aae-orc-6vy9x, M9-3): the supervisor role's own user, so its global reach no longer rides the team user",
-				Password:  t.SupervisorPassword,
+				Password:  ru.Password,
 			})
 		}
 	}

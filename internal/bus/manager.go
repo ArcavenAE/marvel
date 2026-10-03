@@ -18,6 +18,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // TeamLister is the slice of the Store the manager reads: which teams are
@@ -69,6 +70,10 @@ type Manager struct {
 
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
+
+	// Events receives bus.global-role-unadmitted. Nil is safe: the daemon wires
+	// its ring, and a test may leave it unset.
+	Events events.Emitter
 
 	// known is the set of per-role users the broker has been seen to accept: a
 	// real login as the user succeeded. Render mints a user and writes the file,
@@ -279,6 +284,13 @@ func (m *Manager) Credential(team, role string) (string, string, bool) {
 	return team, pw, true
 }
 
+// GlobalRole is the global role a role holds on this cluster: the resolver's
+// answer with this cluster's admitted set, "" for none. Scaffold.
+func (m *Manager) GlobalRole(role api.Role) string {
+	_ = role
+	return ""
+}
+
 // Domain is the cluster name the broker serves as its JetStream domain.
 func (m *Manager) Domain() string { return m.domain }
 
@@ -357,12 +369,11 @@ func (m *Manager) Render() (bool, error) {
 		}
 		live[t.Name] = true
 		tu := TeamUser{
-			Workspace:  t.Workspace,
-			Team:       t.Name,
-			Password:   pw,
-			Supervisor: hasSupervisorRole(t),
+			Workspace: t.Workspace,
+			Team:      t.Name,
+			Password:  pw,
 		}
-		if tu.Supervisor && m.bus.HubURL != "" {
+		if hasSupervisorRole(t) && m.bus.HubURL != "" {
 			// The supervisor role's own user, minted only when missing and
 			// keyed by user name like the team's.
 			user := t.Name + SupervisorUserSuffix
@@ -375,7 +386,7 @@ func (m *Manager) Render() (bool, error) {
 				m.passwords[user] = spw
 			}
 			live[user] = true
-			tu.SupervisorPassword = spw
+			tu.GlobalRoles = []RoleUser{{Role: "supervisor", Password: spw}}
 		}
 		spec.Teams = append(spec.Teams, tu)
 	}
@@ -510,6 +521,13 @@ func (a Adopted) URL() string { return a.url }
 
 // Bus is the resolved section, for status.
 func (a Adopted) Bus() config.ResolvedBus { return a.bus }
+
+// GlobalRole is the same resolver answer as the managed broker's, from the
+// section the cluster declared. Scaffold.
+func (a Adopted) GlobalRole(role api.Role) string {
+	_ = role
+	return ""
+}
 
 // Credential is never available for an adopted broker.
 func (a Adopted) Credential(string, string) (string, string, bool) { return "", "", false }
