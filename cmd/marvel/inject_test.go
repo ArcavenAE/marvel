@@ -209,3 +209,16 @@ func TestDescribeInject(t *testing.T) {
 		})
 	}
 }
+
+// --clear sends a C-c, so the help must say when the reader allows it. For
+// claude that is a draft beside a finished turn's done line: a reply taller
+// than the pane scrolls its markers off the top and then reads unknown, so
+// "an idle composer" alone promises more than the reader gives.
+func TestInjectHelpSaysWhenClearIsAllowed(t *testing.T) {
+	long := strings.Join(strings.Fields(injectCmd().Long), " ")
+	for _, want := range []string{"beside a finished turn's done line", "scrolled off", "unknown"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("inject help does not say %q", want)
+		}
+	}
+}
