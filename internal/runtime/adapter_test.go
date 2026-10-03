@@ -759,3 +759,30 @@ func TestBaseEnvStampsMarvelWorkDir(t *testing.T) {
 		t.Errorf("MARVEL_WORKDIR = %q on a session placed nowhere, want it absent", got)
 	}
 }
+
+// Test 6, the runtime half: a seat that holds the global tier carries
+// DIRECTOR_GLOBAL_ROLE with the resolved word, so director's launcher reads the
+// declaration instead of guessing from the role name. A seat without it carries
+// no such key, and the key never rides without a bus.
+func TestBaseEnvCarriesTheResolvedGlobalRole(t *testing.T) {
+	t.Parallel()
+	mk := func(url, globalRole string) map[string]string {
+		return baseEnv(&LaunchContext{
+			Session:    &api.Session{Name: "ops-research-supervisor-g1-0"},
+			Role:       &api.Role{Name: "research-supervisor"},
+			Team:       &api.Team{Name: "ops"},
+			Workspace:  &api.Workspace{Name: "acme"},
+			BusURL:     url,
+			GlobalRole: globalRole,
+		})
+	}
+	if got := mk("nats://127.0.0.1:4222", "supervisor")["DIRECTOR_GLOBAL_ROLE"]; got != "supervisor" {
+		t.Errorf("DIRECTOR_GLOBAL_ROLE = %q, want supervisor", got)
+	}
+	if _, ok := mk("nats://127.0.0.1:4222", "")["DIRECTOR_GLOBAL_ROLE"]; ok {
+		t.Error("DIRECTOR_GLOBAL_ROLE set for a role that holds no global tier")
+	}
+	if _, ok := mk("", "supervisor")["DIRECTOR_GLOBAL_ROLE"]; ok {
+		t.Error("DIRECTOR_GLOBAL_ROLE set with no bus URL")
+	}
+}

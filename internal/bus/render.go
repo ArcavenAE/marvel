@@ -70,13 +70,20 @@ type User struct {
 // workspace subtree. Supervisor marks the team that holds a supervisor role;
 // with a hub it also gets the global grants.
 type TeamUser struct {
-	Workspace  string
-	Team       string
-	Password   string
-	Supervisor bool
-	// SupervisorPassword is the password of the `<team>.supervisor` user;
-	// empty means that user is not rendered.
-	SupervisorPassword string
+	Workspace string
+	Team      string
+	Password  string
+	// GlobalRoles lists the team's roles that hold the global tier, each with
+	// the password of its own `<team>.<role>` user. Empty means no per-role
+	// user renders and the team user carries no global grants.
+	GlobalRoles []RoleUser
+}
+
+// RoleUser is one role's own broker user, `<team>.<role>`: the role name and
+// the password minted for it.
+type RoleUser struct {
+	Role     string
+	Password string
 }
 
 // MonitorAddr returns the loopback monitoring address for a listen address:

@@ -909,6 +909,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 	if m.Bus != nil {
 		lctx.BusURL = m.Bus.URL()
+		lctx.GlobalRole = m.Bus.GlobalRole(*role)
 		if user, pass, ok := m.Bus.Credential(team.Name, sess.Role); ok {
 			lctx.BusUser, lctx.BusPassword = user, pass
 		}
@@ -1652,6 +1653,9 @@ func (m *Manager) CleanupWorkspace(workspace string) error {
 type BusEnv interface {
 	URL() string
 	Credential(team, role string) (user, password string, ok bool)
+	// GlobalRole is the global role the stored role holds on this cluster,
+	// "" for none: config.ResolvedGlobalRole with the cluster's admitted set.
+	GlobalRole(role api.Role) string
 }
 
 // ErrPlacementRefused is wrapped by the error a refused spawn returns, so a

@@ -454,6 +454,14 @@ type SessionMetrics struct {
 	MetricsAt    time.Time
 }
 
+// The values a role's global_role may take. The word is the global address
+// word (the token in global.<cluster>.supervisor.inbox and in
+// DIRECTOR_GLOBAL_ROLE), not a role class.
+const (
+	GlobalRoleSupervisor = "supervisor"
+	GlobalRoleNone       = "none"
+)
+
 // Role declares desired state for one kind of agent within a team.
 // Name is the job function (reviewer, supervisor, probe-runner).
 // Persona and Identity are the costume and lens per finding-019.
@@ -495,6 +503,12 @@ type Role struct {
 	DangerousPermissions bool   `toml:"dangerous_permissions,omitempty"`
 	Persona              string `toml:"persona,omitempty"`  // character slug (e.g. "naomi-nagata")
 	Identity             string `toml:"identity,omitempty"` // professional lens (e.g. "homicide detective")
+	// GlobalRole is the global-tier role this role holds: "supervisor", or
+	// "none" to opt out. Empty means the manifest declared nothing, and the
+	// default by role name applies (docs/design/global-role-declaration.md).
+	// Read it only through config.ResolvedGlobalRole, which also checks that
+	// the cluster admits the role's name.
+	GlobalRole string `toml:"global_role,omitempty"`
 	// Policy names the Policy this role's sessions are projected with —
 	// the contract half of finding-024: a Claude Code settings fragment
 	// marvel writes to a per-session file the harness reads. Empty means

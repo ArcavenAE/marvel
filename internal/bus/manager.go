@@ -18,6 +18,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // TeamLister is the slice of the Store the manager reads: which teams are
@@ -70,6 +71,10 @@ type Manager struct {
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
 
+	// Events receives bus.global-role-unadmitted. Nil is safe: the daemon wires
+	// its ring, and a test may leave it unset.
+	Events events.Emitter
+
 	// known is the set of per-role users the broker has been seen to accept: a
 	// real login as the user succeeded. Render mints a user and writes the file,
 	// but the broker reads it on a reload that lands later, so Credential hands
@@ -78,6 +83,10 @@ type Manager struct {
 	known map[string]bool
 	// verify dials the broker as one user; nil means a real connection.
 	verify func(ctx context.Context, url, user, password string) error
+	// unadmitted is the set of team/role keys already reported as declaring a
+	// global role the cluster does not admit, so the event fires once per
+	// change and not at every render.
+	unadmitted map[string]bool
 	// confirming and confirmAgain single-flight the background confirmation.
 	confirming   atomic.Bool
 	confirmAgain atomic.Bool
@@ -255,12 +264,12 @@ func (m *Manager) URL() string { return m.bus.URL }
 
 // Credential is the broker user and password a seat of the given role presents,
 // the session.BusEnv contract. A role that holds a global address
-// (config.GlobalAddressRoles) gets its own `<team>.<role>` user once the broker
+// (config.ResolvedGlobalRole) gets its own `<team>.<role>` user once the broker
 // has accepted it (ConfirmRoleUsers); every other role, and a global role whose
 // user is absent, not yet written or not yet accepted, gets the team user
 // (section 4).
 func (m *Manager) Credential(team, role string) (string, string, bool) {
-	if slices.Contains(config.GlobalAddressRoles, role) {
+	if m.holdsGlobalRole(team, role) {
 		user := team + "." + role
 		m.mu.Lock()
 		pw, ok := m.passwords[user]
@@ -277,6 +286,29 @@ func (m *Manager) Credential(team, role string) (string, string, bool) {
 		return "", "", false
 	}
 	return team, pw, true
+}
+
+// GlobalRole is the global role a role holds on this cluster: the resolver's
+// answer with this cluster's admitted set, "" for none. The renderer,
+// Credential and the seat env all read it, so they cannot disagree.
+func (m *Manager) GlobalRole(role api.Role) string {
+	return config.ResolvedGlobalRole(role, m.bus.GlobalRoles)
+}
+
+// holdsGlobalRole reports whether the stored role team/role resolves to the
+// global tier on this cluster.
+func (m *Manager) holdsGlobalRole(team, role string) bool {
+	for _, t := range m.teams.ListTeams() {
+		if t.Name != team {
+			continue
+		}
+		for _, r := range t.Roles {
+			if r.Name == role {
+				return m.GlobalRole(r) != ""
+			}
+		}
+	}
+	return false
 }
 
 // Domain is the cluster name the broker serves as its JetStream domain.
@@ -357,26 +389,34 @@ func (m *Manager) Render() (bool, error) {
 		}
 		live[t.Name] = true
 		tu := TeamUser{
-			Workspace:  t.Workspace,
-			Team:       t.Name,
-			Password:   pw,
-			Supervisor: hasSupervisorRole(t),
+			Workspace: t.Workspace,
+			Team:      t.Name,
+			Password:  pw,
 		}
-		if tu.Supervisor && m.bus.HubURL != "" {
-			// The supervisor role's own user, minted only when missing and
-			// keyed by user name like the team's.
-			user := t.Name + SupervisorUserSuffix
-			spw, ok := m.passwords[user]
-			if !ok {
-				var err error
-				if spw, err = NewPassword(); err != nil {
-					return false, err
+		if m.bus.HubURL != "" {
+			// Each global role's own user, minted only when missing and keyed
+			// by user name like the team's. Roles are taken in name order so
+			// the rendered file is the same from one render to the next.
+			roles := slices.Clone(t.Roles)
+			slices.SortFunc(roles, func(a, b api.Role) int { return strings.Compare(a.Name, b.Name) })
+			for _, r := range roles {
+				if m.GlobalRole(r) == "" {
+					continue
 				}
-				m.passwords[user] = spw
+				user := t.Name + "." + r.Name
+				rpw, ok := m.passwords[user]
+				if !ok {
+					var err error
+					if rpw, err = NewPassword(); err != nil {
+						return false, err
+					}
+					m.passwords[user] = rpw
+				}
+				live[user] = true
+				tu.GlobalRoles = append(tu.GlobalRoles, RoleUser{Role: r.Name, Password: rpw})
 			}
-			live[user] = true
-			tu.SupervisorPassword = spw
 		}
+		m.noteUnadmitted(t)
 		spec.Teams = append(spec.Teams, tu)
 	}
 	for name := range m.passwords {
@@ -481,18 +521,6 @@ func RecoverPasswords(authPath string) map[string]string {
 	return out
 }
 
-// hasSupervisorRole reports whether a team declares a role that holds a global
-// address (config.GlobalAddressRoles; today only supervisor, the same name
-// internal/team orders last in a shift).
-func hasSupervisorRole(t api.Team) bool {
-	for _, r := range t.Roles {
-		if slices.Contains(config.GlobalAddressRoles, r.Name) {
-			return true
-		}
-	}
-	return false
-}
-
 // Adopted is the session.BusEnv for a cluster whose bus is managed: false,
 // an existing broker marvel did not configure (the phase-0 path). Sessions
 // get the URL and no credential; the broker's own authorization, if any,
@@ -510,6 +538,12 @@ func (a Adopted) URL() string { return a.url }
 
 // Bus is the resolved section, for status.
 func (a Adopted) Bus() config.ResolvedBus { return a.bus }
+
+// GlobalRole is the same resolver answer as the managed broker's, from the
+// section the cluster declared.
+func (a Adopted) GlobalRole(role api.Role) string {
+	return config.ResolvedGlobalRole(role, a.bus.GlobalRoles)
+}
 
 // Credential is never available for an adopted broker.
 func (a Adopted) Credential(string, string) (string, string, bool) { return "", "", false }
@@ -567,4 +601,31 @@ func (m *Manager) writeLeafState(attached bool) error {
 		return fmt.Errorf("create bus dir %s: %w", m.dir, err)
 	}
 	return writeFileAtomic(filepath.Join(m.dir, LeafStateName), []byte(body), 0o644)
+}
+
+// noteUnadmitted emits bus.global-role-unadmitted for each role of t whose
+// manifest declares the supervisor global role but whose name the cluster does
+// not admit, once until it is admitted again or the declaration goes. The
+// caller holds m.mu.
+func (m *Manager) noteUnadmitted(t api.Team) {
+	if m.unadmitted == nil {
+		m.unadmitted = map[string]bool{}
+	}
+	for _, r := range t.Roles {
+		key := t.Workspace + "/" + t.Name + "/" + r.Name
+		declared := r.GlobalRole == api.GlobalRoleSupervisor
+		if !declared || m.GlobalRole(r) != "" {
+			delete(m.unadmitted, key)
+			continue
+		}
+		if m.unadmitted[key] {
+			continue
+		}
+		m.unadmitted[key] = true
+		events.Emit(m.Events, events.Event{
+			Kind: events.KindBusGlobalRoleUnadmitted, Severity: events.SeverityWarning,
+			Workspace: t.Workspace, Team: t.Name, Role: r.Name,
+			Message: fmt.Sprintf("team %s role %s declares global_role %s but the cluster does not admit it (global_roles on the bus entry); it holds no global tier until it is admitted or the declaration is removed", t.Name, r.Name, api.GlobalRoleSupervisor),
+		})
+	}
 }

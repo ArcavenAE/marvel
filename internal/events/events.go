@@ -248,6 +248,11 @@ const (
 	KindBusLeafUp         Kind = "bus.leaf.up"
 	KindBusLeafDown       Kind = "bus.leaf.down"
 	KindBusLeafUnenrolled Kind = "bus.leaf.unenrolled"
+	// KindBusGlobalRoleUnadmitted reports a stored role whose manifest declares
+	// a global role but whose name the cluster's config no longer admits
+	// (global_roles on the bus entry). The role holds no global tier until it
+	// is admitted again or the declaration is removed. Once per change.
+	KindBusGlobalRoleUnadmitted Kind = "bus.global-role-unadmitted"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -338,6 +343,7 @@ var allKinds = []Kind{
 	KindBusLeafUp,
 	KindBusLeafDown,
 	KindBusLeafUnenrolled,
+	KindBusGlobalRoleUnadmitted,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,

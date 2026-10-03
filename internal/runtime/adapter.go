@@ -62,6 +62,10 @@ type LaunchContext struct {
 	BusURL      string
 	BusUser     string
 	BusPassword string
+	// GlobalRole is the global role the role holds on this cluster, resolved
+	// by config.ResolvedGlobalRole through the bus provider: "supervisor", or
+	// empty for none. It rides to the seat as DIRECTOR_GLOBAL_ROLE.
+	GlobalRole string
 	// StreamPath is a sink the session manager created for this launch —
 	// a FIFO the harness's structured output can be redirected into.
 	// Empty means marvel is not observing this session's stream, either
@@ -421,6 +425,13 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 		if ctx.BusUser != "" {
 			env["DIRECTOR_NATS_USER"] = ctx.BusUser
 			env["DIRECTOR_NATS_PASS"] = ctx.BusPassword
+		}
+		// The resolved global role, so director's launcher reads the
+		// declaration and not the role name. Set only when the role holds the
+		// tier on this cluster; a seat already running keeps the environment
+		// it started with until it is respawned.
+		if ctx.GlobalRole != "" {
+			env["DIRECTOR_GLOBAL_ROLE"] = ctx.GlobalRole
 		}
 	}
 	if ctx.SocketPath != "" {

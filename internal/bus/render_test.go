@@ -25,7 +25,7 @@ func baseSpec() Spec {
 		LeafAttached: true,
 		Admin:        User{Name: AdminUser, Password: "adminpw"},
 		Teams: []TeamUser{
-			{Workspace: "aae-orc", Team: "ops", Password: "opspw", Supervisor: true, SupervisorPassword: "suppw"},
+			{Workspace: "aae-orc", Team: "ops", Password: "opspw", GlobalRoles: []RoleUser{{Role: "supervisor", Password: "suppw"}}},
 			{Workspace: "aae-orc", Team: "fleet", Password: "fleetpw"},
 		},
 	}

@@ -121,7 +121,9 @@ func TestSupervisorUserWithoutAPasswordIsRefused(t *testing.T) {
 	t.Parallel()
 	s := hubSpec()
 	for i := range s.Teams {
-		s.Teams[i].SupervisorPassword = ""
+		for j := range s.Teams[i].GlobalRoles {
+			s.Teams[i].GlobalRoles[j].Password = ""
+		}
 	}
 	if _, err := DeclaredPrincipals(s); err == nil || !strings.Contains(err.Error(), "supervisor") {
 		t.Fatalf("error = %v, want a refusal that names the supervisor user", err)
