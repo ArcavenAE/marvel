@@ -145,6 +145,7 @@ type ManifestRole struct {
 	DangerousPermissions bool                 `toml:"dangerous_permissions,omitempty" yaml:"dangerous_permissions,omitempty"`
 	Persona              string               `toml:"persona,omitempty"             yaml:"persona,omitempty"`
 	Identity             string               `toml:"identity,omitempty"            yaml:"identity,omitempty"`
+	GlobalRole           string               `toml:"global_role,omitempty"         yaml:"global_role,omitempty"`
 	Policy               string               `toml:"policy,omitempty"              yaml:"policy,omitempty"`
 	HealthCheck          *ManifestHealthCheck `toml:"healthcheck,omitempty"         yaml:"healthcheck,omitempty"`
 	// Shift opts this role into automatic shifts. Unset means the role shifts

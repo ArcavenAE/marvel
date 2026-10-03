@@ -428,6 +428,10 @@ type Bus struct {
 	Seat *Seat `yaml:"seat,omitempty"`
 	// Hub, when set, makes the broker a leaf of the global tier.
 	Hub *Hub `yaml:"hub,omitempty"`
+	// GlobalRoles are the role names this cluster admits to the global tier,
+	// beside `supervisor`, which is admitted without being listed. A manifest
+	// can declare a role global only if the operator's config names it here.
+	GlobalRoles []string `yaml:"global_roles,omitempty"`
 }
 
 // Seat names the workspace and team the director seat lives in, both
@@ -457,6 +461,12 @@ var ReservedBusUsers = []string{"director", "marvel_admin"}
 // tier (R-94). A seat in one of these roles gets the global grants; every
 // other role does not. One declared list, so the rule has one place to change.
 var GlobalAddressRoles = []string{"supervisor"}
+
+// DefaultGlobalRoleByName is the global role a role holds when its manifest
+// declares none, keyed by role name. It is read only when global_role is
+// absent, so an old manifest behaves as it always did and nothing widens at
+// upgrade.
+var DefaultGlobalRoleByName = map[string]string{"supervisor": "supervisor"}
 
 // validSubjectToken checks a name against the R-76 class [A-Za-z0-9_-],
 // naming what the name is for in the error.
@@ -655,6 +665,9 @@ type ResolvedBus struct {
 	HubCAFile string
 	// Seat is copied through when declared.
 	Seat *Seat
+	// GlobalRoles is the admitted set as declared, without the implicit
+	// supervisor, which ResolvedGlobalRole adds.
+	GlobalRoles []string
 }
 
 // Resolve fills the bus defaults: url from listen, store_dir under
@@ -670,6 +683,7 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 		Class: b.Class, Provider: b.Provider, CallerIdentity: b.CallerIdentity,
 		Mode: mode, Managed: mode == service.ModeManaged,
 		Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir, Seat: b.Seat,
+		GlobalRoles: b.GlobalRoles,
 	}
 	if r.Class == "" {
 		r.Class = service.ClassMessageBus
