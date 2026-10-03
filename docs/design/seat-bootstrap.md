@@ -339,7 +339,8 @@ the whole process tree, not only the child: `claude auth status` forks the
 `security` CLI to read the keychain (the reviewer's PATH stand-in was called
 twice as `find-generic-password`), so a keychain prompt or hang lives in a
 grandchild. The command runs with `Setpgid`, and on timeout marvel kills the
-group (`-pgid`). Its stdout and stderr go to `/dev/null`, so `Wait` cannot
+group (`-pgid`), only after a successful `Start` and only for a pid greater
+than 1; it never calls `kill(0)` or `kill(-1)`. Its stdout and stderr go to `/dev/null`, so `Wait` cannot
 block on a pipe a surviving grandchild still holds. The spawn is refused
 `login-check-timeout`. codex's call (`codex_home.go:232`) kills only its
 child and keeps a pipe, so it is the figure's source, not the pattern's.
@@ -553,9 +554,10 @@ launch.
    bytes and mtime are unchanged after every case. The `mcpServers` map
    decodes into `map[string]struct{}`: a fixture whose entry carries an env
    value leaves no trace of it in the decoded value, the session record, or
-   the log. The fixture's env value is a canary byte string, and `%#v` of
-   the decoded value does not contain it; that spec fails for both
-   `json.RawMessage` and `any`. A fake `claude auth status` that forks a
+   the log. The fixture's env value is a canary byte string, and
+   `json.Marshal` of the decoded value does not contain it. That spec fails
+   for both `json.RawMessage` and `any` and passes for `struct{}` (`%#v`
+   alone would miss `json.RawMessage`; the reviewer measured both). A fake `claude auth status` that forks a
    never-exiting child, which holds the inherited stdout, and then never
    exits: within 10 seconds plus a small margin both processes are gone (the
    group is killed), `Wait` returns, and the spawn is refused
