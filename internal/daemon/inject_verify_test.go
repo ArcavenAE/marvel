@@ -306,3 +306,70 @@ func TestPreflightFailsClosedWhenThePaneCannotBeRead(t *testing.T) {
 		t.Error("an inject that could not be pre-flighted was recorded as sent")
 	}
 }
+
+// claudeFrameSeat paints a captured-shape Claude composer and then becomes a
+// program that is not a shell (sleep), so the pane reads as a harness. Echo is
+// off so typed keys do not alter the frame.
+func claudeFrameSeat(t *testing.T, frame string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "frame.txt")
+	if err := os.WriteFile(path, []byte(frame), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return "stty -echo\ncat " + path + "\necho frame-painted\nexec sleep 300\n"
+}
+
+const (
+	testRule = "──────────────────────────────"
+	testNB   = " "
+)
+
+func claudeFrame(composer string) string {
+	return "\n✻ Worked for 2s · done 5:23 PM\n\n" + testRule + "\n" + composer + "\n" + testRule + "\n  [Model] scratch\n"
+}
+
+func verifyResult(t *testing.T, d *Daemon, key string, p map[string]any) map[string]string {
+	t.Helper()
+	p["session_key"] = key
+	p["verify"] = true
+	p["settle_ms"] = 100
+	resp := injectOf(t, d, p)
+	if resp.Error != "" {
+		t.Fatalf("inject: %s", resp.Error)
+	}
+	var out map[string]string
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// The claude reader tells the dim placeholder from typed text by its attributes,
+// so the daemon captures that seat with escape sequences. An idle composer
+// showing only the placeholder confirms a submitted message.
+func TestVerifyReadsAClaudeComposerWithEscapes(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, claudeFrameSeat(t, claudeFrame("\x1b[39m❯"+testNB+"\x1b[2mTry \"fix the build\"\x1b[0m")), "claude", "frame-painted")
+
+	out := verifyResult(t, d, key, map[string]any{"text": "hello", "literal": true, "enter": true})
+	if out["verify"] != "confirmed" || out["composer"] != "empty" {
+		t.Errorf("result = %v, want confirmed with the composer read as empty", out)
+	}
+}
+
+func TestVerifyConfirmsStagedTextAndDoesNotConfirmItAsSubmitted(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, claudeFrameSeat(t, claudeFrame("❯"+testNB+"a staged message")), "claude", "frame-painted")
+
+	staged := verifyResult(t, d, key, map[string]any{"text": "more", "literal": true})
+	if staged["verify"] != "confirmed" || staged["composer"] != "holds_text" {
+		t.Errorf("staging: result = %v, want confirmed, holds_text", staged)
+	}
+	submitted := verifyResult(t, d, key, map[string]any{"text": "Enter", "literal": false})
+	if submitted["verify"] != "unconfirmed" || submitted["composer"] != "holds_text" {
+		t.Errorf("a submit that left the text in the composer: result = %v, want unconfirmed, holds_text", submitted)
+	}
+	if !hasKind(d, events.KindSessionInjectUnconfirmed) {
+		t.Error("the unconfirmed submit emitted no event")
+	}
+}
