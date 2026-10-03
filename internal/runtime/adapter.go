@@ -315,7 +315,9 @@ var (
 // ComposerFor returns the composer contract of a runtime, or the zero contract
 // when its adapter has none.
 func (r *Registry) ComposerFor(runtimeName string) ComposerContract {
-	if c, ok := r.Resolve(runtimeName).(ComposerCapable); ok {
+	// The harness is the program, so a path or a wrapper directory does not hide
+	// it (the composer reader finds it the same way).
+	if c, ok := r.Resolve(filepath.Base(strings.TrimSpace(runtimeName))).(ComposerCapable); ok {
 		return c.Composer()
 	}
 	return ComposerContract{}
