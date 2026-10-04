@@ -620,17 +620,20 @@ until a menu sample and a post-selection sample exist for the harness version
 when a sample ships. This checklist is what the person at the pane records, so
 the capture is read from one place. Each item names where it comes from.
 
-1. **A menu block with a composer line under it.** Capture the screen after the
-   menu has been answered or dismissed, with the composer drawn below the old
-   menu block, and say whether the block is still on screen. `Match` takes the
-   last place where the whole block appears and allows only blank rows and the
+1. **A menu block with a composer line under it.** Capture the screen that 9.7
+   step 4 leaves, where the operator chose option 1 the usual way, or one left by
+   a menu the operator answered in the normal course, with the composer drawn
+   below the old menu block, and say whether the block is still on screen.
+   Nobody answers or dismisses the menu for this item. `Match` takes the last
+   place where the whole block appears and allows only blank rows and the
    sample's own trailing rows after it (`internal/limitmenu/limitmenu.go:127-150`,
-   `RefusalTrailingRows`). A review planted a `> composer ready` line under the
-   block and the inject of `hello` was refused as the usage-limit menu; if claude
-   leaves the block on screen after the menu is answered, a seat would refuse
-   every inject until the block scrolls off (review 5405270263 on marvel#560,
-   section (b)). The review asked for this to be checked against the real capture
-   before a sample ships.
+   `RefusalTrailingRows`), and a declined block is refused as the usage-limit
+   menu (`internal/daemon/daemon.go:2154`). A review planted a `> composer ready`
+   line under the block and the inject of `hello` was refused; if claude leaves
+   the block on screen after the menu is answered, a seat would refuse every
+   inject until the block scrolls off (review 5405270263 on marvel#560, section
+   (b)). The review asked for this to be checked against the real capture before
+   a sample ships.
 2. **Raw bytes, captured with `tmux capture-pane -e`.** Keep the capture with its
    escape sequences as well as the plain rows the matcher compares. No document
    or test in this repository says what the limit menu's escape sequences hold.
@@ -644,8 +647,11 @@ the capture is read from one place. Each item names where it comes from.
    whether `rate_limits` is absent on Enterprise, present without percentages,
    or present only near a limit (9.8, "The Enterprise payload"). The windows the
    reading takes from it are `five_hour` and `seven_day`, each with
-   `used_percentage` and `resets_at` (section 2, `cmd/marvel/ctxforward.go:111-124`).
-4. **Whether a digit selects an option.** This is steps 1 to 5 of 9.7, in the
+   `used_percentage` and `resets_at` (`cmd/marvel/ctxforward.go:111-124`). That
+   file's own comment says "NOT VERIFIED: a populated payload observed in the
+   wild", so a populated capture is the first such observation. Strip local paths
+   and session identifiers from the JSON before a capture is committed.
+4. **Whether a digit selects an option (operator-run, at a real limit, 9.7).** This is steps 1 to 5 of 9.7, in the
    order given there: the menu sample, then the `2` press from row 1, then (only
    if that took option 2) from row 3, then option 1 chosen the usual way as the
    must-not-match fixture, each stored with the harness version, the key and the
@@ -653,8 +659,9 @@ the capture is read from one place. Each item names where it comes from.
    (9.4 item 4: "Nothing yet measures that the digit `2` selects option 2
    wherever the cursor sits").
 
-Items 1 to 3 press no key. Item 4 does, and stays interventional: the operator
-runs it, at a real limit, as 9.7 says.
+Items 1 to 3 ask for no key to be pressed. Item 4 does, and stays
+interventional: the operator runs it, at a real limit, as 9.7 says, and no seat
+runs it.
 
 ### 9.8 Open questions added
 
