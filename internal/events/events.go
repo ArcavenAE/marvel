@@ -134,9 +134,8 @@ const (
 	KindScheduleDSTAcknowledged Kind = "schedule.dst-acknowledged"
 	// KindScheduleStale is the freshness alarm (scheduled-runs section 7): a
 	// scheduled role has no succeeded run newer than its stale_after. It
-	// fires once when the role goes stale, at warning, and once more, at
-	// info, when a succeeded run brings it back. Diagnostic only: it blocks
-	// nothing.
+	// fires once, at warning, when the role goes stale; KindScheduleFresh
+	// marks the recovery. Diagnostic only: it blocks nothing.
 	KindScheduleStale Kind = "schedule.stale"
 	// KindScheduleFresh is the freshness alarm's recovery: a stale
 	// scheduled role is fresh again (#431 ruling on default 2).

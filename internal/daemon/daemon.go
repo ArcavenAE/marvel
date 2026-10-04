@@ -480,6 +480,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// daemon's broker, and no session may spawn before there is a bus to
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
+	d.loadScheduleHistoryMax(socketPath)
 	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()
 		if d.pidFile != "" {
@@ -1211,6 +1212,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		// doubled the prefix. Matches the ValidateRuntimes/ValidateBudgets
 		// pre-flight siblings below, which also surface err.Error() directly.
 		return Response{Error: err.Error()}
+	}
+	if err := api.ScheduleHistoryCap(m, d.scheduleHistoryMax); err != nil {
+		return Response{Error: "parse manifest: " + err.Error()}
 	}
 
 	if p.WorkspaceRoot != "" {

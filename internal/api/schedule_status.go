@@ -97,8 +97,10 @@ type ScheduleStatus struct {
 }
 
 // AddRun records a finished run, then drops the oldest runs of the run's
-// outcome beyond that outcome's bound. Each bound counts only its own
-// outcome, so a streak of failures cannot push the last success out.
+// class beyond that class's bound. Successes are one class, bounded by
+// history.succeeded. Failed and cancelled runs are the other, sharing
+// history.failed. So a streak of failures or kills cannot push the last
+// success out.
 func (st *ScheduleStatus) AddRun(r RunRecord, h ScheduleHistory) {
 	if st.Since.IsZero() {
 		st.Since = r.EndedAt
@@ -108,13 +110,14 @@ func (st *ScheduleStatus) AddRun(r RunRecord, h ScheduleHistory) {
 	}
 	st.History = append(st.History, r)
 
+	succeeded := r.Outcome == RunSucceeded
 	limit := h.Failed
-	if r.Outcome == RunSucceeded {
+	if succeeded {
 		limit = h.Succeeded
 	}
 	excess := -limit
 	for _, x := range st.History {
-		if x.Outcome == r.Outcome {
+		if (x.Outcome == RunSucceeded) == succeeded {
 			excess++
 		}
 	}
@@ -123,7 +126,7 @@ func (st *ScheduleStatus) AddRun(r RunRecord, h ScheduleHistory) {
 	}
 	kept := st.History[:0]
 	for _, x := range st.History {
-		if x.Outcome == r.Outcome && excess > 0 {
+		if (x.Outcome == RunSucceeded) == succeeded && excess > 0 {
 			excess--
 			continue
 		}
@@ -229,6 +232,28 @@ func (s *Store) DeleteScheduleStatus(key string) error {
 	return nil
 }
 
+// DefaultScheduleHistoryMax is the ceiling on schedule.history when the
+// cluster sets no schedule_history_max. A role's whole status is one stored
+// value rewritten on every run, and each run can carry a 4 KiB result.
+const DefaultScheduleHistoryMax = 50
+
 // ScheduleHistoryCap checks every scheduled role's history against the
-// cluster's ceiling.
-func ScheduleHistoryCap(m *Manifest, limit int) error { return nil }
+// cluster's ceiling, limit, or DefaultScheduleHistoryMax when limit is not
+// positive. The ceiling is the cluster's because it protects the daemon's
+// store, not a team's choice, so it is checked at apply, not at parse.
+func ScheduleHistoryCap(m *Manifest, limit int) error {
+	if limit <= 0 {
+		limit = DefaultScheduleHistoryMax
+	}
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Schedule == nil || r.Schedule.History == nil {
+				continue
+			}
+			if h := r.Schedule.History; h.Succeeded > limit || h.Failed > limit {
+				return fmt.Errorf("team %s role %s: schedule.history keeps at most %d runs of each outcome (schedule_history_max on the cluster)", t.Name, r.Name, limit)
+			}
+		}
+	}
+	return nil
+}

@@ -3,8 +3,6 @@ package daemon
 import (
 	"time"
 
-	"github.com/arcavenae/marvel/internal/config"
-
 	"github.com/arcavenae/marvel/internal/api"
 )
 
@@ -97,6 +95,3 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 	}
 	return out, nil
 }
-
-// scheduleHistoryMaxFrom reads the cluster's ceiling on schedule.history.
-func scheduleHistoryMaxFrom(cl *config.Cluster) int { return 0 }

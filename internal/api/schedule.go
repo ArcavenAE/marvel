@@ -154,9 +154,6 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 		if h.Failed <= 0 {
 			return fmt.Errorf("%s: schedule.history.failed must be > 0 when set", where)
 		}
-		if h.Succeeded > maxScheduleHistory || h.Failed > maxScheduleHistory {
-			return fmt.Errorf("%s: schedule.history keeps at most %d runs of each outcome", where, maxScheduleHistory)
-		}
 	}
 	return nil
 }
@@ -166,10 +163,6 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 const (
 	defaultScheduleHistorySucceeded = 3
 	defaultScheduleHistoryFailed    = 3
-	// maxScheduleHistory caps each outcome's bound. A role's whole status
-	// is one stored value rewritten on every run, and each run can carry a
-	// 4 KiB result (#431 review).
-	maxScheduleHistory = 50
 )
 
 // policy converts a validated block. Defaults: concurrency forbid,

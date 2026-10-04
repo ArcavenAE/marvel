@@ -322,8 +322,9 @@ the property that matters for a shared account.
 
 - **The event ring, always.** `schedule.fired`, `schedule.skipped`,
   `schedule.missed`, `schedule.replaced`, `run.succeeded`, `run.failed`,
-  `run.deadline`, `schedule.stale`. Filterable by workspace, team and role like
-  every other kind.
+  `run.cancelled` (a live run ended by a kill or delete), `run.deadline`,
+  `schedule.stale`, `schedule.fresh`. Filterable by workspace, team and role
+  like every other kind.
 - **The bus, through marvel's own stream, when it exists.** aae-orc-aubd6
   provisions EVENTS_MARVEL. Once it lands, the same kinds are mirrored there,
   and director or a supervisor subscribes (7vw44 `subscribe_events`). marvel
@@ -336,8 +337,8 @@ the property that matters for a shared account.
 ## 7. The freshness alarm (question-scheduled-cues, first piece)
 
 `stale_after` is required. When a schedule has no `succeeded` run newer than
-`stale_after`, marvel emits `schedule.stale` once per transition, and again
-when it recovers. It is an event, never a block (diagnostic-not-gate). The
+`stale_after`, marvel emits `schedule.stale` once per transition, and
+`schedule.fresh` when it recovers (operator ruling on #431). It is an event, never a block (diagnostic-not-gate). The
 "last succeeded" time lives in the store with the history, so it survives a
 daemon restart.
 
