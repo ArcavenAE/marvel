@@ -29,7 +29,8 @@ window after it. Written to assume the upgrade goes badly.
 
 ## 2. Preconditions (all before the window is set)
 
-1. **Pinned. DONE 2026-10-04** (by director): `brew pin arcavenae/tap/marvel`;
+1. **Pinned. DONE 2026-10-04, before 04:02Z** (director-reported: director
+   ran `brew pin arcavenae/tap/marvel`);
    kinu is still on b533ca5. Verify with `brew list --pinned --formula`, which
    must list `marvel`. **Every brew step here uses the tap-qualified name.** A
    bare `brew pin marvel` fails on kinu: Homebrew resolves the bare name to a
@@ -37,18 +38,31 @@ window after it. Written to assume the upgrade goes badly.
    nothing. `marvel upgrade` delegates to `brew upgrade arcavenae/tap/marvel`
    (`admin-guide.md`, Upgrading), so the pin holds it too: `brew upgrade
    --dry-run arcavenae/tap/marvel` answers "Not upgrading 1 pinned package"
-   (checked 2026-10-04, with auto-update off).
+   (run by this runbook's author at about 04:05Z with
+   `HOMEBREW_NO_AUTO_UPDATE=1`, together with `brew list --pinned --formula`,
+   which listed `marvel`).
 2. **The release.** The exact release to install is named in the window note
    by its full version and its release asset, and it is the one rehearsed.
    #524 is fixed in it (recommended, not required).
 3. **Rehearsal passed** (section 3) on that release, with its transcript linked
    from #524.
 4. **Quiet.** No shift, scheduled run, or `marvel work` apply is in flight.
-5. **The start directory, decided.** Either every team declares its root in
-   its manifest and is re-applied before the window, so no team is stamped; or
-   the operator accepts that the next spawn of each team starts in
-   `~/work/aae-orc` instead of today's tmux-server cwd. The default is to
-   declare the roots: it removes the change instead of explaining it.
+5. **The start directory, decided by the operator.** Two branches:
+   - **Accept the move (default, no writes).** Each team's next spawn starts
+     in `~/work/aae-orc` instead of the tmux server's cwd. Today that cwd is
+     `~/work/aae-orc/marvel-wt-318`, a feature-branch worktree
+     (`feat/backend-swaps-overlay-writer`), so today's start directory looks
+     accidental, and the move may be the correction. Nothing is applied.
+   - **Declare roots (operator-attended, before the window).** `marvel work`
+     applies and reconciles at once, with no dry run (`cmd/marvel/main.go:880-920`),
+     and it also sets the workspace root (`cmd/marvel/workroot.go:19`). A workdir change
+     alone moves nothing live. But any other drift between a team's manifest
+     and the live team, across about 30 teams, would be applied at the same
+     moment. So, per team, with the operator present: save `marvel describe
+     team <ws/team>` into `$W/describe-pre-root-<team>` (the way back); diff
+     the live team against the manifest; and apply only when the only
+     difference is the root. A team with any other difference is left
+     unapplied and takes the default branch.
 
 ## 3. Rehearsal (operator-attended, on kinu, before the window)
 
@@ -68,10 +82,14 @@ run() { (cd ~/work/aae-orc && HOME="$S" MARVEL_TMUX_SOCKET=rehearse-a4 \
 cli() { HOME="$S" "$1" --socket "$S/m.sock" "${@:2}"; }
 ```
 
-Before each daemon start, check that `$S/m.sock` is not the live socket, that
-`tmux -L rehearse-a4 ls` lists only the scratch server, and that the scratch
-daemon's first answer is a read-only `cli <bin> bus status` with no "is rooted
-at" warning. A hand-run daemon cannot take the live socket, since it takes the
+Before each daemon start, in the shell that starts it, `env | grep
+'^MARVEL_'` prints nothing (`run()` sets only `HOME` and `MARVEL_TMUX_SOCKET`,
+so a leaked `MARVEL_BACKEND_OVERLAY_DIR` or `MARVEL_SOCKET` would pass through).
+After each start: the scratch daemon's first answer is a read-only `cli <bin>
+bus status` with no "is rooted at" warning, and two live counts taken before
+the rehearsal are unchanged: `marvel get sessions | wc -l` against the live
+daemon, and `tmux -S /private/tmp/tmux-501/marvel-75c803c5 list-panes -a | wc
+-l` on the live marvel tmux server. A hand-run daemon cannot take the live socket, since it takes the
 socket lock first (`daemon.go:447-457`). It reaches the live panes only through
 `MARVEL_TMUX_SOCKET`, which is set to the scratch server.
 
@@ -79,7 +97,9 @@ socket lock first (`daemon.go:447-457`). It reaches the live panes only through
 read-only open of the live file blocks on the daemon's lock. So the copy is
 taken cold: `marvel stop` (agents keep running; `admin-guide.md` lines
 185-189), `cp -p ~/.marvel/state/marvel.bolt "$S/state/marvel.bolt"`, then start
-the live daemon again with its recorded command (section 5, step 1). This stop
+the live daemon again with the command and from the cwd recorded first, the
+same capture as section 5 step 1 (`ps` for the command, `lsof -d cwd` for the
+directory). This stop
 and start is the only touch on the live daemon. It costs the daemon gap of
 section 4 and nothing else.
 
@@ -155,11 +175,18 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
 3. `marvel stop`.
 4. Cold copy: `cp -p ~/.marvel/state/marvel.bolt
    ~/.marvel/state/marvel.bolt.pre-v2-$(date +%Y%m%d)`.
-5. Install the rehearsed release, never the floating alpha. Through the tap
-   only if its formula still names the rehearsed version (`brew unpin arcavenae/tap/marvel`, then
-   `brew upgrade arcavenae/tap/marvel`,
-   upgrade, check). Otherwise install the rehearsed release asset by its URL,
-   or with mise at that exact version. `marvel version` must name it.
+5. Install the rehearsed release, never the floating alpha. Run every brew
+   command with `HOMEBREW_NO_AUTO_UPDATE=1`, so brew does not fetch a newer
+   formula on the way.
+   - **Through the tap, only if** `brew info arcavenae/tap/marvel` names the
+     rehearsed version: `brew unpin arcavenae/tap/marvel`, then `brew upgrade
+     arcavenae/tap/marvel`.
+   - **Otherwise:** install the rehearsed release asset by its URL, or with
+     mise at that exact version.
+
+   Then `marvel version` must name the rehearsed release. **If it does not, do
+   not start the daemon.** Go to section 6 step 5 with the old binary instead:
+   the store is still v1, since nothing has opened it.
 6. Start the daemon with `$W/daemon-cmd`, from the directory in `$W/daemon-cwd`.
 7. Verify, each a pass condition:
    - `~/.marvel/state/marvel.bolt.v1.bak` exists;
@@ -169,7 +196,7 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
    - the daemon log has one placement line per stamped team, and the
      migration line if #524 shipped;
    - one seat's statusline updates (`ctx-forward` works).
-8. Pin again (`brew pin arcavenae/tap/marvel`, verified with `brew list
+8. Pin again (`HOMEBREW_NO_AUTO_UPDATE=1 brew pin arcavenae/tap/marvel`, verified with `brew list
    --pinned --formula`) if it was unpinned in step 5. Watch 30
    minutes. Keep `.v1.bak`, `.pre-v2-*` and `$W` until the operator deletes
    them.
