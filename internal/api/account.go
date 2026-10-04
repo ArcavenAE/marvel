@@ -1,6 +1,9 @@
 package api
 
 import (
+	"crypto/subtle"
+	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -90,8 +93,41 @@ type AccountReading struct {
 // session, which the daemon resolves to the account key, and carries the
 // windows. It is not the heartbeat request and shares none of its fields.
 type AccountLimitsRequest struct {
-	Session string          `json:"session"`
-	Windows []AccountWindow `json:"windows"`
+	Session string `json:"session"`
+	// SessionToken is the secret marvel minted for the reporting session at
+	// spawn (MARVEL_HEARTBEAT_TOKEN). A reading can set the limited condition
+	// on every session of an account, so the daemon accepts it only from a
+	// process that holds the token of the session it names.
+	SessionToken string          `json:"session_token,omitempty"`
+	Windows      []AccountWindow `json:"windows"`
+}
+
+// ErrAccountReportUnbound is returned when a reading names a session whose
+// record carries no token. Unlike the heartbeat, which admits that case for
+// records written before tokens existed, a reading that can mark a whole
+// account limited is refused: such a session has no token to present, and the
+// record drains as those sessions end.
+var ErrAccountReportUnbound = errors.New("session carries no token, so a reading cannot be bound to it")
+
+// AuthenticateAccountReport returns the session a reading names, provided the
+// presented token is the one minted for it. A missing session is ErrNotFound,
+// a record with no token hash is ErrAccountReportUnbound, and a wrong or absent
+// token is ErrHeartbeatUnauthorized. The comparison is constant-time.
+func (s *Store) AuthenticateAccountReport(sessionKey, token string) (Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[sessionKey]
+	if !ok {
+		return Session{}, fmt.Errorf("session %s: %w", sessionKey, ErrNotFound)
+	}
+	if sess.HeartbeatTokenHash == "" {
+		return Session{}, fmt.Errorf("session %s: %w", sessionKey, ErrAccountReportUnbound)
+	}
+	presented := HashHeartbeatToken(token)
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(sess.HeartbeatTokenHash)) != 1 {
+		return Session{}, fmt.Errorf("session %s: %w", sessionKey, ErrHeartbeatUnauthorized)
+	}
+	return cloneSession(sess), nil
 }
 
 // AccountReadings holds the newest reading per account, in memory.

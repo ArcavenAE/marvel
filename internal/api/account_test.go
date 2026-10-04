@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -227,5 +228,49 @@ func TestSessionWithAccountHomeDecodesInAnOldClient(t *testing.T) {
 	plain, _ := json.Marshal(Session{Name: "x"})
 	if strings.Contains(string(plain), "account_home") {
 		t.Fatalf("an empty AccountHome is on the wire: %s", plain)
+	}
+}
+
+func storeWithSession(t *testing.T, hash string) *Store {
+	t.Helper()
+	st := NewStore()
+	sess := Session{Workspace: "ws", Name: "seat", Runtime: Runtime{Name: "claude"}, HeartbeatTokenHash: hash}
+	if err := st.CreateSession(&sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return st
+}
+
+func TestAuthenticateAccountReport(t *testing.T) {
+	t.Parallel()
+	token, hash, err := NewHeartbeatToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := storeWithSession(t, hash)
+	got, err := st.AuthenticateAccountReport("ws/seat", token)
+	if err != nil || got.Key() != "ws/seat" {
+		t.Fatalf("matching token: %v %v", got.Key(), err)
+	}
+	tests := []struct {
+		name, key, token string
+		want             error
+	}{
+		{"wrong token", "ws/seat", "nope", ErrHeartbeatUnauthorized},
+		{"empty token", "ws/seat", "", ErrHeartbeatUnauthorized},
+		{"unknown session", "ws/ghost", token, ErrNotFound},
+	}
+	for _, tc := range tests {
+		if _, err := st.AuthenticateAccountReport(tc.key, tc.token); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	// A record with no hash is refused, even for an empty token, unlike the
+	// heartbeat which admits it.
+	legacy := storeWithSession(t, "")
+	for _, tok := range []string{"", token} {
+		if _, err := legacy.AuthenticateAccountReport("ws/seat", tok); !errors.Is(err, ErrAccountReportUnbound) {
+			t.Errorf("unbound record, token %q: err = %v, want ErrAccountReportUnbound", tok, err)
+		}
 	}
 }
