@@ -10,7 +10,8 @@ Source: operator, typed to director in session (no public source), in director's
 A seat whose harness has an update pending is not unhealthy the way a seat out
 of context is, yet the restarts the code shows all start a new session: `marvel
 kill` ends the seat (cmd/marvel/main.go:1439) and the controller refills the
-missing replica (internal/team/controller.go:335), both read at origin/main
+missing replica (reconcileRoleAt, internal/team/controller.go:965, applying planRole,
+:1091, which plans toward role.Replicas), both read at origin/main
 b0a6d67. Whether any path keeps the session is unverified. If the two conditions are
 told apart, a seat with a good context could be restarted and resumed without
 discarding its work, and a shift change is kept for the case that needs it.
@@ -57,7 +58,7 @@ each harness and is the first thing to measure.
   session pick up the update? Claude Code, codex and others differ, and this
   has not been measured. One cited fact: for claude, marvel mints a session id
   and declines to when the launch args carry `--resume`, `-r`, `--continue` or
-  `-c` (internal/runtime/claude.go:83-91), so a resume path would meet that rule.
+  `-c` (internal/runtime/claude.go:78-88), so a resume path would meet that rule.
 - What does "marvel-native tmux exit" mean in code: an existing path, or a
   new one? The inject path refuses menus it can place (marvel#560), so an exit
   key must not become a way to answer an update menu by accident.
