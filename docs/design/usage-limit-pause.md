@@ -294,3 +294,122 @@ doc supplies them.
   silently, is the operator's choice; default is optional names.
 - **The 15-minute staleness bound** is a guess sized to the statusline cadence
   of an idle seat. It is a constant to tune, not a finding.
+
+## 9. Revision, 2026-10-04: what the 2026-10-03 limit showed
+
+The account limit this design was written for happened on kinu on
+2026-10-03. Nothing in sections 2 to 4a is built yet (`git grep
+account.limits origin/main` finds nothing at b003cd3), so the fleet met it
+with today's marvel. This section records what it showed and revises the
+design where the evidence disagrees with it. Sections 1 to 8 stand except
+where this section says otherwise.
+
+- Author: the arcaven architect role. Checked against marvel `origin/main`
+  b003cd3.
+- Evidence home: `_kos/probes/brief-seat-account-switch-on-quota.md` (open,
+  not yet committed when this was written) and the operator's relay through
+  director.
+
+### 9.1 What was observed
+
+| Observation | Source | Bears on |
+|---|---|---|
+| 8 of 30 Claude seats sat on the weekly-limit menu for hours, unseen | the probe brief, item 1 (`marvel capture` on each seat, grep for the menu text) | sections 3 and 4 |
+| The menu reads "Stop and wait for limit to reset / Wait here, then continue automatically at <time> / Switch to usage credits" | the same | 9.3 |
+| Statuslines showed `acct 7d 100%` | relayed by the supervisor; `formatRateLimits`, `cmd/marvel/ctxforward.go:265` | section 8, first open question |
+| `marvel get sessions` showed every stuck seat as `running` and healthy | relayed by the supervisor | section 3 |
+| All 30 seats share the operator's default config directory, so one `/login` changes the store for all of them | the probe brief, items 2 and 3 | section 2, the account key |
+| After the move to Claude Enterprise, 0 of 30 live statuslines carry an `acct` segment | `tmux capture-pane` on every pane, 2026-10-04 about 03:25Z: 30 statuslines matched `CTX n%`, none contained `acct` | 9.2 |
+
+### 9.2 The reading may not exist on every plan
+
+`formatRateLimits` prints whenever the payload carries a window with a
+percentage, so an absent `acct` segment on all 30 seats is consistent with
+the Enterprise payload carrying no `rate_limits` block. This is inferred from
+the pane, not read from a payload; UL-2's fixture capture should record one
+Enterprise payload as well as one subscription payload.
+
+If it holds, Part 1 has no source on kinu today, and `limited` (section 3)
+can only come from a harness refusal, which UL-3 does not recognize yet. Two
+consequences for the build:
+
+1. **The no-reading case is the common case, not the edge.** `get sessions`
+   must not read as "not limited" when there is no reading. Where the
+   account has no fresh reading, `describe` says `limit reading: none` and
+   the budget view row says `none`, never `0%`.
+2. **UL-3's refusal recognition moves up.** For an interactive seat, section
+   3 ruled out pane-text scraping and relied on the statusline. With no
+   statusline reading, the seat's own refusal is the only signal left. UL-3
+   should capture a real refusal sample from each plan type before choosing
+   its match; the limit menu of 9.1 is one such sample for the subscription
+   plan, captured by hand.
+
+### 9.3 Seen is not survived: the menu waits for a key
+
+Section 1 summarized finding-056 as "the harness resumed on its own at the
+reset". The 2026-10-03 limit did not behave that way. The menu blocks until
+someone picks an option; a seat left on it does not resume at the reset. Only
+the second option ("Wait here, then continue automatically") resumes by
+itself, and nobody was there to pick it.
+
+Every seat on the account was limited at once, supervisors and director
+included. After the reset, the event `session.unlimited` (section 3) has no
+awake reader on that account. The only actor not subject to the limit is the
+marvel daemon, which already injects into panes on its own authority
+(`injector=marvel:max-age`, `internal/daemon/daemon.go:326`).
+
+So "survive" needs one more part, and it is a ruling, not a default this
+design can take:
+
+**Ruling UL-R1. May the marvel daemon answer the limit menu?**
+
+| Option | What marvel does | Cost |
+|---|---|---|
+| A | Never touches the menu. At the clear it emits `session.unlimited` and `seat.resume-proposed`; a human or an awake seat resumes each one | Survives only if someone off the account is awake. On 2026-10-03, nobody was |
+| B | Answers the menu with the second option only, "Wait here, then continue automatically", once per limit, and logs `injector=marvel:limit-wait`. It acts only after `marvel capture` matches the three option lines byte for byte against a captured sample. It refuses on any mismatch, never sends the key for the third option, and never answers a menu it did not just match | The seat resumes at the reset with no one present. It needs a captured sample per harness version, and a harness change makes it refuse, not misfire |
+| C | Waits for the seat to return to a prompt, then injects a fixed resume line | Does not help a seat that stays on the menu, which is the observed case |
+
+**Default: B**, gated on a byte-for-byte captured sample and the refusals
+above. The third option spends the operator's money, and choosing it stays a
+human act (ADR-007); B is written so it cannot reach it. Two things argue
+against B and belong with the ruling. B reads pane text to decide an action,
+which section 3 refused for setting a condition. And on 2026-10-03 the
+auto-mode classifier refused a seat's raw Escape key to another seat's pane
+("Interfere With Workloads"; the probe brief, "Constraint met"). B is the
+daemon acting on its own authority, not one agent typing into another
+agent's pane. Whether the operator wants that authority to exist is the
+question. Expiry: the default holds until the build of UL-7 starts; with no
+ruling by then, the builder builds A.
+
+### 9.4 Revised edits
+
+| # | Edit | Depends on |
+|---|---|---|
+| UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures; a missing `rate_limits` block is stored as `none` | UL-1 |
+| UL-3 | As before, with the captured limit menu as the first interactive refusal sample, and `none` shown as `none` (9.2, item 1) | UL-1 |
+| UL-7 | The resume part of UL-R1: A's events always; B's guarded menu answer only if the operator rules B | UL-3, UL-R1 |
+
+Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so
+the next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
+
+### 9.5 Tests added
+
+19. A seat whose account has no reading shows `none` in the budget view and
+    `limit reading: none` in `describe`; it is never shown as below the limit.
+20. (UL-7, option B) A pane whose capture matches the sample receives exactly
+    one key, the second option's, and the event carries
+    `injector=marvel:limit-wait`. A pane that differs by one byte receives
+    nothing and emits `limit-menu.refused` with the reason.
+21. (UL-7) No path through UL-7 sends the third option's key; a guard test
+    asserts it over every branch.
+22. (UL-7, option A) At the clear, `seat.resume-proposed` is emitted once per
+    limited seat and nothing is injected.
+
+### 9.6 Open questions added
+
+- **The Enterprise payload.** Is `rate_limits` absent on Enterprise, or
+  present only near a limit? One captured payload answers it (UL-2).
+- **The account switch.** Whether a running seat's requests follow a new
+  `/login` in the shared store is the probe brief's open decisive test. If they
+  do, the account key in section 2 can change under a live session, and the
+  key must be re-read on each reading, not cached per session.
