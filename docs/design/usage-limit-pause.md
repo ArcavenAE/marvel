@@ -433,7 +433,8 @@ included. The marvel daemon is the only actor the limit does not stop, and it
 already injects into panes on its own authority (`injector=marvel:max-age`,
 `internal/daemon/daemon.go:326`).
 
-**Ruling UL-R1. May the marvel daemon answer the limit menu?**
+**Ruling UL-R1. May the marvel daemon answer the limit menu?** Ruled
+2026-10-04: build B now, A as the target (9.9).
 
 | Option | What marvel does | Cost |
 |---|---|---|
@@ -504,7 +505,7 @@ of UL-7 starts; with no ruling by then, the builder builds A.
 |---|---|---|
 | UL-1 | As before, plus the three reading states and the `none` budget row (9.2) | none |
 | UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures | UL-1 |
-| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3; built only if UL-R2 adopts the exception, see its expiry) | UL-1 |
+| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3; adopted with UL-R1, see 9.9) | UL-1 |
 | UL-7 | UL-R1: A's events always; B's guarded selection only if the operator rules B; the matcher and its fixtures shared with UL-3 | UL-3, UL-R1, and for B the samples from probe P-UL7 (9.7) |
 
 Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so the
@@ -592,3 +593,32 @@ item 4 stays as written. If `2` does not select option 2 at all, item 5's
   key must be re-read on each reading, not cached per session.
 - **What an unanswered weekly menu does at its reset** (9.4). The first reset
   observed with the menu up answers it, and may make UL-7 unnecessary.
+
+### 9.9 Rulings (operator, 2026-10-04, relayed by director)
+
+UL-R1, verbatim:
+
+> "UL-R1 A (put events on the marvel internal bus; which we don't have yet) and
+> B, well plan to do A but do B right now. The real point is, yes, marvel can do
+> SOMETHING about it, can even interact with the menu, the details of what it
+> will do should be flexible (may include triggering a "/login" migration of
+> the running session to another backend) and ideally we'll have detected this
+> before it got to this point and taken defensive measures already"
+
+What it changes in this design:
+
+- **B is built now** (UL-7, under the matcher of 9.4 and probe P-UL7 of 9.7).
+  **A is the target**: its events go on marvel's internal bus once that bus
+  exists. Until then they go on the event ring, as section 3 says.
+- **The action is pluggable.** UL-7 defines a limit action as an interface
+  with B's guarded selection as its first implementation. A `/login`
+  migration of the running session to another backend is a named future
+  action. It is not designed here; the account-switch probe brief (marvel#532)
+  is where its facts live.
+- **Early detection is the real goal.** Detecting the limit before the menu
+  appears, and acting defensively, ranks above answering the menu. The
+  account reading (UL-1, UL-2) and its thresholds serve that. A threshold
+  action before 100% is a follow-up design, not part of UL-7.
+- **UL-R2 was not ruled separately.** It is taken as adopted under "marvel can
+  do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3, and
+  its expiry no longer applies.
