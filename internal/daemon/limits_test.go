@@ -66,13 +66,23 @@ func TestEvaluateLimitsSetsAndClearsOncePerTransition(t *testing.T) {
 	}
 }
 
-// Test 4 (daemon half): a stale 100 sets nothing.
-func TestEvaluateLimitsIgnoresAStaleReading(t *testing.T) {
+// Test 4 (daemon half): a stale 100 with a reset ahead sets the condition, and a
+// stale reading below 100 does not.
+func TestEvaluateLimitsSetsFromAStaleFullReading(t *testing.T) {
 	d, key := limitDaemon(t, api.AccountWindow{Name: "seven_day", UsedPercent: acctPct(100), ResetsAt: acctT0.Add(48 * time.Hour)})
 	d.evaluateLimits(acctT0.Add(16 * time.Minute))
 	got, _ := d.store.GetSession(key)
+	if got.Condition != api.ConditionLimited {
+		t.Fatalf("a stale 100 with a future reset set %q, want limited", got.Condition)
+	}
+}
+
+func TestEvaluateLimitsIgnoresAStaleReadingBelowFull(t *testing.T) {
+	d, key := limitDaemon(t, api.AccountWindow{Name: "seven_day", UsedPercent: acctPct(80), ResetsAt: acctT0.Add(48 * time.Hour)})
+	d.evaluateLimits(acctT0.Add(16 * time.Minute))
+	got, _ := d.store.GetSession(key)
 	if got.Condition != "" {
-		t.Fatalf("a stale reading set %q", got.Condition)
+		t.Fatalf("a stale 80 set %q", got.Condition)
 	}
 }
 

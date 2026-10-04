@@ -358,11 +358,12 @@ Where each state shows:
 Which state kinu reads depends on when UL-1 ships. Shipped today, its keys
 read `none`: no reading was ever stored, since nothing is built. Had UL-1 been
 running before the move to Enterprise, the keys would read `stale`, holding
-the personal plan's last reading. That stale 100% neither sets nor holds
-`limited` (section 2, test 4), and whether a `/login` should start a new key is
+the personal plan's last reading. That stale 100% sets `limited` while its
+reset is ahead and never clears it (section 2, test 4); it ends at its reset or
+at a newer fresh reading below 100. Whether a `/login` should start a new key is
 9.8's open question.
 
-With no fresh reading, `limited` can come only from a refusal, and UL-3 does
+With no reading, `limited` can come only from a refusal, and UL-3 does
 not recognize one yet. 9.3 adds the interactive source.
 
 ### 9.3 The named exception to "no pane-text scraping"
