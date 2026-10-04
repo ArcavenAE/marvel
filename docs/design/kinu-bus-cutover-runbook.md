@@ -92,7 +92,7 @@ touched, and that is checked, not assumed.
 for v in ${(k)parameters[(I)MARVEL_*]}; do unset "$v"; done   # zsh; bash: unset $(compgen -v MARVEL_)
 env | grep '^MARVEL_'                       # must print nothing (CLAUDE.md, #504)
 S=$(mktemp -d)                              # scratch HOME: config, StateDir, stores
-# scratch ports: phase-0 14222 (monitor 18222), hub 14242 / leaf 17442,
+# scratch ports: phase-0 14222 (monitor 18222), hub 14242 (monitor 18242) / leaf 17442,
 # a second scratch leaf standing in for mokuzai on 24222
 ```
 
@@ -104,7 +104,7 @@ its own config; the client must still name `--socket` (marvel `CLAUDE.md`).
 
 - `env | grep '^MARVEL_'` prints nothing in the shell that starts it.
 - Its port is free: `lsof -nP -iTCP:<port> -sTCP:LISTEN` prints nothing for
-  14222, 18222, 14242, 17442 and 24222. This is the guard against a scratch
+  14222, 18222, 14242, 18242, 17442 and 24222. This is the guard against a scratch
   broker binding a live port.
 - A scratch nats-server's `-c` path and store are under `$S`, never
   `~/.director`. Read back with `ps -o command= -p <pid>` after it starts.
@@ -116,8 +116,13 @@ its own config; the client must still name `--socket` (marvel `CLAUDE.md`).
 - Every client command names its server: `nats -s nats://127.0.0.1:14222` (or
   the scratch hub), never a default context. The shim gets an explicit
   `NATS_URL` to a scratch port.
-- After each step, the live checks are unchanged: the phase-0 broker on 4222 and the hub's
-  `/leafz` show the same processes and leaves as at the start.
+- **The live-unchanged check**, at the start and after each step, read-only:
+  `curl -s 127.0.0.1:8242/leafz` (the **live** hub's monitor) and `curl -s
+  127.0.0.1:8222/jsz` (the live phase-0 monitor), saved and compared with the
+  first capture; `lsof -nP -iTCP:4222 -sTCP:LISTEN` and `ps -o
+  pid,lstart,command -p <phase-0 pid>,<hub pid>` show the same pids and start
+  times. No nats client is ever pointed at 4222 or 4242 during the rehearsal.
+  Any change stops the rehearsal.
 
 Steps, each with a pass condition:
 
@@ -135,7 +140,9 @@ Steps, each with a pass condition:
    -s 127.0.0.1:18222/leafz` that its only leaf is the scratch hub. Provision the streams as `verify-auth.sh` does,
    and publish a few messages to AGENT_INBOX and AGENT_AUDIT. Start a scratch
    hub (domain `global`, scratch kinu-leaf and mokuzai-leaf NKeys) and the
-   scratch mokuzai leaf. Pass: the hub's `/leafz` lists both leaves.
+   scratch mokuzai leaf. Pass: the **scratch** hub's `/leafz`
+   (`127.0.0.1:18242`) lists both scratch leaves, and the live hub's (`8242`) is
+   unchanged.
 2. **Flip.** Write `$S/.marvel/config.yaml` with the section 6.1 entry on
    scratch ports, `store_dir: $S/p0`, and `hub.url` at the scratch hub. Stop
    the scratch phase-0 broker. Copy the store cold. Start the scratch daemon
@@ -156,7 +163,7 @@ Steps, each with a pass condition:
    password". So a pass cannot come from a credential the test did not
    intend.
 5. **The other leaf held.** Pass: the scratch mokuzai leaf never left the
-   hub's `/leafz` during steps 2 to 4.
+   scratch hub's `/leafz` (`127.0.0.1:18242`) during steps 2 to 4.
 6. **Credentials against an anonymous broker.** Point the bare shim with
    `DIRECTOR_NATS_USER`/`DIRECTOR_NATS_PASS` set, and the step-3 session, at an
    anonymous scratch broker. Record whether each connects. This decides
@@ -213,7 +220,9 @@ Capture first, into `W=~/.marvel/window-bus-$(date +%Y%m%d)`:
    ~/.marvel/config.yaml $W/config.yaml.pre-bus`; `curl -s
    127.0.0.1:8242/leafz` and `127.0.0.1:8222/jsz?streams=true` into `$W`;
    `marvel get sessions > $W/sessions-before`; `marvel describe team` for each
-   team into `$W/teams-workdir` (precondition 6); the daemon's start command.
+   team into `$W/teams-workdir` (precondition 6); the daemon's start command
+   (`ps -o pid,lstart,command`) and its cwd (`lsof -a -p <pid> -d cwd -Fn`),
+   since `ps` shows no cwd.
 
 Then:
 
@@ -290,7 +299,8 @@ until it is pushed again (#339), so the seed push joins kinu's restart steps.
    before. It is the anonymous base only, by design (its header).
 5. Pass: the hub's `/leafz` lists kinu's phase-0 leaf again, through
    `leaf-kinu.conf`, and the two remote leaves.
-6. Start the daemon with the recorded command. It adopts the panes.
+6. Start the daemon with the recorded command, from the recorded cwd. It
+   adopts the panes.
 7. Seats. Unrolled seats reconnect by themselves. Respawned seats carry a
    team user to an anonymous broker. If rehearsal step 6 showed they connect,
    nothing more is needed. If not, roll them once more. The director seat goes
