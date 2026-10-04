@@ -38,6 +38,18 @@ func TestClaudeReaderReadsTheCapturedStates(t *testing.T) {
 		{"3b-mid-turn-3s", Unknown, Unknown},
 		{"3c-mid-turn-6s", Unknown, Unknown},
 		{"4-idle-after-submit", Empty, Empty},
+		// A real dim suggestion (SGR 2) beside a done line. It is no draft, so
+		// with escapes it reads Unknown: Empty would widen Confirms(Submit) and
+		// bareDigitRefusal, and Unknown permits and confirms nothing. A plain
+		// capture cannot see dim, so it reads as any typed draft does (marvel#571).
+		{"5-idle-suggestion", HoldsText, Unknown},
+		// Guard, not a new behavior: a collapsed paste chip is drawn plain, so it
+		// is a real staged paste and reads HoldsText on main already. Fixture 6 is
+		// a live capture of the same scratch session as fixture 5, taken a few
+		// seconds after a 12 line bracketed paste. A "paste again to expand" hint
+		// shows under the lower rule for a moment after the paste and had gone by
+		// this capture, so the fixture does not carry it.
+		{"6-paste-chip", HoldsText, HoldsText},
 	}
 	for _, tc := range cases {
 		if got := r.Read(fixture(t, tc.name+".txt")); got != tc.plain {
@@ -109,6 +121,18 @@ func TestClaudeReaderEdges(t *testing.T) {
 		// The dim placeholder is checked before the idle rule: it is no draft, so a
 		// placeholder after an earlier turn still reads empty and not unknown.
 		{"a dim placeholder after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+dim+"Try \"fix the build\"\x1b[0m"), Empty},
+		// Composer text whose first visible character is dim reads Unknown,
+		// whatever follows (marvel#571). Dim is read from the SGR parameters.
+		{"a dim suggestion beside a done line is unknown", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start with step 1\x1b[0m"), Unknown},
+		{"a dim suggestion in a combined attribute is unknown", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"\x1b[2;37mrun the tests\x1b[0m"), Unknown},
+		{"a dim suggestion with no done line is unknown", frame("", "❯"+nb+dim+"start with step 1\x1b[0m"), Unknown},
+		{"a dim suggestion under a spinner is mid turn", frame("✳ Cooking… (3s · thinking)", "❯"+nb+dim+"start with step 1\x1b[0m"), MidTurn},
+		// Synthetic: a plain first character with a dim tail is a draft.
+		{"a plain first character with a dim tail is a draft", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"st"+dim+"art with step 1\x1b[0m"), HoldsText},
+		// Synthetic: a dim head with a plain tail is still unknown.
+		{"a dim head with a plain tail is unknown", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start\x1b[22m with step 1"), Unknown},
+		{"a dim suggestion that wraps onto a second line is unknown", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start with step 1 and then", "  keep going\x1b[0m"), Unknown},
+		{"a dim first line with a plain second line is unknown", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start with step 1\x1b[0m", "  and a typed line"), Unknown},
 		{"a hint line right of the composer is not content", frame("✻ Worked for 2s · done 5:23 PM\n"+strings.Repeat(" ", 100)+"auto mode unavailable for this model", "❯"+nb), Empty},
 		{"streaming text over an older done marker", frame("✻ Worked for 2s · done 5:23 PM\n\n❯ next prompt\n\n⏺ Reply text still arriving", "❯"+nb), Unknown},
 		{"placeholder text with escapes is dim and so empty", frame("", "❯"+nb+dim+"Try \"fix the build\""+"\x1b[0m"), Empty},
@@ -183,5 +207,25 @@ func TestClaudeReaderDoesNotTakeAHintLineForASpinner(t *testing.T) {
 	}
 	if got != Empty {
 		t.Errorf("Read = %q, want %q: the done line above the hint line is what the frame says", got, Empty)
+	}
+}
+
+// A dim suggestion is no draft, so the keys that act on a draft refuse it:
+// a clear on a composer that is really empty arms exit on claude, and a stage
+// that did not land must not verify as confirmed (marvel#571).
+func TestADimSuggestionIsNeitherClearableNorAConfirmedStage(t *testing.T) {
+	t.Parallel()
+	state := ReaderFor("claude").Read(fixture(t, "5-idle-suggestion.ansi.txt"))
+	if state != Unknown {
+		t.Fatalf("the suggestion fixture reads %q, want unknown", state)
+	}
+	if Confirms(Submit, state) {
+		t.Errorf("Confirms(Submit, %q) = true: a suggestion is no evidence a submit landed", state)
+	}
+	if err := CanClear("claude", "C-u", state); err == nil {
+		t.Errorf("CanClear(%q) = nil, want a refusal: nothing is staged", state)
+	}
+	if Confirms(Stage, state) {
+		t.Errorf("Confirms(Stage, %q) = true: the stage did not land", state)
 	}
 }

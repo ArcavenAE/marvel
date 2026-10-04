@@ -873,6 +873,19 @@ func (d *Driver) CapturePaneRange(paneID string, start, end int) (string, error)
 	return string(out), nil
 }
 
+// CapturePaneRangeEscapes is CapturePaneRange with the terminal's escape
+// sequences kept (capture-pane -e), for a ranged read that must tell dim text
+// from typed text.
+func (d *Driver) CapturePaneRangeEscapes(paneID string, start, end int) (string, error) {
+	out, err := d.cmd("capture-pane", "-t", paneID, "-p", "-e",
+		"-S", fmt.Sprintf("%d", start),
+		"-E", fmt.Sprintf("%d", end)).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capture-pane %s [%d:%d]: %s: %w", paneID, start, end, string(out), err)
+	}
+	return string(out), nil
+}
+
 // PaneForeground returns the pane's current command and its width in columns
 // (display-message #{pane_current_command} and #{pane_width}). The command is
 // the foreground process as tmux names it; the width is recorded beside a

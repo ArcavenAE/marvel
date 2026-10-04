@@ -2256,6 +2256,13 @@ func (d *Daemon) repaintSettled(paneID string, settleMS int) (tmux.RepaintResult
 // reader would make of the screen.
 func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS int) (composer.State, error) {
 	res, _ := d.repaintSettled(sess.PaneID, settleMS)
+	return d.readComposerAfterNudge(sess, reader, res.Target)
+}
+
+// readComposerAfterNudge is readComposer for a caller that has already nudged
+// the pane, so it is not nudged twice. target is the foreground program the
+// nudge reported.
+func (d *Daemon) readComposerAfterNudge(sess api.Session, reader composer.Reader, target string) (composer.State, error) {
 	capture := d.driver.CapturePane
 	if reader.Escapes() {
 		capture = d.driver.CapturePaneEscapes
@@ -2264,10 +2271,16 @@ func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS
 	if err != nil {
 		return composer.Unknown, err
 	}
-	if composer.ShellTarget(res.Target) {
-		return composer.Shell, nil
+	return composerState(reader, target, content), nil
+}
+
+// composerState places a capture taken in the reader's mode. A shell in the
+// foreground means no harness is running, whatever the screen would read as.
+func composerState(reader composer.Reader, target, content string) composer.State {
+	if composer.ShellTarget(target) {
+		return composer.Shell
 	}
-	return reader.Read(content), nil
+	return reader.Read(content)
 }
 
 // clearKeyFor returns the key to clear a staged draft, or the reason a clear
@@ -2330,6 +2343,14 @@ type captureParams struct {
 	// SettleMS is how long the nudge is held, and then how long to wait for the
 	// restore's redraw before reading. Zero means the default.
 	SettleMS int `json:"settle_ms,omitempty"`
+	// Escapes keeps the pane's escape sequences (capture-pane -e), so a reader
+	// can tell dim text from typed text. Off by default: the output is what it
+	// was.
+	Escapes bool `json:"escapes,omitempty"`
+	// Composer returns the composer state the session's reader gives, beside
+	// the content. It types nothing. Like Repaint it nudges the pane's size,
+	// because reading the composer repaints first.
+	Composer bool `json:"composer,omitempty"`
 }
 
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
@@ -2374,16 +2395,24 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 
 	// A repaint is a request, not a promise: a failure to signal is reported
 	// beside the capture and never fails it.
+	// Reading the composer repaints first, so --composer nudges once whether or
+	// not --repaint is also given, and the read after it does not nudge again.
 	repaint, target := "", ""
-	if p.Repaint {
+	if p.Repaint || p.Composer {
 		res, rerr := d.repaintSettled(sess.PaneID, p.SettleMS)
 		repaint, target = repaintStatus(res, rerr), res.Target
 	}
 
 	var content string
-	if start, end, ranged := captureBounds(p); ranged {
+	start, end, ranged := captureBounds(p)
+	switch {
+	case ranged && p.Escapes:
+		content, err = d.driver.CapturePaneRangeEscapes(sess.PaneID, start, end)
+	case ranged:
 		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
-	} else {
+	case p.Escapes:
+		content, err = d.driver.CapturePaneEscapes(sess.PaneID)
+	default:
 		content, err = d.driver.CapturePane(sess.PaneID)
 	}
 	if err != nil {
@@ -2398,6 +2427,23 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	if p.Repaint {
 		out["repaint"] = repaint
 		out["repaint_target"] = target
+	}
+	if p.Composer {
+		// The state is read from a capture in the reader's mode. When the content
+		// is that same capture (an unranged read in the same mode), content and
+		// state come from the same bytes and cannot disagree.
+		reader := composer.ReaderFor(sess.Runtime.Name)
+		var state composer.State
+		var cerr error
+		if !ranged && p.Escapes == reader.Escapes() {
+			state = composerState(reader, target, content)
+		} else {
+			state, cerr = d.readComposerAfterNudge(sess, reader, target)
+		}
+		out["composer"] = string(state)
+		if cerr != nil {
+			out["composer_error"] = cerr.Error()
+		}
 	}
 	result, _ := json.Marshal(out)
 	return Response{Result: result}

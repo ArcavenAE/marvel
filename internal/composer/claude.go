@@ -120,6 +120,15 @@ func (claudeReader) Read(capture string) State {
 				return Unknown
 			}
 		}
+		// Text whose first visible character is dim is a suggestion, not a draft: a
+		// typed draft is never drawn dim. It reads Unknown, not Empty: Empty would
+		// let a dim chip left by a submit that did not land confirm that submit,
+		// and let a bare digit through, while Unknown permits and confirms
+		// nothing. A plain first character with a dim tail is a draft
+		// (marvel#571).
+		if dimAtText(raw[top]) {
+			return Unknown
+		}
 		// A draft counts only beside positive evidence of idle: a finished turn's
 		// done line. The absence of turn markers is not evidence: the capture is the
 		// visible pane, so a reply taller than the pane scrolls its own markers off
