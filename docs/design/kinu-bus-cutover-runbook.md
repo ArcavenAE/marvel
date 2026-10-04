@@ -19,9 +19,9 @@ and says go.** Written to assume the cutover goes badly.
 | Piece | Live state | Touched by this cutover |
 |---|---|---|
 | Phase-0 broker | `nats-server -c director/probe/nats-phase-0/nats-server.conf`, started by `start.sh` on 2026-09-26; 127.0.0.1:4222, monitor 8222, anonymous, store `~/.director/nats/store`, one leaf out to the hub (`include "leaf-kinu.conf"`) | **replaced** |
-| Global hub | `nats-server --config ~/.director/nats-global/nats-server.conf`, started 2026-09-25; 0.0.0.0:4242, monitor 127.0.0.1:8242, leafnodes 0.0.0.0:7442, domain `global`. Three leaves: kinu's phase-0, mokuzai (172.31.2.176), and a third from 172.31.2.217, probably corporate | **not touched**: no stop, reload or edit |
+| Global hub | `nats-server --config ~/.director/nats-global/nats-server.conf`, started 2026-09-25; 0.0.0.0:4242, monitor 127.0.0.1:8242, leafnodes 0.0.0.0:7442, domain `global`. Three leaves: kinu's phase-0, mokuzai, and a third that is probably corporate (inferred from its address) | **not touched**: no stop, reload or edit |
 | marvel daemon | b533ca5 (or the release from the store-migration window), cwd `~/work/aae-orc`; `~/.marvel/config.yaml` has no bus entry; `marvel bus status` says none is configured; `marvel credential list` is empty | gains a bus entry; restarted |
-| kinu sessions | 32, in arcaven 13, e98 9, product 5, midway 2, vantage 2, analysts 1 | every one respawned |
+| kinu sessions | 32, across 6 teams (arcaven 13) | every one respawned |
 | The operator's director session | its `director-mcp` entry in `~/.claude.json` has no `DIRECTOR_NATS_USER` or `DIRECTOR_NATS_PASS_FILE` key | gains both |
 
 ## 2. Preconditions (all before the window is set)
