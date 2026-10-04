@@ -316,7 +316,7 @@ where this section says otherwise.
 |---|---|---|
 | 8 of 30 Claude seats sat on the weekly-limit menu for hours, unseen | the probe brief, item 1 (`marvel capture` on each seat, grep for the menu text) | sections 3 and 4 |
 | The menu reads "Stop and wait for limit to reset / Wait here, then continue automatically at <time> / Switch to usage credits" | the same | 9.3 |
-| Statuslines showed `acct 7d 100%` | relayed by the supervisor; `formatRateLimits`, `cmd/marvel/ctxforward.go:265` | section 8, first open question |
+| Statuslines showed `acct 7d 100%` | relayed by the supervisor; `formatRateLimits`, `cmd/marvel/ctxforward.go:268` | section 8, first open question |
 | `marvel get sessions` showed every stuck seat as `running` and healthy | relayed by the supervisor | section 3 |
 | All 30 seats share the operator's default config directory, so one `/login` changes the store for all of them | the probe brief, items 2 and 3 | section 2, the account key |
 | After the move to Claude Enterprise, 0 of 30 live statuslines carry an `acct` segment | `tmux capture-pane` on every pane, 2026-10-04 about 03:25Z: 30 statuslines matched `CTX n%`, none contained `acct` | 9.2 |
