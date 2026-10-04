@@ -14,6 +14,11 @@ const ConditionLimited SessionCondition = "limited"
 // LimitSourceReading marks a condition set from an account reading.
 const LimitSourceReading = "reading"
 
+// LimitSourcePaneMenu marks a condition set because a seat's pane showed the
+// usage-limit menu. It is the one place pane text sets a condition (design 9.3,
+// UL-R2), and it never sends a key.
+const LimitSourcePaneMenu = "pane-menu"
+
 // LimitProvenance says why a session is limited. It is stored with the
 // condition so the condition can clear at ResetsAt after a restart.
 type LimitProvenance struct {
@@ -24,10 +29,32 @@ type LimitProvenance struct {
 	ReportedBy  string    `json:"reported_by,omitempty"`
 	ReadingAt   time.Time `json:"reading_at,omitempty"`
 	Account     string    `json:"account,omitempty"`
+
+	// The fields below are set only by the pane-menu source. SampleVersion is
+	// the harness version of the sample the capture matched, CapturedAt when it
+	// was captured, Span the reset text as shown, and Zone the zone that text
+	// was read in. ResetsAt holds the parsed until, and is zero when the span
+	// could not be read (UntilNote says why). ActivityAt is the seat's activity
+	// signal when the condition was set; an advance past it means the seat is
+	// working again.
+	SampleVersion string    `json:"sample_version,omitempty"`
+	CapturedAt    time.Time `json:"captured_at,omitempty"`
+	Span          string    `json:"span,omitempty"`
+	Zone          string    `json:"zone,omitempty"`
+	UntilNote     string    `json:"until_note,omitempty"`
+	ActivityAt    time.Time `json:"activity_at,omitempty"`
 }
 
 // Text renders the provenance as one line for a person.
 func (p LimitProvenance) Text() string {
+	if p.Source == LimitSourcePaneMenu {
+		until := "an unknown time (" + p.UntilNote + ")"
+		if !p.ResetsAt.IsZero() {
+			until = fmt.Sprintf("%s (read in %s from %q)", p.ResetsAt.UTC().Format(time.RFC3339), p.Zone, p.Span)
+		}
+		return fmt.Sprintf("limited until %s (limit menu on the pane, sample %s, captured at %s)",
+			until, p.SampleVersion, p.CapturedAt.UTC().Format(time.RFC3339))
+	}
 	return fmt.Sprintf("limited until %s (%s window at %.0f%%, account %s, reading from %s at %s)",
 		p.ResetsAt.UTC().Format(time.RFC3339), p.Window, p.UsedPercent, p.Account, p.ReportedBy, p.ReadingAt.UTC().Format(time.RFC3339))
 }

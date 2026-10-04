@@ -7,11 +7,11 @@ import (
 	_ "time/tzdata" // the zone cases must not depend on the host's zoneinfo
 )
 
-func zone(t *testing.T, name string) *time.Location {
+func chicagoZone(t *testing.T) *time.Location {
 	t.Helper()
-	loc, err := time.LoadLocation(name)
+	loc, err := time.LoadLocation("America/Chicago")
 	if err != nil {
-		t.Fatalf("load %s: %v", name, err)
+		t.Fatalf("load America/Chicago: %v", err)
 	}
 	return loc
 }
@@ -20,7 +20,7 @@ func zone(t *testing.T, name string) *time.Location {
 // and the two wall times Go's time.Date would shift or pick silently.
 func TestParseUntil(t *testing.T) {
 	t.Parallel()
-	chicago := zone(t, "America/Chicago")
+	chicago := chicagoZone(t)
 	utc := func(y int, m time.Month, d, h, mi int) time.Time { return time.Date(y, m, d, h, mi, 0, 0, time.UTC) }
 	tests := []struct {
 		name     string
@@ -61,7 +61,7 @@ func TestParseUntil(t *testing.T) {
 
 func TestParseUntilIsNotGuessed(t *testing.T) {
 	t.Parallel()
-	chicago := zone(t, "America/Chicago")
+	chicago := chicagoZone(t)
 	oct := time.Date(2026, 10, 4, 5, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name     string
@@ -108,9 +108,25 @@ func TestParseUntilIsNotGuessed(t *testing.T) {
 // occurrence; the next year's is read instead.
 func TestParseUntilSkipsAPastAmbiguousTime(t *testing.T) {
 	t.Parallel()
-	chicago := zone(t, "America/Chicago")
+	chicago := chicagoZone(t)
 	captured := time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := ParseUntil("Nov 1 at 1:30am", captured, "", chicago); err != nil {
 		t.Fatalf("Nov 1 2027 is not doubled: %v", err)
+	}
+}
+
+// The reviewer's case on #546: the year is read in the zone, not in UTC. At
+// 2027-01-01T03:00Z it is still 21:00 on Dec 31 2026 in Chicago, so "Dec 31 at
+// 11pm" is two hours ahead in 2026, not eleven months ahead in 2027.
+func TestParseUntilReadsTheYearInTheZone(t *testing.T) {
+	t.Parallel()
+	chicago := chicagoZone(t)
+	captured := time.Date(2027, 1, 1, 3, 0, 0, 0, time.UTC)
+	got, err := ParseUntil("Dec 31 at 11pm", captured, "", chicago)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if want := time.Date(2027, 1, 1, 5, 0, 0, 0, time.UTC); !got.Time.Equal(want) {
+		t.Fatalf("time = %v, want %v (Dec 31 2026 23:00 CST)", got.Time, want)
 	}
 }

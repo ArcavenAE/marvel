@@ -35,6 +35,7 @@ import (
 	"github.com/arcavenae/marvel/internal/knownhosts"
 	"github.com/arcavenae/marvel/internal/limitmenu"
 	"github.com/arcavenae/marvel/internal/logbuf"
+	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
@@ -198,6 +199,14 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
+	// limitMenu holds the captured limit-menu samples; empty until a real
+	// capture is supplied, so the pane-menu source sets nothing. paneMenu is
+	// built from it on first use. hostLocation is a test seam: nil means the
+	// host's own zone.
+	limitMenu    panemenu.Samples
+	paneMenu     *panemenu.Source
+	paneMenuOnce sync.Once
+	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table
 	// from writing the same line every interval for the life of the

@@ -133,10 +133,7 @@ func Match(s Sample, capture string) Result {
 	if s.Validate() != nil {
 		return Result{Refusal: RefusalNoSample}
 	}
-	lines := strings.Split(capture, "\n")
-	for i, l := range lines {
-		lines[i] = strings.TrimRight(l, " \r")
-	}
+	lines := splitCapture(capture)
 	for start := len(lines) - len(s.Rows); start >= 0; start-- {
 		span, glyphOn, ok := matchRun(s, lines[start:start+len(s.Rows)])
 		if !ok {
