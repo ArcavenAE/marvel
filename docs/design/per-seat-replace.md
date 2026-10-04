@@ -82,6 +82,9 @@ unpaired seat, and F8 deletes the oldest.
   store that.
 - The entry clears only when the predecessor row is gone. A failed kill is
   retried each tick.
+- A write for a key that already has an entry is refused, never an
+  overwrite. An overwrite would leave the first successor with no entry: the
+  unpaired third seat this section exists to prevent.
 
 ### D3. The pair is one slot
 
@@ -130,6 +133,17 @@ recreation of a crash-looping successor.
   behind a healthy one.
 - Starts count against `maxAutoShiftsPerTick`. Admission asks for one seat
   (`Want: 1`), not the role's replica count (F11).
+- **A seat already in a replacement is never selected again.** Trigger
+  selection, for both triggers, skips any seat that is the predecessor or the
+  successor of a standing entry. Without this, a predecessor still over
+  `headroom_tokens` on a later tick would fire the hard stage for itself, and
+  its own standing entry would count as the "one other".
+- The per-role count check, the selection and the entry write happen in one
+  pass under the controller lock (`c.mu`; `evaluateShiftTriggers` already
+  runs under it, `controller.go:1931-1934`). The operator path
+  (`--session`, D10) takes the same lock, as `InitiateShift` does
+  (`controller.go:1798-1801`), and its replacements count toward the
+  per-role limit like automatic ones.
 
 ### D8. The triggers
 
@@ -155,7 +169,7 @@ works for any replica count, which is what lets #458's refusal go (D11).
   declares the handoff pair but no `request_headroom` gets an apply warning,
   not a refusal.
 - Seat selection lists the role's running seats at every generation (fixes
-  F6, as #473 did for age).
+  F6, as #473 did for age), minus any seat in a standing entry (D7).
 
 Immediately before deleting a predecessor, either trigger re-probes the
 marker and records `handoff_present_at_drain`. The probe records; it does not
@@ -185,7 +199,8 @@ acceptable only because the forced case is named and ruled.
 ### D10. Operator shifts
 
 `marvel shift --role` keeps today's role-scoped shift. A new
-`marvel shift --session <key>` runs D1 for one seat.
+`marvel shift --session <key>` runs D1 for one seat. It counts toward D7's
+per-role limit and is refused for a seat already in a standing entry.
 
 ### D11. Lift #458
 
@@ -233,25 +248,34 @@ per-tick check is the acceptance criterion.
 | 15 | Marker lands between successor ready and delete: `handoff_present_at_drain` true, not reported missing | probe skipped or read too early | no |
 | 16 | Two entries in one role (a forced pressure replacement beside a max-age one): both pairs collapse, the delete list names neither successor nor the sibling | collapse not per entry | no |
 | 17 | Pressure at an older generation (clone of `TestMaxAgeAsksSeatAtAnOlderGeneration`, `:773`) | the F6 filter survives | no |
+| 18 | Double trigger: A under pressure with its entry standing, then more ticks with A still over `headroom_tokens`, and once a `--session` request for A. Exactly one successor exists, the entry is unchanged, and B is untouched after every pass | a seat in an entry is selected again; a second write overwrites the entry; `--session` bypasses the per-role count | no |
+| 19 | Seat events: a full replacement emits `shift-seat-drained` with `Peer` (the successor), `Cause` and `Reason`, at the predecessor's own generation on a team whose counter is higher; a dropped request emits `shift-hold-released` with its reason; a deadline emits `shift-replace-aborted` | an event omits the seat fields or carries the team generation | no |
+| 20 | `EscalatedAt` is set when a request escalates and survives a controller restart | escalation time held in memory only | no |
+| 21 | `describe team` shows each pending request (seat, cause, requested and escalated times) and each standing replacement (predecessor, successor, cause, reason) | describe reads neither field | no |
+| 22 | Apply checks for `request_headroom`: refused when not above `headroom_tokens`; refused without the `handoff` and `handoff_marker` pair; a pressure role with the pair and no `request_headroom` applies with a warning | a check missing, or the warning raised as a refusal | no |
+| 23 | Soft stage: at `request_headroom` the seat gets the notice and a per-seat request; its marker before the hard line starts the replacement early, with reason `marker` | soft stage never fires, or replaces without the marker | no |
+| 24 | Hard stage: at `headroom_tokens` with no marker the seat is replaced, and reason `forced-deadline` is on the durable entry and survives a restart | forced replace not recorded durably, or skipped | no |
+| 25 | Lift: apply and `scale` accept `max-age` on a role with `replicas = 2` (fails today on `manifest_shift.go:178` and `daemon.go:1589-1594`) | either refusal left in place | no |
 
 ## 6. Plan (flat tickets, dependency edges)
 
 The builder may land these as one PR with commits in this order (the party's
 vote), or as separate PRs in the same order.
 
-1. Context pressure lists seats at every generation, with test 17.
-2. Event fields and kinds, `EscalatedAt`, `describe team` (D9).
-3. Requests keyed by session, and the replacement path D1 to D7, with tests
-   1 to 16. Depends on 1 and 2.
-4. Pressure's soft stage and the forced hard stage (D8). Depends on 3 and on
-   ruling 1.
-5. Lift #458 (D11). Depends on 3 and 4.
+1. Context pressure lists seats at every generation. Red test: 17.
+2. Event fields and kinds, `EscalatedAt`, `describe team` (D9). Red tests:
+   19 to 21.
+3. Requests keyed by session, and the replacement path D1 to D7 and D10.
+   Red tests: 1 to 16 and 18. Depends on 1 and 2.
+4. Pressure's soft stage and the forced hard stage (D8). Red tests: 22 to 24.
+   Depends on 3 and on ruling 1.
+5. Lift #458 (D11). Red test: 25. Depends on 3 and 4.
 
 ## 7. Rulings needed (operator, via director)
 
 | # | Question | Default | Expiry |
 |---|---|---|---|
-| 1 | Context pressure replaces the seat at `headroom_tokens` without an observed handoff (reason `forced-deadline`). That is an exception to "never auto-shift unwatched", the same shape as ruling 2 of `shift-trigger-list.md`, which stays "no" for max age. Allow it for pressure? | Yes, for pressure only: the alternative is auto-compaction, which summarizes the seat's context with nothing to restore it. When ruled, amend `shift-trigger-list.md` D5 and the succession pointer so the exception is written | The default holds when ticket 4 starts |
+| 1 | Context pressure replaces the seat at `headroom_tokens` without an observed handoff (reason `forced-deadline`). That is an exception to "never auto-shift unwatched", the same shape as ruling 2 of `shift-trigger-list.md`, which stays "no" for max age. Allow it for pressure? | Yes, for pressure only: the alternative is auto-compaction, which summarizes the seat's context with nothing to restore it. When ruled, amend `shift-trigger-list.md` D5 and the succession pointer so the exception is written, quoting the trigger and threshold verbatim (`on = "context-pressure"`, at `s.ContextTokens > s.ContextLimit-headroom`, `controller.go:2050`), so it cannot stretch to `request_headroom` or a future trigger | The default holds when ticket 4 starts |
 | 2 | Lift #458's refusal on `replicas > 1` once the tests are green | Yes, in its own commit | The default holds when ticket 5 starts |
 
 Recorded as believed, not measured: that a forced replacement loses less
