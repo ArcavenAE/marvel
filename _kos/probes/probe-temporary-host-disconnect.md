@@ -108,12 +108,19 @@ candidate until the seat logs and leaf timestamps back it.
   its config was edited by hand. A list of hub addresses is the near-term
   fix (marvel#575, bd aae-orc-9lapl); a directory is the longer one
   ([[service-directory]]).
-- **C2. Discovery and trust were bound to addresses.** A remote leaf dialed
-  the hub host by a `.local` name, which mDNS does not carry across
-  subnets, so the name stopped resolving when the host changed subnet.
-  Pinned host keys were tied to addresses, so trust did not follow the host
-  to its new place (marvel#434). The operator expects the address to move
-  between subnets again and wants every node to tolerate it.
+- **C2. Discovery and trust may have been bound to addresses** (unverified).
+  The verified part: the hub host came back on a different address. The
+  rest is a lead to test against the logs:
+  - name resolution: a remote leaf dialed the hub host by a `.local` name.
+    Whether that stopped resolving is not established. mDNS answers per
+    link, not per IPv4 subnet, and the remote leaf returned at 22:19:29Z
+    over an IPv6 link-local address, which may contradict the lead;
+  - trust: host keys pinned to addresses refused a moved cluster in
+    marvel#434's earlier event. Nothing yet records that it recurred in
+    this window.
+
+  The operator expects the address to move between subnets again and wants
+  every node to tolerate it.
 
 - **C3. Seats on the host that left cannot see the cut on the bus.** The
   local bus and the hub run on that host, so for its own seats the bus
