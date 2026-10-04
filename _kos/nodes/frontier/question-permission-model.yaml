@@ -180,6 +180,17 @@ content: |
   (`internal/api/seat_env.go`). Folder trust and settings sources, which also
   decide what a seat may load, are tracked in `question-seat-harness-state`.
 
+  STATE 2026-10-04 (harvest, finding-065). A names-only check from the
+  harness's own tool process on a live seat found nine of the ten
+  `InheritedSessionEnv` names SET, including CLAUDE_CODE_SESSION_ID, whose
+  value was this session's transcript file name; CLAUDE_CODE_BRIDGE_SESSION_ID
+  was unset, and a made-up name was unset as the control. This does not
+  contradict the 2026-10-03 note: the denylist strips what the daemon
+  inherited, and the harness sets these names again for the processes it
+  starts, so a tool process cannot test the denylist. Whether the pane
+  process holds them before the harness starts was not re-measured.
+  MARVEL_SESSION is the seat name, not the transcript id.
+
 edges:
   - target: elem-runtime-adapter-framework
     type: derives
