@@ -254,6 +254,10 @@ type Session struct {
 	// window closed on exit (interactive roles, where tmux keeps nothing).
 	// Status, not spec; json omitempty keeps it out of pre-existing rows.
 	ExitStatus string `json:"exit_status,omitempty" toml:"-"`
+	// Firing is the schedule firing this session was spawned for, empty
+	// for a role with no schedule. Only a session of the role's current
+	// firing occupies a replica slot (ADR-010 Amendment 1).
+	Firing string `json:"firing,omitempty" toml:"-"`
 	// Reason is a projection-only annotation: empty on every real session
 	// row, filled by the read-path join (team.Controller.ProjectHeldRoleRows)
 	// on the synthetic rows it invents for a role held down with no live

@@ -98,6 +98,9 @@ type Controller struct {
 
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
+	// jitter draws a firing's random delay up to its schedule's jitter;
+	// nil means a uniform draw. Tests set it to return zero.
+	jitter func(max time.Duration) time.Duration
 }
 
 // Snapshotter supplies the measured state one admission check evaluates.

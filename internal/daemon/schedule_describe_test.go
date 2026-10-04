@@ -23,7 +23,7 @@ func describeTeam(t *testing.T, d *Daemon, key string) map[string]any {
 }
 
 // TestDescribeTeamShowsTheSchedule is design section 5's describe block:
-// each scheduled role shows its schedule, that it does not fire yet, its
+// each scheduled role shows its schedule, the clock's next due and current firing, its
 // freshness and its run history, newest first, with each run's result text
 // and whether the 4 KiB cap cut it. The team's own fields are unchanged,
 // and a team with no scheduled role has no schedule block at all.
@@ -38,6 +38,8 @@ func TestDescribeTeamShowsTheSchedule(t *testing.T) {
 	ended := time.Date(2026, 10, 1, 6, 20, 0, 0, time.UTC)
 	long := strings.Repeat("x", 5000)
 	if _, err := d.store.UpdateScheduleStatus(teamKey+"/board-refresh", func(st *api.ScheduleStatus) bool {
+		st.NextDueAt = time.Date(2026, 10, 2, 6, 17, 0, 0, time.UTC)
+		st.Firing = "20261001T061700Z"
 		r := api.RunRecord{
 			Session: "described/timers-described-board-refresh-g1-0", Outcome: api.RunSucceeded,
 			ExitStatus: "0", StartedAt: ended.Add(-3 * time.Minute), EndedAt: ended,
@@ -68,8 +70,8 @@ func TestDescribeTeamShowsTheSchedule(t *testing.T) {
 	if s["role"] != "board-refresh" || s["cron"] != "17 6 * * *" || s["timezone"] != "Etc/UTC" || s["stale_after"] != "30h0m0s" {
 		t.Fatalf("schedule block = %v", s)
 	}
-	if s["next_due"] != nil || !strings.Contains(s["held"].(string), "does not fire yet") {
-		t.Fatalf("schedule block should show no next due and the hold: %v", s)
+	if s["next_due"] != "2026-10-02T06:17:00Z" || s["firing"] != "20261001T061700Z" || s["held"] != nil {
+		t.Fatalf("schedule block should show the clock's next due and current firing, and no hold: %v", s)
 	}
 	if s["last_succeeded_at"] != "2026-10-01T06:20:00Z" {
 		t.Fatalf("last_succeeded_at = %v", s["last_succeeded_at"])
