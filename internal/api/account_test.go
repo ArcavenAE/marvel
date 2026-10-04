@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -272,5 +273,32 @@ func TestAuthenticateAccountReport(t *testing.T) {
 		if _, err := legacy.AuthenticateAccountReport("ws/seat", tok); !errors.Is(err, ErrAccountReportUnbound) {
 			t.Errorf("unbound record, token %q: err = %v, want ErrAccountReportUnbound", tok, err)
 		}
+	}
+}
+
+// Percentages outside what a window can hold are not readings.
+func TestAccountRecordRefusesNegativeAndNonFinitePercentages(t *testing.T) {
+	t.Parallel()
+	key := AccountKey{Harness: "claude", Backend: BackendDefaultName}
+	t0 := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	for name, v := range map[string]float64{
+		"negative":      -0.1,
+		"minus one":     -1,
+		"not a number":  math.NaN(),
+		"infinity":      math.Inf(1),
+		"minus infinty": math.Inf(-1),
+	} {
+		r := NewAccountReadings()
+		if r.Record(key, []AccountWindow{{Name: "w", UsedPercent: &v}}, "ws/a", t0) {
+			t.Errorf("%s was stored", name)
+		}
+		if _, st := r.Reading(key, t0); st != ReadingNone {
+			t.Errorf("%s: state %q, want none", name, st)
+		}
+	}
+	zero := 0.0
+	r := NewAccountReadings()
+	if !r.Record(key, []AccountWindow{{Name: "w", UsedPercent: &zero}}, "ws/a", t0) {
+		t.Error("zero percent is a reading and was refused")
 	}
 }

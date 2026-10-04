@@ -221,12 +221,49 @@ func TestAccountLimitsRPCReportsAnUnusableReading(t *testing.T) {
 	}
 }
 
-// A runtime that can never send a reading gets no none row: a none row means
-// a reading is expected and has not arrived.
-func TestAccountRowsNoNoneRowForARuntimeThatCannotReport(t *testing.T) {
+// Every harness runtime with a live session gets a none row, because none
+// means no reading was received. The ones marvel has no way to read say so in
+// the note, so "unverified" shows in get budgets rather than as a missing row.
+func TestAccountRowsEveryHarnessRuntimeGetsANoneRow(t *testing.T) {
 	t.Parallel()
-	rows := accountRows(api.NewAccountReadings(), []api.Session{accountSession("a", "sleep"), accountSession("b", "generic")}, acctT0)
-	if len(rows) != 0 {
-		t.Fatalf("got rows for runtimes that cannot report: %+v", rows)
+	for _, tc := range []struct {
+		harness    string
+		unverified bool
+	}{
+		{"claude", false},
+		{"codex", false},
+		{"forestage", true},
+		{"opencode", true},
+	} {
+		rows := accountRows(api.NewAccountReadings(), []api.Session{accountSession("a", tc.harness)}, acctT0)
+		if len(rows) != 1 || rows[0].Reading != "none" || rows[0].AccountWindow != "-" {
+			t.Errorf("%s: rows = %+v, want one none row", tc.harness, rows)
+			continue
+		}
+		if got := strings.Contains(rows[0].Note, "not known to report"); got != tc.unverified {
+			t.Errorf("%s: note %q, unverified note = %v, want %v", tc.harness, rows[0].Note, got, tc.unverified)
+		}
+	}
+}
+
+// The test runtimes are not harnesses and have no account.
+func TestAccountRowsNoRowForTheTestRuntimes(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"sleep", "generic", "simulator", "my-script"} {
+		if rows := accountRows(api.NewAccountReadings(), []api.Session{accountSession("a", name)}, acctT0); len(rows) != 0 {
+			t.Errorf("%s: got rows %+v", name, rows)
+		}
+	}
+}
+
+// A forestage account with a live session and a reading shows the reading; the
+// unverified note is only for the none row.
+func TestAccountRowsAReadingFromAnUnverifiedHarnessIsShown(t *testing.T) {
+	t.Parallel()
+	rd := api.NewAccountReadings()
+	rd.Record(api.AccountKeyOf(accountSession("a", "forestage")), []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(9)}}, "ws/a", acctT0)
+	rows := accountRows(rd, []api.Session{accountSession("a", "forestage")}, acctT0)
+	if len(rows) != 1 || rows[0].Reading != "fresh" || strings.Contains(rows[0].Note, "not known") {
+		t.Fatalf("rows = %+v", rows)
 	}
 }

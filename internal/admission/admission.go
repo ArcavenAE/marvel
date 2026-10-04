@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -543,4 +544,25 @@ func Rows(t api.Team, s Snapshot) []Row {
 		out = append(out, row)
 	}
 	return out
+}
+
+// MarshalJSON leaves the numbers an account row does not have out of the wire
+// form: limit and headroom mean nothing for an account, and observed carries a
+// percentage only for a fresh reading, so a stale or none row must not read
+// "observed": 0. A team row marshals exactly as before.
+func (r Row) MarshalJSON() ([]byte, error) {
+	type plain Row
+	if r.Reading == "" {
+		return json.Marshal(plain(r))
+	}
+	out := struct {
+		plain
+		Limit    *int `json:"limit,omitempty"`
+		Observed *int `json:"observed,omitempty"`
+		Headroom *int `json:"headroom,omitempty"`
+	}{plain: plain(r)}
+	if r.Reading == "fresh" {
+		out.Observed = &r.Observed
+	}
+	return json.Marshal(out)
 }
