@@ -66,6 +66,18 @@ const (
 	// handed to a replacement while the old process may still run; a later
 	// reap that finds the pane gone finishes the delete (marvel#364).
 	KindSessionKillFailed Kind = "session.kill-failed"
+	// KindSessionHarnessState records the harness-state watchdog classifying a
+	// quiet pane as logged-out (docs/design/harness-state-watchdog-p1.md). It
+	// carries the state, confidence, pattern id and version and the pattern's
+	// fixed rows with each variable span masked, never captured text. It informs
+	// an operator; no consumer may act on it before Phase 3.
+	KindSessionHarnessState Kind = "session.harness-state"
+	// KindSessionHarnessStateCleared records that state ending.
+	KindSessionHarnessStateCleared Kind = "session.harness-state-cleared"
+	// KindAccountLoggedOut rolls up three or more seats of one account reading
+	// logged-out within one watchdog window, so a fleet-wide expiry reads as
+	// one fact.
+	KindAccountLoggedOut Kind = "account.logged-out"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
 	// nothing it execs inherits them (aae-orc#418).
@@ -317,6 +329,9 @@ var allKinds = []Kind{
 	KindSessionFailed,
 	KindSessionSucceeded,
 	KindSessionKillFailed,
+	KindSessionHarnessState,
+	KindSessionHarnessStateCleared,
+	KindAccountLoggedOut,
 	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
