@@ -609,3 +609,14 @@ var ErrNoCommand = fmt.Errorf("runtime has no command or image")
 // prompt-less headless harness reads stdin and hangs on a pane tty
 // nobody is typing into, so this is a manifest error, not a default.
 var ErrNoPrompt = fmt.Errorf("headless runtime has no prompt")
+
+// ForegroundRule is the optional gate of the harness-state watchdog
+// (docs/design/harness-state-watchdog-p1.md section 3). An adapter implements
+// it when it can say, from the pane's current command alone, whether its
+// harness is the process in front. An adapter without one is never a
+// candidate for the watchdog: marvel does not guess a harness from pane text.
+type ForegroundRule interface {
+	// Foreground reports whether paneCommand is this harness in front, and
+	// the harness version the command carries, "" when it carries none.
+	Foreground(paneCommand string) (harnessVersion string, ok bool)
+}

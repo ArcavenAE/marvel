@@ -33,6 +33,7 @@ import (
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
 	"github.com/arcavenae/marvel/internal/logbuf"
+	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
@@ -193,11 +194,11 @@ type Daemon struct {
 	accounts *api.AccountReadings
 	// limitMenu holds the captured limit-menu samples; empty until a real
 	// capture is supplied, so the pane-menu source sets nothing. paneMenu is
-	// its per-seat capture cadence. paneCapture and hostLocation are test
-	// seams: nil means the tmux driver and the host's own zone.
-	limitMenu    limitMenuSamples
-	paneMenu     paneMenuState
-	paneCapture  func(paneID string) (string, error)
+	// built from it on first use. hostLocation is a test seam: nil means the
+	// host's own zone.
+	limitMenu    panemenu.Samples
+	paneMenu     *panemenu.Source
+	paneMenuOnce sync.Once
 	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table
