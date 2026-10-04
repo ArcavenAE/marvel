@@ -547,6 +547,11 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 		"SendRequestWith": {"SendRequest": 1},
 		"WatchEventsWith": {},
 		"dialDaemonWith":  {"SendRequestWith": 1, "WatchEventsWith": 1},
+		// Two functions in other packages that type literal text plus Enter into a
+		// pane: the max-age sender the controller holds, and a runtime instance's
+		// Inject. The daemon package calls neither.
+		"Notify": {},
+		"Inject": {},
 	}
 	got := map[string]map[string]int{}
 	for name := range want {
