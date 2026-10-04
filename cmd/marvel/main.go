@@ -2644,6 +2644,12 @@ func renderSessionTable(sessions []api.Session) string {
 		if s.State == api.SessionRunning && s.ActivityState == api.ActivityStalled {
 			health += " (stalled)"
 		}
+		// The harness-state watchdog's verdict (docs/design/harness-state-
+		// watchdog-p1.md section 5): only a high-confidence logged-out shows
+		// here; a low-confidence match is in describe. Advisory, no new column.
+		if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateLoggedOut {
+			health += " (logged-out)"
+		}
 		// A failed row carrying a projection Reason is TERMINAL: the role
 		// will spawn no replacement. Without this suffix it is byte-identical
 		// to an ordinary failure the reconciler is about to replace, so the

@@ -58,11 +58,32 @@ window after it. Written to assume the upgrade goes badly.
      and it also sets the workspace root (`cmd/marvel/workroot.go:19`). A workdir change
      alone moves nothing live. But any other drift between a team's manifest
      and the live team, across about 30 teams, would be applied at the same
-     moment. So, per team, with the operator present: save `marvel describe
-     team <ws/team>` into `$W/describe-pre-root-<team>` (the way back); diff
-     the live team against the manifest; and apply only when the only
-     difference is the root. A team with any other difference is left
-     unapplied and takes the default branch.
+     moment. And `marvel work` applies a whole manifest file, which carries
+     more than teams: a `Manifest` holds its workspace, a list of teams, a
+     list of endpoints and a list of policies (`internal/api/manifest.go`,
+     `Manifest`, lines 51-56 at b533ca5). Apply overwrites an existing
+     policy's `Version` and `Settings` (the policy loop at b533ca5
+     `manifest.go:724-743`, at main `:731`), which the reconciler re-projects
+     into live sessions, and it creates the file's endpoints (b533ca5 `:856`,
+     main `:867`). The gate is therefore **per file, over everything in it**,
+     with the operator present:
+     - **a file with a non-empty `policies` section takes the default
+       branch, whatever it says.** At b533ca5 nothing shows a live policy's
+       settings: `marvel get policies` prints workspace, name, version and a
+       count of keys (`printPolicies`, `cmd/marvel/main.go:2800-2814`), and
+       `describe` has no policy type (`daemon.go:1391-1399`). A settings
+       change with the same version and key count cannot be seen, so it
+       cannot be ruled out;
+     - for every team the file lists, save `marvel describe team <ws/team>`
+       into `$W/describe-pre-root-<team>` (the way back) and diff the live
+       team against the file;
+     - save `marvel get endpoints` for the file's workspace into
+       `$W/endpoints-pre-root` and diff each endpoint against the file (get
+       shows all three of an endpoint's fields, and apply only creates);
+     - apply the file only when the **only** difference anywhere in it is the
+       root. A difference in any team or endpoint, including one the file
+       would create, means the file is not applied, and every team in it
+       takes the default branch.
 
 ## 3. Rehearsal (operator-attended, on kinu, before the window)
 
@@ -88,8 +109,11 @@ so a leaked `MARVEL_BACKEND_OVERLAY_DIR` or `MARVEL_SOCKET` would pass through).
 After each start: the scratch daemon's first answer is a read-only `cli <bin>
 bus status` with no "is rooted at" warning, and two live counts taken before
 the rehearsal are unchanged: `marvel get sessions | wc -l` against the live
-daemon, and `tmux -S /private/tmp/tmux-501/marvel-75c803c5 list-panes -a | wc
--l` on the live marvel tmux server. A hand-run daemon cannot take the live socket, since it takes the
+daemon, and `tmux -L marvel-75c803c5 list-panes -a | wc
+-l` on the live marvel tmux server. The baseline must be nonzero (38 panes on
+2026-10-04): `-L` resolves the socket under the caller's `TMUX_TMPDIR`, and if
+that differs from the daemon's, both counts read 0 and the comparison passes
+while proving nothing. A hand-run daemon cannot take the live socket, since it takes the
 socket lock first (`daemon.go:447-457`). It reaches the live panes only through
 `MARVEL_TMUX_SOCKET`, which is set to the scratch server.
 
@@ -171,7 +195,9 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
    `marvel get sessions > $W/sessions-before`; `ls -la ~/.marvel/state >
    $W/state-before`.
 2. Keep the old binary: `mkdir -p ~/.marvel/rollback && cp -p "$(cat
-   $W/keg)" ~/.marvel/rollback/marvel-b533ca5`.
+   $W/keg)" ~/.marvel/rollback/marvel-b533ca5 && ln -sf marvel-b533ca5
+   ~/.marvel/rollback/marvel`. The link is what lets a `PATH` change pick up
+   the saved binary; nothing else names it `marvel`.
 3. `marvel stop`.
 4. Cold copy: `cp -p ~/.marvel/state/marvel.bolt
    ~/.marvel/state/marvel.bolt.pre-v2-$(date +%Y%m%d)`.
@@ -185,8 +211,26 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
      mise at that exact version.
 
    Then `marvel version` must name the rehearsed release. **If it does not, do
-   not start the daemon.** Go to section 6 step 5 with the old binary instead:
-   the store is still v1, since nothing has opened it.
+   not start the daemon.** The store is still v1, since nothing has opened it,
+   but `PATH` now holds an unrehearsed binary, and the tap branch left the
+   formula unpinned. Before going to section 6 step 5 with the old binary:
+   - re-pin, `HOMEBREW_NO_AUTO_UPDATE=1 brew pin arcavenae/tap/marvel`,
+     verified with `brew list --pinned --formula`, so nothing upgrades it
+     further;
+   - write the unrehearsed binary's version in the window note, named by its
+     path before `PATH` changes. On the tap branch that is the keg,
+     `"$(HOMEBREW_NO_AUTO_UPDATE=1 brew --prefix arcavenae/tap/marvel)/bin/marvel" version`. On the
+     asset or mise branch the keg was never touched, so that command records
+     the old pinned keg, not what was installed; record `"$(command -v
+     marvel)" version` and the path it printed instead. On the mise branch,
+     run it from the seats' start directory (precondition 5), since a mise
+     shim resolves its version from the current directory's config;
+   - put `~/.marvel/rollback` first on the operator's `PATH`, then prove it:
+     `command -v marvel` must print `~/.marvel/rollback/marvel`, and `marvel
+     version` must name b533ca5;
+   - seats' `ctx-forward` still runs the keg's client, so rehearsal step 4's
+     result (new client against the old daemon) says whether that works.
+   Replacing the keg is the operator's call after the window.
 6. Start the daemon with `$W/daemon-cmd`, from the directory in `$W/daemon-cwd`.
 7. Verify, each a pass condition:
    - `~/.marvel/state/marvel.bolt.v1.bak` exists;
@@ -214,8 +258,9 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
 4. `cp -p $W/config.yaml ~/.marvel/config.yaml`.
 5. Start the saved binary with the recorded command and cwd, by full path:
    `~/.marvel/rollback/marvel-b533ca5 daemon ...`. If rehearsal step 4 showed the
-   new client cannot talk to the old daemon, put the saved binary first on the
-   operator's `PATH` for the rollback; seats' `ctx-forward` then stays broken
+   new client cannot talk to the old daemon, put `~/.marvel/rollback` (with
+   step 2's `marvel` link) first on the operator's `PATH` for the rollback and
+   check `command -v marvel` prints the link; seats' `ctx-forward` then stays broken
    until a fixed release ships. Say which in the window note.
 6. Verify `marvel get teams` equals `$W/teams-before`, and the sessions are
    adopted.
