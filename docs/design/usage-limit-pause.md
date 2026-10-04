@@ -643,7 +643,7 @@ UL-R1 follow-up, the operator's answer to which internal bus A means
 
 Director's reading, a gloss and not part of the quote: option A's internal bus
 is marvel's event ring, used as the backplane, with the ring-to-NATS tap
-(aae-orc-zhx6x) as the way to signal agent teams when appropriate. This
+(aae-orc-zhx6x) as a method to signal agent teams when appropriate. This
 answers the scoping question of which bus A's events go on.
 
 What it changes in this design:
@@ -651,7 +651,8 @@ What it changes in this design:
 - **B is built now** (UL-7, under the matcher of 9.4 and probe P-UL7 of 9.7).
   **A is the target**: its events go on marvel's event ring, the internal
   bus the follow-up above names, and reach agent teams through the
-  ring-to-NATS tap (aae-orc-zhx6x) once it ships.
+  ring-to-NATS tap (aae-orc-zhx6x) when appropriate, once it ships. As filed,
+  that tap carries events at warning severity and above only.
 - **No samples, no key.** B acts only where a menu sample and a P-UL7
   post-selection sample exist for the seat's harness version. A matching menu
   with no post-selection sample sends nothing and emits A's events plus
@@ -667,7 +668,7 @@ What it changes in this design:
   account reading (UL-1, UL-2) and its thresholds serve that. A threshold
   action before 100% is a follow-up design, not part of UL-7.
 - **UL-R2 was not ruled separately.** It is taken as adopted under "marvel can
-  do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3 once the Conflict below is answered, and
+  do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3 if the Conflict below is answered in its favor, and
   its expiry no longer applies.
 
   **Conflict, awaiting the operator.** That adoption line and 9.3's expiry
