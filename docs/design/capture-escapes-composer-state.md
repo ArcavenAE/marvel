@@ -129,7 +129,7 @@ run. "Guard" means it passes on main and must keep passing.
 | 4 | Dim head, plain tail, beside a done line, reads `Unknown` (synthetic, marked as such) | red | reads `HoldsText` |
 | 5 | Plain head, dim tail, beside a done line, reads `HoldsText` (synthetic, marked as such) | guard | `HoldsText` |
 | 6 | Plain text beside a done line still reads `HoldsText` (`claude_test.go:84-85`), and an escapes capture of unstyled text still does (`inject_bare_digit_test.go:201`) | guard | pass |
-| 7 | Fixture `6-paste-chip` reads `HoldsText` with escapes (its first character is not dim, P1) | red | fixture missing |
+| 7 | Fixture `6-paste-chip` reads `HoldsText` with escapes (its first character is not dim, P1) | guard (red only for the missing fixture) | main already reads the chip `HoldsText` |
 | 8 | The six existing fixtures keep both readings (`TestClaudeReaderReadsTheCapturedStates`, `claude_test.go:22`) | guard | pass |
 | 9 | `handleCapture` with `escapes` returns content containing ESC; without it, content with no ESC, as today | red | `captureParams` has no `escapes`; unknown JSON keys are ignored, so no ESC |
 | 10 | Ranged with `escapes` returns ESC in the ranged lines only | red | no ranged escapes variant |
@@ -144,10 +144,13 @@ existing seat helper `verifySeat` (`internal/daemon/inject_verify_test.go:32`),
 which runs a script in a pane and waits for it, as
 `inject_bare_digit_test.go:184-201` already does for a staged draft. They skip
 where tmux is absent, as the package's other tmux tests do. The script takes
-the shape of `quietSeat` (`inject_verify_test.go:25-28`): it prints the
-fixture's bytes, then echoes each line it reads, so a key sent would show in
-the capture. The existing verify tests already read such a seat as a composer,
-not as `Shell` (`daemon.go:2267`). Tests 1 to 8 and 11 need no tmux.
+the shape of `claudeFrameSeat` with `claudeFrame`
+(`inject_verify_test.go:314-330`): it prints the fixture's bytes and then
+`exec sleep`, so the foreground is not a shell and the read is not taken as
+`Shell` (`daemon.go:2267`). Unlike `claudeFrameSeat`, it leaves echo on, so a
+key sent to the pane would show in the capture. `quietSeat` does not fit: its
+foreground is `sh`, which reads `Shell` (`inject_verify_test.go:167-168`).
+Tests 1 to 8 and 11 need no tmux.
 
 ## 5. Plan
 
