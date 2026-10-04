@@ -11,7 +11,7 @@
 - **Subject:** marvel (how a cluster finds the services it depends on).
   Filed in the marvel graph per the subject test; the hub, bd and director
   are objects here.
-- **Related:** the marvel hub-URL-list issue (number to follow), the
+- **Related:** marvel#575 (bus.hub as a list of hub URLs), the
   near-term half of this; `_kos/probes/probe-temporary-host-disconnect.md`
   (the cut that showed the problem; its brief lands in its own PR); [[get-views-connection-and-service-context]]
   (showing which hub and bd a view is connected to);
@@ -21,7 +21,7 @@
 ## Why look at it
 
 Every cluster carries the hub's address in its config (`hub.url`, a single
-string, `internal/config/config.go:444-449`), and every seat carries the bd
+string, `internal/config/config.go:473-474` at main b355df7), and every seat carries the bd
 server's address in its client env. When the host that runs both changes
 address, each of those copies is wrong at once, and each is fixed by hand.
 That happened on 2026-10-04: during recovery from a planned disconnect, the
@@ -29,7 +29,8 @@ hub host came back on a different address. A remote leaf dialed it by a
 `.local` name, which mDNS does not carry across subnets, and pinned host
 keys were tied to addresses, so the old trust did not match the new place.
 
-A list of hub addresses (the issue above) lets a leaf try the next one.
+A list of hub addresses (marvel#575; the leaf renderer already writes
+`urls: [...]` with one entry, `internal/bus/render.go:164`) lets a leaf try the next one.
 A directory goes further: a cluster asks "where is the hub, and where is
 bd" and gets the current answer, so no node holds an address that can go
 stale.
@@ -76,6 +77,5 @@ connect, and fall back to its configured addresses when it gets no answer.
 
 ## Not in this idea
 
-The hub address list itself, which is the issue above and is the near-term
-fix. Cluster identity and key trust (marvel#434). Finding clusters on one
+The hub address list itself, which is marvel#575 and is the near-term fix. Cluster identity and key trust (marvel#434). Finding clusters on one
 LAN ([[local-cluster-discovery]]).
