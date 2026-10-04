@@ -2,7 +2,8 @@
 
 Source: the ops team's report for the 2026-10-04 harvest, item 2, relayed
 there from that team's architect seat. I verified the claim against marvel
-origin/main b003cd3 before writing it, and narrowed it to what the code
+origin/main b003cd3 before writing it, and re-checked the line cites
+after merging main at 4219bca, and narrowed it to what the code
 does.
 
 **Placement.** marvel is the subject: what the claude adapter puts on a
@@ -14,10 +15,10 @@ The claude adapter appends a one-line identity prompt, `You are <session>
 (role: <role>, team: <team>, workspace: <workspace>).`, as
 `--append-system-prompt`, but only when the role's args do not already carry
 `--append-system-prompt` or `--append-system-prompt-file`, and only for the
-bare harness, not a wrapper command (`internal/runtime/claude.go:137-141`).
+bare harness, not a wrapper command (`internal/runtime/claude.go:138-142`).
 Claude Code keeps only the last `--append-system-prompt` it is given, so the
 code steps aside rather than have one prompt silently replace the other
-(the comment at `:128-136`).
+(the comment at `:129-137`).
 
 So a role that adds its own system prompt through `runtime.args` launches
 with that prompt and without the identity line. The identity still reaches
@@ -30,7 +31,7 @@ statement of who it is in its own prompt.
 
 The report said "adding a manifest prompt" drops the identity line. The
 manifest's `runtime.prompt` field is the headless request, passed as the
-positional argument (`claude.go:160-163`), and it does not suppress the
+positional argument (`claude.go:161-164`), and it does not suppress the
 identity line. Only a system prompt supplied as one of the two flags in
 `runtime.args` does.
 

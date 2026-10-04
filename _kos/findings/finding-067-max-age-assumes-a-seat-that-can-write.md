@@ -44,7 +44,7 @@ role with max age declares a handoff path (it cannot check writability,
 only declaration), or document the precondition beside `handoff` in the
 manifest reference. Recorded as an open question.
 
-Related, and not this finding: the three max-age gaps (marvel#451, #452,
-#453), being placed as finding-065 in marvel#528, and the orc's open
+Related, and not this finding: the max-age gaps in finding-065 (marvel#451
+fixed by #473; #452 and #453 open), and the orc's open
 question on the five forms of terminal marker seats write
 (`question-handoff-terminal-marker`, in review).
