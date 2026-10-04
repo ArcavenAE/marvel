@@ -438,6 +438,15 @@ func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
 		emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
 		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
 	}
+	// The same bare-digit refusal as an inject, with no flag to lift it: a text
+	// that starts with a menu digit is not typed into a pane the capture cannot
+	// place.
+	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
+		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
+			emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
+			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		}
+	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
 	}

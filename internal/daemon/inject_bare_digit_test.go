@@ -257,3 +257,48 @@ func TestDeclaredUserCannotFakeTheFlagTag(t *testing.T) {
 		t.Errorf("%d inject events carry flag=allow-bare-digit, want exactly the one sent with the flag", flagged)
 	}
 }
+
+// The max-age sender types a literal plus Enter like an inject, so it takes the
+// same bare-digit refusal: a text that starts with a menu digit is not typed
+// into a claude pane the capture cannot place, and there is no flag to lift it.
+func TestNotifyHandoffRefusesABareDigitItCannotRuleOut(t *testing.T) {
+	d := bareDigitDaemon(t)
+	key := verifySeat(t, d, quietSeat, "claude", "composer ready")
+
+	for _, text := range []string{"3", "2", " 1", "3 now"} {
+		err := d.teamCtrl.Notify(sessionOf(t, d, key), text)
+		if err == nil || !strings.Contains(err.Error(), "cannot rule out") {
+			t.Fatalf("Notify(%q) error = %v, want the cannot-rule-out refusal", text, err)
+		}
+	}
+	neverShows(t, d, key, "got:3")
+	if hasKind(d, events.KindSessionInjected) {
+		t.Error("a refused handoff was recorded as sent")
+	}
+	if refused := d.events.Snapshot(events.Filter{Kind: events.KindSessionInjectRefused}, 0); len(refused) != 4 {
+		t.Errorf("%d refusals recorded, want 4", len(refused))
+	}
+
+	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff"); err != nil {
+		t.Fatalf("a non-digit handoff was refused: %v", err)
+	}
+	waitCaptureHas(t, d, key, "got:please write your handoff")
+}
+
+// A pane the reader places as an empty composer rules the menu out, and with no
+// sample held nothing is checked.
+func TestNotifyHandoffDeliversADigitWhereTheMenuIsRuledOut(t *testing.T) {
+	d := bareDigitDaemon(t)
+	key := verifySeat(t, d, idleComposerSeat(t), "claude", "auto mode unavailable")
+	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "2"); err != nil {
+		t.Fatalf("Notify to an idle composer: %v", err)
+	}
+	waitCaptureHas(t, d, key, "got:2")
+
+	d2 := newHandlerDaemon(t)
+	key2 := verifySeat(t, d2, quietSeat, "claude", "composer ready")
+	if err := d2.teamCtrl.Notify(sessionOf(t, d2, key2), "3"); err != nil {
+		t.Fatalf("Notify with no sample held: %v", err)
+	}
+	waitCaptureHas(t, d2, key2, "got:3")
+}
