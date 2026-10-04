@@ -25,9 +25,10 @@ string, `internal/config/config.go:473-474` at main b355df7), and every seat car
 server's address in its client env. When the host that runs both changes
 address, each of those copies is wrong at once, and each is fixed by hand.
 That happened on 2026-10-04: during recovery from a planned disconnect, the
-hub host came back on a different address. A remote leaf dialed it by a
-`.local` name, which mDNS does not carry across subnets, and pinned host
-keys were tied to addresses, so the old trust did not match the new place.
+hub host came back on a different address, and the copies that named the
+old one went stale. Why name resolution and trust did not follow the host
+is a candidate (C2) in the disconnect probe brief (marvel#577), pending
+the seat logs, not a finding.
 
 A list of hub addresses (marvel#575; the leaf renderer already writes
 `urls: [...]` with one entry, `internal/bus/render.go:164`) lets a leaf try the next one.
@@ -66,9 +67,9 @@ connect, and fall back to its configured addresses when it gets no answer.
    issuance-free data; a bus password or a bd credential would be custody.
    Where is the line, and does the directory ever cross it?
 5. **Trust in the answer.** An unauthenticated directory can send a cluster
-   to the wrong hub. Trust has to stay pinned to identity (marvel#434), so
-   a new address for a known key is accepted and an unknown key is refused,
-   whatever the directory says.
+   to the wrong hub. Does trust stay pinned to identity (marvel#434), so
+   that a new address for a known key is accepted and an unknown key
+   refused, whatever the directory says?
 6. **Staleness and churn.** How quickly does a changed address reach the
    directory, and who writes it: the moved service announcing itself, or
    an operator?
