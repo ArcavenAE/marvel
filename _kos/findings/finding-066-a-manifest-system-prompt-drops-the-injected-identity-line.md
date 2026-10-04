@@ -2,9 +2,8 @@
 
 Source: the ops team's report for the 2026-10-04 harvest, item 2, relayed
 there from that team's architect seat. I verified the claim against marvel
-origin/main b003cd3 before writing it, and re-checked the line cites
-after merging main at 4219bca, and narrowed it to what the code
-does.
+origin/main b003cd3 and narrowed it to what the code does. The line cites
+were re-checked after merging main at 4219bca.
 
 **Placement.** marvel is the subject: what the claude adapter puts on a
 seat's command line.
