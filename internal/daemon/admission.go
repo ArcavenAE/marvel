@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
@@ -161,6 +162,7 @@ func (d *Daemon) budgetRows() []admission.Row {
 		}
 		out = append(out, admission.Rows(t, d.AdmissionSnapshot(t))...)
 	}
+	out = append(out, accountRows(d.accounts, d.store.ListSessions(), time.Now().UTC())...)
 	return out
 }
 

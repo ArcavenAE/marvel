@@ -302,6 +302,12 @@ type Session struct {
 	// written before it. Stable across restarts of the same session key.
 	// Status, not spec; additive on the json path.
 	HarnessHome string `json:"harness_home,omitempty" toml:"-"`
+	// AccountHome is the harness home this session's login comes from: the
+	// directory a private harness home is seeded and linked from, never the
+	// private home itself, which differs for every session. It is one input
+	// to the account key (AccountKeyOf). Empty means the harness's own
+	// default home. Status, not spec; additive on the json path.
+	AccountHome string `json:"account_home,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
