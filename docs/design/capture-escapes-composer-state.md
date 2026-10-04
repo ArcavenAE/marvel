@@ -67,17 +67,26 @@ consumers, so the change only narrows:
 | `Confirms(Submit)` | does not confirm | does not confirm (unchanged) |
 | `bareDigitRefusal` | refuses | refuses (unchanged) |
 
-The cost is on the safe side. A stage whose text claude draws dim (a paste
-chip, if P1 shows one is dim) no longer verifies, and its clear is refused.
+The cost is on the safe side. A stage whose text claude draws dim would no
+longer verify, and its clear would be refused; P1 shows the paste chip is not
+such a case.
 The caller sees "unconfirmed" where it saw "confirmed". It never sees the
 reverse.
 
 Probe P1 (read-only; the builder is running it): on panes showing (a) a dim
 suggestion and (b) a collapsed paste chip, run
 `tmux capture-pane -p -e -t <pane>` and `tmux capture-pane -p -t <pane>`, and
-save both as fixtures `5-idle-suggestion` and `6-paste-chip`. The SGR bytes of
-each decide nothing under D1 (both are safe either way), but the chip fixture
-records which side of the rule a real staged paste falls on.
+save both as fixtures `5-idle-suggestion` and `6-paste-chip`. Result (claude 2.1.289, read-only, private socket, from the marvel builder):
+
+- **Suggestion:** dim, SGR 2 on the text only, not the prompt:
+  `ESC[39m ❯ U+00A0 ESC[2m start with step 1 ESC[0m`. It appeared only after a
+  turn that ended in a question; a plain "ok" turn left the composer empty. D1
+  reads it `Unknown`.
+- **Paste chip:** not dim. No SGR after the prompt's `ESC[39m`:
+  `ESC[39m ❯ U+00A0 [Pasted text #1 +12 lines]`, with a hint line ("paste
+  again to expand") under the lower rule. It is a real staged draft and keeps
+  `HoldsText` under D1, so a staged paste still verifies and can still be
+  cleared.
 
 ### D2. `marvel capture --escapes`
 
@@ -120,7 +129,7 @@ run. "Guard" means it passes on main and must keep passing.
 | 4 | Dim head, plain tail, beside a done line, reads `Unknown` (synthetic, marked as such) | red | reads `HoldsText` |
 | 5 | Plain head, dim tail, beside a done line, reads `HoldsText` (synthetic, marked as such) | guard | `HoldsText` |
 | 6 | Plain text beside a done line still reads `HoldsText` (`claude_test.go:84-85`), and an escapes capture of unstyled text still does (`inject_bare_digit_test.go:201`) | guard | pass |
-| 7 | Fixture `6-paste-chip` reads as P1 shows: `Unknown` if its first character is dim, `HoldsText` if not | red | fixture missing |
+| 7 | Fixture `6-paste-chip` reads `HoldsText` with escapes (its first character is not dim, P1) | red | fixture missing |
 | 8 | The six existing fixtures keep both readings (`TestClaudeReaderReadsTheCapturedStates`, `claude_test.go:22`) | guard | pass |
 | 9 | `handleCapture` with `escapes` returns content containing ESC; without it, content with no ESC, as today | red | `captureParams` has no `escapes`; unknown JSON keys are ignored, so no ESC |
 | 10 | Ranged with `escapes` returns ESC in the ranged lines only | red | no ranged escapes variant |
