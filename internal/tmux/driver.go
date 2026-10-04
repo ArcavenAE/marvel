@@ -873,6 +873,25 @@ func (d *Driver) CapturePaneRange(paneID string, start, end int) (string, error)
 	return string(out), nil
 }
 
+// PaneForeground returns the pane's current command and its width in columns
+// (display-message #{pane_current_command} and #{pane_width}). The command is
+// the foreground process as tmux names it; the width is recorded beside a
+// capture so a sample taken at one width can be told from one taken at another.
+func (d *Driver) PaneForeground(paneID string) (command string, width int, err error) {
+	out, err := d.cmd("display-message", "-p", "-t", paneID, "#{pane_current_command}\t#{pane_width}").CombinedOutput()
+	if err != nil {
+		return "", 0, fmt.Errorf("display-message %s: %s: %w", paneID, strings.TrimSpace(string(out)), err)
+	}
+	parts := strings.SplitN(strings.TrimRight(string(out), "\n"), "\t", 2)
+	command = parts[0]
+	if len(parts) == 2 {
+		if w, aerr := strconv.Atoi(strings.TrimSpace(parts[1])); aerr == nil {
+			width = w
+		}
+	}
+	return command, width, nil
+}
+
 // ShowOption returns the value of a session option (tmux show-options -v).
 // Used to verify session-scoped options marvel sets at session creation,
 // such as history-limit.
