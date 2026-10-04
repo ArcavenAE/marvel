@@ -32,6 +32,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
+	"github.com/arcavenae/marvel/internal/limitmenu"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/service"
@@ -122,8 +123,13 @@ type Daemon struct {
 	sessMgr   *session.Manager
 	teamCtrl  *team.Controller
 	driver    *tmux.Driver
-	listener  net.Listener
-	sshServer *SSHServer
+	// limitMenus are the captured usage-limit menus an inject is checked against.
+	// Production ships none (limitmenu: no sample, no match), so nothing is
+	// refused and no extra capture is taken until P-UL7 supplies one. Set once,
+	// by shippedLimitMenus in the constructor; tests set it directly.
+	limitMenus []limitmenu.Sample
+	listener   net.Listener
+	sshServer  *SSHServer
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -306,26 +312,6 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
-	// The max-age shift trigger asks a seat for its handoff the way an
-	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
-	// a draft typed into a seat, so it is recorded like any inject, from marvel.
-	teamCtrl.Notify = func(sess api.Session, text string) error {
-		if sess.PaneID == "" {
-			return fmt.Errorf("session %s has no pane", sess.Key())
-		}
-		// The handoff request is typed text like any inject, so it passes the same
-		// pre-flight: a codex seat on its update menu since spawn reads as quiet,
-		// which is the seat this stage picks.
-		if why := preflightRefusal(driver, sess, composer.ReaderFor(sess.Runtime.Name)); why != "" {
-			emitInjectRefused(evRing, sess, why, "transport=daemon injector=marvel:max-age")
-			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
-		}
-		if err := driver.SendKeys(sess.PaneID, text, true, true); err != nil {
-			return err
-		}
-		recordInject(evRing, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
-		return nil
-	}
 	// The migration committed before this point; announce what it stamped,
 	// once, so an operator can see which teams were pinned to the old
 	// directory and declare a root for them.
@@ -395,27 +381,52 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		build:     opts.Build,
-		startedAt: time.Now().UTC(),
-		store:     store,
-		sessMgr:   sessMgr,
-		teamCtrl:  teamCtrl,
-		driver:    driver,
-		pidFile:   opts.PidFile,
-		reclaim:   opts.Reclaim,
-		home:      home,
-		logs:      buf,
-		events:    evRing,
-		usage:     acct,
-		orphans:   newOrphanRegistry(),
-		reexec:    syscall.Exec,
+		build:      opts.Build,
+		startedAt:  time.Now().UTC(),
+		store:      store,
+		sessMgr:    sessMgr,
+		teamCtrl:   teamCtrl,
+		driver:     driver,
+		limitMenus: shippedLimitMenus(),
+		pidFile:    opts.PidFile,
+		reclaim:    opts.Reclaim,
+		home:       home,
+		logs:       buf,
+		events:     evRing,
+		usage:      acct,
+		orphans:    newOrphanRegistry(),
+		reexec:     syscall.Exec,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
 	// evaluate a cumulative clause without internal/team importing
 	// internal/usage. See aae-orc-qiay.
 	teamCtrl.Snapshots = d
+	// The max-age shift trigger asks a seat for its handoff the way an
+	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
+	// a draft typed into a seat, so it is recorded like any inject, from marvel.
+	teamCtrl.Notify = d.notifyHandoff
 	return d, nil
+}
+
+// notifyHandoff types the max-age handoff request into a seat. The request is
+// typed text like any inject, so it passes the same pre-flight: a codex seat on
+// its update menu since spawn reads as quiet, which is the seat this stage
+// picks, and a claude seat sitting on the usage-limit menu is refused too
+// (marvel#559).
+func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
+	if sess.PaneID == "" {
+		return fmt.Errorf("session %s has no pane", sess.Key())
+	}
+	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenus); why != "" {
+		emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
+		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+	}
+	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
+		return err
+	}
+	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
+	return nil
 }
 
 // Usage returns the daemon's context and token accountant. Exported for
@@ -2073,7 +2084,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	// A harness with a state where a keystroke is dangerous is read before any
 	// input. Escape alone passes: it is the key that dismisses such a menu.
 	if !isDismissKey(p) {
-		if why := preflightRefusal(d.driver, sess, reader); why != "" {
+		if why := preflightRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
 			return d.refuseInject(sess, p, origin, why)
 		}
 	}
@@ -2106,23 +2117,44 @@ func isDismissKey(p injectParams) bool {
 }
 
 // preflightRefusal reads a pane before keystrokes go in and returns why they
-// must not, or "" when they may. It applies to a harness whose reader has a state
-// where a keystroke is dangerous, and it fails closed: a pane that cannot be read
-// is not typed into blind.
+// must not, or "" when they may. It reads the pane for a harness whose reader has
+// a state where a keystroke is dangerous (codex's update menu), and for claude
+// when there is a usage-limit menu sample to check the pane against. It fails
+// closed: a pane that cannot be read is not typed into blind.
+//
+// With no sample, which is what production ships until P-UL7, claude is not read
+// and nothing about its inject changes. With one, each claude inject costs one
+// capture-pane -J before the keystrokes (one tmux round trip),
+// and a claude pane that cannot be read is refused.
+//
+// A limit menu on screen is refused whether the matcher accepts it or declines
+// it: a decline (cursor on another row, rows after the block) still means the
+// block was found, and a digit picks an option from it. A screen the matcher
+// finds no block in is not refused here; whether to refuse a bare digit when the
+// capture cannot rule a menu out is a separate ruling (marvel#559 part b).
 //
 // It is a check, not a lock. The pane can change between this read and the
 // keystrokes (a seat still starting can draw its menu just after the capture),
 // and nothing here holds it still.
-func preflightRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader) string {
-	if !reader.Preflight() {
+func preflightRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader, menus []limitmenu.Sample) string {
+	checkLimitMenu := reader.Name() == "claude" && len(menus) > 0
+	if !reader.Preflight() && !checkLimitMenu {
 		return ""
 	}
 	content, err := driver.CapturePaneJoined(sess.PaneID)
 	if err != nil {
 		return "the pane could not be read, so " + reader.Name() + " is not typed into blind: " + err.Error()
 	}
-	if reader.Read(content) == composer.MenuUnsafe {
+	if reader.Preflight() && reader.Read(content) == composer.MenuUnsafe {
 		return reader.Name() + " is showing its update menu, where Enter or a newline runs the vendor's installer; send Escape to skip it (marvel#477)"
+	}
+	if checkLimitMenu {
+		for _, sample := range menus {
+			res := limitmenu.Match(sample, content)
+			if res.Matched || (res.Refusal != limitmenu.RefusalNoBlock && res.Refusal != limitmenu.RefusalNoSample) {
+				return reader.Name() + " is showing its usage-limit menu, where a digit picks an option and option 3 spends money; nothing is typed into it (marvel#559)"
+			}
+		}
 	}
 	return ""
 }
