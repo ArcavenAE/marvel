@@ -38,6 +38,10 @@ func TestClaudeReaderReadsTheCapturedStates(t *testing.T) {
 		{"3b-mid-turn-3s", Unknown, Unknown},
 		{"3c-mid-turn-6s", Unknown, Unknown},
 		{"4-idle-after-submit", Empty, Empty},
+		// A real dim suggestion (SGR 2) beside a done line. It is no draft, so
+		// with escapes it reads Empty. A plain capture cannot see dim, so it reads
+		// as any typed draft does (marvel#571).
+		{"5-idle-suggestion", HoldsText, Empty},
 	}
 	for _, tc := range cases {
 		if got := r.Read(fixture(t, tc.name+".txt")); got != tc.plain {
@@ -109,6 +113,20 @@ func TestClaudeReaderEdges(t *testing.T) {
 		// The dim placeholder is checked before the idle rule: it is no draft, so a
 		// placeholder after an earlier turn still reads empty and not unknown.
 		{"a dim placeholder after an earlier turn with no done line", frame("❯ earlier prompt\n\n⏺ reply", "❯"+nb+dim+"Try \"fix the build\"\x1b[0m"), Empty},
+		// Dim from the first visible character is a suggestion, not a draft
+		// (marvel#571): beside a done line it is Empty whatever its words; with no
+		// done line it is Unknown, as a draft is. Dim is read from the SGR
+		// parameters, so a reset ends it.
+		{"a dim suggestion beside a done line is empty", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start with step 1\x1b[0m"), Empty},
+		{"a dim suggestion in a combined attribute is empty", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"\x1b[2;37mrun the tests\x1b[0m"), Empty},
+		{"a dim suggestion with no done line is unknown", frame("", "❯"+nb+dim+"start with step 1\x1b[0m"), Unknown},
+		{"a dim suggestion under a spinner is mid turn", frame("✳ Cooking… (3s · thinking)", "❯"+nb+dim+"start with step 1\x1b[0m"), MidTurn},
+		// Synthetic: a plain first character with a dim tail means a draft is
+		// present, so it keeps today's reading.
+		{"a plain first character with a dim tail is a draft", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+"st"+dim+"art with step 1\x1b[0m"), HoldsText},
+		{"dim text that resets part way holds a draft", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start\x1b[22m with step 1"), HoldsText},
+		{"a dim suggestion that wraps onto a second line is empty", frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start with step 1 and then", "  keep going\x1b[0m"), Empty},
+		{"a dim first line with a plain second line holds a draft", "\x1b[39m" + frame("✻ Worked for 2s · done 5:23 PM", "❯"+nb+dim+"start with step 1\x1b[0m", "  and a typed line"), HoldsText},
 		{"a hint line right of the composer is not content", frame("✻ Worked for 2s · done 5:23 PM\n"+strings.Repeat(" ", 100)+"auto mode unavailable for this model", "❯"+nb), Empty},
 		{"streaming text over an older done marker", frame("✻ Worked for 2s · done 5:23 PM\n\n❯ next prompt\n\n⏺ Reply text still arriving", "❯"+nb), Unknown},
 		{"placeholder text with escapes is dim and so empty", frame("", "❯"+nb+dim+"Try \"fix the build\""+"\x1b[0m"), Empty},
@@ -183,5 +201,19 @@ func TestClaudeReaderDoesNotTakeAHintLineForASpinner(t *testing.T) {
 	}
 	if got != Empty {
 		t.Errorf("Read = %q, want %q: the done line above the hint line is what the frame says", got, Empty)
+	}
+}
+
+// A dim suggestion is no draft, so the keys that act on a draft refuse it:
+// a clear on a composer that is really empty arms exit on claude, and a stage
+// that did not land must not verify as confirmed (marvel#571).
+func TestADimSuggestionIsNeitherClearableNorAConfirmedStage(t *testing.T) {
+	t.Parallel()
+	state := ReaderFor("claude").Read(fixture(t, "5-idle-suggestion.ansi.txt"))
+	if err := CanClear("claude", "C-u", state); err == nil {
+		t.Errorf("CanClear(%q) = nil, want a refusal: nothing is staged", state)
+	}
+	if Confirms(Stage, state) {
+		t.Errorf("Confirms(Stage, %q) = true: the stage did not land", state)
 	}
 }
