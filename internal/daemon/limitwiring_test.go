@@ -527,17 +527,31 @@ func keysOf(m map[string]bool) []string {
 }
 
 // The existing inject path is the other way to type a string into a pane, and a
-// hook or a watcher could call it with "3". Its callers are inventoried: the
-// handler is reached only from the dispatcher, the dispatcher only from the
-// connection reader and dispatch, and dispatch from nothing outside tests.
+// hook or a watcher could reach it with "3": by calling the handler, by feeding a
+// request to the connection handlers over a pipe, or by dialing the daemon's own
+// socket as a client. Every function on that road has an inventory of callers
+// (marvel#556 review r5 and r6: routes N1c, W2, W3). The handler is reached only
+// from the dispatcher, the dispatcher only from the connection reader, the
+// connection handlers only from the listener and the SSH server, and the client
+// entry points from nothing in this package. None is used as a value.
 func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	t.Parallel()
 	want := map[string]map[string]int{
-		"handleInjectAs": {"*Daemon.dispatchAs": 1},
-		"dispatchAs":     {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
-		"dispatch":       {},
+		"handleInjectAs":  {"*Daemon.dispatchAs": 1},
+		"dispatchAs":      {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
+		"dispatch":        {},
+		"handleRWCAs":     {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
+		"handleRWC":       {},
+		"handleConn":      {"*Daemon.Start": 1},
+		"SendRequest":     {},
+		"SendRequestWith": {"SendRequest": 1},
+		"WatchEventsWith": {},
+		"dialDaemonWith":  {"SendRequestWith": 1, "WatchEventsWith": 1},
 	}
-	got := map[string]map[string]int{"handleInjectAs": {}, "dispatchAs": {}, "dispatch": {}}
+	got := map[string]map[string]int{}
+	for name := range want {
+		got[name] = map[string]int{}
+	}
 	p := parseDaemon(t)
 	called := map[ast.Node]bool{}
 	p.eachFunc(func(file, fun string, n ast.Node) bool {
@@ -546,18 +560,37 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 			return true
 		}
 		called[c.Fun] = true
-		if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
-			if m, ok := got[sel.Sel.Name]; ok {
-				m[fun]++
-			}
+		name := ""
+		switch f := c.Fun.(type) {
+		case *ast.SelectorExpr:
+			name = f.Sel.Name
+			called[f.Sel] = true
+		case *ast.Ident:
+			name = f.Name
+		}
+		if m, ok := got[name]; ok {
+			m[fun]++
 		}
 		return true
 	})
 	p.each(func(file string, n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && !called[sel] {
-			if _, tracked := got[sel.Sel.Name]; tracked {
-				t.Errorf("%s: %s used as a value", file, sel.Sel.Name)
+		var name string
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if called[x] {
+				return true
 			}
+			name = x.Sel.Name
+		case *ast.Ident:
+			if called[x] {
+				return true
+			}
+			name = x.Name
+		default:
+			return true
+		}
+		if _, tracked := got[name]; tracked && !isDeclName(p, n) {
+			t.Errorf("%s: %s used as a value", file, name)
 		}
 		return true
 	})
@@ -566,4 +599,73 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 			t.Errorf("callers of %s are %v, inventoried as %v", name, got[name], w)
 		}
 	}
+}
+
+// isDeclName reports whether an identifier is the name of a function declaration
+// itself, which is not a use.
+func isDeclName(p pkgFiles, n ast.Node) bool {
+	id, ok := n.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	found := false
+	p.each(func(file string, m ast.Node) bool {
+		if fd, ok := m.(*ast.FuncDecl); ok && fd.Name == id {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// A connection into the daemon's own socket, or a pipe into its handlers, is a
+// way to send it an inject request. The only dials in the package are the
+// client's (dialDaemonWith, to the daemon the CLI names), the SSH client's two,
+// and the dial to the user's SSH agent; net.Pipe and the Dialer type are not
+// used at all, and the process may not spawn commands or open HTTP or RPC
+// connections.
+func TestNoNewRouteIntoTheDaemonsOwnSocket(t *testing.T) {
+	t.Parallel()
+	wantDial := map[string]int{
+		"net.Dial in dialDaemonWith":    2,
+		"net.Dial in sshAuthMethodsFor": 1,
+		"ssh.Dial in dialSSHDirect":     1,
+		"ssh.Dial in dialSSHTunnel":     1,
+	}
+	gotDial := map[string]int{}
+	p := parseDaemon(t)
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		x := types.ExprString(sel.X)
+		if x != "net" && x != "ssh" && x != "tls" {
+			return true
+		}
+		if sel.Sel.Name == "Pipe" || sel.Sel.Name == "Dialer" || strings.HasPrefix(sel.Sel.Name, "Dial") {
+			gotDial[x+"."+sel.Sel.Name+" in "+fun]++
+		}
+		return true
+	})
+	for k, n := range gotDial {
+		if wantDial[k] != n {
+			t.Errorf("%s: %d uses, inventoried as %d", k, n, wantDial[k])
+		}
+	}
+	for k, n := range wantDial {
+		if gotDial[k] != n {
+			t.Errorf("inventoried %q: %d uses, now %d", k, n, gotDial[k])
+		}
+	}
+	p.each(func(file string, n ast.Node) bool {
+		if imp, ok := n.(*ast.ImportSpec); ok {
+			path, _ := strconv.Unquote(imp.Path.Value)
+			switch path {
+			case "os/exec", "net/http", "net/rpc":
+				t.Errorf("%s imports %s; the daemon package opens no other route to a socket or a process", file, path)
+			}
+		}
+		return true
+	})
 }
