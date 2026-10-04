@@ -91,7 +91,7 @@ busy panes whose output is full of error-looking text.
 ## 4. Matching
 
 **Input.** The visible screen from `Driver.CapturePaneJoined`
-(`capture-pane -p -J`, `internal/tmux/driver.go:634`), no scrollback.
+(`capture-pane -p -J`, `internal/tmux/driver.go:636`), no scrollback.
 Joining wrapped lines removes the pane width from the match, so a sample
 taken at one width matches a seat at another; samples are captured the same
 way, and the pane width is recorded beside each.
