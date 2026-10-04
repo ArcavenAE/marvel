@@ -46,11 +46,29 @@ counterfeit, an approval.
 ## 3. The gate
 
 A running session with a live pane and a live process is a candidate only
-when the pane's **foreground command is the harness** (`#{pane_current_command}`,
-already read by `ListPanes`, `internal/tmux/driver.go:890`), matching the
-command name the pattern set records with its sample. A seat with a pager or
-an editor in front (`less` showing the sample or incident text, the block at
-the bottom) is not a candidate, however quiet. Then **either**:
+when the pane's **foreground process is the harness marvel spawned there**
+(option (a) of the review). Two facts decide it:
+
+- **Which harness:** marvel's own record. The session's runtime name selects
+  its adapter from the registry (`internal/runtime/adapter.go:333-345`), the
+  same lookup the spawn used. Nothing is read from the pane for this.
+- **Whether it is in front:** `#{pane_current_command}` (already read by
+  `ListPanes`, `internal/tmux/driver.go:890`) is checked by that adapter's
+  foreground rule, an optional interface in the existing pattern
+  (`SessionIDAssigner`, `adapter.go:197-215`); an adapter without one is never
+  a candidate. claude's rule: the command is a semver-shaped string
+  (`^[0-9]+\.[0-9]+\.[0-9]+$`) or `claude`. Measured read-only on one fleet
+  workstation, every claude pane reports its **version** there: 2.1.285 (7
+  panes), 2.1.283 (6) and 2.1.284 (1), all live at once. A rule keyed on the
+  version recorded with a sample would drop every seat on another version,
+  exactly when an update is likeliest to log seats out.
+
+The same field then supplies the session's harness version for choosing a
+pattern set, which is what makes the `low` tier reachable: a seat on 2.1.285
+matched by a 2.1.283 pattern set is a candidate, matches, and reads `low`.
+A seat with a pager or an editor in front (`less` showing the sample or
+incident text, the block at the bottom) fails the foreground rule and is not
+a candidate, however quiet. Then **either**:
 
 1. **Quiet after work:** `ContextAt` is non-zero and older than the
    watchdog window (default 10 minutes); or
@@ -72,13 +90,17 @@ busy panes whose output is full of error-looking text.
 
 ## 4. Matching
 
-**Input.** The visible screen from `Driver.CapturePane` (`internal/tmux/driver.go:626`), no scrollback.
+**Input.** The visible screen from `Driver.CapturePaneJoined`
+(`capture-pane -p -J`, `internal/tmux/driver.go:634`), no scrollback.
+Joining wrapped lines removes the pane width from the match, so a sample
+taken at one width matches a seat at another; samples are captured the same
+way, and the pane width is recorded beside each.
 
 **Normalize.** Strip trailing spaces per row and drop trailing blank rows.
 `capture-pane -p` without `-e` emits no escape sequences, so there is no ANSI
 to strip; the normalizer refuses input that contains an ESC byte rather
-than guessing. Rows are not joined or reflowed: a wrapped line stays
-two rows, as the sample has it.
+than guessing. The refusal's error names the pane and the byte offset only,
+never the row's text, since that row may hold a span to be masked.
 
 **Patterns are data,** in `internal/panestate/patterns/claude/<harness
 version>/logged-out.yaml`, built from captured samples stored beside them as
@@ -93,7 +115,10 @@ substring match inside a row, no match above the last block.
   harness version equals the session's.
 - `low`: the whole block matches, but the pattern set is for a different
   harness version, or only some rows match. Reported as `unknown`, with the
-  masked evidence kept for `describe`.
+  evidence kept for `describe`. That evidence is **rendered from the
+  pattern** too: its fixed rows, and `<masked>` for each variable span. A
+  partial match shows only the pattern rows that matched, never a captured
+  row that did not.
 - A capture error, an empty screen, or no pattern set for the harness: no
   state, `unknown`.
 
@@ -144,7 +169,8 @@ block no longer matches; the session ends.
 2. A pager in front: the P-WD1 sample displayed in `less` at the bottom of
    the pane, `pane_current_command` = `less`, session quiet past the window:
    not a candidate, never captured, no state. The same screen with the
-   harness command in front: `logged-out`.
+   harness in front (`pane_current_command` = the sample's version):
+   `logged-out`.
 3. The sample's block with a busy session's output below it: no match (the
    block is not at the bottom).
 4. The sample's rows quoted inside a tool result in the middle of the
@@ -167,7 +193,16 @@ block no longer matches; the session ends.
 13. Masking: a sample whose variable span holds
     `https://example.invalid/device?code=ABCD-1234`: the event payload, the
     `describe` output and the daemon log contain neither the URL nor the
-    code, and do contain `<masked>` in that row.
+    code, and do contain `<masked>` in that row. The same with the URL long
+    enough to wrap at the pane edge (joined by `-J`), with a `low` partial
+    match, and with an ESC byte in that row (the refusal path): in none of
+    them does the URL or code appear anywhere.
+14. Cross-version: a pattern set captured on 2.1.283; three seats in front
+    with `pane_current_command` 2.1.283, 2.1.285 and `claude`. The first is a
+    candidate and reads `high`; the second and third are candidates, match,
+    and read `low` (`unknown` in HEALTH, masked evidence in `describe`). A
+    seat whose runtime is not claude, with `2.1.283` in front, is not judged
+    by claude's rule.
 
 ## 7. Probe P-WD1 (builder-run, scratch only)
 
