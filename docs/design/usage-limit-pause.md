@@ -2,7 +2,7 @@
 
 Design for review. No code lands until this doc is reviewed.
 
-- Author: arcaven-architect-g5-0.
+- Author: the arcaven architect seat.
 - Issue: #417. Tracks: aae-orc-1p9z2, which carries recommendations 1 to 3 of
   marvel finding-056 (on #408), approved by the operator on 2026-09-30 as one
   design.
@@ -396,8 +396,13 @@ exception, and only one:
   credits or logged in again resumes work, and its activity signal advances
   (`store.go:790-793`), which rule 2 cannot tell from waiting out the reset.
   The menu's row 2 names the reset time, so the condition stores it as
-  `until`, parsed in the host's zone from the matched span. A clear by any
-  rule before `until` also emits `limit-menu.resumed-before-reset` at warning
+  `until`, parsed from the matched span under three rules. The span has no
+  year, so `until` is its first occurrence after the capture time (a
+  late-December capture of "Jan 2" is next January, not last). It is read in
+  the seat's zone when the seat's environment records one (`TZ`), otherwise
+  in the host's zone, and the provenance names which zone was used. A local
+  time that occurs twice (a DST fall-back) or never (a spring-forward) is not
+  guessed: `until` is empty. A clear by any rule before `until` also emits `limit-menu.resumed-before-reset` at warning
   severity, naming the rule and the time left. It changes nothing; it makes a
   resume that may have cost money, or moved the seat to another account,
   visible (ADR-007). If the span cannot be parsed, `until` is empty, and the
@@ -496,8 +501,8 @@ reach it. Against B: on 2026-10-03 the auto-mode classifier refused one seat's
 raw Escape key to another seat's pane ("Interfere With Workloads"; the probe
 brief, "Constraint met"). B is the daemon acting on its own authority, not one
 agent typing into another's pane, but whether the operator wants that
-authority to exist is the question. Expiry: the default holds until the build
-of UL-7 starts; with no ruling by then, the builder builds A.
+authority to exist is the question. Expiry: none; UL-R1 was ruled
+2026-10-04 (9.9).
 
 ### 9.5 Revised edits
 
@@ -506,7 +511,7 @@ of UL-7 starts; with no ruling by then, the builder builds A.
 | UL-1 | As before, plus the three reading states and the `none` budget row (9.2) | none |
 | UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures | UL-1 |
 | UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3; adopted with UL-R1, see 9.9) | UL-1 |
-| UL-7 | UL-R1: A's events always; B's guarded selection only if the operator rules B; the matcher and its fixtures shared with UL-3 | UL-3, UL-R1, and for B the samples from probe P-UL7 (9.7) |
+| UL-7 | UL-R1, ruled (9.9): A's events always; B's guarded selection built now, as the first limit action; the matcher and its fixtures shared with UL-3 | UL-3, UL-R1, and for B the samples from probe P-UL7 (9.7) |
 
 Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so the
 next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
@@ -553,11 +558,23 @@ next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
     builds A and emits `limit-menu.unselectable` once.
 26. (UL-7, guard) The only key UL-7 can send is `2`, and UL-3 sends none: a
     guard asserts this over every branch and the shared matcher. Run against
-    hostile fixtures (i) to (iv), no fixture leads to a key that would select
+    hostile fixtures (i) to (v), no fixture leads to a key that would select
     "Switch to usage credits", and (iv) and (v) send nothing at all. No
     branch ever sends Enter or an arrow.
 27. (UL-7, A) At the clear, `seat.resume-proposed` is emitted once per limited
     seat and nothing is injected.
+28. (UL-7, B, missing samples) A pane matching the menu sample, for a harness
+    version with no post-selection sample, receives no key; A's events and
+    `limit-menu.unsampled` are emitted once, and a second matching capture in
+    the same limit emits nothing more.
+29. (9.3, `until` parsing, fake clock) A capture on Dec 30 of `Jan 2 at 9pm`
+    stores Jan 2 of the next year, and an activity clear on Dec 31 emits
+    `limit-menu.resumed-before-reset`. With the host in America/Chicago and
+    the seat's `TZ=UTC`, `Oct 6 at 2am` is stored as 02:00Z, and the
+    provenance names UTC; with no seat zone it is 07:00Z and names the host
+    zone. with the clock in October 2026, `Nov 1 at 1:30am` in America/Chicago
+    (occurs twice) and `Mar 14 at 2:30am` (2027, does not occur) store an empty `until`, and the clear emits
+    `limit-menu.reset-unknown`.
 
 ### 9.7 Pre-build probe P-UL7 (operator-run, at the next real limit)
 
@@ -569,15 +586,22 @@ does, at the next real limit event. Nobody schedules it ahead of that, and
 nobody forces a limit to get one.
 
 1. On a seat showing the menu, capture it as the menu sample.
-2. Move the cursor to row 3, press `2` alone, and capture the result. This is
-   post-selection sample A (key `2`, cursor row 3).
-3. On a second limited seat, or the same one after it returns to the menu,
-   repeat with the cursor on row 1. This is sample B (key `2`, cursor row 1).
+2. Move the cursor to row 1 ("Stop and wait for limit to reset"), press `2`
+   alone, and capture the result. This is post-selection sample B (key `2`,
+   cursor row 1). It goes first because it is the safe press: if the digit
+   acts on the cursor row instead of selecting by number, it takes option 1,
+   which spends nothing.
+3. Only if step 2 showed option 2 taken: on a second limited seat, or the same
+   one after it returns to the menu, repeat with the cursor on row 3. This is
+   sample A (key `2`, cursor row 3). **The risk:** row 3 is "Switch to usage
+   credits". If the digit does not select by number, this press is the spend.
+   Step 2 is the evidence that it does; without it, step 3 is not run, and
+   item 4 stays as written.
 4. On a third, select option 1 the way the operator normally would, and
    capture it. This is the must-not-match fixture.
 5. Store each with the harness version, the key and the starting cursor row.
 
-Results: if A and B both show option 2 taken, item 4 may admit any cursor
+Results: if B and A both show option 2 taken, item 4 may admit any cursor
 row, and fixtures (iv) and (v) move to accepted. If either shows anything else,
 item 4 stays as written. If `2` does not select option 2 at all, item 5's
 "not buildable" path applies.
@@ -610,6 +634,11 @@ What it changes in this design:
 - **B is built now** (UL-7, under the matcher of 9.4 and probe P-UL7 of 9.7).
   **A is the target**: its events go on marvel's internal bus once that bus
   exists. Until then they go on the event ring, as section 3 says.
+- **No samples, no key.** B acts only where a menu sample and a P-UL7
+  post-selection sample exist for the seat's harness version. A matching menu
+  with no post-selection sample sends nothing and emits A's events plus
+  `limit-menu.unsampled`, once per limit per seat. Matcher item 5 covers
+  samples that fail; this covers samples that are missing.
 - **The action is pluggable.** UL-7 defines a limit action as an interface
   with B's guarded selection as its first implementation. A `/login`
   migration of the running session to another backend is a named future
@@ -622,3 +651,9 @@ What it changes in this design:
 - **UL-R2 was not ruled separately.** It is taken as adopted under "marvel can
   do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3, and
   its expiry no longer applies.
+
+  **Conflict, awaiting the operator.** That adoption line and 9.3's expiry
+  (build the alternative, no `pane-menu` source, if UL-R2 has no ruling when
+  UL-3's build starts) disagree on whether UL-R2 is ruled. The question is
+  escalated to the operator. Neither text is edited until the answer comes
+  back, and UL-3's `pane-menu` source is not built until it does.
