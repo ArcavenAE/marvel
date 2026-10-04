@@ -557,3 +557,40 @@ func TestPaneMenuCapturesOnlyWhereTheHarnessIsInFront(t *testing.T) {
 		t.Fatalf("held pane captured with a pager in front (calls +%d)", r.calls-before)
 	}
 }
+
+// A package-level func variable is a hole the import check cannot see: it can be
+// assigned from anywhere at init. None may exist in the package (marvel#552).
+func TestPaneMenuHasNoPackageLevelFuncVariables(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no sources: %v", err)
+	}
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, perr := parser.ParseFile(fset, name, nil, 0)
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs := spec.(*ast.ValueSpec)
+				if _, isFunc := vs.Type.(*ast.FuncType); isFunc {
+					t.Errorf("%s: package-level func variable %v", fset.Position(vs.Pos()), vs.Names)
+				}
+				for _, v := range vs.Values {
+					if _, lit := v.(*ast.FuncLit); lit {
+						t.Errorf("%s: package-level func literal %v", fset.Position(vs.Pos()), vs.Names)
+					}
+				}
+			}
+		}
+	}
+}

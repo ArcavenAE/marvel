@@ -32,6 +32,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
+	"github.com/arcavenae/marvel/internal/limitact"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
@@ -200,7 +201,7 @@ type Daemon struct {
 	paneMenu     *panemenu.Source
 	paneMenuOnce sync.Once
 	// limitAct is the limit action behind the pane-menu source's hooks.
-	limitAct     limitAction
+	limitAct     *limitact.Action
 	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table
