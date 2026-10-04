@@ -1691,8 +1691,13 @@ names the shell. A failed repaint never fails the capture.
 byte on stdout, so text drawn dim, such as a composer suggestion, can be told
 from a typed draft. --composer reports the composer state marvel's own reader
 gives the session ("composer: empty", "holds_text", "mid_turn", "unknown", ...)
-on stderr. It types nothing. Like --repaint it nudges the pane's size, because
-the reader repaints before it reads. A runtime with no reader reads unknown.`,
+on stderr. It types nothing. It nudges the pane's size once (with or without
+--repaint), because the reader repaints before it reads; --settle applies to
+that one nudge. The state is read from a capture in the reader's mode (escapes
+for claude). With --escapes the content is that same capture, so content and
+state cannot disagree. Without --escapes on claude the plain content is a
+second capture taken straight after, and the two can differ if the pane changed
+between them. A runtime with no reader reads unknown.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := captureRequest(args[0], captureOpts{

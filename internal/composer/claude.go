@@ -120,15 +120,14 @@ func (claudeReader) Read(capture string) State {
 				return Unknown
 			}
 		}
-		// Text drawn dim from its first visible character to its last is a
-		// suggestion, not a draft: a typed draft is never dim. It reads as the
-		// composer being empty, beside the same evidence of idle a draft needs
-		// (marvel#571). A plain first character with a dim tail is a draft.
-		if allDim(raw[top : top+len(draft)]) {
-			if !doneLine.MatchString(above) {
-				return Unknown
-			}
-			return Empty
+		// Text whose first visible character is dim is a suggestion, not a draft: a
+		// typed draft is never drawn dim. It reads Unknown, not Empty: Empty would
+		// let a dim chip left by a submit that did not land confirm that submit,
+		// and let a bare digit through, while Unknown permits and confirms
+		// nothing. A plain first character with a dim tail is a draft
+		// (marvel#571).
+		if dimAtText(raw[top]) {
+			return Unknown
 		}
 		// A draft counts only beside positive evidence of idle: a finished turn's
 		// done line. The absence of turn markers is not evidence: the capture is the
@@ -197,42 +196,4 @@ func applySGR(dim bool, params string) bool {
 		}
 	}
 	return dim
-}
-
-// allDim reports whether every visible character of the composer's text is
-// drawn dim (SGR 2). lines are the composer's raw lines, the first holding the
-// prompt. The dim state carries from one line to the next, so a suggestion that
-// wraps stays dim; a continuation line is indented by two spaces. A capture
-// with no escapes has no dim text, so it is never all dim.
-func allDim(lines []string) bool {
-	dim := false
-	seen := false
-	for n, l := range lines {
-		if n == 0 {
-			i := strings.Index(l, claudePrompt)
-			if i < 0 {
-				return false
-			}
-			l = l[i+len(claudePrompt):]
-		}
-		for len(l) > 0 {
-			loc := sgrSeq.FindStringIndex(l)
-			seg := l
-			if loc != nil {
-				seg = l[:loc[0]]
-			}
-			if vis := strings.TrimSpace(ansiSeq.ReplaceAllString(seg, "")); vis != "" {
-				if !dim {
-					return false
-				}
-				seen = true
-			}
-			if loc == nil {
-				break
-			}
-			dim = applySGR(dim, l[loc[0]+2:loc[1]-1])
-			l = l[loc[1]:]
-		}
-	}
-	return seen
 }
