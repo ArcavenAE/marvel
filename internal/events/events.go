@@ -58,9 +58,23 @@ const (
 	// time could not be read, so "before the reset" cannot be judged.
 	KindLimitMenuResumedBeforeReset Kind = "limit-menu.resumed-before-reset"
 	KindLimitMenuResetUnknown       Kind = "limit-menu.reset-unknown"
-	KindSessionRestarted            Kind = "session.restarted"
-	KindSessionFailed               Kind = "session.failed"
-	KindSessionSucceeded            Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// The limit action's events (design 9.4, UL-7). Unsampled: a menu matched
+	// but no post-selection sample exists for its version, so no key was sent.
+	// Unselectable: the samples show the digit does not select option 2.
+	// Refused: a menu block was found but the matcher declined it. Answered,
+	// Unconfirmed and Unexpected follow the one key the action sent.
+	KindLimitMenuUnsampled    Kind = "limit-menu.unsampled"
+	KindLimitMenuUnselectable Kind = "limit-menu.unselectable"
+	KindLimitMenuRefused      Kind = "limit-menu.refused"
+	KindLimitMenuAnswered     Kind = "limit-menu.answered"
+	KindLimitMenuUnconfirmed  Kind = "limit-menu.unconfirmed"
+	KindLimitMenuUnexpected   Kind = "limit-menu.unexpected"
+	// KindSeatResumeProposed is option A: at the clear of a limit, a human or
+	// an awake seat is told this seat can be resumed. Nothing is injected.
+	KindSeatResumeProposed Kind = "seat.resume-proposed"
+	KindSessionRestarted   Kind = "session.restarted"
+	KindSessionFailed      Kind = "session.failed"
+	KindSessionSucceeded   Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
@@ -313,6 +327,13 @@ var allKinds = []Kind{
 	KindSessionUnlimited,
 	KindLimitMenuResumedBeforeReset,
 	KindLimitMenuResetUnknown,
+	KindLimitMenuUnsampled,
+	KindLimitMenuUnselectable,
+	KindLimitMenuRefused,
+	KindLimitMenuAnswered,
+	KindLimitMenuUnconfirmed,
+	KindLimitMenuUnexpected,
+	KindSeatResumeProposed,
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,
