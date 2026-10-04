@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/limitmenu"
 )
@@ -139,13 +140,29 @@ func TestAllowBareDigitLiftsOnlyTheCannotRuleOutRefusal(t *testing.T) {
 	neverShows(t, d2, menuKey, "got:3")
 }
 
+// A seat showing a composer with a staged draft: a prompt line (a glyph and a
+// no-break space) between two rules, holding text that is not the dim
+// placeholder, under a finished turn's done line. The reader places it HoldsText.
+const stagedDraftSeat = `stty -echo
+printf '✻ Worked for 2s · done 5:23 PM\n\n'
+printf '────────────────────────────────────────────────────────────────────────\n'
+printf '❯\xc2\xa0fix the build\n'
+printf '────────────────────────────────────────────────────────────────────────\n'
+printf 'staged draft ready\n'
+while IFS= read -r line; do echo "got:$line"; done
+`
+
 // A composer holding a staged draft is placed by the reader, but a digit there is
 // not ruled out as a menu answer: a menu row can read as a staged draft, so only
 // an empty composer or a turn in progress rules the menu out.
 func TestBareDigitIsRefusedWhileTheComposerHoldsADraft(t *testing.T) {
 	d := bareDigitDaemon(t)
-	key := verifySeat(t, d, composerFixtureSeat(t, "2-staged-draft"), "claude", "history of lighthouses")
+	key := verifySeat(t, d, stagedDraftSeat, "claude", "staged draft ready")
 
+	c, err := d.driver.CapturePaneEscapes(sessionOf(t, d, key).PaneID)
+	if err != nil || composer.ReaderFor("claude").Read(c) != composer.HoldsText {
+		t.Fatalf("control: the seat must read as a staged draft, got %q (err %v)", composer.ReaderFor("claude").Read(c), err)
+	}
 	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "3", "literal": true, "enter": true})
 	if !strings.Contains(resp.Error, "cannot rule out") {
 		t.Fatalf("error = %q, want the cannot-rule-out refusal", resp.Error)
