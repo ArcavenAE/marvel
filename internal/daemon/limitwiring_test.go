@@ -708,3 +708,97 @@ func TestNoNewRouteIntoTheDaemonsOwnSocket(t *testing.T) {
 		return true
 	})
 }
+
+// notifyHandoffUses lists every mention of notifyHandoff in the package other
+// than its declaration and the one pinned install, teamCtrl.Notify =
+// d.notifyHandoff in daemon.go NewWithOptions. notifyHandoff types a literal
+// plus Enter into a pane after #560's preflight, so a caller that passes it
+// "3" reaches a menu's option key through the sender the key-press inventory
+// already counts once (the N1c class). A call, a method value or a bare name
+// elsewhere is a new route and is listed.
+func notifyHandoffUses(p pkgFiles) []string {
+	allowed := map[ast.Node]bool{}
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || file != "daemon.go" || fun != "NewWithOptions" || len(as.Lhs) != len(as.Rhs) {
+			return true
+		}
+		for i := range as.Lhs {
+			if types.ExprString(as.Lhs[i]) == "teamCtrl.Notify" && types.ExprString(as.Rhs[i]) == "d.notifyHandoff" {
+				allowed[as.Rhs[i]] = true
+			}
+		}
+		return true
+	})
+	var uses []string
+	p.each(func(file string, n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if x.Sel.Name == "notifyHandoff" && !allowed[x] {
+				uses = append(uses, file+": "+types.ExprString(x))
+			}
+		case *ast.Ident:
+			if x.Name == "notifyHandoff" && !isDeclName(p, x) && !isSelectorName(p, x) {
+				uses = append(uses, file+": "+x.Name)
+			}
+		}
+		return true
+	})
+	return uses
+}
+
+// isSelectorName reports whether an identifier is the Sel of a selector
+// expression, which notifyHandoffUses has already judged as a whole.
+func isSelectorName(p pkgFiles, id *ast.Ident) bool {
+	found := false
+	p.each(func(file string, m ast.Node) bool {
+		if s, ok := m.(*ast.SelectorExpr); ok && s.Sel == id {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+func TestNotifyHandoffHasNoCallerBesideItsInstall(t *testing.T) {
+	t.Parallel()
+	for _, u := range notifyHandoffUses(parseDaemon(t)) {
+		t.Errorf("notifyHandoff reached outside its pinned install: %s", u)
+	}
+}
+
+// The guard fails on a new caller: a call, a method value, a bare name, and a
+// second install in another function or file are each listed, and the pinned
+// install alone is not.
+func TestNotifyHandoffGuardCatchesANewCaller(t *testing.T) {
+	t.Parallel()
+	const pinned = "package daemon\nfunc NewWithOptions(d *Daemon) { teamCtrl.Notify = d.notifyHandoff }\n"
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  int
+	}{
+		{"only the pinned install", map[string]string{"daemon.go": pinned}, 0},
+		{"a call", map[string]string{"daemon.go": pinned, "watch.go": "package daemon\nfunc watch(d *Daemon) { _ = d.notifyHandoff(s, \"3\") }\n"}, 1},
+		{"a method value", map[string]string{"daemon.go": pinned, "watch.go": "package daemon\nfunc watch(d *Daemon) { f := d.notifyHandoff; _ = f }\n"}, 1},
+		{"a package-level var", map[string]string{"daemon.go": pinned, "watch.go": "package daemon\nvar send = (*Daemon).notifyHandoff\n"}, 1},
+		{"a second install", map[string]string{"daemon.go": pinned + "func other(d *Daemon) { teamCtrl.Notify = d.notifyHandoff }\n"}, 1},
+		{"the install moved to another file", map[string]string{"daemon.go": "package daemon\n", "watch.go": pinned}, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := pkgFiles{fset: token.NewFileSet(), files: map[string]*ast.File{}}
+			for name, src := range tc.files {
+				f, err := parser.ParseFile(p.fset, name, src, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.files[name] = f
+			}
+			if got := notifyHandoffUses(p); len(got) != tc.want {
+				t.Errorf("uses = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
