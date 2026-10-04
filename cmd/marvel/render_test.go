@@ -413,3 +413,59 @@ func TestRenderSessionTableMarksTerminalRoles(t *testing.T) {
 		})
 	}
 }
+
+// Account rows share the budget table. A none or stale row must not read as a
+// number or as healthy: no percent sign, no "ok", and the cells that mean
+// nothing for an account are dashes.
+func TestRenderBudgetTableAccountRows(t *testing.T) {
+	resets := time.Now().UTC().Add(49*time.Hour + 30*time.Minute)
+	rows := []admission.Row{
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "claude default - default-home",
+			AccountWindow: "-", Reading: "none", Note: "no reading received for this account",
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "codex default - /h/.codex",
+			AccountWindow: "seven_day", Reading: "stale", ResetsAt: &resets, Note: "reading from ws/a at 2026-10-04T12:00:00Z",
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "forestage default - default-home",
+			AccountWindow: "seven_day", Reading: "fresh", Observed: 87, ResetsAt: &resets, Note: "reading from ws/b at 2026-10-04T12:00:00Z",
+		},
+	}
+	table := renderBudgetTable(rows)
+	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("got %d lines, want header and 3 rows:\n%s", len(lines), table)
+	}
+	line := func(sub string) string {
+		for _, l := range lines {
+			if strings.Contains(l, sub) {
+				return l
+			}
+		}
+		t.Fatalf("no row for %q:\n%s", sub, table)
+		return ""
+	}
+	none, stale, fresh := line("claude default"), line("codex default"), line("forestage default")
+	if !strings.Contains(none, "none") || strings.Contains(none, "%") || strings.Contains(none, " ok") {
+		t.Errorf("none row reads as a number or as ok: %q", none)
+	}
+	if !strings.Contains(stale, "stale") || strings.Contains(stale, "%") || strings.Contains(stale, " ok") {
+		t.Errorf("stale row reads as a number or as ok: %q", stale)
+	}
+	if !strings.Contains(fresh, "87%") {
+		t.Errorf("fresh row does not show the percentage: %q", fresh)
+	}
+	if !strings.Contains(fresh, "2d1h") {
+		t.Errorf("fresh row does not show the time to reset: %q", fresh)
+	}
+	if !strings.Contains(fresh, "seven_day") {
+		t.Errorf("fresh row does not name its window: %q", fresh)
+	}
+	for _, l := range []string{none, stale, fresh} {
+		if !strings.Contains(l, string(api.DimAccountWindow)) {
+			t.Errorf("row lacks its dimension: %q", l)
+		}
+	}
+}

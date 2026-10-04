@@ -2965,12 +2965,22 @@ func renderBudgetTable(rows []admission.Row) string {
 		if rows[i].Team != rows[j].Team {
 			return rows[i].Team < rows[j].Team
 		}
-		return rows[i].Dimension < rows[j].Dimension
+		if rows[i].Dimension != rows[j].Dimension {
+			return rows[i].Dimension < rows[j].Dimension
+		}
+		if rows[i].Account != rows[j].Account {
+			return rows[i].Account < rows[j].Account
+		}
+		return rows[i].AccountWindow < rows[j].AccountWindow
 	})
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tDIMENSION\tLIMIT\tOBSERVED\tHEADROOM\tSTATE\tWINDOW\tNOTE\n")
 	for _, r := range rows {
+		if r.Reading != "" {
+			writeAccountRow(w, r)
+			continue
+		}
 		note := r.Note
 		if note == "" {
 			note = "-"
@@ -2981,6 +2991,40 @@ func renderBudgetTable(rows []admission.Row) string {
 	}
 	_ = w.Flush()
 	return buf.String()
+}
+
+// writeAccountRow renders an account_window row into the budget table. The
+// cells that mean nothing for an account (limit, headroom, state) are dashes.
+// OBSERVED is the percentage only for a fresh reading; a stale or absent
+// reading reads as that word, never as a number and never as ok.
+func writeAccountRow(w io.Writer, r admission.Row) {
+	observed := r.Reading
+	if r.Reading == "fresh" {
+		observed = fmt.Sprintf("%d%%", r.Observed)
+	}
+	resets := "-"
+	if r.ResetsAt != nil {
+		resets = formatUntil(time.Until(*r.ResetsAt))
+	}
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t-\t%s\t%s %s; %s\n",
+		r.Workspace, r.Team, r.Dimension, observed, resets, r.Account, r.AccountWindow, r.Note)
+}
+
+// formatUntil renders a time to go as days and hours, hours and minutes, or
+// minutes, whichever is the coarsest that is not zero.
+func formatUntil(d time.Duration) string {
+	if d <= 0 {
+		return "now"
+	}
+	h := int(d.Hours())
+	switch {
+	case h >= 24:
+		return fmt.Sprintf("%dd%dh", h/24, h%24)
+	case h >= 1:
+		return fmt.Sprintf("%dh%dm", h, int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
 }
 
 // formatWindow renders how long a cumulative figure has been accumulating.

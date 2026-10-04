@@ -188,6 +188,9 @@ type Daemon struct {
 	// Per-session context and token accountant, fed by the adapter
 	// streams through the session manager. Always non-nil.
 	usage *usage.Accountant
+	// accounts holds the newest rate-limit reading per account, in memory.
+	// It is not keyed to a session and is not the heartbeat's data.
+	accounts *api.AccountReadings
 
 	// metricsWarn keeps a sampler that cannot read the process table
 	// from writing the same line every interval for the life of the
@@ -407,6 +410,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		logs:      buf,
 		events:    evRing,
 		usage:     acct,
+		accounts:  api.NewAccountReadings(),
 		orphans:   newOrphanRegistry(),
 		reexec:    syscall.Exec,
 	}
@@ -943,6 +947,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
+	case "account.limits":
+		return d.handleAccountLimits(req.Params)
 	case "run":
 		return d.handleRun(req.Params)
 	case "shift":

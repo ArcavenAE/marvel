@@ -1,0 +1,175 @@
+package daemon
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/arcavenae/marvel/internal/api"
+)
+
+func accountSession(name, harness string) api.Session {
+	return api.Session{
+		Workspace:       "ws",
+		Name:            name,
+		State:           api.SessionRunning,
+		Runtime:         api.Runtime{Name: harness},
+		BackendResolved: api.BackendDefaultName,
+	}
+}
+
+func acctPct(v float64) *float64 { return &v }
+
+var acctT0 = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+
+// Test 19: an account with live sessions and no reading has one row, window
+// "-", observed none, and no percentage anywhere in it.
+func TestAccountRowsNoneIsOneRow(t *testing.T) {
+	t.Parallel()
+	rows := accountRows(api.NewAccountReadings(), []api.Session{accountSession("a", "claude"), accountSession("b", "claude")}, acctT0)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 for one account: %+v", len(rows), rows)
+	}
+	r := rows[0]
+	if r.Dimension != api.DimAccountWindow || r.AccountWindow != "-" || r.Reading != "none" {
+		t.Fatalf("row = %+v, want account_window / - / none", r)
+	}
+	if r.Workspace != "-" || r.Team != "-" {
+		t.Errorf("an account belongs to no workspace or team: %q %q", r.Workspace, r.Team)
+	}
+	if r.Observed != 0 || r.Limit != 0 || r.Headroom != 0 || r.ResetsAt != nil {
+		t.Errorf("a none row carries numbers: %+v", r)
+	}
+	if !strings.Contains(r.Account, "claude") {
+		t.Errorf("account %q does not name the key", r.Account)
+	}
+}
+
+func TestAccountRowsFreshOneRowPerWindow(t *testing.T) {
+	t.Parallel()
+	rd := api.NewAccountReadings()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	reset := acctT0.Add(48 * time.Hour)
+	rd.Record(key, []api.AccountWindow{
+		{Name: "seven_day", UsedPercent: acctPct(86.6), ResetsAt: reset},
+		{Name: "five_hour", UsedPercent: acctPct(12), ResetsAt: acctT0.Add(time.Hour)},
+	}, "ws/a", acctT0)
+	rows := accountRows(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(time.Minute))
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(rows), rows)
+	}
+	if rows[0].AccountWindow != "five_hour" || rows[1].AccountWindow != "seven_day" {
+		t.Fatalf("rows not in window-name order: %q then %q", rows[0].AccountWindow, rows[1].AccountWindow)
+	}
+	if rows[1].Reading != "fresh" || rows[1].Observed != 87 {
+		t.Errorf("seven_day = %+v, want fresh and 87 (rounded)", rows[1])
+	}
+	if rows[1].ResetsAt == nil || !rows[1].ResetsAt.Equal(reset) {
+		t.Errorf("resets_at = %v, want %v", rows[1].ResetsAt, reset)
+	}
+	if !strings.Contains(rows[1].Note, "ws/a") {
+		t.Errorf("note %q does not name the reporting session", rows[1].Note)
+	}
+}
+
+// Test 21: 16 minutes on, the rows are stale and carry no number.
+func TestAccountRowsStaleKeepWindowsAndDropNumbers(t *testing.T) {
+	t.Parallel()
+	rd := api.NewAccountReadings()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(100), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
+	rows := accountRows(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(16*time.Minute))
+	if len(rows) != 1 || rows[0].Reading != "stale" || rows[0].AccountWindow != "seven_day" {
+		t.Fatalf("rows = %+v, want one stale seven_day row", rows)
+	}
+	if rows[0].Observed != 0 {
+		t.Errorf("a stale row carries observed %d; it must not show a number", rows[0].Observed)
+	}
+}
+
+func TestAccountRowsOnlyLiveSessionsMakeANoneRow(t *testing.T) {
+	t.Parallel()
+	ended := accountSession("gone", "codex")
+	ended.State = api.SessionFailed
+	rows := accountRows(api.NewAccountReadings(), []api.Session{ended}, acctT0)
+	if len(rows) != 0 {
+		t.Fatalf("an account only an ended session used got rows: %+v", rows)
+	}
+}
+
+func TestAccountRowsTwoAccountsTwoGroups(t *testing.T) {
+	t.Parallel()
+	rows := accountRows(api.NewAccountReadings(), []api.Session{accountSession("a", "claude"), accountSession("b", "codex")}, acctT0)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want one none row per account: %+v", len(rows), rows)
+	}
+	if rows[0].Account == rows[1].Account {
+		t.Fatalf("both rows name %q", rows[0].Account)
+	}
+}
+
+// A reading whose sessions have all gone still shows, as stale in time.
+func TestAccountRowsKeepAReadingNoSessionUses(t *testing.T) {
+	t.Parallel()
+	rd := api.NewAccountReadings()
+	rd.Record(api.AccountKeyOf(accountSession("a", "claude")), []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(5)}}, "ws/a", acctT0)
+	rows := accountRows(rd, nil, acctT0)
+	if len(rows) != 1 || rows[0].Reading != "fresh" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+// The RPC resolves the reporting session to its account and the budget view
+// then shows the reading. A session that does not exist is refused.
+func TestAccountLimitsRPCRecordsAndShows(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := accountSession("seat", "claude")
+	if err := d.store.CreateSession(&sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if resp := d.recordAccountLimits(api.AccountLimitsRequest{Session: "ws/nobody", Windows: []api.AccountWindow{{Name: "w", UsedPercent: acctPct(1)}}}, acctT0); resp.Error == "" {
+		t.Fatal("a reading from an unknown session was accepted")
+	}
+	resp := d.recordAccountLimits(api.AccountLimitsRequest{Session: "ws/seat", Windows: []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(42)}}}, time.Now().UTC())
+	if resp.Error != "" {
+		t.Fatalf("record: %s", resp.Error)
+	}
+	var got []string
+	for _, r := range d.budgetRows() {
+		if r.Dimension == api.DimAccountWindow {
+			got = append(got, r.Reading+":"+r.AccountWindow)
+		}
+	}
+	if len(got) != 1 || got[0] != "fresh:seven_day" {
+		t.Fatalf("account rows = %v, want [fresh:seven_day]", got)
+	}
+}
+
+// A reading with no usable percentage is acknowledged as not stored, and the
+// account stays none.
+func TestAccountLimitsRPCReportsAnUnusableReading(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := accountSession("seat", "claude")
+	if err := d.store.CreateSession(&sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	resp := d.recordAccountLimits(api.AccountLimitsRequest{Session: "ws/seat", Windows: []api.AccountWindow{{Name: "five_hour"}}}, time.Now().UTC())
+	if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":false`) {
+		t.Fatalf("resp = %+v", resp)
+	}
+	for _, r := range d.budgetRows() {
+		if r.Dimension == api.DimAccountWindow && r.Reading != "none" {
+			t.Fatalf("row = %+v, want none", r)
+		}
+	}
+}
+
+// A runtime that can never send a reading gets no none row: a none row means
+// a reading is expected and has not arrived.
+func TestAccountRowsNoNoneRowForARuntimeThatCannotReport(t *testing.T) {
+	t.Parallel()
+	rows := accountRows(api.NewAccountReadings(), []api.Session{accountSession("a", "sleep"), accountSession("b", "generic")}, acctT0)
+	if len(rows) != 0 {
+		t.Fatalf("got rows for runtimes that cannot report: %+v", rows)
+	}
+}
