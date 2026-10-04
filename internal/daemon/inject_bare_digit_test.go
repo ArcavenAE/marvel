@@ -45,7 +45,12 @@ func TestIsBareDigit(t *testing.T) {
 // "got:<line>". The composer reader places it Empty on a capture with escapes.
 func idleComposerSeat(t *testing.T) string {
 	t.Helper()
-	fixture, err := filepath.Abs("../composer/testdata/claude/1-empty-idle.ansi.txt")
+	return composerFixtureSeat(t, "1-empty-idle")
+}
+
+func composerFixtureSeat(t *testing.T, name string) string {
+	t.Helper()
+	fixture, err := filepath.Abs("../composer/testdata/claude/" + name + ".ansi.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,4 +137,18 @@ func TestAllowBareDigitLiftsOnlyTheCannotRuleOutRefusal(t *testing.T) {
 		t.Fatalf("the flag answered a found menu: error = %q", resp.Error)
 	}
 	neverShows(t, d2, menuKey, "got:3")
+}
+
+// A composer holding a staged draft is placed by the reader, but a digit there is
+// not ruled out as a menu answer: a menu row can read as a staged draft, so only
+// an empty composer or a turn in progress rules the menu out.
+func TestBareDigitIsRefusedWhileTheComposerHoldsADraft(t *testing.T) {
+	d := bareDigitDaemon(t)
+	key := verifySeat(t, d, composerFixtureSeat(t, "2-staged-draft"), "claude", "history of lighthouses")
+
+	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "3", "literal": true, "enter": true})
+	if !strings.Contains(resp.Error, "cannot rule out") {
+		t.Fatalf("error = %q, want the cannot-rule-out refusal", resp.Error)
+	}
+	neverShows(t, d, key, "got:3")
 }
