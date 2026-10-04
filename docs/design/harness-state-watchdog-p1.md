@@ -45,8 +45,12 @@ counterfeit, an approval.
 
 ## 3. The gate
 
-A running session with a live pane and a live process is a candidate when
-**either**:
+A running session with a live pane and a live process is a candidate only
+when the pane's **foreground command is the harness** (`#{pane_current_command}`,
+already read by `ListPanes`, `internal/tmux/driver.go:890`), matching the
+command name the pattern set records with its sample. A seat with a pager or
+an editor in front (`less` showing the sample or incident text, the block at
+the bottom) is not a candidate, however quiet. Then **either**:
 
 1. **Quiet after work:** `ContextAt` is non-zero and older than the
    watchdog window (default 10 minutes); or
@@ -70,8 +74,10 @@ busy panes whose output is full of error-looking text.
 
 **Input.** The visible screen from `Driver.CapturePane` (`internal/tmux/driver.go:626`), no scrollback.
 
-**Normalize.** Strip ANSI escapes, strip trailing spaces per row, drop
-trailing blank rows. Rows are not joined or reflowed: a wrapped line stays
+**Normalize.** Strip trailing spaces per row and drop trailing blank rows.
+`capture-pane -p` without `-e` emits no escape sequences, so there is no ANSI
+to strip; the normalizer refuses input that contains an ESC byte rather
+than guessing. Rows are not joined or reflowed: a wrapped line stays
 two rows, as the sample has it.
 
 **Patterns are data,** in `internal/panestate/patterns/claude/<harness
@@ -87,7 +93,7 @@ substring match inside a row, no match above the last block.
   harness version equals the session's.
 - `low`: the whole block matches, but the pattern set is for a different
   harness version, or only some rows match. Reported as `unknown`, with the
-  evidence kept for `describe`.
+  masked evidence kept for `describe`.
 - A capture error, an empty screen, or no pattern set for the harness: no
   state, `unknown`.
 
@@ -110,12 +116,20 @@ it becomes a second pattern set in the same package, not a second matcher.
 - **`get sessions`:** HEALTH carries `(logged-out)`, the same suffix idiom as
   `(stalled)` (`cmd/marvel/main.go:2638-2646`). No new column, no change to
   `State` or `HealthState`.
+- **No captured text leaves the matcher unmasked.** A login screen's
+  variable span is exactly where an auth URL or a device code sits. Every
+  surface carries the pattern's id and version and the pattern's **fixed**
+  rows; each variable span is replaced by `<masked>`. The raw capture is
+  never stored, logged or published.
 - **`describe session`:** `Harness state: logged-out (high, claude
-  2.1.x, captured 04:12Z)` and the matched rows, verbatim.
+  2.1.x, pattern logged-out@1, captured 04:12Z)` and the fixed rows, masked
+  as above.
 - **Events:** `session.harness-state` with the state, confidence, pattern
-  version and matched rows, on the event ring at warning severity, and
-  `session.harness-state-cleared` when it ends. At warning, the zhx6x tap
-  carries them to the bus once it ships.
+  id and version, and the masked rows, on the event ring at warning
+  severity, and `session.harness-state-cleared` when it ends. At warning, the
+  zhx6x tap carries them to the bus once it ships. **No bus consumer may act
+  on these events before Phase 3**: they inform an operator, and acting on a
+  pane from them is the inject-as-approval shape #542 leaves open.
 - **Fleet roll-up:** when three or more seats on one account read
   `logged-out` within one window, one `account.logged-out` event names them,
   so a fleet-wide expiry reads as one fact, not thirty.
@@ -126,8 +140,11 @@ block no longer matches; the session ends.
 ## 6. Tests (red first)
 
 1. A fake driver whose visible screen is the P-WD1 sample, session quiet past
-   the window: `logged-out`, `high`, the evidence equals the sample's rows.
-2. The same screen with ANSI color codes around each row: the same result.
+   the window: `logged-out`, `high`, the evidence equals the sample's fixed rows, with each variable span masked.
+2. A pager in front: the P-WD1 sample displayed in `less` at the bottom of
+   the pane, `pane_current_command` = `less`, session quiet past the window:
+   not a candidate, never captured, no state. The same screen with the
+   harness command in front: `logged-out`.
 3. The sample's block with a busy session's output below it: no match (the
    block is not at the bottom).
 4. The sample's rows quoted inside a tool result in the middle of the
@@ -147,16 +164,35 @@ block no longer matches; the session ends.
     `account.logged-out` event naming all three.
 12. The rot test: each stored sample is matched by its own pattern set; a
     sample edited by one character in a fixed span is not.
+13. Masking: a sample whose variable span holds
+    `https://example.invalid/device?code=ABCD-1234`: the event payload, the
+    `describe` output and the daemon log contain neither the URL nor the
+    code, and do contain `<masked>` in that row.
 
 ## 7. Probe P-WD1 (builder-run, scratch only)
 
-A logged-out screen is safe to produce without touching the fleet: on a
+The aim is a logged-out screen produced without touching the fleet: on a
 scratch tmux server (`tmux -L wd1-scratch`), start the harness with an empty
 config directory (`CLAUDE_CONFIG_DIR=$(mktemp -d)`) and no credentials in
-the environment, wait for it to settle, and capture the visible screen with
-the harness version. Positive control: the same capture from a scratch
-session that is logged in shows no match. That gives the "never logged in"
-screen.
+the environment, wait for it to settle, and capture the visible screen, the
+harness version and `pane_current_command`.
+
+- **Open question: where the harness keeps its login, per OS.** On macOS it
+  may use the system keychain, so an empty config directory may not isolate
+  the scratch session from the operator's login. This is not answered by
+  probing: no seat inspects the harness binary or the keychain to find out
+  (a seat that tried was refused as credential exploration, and the refusal
+  is the design). It is asked of the operator or of the harness's own
+  documentation.
+- **Stop condition.** If the first capture shows a logged-in prompt, stop:
+  the scratch session is not isolated. Kill the scratch server
+  (`tmux -L wd1-scratch kill-server`), record that, and capture nothing
+  further.
+- **The positive control is operator-run.** A logged-in capture needs a real
+  credential, so the operator runs it, with their own login, and hands over
+  only the capture. No seat runs it.
+
+That gives the "never logged in" screen.
 
 The "token expired mid-session" screen (#276 cause 2) cannot be produced on
 purpose without spending or breaking a real credential. It is captured at the
