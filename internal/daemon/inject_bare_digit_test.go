@@ -10,8 +10,10 @@ import (
 	"github.com/arcavenae/marvel/internal/limitmenu"
 )
 
-// A bare digit is text exactly "1", "2" or "3", whatever Literal and Enter say.
-func TestIsBareDigit(t *testing.T) {
+// A menu digit is text that starts with "1", "2" or "3" after leading
+// whitespace, whatever Literal and Enter say: a menu that selects by number may
+// act on the first character of "3 ", "3\n" or "13".
+func TestStartsWithMenuDigit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		text string
@@ -20,21 +22,29 @@ func TestIsBareDigit(t *testing.T) {
 		{"1", true},
 		{"2", true},
 		{"3", true},
+		{" 3", true},
+		{"\t2", true},
+		{"\n1", true},
+		{"3 ", true},
+		{"3\n", true},
+		{"13", true},
+		{"2 apples", true},
 		{"0", false},
 		{"4", false},
-		{"12", false},
-		{" 3", false},
-		{"3 ", false},
+		{"9", false},
 		{"", false},
+		{"   ", false},
 		{"three", false},
 		{"Enter", false},
 		{"hello", false},
+		{"x3", false},
+		{"-1", false},
 	}
 	for _, tt := range tests {
 		for _, lit := range []bool{true, false} {
 			for _, enter := range []bool{true, false} {
-				if got := isBareDigit(injectParams{Text: tt.text, Literal: lit, Enter: enter}); got != tt.want {
-					t.Errorf("isBareDigit(%q literal=%v enter=%v) = %v, want %v", tt.text, lit, enter, got, tt.want)
+				if got := startsWithMenuDigit(injectParams{Text: tt.text, Literal: lit, Enter: enter}); got != tt.want {
+					t.Errorf("startsWithMenuDigit(%q literal=%v enter=%v) = %v, want %v", tt.text, lit, enter, got, tt.want)
 				}
 			}
 		}
@@ -76,6 +86,10 @@ func TestBareDigitIsRefusedWhenTheCaptureCannotRuleOutTheMenu(t *testing.T) {
 		{"text": "3", "literal": true},
 		{"text": "2", "literal": true, "enter": true},
 		{"text": "1", "literal": false},
+		{"text": " 3", "literal": true},
+		{"text": "3 ", "literal": true, "enter": true},
+		{"text": "3\n", "literal": true},
+		{"text": "13", "literal": true, "enter": true},
 	} {
 		p["session_key"] = key
 		resp := injectOf(t, d, p)
@@ -131,6 +145,10 @@ func TestAllowBareDigitLiftsOnlyTheCannotRuleOutRefusal(t *testing.T) {
 		t.Errorf("inject events = %+v, want one that records the override", injected)
 	}
 
+	if !strings.Contains(injected[0].Message, "override=lifted-cannot-rule-out") {
+		t.Errorf("inject event %q does not say the flag lifted the refusal", injected[0].Message)
+	}
+
 	d2 := bareDigitDaemon(t)
 	menuKey := verifySeat(t, d2, limitMenuSeat, "claude", "Switch to usage credits")
 	resp := injectOf(t, d2, map[string]any{"session_key": menuKey, "text": "3", "literal": true, "allow_bare_digit": true})
@@ -138,6 +156,13 @@ func TestAllowBareDigitLiftsOnlyTheCannotRuleOutRefusal(t *testing.T) {
 		t.Fatalf("the flag answered a found menu: error = %q", resp.Error)
 	}
 	neverShows(t, d2, menuKey, "got:3")
+	refused := d2.events.Snapshot(events.Filter{Kind: events.KindSessionInjectRefused}, 0)
+	if len(refused) != 1 || !strings.Contains(refused[0].Message, "allow-bare-digit") {
+		t.Errorf("a refused attempt with the flag = %+v, want one refusal that records the flag", refused)
+	}
+	if strings.Contains(refused[0].Message, "override=") {
+		t.Errorf("a refused attempt claims it lifted a refusal: %q", refused[0].Message)
+	}
 }
 
 // A seat showing a composer with a staged draft: a prompt line (a glyph and a
@@ -168,4 +193,16 @@ func TestBareDigitIsRefusedWhileTheComposerHoldsADraft(t *testing.T) {
 		t.Fatalf("error = %q, want the cannot-rule-out refusal", resp.Error)
 	}
 	neverShows(t, d, key, "got:3")
+}
+
+// The check is for claude only: another harness, with a sample held, is not read
+// for a menu digit and the digit goes.
+func TestMenuDigitCheckIsScopedToClaude(t *testing.T) {
+	d := bareDigitDaemon(t)
+	key := verifySeat(t, d, quietSeat, "opencode", "composer ready")
+
+	if resp := injectOf(t, d, map[string]any{"session_key": key, "text": "3", "literal": true, "enter": true}); resp.Error != "" {
+		t.Fatalf("a digit to a non-claude seat was refused: %s", resp.Error)
+	}
+	waitCaptureHas(t, d, key, "got:3")
 }

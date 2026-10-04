@@ -2044,7 +2044,7 @@ type injectParams struct {
 	// SettleMS is how long verification waits for a redraw. Zero means the
 	// default.
 	SettleMS int `json:"settle_ms,omitempty"`
-	// AllowBareDigit lifts one refusal: a bare digit sent to a claude pane the
+	// AllowBareDigit lifts one refusal: text starting with 1, 2 or 3 sent to a claude pane the
 	// capture cannot rule a usage-limit menu out of (marvel#559 part b). It does
 	// not lift the refusal on a menu the matcher finds.
 	AllowBareDigit bool `json:"allow_bare_digit,omitempty"`
@@ -2072,6 +2072,11 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	}
 
 	origin := injectOrigin(c, p.Injector)
+	if p.AllowBareDigit {
+		// Recorded whenever the flag is set, so a refused attempt leaves a trace
+		// too; "override=" below marks the one case where it lifted a refusal.
+		origin += " allow-bare-digit"
+	}
 	reader := composer.ReaderFor(sess.Runtime.Name)
 
 	// A clear is only sent where a reader can vouch for it. Where the harness
@@ -2093,12 +2098,12 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		}
 	}
 
-	if isBareDigit(p) {
+	if startsWithMenuDigit(p) {
 		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
 			if !p.AllowBareDigit {
 				return d.refuseInject(sess, p, origin, why)
 			}
-			origin += " override=allow-bare-digit"
+			origin += " override=lifted-cannot-rule-out"
 		}
 	}
 
@@ -3530,14 +3535,19 @@ func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
 	return nil
 }
 
-// isBareDigit reports whether an inject is text exactly "1", "2" or "3", the
-// answers to a menu, whatever Literal and Enter say.
-func isBareDigit(p injectParams) bool {
-	return p.Text == "1" || p.Text == "2" || p.Text == "3"
+// startsWithMenuDigit reports whether an inject's text, after leading
+// whitespace, starts with "1", "2" or "3": the answers to a menu, whatever
+// Literal and Enter say. Starting with the digit is the test, not being only the
+// digit, because a menu that selects by number may act on the first character
+// ("3 " or "13" typed at a numbered menu are not known to do nothing). Whether
+// a menu does is unverified until P-UL7 captures one.
+func startsWithMenuDigit(p injectParams) bool {
+	t := strings.TrimLeftFunc(p.Text, unicode.IsSpace)
+	return t != "" && (t[0] == '1' || t[0] == '2' || t[0] == '3')
 }
 
-// bareDigitRefusal is the second check a claude pane gets when the text is a bare
-// digit and a usage-limit menu sample is held: the pane must show a composer the
+// bareDigitRefusal is the second check a claude pane gets when the text starts
+// with a menu digit and a usage-limit menu sample is held: the pane must show a composer the
 // reader places as Empty or MidTurn, read from a capture taken with escapes. A
 // pane the capture cannot place (a menu the sample does not match, a screen
 // mid-stream with an empty composer, a shell) cannot be ruled out as a menu where
@@ -3550,11 +3560,11 @@ func bareDigitRefusal(driver *tmux.Driver, sess api.Session, reader composer.Rea
 	}
 	content, err := driver.CapturePaneEscapes(sess.PaneID)
 	if err != nil {
-		return "the pane could not be read, so the capture cannot rule out a usage-limit menu, and a bare digit is not typed blind: " + err.Error()
+		return "the pane could not be read, so the capture cannot rule out a usage-limit menu, and text that starts with a menu digit is not typed blind: " + err.Error()
 	}
 	switch reader.Read(content) {
 	case composer.Empty, composer.MidTurn:
 		return ""
 	}
-	return "claude is not showing a composer the reader can place, so the capture cannot rule out a usage-limit menu, where a bare digit picks an option and option 3 spends money; nothing is typed (marvel#559). To send it anyway: --allow-bare-digit"
+	return "claude is not showing a composer the reader can place, so the capture cannot rule out a usage-limit menu, where a digit picks an option and option 3 spends money; nothing is typed (marvel#559). To send it anyway: --allow-bare-digit"
 }
