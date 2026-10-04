@@ -1,9 +1,10 @@
 # Capture with escapes, a read-only composer state, and the dim suggestion (marvel#571)
 
-- **Status:** design for review, 2026-10-04. Tracks marvel#571 and
-  aae-orc-4tueh. Checked at marvel main 57be868; every line reference below is
-  at that commit.
-- **Scope:** small and additive. Existing capture output does not change.
+- **Status:** design for review, 2026-10-04, revision 2 (after review
+  5407804684). Tracks marvel#571 and aae-orc-4tueh. Checked at marvel main
+  57be868; every line reference below is at that commit.
+- **Scope:** small. D1 narrows what the claude reader accepts; D2 and D3 are
+  additive, and capture output without the new flags does not change.
 
 ## 1. Why
 
@@ -23,33 +24,60 @@ also verify as confirmed (`Confirms(Stage, HoldsText)`, `composer.go:131-139`).
 | F1 | `marvel capture` has `-S`, `-E`, `--repaint`, `--settle` and nothing else | `cmd/marvel/main.go:1697-1700` |
 | F2 | `handleCapture` always captures plain, ranged or visible | `internal/daemon/daemon.go:2384-2388` |
 | F3 | `CapturePaneEscapes` exists (`capture-pane -p -e`); there is no ranged escapes variant | `internal/tmux/driver.go:644-652`, `:866` (`CapturePaneRange`) |
-| F4 | `readComposer` captures with escapes when the reader asks (claude does) | `daemon.go:2257-2271`; `claude.go:27` |
+| F4 | The daemon hands the claude reader only escapes captures: `readComposer` and `bareDigitRefusal` | `daemon.go:2257-2271`, `:3622`; `claude.go:27` |
 | F5 | Composer state reaches a caller only through `verifyInject`, after an inject | `daemon.go:2292-2304` |
 | F6 | The claude reader treats only the placeholder as dim; dim text beside a done line reads `HoldsText` | `claude.go:106-132` |
 | F7 | No fixture holds a suggestion: the claude fixtures are empty-idle, staged-draft, three mid-turn cases, idle-after-submit | `internal/composer/testdata/claude/` |
+| F8 | Three consumers act on a reading: `Confirms` (Submit accepts `Empty` or `MidTurn`, Stage accepts `HoldsText`), `CanClear` (`HoldsText` only), `bareDigitRefusal` (`Empty` or `MidTurn` only) | `composer.go:131-155`; `daemon.go:3624-3625` |
 
-F6 is inferred from the code, not reproduced. It needs a real capture (D1).
+F6 is confirmed by reading and not yet reproduced live. Probe P1 (D1) captures
+it.
 
 ## 3. Decisions
 
-### D1. The reader: text dim from its first visible character is not a draft
+### D1. Composer text that starts dim reads Unknown
 
-A typed draft is never drawn dim. So when every visible character of the
-composer's text is dim (SGR 2):
+One rule, decided by the first visible character of the composer's first text
+line, which is what `dimAtText` already reads (`claude.go:142`):
 
-- beside a finished turn's done line it reads `Empty`, whatever its words;
-- with no done line it reads `Unknown`, as a draft does today.
+- **Dim first character:** `Unknown`, whatever the words, however many lines,
+  whatever follows it. A dim head with a plain tail is `Unknown` too.
+- **Plain first character:** today's reading (`HoldsText` beside a done line,
+  `Unknown` without one), even if a dim tail follows.
+- **The placeholder** (dim, one line, `Try "..."`) is checked first and still
+  reads `Empty`. Nothing about it changes.
+- **A plain capture** (no SGR at all) cannot show dim, so it reads as today.
+  This rule does not reach it, and it does not need to: the daemon hands the
+  claude reader only escapes captures (F4). Plain text beside a done line
+  stays `HoldsText`, which existing tests pin (`claude_test.go:84-85`,
+  `internal/daemon/inject_bare_digit_test.go:201`).
 
-Text whose first visible character is not dim keeps today's reading
-(`HoldsText` beside a done line), even if a dim tail follows it: a real draft
-is present. The placeholder path is unchanged.
+Why `Unknown` and not `Empty`: `Empty` is permissive in two consumers
+(`Confirms(Submit)` and `bareDigitRefusal`, F8). Suppose claude draws a
+collapsed paste chip (`[Pasted text #N +M lines]`) or an image chip dim, and a
+bracketed-paste submit (`driver.go:550-608`) leaves the chip in the composer
+because its Enter did not land. Reading `Empty` there would verify a submit
+that never sent. `Unknown` confirms nothing and permits nothing in all three
+consumers, so the change only narrows:
 
-The rule is checked against a real capture of a live suggestion. Probe P1
-(read-only): on a pane showing a dim suggestion, run
+| Consumer | On main (suggestion reads `HoldsText`) | After D1 (`Unknown`) |
+|---|---|---|
+| `CanClear` | allows a clear | refuses |
+| `Confirms(Stage)` | confirms | does not confirm |
+| `Confirms(Submit)` | does not confirm | does not confirm (unchanged) |
+| `bareDigitRefusal` | refuses | refuses (unchanged) |
+
+The cost is on the safe side. A stage whose text claude draws dim (a paste
+chip, if P1 shows one is dim) no longer verifies, and its clear is refused.
+The caller sees "unconfirmed" where it saw "confirmed". It never sees the
+reverse.
+
+Probe P1 (read-only; the builder is running it): on panes showing (a) a dim
+suggestion and (b) a collapsed paste chip, run
 `tmux capture-pane -p -e -t <pane>` and `tmux capture-pane -p -t <pane>`, and
-save both as fixture `5-idle-suggestion` beside the others. Until the fixture
-exists, test 1 fails for want of it, which is the point: the reader's shapes
-come from real captures (`claude.go:8-11`).
+save both as fixtures `5-idle-suggestion` and `6-paste-chip`. The SGR bytes of
+each decide nothing under D1 (both are safe either way), but the chip fixture
+records which side of the rule a real staged paste falls on.
 
 ### D2. `marvel capture --escapes`
 
@@ -61,26 +89,56 @@ output are what they are today.
 
 ### D3. A read-only composer state, as a capture field, not a new verb
 
-A new flag, `--composer`, returns `readComposer`'s state beside the content as
+A new flag, `--composer`, reports the composer state beside the content as
 `composer: <state>` on stderr, the way `repaint:` is reported. It types
-nothing. Like `--repaint`, it nudges the pane's size to get a fresh paint,
-because `readComposer` does (`daemon.go:2258`). A runtime with no reader reads
-`unknown`. A new verb was the alternative. A field reuses the capture path and
-its output contract, and adds one flag instead of a command.
+nothing. A new verb was the alternative; a field reuses the capture path and
+its output contract and adds one flag instead of a command.
 
-## 4. Tests (red first)
+**One nudge.** `readComposer` repaints before it reads (`daemon.go:2258`).
+With `--composer`, `handleCapture` nudges once, whether or not `--repaint` is
+also given, and `readComposer` is split so the read after that nudge does not
+nudge again. `--settle` applies to that one nudge.
 
-| # | Test | Fails today because | tmux |
+**One capture where it can be.** The state is read from a capture in the
+reader's mode (escapes for claude). When that capture is also the content
+(with `--escapes`, or a reader that reads plain), content and state come from
+the same bytes and cannot disagree. Without `--escapes` on claude, the plain
+content is a second capture taken straight after, and the two can disagree if
+the pane changed between them; the CLI help says so. A runtime with no reader
+reads `unknown`.
+
+## 4. Tests
+
+"Red" means it fails on main 57be868; the reason is read from the code, not
+run. "Guard" means it passes on main and must keep passing.
+
+| # | Test | Kind | On main, by reading |
 |---|---|---|---|
-| 1 | Fixture `5-idle-suggestion`: escapes reads `Empty`, plain reads `Unknown` | the reader returns `HoldsText` (or the fixture is missing) | no |
-| 2 | Dim-only composer text with no done line reads `Unknown` | the rule is absent | no |
-| 3 | `CanClear` refuses on the suggestion fixture's state; `Confirms(Stage, ...)` is false | `HoldsText` allows both | no |
-| 4 | A plain first character with a dim tail, beside a done line, still reads `HoldsText` (synthetic, marked as such) | guards D1 against over-reach | no |
-| 5 | The six existing fixtures keep their readings (`TestClaudeReaderReadsTheCapturedStates`, `claude_test.go:22`) | regression guard | no |
-| 6 | `handleCapture` with `escapes` calls the escapes capture and returns content with ESC; without it, the plain call and identical output | the flag does not exist | no (fake driver) |
-| 7 | Ranged with `escapes` calls `CapturePaneRangeEscapes` with the same bounds and `-e` | no ranged escapes variant | no |
-| 8 | The CLI sends `escapes: true` only with `--escapes`, and `composer: true` only with `--composer` | the flags do not exist | no |
-| 9 | `capture --composer` returns the state `readComposer` gives for the session, sends no keys, and reads `unknown` for a runtime with no reader | the field does not exist | no (fake driver) |
+| 1 | Fixture `5-idle-suggestion`: escapes reads `Unknown`; plain reads `HoldsText`, because a plain capture cannot show dim (D1, plain-capture bullet) | red | escapes reads `HoldsText` (`claude.go:131`); the fixture is also missing |
+| 2 | Dim first character, with no done line, reads `Unknown` | guard | already `Unknown` (`claude.go:129-131`) |
+| 3 | On the suggestion fixture's reading: `CanClear` refuses, `Confirms(Stage)` is false, `Confirms(Submit)` is false | red | `HoldsText` passes `CanClear` and `Confirms(Stage)` |
+| 4 | Dim head, plain tail, beside a done line, reads `Unknown` (synthetic, marked as such) | red | reads `HoldsText` |
+| 5 | Plain head, dim tail, beside a done line, reads `HoldsText` (synthetic, marked as such) | guard | `HoldsText` |
+| 6 | Plain text beside a done line still reads `HoldsText` (`claude_test.go:84-85`), and an escapes capture of unstyled text still does (`inject_bare_digit_test.go:201`) | guard | pass |
+| 7 | Fixture `6-paste-chip` reads as P1 shows: `Unknown` if its first character is dim, `HoldsText` if not | red | fixture missing |
+| 8 | The six existing fixtures keep both readings (`TestClaudeReaderReadsTheCapturedStates`, `claude_test.go:22`) | guard | pass |
+| 9 | `handleCapture` with `escapes` returns content containing ESC; without it, content with no ESC, as today | red | `captureParams` has no `escapes`; unknown JSON keys are ignored, so no ESC |
+| 10 | Ranged with `escapes` returns ESC in the ranged lines only | red | no ranged escapes variant |
+| 11 | The CLI sends `escapes: true` only with `--escapes`, and `composer: true` only with `--composer` | red | the flags do not exist; cobra refuses them |
+| 12 | `capture --composer` on a pane showing the suggestion fixture reports `unknown`, sends no keys (the pane's input is unchanged), nudges once with and without `--repaint`, and reports `unknown` for a runtime with no reader | red | the field does not exist |
+
+**The seam for 9, 10 and 12.** There is no fake driver: `*tmux.Driver` runs
+the tmux on `PATH` (`driver.go:83-95`). These tests run against real tmux on
+the package's private server, which `TestMain` already sets up through
+`MARVEL_TMUX_SOCKET` (`internal/daemon/testmain_test.go:13-25`), using the
+existing seat helper `verifySeat` (`internal/daemon/inject_verify_test.go:32`),
+which runs a script in a pane and waits for it, as
+`inject_bare_digit_test.go:184-201` already does for a staged draft. They skip
+where tmux is absent, as the package's other tmux tests do. The script takes
+the shape of `quietSeat` (`inject_verify_test.go:25-28`): it prints the
+fixture's bytes, then echoes each line it reads, so a key sent would show in
+the capture. The existing verify tests already read such a seat as a composer,
+not as `Shell` (`daemon.go:2267`). Tests 1 to 8 and 11 need no tmux.
 
 ## 5. Plan
 
@@ -89,4 +147,7 @@ first. D2 and D3 are additive and independent of it.
 
 ## 6. Rulings needed
 
-None. All three changes are additive, and D1 only narrows what can be cleared.
+None. D1 widens nothing: every consumer refuses or declines to confirm at
+least as often as it does on main (table in D1). The one behaviour that moves
+toward refusal, a dim staged text no longer verifying, is a false "unconfirmed",
+never a false "confirmed".
