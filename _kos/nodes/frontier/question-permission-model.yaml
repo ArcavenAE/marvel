@@ -184,11 +184,11 @@ content: |
   harness's own tool process on a live seat found nine of the ten
   `InheritedSessionEnv` names SET, including CLAUDE_CODE_SESSION_ID, whose
   value was this session's transcript file name; CLAUDE_CODE_BRIDGE_SESSION_ID
-  was unset, and a made-up name was unset as the control. This does not
-  contradict the 2026-10-03 note: the denylist strips what the daemon
+  was unset, and a made-up name was unset as the control. This neither
+  supports nor refutes the 2026-10-03 note: the denylist strips what the daemon
   inherited, and the harness sets these names again for the processes it
-  starts, so a tool process cannot test the denylist. Whether the pane
-  process holds them before the harness starts was not re-measured.
+  starts, so a tool process cannot test the denylist either way. Whether the
+  pane process holds them before the harness starts was not re-measured.
   MARVEL_SESSION is the seat name, not the transcript id.
 
 edges:
