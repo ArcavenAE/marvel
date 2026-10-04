@@ -166,3 +166,127 @@ func TestReapRecordsScheduledRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestDeleteRecordsACancelledRun is the operator's ruling on #431 default
+// 6: deleting a live run of a scheduled role records it as cancelled,
+// with what the stream had said so far, and emits run.cancelled.
+// Deleting a run that already ended records nothing more, and deleting a
+// live unscheduled session records nothing.
+func TestDeleteRecordsACancelledRun(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	ring := events.NewRing(400)
+	mgr := NewManager(store, driver)
+	mgr.Events = ring
+	mgr.Usage = usage.New(store, usage.NewResolver(usage.DefaultTable()))
+	mgr.StreamDir = filepath.Join(t.TempDir(), "streams")
+
+	ws := "test-run-cancelled"
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	// Speaks its first message, then stays alive until killed.
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "transcript.ndjson")
+	head := strings.SplitAfterN(runFixture, "\n", 3)
+	if err := os.WriteFile(fixture, []byte(head[0]+head[1]), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	slow := filepath.Join(dir, "stub-claude")
+	if err := os.WriteFile(slow, []byte(fmt.Sprintf("#!/bin/sh\ncat %q\nexec sleep 60\n", fixture)), 0o700); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	rt := api.Runtime{Name: "claude", Command: slow, Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
+	if err := store.CreateTeam(&api.Team{
+		Name: "timers", Workspace: ws,
+		Roles: []api.Role{
+			{Name: "refresh", Replicas: 1, Runtime: rt, Schedule: runTestSchedule()},
+			{Name: "plain", Replicas: 1, Runtime: rt},
+		},
+	}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	live := &api.Session{Name: "timers-refresh-g1-0", Workspace: ws, Team: "timers", Role: "refresh", Runtime: rt}
+	plain := &api.Session{Name: "timers-plain-g1-0", Workspace: ws, Team: "timers", Role: "plain", Runtime: rt}
+	for _, s := range []*api.Session{live, plain} {
+		if err := mgr.Create(s); err != nil {
+			t.Fatalf("create %s: %v", s.Name, err)
+		}
+	}
+	waitForKind(t, ring, events.KindAgentMessageCompleted, 15*time.Second)
+	// Both stubs must have spoken before the kill, or the tail is empty.
+	deadline := time.Now().Add(10 * time.Second)
+	for len(ring.Snapshot(events.Filter{Kind: events.KindAgentMessageCompleted}, 0)) < 2 && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if err := mgr.Delete(live.Key()); err != nil {
+		t.Fatalf("delete live run: %v", err)
+	}
+	if err := mgr.Delete(plain.Key()); err != nil {
+		t.Fatalf("delete plain session: %v", err)
+	}
+
+	st, ok := store.GetScheduleStatus(ws + "/timers/refresh")
+	if !ok || len(st.History) != 1 {
+		t.Fatalf("status after delete = %+v (found %v), want one run", st, ok)
+	}
+	r := st.History[0]
+	if r.Outcome != api.RunCancelled || r.Session != live.Key() || r.Result != "board refreshed" {
+		t.Fatalf("cancelled run = %+v, want outcome cancelled with the message so far", r)
+	}
+	if !st.LastSucceededAt.IsZero() {
+		t.Fatalf("a cancelled run set last succeeded: %v", st.LastSucceededAt)
+	}
+	if _, found := store.GetScheduleStatus(ws + "/timers/plain"); found {
+		t.Fatal("deleting an unscheduled session recorded a run")
+	}
+	cancelled := ring.Snapshot(events.Filter{Kind: events.KindRunCancelled}, 0)
+	if len(cancelled) != 1 || cancelled[0].Role != "refresh" || strings.Contains(cancelled[0].Message, "board refreshed") {
+		t.Fatalf("run.cancelled = %+v, want one status-only event for refresh", cancelled)
+	}
+}
+
+// TestDeleteOfAnEndedRunRecordsNothingMore: a run that already ended was
+// recorded at reap; deleting its row later is not a second run.
+func TestDeleteOfAnEndedRunRecordsNothingMore(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+	mgr.StreamDir = filepath.Join(t.TempDir(), "streams")
+	ws := "test-run-ended-delete"
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	rt := api.Runtime{Name: "claude", Command: exitingHarness(t, runFixture, 0), Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
+	if err := store.CreateTeam(&api.Team{
+		Name: "timers", Workspace: ws,
+		Roles: []api.Role{{Name: "refresh", Replicas: 1, Runtime: rt, Schedule: runTestSchedule()}},
+	}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	sess := &api.Session{Name: "timers-refresh-g1-0", Workspace: ws, Team: "timers", Role: "refresh", Runtime: rt}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	reapUntilGone(t, mgr, store, sess.Key())
+	if err := mgr.Delete(sess.Key()); err != nil {
+		t.Fatalf("delete ended run: %v", err)
+	}
+	st, _ := store.GetScheduleStatus(ws + "/timers/refresh")
+	if len(st.History) != 1 || st.History[0].Outcome != api.RunSucceeded {
+		t.Fatalf("history = %+v, want only the succeeded run from reap", st.History)
+	}
+}

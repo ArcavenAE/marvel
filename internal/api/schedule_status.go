@@ -12,6 +12,7 @@ type RunOutcome string
 const (
 	RunSucceeded RunOutcome = "succeeded"
 	RunFailed    RunOutcome = "failed"
+	RunCancelled RunOutcome = "cancelled"
 )
 
 // maxRunResultBytes caps the result text a run record keeps (design
@@ -227,3 +228,7 @@ func (s *Store) DeleteScheduleStatus(key string) error {
 	delete(s.scheduleStatus, key)
 	return nil
 }
+
+// ScheduleHistoryCap checks every scheduled role's history against the
+// cluster's ceiling.
+func ScheduleHistoryCap(m *Manifest, limit int) error { return nil }

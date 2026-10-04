@@ -138,11 +138,17 @@ const (
 	// info, when a succeeded run brings it back. Diagnostic only: it blocks
 	// nothing.
 	KindScheduleStale Kind = "schedule.stale"
+	// KindScheduleFresh is the freshness alarm's recovery: a stale
+	// scheduled role is fresh again (#431 ruling on default 2).
+	KindScheduleFresh Kind = "schedule.fresh"
 	// KindRunSucceeded and KindRunFailed record that a run of a scheduled
 	// role ended and was added to the role's run history. They carry
 	// status only, never the run's result text (scheduled-runs section 5).
 	KindRunSucceeded Kind = "run.succeeded"
 	KindRunFailed    Kind = "run.failed"
+	// KindRunCancelled records a live run of a scheduled role ended by a
+	// kill or delete rather than by its own exit (#431 ruling on default 6).
+	KindRunCancelled Kind = "run.cancelled"
 	// KindContextFeedUnsupported records that an applied manifest declares
 	// runtime.context_feed on a role whose harness cannot honour it, so the
 	// declaration is advisory and CTX% will not be fed by it. Fires once
@@ -318,8 +324,10 @@ var allKinds = []Kind{
 	KindContextLimitUnresolved,
 	KindScheduleDSTAcknowledged,
 	KindScheduleStale,
+	KindScheduleFresh,
 	KindRunSucceeded,
 	KindRunFailed,
+	KindRunCancelled,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindAdmissionCleared,

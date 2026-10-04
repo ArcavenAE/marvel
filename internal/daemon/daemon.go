@@ -116,14 +116,17 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
-	build     Build
-	startedAt time.Time
-	store     *api.Store
-	sessMgr   *session.Manager
-	teamCtrl  *team.Controller
-	driver    *tmux.Driver
-	listener  net.Listener
-	sshServer *SSHServer
+	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
+	// schedule.history; zero means the default.
+	scheduleHistoryMax int
+	build              Build
+	startedAt          time.Time
+	store              *api.Store
+	sessMgr            *session.Manager
+	teamCtrl           *team.Controller
+	driver             *tmux.Driver
+	listener           net.Listener
+	sshServer          *SSHServer
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
