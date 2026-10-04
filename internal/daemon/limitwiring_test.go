@@ -197,23 +197,24 @@ func TestPaneMenuSourceIsBuiltOnlyFromThePinnedExpressions(t *testing.T) {
 	builds := 0
 	p.each(func(name string, n ast.Node) bool {
 		lit, ok := n.(*ast.CompositeLit)
-		if !ok || !isSel(lit.Type, "panemenu", "Source") {
+		if !ok || !isSel(lit.Type, "panemenu", "Config") {
 			return true
 		}
 		builds++
 		fields := fieldExprs(lit)
 		inFront := fields["InFront"]
 		delete(fields, "InFront")
-		expectFields(t, "panemenu.Source", fields, map[string]string{
+		expectFields(t, "panemenu.Config", fields, map[string]string{
 			"Samples":  "d.limitMenu",
 			"Store":    "d.store",
 			"Readings": "d.accounts",
 			"Events":   "d.events",
 			"Capture":  "d.driver.CapturePaneJoined",
+			"Hooks":    "d.newLimitAction().Hooks()",
 			"HostZone": "d.hostLocation",
 		})
 		if inFront == "" {
-			t.Error("panemenu.Source has no InFront")
+			t.Error("panemenu.Config has no InFront")
 		}
 		var fn *ast.FuncLit
 		for _, el := range lit.Elts {
@@ -243,7 +244,20 @@ func TestPaneMenuSourceIsBuiltOnlyFromThePinnedExpressions(t *testing.T) {
 		return true
 	})
 	if builds != 1 {
-		t.Errorf("panemenu.Source is built %d times, want 1", builds)
+		t.Errorf("panemenu.Config is built %d times, want 1", builds)
+	}
+	newCalls := 0
+	p.each(func(name string, n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok && isSel(c.Fun, "panemenu", "New") {
+			newCalls++
+			if len(c.Args) != 1 || types.ExprString(c.Args[0]) != "cfg" {
+				t.Errorf("%s: panemenu.New is not called with the one built cfg", name)
+			}
+		}
+		return true
+	})
+	if newCalls != 1 {
+		t.Errorf("panemenu.New is called %d times, want 1", newCalls)
 	}
 }
 
@@ -401,7 +415,7 @@ func TestBuiltSourceAndActionCannotBeReassigned(t *testing.T) {
 	t.Parallel()
 	p := parseDaemon(t)
 	wiringFields := map[string]bool{"Hooks": true, "Capture": true, "InFront": true, "Send": true, "Matched": true, "Seen": true, "Cleared": true}
-	pinned := map[string]string{"src.Hooks": "d.newLimitAction().Hooks()", "d.paneMenu": "src"}
+	pinned := map[string]string{"d.paneMenu": "panemenu.New(cfg)"}
 	seen := map[string]int{}
 	check := func(file, fun string, lhs, rhs ast.Expr) {
 		l := types.ExprString(lhs)
@@ -454,7 +468,7 @@ func TestBuiltSourceAndActionCannotBeReassigned(t *testing.T) {
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
 		ts := f.Type.String()
-		if strings.Contains(ts, "limitact.") || strings.Contains(ts, "panemenu.Source") {
+		if strings.Contains(ts, "limitact.") || strings.Contains(ts, "panemenu.Config") {
 			t.Errorf("Daemon.%s is typed %s; the daemon may hold neither the source nor the action", f.Name, ts)
 		}
 	}
@@ -464,5 +478,92 @@ func TestBuiltSourceAndActionCannotBeReassigned(t *testing.T) {
 	}
 	if _, ok := rt.FieldByName("limitAct"); ok {
 		t.Error("Daemon has a limitAct field again")
+	}
+}
+
+// Nothing in the daemon can get behind the built source or the action by
+// reflection, unsafe pointers or type assertions, and the daemon names only the
+// constructors and the input types of the two packages (marvel#556 review r5:
+// pointer, reflect and assertion routes). The source's own type is unexported, so
+// there is nothing to assert to; this keeps it so.
+func TestDaemonCannotReachBehindTheBuiltSourceOrAction(t *testing.T) {
+	t.Parallel()
+	p := parseDaemon(t)
+	allowed := map[string]map[string]bool{
+		"panemenu": {"Config": true, "New": true, "Samples": true, "Evaluator": true},
+		"limitact": {"New": true, "Deps": true},
+	}
+	p.each(func(file string, n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.ImportSpec:
+			path, _ := strconv.Unquote(x.Path.Value)
+			if path == "reflect" || path == "unsafe" {
+				t.Errorf("%s imports %s; the daemon package may not use reflection or unsafe pointers", file, path)
+			}
+		case *ast.TypeAssertExpr:
+			if x.Type != nil {
+				if ts := types.ExprString(x.Type); strings.Contains(ts, "panemenu.") || strings.Contains(ts, "limitact.") {
+					t.Errorf("%s asserts to %s", file, ts)
+				}
+			}
+		case *ast.SelectorExpr:
+			if id, ok := x.X.(*ast.Ident); ok {
+				if names, ok := allowed[id.Name]; ok && !names[x.Sel.Name] && (file != "limitaction.go" || id.Name+"."+x.Sel.Name != "limitact.Action") {
+					t.Errorf("%s names %s.%s; the daemon may name only %v", file, id.Name, x.Sel.Name, keysOf(names))
+				}
+			}
+		}
+		return true
+	})
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The existing inject path is the other way to type a string into a pane, and a
+// hook or a watcher could call it with "3". Its callers are inventoried: the
+// handler is reached only from the dispatcher, the dispatcher only from the
+// connection reader and dispatch, and dispatch from nothing outside tests.
+func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
+	t.Parallel()
+	want := map[string]map[string]int{
+		"handleInjectAs": {"*Daemon.dispatchAs": 1},
+		"dispatchAs":     {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
+		"dispatch":       {},
+	}
+	got := map[string]map[string]int{"handleInjectAs": {}, "dispatchAs": {}, "dispatch": {}}
+	p := parseDaemon(t)
+	called := map[ast.Node]bool{}
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		called[c.Fun] = true
+		if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+			if m, ok := got[sel.Sel.Name]; ok {
+				m[fun]++
+			}
+		}
+		return true
+	})
+	p.each(func(file string, n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && !called[sel] {
+			if _, tracked := got[sel.Sel.Name]; tracked {
+				t.Errorf("%s: %s used as a value", file, sel.Sel.Name)
+			}
+		}
+		return true
+	})
+	for name, w := range want {
+		if !reflect.DeepEqual(got[name], w) {
+			t.Errorf("callers of %s are %v, inventoried as %v", name, got[name], w)
+		}
 	}
 }

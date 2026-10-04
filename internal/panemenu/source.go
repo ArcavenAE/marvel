@@ -86,11 +86,47 @@ type Readings interface {
 	Reading(key api.AccountKey, now time.Time) (api.AccountReading, api.ReadingState)
 }
 
-// Source sets and clears the pane-menu condition. Capture returns the visible
+// Config is everything the source is built from. Capture returns the visible
 // screen of a pane with wrapped rows joined; InFront says whether the session's
 // harness is the process in front of its pane. Those two functions are the whole
 // of its reach into a pane.
-type Source struct {
+type Config struct {
+	Samples  Samples
+	Store    Store
+	Readings Readings
+	Events   events.Emitter
+	Capture  func(paneID string) (string, error)
+	InFront  func(sess api.Session) bool
+	Hooks    Hooks
+	// HostZone is the zone a reset time is read in when the seat records none.
+	// Nil means the host's own.
+	HostZone *time.Location
+}
+
+// Evaluator is all a caller can do with a built source: run an evaluation. The
+// type behind it is unexported and has no way back to its fields, so after New
+// returns nobody can swap its Capture, InFront or Hooks.
+type Evaluator interface {
+	Evaluate(now time.Time)
+}
+
+// New builds the source. The configuration is copied; later changes to cfg do
+// not reach the result.
+func New(cfg Config) Evaluator {
+	return &source{
+		Samples:  cfg.Samples,
+		Store:    cfg.Store,
+		Readings: cfg.Readings,
+		Events:   cfg.Events,
+		Capture:  cfg.Capture,
+		InFront:  cfg.InFront,
+		Hooks:    cfg.Hooks,
+		HostZone: cfg.HostZone,
+	}
+}
+
+// source sets and clears the pane-menu condition. It is built only by New.
+type source struct {
 	Samples  Samples
 	Store    Store
 	Readings Readings
@@ -107,7 +143,7 @@ type Source struct {
 }
 
 // due reports whether the seat may be captured at now and, if so, records it.
-func (d *Source) due(key string, now time.Time) bool {
+func (d *source) due(key string, now time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.last == nil {
@@ -122,7 +158,7 @@ func (d *Source) due(key string, now time.Time) bool {
 
 // prune drops the cadence of sessions that no longer exist, so the map does not
 // grow with every seat that ever ran.
-func (d *Source) prune(sessions []api.Session) {
+func (d *source) prune(sessions []api.Session) {
 	live := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
 		live[s.Key()] = true
@@ -136,7 +172,7 @@ func (d *Source) prune(sessions []api.Session) {
 	}
 }
 
-func (d *Source) forget(key string) {
+func (d *source) forget(key string) {
 	d.mu.Lock()
 	delete(d.last, key)
 	d.mu.Unlock()
@@ -144,7 +180,7 @@ func (d *Source) forget(key string) {
 
 // Evaluate sets and clears the pane-menu condition on interactive seats. A seat
 // whose condition another source set is left alone.
-func (d *Source) Evaluate(now time.Time) {
+func (d *source) Evaluate(now time.Time) {
 	sessions := d.Store.ListSessions()
 	d.prune(sessions)
 	if len(d.Samples.Menus) == 0 {
@@ -178,7 +214,7 @@ func (d *Source) Evaluate(now time.Time) {
 
 // clearOrphanedPaneMenus ends a pane-menu condition on a session that is gone,
 // even when no sample is loaded.
-func (d *Source) clearOrphanedPaneMenus(sessions []api.Session, now time.Time) {
+func (d *source) clearOrphanedPaneMenus(sessions []api.Session, now time.Time) {
 	for _, sess := range sessions {
 		if sess.Limit != nil && sess.Limit.Source == api.LimitSourcePaneMenu && !sess.State.CountsAsAlive() {
 			d.clearPaneMenu(sess, paneClearSessionEnded, now)
@@ -189,7 +225,7 @@ func (d *Source) clearOrphanedPaneMenus(sessions []api.Session, now time.Time) {
 // setPaneMenu captures a seat that might be on the menu and sets the condition
 // when the capture matches. Only a seat with no fresh reading, whose activity
 // advisory reads stalled or unknown, is captured, and a working seat never is.
-func (d *Source) setPaneMenu(sess api.Session, readingState api.ReadingState, now time.Time) {
+func (d *source) setPaneMenu(sess api.Session, readingState api.ReadingState, now time.Time) {
 	if readingState == api.ReadingFresh {
 		return
 	}
@@ -241,7 +277,7 @@ func (d *Source) setPaneMenu(sess api.Session, readingState api.ReadingState, no
 
 // paneMenuProvenance builds the provenance for a matched capture, reading the
 // reset span in the seat's zone when its environment records one.
-func (d *Source) paneMenuProvenance(sess api.Session, version, span string, now time.Time) *api.LimitProvenance {
+func (d *source) paneMenuProvenance(sess api.Session, version, span string, now time.Time) *api.LimitProvenance {
 	prov := &api.LimitProvenance{
 		Source: api.LimitSourcePaneMenu, SampleVersion: version, CapturedAt: now, Span: span,
 		ReportedBy: sess.Key(), Account: api.AccountKeyOf(sess).String(),
@@ -271,7 +307,7 @@ func untilNote(err error) string {
 // holdPaneMenu decides whether a held condition ends: first a fresh reading
 // below the limit, then the seat's activity advancing, then a capture that
 // shows neither the menu nor the post-selection screen.
-func (d *Source) holdPaneMenu(sess api.Session, reading api.AccountReading, state api.ReadingState, now time.Time) {
+func (d *source) holdPaneMenu(sess api.Session, reading api.AccountReading, state api.ReadingState, now time.Time) {
 	if state == api.ReadingFresh && !hasFullWindow(reading, now) {
 		d.clearPaneMenu(sess, paneClearFreshReading, now)
 		return
@@ -314,7 +350,7 @@ func hasFullWindow(reading api.AccountReading, now time.Time) bool {
 
 // clearPaneMenu ends the condition and says which rule did, and whether the
 // seat left the menu before the reset time the menu named.
-func (d *Source) clearPaneMenu(sess api.Session, rule string, now time.Time) {
+func (d *source) clearPaneMenu(sess api.Session, rule string, now time.Time) {
 	var prov *api.LimitProvenance
 	_ = d.Store.UpdateSession(sess.Key(), func(live *api.Session) error {
 		if live.Limit == nil || live.Limit.Source != api.LimitSourcePaneMenu {
@@ -366,7 +402,7 @@ func (d *Source) clearPaneMenu(sess api.Session, rule string, now time.Time) {
 	}
 }
 
-func (d *Source) hostZone() *time.Location {
+func (d *source) hostZone() *time.Location {
 	if d.HostZone != nil {
 		return d.HostZone
 	}
@@ -376,6 +412,6 @@ func (d *Source) hostZone() *time.Location {
 // seen reports whether the seat's pane may be captured: the harness marvel
 // spawned there is the process in front (design 9.3 and the watchdog's gate,
 // harness-state-watchdog-p1.md section 3). Without that answer nothing is read.
-func (d *Source) seen(sess api.Session) bool {
+func (d *source) seen(sess api.Session) bool {
 	return d.Capture != nil && d.InFront != nil && d.InFront(sess)
 }

@@ -75,7 +75,7 @@ type laRig struct {
 	store    *api.Store
 	ring     *events.Ring
 	readings *api.AccountReadings
-	src      *panemenu.Source
+	src      panemenu.Evaluator
 	act      *Action
 	samples  panemenu.Samples
 	key      string
@@ -116,12 +116,12 @@ func (r *laRig) wire() {
 		Capture: func(string) (string, error) { r.polls++; return r.capture, nil },
 		Sleep:   func(time.Duration) {},
 	})
-	r.src = &panemenu.Source{
+	r.src = panemenu.New(panemenu.Config{
 		Samples: r.samples, Store: r.store, Readings: r.readings, Events: r.ring,
 		Capture:  func(string) (string, error) { return r.capture, nil },
 		InFront:  func(api.Session) bool { return true },
 		HostZone: time.UTC, Hooks: r.act.Hooks(),
-	}
+	})
 }
 
 func (r *laRig) tick(at time.Time) { r.src.Evaluate(at) }

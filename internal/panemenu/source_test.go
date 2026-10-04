@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ var (
 // paneRig is a source with one interactive claude seat whose pane shows
 // whatever capture holds, a counter of captures, and the sample set loaded.
 type paneRig struct {
-	src      *Source
+	src      *source
 	store    *api.Store
 	ring     *events.Ring
 	readings *api.AccountReadings
@@ -87,7 +88,7 @@ func newPaneRig(t *testing.T, env map[string]string) *paneRig {
 	if err := r.store.CreateSession(&sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	r.src = &Source{
+	r.src = &source{
 		Samples:  Samples{Menus: []limitmenu.Sample{menuSample()}, PostSelection: []limitmenu.Screen{postSelectionScreen()}},
 		Store:    r.store,
 		Readings: r.readings,
@@ -624,5 +625,19 @@ func TestPaneMenuHasNoLooseTypingOrAssertions(t *testing.T) {
 			}
 			return true
 		})
+	}
+}
+
+// New hands back an interface with Evaluate only, over an unexported type, so no
+// caller can reach or replace the built source's Capture, InFront or Hooks.
+func TestNewReturnsAnEvaluateOnlyValueOverAnUnexportedType(t *testing.T) {
+	t.Parallel()
+	ret := reflect.TypeOf(New).Out(0)
+	if ret.Kind() != reflect.Interface || ret.NumMethod() != 1 || ret.Method(0).Name != "Evaluate" {
+		t.Fatalf("New returns %v, want an interface with Evaluate only", ret)
+	}
+	dyn := reflect.TypeOf(New(Config{}))
+	if dyn.Kind() != reflect.Pointer || dyn.Elem().Name() != "source" || ast.IsExported(dyn.Elem().Name()) {
+		t.Errorf("New builds %v, want the unexported *source", dyn)
 	}
 }

@@ -200,7 +200,7 @@ type Daemon struct {
 	// limit action at all. hostLocation is a test seam: nil means the host's own
 	// zone.
 	limitMenu    panemenu.Samples
-	paneMenu     paneMenuEvaluator
+	paneMenu     panemenu.Evaluator
 	paneMenuOnce sync.Once
 	hostLocation *time.Location
 
