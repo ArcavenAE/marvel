@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
 )
 
 // fakeDaemon answers every request with an empty response and records the
 // methods it was sent, in order. The socket lives in its own short directory:
 // a unix socket path is capped near 104 bytes and t.TempDir can exceed it.
-func fakeDaemon(t *testing.T) (socket string, methods func() []string) {
+func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens func() []string) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "mx")
 	if err != nil {
@@ -29,8 +30,9 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	var (
-		mu  sync.Mutex
-		got []string
+		mu   sync.Mutex
+		got  []string
+		toks []string
 	)
 	go func() {
 		for {
@@ -42,6 +44,12 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string) {
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				mu.Lock()
 				got = append(got, req.Method)
+				if req.Method == "account.limits" {
+					var body api.AccountLimitsRequest
+					if json.Unmarshal(req.Params, &body) == nil {
+						toks = append(toks, body.SessionToken)
+					}
+				}
 				mu.Unlock()
 			}
 			_ = json.NewEncoder(c).Encode(daemon.Response{})
@@ -49,10 +57,14 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string) {
 		}
 	}()
 	return socket, func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), got...)
-	}
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), got...)
+		}, func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), toks...)
+		}
 }
 
 // withStdin runs fn with os.Stdin reading payload and the seat environment
@@ -96,7 +108,7 @@ func seatEnv(t *testing.T, socket string) {
 }
 
 func TestCtxForwardPostsTheAccountReadingBeforeTheHeartbeat(t *testing.T) {
-	socket, methods := fakeDaemon(t)
+	socket, methods, _ := fakeDaemon(t)
 	seatEnv(t, socket)
 	withStdin(t, readTestdata(t, "statusline-2.1.226-rate-limits-synthetic.json"), func() {
 		if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
@@ -112,7 +124,7 @@ func TestCtxForwardPostsTheAccountReadingBeforeTheHeartbeat(t *testing.T) {
 // A payload with a rate_limits block but no context figure yet still reports
 // the account; before this the whole hook returned early.
 func TestCtxForwardPostsTheAccountReadingWithNoContextFigure(t *testing.T) {
-	socket, methods := fakeDaemon(t)
+	socket, methods, _ := fakeDaemon(t)
 	seatEnv(t, socket)
 	payload := []byte(`{"model":{"display_name":"x"},"rate_limits":{"seven_day":{"used_percentage":50,"resets_at":1786400000}}}`)
 	withStdin(t, payload, func() {
@@ -129,7 +141,7 @@ func TestCtxForwardPostsTheAccountReadingWithNoContextFigure(t *testing.T) {
 
 // A payload from a session that has made no API call sends nothing at all.
 func TestCtxForwardSendsNothingForAnEmptyPayload(t *testing.T) {
-	socket, methods := fakeDaemon(t)
+	socket, methods, _ := fakeDaemon(t)
 	seatEnv(t, socket)
 	withStdin(t, readTestdata(t, "statusline-2.1.226-empty.json"), func() {
 		if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
@@ -153,7 +165,7 @@ func TestCtxForwardWithoutASeatEnvironmentIsSilent(t *testing.T) {
 }
 
 func TestCodexCtxPostsTheAccountReading(t *testing.T) {
-	socket, methods := fakeDaemon(t)
+	socket, methods, _ := fakeDaemon(t)
 	seatEnv(t, socket)
 	path, err := filepath.Abs("../../internal/runtime/codex/testdata/rollout-compaction.jsonl")
 	if err != nil {
@@ -168,5 +180,43 @@ func TestCodexCtxPostsTheAccountReading(t *testing.T) {
 	got := waitForMethods(t, methods, 1)
 	if len(got) == 0 || got[0] != "account.limits" {
 		t.Fatalf("methods = %v, want account.limits first", got)
+	}
+}
+
+// The hook presents the token marvel minted for the session, read from the
+// environment, so the daemon can bind the reading to it. Without one it sends an
+// empty token and the daemon refuses.
+func TestCtxForwardPresentsTheSessionToken(t *testing.T) {
+	socket, methods, tokens := fakeDaemon(t)
+	seatEnv(t, socket)
+	t.Setenv(api.HeartbeatTokenEnv, "minted-at-spawn")
+	withStdin(t, readTestdata(t, "statusline-2.1.226-rate-limits-synthetic.json"), func() {
+		if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+	waitForMethods(t, methods, 2)
+	if got := tokens(); len(got) != 1 || got[0] != "minted-at-spawn" {
+		t.Fatalf("tokens presented = %v, want [minted-at-spawn]", got)
+	}
+}
+
+func TestCodexCtxPresentsTheSessionToken(t *testing.T) {
+	socket, methods, tokens := fakeDaemon(t)
+	seatEnv(t, socket)
+	t.Setenv(api.HeartbeatTokenEnv, "minted-at-spawn")
+	path, err := filepath.Abs("../../internal/runtime/codex/testdata/rollout-compaction.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]string{"transcript_path": path})
+	withStdin(t, payload, func() {
+		if err := newCodexCtxCmd().RunE(newCodexCtxCmd(), nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+	waitForMethods(t, methods, 1)
+	if got := tokens(); len(got) != 1 || got[0] != "minted-at-spawn" {
+		t.Fatalf("tokens presented = %v, want [minted-at-spawn]", got)
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"math"
+	"os"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -73,13 +74,15 @@ func codexAccountWindows(raw []byte) []api.AccountWindow {
 	return out
 }
 
-// accountLimitsRequest builds the account.limits request for a session. It
-// reports false when there is nothing to send.
-func accountLimitsRequest(workspace, session string, windows []api.AccountWindow) (daemon.Request, bool) {
+// accountLimitsRequest builds the account.limits request for a session. The
+// token is the one marvel minted for the session at spawn, which the daemon
+// requires: a reading can mark every session of an account limited. It reports
+// false when there is nothing to send.
+func accountLimitsRequest(workspace, session, token string, windows []api.AccountWindow) (daemon.Request, bool) {
 	if len(windows) == 0 {
 		return daemon.Request{}, false
 	}
-	params, err := json.Marshal(api.AccountLimitsRequest{Session: workspace + "/" + session, Windows: windows})
+	params, err := json.Marshal(api.AccountLimitsRequest{Session: workspace + "/" + session, SessionToken: token, Windows: windows})
 	if err != nil {
 		return daemon.Request{}, false
 	}
@@ -88,7 +91,7 @@ func accountLimitsRequest(workspace, session string, windows []api.AccountWindow
 
 // sendAccountLimits posts the windows, best effort.
 func sendAccountLimits(socket, workspace, session string, windows []api.AccountWindow) {
-	req, ok := accountLimitsRequest(workspace, session, windows)
+	req, ok := accountLimitsRequest(workspace, session, os.Getenv(api.HeartbeatTokenEnv), windows)
 	if !ok {
 		return
 	}

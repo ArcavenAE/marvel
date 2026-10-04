@@ -117,7 +117,7 @@ func TestCodexAccountWindowsHoldsOnAnyFailure(t *testing.T) {
 func TestAccountLimitsRequest(t *testing.T) {
 	t.Parallel()
 	pct := 87.0
-	req, ok := accountLimitsRequest("ws", "seat-0", []api.AccountWindow{{Name: "seven_day", UsedPercent: &pct}})
+	req, ok := accountLimitsRequest("ws", "seat-0", "tok", []api.AccountWindow{{Name: "seven_day", UsedPercent: &pct}})
 	if !ok || req.Method != "account.limits" {
 		t.Fatalf("req = %+v ok=%v", req, ok)
 	}
@@ -125,10 +125,10 @@ func TestAccountLimitsRequest(t *testing.T) {
 	if err := json.Unmarshal(req.Params, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Session != "ws/seat-0" || len(body.Windows) != 1 || *body.Windows[0].UsedPercent != 87 {
+	if body.Session != "ws/seat-0" || body.SessionToken != "tok" || len(body.Windows) != 1 || *body.Windows[0].UsedPercent != 87 {
 		t.Fatalf("body = %+v", body)
 	}
-	if _, ok := accountLimitsRequest("ws", "seat-0", nil); ok {
+	if _, ok := accountLimitsRequest("ws", "seat-0", "tok", nil); ok {
 		t.Fatal("a request was built with nothing to send")
 	}
 }
