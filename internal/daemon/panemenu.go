@@ -8,6 +8,13 @@ import (
 	"github.com/arcavenae/marvel/internal/runtime"
 )
 
+// paneMenuEvaluator is all the daemon keeps of the pane-menu source: it can run
+// an evaluation and nothing else, so no daemon code can reassign the source's
+// Capture or Hooks after the constructor below has set them.
+type paneMenuEvaluator interface {
+	Evaluate(now time.Time)
+}
+
 // paneMenuSource builds the pane-menu source (internal/panemenu) once. The
 // package is handed two functions and no driver: Capture reads the visible
 // screen with wrapped rows joined (capture-pane -J), and InFront applies the
@@ -15,10 +22,10 @@ import (
 // captured only where marvel's spawn record says it is the process in front.
 // The daemon wiring of those two is the whole of what this file adds; the
 // source itself cannot send a key.
-func (d *Daemon) paneMenuSource() *panemenu.Source {
+func (d *Daemon) paneMenuSource() paneMenuEvaluator {
 	d.paneMenuOnce.Do(func() {
 		reg := runtime.NewRegistry()
-		d.paneMenu = &panemenu.Source{
+		src := &panemenu.Source{
 			Samples:  d.limitMenu,
 			Store:    d.store,
 			Readings: d.accounts,
@@ -38,8 +45,8 @@ func (d *Daemon) paneMenuSource() *panemenu.Source {
 			},
 			HostZone: d.hostLocation,
 		}
-		d.limitAct = d.newLimitAction()
-		d.paneMenu.Hooks = d.limitAct.Hooks()
+		src.Hooks = d.newLimitAction().Hooks()
+		d.paneMenu = src
 	})
 	return d.paneMenu
 }

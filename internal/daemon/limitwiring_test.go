@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -150,7 +151,7 @@ func TestLimitSenderIsPinned(t *testing.T) {
 func TestLimitActionIsBuiltOnlyFromThePinnedExpressions(t *testing.T) {
 	t.Parallel()
 	p := parseDaemon(t)
-	var builds, senderUses, hooksAssigns, actAssigns int
+	var builds, senderUses int
 	p.each(func(name string, n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
@@ -176,21 +177,6 @@ func TestLimitActionIsBuiltOnlyFromThePinnedExpressions(t *testing.T) {
 			if x.Name == "limitSender" {
 				senderUses++
 			}
-		case *ast.AssignStmt:
-			for i, l := range x.Lhs {
-				switch types.ExprString(l) {
-				case "d.paneMenu.Hooks":
-					hooksAssigns++
-					if i >= len(x.Rhs) || types.ExprString(x.Rhs[i]) != "d.limitAct.Hooks()" {
-						t.Errorf("%s: Hooks assigned something other than d.limitAct.Hooks()", name)
-					}
-				case "d.limitAct":
-					actAssigns++
-					if i >= len(x.Rhs) || types.ExprString(x.Rhs[i]) != "d.newLimitAction()" {
-						t.Errorf("%s: limitAct assigned something other than d.newLimitAction()", name)
-					}
-				}
-			}
 		}
 		return true
 	})
@@ -199,9 +185,6 @@ func TestLimitActionIsBuiltOnlyFromThePinnedExpressions(t *testing.T) {
 	}
 	if senderUses != 2 { // the declaration and its one use
 		t.Errorf("limitSender is named %d times, want 2 (declaration and one use)", senderUses)
-	}
-	if hooksAssigns != 1 || actAssigns != 1 {
-		t.Errorf("Hooks assigned %d times and limitAct %d times, want 1 and 1", hooksAssigns, actAssigns)
 	}
 }
 
@@ -261,5 +244,225 @@ func TestPaneMenuSourceIsBuiltOnlyFromThePinnedExpressions(t *testing.T) {
 	})
 	if builds != 1 {
 		t.Errorf("panemenu.Source is built %d times, want 1", builds)
+	}
+}
+
+// enclosing names the top-level function a node sits in: "Recv.Name" or "Name".
+func enclosing(fd *ast.FuncDecl) string {
+	if fd.Recv != nil && len(fd.Recv.List) == 1 {
+		return types.ExprString(fd.Recv.List[0].Type) + "." + fd.Name.Name
+	}
+	return fd.Name.Name
+}
+
+// eachFunc walks every top-level function of the daemon package, with the
+// function's name, so a finding can say where it is.
+func (p pkgFiles) eachFunc(fn func(file, fun string, n ast.Node) bool) {
+	p.each(func(file string, n ast.Node) bool {
+		fd, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+		ast.Inspect(fd, func(m ast.Node) bool { return fn(file, enclosing(fd), m) })
+		return false
+	})
+}
+
+// Every place in the daemon that can press a key is listed here, keyed by the
+// function it sits in. A new call site anywhere in the package, in a new file, a
+// goroutine, an event watcher or a closure assigned to a field, changes the
+// count and fails this test (marvel#556 review r4: routes N1, N3, N10 all added a
+// SendKeys call). SendKeys is also never used as a value.
+func TestEveryKeyPressInTheDaemonIsInventoried(t *testing.T) {
+	t.Parallel()
+	want := map[string]int{
+		"NewWithOptions":         1, // the startup injection of a spawn prompt
+		"*Daemon.handleInjectAs": 2, // the operator's inject: clear key, then the text
+		"limitSender":            1, // the limit action's digit
+	}
+	got := map[string]int{}
+	p := parseDaemon(t)
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "SendKeys" {
+				got[fun]++
+			}
+		}
+		return true
+	})
+	// A method value (x.SendKeys not called) is a hidden call site.
+	calls := map[ast.Node]bool{}
+	p.each(func(file string, n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			calls[c.Fun] = true
+		}
+		return true
+	})
+	p.each(func(file string, n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "SendKeys" && !calls[sel] {
+			t.Errorf("%s: SendKeys used as a value", file)
+		}
+		return true
+	})
+	for fun, n := range got {
+		if want[fun] != n {
+			t.Errorf("%s calls SendKeys %d times, inventoried as %d", fun, n, want[fun])
+		}
+	}
+	for fun, n := range want {
+		if got[fun] != n {
+			t.Errorf("%s was inventoried with %d SendKeys calls and has %d", fun, n, got[fun])
+		}
+	}
+}
+
+// The driver is reached in the daemon only through these methods, from these
+// functions, and escapes as a bare value only into these two. In the two wiring
+// files only the two read-only methods appear.
+func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
+	t.Parallel()
+	wantUse := map[string]bool{
+		"*Daemon.handleCapture d.driver.CapturePane":        true,
+		"*Daemon.handleCapture d.driver.CapturePaneRange":   true,
+		"*Daemon.handleInjectAs d.driver.SendKeys":          true,
+		"*Daemon.readComposer d.driver.CapturePane":         true,
+		"*Daemon.readComposer d.driver.CapturePaneEscapes":  true,
+		"*Daemon.repaintSettled d.driver.Repaint":           true,
+		"NewWithOptions driver.SendKeys":                    true,
+		"preflightRefusal driver.CapturePaneJoined":         true,
+		"limitSender drv.SendKeys":                          true,
+		"*Daemon.newLimitAction d.driver.CapturePaneJoined": true,
+		"*Daemon.paneMenuSource d.driver.CapturePaneJoined": true,
+		"*Daemon.paneMenuSource d.driver.PaneForeground":    true,
+	}
+	wantValue := map[string]bool{
+		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...)
+		"*Daemon.newLimitAction": true, // limitSender(d.driver)
+	}
+	wiring := map[string]bool{"CapturePaneJoined": true, "PaneForeground": true}
+	p := parseDaemon(t)
+	used := map[string]bool{}
+	values := map[string]bool{}
+	p.each(func(file string, n ast.Node) bool {
+		fd, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+		fun := enclosing(fd)
+		selOfSel := map[ast.Node]bool{}
+		ast.Inspect(fd, func(m ast.Node) bool {
+			sel, ok := m.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if x := types.ExprString(sel.X); x == "d.driver" || x == "driver" || x == "drv" {
+				key := fun + " " + x + "." + sel.Sel.Name
+				used[key] = true
+				if !wantUse[key] {
+					t.Errorf("%s: %s is not in the driver inventory", file, key)
+				}
+				if (file == "panemenu.go" || file == "limitaction.go") && x == "d.driver" && !wiring[sel.Sel.Name] {
+					t.Errorf("%s: wiring file calls d.driver.%s; only CapturePaneJoined and PaneForeground", file, sel.Sel.Name)
+				}
+				selOfSel[sel.X] = true
+			}
+			return true
+		})
+		ast.Inspect(fd, func(m ast.Node) bool {
+			if sel, ok := m.(*ast.SelectorExpr); ok && types.ExprString(sel) == "d.driver" && !selOfSel[sel] {
+				values[fun] = true
+				if !wantValue[fun] {
+					t.Errorf("%s: d.driver escapes as a value in %s", file, fun)
+				}
+			}
+			return true
+		})
+		return false
+	})
+	for k := range wantUse {
+		if !used[k] {
+			t.Errorf("inventoried driver use %q is gone; update the inventory", k)
+		}
+	}
+	for k := range wantValue {
+		if !values[k] {
+			t.Errorf("inventoried driver value use in %s is gone", k)
+		}
+	}
+}
+
+// The pane-menu source and the limit action are not addressable from the daemon
+// once built. Nothing in the package assigns through d.paneMenu or d.limitAct,
+// the daemon holds no field typed as the source or the action, and the only
+// assignments to the source's wiring fields are the pinned lines in
+// paneMenuSource (marvel#556 review r4: routes N3 and N10 reassigned a field of
+// the built source from a new file).
+func TestBuiltSourceAndActionCannotBeReassigned(t *testing.T) {
+	t.Parallel()
+	p := parseDaemon(t)
+	wiringFields := map[string]bool{"Hooks": true, "Capture": true, "InFront": true, "Send": true, "Matched": true, "Seen": true, "Cleared": true}
+	pinned := map[string]string{"src.Hooks": "d.newLimitAction().Hooks()", "d.paneMenu": "src"}
+	seen := map[string]int{}
+	check := func(file, fun string, lhs, rhs ast.Expr) {
+		l := types.ExprString(lhs)
+		root := l
+		if i := strings.IndexAny(l, ".[("); i >= 0 {
+			if strings.HasPrefix(l, "d.") {
+				if j := strings.IndexAny(l[2:], ".[("); j >= 0 {
+					root = l[:2+j]
+				}
+			} else {
+				root = l[:i]
+			}
+		}
+		banned := root == "d.paneMenu" || root == "d.limitAct"
+		if sel, ok := lhs.(*ast.SelectorExpr); ok && wiringFields[sel.Sel.Name] {
+			banned = true
+		}
+		if !banned {
+			return
+		}
+		want, ok := pinned[l]
+		if !ok || fun != "*Daemon.paneMenuSource" || file != "panemenu.go" || rhs == nil || types.ExprString(rhs) != want {
+			t.Errorf("%s: %s assigns %s; only the pinned lines in paneMenuSource may assign the source", file, fun, l)
+			return
+		}
+		seen[l]++
+	}
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			for i, l := range x.Lhs {
+				var r ast.Expr
+				if len(x.Lhs) == len(x.Rhs) {
+					r = x.Rhs[i]
+				}
+				check(file, fun, l, r)
+			}
+		case *ast.IncDecStmt:
+			check(file, fun, x.X, nil)
+		}
+		return true
+	})
+	for k := range pinned {
+		if seen[k] != 1 {
+			t.Errorf("pinned assignment %s appears %d times, want 1", k, seen[k])
+		}
+	}
+
+	rt := reflect.TypeOf(Daemon{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		ts := f.Type.String()
+		if strings.Contains(ts, "limitact.") || strings.Contains(ts, "panemenu.Source") {
+			t.Errorf("Daemon.%s is typed %s; the daemon may hold neither the source nor the action", f.Name, ts)
+		}
+	}
+	pm, ok := rt.FieldByName("paneMenu")
+	if !ok || pm.Type.Kind() != reflect.Interface || pm.Type.NumMethod() != 1 || pm.Type.Method(0).Name != "Evaluate" {
+		t.Errorf("Daemon.paneMenu must be an interface with Evaluate only, is %v", pm.Type)
+	}
+	if _, ok := rt.FieldByName("limitAct"); ok {
+		t.Error("Daemon has a limitAct field again")
 	}
 }

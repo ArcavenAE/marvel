@@ -32,7 +32,6 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/knownhosts"
-	"github.com/arcavenae/marvel/internal/limitact"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
@@ -195,13 +194,14 @@ type Daemon struct {
 	accounts *api.AccountReadings
 	// limitMenu holds the captured limit-menu samples; empty until a real
 	// capture is supplied, so the pane-menu source sets nothing. paneMenu is
-	// built from it on first use. hostLocation is a test seam: nil means the
-	// host's own zone.
+	// built from it on first use and held as an Evaluate-only value: the daemon
+	// cannot address the source's fields (its capture, its hooks) after the one
+	// constructor in panemenu.go has built it, and it keeps no handle on the
+	// limit action at all. hostLocation is a test seam: nil means the host's own
+	// zone.
 	limitMenu    panemenu.Samples
-	paneMenu     *panemenu.Source
+	paneMenu     paneMenuEvaluator
 	paneMenuOnce sync.Once
-	// limitAct is the limit action behind the pane-menu source's hooks.
-	limitAct     *limitact.Action
 	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table
