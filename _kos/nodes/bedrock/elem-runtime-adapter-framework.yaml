@@ -117,6 +117,15 @@ content: |
   for opencode; repaint needs a real size change. marvel#511 records it per
   adapter. A harness upgrade needs the probes re-run.
 
+  NOTE 2026-10-04 (harvest, finding-066). The claude adapter's identity
+  precedence has an operator-facing consequence: adding a system prompt to
+  a role through `runtime.args` (`--append-system-prompt` or
+  `--append-system-prompt-file`) also removes the injected identity line
+  (`internal/runtime/claude.go:137-141`), and nothing reports the skip. The
+  identity still arrives as `MARVEL_SESSION`, `MARVEL_ROLE`, `MARVEL_TEAM`
+  and `MARVEL_WORKSPACE`. `runtime.prompt`, the headless request, does not
+  suppress it. Whether marvel should prepend, signal or leave it is open.
+
 edges:
   - target: elem-console-agnostic
     type: implements
