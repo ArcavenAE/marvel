@@ -13,31 +13,50 @@ the operator says go. Written to assume the cutover goes badly.
 - Run after `kinu-store-migration-runbook.md`, in its own window (that
   runbook, section 7).
 - Checked against marvel `origin/main` c99ce98, director `origin/main`
-  faed978, and the live kinu processes on 2026-10-04 at about 03:45Z
-  (read-only).
+  faed978, and the live kinu processes on 2026-10-04 between 03:28Z and
+  03:37Z (read-only), with the director registration and the broker pidfile
+  rechecked at about 04:15Z.
 
 ## 1. What runs today
 
 | Piece | Live state | Touched by this cutover |
 |---|---|---|
 | Phase-0 broker | `nats-server -c director/probe/nats-phase-0/nats-server.conf`, started by `start.sh` on 2026-09-26; 127.0.0.1:4222, monitor 8222, anonymous, store `~/.director/nats/store`, one leaf out to the hub (`include "leaf-kinu.conf"`) | **replaced** |
-| Global hub | `nats-server --config ~/.director/nats-global/nats-server.conf`, started 2026-09-25; 0.0.0.0:4242, monitor 127.0.0.1:8242, leafnodes 0.0.0.0:7442, domain `global`. Three leaves: kinu's phase-0, mokuzai, and a third that is probably corporate (inferred from its address) | **not touched**: no stop, reload or edit |
+| Global hub | `nats-server --config ~/.director/nats-global/nats-server.conf`, started 2026-09-25; 0.0.0.0:4242, monitor 127.0.0.1:8242, leafnodes 0.0.0.0:7442, domain `global`. Three leaves: kinu's phase-0, mokuzai, and a third that may be corporate's (inferred from its address; the checked-in hub conf names only the kinu and mokuzai leaf users) | **not touched**: no stop, reload or edit |
 | marvel daemon | b533ca5 today; the release from the store-migration window by the time this runs. Its cwd is `~/work/aae-orc`; `~/.marvel/config.yaml` has no bus entry; `marvel bus status` says none is configured; `marvel credential list` is empty | gains a bus entry; restarted |
 | kinu sessions | 32, across 6 teams (arcaven 13) | every one respawned |
-| The operator's director session | its `director-mcp` entry in `~/.claude.json` has no `DIRECTOR_NATS_USER` or `DIRECTOR_NATS_PASS_FILE` key | gains both |
+| The operator's director session | its `director-mcp` entry in `~/.claude.json` runs the bare `director-mcp` binary and carries no `DIRECTOR_NATS_*` key (counted, values not read) | switched to the `director-mcp-seat` wrapper at step 8 |
 
 ## 2. Preconditions (all before the window is set)
 
 1. **Daemon build.** It includes aae-orc-wzexa (959bf90), aae-orc-vy6k7
    (18ea860) and #279 (b798131). b533ca5 already does; the store-migration
    window comes first anyway.
-2. **The director seat credential (NOT MET today).** The operator sets
-   `DIRECTOR_NATS_USER=director` and `DIRECTOR_NATS_PASS_FILE=<StateDir>/nats/director.pass`
-   in the `director-mcp` entry of the aae-orc project in `~/.claude.json`, by
-   hand at a terminal. Without it the flip turns authorization on and locks
-   the human out of the bus (`bus-as-service.md` 6.2). Whether the shim can
-   carry these keys against today's anonymous broker before the window is
-   rehearsal step 6; if it cannot, they are set in the window, at step 8.
+2. **The director seat credential (NOT MET today).** What each client
+   actually reads:
+   - **The bare `director-mcp` binary** reads `DIRECTOR_NATS_CREDS` (a creds
+     file), or else `DIRECTOR_NATS_USER` plus `DIRECTOR_NATS_PASS`, the
+     password **value** (director `bus.go:94-98`). Nothing reads a
+     `DIRECTOR_NATS_PASS_FILE`; `bus-as-service.md` 6.2 names that variable,
+     and that is a defect in the design text (marvel-managed-bus-review:121).
+   - **The `director-mcp-seat` wrapper** (`probe/nats-phase-0/director-mcp-seat`)
+     uses `DIRECTOR_NATS_USER`/`DIRECTOR_NATS_PASS` when both are set.
+     Otherwise it reads `$MARVEL_BUS_STATE/director.pass` (default
+     `~/.marvel/state/nats/director.pass`, the file the managed daemon renders
+     under its StateDir) and exports `DIRECTOR_NATS_USER=director` and the
+     password from it. With no such file it exits 1 (lines 57, 83-93). It also
+     needs `DIRECTOR_TEAM` and `DIRECTOR_WORKSPACE` set outside a marvel
+     session.
+
+   The operator's registration runs the bare binary with no `DIRECTOR_NATS_*`
+   keys, so after the flip it offers no credential and is refused. The plan:
+   prepare a `director-mcp-seat` registration (command, `DIRECTOR_TEAM`,
+   `DIRECTOR_WORKSPACE`, and no `DIRECTOR_NATS_*` keys), and switch to it **at
+   window step 8, not before**: until the daemon renders `director.pass`, the
+   wrapper exits 1. Putting a password value into `~/.claude.json` for the bare
+   binary is the fallback, not the plan, because it leaves the secret at rest
+   in the harness config. Without one of the two, the flip locks the human out
+   of the bus (`bus-as-service.md` 6.2).
 3. **The leaf seed.** The operator has the kinu leaf NKey seed as a file for
    `credential put bus/leaf --value-file`, and has checked, without printing
    the seed, that its public key is the kinu leaf user in the hub's conf
@@ -45,8 +64,8 @@ the operator says go. Written to assume the cutover goes badly.
    (`bus.leaf.unenrolled`): survivable, and recovered in the window.
 4. **Rehearsal passed** (section 3), its transcript linked from #534, with the
    broker gap and the per-seat respawn time measured.
-5. **Quiet fleet.** No merge, shift or apply in flight. mokuzai's and
-   corporate's supervisors are told kinu seats will be unreachable for the
+5. **Quiet fleet.** No merge, shift or apply in flight. mokuzai's
+   supervisor, and corporate's if that cluster leafs into this hub, are told kinu seats will be unreachable for the
    window, and that global mail to them queues at the hub.
 6. **Start directories.** The store-migration window has run, and its
    precondition 5 has settled where each team spawns: either each team
@@ -102,9 +121,18 @@ its own config; the client must still name `--socket` (marvel `CLAUDE.md`).
 
 Steps, each with a pass condition:
 
-1. **Build today's shape.** Copy `nats-server.conf` to `$S` with only its
-   ports and its leaf include changed. Start it through `start.sh` with
-   `DIRECTOR_PHASE0_HOME=$S/p0`. Provision the streams as `verify-auth.sh` does,
+1. **Build today's shape. Never use `start.sh` here.** It always runs the
+   checked-in `nats-server.conf`, which includes `leaf-kinu.conf` with the real
+   kinu seed pointed at the live hub on 7442, so a scratch broker started
+   through it would join the live hub as kinu's leaf. Instead, write
+   `$S/p0/nats-server.conf` from the checked-in one with the scratch ports, a
+   scratch `store_dir`, and the leaf include **removed**, then a leafnode remote
+   only to the scratch hub (17442) with the scratch kinu-leaf NKey. **Check it
+   before it starts:** `grep -n -E 'include|7442|leaf-kinu|~/.director' $S/p0/nats-server.conf`
+   prints nothing but the scratch remote, and no line names a live path or
+   port. Then run it directly, `nats-server -c $S/p0/nats-server.conf --pid
+   $S/p0/nats-server.pid --log $S/p0/nats-server.log &`, and confirm with `curl
+   -s 127.0.0.1:18222/leafz` that its only leaf is the scratch hub. Provision the streams as `verify-auth.sh` does,
    and publish a few messages to AGENT_INBOX and AGENT_AUDIT. Start a scratch
    hub (domain `global`, scratch kinu-leaf and mokuzai-leaf NKeys) and the
    scratch mokuzai leaf. Pass: the hub's `/leafz` lists both leaves.
@@ -119,17 +147,28 @@ Steps, each with a pass condition:
 3. **Spawn with a credential.** Apply a one-role scratch team whose runtime is
    a shell, not a harness. Pass: the session's env carries `NATS_URL` and a
    team user, and that user can subscribe its inbox. **Measure** one respawn.
-4. **The seat.** Run the director shim with `DIRECTOR_NATS_USER=director` and
-   `DIRECTOR_NATS_PASS_FILE=$S/.marvel/state/nats/director.pass` (the rendered
-   path under the scratch StateDir). Pass: it connects and `inbox_summary`
-   answers.
+4. **The seat, through the wrapper it will use.** With `DIRECTOR_NATS_*`
+   unset, run `director-mcp-seat` with `MARVEL_BUS_STATE=$S/.marvel/state/nats`
+   (named explicitly, not derived from `HOME`), `NATS_URL` at the scratch
+   broker, and `DIRECTOR_TEAM`/`DIRECTOR_WORKSPACE` set. Pass: it connects as
+   `director` and `inbox_summary` answers. Negative control: the same with
+   `MARVEL_BUS_STATE` at an empty scratch directory exits 1 with "no seat
+   password". So a pass cannot come from a credential the test did not
+   intend.
 5. **The other leaf held.** Pass: the scratch mokuzai leaf never left the
    hub's `/leafz` during steps 2 to 4.
-6. **Credentials against an anonymous broker.** Point the shim, with its
-   `DIRECTOR_NATS_*` set, and the step-3 session at an anonymous scratch
-   broker. Record whether each connects. This decides precondition 2's timing
-   and rollback step 7.
-7. **Roll back** exactly as section 6, on the scratch processes. Pass: the
+6. **Credentials against an anonymous broker.** Point the bare shim with
+   `DIRECTOR_NATS_USER`/`DIRECTOR_NATS_PASS` set, and the step-3 session, at an
+   anonymous scratch broker. Record whether each connects. This decides
+   rollback step 7.
+7. **Roll back** as section 7 does, with every path, port and socket replaced
+   by its scratch value: `marvel --socket $S/m.sock stop` (with `HOME="$S"`),
+   then kill the scratch managed broker from `$S/.marvel/run/nats-server.pid`
+   if it is still up, restore `$S/.marvel/config.yaml`, and start the scratch
+   phase-0 again with `nats-server -c $S/p0/nats-server.conf` (never
+   `start.sh`). Also rehearse the dead-daemon case: kill the scratch daemon
+   with SIGKILL, confirm its broker is still answering, then stop the broker
+   from its pidfile. Pass: the
    anonymous scratch phase-0 serves the step-1 streams. Record whether the
    store the managed broker opened (it adds a JetStream domain) loads under
    the no-domain phase-0 conf. That decides rollback step 3. The forward
@@ -149,12 +188,12 @@ Steps, each with a pass condition:
 - **kinu's global reach**, over the same span: kinu seats cannot publish to
   or read the global tier. Global mail to them waits at the hub, in streams
   with a 72h max age, and is read after respawn.
-- **mokuzai and corporate seats keep their own buses and their hub links**
-  (section 5). They lose only their reach to kinu seats, as above.
+- **mokuzai's seats, and corporate's if it is the third leaf, keep their own
+  buses and their hub links** (section 5). They lose only their reach to kinu seats, as above.
 
-## 5. Why mokuzai's and corporate's leaf links survive
+## 5. Why the other clusters' leaf links survive
 
-Their links end at the hub, the 0.0.0.0:7442 leafnode listener of the
+mokuzai's link, and the third leaf's (possibly corporate's), end at the hub, the 0.0.0.0:7442 leafnode listener of the
 hand-started hub process. kinu's phase-0 broker holds only an outbound leaf to
 that same hub. The cutover replaces the phase-0 broker and never stops,
 reloads or edits the hub or `~/.director/nats-global`, so their links have
@@ -202,9 +241,10 @@ Then:
    - `/jsz` stream counts are at least `$W`'s (AGENT_AUDIT keeps its 720h
      history);
    - an anonymous `nats -s nats://127.0.0.1:4222 sub '>'` is refused.
-8. The director seat: reconnect `director-mcp` in the operator's session (set
-   precondition 2's keys first if rehearsal step 6 said to). Pass:
-   `inbox_summary` answers.
+8. The director seat: confirm `~/.marvel/state/nats/director.pass` exists
+   (`test -r`, no read of its content), switch the operator's `director-mcp`
+   registration to the prepared `director-mcp-seat` one (precondition 2), and
+   reconnect it in the operator's session. Pass: `inbox_summary` answers.
 9. Roll kinu sessions, supervisors first, then the rest, team by team, each
    after its handoff marker. Pass per team: a respawned seat answers a
    roll-call message; a global publish from a kinu supervisor lands in
@@ -229,8 +269,16 @@ until it is pushed again (#339), so the seed push joins kinu's restart steps.
 
 ## 7. Rollback (on a failed check at step 7 not fixed in 15 minutes, a failed step 9, or the operator's word)
 
-1. `marvel stop`, without `--keep-bus`, so the managed broker stops with the
-   daemon. Panes survive. Confirm 4222 is closed.
+1. Stop the managed broker and the daemon.
+   - **Daemon alive:** `marvel stop`, without `--keep-bus`, stops the broker
+     with the daemon. Panes survive.
+   - **Daemon dead, broker alive:** the managed broker outlives its daemon by
+     design, so the next daemon can adopt it (`internal/bus/supervisor.go:198-209`).
+     Stop it from its pidfile: check that `ps -o command= -p $(cat
+     ~/.marvel/run/nats-server.pid)` is the managed nats-server, then `kill
+     -TERM $(cat ~/.marvel/run/nats-server.pid)` (`supervisor.go:179`).
+
+   Either way, confirm 4222 is closed before step 4.
 2. `cp -p $W/config.yaml.pre-bus ~/.marvel/config.yaml`.
 3. The store. If rehearsal step 7 showed the domain-stamped store loads under
    the phase-0 conf, keep it, and nothing is lost. Otherwise run `mv
@@ -245,8 +293,11 @@ until it is pushed again (#339), so the seed push joins kinu's restart steps.
 6. Start the daemon with the recorded command. It adopts the panes.
 7. Seats. Unrolled seats reconnect by themselves. Respawned seats carry a
    team user to an anonymous broker. If rehearsal step 6 showed they connect,
-   nothing more is needed. If not, roll them once more. The director seat
-   keeps or drops its `DIRECTOR_NATS_*` keys the same way.
+   nothing more is needed. If not, roll them once more. The director seat goes
+   back to its bare `director-mcp` registration, since the wrapper exits 1
+   once no daemon renders `director.pass` (or, if the file is left behind, it
+   connects with a credential the anonymous broker ignores, per rehearsal step
+   6).
 8. Leave the `bus/leaf` credential unpushed. The phase-0 broker reads its own
    `leaf-kinu.conf`.
 
