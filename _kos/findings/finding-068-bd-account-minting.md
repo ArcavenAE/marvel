@@ -1,8 +1,8 @@
-# finding-066: bd attribution is self-asserted today; dolt can authenticate a seat by JWT, but delegated CREATE USER is root-equivalent
+# finding-068: bd attribution is self-asserted today; dolt can authenticate a seat by JWT, but delegated CREATE USER is root-equivalent
 
 **Date:** 2026-10-03
 **Placement:** marvel. The subject is marvel minting the identity a seat writes to bd under. It answers `question-bd-managed-extended-service` (d) and part of (e).
-**Number:** 066, agreed with the marvel builder 2026-10-04 (origin/main tops out at 064; marvel#528 holds 065).
+**Number:** 068, the next free id across main and open PRs (#528 065, #530 066/067).
 **Rulings (operator, 2026-10-04, ratified defaults):**
 - (i) a marvel signing key trusted by the bd server is custody-adjacent until ruled otherwise, and nothing is built on it in the meantime;
 - (ii) the identity is the slot, not the session;
