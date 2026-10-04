@@ -39,6 +39,11 @@ const (
 	LimitUnchanged LimitChange = ""
 	LimitSet       LimitChange = "limited"
 	LimitCleared   LimitChange = "unlimited"
+	// LimitRebound means the session stays limited but the window that binds
+	// it changed. It is silent: no event, because the transition count is
+	// unchanged, but the new provenance must be stored so the condition ends
+	// when the window that still binds it resets.
+	LimitRebound LimitChange = "rebound"
 )
 
 // Reasons EvaluateLimit gives for a clear.
@@ -51,11 +56,16 @@ const (
 // account's reading. cur is the stored provenance, nil if not limited.
 //
 // A session is limited when a fresh reading has a window at 100 percent or
-// more whose reset is still ahead. It stays limited until that reset, or until
-// a newer fresh reading puts the same window below 100. A stale reading never
-// sets a condition and never clears one; a stored condition ends by its own
-// reset time, so it needs no reading and survives a daemon restart. A
-// condition another source set (the pane menu) is left alone.
+// more whose reset is still ahead. It is bound to the full window that resets
+// last. It stays limited until that reset, or until a newer fresh reading
+// leaves no window at 100 with a reset ahead. If a newer reading puts the bound
+// window below 100 while another window is still full, the session stays
+// limited and is rebound to the one that still binds it, with no clear and no
+// new set: a false unlimited followed by limited would break once per
+// transition. A stale reading never sets a condition and never clears one; a
+// stored condition ends by its own reset time, so it needs no reading and
+// survives a daemon restart. A condition another source set (the pane menu) is
+// left alone.
 func EvaluateLimit(cur *LimitProvenance, key AccountKey, reading AccountReading, state ReadingState, now time.Time) (next *LimitProvenance, change LimitChange, reason string) {
 	if cur != nil {
 		if cur.Source != LimitSourceReading {
@@ -64,11 +74,18 @@ func EvaluateLimit(cur *LimitProvenance, key AccountKey, reading AccountReading,
 		if !now.Before(cur.ResetsAt) {
 			return nil, LimitCleared, LimitClearResetReached
 		}
-		if state == ReadingFresh && reading.At.After(cur.ReadingAt) {
-			for _, w := range reading.Windows {
-				if w.Name == cur.Window && w.UsedPercent != nil && *w.UsedPercent < 100 {
-					return nil, LimitCleared, LimitClearBelowLimit
-				}
+		if state != ReadingFresh || !reading.At.After(cur.ReadingAt) {
+			return cur, LimitUnchanged, ""
+		}
+		if bound := bindingWindow(reading, now); bound != nil {
+			if bound.Name == cur.Window && bound.ResetsAt.Equal(cur.ResetsAt) {
+				return cur, LimitUnchanged, ""
+			}
+			return provenanceFor(key, reading, bound), LimitRebound, ""
+		}
+		for _, w := range reading.Windows {
+			if w.Name == cur.Window && w.UsedPercent != nil && *w.UsedPercent < 100 {
+				return nil, LimitCleared, LimitClearBelowLimit
 			}
 		}
 		return cur, LimitUnchanged, ""
@@ -76,6 +93,16 @@ func EvaluateLimit(cur *LimitProvenance, key AccountKey, reading AccountReading,
 	if state != ReadingFresh {
 		return nil, LimitUnchanged, ""
 	}
+	bind := bindingWindow(reading, now)
+	if bind == nil {
+		return nil, LimitUnchanged, ""
+	}
+	return provenanceFor(key, reading, bind), LimitSet, ""
+}
+
+// bindingWindow is the full window (100 percent or more) with a reset still
+// ahead that resets last, or nil if there is none.
+func bindingWindow(reading AccountReading, now time.Time) *AccountWindow {
 	var bind *AccountWindow
 	for i := range reading.Windows {
 		w := &reading.Windows[i]
@@ -86,13 +113,14 @@ func EvaluateLimit(cur *LimitProvenance, key AccountKey, reading AccountReading,
 			bind = w
 		}
 	}
-	if bind == nil {
-		return nil, LimitUnchanged, ""
-	}
+	return bind
+}
+
+func provenanceFor(key AccountKey, reading AccountReading, w *AccountWindow) *LimitProvenance {
 	return &LimitProvenance{
-		Source: LimitSourceReading, Window: bind.Name, UsedPercent: *bind.UsedPercent,
-		ResetsAt: bind.ResetsAt, ReportedBy: reading.Session, ReadingAt: reading.At, Account: key.String(),
-	}, LimitSet, ""
+		Source: LimitSourceReading, Window: w.Name, UsedPercent: *w.UsedPercent,
+		ResetsAt: w.ResetsAt, ReportedBy: reading.Session, ReadingAt: reading.At, Account: key.String(),
+	}
 }
 
 // LimitReadingText renders a reading state for describe: "fresh 87% (seven_day)",

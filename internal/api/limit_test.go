@@ -171,3 +171,56 @@ func TestLimitedSessionJSONIsAdditive(t *testing.T) {
 		t.Fatalf("old client decode: %v %+v", err, old)
 	}
 }
+
+// Blocker 2 of the #549 review: with both windows full, the one that resets
+// last binds. A newer reading that drops it below 100 while the other is still
+// full must rebind, not clear: a clear followed by a set on the next tick would
+// break once per transition.
+func TestEvaluateLimitRebindsWhenAnotherWindowStillBinds(t *testing.T) {
+	t.Parallel()
+	five, seven := limT0.Add(time.Hour), limT0.Add(40*time.Hour)
+	first := reading(limT0, win("five_hour", 100, five), win("seven_day", 100, seven))
+	cur, ch, _ := EvaluateLimit(nil, limKey(), first, ReadingFresh, limT0)
+	if ch != LimitSet || cur.Window != "seven_day" {
+		t.Fatalf("setup: %q %+v", ch, cur)
+	}
+
+	later := reading(limT0.Add(time.Minute), win("five_hour", 100, five), win("seven_day", 99, seven))
+	next, ch, why := EvaluateLimit(cur, limKey(), later, ReadingFresh, limT0.Add(2*time.Minute))
+	if ch != LimitRebound || why != "" || next == nil || next.Window != "five_hour" || !next.ResetsAt.Equal(five) {
+		t.Fatalf("got %q %q %+v, want a silent rebind to five_hour", ch, why, next)
+	}
+	// The next evaluation of the same reading changes nothing: no clear, no set.
+	again, ch, _ := EvaluateLimit(next, limKey(), later, ReadingFresh, limT0.Add(3*time.Minute))
+	if ch != LimitUnchanged || again != next {
+		t.Fatalf("second pass: %q %+v, want unchanged", ch, again)
+	}
+	// Only when no window is full any more does it clear.
+	free := reading(limT0.Add(5*time.Minute), win("five_hour", 90, five), win("seven_day", 99, seven))
+	if _, ch, why := EvaluateLimit(next, limKey(), free, ReadingFresh, limT0.Add(6*time.Minute)); ch != LimitCleared || why != LimitClearBelowLimit {
+		t.Fatalf("no full window: %q %q, want a clear", ch, why)
+	}
+}
+
+// A newer reading that leaves the same window binding changes nothing, so a
+// statusline ticking every few seconds does not rewrite the session.
+func TestEvaluateLimitSameBindingIsUnchanged(t *testing.T) {
+	t.Parallel()
+	reset := limT0.Add(2 * time.Hour)
+	cur, _, _ := EvaluateLimit(nil, limKey(), reading(limT0, win("seven_day", 100, reset)), ReadingFresh, limT0)
+	if next, ch, _ := EvaluateLimit(cur, limKey(), reading(limT0.Add(time.Minute), win("seven_day", 100, reset)), ReadingFresh, limT0.Add(2*time.Minute)); ch != LimitUnchanged || next != cur {
+		t.Fatalf("got %q %+v", ch, next)
+	}
+}
+
+// A stale reading never clears, even when it is newer than the one that set the
+// condition and shows the bound window below 100.
+func TestEvaluateLimitStaleNewerReadingNeverClears(t *testing.T) {
+	t.Parallel()
+	reset := limT0.Add(2 * time.Hour)
+	cur, _, _ := EvaluateLimit(nil, limKey(), reading(limT0, win("seven_day", 100, reset)), ReadingFresh, limT0)
+	newer := reading(limT0.Add(time.Minute), win("seven_day", 10, reset))
+	if _, ch, _ := EvaluateLimit(cur, limKey(), newer, ReadingStale, limT0.Add(time.Hour)); ch != LimitUnchanged {
+		t.Fatalf("a stale newer reading changed it: %q", ch)
+	}
+}

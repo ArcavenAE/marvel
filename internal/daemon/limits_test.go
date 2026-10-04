@@ -135,3 +135,60 @@ func TestGetAndDescribeSessionCarryTheLimitReading(t *testing.T) {
 		t.Errorf("the view fields were stored: %+v", stored)
 	}
 }
+
+// Blocker 2 at the daemon: a rebind to the window that still binds is stored,
+// and emits neither session.unlimited nor a second session.limited.
+func TestEvaluateLimitsRebindEmitsNoEvent(t *testing.T) {
+	five, seven := acctT0.Add(time.Hour), acctT0.Add(40*time.Hour)
+	d, key := limitDaemon(t,
+		api.AccountWindow{Name: "five_hour", UsedPercent: acctPct(100), ResetsAt: five},
+		api.AccountWindow{Name: "seven_day", UsedPercent: acctPct(100), ResetsAt: seven})
+	d.evaluateLimits(acctT0.Add(time.Minute))
+
+	sess, _ := d.store.GetSession(key)
+	d.accounts.Record(api.AccountKeyOf(sess), []api.AccountWindow{
+		{Name: "five_hour", UsedPercent: acctPct(100), ResetsAt: five},
+		{Name: "seven_day", UsedPercent: acctPct(99), ResetsAt: seven},
+	}, "ws/seat", acctT0.Add(2*time.Minute))
+	d.evaluateLimits(acctT0.Add(3 * time.Minute))
+	d.evaluateLimits(acctT0.Add(4 * time.Minute))
+
+	got, _ := d.store.GetSession(key)
+	if got.Condition != api.ConditionLimited || got.Limit.Window != "five_hour" || !got.Limit.ResetsAt.Equal(five) {
+		t.Fatalf("not rebound to five_hour: %q %+v", got.Condition, got.Limit)
+	}
+	if n := len(eventsOf(d, events.KindSessionLimited)); n != 1 {
+		t.Errorf("session.limited emitted %d times, want 1", n)
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 0 {
+		t.Errorf("session.unlimited emitted %d times, want 0", n)
+	}
+	// It now ends at the five_hour reset, not the seven_day one.
+	d.evaluateLimits(five)
+	if got, _ = d.store.GetSession(key); got.Condition != "" {
+		t.Fatalf("still limited at the five_hour reset: %q", got.Condition)
+	}
+}
+
+// A session that ended while limited still has its condition cleared at the
+// reset, so a dead row does not stay limited forever.
+func TestEvaluateLimitsClearsADeadSessionAtTheReset(t *testing.T) {
+	reset := acctT0.Add(2 * time.Hour)
+	d, key := limitDaemon(t, api.AccountWindow{Name: "seven_day", UsedPercent: acctPct(100), ResetsAt: reset})
+	d.evaluateLimits(acctT0.Add(time.Minute))
+	if err := d.store.UpdateSession(key, func(s *api.Session) error { s.State = api.SessionFailed; return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	d.evaluateLimits(reset.Add(-time.Minute))
+	if got, _ := d.store.GetSession(key); got.Condition != api.ConditionLimited {
+		t.Fatalf("a dead session's condition cleared before the reset: %q", got.Condition)
+	}
+	d.evaluateLimits(reset)
+	if got, _ := d.store.GetSession(key); got.Condition != "" || got.Limit != nil {
+		t.Fatalf("a dead session stayed limited past the reset: %q %+v", got.Condition, got.Limit)
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 1 {
+		t.Errorf("session.unlimited emitted %d times, want 1", n)
+	}
+}

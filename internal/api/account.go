@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -69,8 +71,35 @@ func AccountKeyOf(s Session) AccountKey {
 		Harness:          s.Runtime.Name,
 		Backend:          b,
 		CredentialSource: s.BackendCredentialSource,
-		ConfigHome:       s.AccountHome,
+		ConfigHome:       canonicalConfigHome(s.Runtime.Name, s.AccountHome),
 	}
+}
+
+// defaultHomeDirs is each harness's own default state directory, relative to
+// the user's home. Naming it explicitly and naming nothing are the same login.
+var defaultHomeDirs = map[string]string{"claude": ".claude", "codex": ".codex"}
+
+// canonicalConfigHome reduces a recorded login home to one spelling: empty for
+// the harness's default directory, otherwise the cleaned path. Without it a
+// session that fell back to the shared home (empty) and one that names the
+// same directory (codex always does) would be two accounts for one login.
+func canonicalConfigHome(harness, home string) string {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		userHome = ""
+	}
+	return canonicalConfigHomeIn(harness, home, userHome)
+}
+
+func canonicalConfigHomeIn(harness, home, userHome string) string {
+	if home == "" {
+		return ""
+	}
+	home = filepath.Clean(home)
+	if def, ok := defaultHomeDirs[harness]; ok && userHome != "" && home == filepath.Join(userHome, def) {
+		return ""
+	}
+	return home
 }
 
 // AccountWindow is one rate-limit window of an account. UsedPercent is a
