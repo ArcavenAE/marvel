@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -59,10 +60,64 @@ func TestObservationStampFailsClosed(t *testing.T) {
 	}
 	// A corrupt state file is overwritten with a fresh stamp, not trusted.
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".marvel-acct-ws-a.json"), []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, stampFileName("ws", "a")), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := observationStamp(dir, "ws", "a", stampWin(40, 1), t0); !got.Equal(t0) {
 		t.Fatalf("corrupt state: %v", got)
+	}
+}
+
+// Two seats whose names differ only where a sanitizer would merge them must not
+// share a stamp file (marvel#551 review).
+func TestObservationStampCollidingNamesStaySeparate(t *testing.T) {
+	pairs := [][2][2]string{
+		{{"a-b", "c"}, {"a", "b-c"}},
+		{{"ws", "x.y"}, {"ws", "x_y"}},
+		{{"a", "b"}, {"a-b", ""}},
+	}
+	for _, p := range pairs {
+		dir := t.TempDir()
+		t0 := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+		observationStamp(dir, p[0][0], p[0][1], stampWin(40, 1786000000), t0)
+		t1 := t0.Add(time.Hour)
+		if got := observationStamp(dir, p[1][0], p[1][1], stampWin(40, 1786000000), t1); !got.Equal(t1) {
+			t.Errorf("%v borrowed %v's stamp: %v", p[1], p[0], got)
+		}
+		// And the first is still its own, unchanged.
+		if got := observationStamp(dir, p[0][0], p[0][1], stampWin(40, 1786000000), t1.Add(time.Hour)); !got.Equal(t0) {
+			t.Errorf("%v lost its stamp: %v", p[0], got)
+		}
+	}
+}
+
+// A symlink planted at the old guessable temp name must not be followed.
+func TestObservationStampDoesNotFollowAPlantedSymlink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	final := filepath.Join(dir, stampFileName("ws", "a"))
+	oldTmp := final + "." + strconv.Itoa(os.Getpid()) + ".tmp"
+	for _, planted := range []string{oldTmp, final} {
+		if err := os.Symlink(victim, planted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t0 := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	got := observationStamp(dir, "ws", "a", stampWin(40, 1786000000), t0)
+	if raw, _ := os.ReadFile(victim); string(raw) != "keep" {
+		t.Fatalf("the symlink target was written: %q", raw)
+	}
+	if !got.Equal(t0) {
+		t.Fatalf("stamp = %v", got)
+	}
+	if info, err := os.Lstat(final); err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("final file: %v %v", info, err)
+	}
+	_ = os.Remove(oldTmp) // the planted one is the test's, not a leftover
+	if left, _ := filepath.Glob(filepath.Join(dir, ".marvel-acct-*.tmp")); len(left) != 0 {
+		t.Fatalf("temp files left behind: %v", left)
 	}
 }

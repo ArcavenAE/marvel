@@ -49,8 +49,7 @@ func observationStamp(dir, workspace, session string, windows []api.AccountWindo
 	if dir == "" || len(windows) == 0 {
 		return time.Time{}
 	}
-	name := ".marvel-acct-" + sanitizeStampName(workspace) + "-" + sanitizeStampName(session) + ".json"
-	path := filepath.Join(dir, name)
+	path := filepath.Join(dir, stampFileName(workspace, session))
 	figure := figureOf(windows)
 	if raw, err := os.ReadFile(path); err == nil {
 		var prev stampFile
@@ -62,8 +61,17 @@ func observationStamp(dir, workspace, session string, windows []api.AccountWindo
 	if err != nil {
 		return time.Time{}
 	}
-	tmp := path + fmt.Sprintf(".%d.tmp", os.Getpid())
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	// A fresh temp file in the same directory (O_EXCL, a random name), so a
+	// planted symlink at a guessable name is never followed; then rename over.
+	f, err := os.CreateTemp(dir, ".marvel-acct-*.tmp")
+	if err != nil {
+		return time.Time{}
+	}
+	tmp := f.Name()
+	_, werr := f.Write(raw)
+	cerr := f.Close()
+	if werr != nil || cerr != nil || os.Chmod(tmp, 0o600) != nil {
+		_ = os.Remove(tmp)
 		return time.Time{}
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -73,12 +81,10 @@ func observationStamp(dir, workspace, session string, windows []api.AccountWindo
 	return now.UTC()
 }
 
-func sanitizeStampName(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			return r
-		}
-		return '_'
-	}, s)
+// stampFileName names a seat's stamp file by a hash of the pair, with a NUL
+// between the parts, so no two (workspace, session) pairs share a file however
+// they are spelled: "a-b"+"c" and "a"+"b-c" differ, as do "x.y" and "x_y".
+func stampFileName(workspace, session string) string {
+	sum := sha256.Sum256([]byte(workspace + "\x00" + session))
+	return ".marvel-acct-" + hex.EncodeToString(sum[:12]) + ".json"
 }
