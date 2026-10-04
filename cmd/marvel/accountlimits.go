@@ -108,11 +108,15 @@ func accountLimitsRequest(workspace, session, token string, windows []api.Accoun
 const accountLimitsTimeout = 3 * time.Second
 
 // sendAccountLimits posts the windows, best effort. observedAt is when the
-// harness made the observation, zero when it is live.
+// harness made the observation. Both senders stamp it (the statusline with its
+// own tick time); a zero one is read by the daemon as unknown and never
+// displaces a stamped reading.
 func sendAccountLimits(socket, workspace, session string, windows []api.AccountWindow, observedAt time.Time) {
 	req, ok := accountLimitsRequest(workspace, session, os.Getenv(api.HeartbeatTokenEnv), windows, observedAt)
 	if !ok {
 		return
 	}
+	// The deadline is set after the dial, so it bounds the exchange and not the
+	// connect; connecting to the local socket does not block.
 	_, _ = daemon.SendRequestWith(socket, req, daemon.DialOptions{Timeout: accountLimitsTimeout})
 }

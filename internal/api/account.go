@@ -116,6 +116,10 @@ type AccountReading struct {
 	Windows []AccountWindow `json:"windows"`
 	Session string          `json:"session"`
 	At      time.Time       `json:"at"`
+	// unstamped marks a reading whose sender gave no observation time, so At is
+	// only when the daemon received it. Such a reading never displaces a stamped
+	// one and is displaced by any later reading.
+	unstamped bool
 }
 
 // AccountLimitsRequest is the account.limits RPC body. It names the reporting
@@ -194,10 +198,35 @@ func (a *AccountReadings) Record(key AccountKey, windows []AccountWindow, sessio
 	defer a.mu.Unlock()
 	// The newest observation wins. An older one is not an error, it is
 	// information the account already has newer.
-	if held, ok := a.m[key]; ok && at.Before(held.At) {
+	if held, ok := a.m[key]; ok && !held.unstamped && at.Before(held.At) {
 		return false
 	}
 	a.m[key] = AccountReading{Windows: usable, Session: session, At: at}
+	return true
+}
+
+// RecordUnstamped stores a reading whose sender gave no observation time. The
+// time is unknown, so it is treated as unknown: it is stored only when nothing
+// stamped is held (an older sender that never stamps still gets its readings
+// through, one replacing the last), and it never displaces a stamped reading.
+// now is when the daemon received it.
+func (a *AccountReadings) RecordUnstamped(key AccountKey, windows []AccountWindow, session string, now time.Time) bool {
+	var usable []AccountWindow
+	for _, w := range windows {
+		if w.UsedPercent == nil || math.IsNaN(*w.UsedPercent) || math.IsInf(*w.UsedPercent, 0) || *w.UsedPercent < 0 {
+			continue
+		}
+		usable = append(usable, cloneWindow(w))
+	}
+	if len(usable) == 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if held, ok := a.m[key]; ok && !held.unstamped {
+		return false
+	}
+	a.m[key] = AccountReading{Windows: usable, Session: session, At: now, unstamped: true}
 	return true
 }
 

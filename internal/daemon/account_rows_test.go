@@ -330,3 +330,46 @@ func TestAccountLimitsObservedAtFutureRejectedSkewClamped(t *testing.T) {
 		t.Fatal(resp.Error)
 	}
 }
+
+// A claude reading with no observation time (an older sender) posted after a
+// stamped fresh 100 is not stored, and limited stays set (marvel#551 r2).
+func TestAccountLimitsZeroTimeReadingNeverDisplacesAStampedOne(t *testing.T) {
+	d := newHandlerDaemon(t)
+	token := tokenedSession(t, d, "seat")
+	now := time.Now().UTC()
+	reset := now.Add(2 * time.Hour)
+	post := func(pct float64, observed time.Time) Response {
+		return d.recordAccountLimits(api.AccountLimitsRequest{
+			Session: "ws/seat", SessionToken: token, ObservedAt: observed,
+			Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(pct), ResetsAt: reset}},
+		}, now)
+	}
+	if resp := post(100, now.Add(-time.Second)); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	d.evaluateLimits(now)
+	resp := post(40, time.Time{})
+	if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":false`) {
+		t.Fatalf("zero-time reading: %+v", resp)
+	}
+	d.evaluateLimits(now.Add(time.Second))
+	if got, _ := d.store.GetSession("ws/seat"); got.Condition != api.ConditionLimited {
+		t.Fatalf("a zero-time 40 lifted the limit: %q", got.Condition)
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 0 {
+		t.Fatalf("session.unlimited emitted %d times", n)
+	}
+}
+
+// With nothing stored, a zero-time reading is stored (an older sender).
+func TestAccountLimitsZeroTimeReadingIsStoredWhenNothingIs(t *testing.T) {
+	d := newHandlerDaemon(t)
+	token := tokenedSession(t, d, "seat")
+	resp := d.recordAccountLimits(api.AccountLimitsRequest{
+		Session: "ws/seat", SessionToken: token,
+		Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(40)}},
+	}, time.Now().UTC())
+	if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":true`) {
+		t.Fatalf("resp = %+v", resp)
+	}
+}

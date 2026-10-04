@@ -380,3 +380,32 @@ func TestAccountLimitsRequestObservedAtIsAdditive(t *testing.T) {
 		t.Fatalf("a request without observed_at: %+v %v", back, err)
 	}
 }
+
+// A reading with no observation time is unknown: it never displaces a stamped
+// one, is stored when nothing stamped is held, and an older sender that never
+// stamps still gets each new reading through.
+func TestAccountRecordUnstampedNeverDisplacesAStampedReading(t *testing.T) {
+	t.Parallel()
+	key := AccountKey{Harness: "claude", Backend: BackendDefaultName}
+	t0 := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	r := NewAccountReadings()
+	if !r.RecordUnstamped(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(10)}}, "ws/a", t0) {
+		t.Fatal("first unstamped reading refused")
+	}
+	if !r.RecordUnstamped(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(20)}}, "ws/a", t0.Add(time.Minute)) {
+		t.Fatal("a later unstamped reading was refused: an old sender would be frozen")
+	}
+	if !r.Record(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(100)}}, "ws/b", t0.Add(-time.Hour)) {
+		t.Fatal("a stamped reading was refused by an unstamped one")
+	}
+	if r.RecordUnstamped(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(40)}}, "ws/c", t0.Add(2*time.Minute)) {
+		t.Fatal("an unstamped reading displaced a stamped one")
+	}
+	got, _ := r.Reading(key, t0.Add(-time.Hour))
+	if *got.Windows[0].UsedPercent != 100 || got.Session != "ws/b" {
+		t.Fatalf("reading = %+v", got)
+	}
+	if r.RecordUnstamped(key, nil, "ws/c", t0) {
+		t.Fatal("an unusable unstamped reading was stored")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,9 @@ import (
 // fakeDaemon answers every request with an empty response and records the
 // methods it was sent, in order. The socket lives in its own short directory:
 // a unix socket path is capped near 104 bytes and t.TempDir can exceed it.
+// lastObserved is the observed_at of the last account.limits the fake daemon saw.
+var lastObserved atomic.Value
+
 func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens func() []string) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "mx")
@@ -49,6 +53,7 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens fu
 					var body api.AccountLimitsRequest
 					if json.Unmarshal(req.Params, &body) == nil {
 						toks = append(toks, body.SessionToken)
+						lastObserved.Store(body.ObservedAt)
 					}
 				}
 				mu.Unlock()
@@ -227,4 +232,23 @@ func liveRollout(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// The claude statusline stamps its own observation time, so the daemon never
+// has to read its reading as unknown.
+func TestCtxForwardStampsItsObservationTime(t *testing.T) {
+	socket, methods, _ := fakeDaemon(t)
+	seatEnv(t, socket)
+	lastObserved.Store(time.Time{})
+	before := time.Now().UTC().Add(-time.Second)
+	withStdin(t, readTestdata(t, "statusline-2.1.226-rate-limits-synthetic.json"), func() {
+		if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+	waitForMethods(t, methods, 2)
+	got, _ := lastObserved.Load().(time.Time)
+	if got.IsZero() || got.Before(before) || got.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("observed_at = %v, want about now", got)
+	}
 }
