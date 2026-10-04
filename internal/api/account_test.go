@@ -302,3 +302,35 @@ func TestAccountRecordRefusesNegativeAndNonFinitePercentages(t *testing.T) {
 		t.Error("zero percent is a reading and was refused")
 	}
 }
+
+// Naming the harness's default home and naming nothing are one login.
+func TestCanonicalConfigHome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, harness, home, user, want string
+	}{
+		{"empty stays empty", "claude", "", "/h", ""},
+		{"claude's default dir", "claude", "/h/.claude", "/h", ""},
+		{"with a trailing slash", "claude", "/h/.claude/", "/h", ""},
+		{"codex's default dir", "codex", "/h/.codex", "/h", ""},
+		{"another harness's default is not this one's", "claude", "/h/.codex", "/h", "/h/.codex"},
+		{"a different directory is a different login", "claude", "/h/.claude-work", "/h", "/h/.claude-work"},
+		{"a harness with no known default keeps the path", "forestage", "/h/.forestage", "/h", "/h/.forestage"},
+		{"no user home known keeps the cleaned path", "claude", "/h/.claude/", "", "/h/.claude"},
+	}
+	for _, tc := range tests {
+		if got := canonicalConfigHomeIn(tc.harness, tc.home, tc.user); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// No t.Parallel: it sets HOME for the process.
+func TestAccountKeyTreatsTheExplicitDefaultHomeAsTheDefault(t *testing.T) {
+	t.Setenv("HOME", "/home/acct-test")
+	shared := sessionOn("codex", BackendDefaultName, "", "", "")
+	named := sessionOn("codex", BackendDefaultName, "", "/home/acct-test/.codex", "/state/homes/aaa")
+	if AccountKeyOf(shared) != AccountKeyOf(named) {
+		t.Fatalf("one login, two keys: %v and %v", AccountKeyOf(shared), AccountKeyOf(named))
+	}
+}

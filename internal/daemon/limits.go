@@ -31,15 +31,18 @@ func (d *Daemon) evaluateLimits(now time.Time) {
 			}
 			change, reason = ch, why
 			prov = next
-			if ch == api.LimitSet {
+			switch ch {
+			case api.LimitSet, api.LimitRebound:
 				live.Condition, live.Limit = api.ConditionLimited, next
-			} else {
+			case api.LimitCleared:
 				prov = live.Limit
 				live.Condition, live.Limit = "", nil
 			}
 			return nil
 		})
-		if err != nil || change == api.LimitUnchanged {
+		// A rebind is a change of which window binds a session that stays
+		// limited: stored, but not a transition, so no event.
+		if err != nil || change == api.LimitUnchanged || change == api.LimitRebound {
 			continue
 		}
 		ev := events.Event{
