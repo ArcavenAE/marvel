@@ -108,9 +108,9 @@ func accountLimitsRequest(workspace, session, token string, windows []api.Accoun
 const accountLimitsTimeout = 3 * time.Second
 
 // sendAccountLimits posts the windows, best effort. observedAt is when the
-// harness made the observation. Both senders stamp it (the statusline with its
-// own tick time); a zero one is read by the daemon as unknown and never
-// displaces a stamped reading.
+// harness made the observation: codex's rollout time, or for the statusline
+// (which carries none) the time this seat first saw the figure. A zero one is
+// read by the daemon as unknown and never displaces a stamped reading.
 func sendAccountLimits(socket, workspace, session string, windows []api.AccountWindow, observedAt time.Time) {
 	req, ok := accountLimitsRequest(workspace, session, os.Getenv(api.HeartbeatTokenEnv), windows, observedAt)
 	if !ok {

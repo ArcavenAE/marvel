@@ -184,6 +184,13 @@ func NewAccountReadings() *AccountReadings {
 // percentage is dropped; a reading with no usable window is not stored, and
 // does not replace an earlier one.
 func (a *AccountReadings) Record(key AccountKey, windows []AccountWindow, session string, at time.Time) bool {
+	return a.RecordObserved(key, windows, session, at, at)
+}
+
+// RecordObserved is Record with the receiving clock. A stamped reading that is
+// no longer fresh at now does not displace a held unstamped one: the stamp says
+// the figure is old, and the unstamped reading is the daemon's newest news.
+func (a *AccountReadings) RecordObserved(key AccountKey, windows []AccountWindow, session string, at, now time.Time) bool {
 	var usable []AccountWindow
 	for _, w := range windows {
 		if w.UsedPercent == nil || math.IsNaN(*w.UsedPercent) || math.IsInf(*w.UsedPercent, 0) || *w.UsedPercent < 0 {
@@ -198,8 +205,13 @@ func (a *AccountReadings) Record(key AccountKey, windows []AccountWindow, sessio
 	defer a.mu.Unlock()
 	// The newest observation wins. An older one is not an error, it is
 	// information the account already has newer.
-	if held, ok := a.m[key]; ok && !held.unstamped && at.Before(held.At) {
-		return false
+	if held, ok := a.m[key]; ok {
+		if !held.unstamped && at.Before(held.At) {
+			return false
+		}
+		if held.unstamped && now.Sub(at) > ReadingMaxAge {
+			return false
+		}
 	}
 	a.m[key] = AccountReading{Windows: usable, Session: session, At: at}
 	return true

@@ -122,7 +122,7 @@ func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time
 		if err != nil {
 			return Response{Error: fmt.Sprintf("account.limits: %v", err)}
 		}
-		stored = d.accounts.Record(key, req.Windows, sess.Key(), observed)
+		stored = d.accounts.RecordObserved(key, req.Windows, sess.Key(), observed, now)
 	}
 	data, err := json.Marshal(map[string]any{"account": key.String(), "stored": stored})
 	if err != nil {

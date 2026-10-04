@@ -373,3 +373,47 @@ func TestAccountLimitsZeroTimeReadingIsStoredWhenNothingIs(t *testing.T) {
 		t.Fatalf("resp = %+v", resp)
 	}
 }
+
+// The forwarder path, two seats of one account: seat a posts a stamped 100 and
+// is limited; seat b's statusline re-renders the same old 40 over and over, each
+// time stamped with the first time it saw that figure (earlier than a's 100).
+// Limited holds and nothing is unlimited (marvel#551 r3).
+func TestAccountLimitsTwoSeatsAReRenderingSiblingNeverLiftsALimit(t *testing.T) {
+	d := newHandlerDaemon(t)
+	tokA := tokenedSession(t, d, "seat-a")
+	tokB := tokenedSession(t, d, "seat-b")
+	now := time.Now().UTC()
+	reset := now.Add(3 * time.Hour)
+	post := func(session, token string, pct float64, firstSeen time.Time) Response {
+		return d.recordAccountLimits(api.AccountLimitsRequest{
+			Session: session, SessionToken: token, ObservedAt: firstSeen,
+			Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(pct), ResetsAt: reset}},
+		}, now)
+	}
+	bSaw40 := now.Add(-20 * time.Minute)
+	if resp := post("ws/seat-b", tokB, 40, bSaw40); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	if resp := post("ws/seat-a", tokA, 100, now.Add(-time.Minute)); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	d.evaluateLimits(now)
+	for _, k := range []string{"ws/seat-a", "ws/seat-b"} {
+		if got, _ := d.store.GetSession(k); got.Condition != api.ConditionLimited {
+			t.Fatalf("%s not limited: %q", k, got.Condition)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		resp := post("ws/seat-b", tokB, 40, bSaw40) // the same figure, the same first-seen stamp
+		if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":false`) {
+			t.Fatalf("re-render %d: %+v", i, resp)
+		}
+		d.evaluateLimits(now.Add(time.Duration(i+1) * time.Second))
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 0 {
+		t.Fatalf("session.unlimited emitted %d times", n)
+	}
+	if got, _ := d.store.GetSession("ws/seat-b"); got.Condition != api.ConditionLimited {
+		t.Fatalf("seat b lost the limit: %q", got.Condition)
+	}
+}

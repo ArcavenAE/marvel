@@ -234,21 +234,30 @@ func liveRollout(t *testing.T) string {
 	return path
 }
 
-// The claude statusline stamps its own observation time, so the daemon never
-// has to read its reading as unknown.
-func TestCtxForwardStampsItsObservationTime(t *testing.T) {
+// The statusline carries no data time, so the forwarder stamps when this seat
+// first saw the figure. Re-rendering the same payload keeps the stamp; the hook
+// run again later must not make an old figure look new.
+func TestCtxForwardKeepsTheFirstSeenStampAcrossReRenders(t *testing.T) {
 	socket, methods, _ := fakeDaemon(t)
 	seatEnv(t, socket)
-	lastObserved.Store(time.Time{})
+	run := func() time.Time {
+		lastObserved.Store(time.Time{})
+		withStdin(t, readTestdata(t, "statusline-2.1.226-rate-limits-synthetic.json"), func() {
+			if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
+				t.Fatalf("hook: %v", err)
+			}
+		})
+		waitForMethods(t, methods, 1)
+		got, _ := lastObserved.Load().(time.Time)
+		return got
+	}
 	before := time.Now().UTC().Add(-time.Second)
-	withStdin(t, readTestdata(t, "statusline-2.1.226-rate-limits-synthetic.json"), func() {
-		if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
-			t.Fatalf("hook: %v", err)
-		}
-	})
-	waitForMethods(t, methods, 2)
-	got, _ := lastObserved.Load().(time.Time)
-	if got.IsZero() || got.Before(before) || got.After(time.Now().UTC().Add(time.Second)) {
-		t.Fatalf("observed_at = %v, want about now", got)
+	first := run()
+	if first.IsZero() || first.Before(before) {
+		t.Fatalf("first observed_at = %v", first)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if second := run(); !second.Equal(first) {
+		t.Fatalf("a re-render restamped: %v then %v", first, second)
 	}
 }

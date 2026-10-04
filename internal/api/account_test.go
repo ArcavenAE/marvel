@@ -409,3 +409,30 @@ func TestAccountRecordUnstampedNeverDisplacesAStampedReading(t *testing.T) {
 		t.Fatal("an unusable unstamped reading was stored")
 	}
 }
+
+// A stamped reading displaces a held unstamped one only when it is fresh at now
+// (marvel#551 r3): a stale stamped 40 must not regress an unstamped 100.
+func TestAccountRecordStaleStampedDoesNotDisplaceAnUnstampedReading(t *testing.T) {
+	t.Parallel()
+	key := AccountKey{Harness: "claude", Backend: BackendDefaultName}
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	r := NewAccountReadings()
+	r.RecordUnstamped(key, []AccountWindow{{Name: "five_hour", UsedPercent: pct(100)}}, "ws/a", now)
+	stale := now.Add(-ReadingMaxAge - time.Minute)
+	if r.RecordObserved(key, []AccountWindow{{Name: "five_hour", UsedPercent: pct(40)}}, "ws/b", stale, now) {
+		t.Fatal("a stale stamped reading displaced an unstamped one")
+	}
+	got, _ := r.Reading(key, now)
+	if *got.Windows[0].UsedPercent != 100 {
+		t.Fatalf("figure regressed to %v", *got.Windows[0].UsedPercent)
+	}
+	fresh := now.Add(-ReadingMaxAge + time.Minute)
+	if !r.RecordObserved(key, []AccountWindow{{Name: "five_hour", UsedPercent: pct(40)}}, "ws/b", fresh, now) {
+		t.Fatal("a fresh stamped reading was refused")
+	}
+	// With nothing held, a stale stamped reading is still stored (it reads stale).
+	empty := NewAccountReadings()
+	if !empty.RecordObserved(key, []AccountWindow{{Name: "five_hour", UsedPercent: pct(40)}}, "ws/b", stale, now) {
+		t.Fatal("a stale reading into an empty store was refused")
+	}
+}

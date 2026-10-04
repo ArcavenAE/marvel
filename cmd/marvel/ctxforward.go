@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -437,7 +438,9 @@ func newCtxForwardCmd() *cobra.Command {
 			// session, and the account is not a property of any session
 			// (see the rateLimits type). It is sent whether or not the
 			// context half has a figure to forward yet.
-			sendAccountLimits(socket, workspace, session, claudeAccountWindows(raw), time.Now().UTC())
+			windows := claudeAccountWindows(raw)
+			stamp := observationStamp(filepath.Dir(socket), workspace, session, windows, time.Now().UTC())
+			sendAccountLimits(socket, workspace, session, windows, stamp)
 			if !send {
 				return nil
 			}
