@@ -298,118 +298,194 @@ doc supplies them.
 ## 9. Revision, 2026-10-04: what the 2026-10-03 limit showed
 
 The account limit this design was written for happened on kinu on
-2026-10-03. Nothing in sections 2 to 4a is built yet (`git grep
-account.limits origin/main` finds nothing at b003cd3), so the fleet met it
-with today's marvel. This section records what it showed and revises the
-design where the evidence disagrees with it. Sections 1 to 8 stand except
+2026-10-03. Nothing in sections 2 to 4a is built yet (`git grep -n
+account.limits origin/main -- '*.go'` finds nothing at b003cd3), so the fleet
+met it with today's marvel. This section records what it showed and revises
+the design where the evidence disagrees with it. Sections 1 to 8 stand except
 where this section says otherwise.
 
 - Author: the arcaven architect role. Checked against marvel `origin/main`
   b003cd3.
-- Evidence home: `_kos/probes/brief-seat-account-switch-on-quota.md` (open,
-  not yet committed when this was written) and the operator's relay through
-  director.
+- Evidence home: `_kos/probes/brief-seat-account-switch-on-quota.md`
+  (marvel#532, approved, not yet merged when this was written) and the
+  operator's relay through director.
 
 ### 9.1 What was observed
 
 | Observation | Source | Bears on |
 |---|---|---|
 | 8 of 30 Claude seats sat on the weekly-limit menu for hours, unseen | the probe brief, item 1 (`marvel capture` on each seat, grep for the menu text) | sections 3 and 4 |
-| The menu reads "Stop and wait for limit to reset / Wait here, then continue automatically at <time> / Switch to usage credits" | the same | 9.3 |
+| The menu's three options read "Stop and wait for limit to reset", "Wait here, then continue automatically at Oct 6 at 9pm", "Switch to usage credits" | the same; only the time span varies between captures | 9.4 |
 | Statuslines showed `acct 7d 100%` | relayed by the supervisor; `formatRateLimits`, `cmd/marvel/ctxforward.go:268` | section 8, first open question |
 | `marvel get sessions` showed every stuck seat as `running` and healthy | relayed by the supervisor | section 3 |
 | All 30 seats share the operator's default config directory, so one `/login` changes the store for all of them | the probe brief, items 2 and 3 | section 2, the account key |
 | After the move to Claude Enterprise, 0 of 30 live statuslines carry an `acct` segment | `tmux capture-pane` on every pane, 2026-10-04 about 03:25Z: 30 statuslines matched `CTX n%`, none contained `acct` | 9.2 |
 
-### 9.2 The reading may not exist on every plan
+### 9.2 The reading may be absent: three reading states
 
-`formatRateLimits` prints whenever the payload carries a window with a
-percentage, so an absent `acct` segment on all 30 seats is consistent with
-the Enterprise payload carrying no `rate_limits` block. This is inferred from
-the pane, not read from a payload; UL-2's fixture capture should record one
-Enterprise payload as well as one subscription payload.
+`formatRateLimits` returns nothing when the payload has no `rate_limits`
+block, and also when its windows carry no percentage
+(`ctxforward.go:268-296`). An absent `acct` segment on all 30 seats fits
+either cause; it was read from the pane, not from a payload. UL-2's fixture
+capture records one Enterprise payload and one subscription payload, which
+tells the two apart.
 
-If it holds, Part 1 has no source on kinu today, and `limited` (section 3)
-can only come from a harness refusal, which UL-3 does not recognize yet. Two
-consequences for the build:
+Either way, Part 1 has no number on kinu today. The design therefore names
+three reading states per account key, so "no number" is never shown as
+"below the limit":
 
-1. **The no-reading case is the common case, not the edge.** `get sessions`
-   must not read as "not limited" when there is no reading. Where the
-   account has no fresh reading, `describe` says `limit reading: none` and
-   the budget view row says `none`, never `0%`.
-2. **UL-3's refusal recognition moves up.** For an interactive seat, section
-   3 ruled out pane-text scraping and relied on the statusline. With no
-   statusline reading, the seat's own refusal is the only signal left. UL-3
-   should capture a real refusal sample from each plan type before choosing
-   its match; the limit menu of 9.1 is one such sample for the subscription
-   plan, captured by hand.
+| State | When | Shown as |
+|---|---|---|
+| `fresh` | a reading with a usable window arrived within 15 minutes | the percentage, as section 2 says |
+| `stale` | the newest usable reading is older than 15 minutes | `stale` (section 2, test 4) |
+| `none` | no usable reading was ever received for the key: no payload, no `rate_limits` block, or windows without a percentage | `none` |
 
-### 9.3 Seen is not survived: the menu waits for a key
+Where each state shows:
+
+- **Budget view.** Section 2 renders one row per account and window. An
+  account in `none` has no window to name, so it gets one row: dimension
+  `account_window`, window `-`, observed `none`. A `stale` account keeps its
+  window rows, each observed `stale`.
+- **`describe session`.** It always prints `Limit reading: fresh 87% (seven_day)`,
+  `Limit reading: stale (last 2026-10-03T22:10Z)`, or `Limit reading: none`.
+- **JSON.** Each session carries `limit_reading`: `fresh`, `stale` or `none`.
+- **`get sessions`.** The `STATE` cell makes no claim about the limit. It
+  reads `limited` only on evidence (section 3) and otherwise `running`, which
+  is process state, as `CLAUDE.md` says of the HEALTH column. The operator's
+  width constraint holds, and nothing in the table reads as "not limited".
+  The not-limited answer is `describe` or `limit_reading`, never the cell.
+
+With no reading, `limited` can come only from a refusal, and UL-3 does not
+recognize one yet. 9.3 adds the interactive source.
+
+### 9.3 The named exception to "no pane-text scraping"
+
+Section 3 rules out pane text for setting `limited` on an interactive seat
+and relies on the statusline. With the reading in `none` (9.2), that leaves
+an interactive seat with no way to be seen at all. This revision makes one
+exception, and only one:
+
+- **What.** A seat whose account reading is `none` or `stale` is marked
+  `limited`, with source `pane-menu`, when `marvel capture` of its pane
+  matches the limit-menu sample under the matcher of 9.4. Nothing else in the
+  pane is read for meaning.
+- **When.** On the health tick for an interactive seat whose activity
+  advisory reads `stalled` or `unknown`, at most once a minute per seat. A
+  working seat is not captured.
+- **What it may do.** Set and clear the condition, with the capture time and
+  the sample's version in its provenance. It never sends a key; that is UL-7's
+  question (9.4).
+- **Why an exception and not a change of rule.** The matcher is narrow,
+  versioned with the harness, and refuses on any mismatch. "Scrape the pane"
+  stays ruled out everywhere else.
+
+This reverses part of a reviewed section, so it is ruling **UL-R2**:
+default, adopt the exception; alternative, keep the ban and accept that an
+interactive seat on a plan with no reading is never seen as `limited`.
+
+### 9.4 Seen is not survived, if the menu waits
 
 Section 1 summarized finding-056 as "the harness resumed on its own at the
-reset". The 2026-10-03 limit did not behave that way. The menu blocks until
-someone picks an option; a seat left on it does not resume at the reset. Only
-the second option ("Wait here, then continue automatically") resumes by
-itself, and nobody was there to pick it.
+reset". finding-056 recorded that on 2026-09-29: the harness printed
+"continuing automatically at 9pm" and the limited seats resumed at 02:01Z.
+What a seat left on the 2026-10-03 weekly menu does at the reset was **not
+observed**. The reset is Oct 6 at 21:00, and every seat moved to Enterprise by
+`/login` before it. The menu offers "Wait here, then continue automatically"
+as one of three choices, which suggests that a seat nobody answers does not
+continue. That is inference, not observation. It may also be that the
+2026-09-29 limit, a different window, never showed the menu.
 
-Every seat on the account was limited at once, supervisors and director
-included. After the reset, the event `session.unlimited` (section 3) has no
-awake reader on that account. The only actor not subject to the limit is the
-marvel daemon, which already injects into panes on its own authority
-(`injector=marvel:max-age`, `internal/daemon/daemon.go:326`).
-
-So "survive" needs one more part, and it is a ruling, not a default this
-design can take:
+The design takes the worse case, because a wrong guess the other way leaves a
+fleet stuck until a human looks. And the 2026-10-03 limit showed who would
+look: every seat on the account was limited at once, supervisors and director
+included. The marvel daemon is the only actor the limit does not stop, and it
+already injects into panes on its own authority (`injector=marvel:max-age`,
+`internal/daemon/daemon.go:326`).
 
 **Ruling UL-R1. May the marvel daemon answer the limit menu?**
 
 | Option | What marvel does | Cost |
 |---|---|---|
 | A | Never touches the menu. At the clear it emits `session.unlimited` and `seat.resume-proposed`; a human or an awake seat resumes each one | Survives only if someone off the account is awake. On 2026-10-03, nobody was |
-| B | Answers the menu with the second option only, "Wait here, then continue automatically", once per limit, and logs `injector=marvel:limit-wait`. It acts only after `marvel capture` matches the three option lines byte for byte against a captured sample. It refuses on any mismatch, never sends the key for the third option, and never answers a menu it did not just match | The seat resumes at the reset with no one present. It needs a captured sample per harness version, and a harness change makes it refuse, not misfire |
-| C | Waits for the seat to return to a prompt, then injects a fixed resume line | Does not help a seat that stays on the menu, which is the observed case |
+| B | Selects the second option only, once per limit, under the matcher below, and logs `injector=marvel:limit-wait` | The seat resumes at the reset with no one present. It needs a captured sample per harness version, and a harness change makes it refuse, not misfire |
 
-**Default: B**, gated on a byte-for-byte captured sample and the refusals
-above. The third option spends the operator's money, and choosing it stays a
-human act (ADR-007); B is written so it cannot reach it. Two things argue
-against B and belong with the ruling. B reads pane text to decide an action,
-which section 3 refused for setting a condition. And on 2026-10-03 the
-auto-mode classifier refused a seat's raw Escape key to another seat's pane
-("Interfere With Workloads"; the probe brief, "Constraint met"). B is the
-daemon acting on its own authority, not one agent typing into another
-agent's pane. Whether the operator wants that authority to exist is the
-question. Expiry: the default holds until the build of UL-7 starts; with no
-ruling by then, the builder builds A.
+The option that injected a resume line at a prompt is dropped. It does not
+help a seat that stays on the menu, which is the observed case, and a line
+typed into a live menu would become keystrokes.
 
-### 9.4 Revised edits
+**The matcher (used by B and by 9.3).** It is built from a captured sample
+stored as a fixture with its harness version:
+
+1. The menu's first and third option lines match the sample byte for byte.
+2. The second option line matches as three parts: the fixed prefix `Wait
+   here, then continue automatically at `, a time span matching one fixed
+   pattern taken from the sample (for the 2026-10-03 sample, `Oct 6 at 9pm`,
+   so `[A-Z][a-z]{2} [0-9]{1,2} at [0-9]{1,2}(:[0-9]{2})?(am|pm)`), and the
+   sample's exact remainder of the line. Only that span is a pattern.
+3. The key that selects the second option is read from the sample (its
+   number, or the cursor moves the sample shows), never guessed. If the
+   sample shows no way to select option 2 without passing through option 3,
+   B is not buildable. The build then ships A and emits
+   `limit-menu.unselectable` once, so the downgrade is visible, not silent.
+4. Any mismatch refuses: no key is sent, and `limit-menu.refused` carries the
+   reason and the sample version.
+
+**Default: B**, under that matcher. The third option spends the operator's
+money, and choosing it stays a human act (ADR-007); B is written so it cannot
+reach it. Against B: on 2026-10-03 the auto-mode classifier refused one seat's
+raw Escape key to another seat's pane ("Interfere With Workloads"; the probe
+brief, "Constraint met"). B is the daemon acting on its own authority, not one
+agent typing into another's pane, but whether the operator wants that
+authority to exist is the question. Expiry: the default holds until the build
+of UL-7 starts; with no ruling by then, the builder builds A.
+
+### 9.5 Revised edits
 
 | # | Edit | Depends on |
 |---|---|---|
-| UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures; a missing `rate_limits` block is stored as `none` | UL-1 |
-| UL-3 | As before, with the captured limit menu as the first interactive refusal sample, and `none` shown as `none` (9.2, item 1) | UL-1 |
-| UL-7 | The resume part of UL-R1: A's events always; B's guarded menu answer only if the operator rules B | UL-3, UL-R1 |
+| UL-1 | As before, plus the three reading states and the `none` budget row (9.2) | none |
+| UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures | UL-1 |
+| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3, if UL-R2 rules the exception) | UL-1 |
+| UL-7 | UL-R1: A's events always; B's guarded selection only if the operator rules B; the matcher and its fixture shared with UL-3 | UL-3, UL-R1 |
 
-Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so
-the next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
+Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so the
+next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
 
-### 9.5 Tests added
+### 9.6 Tests added (red first)
 
-19. A seat whose account has no reading shows `none` in the budget view and
-    `limit reading: none` in `describe`; it is never shown as below the limit.
-20. (UL-7, option B) A pane whose capture matches the sample receives exactly
-    one key, the second option's, and the event carries
-    `injector=marvel:limit-wait`. A pane that differs by one byte receives
-    nothing and emits `limit-menu.refused` with the reason.
-21. (UL-7) No path through UL-7 sends the third option's key; a guard test
-    asserts it over every branch.
-22. (UL-7, option A) At the clear, `seat.resume-proposed` is emitted once per
-    limited seat and nothing is injected.
+19. An account with no reading: the budget view has one `account_window` row
+    with window `-` and observed `none`; `describe` prints `Limit reading:
+    none`; the JSON `limit_reading` is `none`; the `get sessions` STATE cell is
+    `running`, and no cell in the table carries a percentage or "ok".
+20. A payload whose `rate_limits` windows carry no percentage is stored as
+    `none`, not as 0%.
+21. A reading 16 minutes old (fake clock) shows `stale` in the budget view and
+    `describe`, and `limit_reading` is `stale`; section 2's test 4 still holds.
+22. (9.3) A stalled interactive seat with reading `none` whose capture matches
+    the sample is marked `limited` with source `pane-menu`; a capture differing
+    in any byte outside the time span sets nothing; a working seat is never
+    captured.
+23. (Matcher) The 2026-10-03 sample matches with its own time span and with
+    `Nov 12 at 10:30am`; it refuses `Oct 6 at 9pm` followed by any other
+    remainder, and it refuses a first or third line differing by one byte.
+24. (UL-7, B) A matching pane receives exactly one selection of the second
+    option, and the event carries `injector=marvel:limit-wait`. A
+    non-matching pane receives nothing and emits `limit-menu.refused`.
+25. (UL-7) A sample that offers no way to reach option 2 without option 3
+    builds A and emits `limit-menu.unselectable` once.
+26. (UL-7, guard) No path in UL-7 or UL-3 sends a key that selects the third
+    option; the guard runs over every branch, and over the shared matcher.
+27. (UL-7, A) At the clear, `seat.resume-proposed` is emitted once per limited
+    seat and nothing is injected.
 
-### 9.6 Open questions added
+### 9.7 Open questions added
 
-- **The Enterprise payload.** Is `rate_limits` absent on Enterprise, or
-  present only near a limit? One captured payload answers it (UL-2).
+- **The Enterprise payload.** Is `rate_limits` absent on Enterprise, present
+  without percentages, or present only near a limit? One captured payload
+  answers it (UL-2).
 - **The account switch.** Whether a running seat's requests follow a new
   `/login` in the shared store is the probe brief's open decisive test. If they
   do, the account key in section 2 can change under a live session, and the
   key must be re-read on each reading, not cached per session.
+- **What an unanswered weekly menu does at its reset** (9.4). The first reset
+  observed with the menu up answers it, and may make UL-7 unnecessary.
