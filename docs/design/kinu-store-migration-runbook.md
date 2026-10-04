@@ -19,7 +19,7 @@ window after it. Written to assume the upgrade goes badly.
 | Fact | Where | So |
 |---|---|---|
 | kinu runs b533ca5 (Homebrew keg), store schema 1 | `marvel version`; `bolt.go:67` at b533ca5 | the next binary that contains #482 migrates on its first open |
-| **The tap's floating alpha already migrates.** `Formula/marvel.rb` is `0.1.0-alpha.20261004.033357.c99ce98`, and c99ce98 contains 1cc0a84 | `gh api repos/ArcavenAE/homebrew-tap/contents/Formula/marvel.rb`; ancestry check | any `brew upgrade` or `marvel upgrade` on kinu migrates the store **now**. `marvel` is not pinned (`brew list --pinned` is empty); a `brew pin marvel` has gone to the operator. The window installs the exact rehearsed release, never the floating alpha |
+| **The tap's floating alpha already migrates.** `Formula/marvel.rb` is `0.1.0-alpha.20261004.033357.c99ce98`, and c99ce98 contains 1cc0a84 | `gh api repos/ArcavenAE/homebrew-tap/contents/Formula/marvel.rb`; ancestry check | an unpinned upgrade on kinu would migrate the store at once. kinu is now pinned (precondition 1). The window installs the exact rehearsed release, never the floating alpha |
 | A v2 store is refused by a v1 binary | `bolt.go:122-134` ("newer than binary's ... refusing to load") | after migration, going back needs the backup **and** the old binary |
 | The migration writes `<store>.v1.bak` first, and refuses a v1 store while one sits beside it | `bolt.go:535-540`, `:642-680` | an interrupted migration leaves the store at v1, and any retry must move the old `.v1.bak` aside first |
 | Teams with an empty `WorkDir` are stamped with the **daemon's** cwd, source `legacy`; a cwd of `/` with such teams is refused before the backup | `bolt.go:535-611` (the refusal at `:556-561`) | every kinu team shows `WorkDir: ""` (`marvel describe team`); the daemon's cwd is `~/work/aae-orc` (`lsof -d cwd` on the daemon pid) |
@@ -29,8 +29,15 @@ window after it. Written to assume the upgrade goes badly.
 
 ## 2. Preconditions (all before the window is set)
 
-1. **Pinned.** `brew pin marvel` is done (the operator's step), so nothing
-   migrates kinu before the window.
+1. **Pinned. DONE 2026-10-04** (by director): `brew pin arcavenae/tap/marvel`;
+   kinu is still on b533ca5. Verify with `brew list --pinned --formula`, which
+   must list `marvel`. **Every brew step here uses the tap-qualified name.** A
+   bare `brew pin marvel` fails on kinu: Homebrew resolves the bare name to a
+   cask ("Treating marvel as a cask ... Error: marvel not installed") and pins
+   nothing. `marvel upgrade` delegates to `brew upgrade arcavenae/tap/marvel`
+   (`admin-guide.md`, Upgrading), so the pin holds it too: `brew upgrade
+   --dry-run arcavenae/tap/marvel` answers "Not upgrading 1 pinned package"
+   (checked 2026-10-04, with auto-update off).
 2. **The release.** The exact release to install is named in the window note
    by its full version and its release asset, and it is the one rehearsed.
    #524 is fixed in it (recommended, not required).
@@ -149,7 +156,8 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
 4. Cold copy: `cp -p ~/.marvel/state/marvel.bolt
    ~/.marvel/state/marvel.bolt.pre-v2-$(date +%Y%m%d)`.
 5. Install the rehearsed release, never the floating alpha. Through the tap
-   only if its formula still names the rehearsed version (`brew unpin marvel`,
+   only if its formula still names the rehearsed version (`brew unpin arcavenae/tap/marvel`, then
+   `brew upgrade arcavenae/tap/marvel`,
    upgrade, check). Otherwise install the rehearsed release asset by its URL,
    or with mise at that exact version. `marvel version` must name it.
 6. Start the daemon with `$W/daemon-cmd`, from the directory in `$W/daemon-cwd`.
@@ -161,7 +169,8 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
    - the daemon log has one placement line per stamped team, and the
      migration line if #524 shipped;
    - one seat's statusline updates (`ctx-forward` works).
-8. Pin again (`brew pin marvel`) if it was unpinned in step 5. Watch 30
+8. Pin again (`brew pin arcavenae/tap/marvel`, verified with `brew list
+   --pinned --formula`) if it was unpinned in step 5. Watch 30
    minutes. Keep `.v1.bak`, `.pre-v2-*` and `$W` until the operator deletes
    them.
 
