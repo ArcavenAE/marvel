@@ -12,15 +12,15 @@ import (
 	"github.com/arcavenae/marvel/internal/tmux"
 )
 
-// The direct launch path joins Args as shell text, so the script carries
-// its own quotes.
+// A team session launches through the adapter, which quotes Args itself.
 func shRuntime(script string) api.Runtime {
-	return api.Runtime{Name: "sh", Command: "sh", Args: []string{"-c", "'" + script + "'"}, Mode: api.RuntimeModeHeadless}
+	return api.Runtime{Name: "sh", Command: "sh", Args: []string{"-c", script}, Mode: api.RuntimeModeHeadless}
 }
 
-func clockRole(cron, tz string, rt api.Runtime, mutate func(*api.SchedulePolicy)) api.Role {
+// clockRole is a daily 06:17 schedule in tz.
+func clockRole(tz string, rt api.Runtime, mutate func(*api.SchedulePolicy)) api.Role {
 	p := &api.SchedulePolicy{
-		Cron: cron, Timezone: tz,
+		Cron: "17 6 * * *", Timezone: tz,
 		Concurrency: api.ScheduleConcurrencyForbid, OnFailure: api.ScheduleOnFailureWait,
 		ActiveDeadline: 45 * time.Minute, StaleAfter: 30 * time.Hour,
 		History: &api.ScheduleHistory{Succeeded: 3, Failed: 3},
@@ -51,7 +51,7 @@ func newClockRig(t *testing.T, ws string, start time.Time, role api.Role) *clock
 	ctrl.Events = r.ring
 	mgr.Events = r.ring
 	ctrl.now = r.clock.Now
-	mgr.Now = r.clock.Now
+	mgr.Clock = r.clock.Now
 	ctrl.jitter = func(time.Duration) time.Duration { return 0 }
 	createTeamFixture(t, store, ws, "timers", []api.Role{role})
 	return r
@@ -94,7 +94,7 @@ func liveCount(ss []api.Session) int { return api.CountAlive(ss) }
 // spawns the next run and drops the earlier firing's row.
 func TestScheduledRoleFiresOncePerFiring(t *testing.T) {
 	r := newClockRig(t, "test-clock-fire", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-		clockRole("17 6 * * *", "Etc/UTC", shRuntime("exit 0"), nil))
+		clockRole("Etc/UTC", shRuntime("exit 0"), nil))
 
 	r.ctrl.ReconcileOnce()
 	if st := r.status(); !st.NextDueAt.Equal(time.Date(2026, 10, 1, 6, 17, 0, 0, time.UTC)) || st.Firing != "" {
@@ -154,7 +154,7 @@ func TestScheduleOverlap(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.concurrency, func(t *testing.T) {
 			r := newClockRig(t, "test-clock-overlap-"+tc.concurrency, time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-				clockRole("17 6 * * *", "Etc/UTC", shRuntime("sleep 60"), func(p *api.SchedulePolicy) { p.Concurrency = tc.concurrency }))
+				clockRole("Etc/UTC", shRuntime("sleep 60"), func(p *api.SchedulePolicy) { p.Concurrency = tc.concurrency }))
 			r.ctrl.ReconcileOnce()
 			r.clock.Advance(17*time.Minute + 30*time.Second)
 			r.ctrl.ReconcileOnce()
@@ -210,7 +210,7 @@ func TestScheduleRecoveryRunsAtMostOnce(t *testing.T) {
 	withDeadline := func(p *api.SchedulePolicy) { p.StartingDeadline = 2 * time.Hour }
 
 	t.Run("inside the deadline", func(t *testing.T) {
-		r := newClockRig(t, "test-clock-recover", start, clockRole("17 6 * * *", "Etc/UTC", shRuntime("sleep 60"), withDeadline))
+		r := newClockRig(t, "test-clock-recover", start, clockRole("Etc/UTC", shRuntime("sleep 60"), withDeadline))
 		r.ctrl.ReconcileOnce()
 		r.clock.Advance(49 * time.Hour) // day 3, 07:00: 43 minutes past the newest due
 		r.ctrl.ReconcileOnce()
@@ -229,7 +229,7 @@ func TestScheduleRecoveryRunsAtMostOnce(t *testing.T) {
 	})
 
 	t.Run("past the deadline", func(t *testing.T) {
-		r := newClockRig(t, "test-clock-missed", start, clockRole("17 6 * * *", "Etc/UTC", shRuntime("sleep 60"), withDeadline))
+		r := newClockRig(t, "test-clock-missed", start, clockRole("Etc/UTC", shRuntime("sleep 60"), withDeadline))
 		r.ctrl.ReconcileOnce()
 		r.clock.Advance(51 * time.Hour) // day 3, 09:00: 2h43m past the newest due
 		r.ctrl.ReconcileOnce()
@@ -250,7 +250,7 @@ func TestScheduleRecoveryRunsAtMostOnce(t *testing.T) {
 // charged: no crash-loop backoff, no restart count.
 func TestFailedRunRetriesThenSettles(t *testing.T) {
 	r := newClockRig(t, "test-clock-retry", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-		clockRole("17 6 * * *", "Etc/UTC", shRuntime("exit 3"), func(p *api.SchedulePolicy) { p.Retries = 1 }))
+		clockRole("Etc/UTC", shRuntime("exit 3"), func(p *api.SchedulePolicy) { p.Retries = 1 }))
 	r.ctrl.ReconcileOnce()
 	r.clock.Advance(17*time.Minute + 30*time.Second)
 	r.ctrl.ReconcileOnce()
@@ -291,7 +291,7 @@ func TestFailedRunRetriesThenSettles(t *testing.T) {
 // the schedule; later firings are skipped until reset-health clears it.
 func TestOnFailureFreeze(t *testing.T) {
 	r := newClockRig(t, "test-clock-freeze", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-		clockRole("17 6 * * *", "Etc/UTC", shRuntime("exit 3"), func(p *api.SchedulePolicy) { p.OnFailure = api.ScheduleOnFailureFreeze }))
+		clockRole("Etc/UTC", shRuntime("exit 3"), func(p *api.SchedulePolicy) { p.OnFailure = api.ScheduleOnFailureFreeze }))
 	r.ctrl.ReconcileOnce()
 	r.clock.Advance(17*time.Minute + 30*time.Second)
 	r.ctrl.ReconcileOnce()
@@ -326,7 +326,7 @@ func TestOnFailureFreeze(t *testing.T) {
 // firing that comes due then is recorded skipped, not run.
 func TestPostureHoldSkipsAFiring(t *testing.T) {
 	r := newClockRig(t, "test-clock-posture", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-		clockRole("17 6 * * *", "Etc/UTC", shRuntime("exit 0"), nil))
+		clockRole("Etc/UTC", shRuntime("exit 0"), nil))
 	if err := r.store.UpdateTeam(r.ws+"/timers", func(tm *api.Team) error {
 		tm.ConvergencePosture = api.PostureHold
 		return nil
@@ -350,7 +350,7 @@ func TestPostureHoldSkipsAFiring(t *testing.T) {
 // so once.
 func TestSuspendedScheduleDoesNotFire(t *testing.T) {
 	r := newClockRig(t, "test-clock-suspend", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-		clockRole("17 6 * * *", "Etc/UTC", shRuntime("exit 0"), func(p *api.SchedulePolicy) { p.Suspend = true }))
+		clockRole("Etc/UTC", shRuntime("exit 0"), func(p *api.SchedulePolicy) { p.Suspend = true }))
 	for i := 0; i < 3; i++ {
 		r.ctrl.ReconcileOnce()
 		r.clock.Advance(20 * time.Minute)
@@ -373,7 +373,7 @@ func TestScheduleDSTEvents(t *testing.T) {
 
 	t.Run("shift", func(t *testing.T) {
 		r := newClockRig(t, "test-clock-dst-shift", eve,
-			clockRole("17 6 * * *", "America/Chicago", shRuntime("exit 0"), func(p *api.SchedulePolicy) { p.DSTAck = true }))
+			clockRole("America/Chicago", shRuntime("exit 0"), func(p *api.SchedulePolicy) { p.DSTAck = true }))
 		r.ctrl.ReconcileOnce()
 		evs := r.kind(events.KindScheduleDSTShift)
 		if len(evs) != 1 || !strings.Contains(evs[0].Message, "-05:00") || !strings.Contains(evs[0].Message, "-06:00") {
@@ -386,7 +386,7 @@ func TestScheduleDSTEvents(t *testing.T) {
 
 	t.Run("unacknowledged", func(t *testing.T) {
 		r := newClockRig(t, "test-clock-dst-unack", eve,
-			clockRole("17 6 * * *", "America/Chicago", shRuntime("exit 0"), nil))
+			clockRole("America/Chicago", shRuntime("exit 0"), nil))
 		r.ctrl.ReconcileOnce()
 		r.ctrl.ReconcileOnce()
 		if n := len(r.kind(events.KindScheduleDSTUnacknowledged)); n != 1 {
@@ -405,7 +405,7 @@ func TestNextDueSurvivesARestart(t *testing.T) {
 	skipIfNoTmux(t)
 	path := filepath.Join(t.TempDir(), "marvel.bolt")
 	start := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
-	role := clockRole("17 6 * * *", "Etc/UTC", shRuntime("exit 0"), nil)
+	role := clockRole("Etc/UTC", shRuntime("exit 0"), nil)
 	driver, err := tmux.NewDriver()
 	if err != nil {
 		t.Fatalf("driver: %v", err)

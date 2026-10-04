@@ -50,8 +50,9 @@ func (d *usageDrain) note(ev rtevents.Event) {
 }
 
 // recordScheduledRun adds a session's run to its role's history when the
-// role is on a schedule, and emits run.succeeded, run.failed or
-// run.cancelled.
+// role is on a schedule, settles it against the role's current firing
+// (retries, on_failure), and emits run.succeeded, run.failed or
+// run.cancelled, plus schedule.frozen when the run froze the schedule.
 // The event carries status only, never the result text (scheduled-runs
 // section 5). A session whose role is not scheduled records nothing.
 func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, exitStatus string, tail runTail) {
@@ -73,7 +74,8 @@ func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, e
 	rec := api.RunRecord{
 		Session:    sess.Key(),
 		StartedAt:  sess.CreatedAt,
-		EndedAt:    time.Now().UTC(),
+		EndedAt:    m.now(),
+		Firing:     sess.Firing,
 		Outcome:    outcome,
 		ExitStatus: exitStatus,
 		Tokens: api.RunTokens{
@@ -89,8 +91,15 @@ func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, e
 
 	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role
 	bound := sched.HistoryBound()
+	policy := *sched
+	var froze bool
 	if _, err := m.store.UpdateScheduleStatus(key, func(st *api.ScheduleStatus) bool {
+		if rec.Firing != "" && rec.Firing == st.Firing {
+			rec.DueAt = st.FiringDueAt
+			rec.CatchUp = st.FiringCatchUp
+		}
 		st.AddRun(rec, bound)
+		froze = st.SettleRun(rec, policy, rec.EndedAt)
 		return true
 	}); err != nil {
 		log.Printf("warning: session %s: record run: %v", sess.Key(), err)
@@ -113,6 +122,17 @@ func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, e
 	}
 	if rec.PermissionDenials > 0 {
 		msg += fmt.Sprintf("; %d permission denials", rec.PermissionDenials)
+	}
+	if froze {
+		events.Emit(m.Events, events.Event{
+			Kind:      events.KindScheduleFrozen,
+			Severity:  events.SeverityWarning,
+			Workspace: sess.Workspace,
+			Team:      sess.Team,
+			Role:      sess.Role,
+			Session:   sess.Key(),
+			Message:   fmt.Sprintf("firing %s failed with its retries used up; on_failure = freeze stops the schedule until reset-health", rec.Firing),
+		})
 	}
 	events.Emit(m.Events, events.Event{
 		Kind:      kind,

@@ -432,9 +432,9 @@ func checkCronItem(item string, lo, hi int) error {
 		if err != nil || n < 1 {
 			return fmt.Errorf("step %q must be a positive number", step)
 		}
-		// "5/15" has two readings in the wild (Vixie reads it as 5-59/15);
-		// refuse it until the clock (S-3) picks one. "*/n" and "a-b/n" are
-		// unambiguous.
+		// "5/15" is not portable: Vixie cron (cronie) rejects it, and some
+		// other implementations read it as 5-59/15. "*/n" and "a-b/n" are
+		// unambiguous, so the refusal offers those.
 		if base != "*" && !strings.Contains(base, "-") {
 			return fmt.Errorf("step on a single number %q is ambiguous; write %s-%d/%s or */%s", item, base, hi, step, step)
 		}

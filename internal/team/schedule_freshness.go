@@ -48,8 +48,11 @@ func (c *Controller) evaluateScheduleFreshness(t *api.Team, role *api.Role, key 
 	staleAfter := role.Schedule.StaleAfter
 	var changed bool
 	st, err := c.store.UpdateScheduleStatus(key, func(st *api.ScheduleStatus) bool {
+		// The clock may have created the record this tick; the first
+		// evaluation's since stamp must be kept even with no transition.
+		stamped := st.Since.IsZero()
 		changed = st.EvaluateFreshness(now, staleAfter)
-		return changed
+		return changed || stamped
 	})
 	if err != nil {
 		log.Printf("warning: schedule freshness %s: %v", key, err)
