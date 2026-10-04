@@ -429,14 +429,18 @@ func newCtxForwardCmd() *cobra.Command {
 			socket := os.Getenv("MARVEL_SOCKET")
 			workspace := os.Getenv("MARVEL_WORKSPACE")
 			session := os.Getenv("MARVEL_SESSION")
-			if !send || socket == "" || workspace == "" || session == "" {
+			if socket == "" || workspace == "" || session == "" {
 				return nil
 			}
-			// Deliberately no rate-limit fields here. Every parameter of
-			// this RPC is keyed to one session, and the account's headroom
-			// is not a property of any session; see the rateLimits type.
-			// It reaches the pane and stops there until an account-scoped
-			// home exists to send it to.
+			// The account's headroom goes to its own RPC, never into the
+			// heartbeat below: every parameter of that one is keyed to a
+			// session, and the account is not a property of any session
+			// (see the rateLimits type). It is sent whether or not the
+			// context half has a figure to forward yet.
+			sendAccountLimits(socket, workspace, session, claudeAccountWindows(raw))
+			if !send {
+				return nil
+			}
 			// The constructor reads the token marvel minted for this
 			// session at spawn. It is what lets the daemon tell this
 			// session reporting itself from any other process on the host

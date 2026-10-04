@@ -124,7 +124,13 @@ func newCodexCtxCmd() *cobra.Command {
 			socket := os.Getenv("MARVEL_SOCKET")
 			workspace := os.Getenv("MARVEL_WORKSPACE")
 			session := os.Getenv("MARVEL_SESSION")
-			if !send || socket == "" || workspace == "" || session == "" {
+			if socket == "" || workspace == "" || session == "" {
+				return nil
+			}
+			// The account's windows go to their own RPC, whether or not this
+			// hook has an occupancy figure to hold or forward.
+			sendAccountLimits(socket, workspace, session, codexAccountWindows(raw))
+			if !send {
 				return nil
 			}
 			p := codexHeartbeatParams(workspace, session, os.Getenv(api.HeartbeatTokenEnv), model, pct, tokens, window)
