@@ -497,3 +497,32 @@ func TestRenderSessionTableLimitedCell(t *testing.T) {
 		t.Errorf("a crashed session's STATE = %q, want crashed", got)
 	}
 }
+
+// The harness-state watchdog's logged-out verdict rides in HEALTH as the same
+// parenthetical idiom, and only for a high-confidence verdict on a running
+// session: a low-confidence "unknown" shows nothing here (it is in describe).
+func TestRenderSessionTableLoggedOutAdvisory(t *testing.T) {
+	base := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy,
+	}
+	cases := []struct {
+		name string
+		hs   *api.HarnessState
+		st   api.SessionState
+		want string
+	}{
+		{"logged-out", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionRunning, "healthy (logged-out)"},
+		{"low unknown", &api.HarnessState{State: "unknown", Confidence: "low"}, api.SessionRunning, "healthy"},
+		{"none", nil, api.SessionRunning, "healthy"},
+		{"not running", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionCrashed, "healthy"},
+	}
+	for _, c := range cases {
+		s := base
+		s.HarnessState, s.State = c.hs, c.st
+		if got := column(t, renderSessionTable([]api.Session{s}), "HEALTH"); got != c.want {
+			t.Errorf("%s: HEALTH = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

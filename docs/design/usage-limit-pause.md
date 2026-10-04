@@ -82,7 +82,7 @@ A session is `limited` when either holds:
    limit or usage limit). UL-3 adds it only after capturing a real sample, so
    until then a headless run is `limited` through its account's reading only.
 
-It clears at the window's `resets_at`, or earlier when a newer reading for its
+It clears at the window's `resets_at`, or earlier when a newer fresh reading for its
 account is below 100.
 
 The session stores the condition with its provenance: the window, `resets_at`,
@@ -236,7 +236,7 @@ doc supplies them.
 4. A reading older than 15 minutes renders `stale` in the budget view.
    Staleness never clears `limited`: a stale 40 leaves a stored condition as
    it is. A stale 100 whose reset is still ahead sets `limited` (ruled by the
-   operator on #551 r4), and a stale 100 whose reset has passed sets nothing.
+   operator on #551), and a stale 100 whose reset has passed sets nothing.
 5. `limited` never triggers a restart, a kill or a shift.
 6. A pause with `--until reset` refuses a scale-up in scope, admits repair,
    and lifts itself at the reset with `pause.lifted`.
@@ -414,12 +414,11 @@ exception, and only one:
   versioned with the harness, and refuses on any mismatch. "Scrape the pane"
   stays ruled out everywhere else.
 
-This reverses part of a reviewed section, so it is ruling **UL-R2**:
+This reverses part of a reviewed section, so it was ruling **UL-R2**:
 default, adopt the exception; alternative, keep the ban and accept that an
 interactive seat on a plan with no reading is never seen as `limited`.
-Expiry, in UL-R1's form: the default holds until the build of UL-3 starts;
-with no ruling by then, the builder builds the alternative (no `pane-menu`
-source), the conservative choice.
+**Ruled 2026-10-04: the exception is adopted** (9.9). The `pane-menu` source
+is built with UL-3.
 
 ### 9.4 Seen is not survived, if the menu waits
 
@@ -513,12 +512,11 @@ authority to exist is the question. Expiry: none; UL-R1 was ruled
 |---|---|---|
 | UL-1 | As before, plus the three reading states and the `none` budget row (9.2) | none |
 | UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures | UL-1 |
-| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3). **The `pane-menu` source is HELD until the operator answers UL-R2 (9.9, Conflict)**; the rest of UL-3 is not | UL-1 |
+| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3; UL-R2 ruled, 9.9) | UL-1 |
 | UL-7 | UL-R1, ruled (9.9): A's events always; B's guarded selection built now, as the first limit action; the matcher and its fixtures shared with UL-3 | UL-3, UL-R1, and for B the samples from probe P-UL7 (9.7) |
 
-Build order for the builder's red/green PR: UL-1, UL-3 (without its held
-`pane-menu` source and tests 22, 22a and 29) and UL-2 first, so the next limit
-is seen. UL-7 follows its ruling (9.9). UL-4 to UL-6 are unchanged.
+Build order for the builder's red/green PR: UL-1, UL-3 (with its `pane-menu`
+source and tests 22, 22a and 29) and UL-2 first, so the next limit is seen. UL-7 follows its ruling (9.9). UL-4 to UL-6 are unchanged.
 
 ### 9.6 Tests added (red first)
 
@@ -532,11 +530,11 @@ is seen. UL-7 follows its ruling (9.9). UL-4 to UL-6 are unchanged.
     `describe`, and `limit_reading` is `stale`. Section 2's test 4 holds: at
     100% with its reset ahead the same reading also sets `limited`, at 40 it
     sets nothing, and at 100 with its reset passed it sets nothing.
-22. (9.3; HELD with the `pane-menu` source, 9.9 Conflict) A stalled interactive seat with reading `none` whose capture matches
+22. (9.3) A stalled interactive seat with reading `none` whose capture matches
     the sample is marked `limited` with source `pane-menu`; a capture differing
     in any byte outside the time span sets nothing; a working seat is never
     captured to set the condition.
-22a. (9.3, clear; HELD with the `pane-menu` source, 9.9 Conflict) A `pane-menu` condition clears on a capture showing neither
+22a. (9.3, clear) A `pane-menu` condition clears on a capture showing neither
     the menu nor the post-selection screen, on an advancing activity signal,
     and on a fresh reading below 100, each emitting `session.unlimited` with
     its rule; with none of the three it stays set across 10 captures. With
@@ -573,7 +571,7 @@ is seen. UL-7 follows its ruling (9.9). UL-4 to UL-6 are unchanged.
     version with no post-selection sample, receives no key; A's events and
     `limit-menu.unsampled` are emitted once, and a second matching capture in
     the same limit emits nothing more.
-29. (9.3, `until` parsing, fake clock; HELD with the `pane-menu` source, 9.9 Conflict) A capture on Dec 30 of `Jan 2 at 9pm`
+29. (9.3, `until` parsing, fake clock) A capture on Dec 30 of `Jan 2 at 9pm`
     stores Jan 2 of the next year, and an activity clear on Dec 31 emits
     `limit-menu.resumed-before-reset`. With the host in America/Chicago and
     the seat's `TZ=UTC`, `Oct 6 at 2am` is stored as 02:00Z, and the
@@ -617,6 +615,58 @@ Results: if B and A both show option 2 taken, item 4 may admit any cursor
 row, and fixtures (iv) and (v) move to accepted. If either shows anything else,
 item 4 stays as written. If `2` does not select option 2 at all, item 5's
 "not buildable" path applies.
+
+### 9.7a P-UL7 capture checklist
+
+Two things in the code wait on P-UL7's captures: the limit action sends nothing
+until a menu sample and a post-selection sample exist for the harness version
+(9.9, "No samples, no key"), and the refusal of an inject into the limit menu
+(marvel#559, `preflightRefusal` in `internal/daemon/daemon.go`) turns on only
+when a sample ships. This checklist is what the person at the pane records, so
+the capture is read from one place. Each item names where it comes from.
+
+1. **A menu block with a composer line under it.** Capture the screen that 9.7
+   step 4 leaves, where the operator chose option 1 the usual way, or one left by
+   a menu the operator answered in the normal course, with the composer drawn
+   below the old menu block, and say whether the block is still on screen.
+   Nobody answers or dismisses the menu for this item. `Match` takes the last
+   place where the whole block appears and allows only blank rows and the
+   sample's own trailing rows after it (`internal/limitmenu/limitmenu.go:127-150`,
+   `RefusalTrailingRows`), and a declined block is refused as the usage-limit
+   menu (`internal/daemon/daemon.go:2154`). A review planted a `> composer ready`
+   line under the block and the inject of `hello` was refused; if claude leaves
+   the block on screen after the menu is answered, a seat would refuse every
+   inject until the block scrolls off (review 5405270263 on marvel#560, section
+   (b)). The review asked for this to be checked against the real capture before
+   a sample ships.
+2. **Raw bytes, captured with `tmux capture-pane -e`.** Keep the capture with its
+   escape sequences as well as the plain rows the matcher compares. No document
+   or test in this repository says what the limit menu's escape sequences hold.
+   The precedent is the composer reader, which is built from `-e` captures
+   because a plain capture cannot tell a dim placeholder from typed text
+   (`internal/composer/claude.go`, the reader's header comment;
+   `internal/composer/testdata/claude/*.ansi.txt`). Source for this item: the
+   director's list for this checklist.
+3. **One Enterprise and one subscription statusline payload.** Save the
+   statusline JSON a seat on each kind of account sends, so UL-2 can answer
+   whether `rate_limits` is absent on Enterprise, present without percentages,
+   or present only near a limit (9.8, "The Enterprise payload"). The windows the
+   reading takes from it are `five_hour` and `seven_day`, each with
+   `used_percentage` and `resets_at` (`cmd/marvel/ctxforward.go:111-124`). That
+   file's own comment says "NOT VERIFIED: a populated payload observed in the
+   wild", so a populated capture is the first such observation. Strip local paths
+   and session identifiers from the JSON before a capture is committed.
+4. **Whether a digit selects an option (operator-run, at a real limit, 9.7).** This is steps 1 to 5 of 9.7, in the
+   order given there: the menu sample, then the `2` press from row 1, then (only
+   if that took option 2) from row 3, then option 1 chosen the usual way as the
+   must-not-match fixture, each stored with the harness version, the key and the
+   starting cursor row. Until it is measured the claim stays unproven
+   (9.4 item 4: "Nothing yet measures that the digit `2` selects option 2
+   wherever the cursor sits").
+
+Items 1 to 3 ask for no key to be pressed. Item 4 does, and stays
+interventional: the operator runs it, at a real limit, as 9.7 says, and no seat
+runs it.
 
 ### 9.8 Open questions added
 
@@ -678,12 +728,17 @@ What it changes in this design:
   appears, and acting defensively, ranks above answering the menu. The
   account reading (UL-1, UL-2) and its thresholds serve that. A threshold
   action before 100% is a follow-up design, not part of UL-7.
-- **UL-R2 was not ruled separately.** It is taken as adopted under "marvel can
-  do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3 if the Conflict below is answered in its favor, and
-  its expiry no longer applies.
+- **UL-R2 is ruled separately.** UL-R1 did not rule it; the operator ruled
+  it on its own (below). The `pane-menu` source of 9.3 is built with UL-3,
+  and 9.3's expiry no longer applies.
 
-  **Conflict, awaiting the operator.** That adoption line and 9.3's expiry
-  (build the alternative, no `pane-menu` source, if UL-R2 has no ruling when
-  UL-3's build starts) disagree on whether UL-R2 is ruled. The question is
-  escalated to the operator. Neither text is edited until the answer comes
-  back, and UL-3's `pane-menu` source is not built until it does.
+UL-R2, verbatim (operator, 2026-10-04, relayed by director):
+
+> "pane text may set "limited""
+
+What it changes in this design: it adopts 9.3's narrow exception. Pane text,
+matched under 9.4's matcher, may set the `limited` condition (source
+`pane-menu`) for an interactive seat with no account reading. It says
+nothing about sending a key; that stays UL-R1's, under 9.4. The earlier
+conflict between this section's adoption line and 9.3's expiry is resolved
+by the ruling.
