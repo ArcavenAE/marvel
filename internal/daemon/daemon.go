@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -2074,6 +2075,10 @@ type injectParams struct {
 	// SettleMS is how long verification waits for a redraw. Zero means the
 	// default.
 	SettleMS int `json:"settle_ms,omitempty"`
+	// AllowBareDigit lifts one refusal: text starting with 1, 2 or 3 sent to a claude pane the
+	// capture cannot rule a usage-limit menu out of (marvel#559 part b). It does
+	// not lift the refusal on a menu the matcher finds.
+	AllowBareDigit bool `json:"allow_bare_digit,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
@@ -2098,6 +2103,11 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	}
 
 	origin := injectOrigin(c, p.Injector)
+	if p.AllowBareDigit {
+		// Recorded whenever the flag is set, so a refused attempt leaves a trace
+		// too; "override=" below marks the one case where it lifted a refusal.
+		origin += " flag=allow-bare-digit"
+	}
 	reader := composer.ReaderFor(sess.Runtime.Name)
 
 	// A clear is only sent where a reader can vouch for it. Where the harness
@@ -2116,6 +2126,15 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	if !isDismissKey(p) {
 		if why := preflightRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
 			return d.refuseInject(sess, p, origin, why)
+		}
+	}
+
+	if startsWithMenuDigit(p) {
+		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+			if !p.AllowBareDigit {
+				return d.refuseInject(sess, p, origin, why)
+			}
+			origin += " override=lifted-cannot-rule-out"
 		}
 	}
 
@@ -3545,4 +3564,49 @@ func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
 		}
 	}
 	return nil
+}
+
+// startsWithMenuDigit reports whether an inject's text, after leading whitespace
+// and invisible format characters (a zero-width space, a byte-order mark, a word
+// joiner), starts with "1", "2" or "3", whatever Literal and Enter say. The
+// fullwidth forms of the three digits count too. Starting with the digit is the
+// test, not being only the digit, because a menu that selects by number may act
+// on the first character ("3 " or "13" typed at a numbered menu are not known to
+// do nothing). Whether a menu does is unverified until P-UL7 captures one, and
+// so is whether it ignores a non-option key before the digit ("x3"), which this
+// does not cover. Digits of other scripts are not mapped: nothing says a menu
+// reads them, and the list of every Unicode digit is not this check's to keep.
+func startsWithMenuDigit(p injectParams) bool {
+	t := strings.TrimLeftFunc(p.Text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
+	if t == "" {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(t)
+	if r >= '\uff10' && r <= '\uff19' { // fullwidth digits
+		r = '0' + (r - '\uff10')
+	}
+	return r == '1' || r == '2' || r == '3'
+}
+
+// bareDigitRefusal is the second check a claude pane gets when the text starts
+// with a menu digit and a usage-limit menu sample is held: the pane must show a composer the
+// reader places as Empty or MidTurn, read from a capture taken with escapes. A
+// pane the capture cannot place (a menu the sample does not match, a screen
+// mid-stream with an empty composer, a shell) cannot be ruled out as a menu where
+// a digit picks an option and option 3 spends money. HoldsText is not accepted,
+// so a menu row that happens to read as a staged draft never rules itself out.
+// With no sample nothing is checked, and nothing changes (marvel#559 part b).
+func bareDigitRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader, menus []limitmenu.Sample) string {
+	if reader.Name() != "claude" || len(menus) == 0 {
+		return ""
+	}
+	content, err := driver.CapturePaneEscapes(sess.PaneID)
+	if err != nil {
+		return "the pane could not be read, so the capture cannot rule out a usage-limit menu, and text that starts with a menu digit is not typed blind: " + err.Error()
+	}
+	switch reader.Read(content) {
+	case composer.Empty, composer.MidTurn:
+		return ""
+	}
+	return "claude is not showing a composer the reader can place, so the capture cannot rule out a usage-limit menu, where a digit picks an option and option 3 spends money; nothing is typed (marvel#559). To send it anyway: --allow-bare-digit"
 }
