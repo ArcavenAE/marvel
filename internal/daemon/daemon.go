@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -2075,7 +2076,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	if p.AllowBareDigit {
 		// Recorded whenever the flag is set, so a refused attempt leaves a trace
 		// too; "override=" below marks the one case where it lifted a refusal.
-		origin += " allow-bare-digit"
+		origin += " flag=allow-bare-digit"
 	}
 	reader := composer.ReaderFor(sess.Runtime.Name)
 
@@ -3535,15 +3536,26 @@ func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
 	return nil
 }
 
-// startsWithMenuDigit reports whether an inject's text, after leading
-// whitespace, starts with "1", "2" or "3": the answers to a menu, whatever
-// Literal and Enter say. Starting with the digit is the test, not being only the
-// digit, because a menu that selects by number may act on the first character
-// ("3 " or "13" typed at a numbered menu are not known to do nothing). Whether
-// a menu does is unverified until P-UL7 captures one.
+// startsWithMenuDigit reports whether an inject's text, after leading whitespace
+// and invisible format characters (a zero-width space, a byte-order mark, a word
+// joiner), starts with "1", "2" or "3", whatever Literal and Enter say. The
+// fullwidth forms of the three digits count too. Starting with the digit is the
+// test, not being only the digit, because a menu that selects by number may act
+// on the first character ("3 " or "13" typed at a numbered menu are not known to
+// do nothing). Whether a menu does is unverified until P-UL7 captures one, and
+// so is whether it ignores a non-option key before the digit ("x3"), which this
+// does not cover. Digits of other scripts are not mapped: nothing says a menu
+// reads them, and the list of every Unicode digit is not this check's to keep.
 func startsWithMenuDigit(p injectParams) bool {
-	t := strings.TrimLeftFunc(p.Text, unicode.IsSpace)
-	return t != "" && (t[0] == '1' || t[0] == '2' || t[0] == '3')
+	t := strings.TrimLeftFunc(p.Text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
+	if t == "" {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(t)
+	if r >= '\uff10' && r <= '\uff19' { // fullwidth digits
+		r = '0' + (r - '\uff10')
+	}
+	return r == '1' || r == '2' || r == '3'
 }
 
 // bareDigitRefusal is the second check a claude pane gets when the text starts

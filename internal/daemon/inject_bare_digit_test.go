@@ -157,7 +157,7 @@ func TestAllowBareDigitLiftsOnlyTheCannotRuleOutRefusal(t *testing.T) {
 	}
 	neverShows(t, d2, menuKey, "got:3")
 	refused := d2.events.Snapshot(events.Filter{Kind: events.KindSessionInjectRefused}, 0)
-	if len(refused) != 1 || !strings.Contains(refused[0].Message, "allow-bare-digit") {
+	if len(refused) != 1 || !strings.Contains(refused[0].Message, "flag=allow-bare-digit") {
 		t.Errorf("a refused attempt with the flag = %+v, want one refusal that records the flag", refused)
 	}
 	if strings.Contains(refused[0].Message, "override=") {
@@ -205,4 +205,42 @@ func TestMenuDigitCheckIsScopedToClaude(t *testing.T) {
 		t.Fatalf("a digit to a non-claude seat was refused: %s", resp.Error)
 	}
 	waitCaptureHas(t, d, key, "got:3")
+}
+
+// A declared value cannot forge the flag's tag: "=" in a declaration becomes "_",
+// so "flag=allow-bare-digit" can only be written by the daemon itself, and the
+// bare words in a declared user never read as the flag.
+func TestDeclaredUserCannotFakeTheFlagTag(t *testing.T) {
+	d := newHandlerDaemon(t)
+	key := verifySeat(t, d, quietSeat, "claude", "composer ready")
+
+	for _, user := range []string{"allow-bare-digit", "flag=allow-bare-digit", "x flag=allow-bare-digit"} {
+		resp := injectOf(t, d, map[string]any{
+			"session_key": key, "text": "hello", "literal": true, "enter": true,
+			"injector": map[string]string{"user": user},
+		})
+		if resp.Error != "" {
+			t.Fatalf("inject: %s", resp.Error)
+		}
+	}
+	waitCaptureHas(t, d, key, "got:hello")
+	for _, e := range d.events.Snapshot(events.Filter{Kind: events.KindSessionInjected}, 0) {
+		if strings.Contains(e.Message, "flag=allow-bare-digit") {
+			t.Errorf("a declared user forged the flag tag: %q", e.Message)
+		}
+	}
+
+	if resp := injectOf(t, d, map[string]any{"session_key": key, "text": "world", "literal": true, "enter": true, "allow_bare_digit": true}); resp.Error != "" {
+		t.Fatalf("inject: %s", resp.Error)
+	}
+	waitCaptureHas(t, d, key, "got:world")
+	flagged := 0
+	for _, e := range d.events.Snapshot(events.Filter{Kind: events.KindSessionInjected}, 0) {
+		if strings.Contains(e.Message, "flag=allow-bare-digit") {
+			flagged++
+		}
+	}
+	if flagged != 1 {
+		t.Errorf("%d inject events carry flag=allow-bare-digit, want exactly the one sent with the flag", flagged)
+	}
 }
