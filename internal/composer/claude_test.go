@@ -44,7 +44,11 @@ func TestClaudeReaderReadsTheCapturedStates(t *testing.T) {
 		// capture cannot see dim, so it reads as any typed draft does (marvel#571).
 		{"5-idle-suggestion", HoldsText, Unknown},
 		// Guard, not a new behavior: a collapsed paste chip is drawn plain, so it
-		// is a real staged paste and reads HoldsText on main already.
+		// is a real staged paste and reads HoldsText on main already. Fixture 6 is
+		// a live capture of the same scratch session as fixture 5, taken a few
+		// seconds after a 12 line bracketed paste. A "paste again to expand" hint
+		// shows under the lower rule for a moment after the paste and had gone by
+		// this capture, so the fixture does not carry it.
 		{"6-paste-chip", HoldsText, HoldsText},
 	}
 	for _, tc := range cases {

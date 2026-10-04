@@ -1644,9 +1644,10 @@ func captureRequest(key string, o captureOpts) map[string]any {
 	}
 	if o.repaint {
 		p["repaint"] = true
-		if o.settleSet {
-			p["settle_ms"] = o.settle.Milliseconds()
-		}
+	}
+	// --settle holds the one nudge, which --composer also makes.
+	if (o.repaint || o.composer) && o.settleSet {
+		p["settle_ms"] = o.settle.Milliseconds()
 	}
 	if o.escapes {
 		p["escapes"] = true
@@ -1741,7 +1742,7 @@ between them. A runtime with no reader reads unknown.`,
 	cmd.Flags().IntVarP(&start, "start", "S", 0, "start line (negative for scrollback; default top of visible)")
 	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line (default bottom of visible)")
 	cmd.Flags().BoolVar(&repaint, "repaint", false, "ask the program to redraw first (widen the pane one column and restore it), then read")
-	cmd.Flags().DurationVar(&settle, "settle", 300*time.Millisecond, "with --repaint, how long to wait for the redraw before reading")
+	cmd.Flags().DurationVar(&settle, "settle", 300*time.Millisecond, "with --repaint or --composer, how long to wait for the redraw before reading")
 	cmd.Flags().BoolVarP(&escapes, "escapes", "e", false, "keep the pane's escape sequences (dim text, colours), byte for byte")
 	cmd.Flags().BoolVar(&composerState, "composer", false, "also report the composer state marvel's reader gives (types nothing; nudges the pane's size)")
 	return cmd

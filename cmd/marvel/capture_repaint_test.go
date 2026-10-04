@@ -65,3 +65,29 @@ func TestCaptureRequestSendsEscapesAndComposerOnlyWhenAsked(t *testing.T) {
 		t.Errorf("combined params = %v", got)
 	}
 }
+
+// --settle holds the one nudge, so it is sent with --composer as well as with
+// --repaint, and only when it was given (marvel#574 review).
+func TestCaptureRequestSendsSettleWithComposerOrRepaint(t *testing.T) {
+	s := time.Second
+	for _, tc := range []struct {
+		name string
+		o    captureOpts
+		want bool
+	}{
+		{"composer with settle", captureOpts{composer: true, settleSet: true, settle: s}, true},
+		{"repaint with settle", captureOpts{repaint: true, settleSet: true, settle: s}, true},
+		{"both with settle", captureOpts{repaint: true, composer: true, settleSet: true, settle: s}, true},
+		{"composer without settle", captureOpts{composer: true}, false},
+		{"settle alone nudges nothing", captureOpts{settleSet: true, settle: s}, false},
+	} {
+		got := captureRequest("ws/a", tc.o)
+		v, has := got["settle_ms"]
+		if has != tc.want {
+			t.Errorf("%s: settle_ms present = %v (%v), want %v", tc.name, has, v, tc.want)
+		}
+		if tc.want && v != int64(1000) {
+			t.Errorf("%s: settle_ms = %v, want 1000", tc.name, v)
+		}
+	}
+}
