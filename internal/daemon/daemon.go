@@ -558,6 +558,14 @@ func (d *Daemon) Start(socketPath string) error {
 		d.teamCtrl.Run(ctx, ReconcileInterval)
 	}()
 
+	// The limited condition is evaluated on its own tick so it ends at its
+	// reset time even if no reading arrives.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunLimits(ctx, ReconcileInterval)
+	}()
+
 	// Start the process sampler. Sibling of the reconcile loop rather
 	// than a step inside it: sampling reads the process table and takes
 	// no part in reconciliation, so it should not be able to slow a
@@ -1388,6 +1396,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 				live[i].Reason = r
 			}
 		}
+		d.stampLimitReading(live, time.Now().UTC())
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
@@ -1451,7 +1460,13 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 	var err error
 	switch p.ResourceType {
 	case "session":
-		result, err = d.store.GetSession(p.Name)
+		var sess api.Session
+		sess, err = d.store.GetSession(p.Name)
+		if err == nil {
+			one := []api.Session{sess}
+			d.stampLimitReading(one, time.Now().UTC())
+			result = one[0]
+		}
 	case "team":
 		result, err = d.describeTeam(p.Name)
 	case "workspace":
