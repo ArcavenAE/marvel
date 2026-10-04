@@ -559,6 +559,20 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	}
 	p := parseDaemon(t)
 	called := map[ast.Node]bool{}
+	// A write to the controller's Notify field installs the sender; it is not a
+	// call and not a read. What the installed function can do is covered by the
+	// key-press inventory.
+	p.each(func(file string, n ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok {
+			for _, l := range as.Lhs {
+				if sel, ok := l.(*ast.SelectorExpr); ok && sel.Sel.Name == "Notify" {
+					called[sel] = true
+					called[sel.Sel] = true
+				}
+			}
+		}
+		return true
+	})
 	p.eachFunc(func(file, fun string, n ast.Node) bool {
 		c, ok := n.(*ast.CallExpr)
 		if !ok {
