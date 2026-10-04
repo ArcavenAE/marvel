@@ -101,13 +101,19 @@ reported as a gap, not filled in.
 Recorded during recovery on 2026-10-04, before the logs are read. Each is a
 candidate until the seat logs and leaf timestamps back it.
 
-- **C1. One hub URL is a single point of failure for every leaf.** A
-  cluster's config carries the hub as one string (`hub.url`,
-  `internal/config/config.go:473-474` at main b355df7). When the hub host came back on a
-  different address, every leaf pointing at the old one stayed down until
-  its config was edited by hand. A list of hub addresses is the near-term
-  fix (marvel#575, bd aae-orc-9lapl); a directory is the longer one
-  ([[service-directory]]).
+- **C1. One hub URL means an address change needs a config edit, unless
+  the name still resolves.** A cluster's config carries the hub as one
+  string (`hub.url`, `internal/config/config.go:473-474` at main b355df7),
+  so a leaf has no second address to try. This is the structural point; how
+  each cluster actually fared differed:
+  - mokuzai's leaf recovered with no manual step: its first clean global
+    poll was at 22:19:08Z, with no re-push or restart on its side (mokuzai
+    reviewer's probe log);
+  - on the other remote cluster, director re-trusted host keys and
+    re-seeded its side by hand.
+
+  A list of hub addresses is the near-term fix (marvel#575, bd
+  aae-orc-9lapl); a directory is the longer one ([[service-directory]]).
 - **C2. Discovery and trust may have been bound to addresses** (unverified).
   The verified part: the hub host came back on a different address. The
   rest is a lead to test against the logs:
@@ -153,6 +159,15 @@ candidate until the seat logs and leaf timestamps back it.
 Sources for C3 to C8: the arcaven supervisor's team roll-up of seat logs,
 sent to director at 22:24Z and kept outside any repo; seats are cited by
 role there.
+
+## Recorded context: a cluster-local fallback, not a marvel feature
+
+Operator ruling, 2026-10-04, verbatim: "mokuzai has a local self-recovery
+method for the credentials, outside of marvel, just in case. Corporate does
+not." That method explains the bus and leaf credential re-put seen on
+mokuzai at 22:12:58Z. It is local to that cluster and outside marvel.
+Nothing is to be built in marvel for it, and the finding should not count
+it as marvel recovering on its own.
 
 ## Not in this probe
 
