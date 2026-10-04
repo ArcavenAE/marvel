@@ -13,8 +13,10 @@
 - **Subject:** marvel (its client, its views and its cluster config). Filed
   in the marvel graph per the subject test; the bus and director are
   objects here, not co-owners.
-- **Related:** [[declared-cluster-config]], [[local-cluster-discovery]],
-  [[get-views-connection-and-service-context]],
+- **Related:** [[get-views-connection-and-service-context]] (its item 1, the
+  cluster a view is connected to, is the single-cluster form of this; its
+  cluster-name example carries the same skippy/mokuzai evidence),
+  [[declared-cluster-config]], [[local-cluster-discovery]],
   [[token-rate-column-and-configurable-columns]] (a CLUSTER column would be
   one of its selectable columns), [[get-sessions-width-and-truncation]]
   (one more column competes for width). bd aae-orc-f08m0 carries the

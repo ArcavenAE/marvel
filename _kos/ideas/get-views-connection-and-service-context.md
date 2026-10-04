@@ -14,6 +14,8 @@
   [[identity-at-launch-and-managed-nats]] (where the managed bus and its leaf
   live). bd aae-orc-o16q2 (RATE column), aae-orc-vdcwm (WORKDIR column): two
   in-flight instances of "one more column," which this idea groups a next wave of.
+  [[multicluster-view]] (one view reading several clusters at once, where item 1
+  becomes a per-row CLUSTER value rather than a header).
 
 ## The intent
 
@@ -25,7 +27,7 @@ above are per-item; this one is the round-up.
 
 ## The known items so far
 
-Two were named at filing, and a third joined on 2026-09-25. All are examples of the same shape: a `get` view today shows
+Two were named at filing, a third joined on 2026-09-25, and a fourth on 2026-10-04. All are examples of the same shape: a `get` view today shows
 per-session facts, and the operator wants it to also show the CONTEXT the session
 sits in, the cluster it belongs to and the services that cluster depends on.
 
@@ -34,11 +36,29 @@ sits in, the cluster it belongs to and the services that cluster depends on.
    else identifies the cluster and the connection). Exactly which fields are
    essential is itself part of the exploration.
 
+   The operator recalled it on 2026-10-04 as "viewing the connection info to
+   the marvel cluster ie mrvl://<address>/ and the cluster name". Two worked
+   examples:
+   - the connection address, as the client resolved it: `mrvl://<host>/` for
+     a remote cluster, or the socket path for a local one;
+   - the cluster name, which has to be the name other tools use. On
+     2026-10-04 the marvel cluster named `skippy` was `mokuzai` on the global
+     bus, so a send to `global://skippy/supervisor` was refused (R-92). A view
+     that shows the client's own name for a cluster would have shown the name
+     the bus refused. Which name is canonical is open (bd aae-orc-4hku4 holds
+     the fleet's name grammar).
+
 2. **The state of the cluster's services.** From an earlier operator note:
    decorate `get *` output with the local and global NATS connection URL and
    status, and the status of the other managed or attached services, for example
    a credential vault, a code graph, flyloft, curtain, and any other attached
    service. The list of services and which of their fields matter is open.
+
+   The operator also named the bd server's connection status (2026-10-04: "we
+   had considered at one point if we could display the nats and/or bd
+   connection status in get sessions"). bd is not on the list above today. It
+   is a service the seats depend on rather than one marvel manages, so how
+   marvel learns its status is part of the question.
 
 3. **The account's budget, reset, and credit state** (added 2026-09-25 by
    operator ruling). Claude Code `rate_limits` (five_hour, seven_day: used
@@ -51,6 +71,14 @@ sits in, the cluster it belongs to and the services that cluster depends on.
    `ACCT`-labelled column as the in-table fallback, never aggregated) live
    in [[token-rate-column-and-configurable-columns]] Feature C; bd
    aae-orc-f08m0.
+
+4. **General cluster health and resource information** (added 2026-10-04,
+   operator: "or some other general cluster health/resource information").
+   Context about the cluster as a whole rather than one session, such as how
+   many sessions run and in which states, host load or memory, and whether
+   the daemon itself is healthy. Which facts earn a place is open, and the
+   automation-boundary question below applies: this informs, it does not
+   gate.
 
 ## The open questions
 
