@@ -72,7 +72,7 @@ the motivating case; `get teams` and `events` are the next likely ones.
    cluster, and a rule for how long the whole command waits.
 4. **Conflicting names.** Session keys are `<team>-<role>-g<gen>-<idx>`
    and workspaces and teams are named per cluster, so two clusters can
-   both have `aae/arcaven` and both have `arcaven-architect-g6-0`. Every
+   both have `demo/review-squad` and both have `review-squad-reviewer-g1-0`. Every
    key in a merged view needs its cluster to be unique, and any verb that
    takes a key back (`describe`, `capture`, `inject`) has to accept the
    qualified form.
