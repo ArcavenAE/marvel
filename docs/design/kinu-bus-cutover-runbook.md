@@ -94,7 +94,9 @@ env | grep '^MARVEL_'                       # must print nothing (CLAUDE.md, #50
 S=$(mktemp -d)                              # scratch HOME: config, StateDir, stores
 m() { HOME="$S" marvel --socket "$S/m.sock" "$@"; }   # the ONLY way the rehearsal calls marvel
 # scratch ports: phase-0 14222 (monitor 18222), hub 14242 (monitor 18242) / leaf 17442,
-# a second scratch leaf standing in for mokuzai on 24222
+# a second scratch leaf standing in for mokuzai on 24222,
+# the scratch MANAGED broker on 14222 (monitor 18222) once phase-0 is stopped,
+# an anonymous scratch broker for step 6 on 34222 (monitor 38222)
 ```
 
 The daemon reads `~/.marvel/config.yaml` through `os.UserHomeDir`
@@ -116,15 +118,26 @@ shell carries the live `NATS_URL` and `DIRECTOR_*` values.
   that starts it, except the variables the step sets on purpose on that one
   command line (step 4's).
 - Its port is free: `lsof -nP -iTCP:<port> -sTCP:LISTEN` prints nothing for
-  14222, 18222, 14242, 18242, 17442 and 24222. This is the guard against a scratch
+  14222, 18222, 14242, 18242, 17442, 24222, 34222 and 38222. This is the guard against a scratch
   broker binding a live port.
 - A scratch nats-server's conf names its store as a **literal** path under
   `$S` (expanded when the conf is written), never a variable. The checked-in
   phase-0 conf has `store_dir: $DIRECTOR_PHASE0_STORE` (director
   `probe/nats-phase-0/nats-server.conf:26`); left in, it resolves from the
   environment, and if that points at the live store, two servers share it.
-  Before start, `grep -n -E '\$[A-Z_]|4222|8222|4242|8242|7442|include|leaf-kinu|\.director' <conf>`
-  prints nothing but the scratch leaf remote, and `grep -n store_dir <conf>`
+  Before start, this prints **nothing**:
+  ```sh
+  grep -n -E '\$[A-Z_]|(^|[^0-9])(4222|8222|4242|8242|7442)([^0-9]|$)|include|leaf-kinu|\.director' <conf>
+  ```
+  The live ports are anchored on non-digits, because every scratch port
+  contains a live one (14222 holds 4222, 17442 holds 7442), and an unanchored
+  pattern can never pass on a correct conf. Checked 2026-10-04: on a scratch
+  conf with ports 14222/18222, a literal store path and a remote to
+  `127.0.0.1:17442`, it prints nothing; it matches each of `port: 4222`,
+  `http_port: 8222`, `listen: 127.0.0.1:4242`, a remote to `:7442`,
+  `store_dir: $DIRECTOR_PHASE0_STORE` and `include "leaf-kinu.conf"`. Run the
+  control once at the start (`echo 'port: 4222' | grep -E '<pattern>'` prints
+  the line), so a typo in the pattern cannot pass as a clean conf. Also `grep -n store_dir <conf>`
   prints one line naming `$S`'s literal path. After start, the server's own
   report must agree: `curl -s 127.0.0.1:<scratch monitor>/varz | jq -r
   .jetstream.config.store_dir` is under `$S`. `ps -o command=` shows only
@@ -160,7 +173,8 @@ Steps, each with a pass condition:
    two checks on their own monitors. Then run it directly, `nats-server -c $S/p0/nats-server.conf --pid
    $S/p0/nats-server.pid --log $S/p0/nats-server.log &`, and confirm with `curl
    -s 127.0.0.1:18222/leafz` that its only leaf is the scratch hub. Provision the streams as `verify-auth.sh` does,
-   and publish a few messages to AGENT_INBOX and AGENT_AUDIT. Start a scratch
+   and publish a few messages to AGENT_INBOX and AGENT_AUDIT, every call as
+   `nats -s nats://127.0.0.1:14222 ...`. Start a scratch
    hub (domain `global`, scratch kinu-leaf and mokuzai-leaf NKeys) and the
    scratch mokuzai leaf. Pass: the **scratch** hub's `/leafz`
    (`127.0.0.1:18242`) lists both scratch leaves, and the live hub's (`8242`) is
@@ -169,15 +183,17 @@ Steps, each with a pass condition:
    scratch ports, `store_dir: $S/p0`, and `hub.url` at the scratch hub. Stop
    the scratch phase-0 broker. Copy the store cold. Start the scratch daemon
    (`HOME="$S"`, `--socket "$S/m.sock"`, `--state-bolt`, `--log-file`,
-   `--pidfile`, all under `$S`, `MARVEL_TMUX_SOCKET=rehearse-a3`), then `m
-   credential put bus/leaf --value-file <scratch seed file>`. Pass: `m bus
-   status` reads ready, provisioned, authorized,
-   leaf up; the stream message counts match step 1; an anonymous `sub '>'` is
-   refused. **Measure** the gap from phase-0 stop to ready.
+   `--pidfile "$S/marvel.pid"`, all under `$S`,
+   `MARVEL_TMUX_SOCKET=rehearse-a3`); its managed broker listens on 14222
+   (monitor 18222). Before the first write, `m get teams` lists none, which
+   proves `m` reached the scratch daemon. Then `m credential put bus/leaf
+   --value-file <scratch seed file>`. Pass: `m bus status` reads ready,
+   provisioned, authorized, leaf up; the stream message counts match step 1;
+   an anonymous `nats -s nats://127.0.0.1:14222 sub '>'` is refused. **Measure** the gap from phase-0 stop to ready.
 3. **Spawn with a credential.** `m apply -f $S/team.yaml`, a one-role scratch
-   team whose runtime is a shell, not a harness. Before it, `m get teams`
-   lists none, which proves `m` reached the scratch daemon. Pass: the session's env carries `NATS_URL` and a
-   team user, and that user can subscribe its inbox. **Measure** one respawn.
+   team whose runtime is a shell, not a harness. Pass: the session's env
+   carries `NATS_URL` at `nats://127.0.0.1:14222` and a team user, and that
+   user can subscribe its inbox (`nats -s nats://127.0.0.1:14222 --user ...`). **Measure** one respawn.
 4. **The seat, through the wrapper it will use.** With `DIRECTOR_NATS_*`
    unset, run `director-mcp-seat` with `MARVEL_BUS_STATE=$S/.marvel/state/nats`
    (named explicitly, not derived from `HOME`), `NATS_URL` at the scratch
@@ -190,7 +206,8 @@ Steps, each with a pass condition:
    scratch hub's `/leafz` (`127.0.0.1:18242`) during steps 2 to 4.
 6. **Credentials against an anonymous broker.** Point the bare shim with
    `DIRECTOR_NATS_USER`/`DIRECTOR_NATS_PASS` set, and the step-3 session, at an
-   anonymous scratch broker. Record whether each connects. This decides
+   anonymous scratch broker started for this step on 34222 (monitor 38222),
+   with the same conf checks, and `NATS_URL=nats://127.0.0.1:34222`. Record whether each connects. This decides
    rollback step 7.
 7. **Roll back** as section 7 does, with every path, port and socket replaced
    by its scratch value: `m stop`, then stop the scratch managed broker from
@@ -198,9 +215,11 @@ Steps, each with a pass condition:
    as rollback step 1 (conf path `$S/.marvel/state/nats/nats-server.conf`,
    the scratch listener port), restore `$S/.marvel/config.yaml`, and start the scratch
    phase-0 again with `nats-server -c $S/p0/nats-server.conf` (never
-   `start.sh`). Also rehearse the dead-daemon case: kill the scratch daemon
-   with SIGKILL, confirm its broker is still answering, then stop the broker
-   from its pidfile. Pass: the
+   `start.sh`). Also rehearse the dead-daemon case: read
+   `dpid=$(cat "$S/marvel.pid")` (step 2's `--pidfile`), require `ps -o
+   command= -p "$dpid"` to contain `$S/m.sock`, then `kill -KILL "$dpid"`;
+   confirm its broker still answers on 18222, then stop the broker from its
+   pidfile by the pid check. Pass: the
    anonymous scratch phase-0 serves the step-1 streams. Record whether the
    store the managed broker opened (it adds a JetStream domain) loads under
    the no-domain phase-0 conf. That decides rollback step 3. The forward
@@ -263,7 +282,11 @@ Then:
    `pid=$(cat ~/.director/nats/nats-server.pid)` once; `ps -o command= -p
    "$pid"` contains `nats-phase-0/nats-server.conf`; `lsof -nP -a -p "$pid"
    -iTCP:4222 -sTCP:LISTEN` prints a line. Only if both hold, `kill -TERM
-   "$pid"`. Then confirm 4222 is closed. **The bus is down from here.**
+   "$pid"`. Then confirm 4222 is closed. **If either check fails,** send
+   nothing and stop the window here: the bus is still up and no seat has lost
+   it. Restore `$W/config.yaml.pre-bus` over `~/.marvel/config.yaml` (step 2's
+   edit), find the 4222 listener with `lsof -nP -iTCP:4222 -sTCP:LISTEN`,
+   write what it shows in the window note, and reschedule. **The bus is down from here.**
 4. Cold copy: `cp -Rp ~/.director/nats/store
    ~/.director/nats/store.pre-managed-$(date +%Y%m%d)`.
 5. `marvel daemon reexec`. The daemon reads its config only at start (marvel#514).
