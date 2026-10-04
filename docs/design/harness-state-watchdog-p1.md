@@ -50,7 +50,7 @@ when the pane's **foreground process is the harness marvel spawned there**
 (option (a) of the review). Two facts decide it:
 
 - **Which harness:** marvel's own record. The session's runtime name selects
-  its adapter from the registry (`internal/runtime/adapter.go:333-345`), the
+  its adapter from the registry (`Registry.Resolve`, `internal/runtime/adapter.go:361-368`), the
   same lookup the spawn used. Nothing is read from the pane for this.
 - **Whether it is in front:** `#{pane_current_command}` (already read by
   `ListPanes`, `internal/tmux/driver.go:890`) is checked by that adapter's
@@ -202,7 +202,7 @@ block no longer matches; the session ends.
     candidate and reads `high`; the second and third are candidates, match,
     and read `low` (`unknown` in HEALTH, masked evidence in `describe`). A
     seat whose runtime is not claude, with `2.1.283` in front, is not judged
-    by claude's rule.
+    by claude's rule and is never captured (zero captures).
 
 ## 7. Probe P-WD1 (builder-run, scratch only)
 
