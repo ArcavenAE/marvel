@@ -2044,6 +2044,10 @@ type injectParams struct {
 	// SettleMS is how long verification waits for a redraw. Zero means the
 	// default.
 	SettleMS int `json:"settle_ms,omitempty"`
+	// AllowBareDigit lifts one refusal: a bare digit sent to a claude pane the
+	// capture cannot rule a usage-limit menu out of (marvel#559 part b). It does
+	// not lift the refusal on a menu the matcher finds.
+	AllowBareDigit bool `json:"allow_bare_digit,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
@@ -2086,6 +2090,15 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	if !isDismissKey(p) {
 		if why := preflightRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
 			return d.refuseInject(sess, p, origin, why)
+		}
+	}
+
+	if isBareDigit(p) {
+		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+			if !p.AllowBareDigit {
+				return d.refuseInject(sess, p, origin, why)
+			}
+			origin += " override=allow-bare-digit"
 		}
 	}
 
@@ -3515,4 +3528,33 @@ func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
 		}
 	}
 	return nil
+}
+
+// isBareDigit reports whether an inject is text exactly "1", "2" or "3", the
+// answers to a menu, whatever Literal and Enter say.
+func isBareDigit(p injectParams) bool {
+	return p.Text == "1" || p.Text == "2" || p.Text == "3"
+}
+
+// bareDigitRefusal is the second check a claude pane gets when the text is a bare
+// digit and a usage-limit menu sample is held: the pane must show a composer the
+// reader places as Empty or MidTurn, read from a capture taken with escapes. A
+// pane the capture cannot place (a menu the sample does not match, a screen
+// mid-stream with an empty composer, a shell) cannot be ruled out as a menu where
+// a digit picks an option and option 3 spends money. HoldsText is not accepted,
+// so a menu row that happens to read as a staged draft never rules itself out.
+// With no sample nothing is checked, and nothing changes (marvel#559 part b).
+func bareDigitRefusal(driver *tmux.Driver, sess api.Session, reader composer.Reader, menus []limitmenu.Sample) string {
+	if reader.Name() != "claude" || len(menus) == 0 {
+		return ""
+	}
+	content, err := driver.CapturePaneEscapes(sess.PaneID)
+	if err != nil {
+		return "the pane could not be read, so the capture cannot rule out a usage-limit menu, and a bare digit is not typed blind: " + err.Error()
+	}
+	switch reader.Read(content) {
+	case composer.Empty, composer.MidTurn:
+		return ""
+	}
+	return "claude is not showing a composer the reader can place, so the capture cannot rule out a usage-limit menu, where a bare digit picks an option and option 3 spends money; nothing is typed (marvel#559). To send it anyway: --allow-bare-digit"
 }
