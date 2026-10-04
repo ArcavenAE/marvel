@@ -2132,7 +2132,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	}
 
 	if startsWithMenuDigit(p) {
-		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenu.Menus); why != "" {
 			if !p.AllowBareDigit {
 				return d.refuseInject(sess, p, origin, why)
 			}

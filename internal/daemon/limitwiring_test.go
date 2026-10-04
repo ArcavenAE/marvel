@@ -346,6 +346,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.startWatchdog d.driver.PaneForeground":     true,
 		"*Daemon.startWatchdog d.driver.CapturePaneJoined":  true,
 		"preflightRefusal driver.CapturePaneJoined":         true,
+		"bareDigitRefusal driver.CapturePaneEscapes":        true,
 		"limitSender drv.SendKeys":                          true,
 		"*Daemon.newLimitAction d.driver.CapturePaneJoined": true,
 		"*Daemon.paneMenuSource d.driver.CapturePaneJoined": true,

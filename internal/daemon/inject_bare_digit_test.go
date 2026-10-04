@@ -82,7 +82,7 @@ func composerFixtureSeat(t *testing.T, name string) string {
 func bareDigitDaemon(t *testing.T) *Daemon {
 	t.Helper()
 	d := newHandlerDaemon(t)
-	d.limitMenus = []limitmenu.Sample{limitMenuSample()}
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	return d
 }
 
