@@ -55,6 +55,14 @@ func (d *Daemon) evaluateLimits(now time.Time) {
 			ev.Message = fmt.Sprintf("limit cleared (%s): was %s", reason, prov.Text())
 		}
 		events.Emit(d.events, ev)
+		if change == api.LimitCleared && sess.State.CountsAsAlive() {
+			// Option A (design 9.4): say the seat can be resumed. Nothing is typed.
+			events.Emit(d.events, events.Event{
+				Kind: events.KindSeatResumeProposed, Severity: events.SeverityWarning,
+				Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role, Session: sess.Key(),
+				Message: fmt.Sprintf("%s is no longer limited (%s); it can be resumed", sess.Key(), reason),
+			})
+		}
 	}
 }
 

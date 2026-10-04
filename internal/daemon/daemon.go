@@ -199,6 +199,8 @@ type Daemon struct {
 	limitMenu    panemenu.Samples
 	paneMenu     *panemenu.Source
 	paneMenuOnce sync.Once
+	// limitAct is the limit action behind the pane-menu source's hooks.
+	limitAct     limitAction
 	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table

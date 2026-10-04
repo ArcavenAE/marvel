@@ -43,6 +43,36 @@ type Samples struct {
 	// PostSelection are the screens a seat shows after the second option was
 	// chosen. A condition holds while one is on screen.
 	PostSelection []limitmenu.Screen
+	// Selections are the P-UL7 measurements of what the digit does on the menu
+	// (design 9.7). The limit action reads them; the source also holds a
+	// condition while any selection's After screen is on show.
+	Selections []limitmenu.Selection
+	// OptionOne are screens a seat shows after option 1 was chosen, which a
+	// confirmation must never mistake for the second option being taken.
+	OptionOne []limitmenu.Screen
+}
+
+// Hooks are the optional callbacks a caller hangs behind the source. They get
+// facts and nothing else: the source passes no pane, no driver and no way to
+// reach one, so a hook can act only with whatever its owner already holds.
+type Hooks struct {
+	// Matched is called once, after the source set the condition from a menu.
+	Matched func(sess api.Session, sample limitmenu.Sample, res limitmenu.Result, now time.Time)
+	// Seen is called for each sample a capture did not match, with the matcher's
+	// verdict: a refusal means a menu block was found and declined.
+	Seen func(sess api.Session, sample limitmenu.Sample, res limitmenu.Result)
+	// Cleared is called after a pane-menu condition ended, with the rule.
+	Cleared func(sess api.Session, rule string)
+}
+
+// heldScreens are the screens a held condition stays up on: the post-selection
+// screens and each measurement's own After screen.
+func (s Samples) heldScreens() []limitmenu.Screen {
+	out := append([]limitmenu.Screen(nil), s.PostSelection...)
+	for _, sel := range s.Selections {
+		out = append(out, sel.After)
+	}
+	return out
 }
 
 // Store is the part of the session store the source reads and writes.
@@ -67,6 +97,7 @@ type Source struct {
 	Events   events.Emitter
 	Capture  func(paneID string) (string, error)
 	InFront  func(sess api.Session) bool
+	Hooks    Hooks
 	// HostZone is the zone a reset time is read in when the seat records none.
 	// Nil means the host's own.
 	HostZone *time.Location
@@ -178,6 +209,9 @@ func (d *Source) setPaneMenu(sess api.Session, readingState api.ReadingState, no
 	for _, sample := range d.Samples.Menus {
 		res := limitmenu.Match(sample, capture)
 		if !res.Matched {
+			if d.Hooks.Seen != nil {
+				d.Hooks.Seen(sess, sample, res)
+			}
 			continue
 		}
 		prov := d.paneMenuProvenance(sess, sample.Version, res.Span, now)
@@ -197,6 +231,9 @@ func (d *Source) setPaneMenu(sess api.Session, readingState api.ReadingState, no
 				Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role, Session: sess.Key(),
 				Message: prov.Text(),
 			})
+			if d.Hooks.Matched != nil {
+				d.Hooks.Matched(sess, sample, res, now)
+			}
 		}
 		return
 	}
@@ -258,7 +295,7 @@ func (d *Source) holdPaneMenu(sess api.Session, reading api.AccountReading, stat
 			return
 		}
 	}
-	for _, scr := range d.Samples.PostSelection {
+	for _, scr := range d.Samples.heldScreens() {
 		if limitmenu.MatchScreen(scr, capture).Matched {
 			return
 		}
@@ -300,6 +337,17 @@ func (d *Source) clearPaneMenu(sess api.Session, rule string, now time.Time) {
 	un.Kind, un.Severity = events.KindSessionUnlimited, events.SeverityInfo
 	un.Message = fmt.Sprintf("limit cleared (%s): was %s", rule, prov.Text())
 	events.Emit(d.Events, un)
+	if d.Hooks.Cleared != nil {
+		d.Hooks.Cleared(sess, rule)
+	}
+	if rule != paneClearSessionEnded {
+		// Option A (design 9.4, ruled UL-R1): at the clear, say the seat can be
+		// resumed. It carries nothing to type; a human or an awake seat acts.
+		ev := base
+		ev.Kind, ev.Severity = events.KindSeatResumeProposed, events.SeverityWarning
+		ev.Message = fmt.Sprintf("%s is no longer limited (%s); it can be resumed", sess.Key(), rule)
+		events.Emit(d.Events, ev)
+	}
 
 	switch {
 	case rule == paneClearSessionEnded:

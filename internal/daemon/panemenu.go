@@ -38,6 +38,12 @@ func (d *Daemon) paneMenuSource() *panemenu.Source {
 			},
 			HostZone: d.hostLocation,
 		}
+		d.limitAct = newSelectWait(d)
+		d.paneMenu.Hooks = panemenu.Hooks{
+			Matched: d.limitAct.Matched,
+			Seen:    d.limitAct.Seen,
+			Cleared: d.limitAct.Cleared,
+		}
 	})
 	return d.paneMenu
 }
