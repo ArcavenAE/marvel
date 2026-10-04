@@ -49,6 +49,47 @@ Left open on purpose:
   proposing, not judging)? The operator still judges; the question is
   whether delivering the judgment by keystroke changes who made it.
 
+## Addendum (2026-10-04): a majordomo to moderate it
+
+The operator, in a second message:
+
+> "this might be a key advantage with marvel, as a service, generally, and
+> something that our future majordomo might moderate - look up the vision
+> for the majordomo or perhaps he has a seargent at arms for stuff like
+> this"
+
+Two framings follow from it, both recorded and neither settled.
+
+- **A general advantage of marvel as a service.** If marvel can carry an
+  operator's authority to a seat safely, that is a capability of marvel as a
+  service provider, not only a fix for Item 1. See
+  question-marvel-service-provider-shape (in both the aae-orc and marvel
+  graphs).
+- **The majordomo as moderator.** Prior art to read, not restated here:
+  - aae-orc `question-akey-majordomo-local-llm-authorization`, "Reading B"
+    (2026-07-05): the majordomo as a delegated signer inside a scope the
+    operator ratifies. The same shape applied to seat approvals instead of
+    akey signatures is the closest match to this idea.
+  - aae-orc `question-marvel-service-provider-shape` and
+    `ideas/marvel-service-provider-architecture.md`: the caretaker
+    (majordomo) behind the wall, where it proposes and a deterministic layer
+    enforces.
+  - marvel `question-convergence-posture` and finding-034: the majordomo as
+    a marvel-native agent whose levers are the same RPC verbs the CLI uses.
+    `marvel inject` as the deterministic delivery lever fits that pattern.
+  - director `ideas/cluster-majordomo-role.md`: a cluster majordomo, one per
+    cluster, a supervisor of supervisors concerned with the cluster rather
+    than the work.
+
+**A second open tension.** The akey reading lets the majordomo act inside
+its ratified scope. The service-provider reading lets it only propose, and
+it ruled against pressure for it to act. An approval-by-keyboard majordomo
+would need one of the two.
+
+**Sergeant at arms.** The operator's proposal, and an open question: a
+possible majordomo sub-role for enforcement and order, as distinct from
+stewardship. No graph mentions it yet, and it is not defined here.
+
 ## Prior art this builds on
 
 - **finding-040, inject is not a dispatch channel.** `marvel inject`
