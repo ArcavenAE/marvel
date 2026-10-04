@@ -86,10 +86,6 @@ type Manager struct {
 	// Usage receives adapter events for token and context accounting.
 	// Nil is safe, matching Events.
 	Usage UsageObserver
-	// Now is the manager's clock, nil meaning time.Now. A test shares one
-	// fake clock with the controller so a run's record and its firing's
-	// retry time read the same clock as the schedule.
-	Now func() time.Time
 
 	// instances tracks the live Instance per session key. Sessions
 	// adopted from a previous daemon have no entry: their pane predates

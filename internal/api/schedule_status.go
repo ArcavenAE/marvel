@@ -277,18 +277,3 @@ func ScheduleHistoryCap(m *Manifest, limit int) error {
 	}
 	return nil
 }
-
-// NextFiring returns the first firing strictly after after.
-func (p SchedulePolicy) NextFiring(after time.Time) (time.Time, error) { return time.Time{}, nil }
-
-// FiringID names a firing by its nominal due time.
-func FiringID(due time.Time) string { return "" }
-
-// OccupiesFiringSlot is the replica slot rule for a scheduled role.
-func OccupiesFiringSlot(s Session, firing string) bool { return false }
-
-// CountFiringSlots counts the sessions that occupy a slot of firing.
-func CountFiringSlots(sessions []Session, firing string) int { return 0 }
-
-// SettleRun applies a finished run to the current firing.
-func (st *ScheduleStatus) SettleRun(r RunRecord, p SchedulePolicy, now time.Time) bool { return false }
