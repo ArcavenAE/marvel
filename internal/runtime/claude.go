@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -243,4 +244,17 @@ func (*Claude) Composer() ComposerContract {
 			"interrupt": "not measured: Escape is Claude Code's interrupt key; the aae-orc-6vcr2 probe measured only that Escape leaves a staged draft alone",
 		},
 	}
+}
+
+var claudeVersionCommand = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// Foreground implements ForegroundRule. claude's binary runs under its version
+// number, so tmux reports "2.1.285" as the pane's command; "claude" covers an
+// install that does not. A rule keyed on one version would drop every seat on
+// another, exactly when an update is likeliest to log seats out.
+func (c *Claude) Foreground(paneCommand string) (string, bool) {
+	if claudeVersionCommand.MatchString(paneCommand) {
+		return paneCommand, true
+	}
+	return "", paneCommand == "claude"
 }

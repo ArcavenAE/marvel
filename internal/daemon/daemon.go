@@ -564,6 +564,8 @@ func (d *Daemon) Start(socketPath string) error {
 		d.RunMetrics(ctx, MetricsInterval)
 	}()
 
+	d.startWatchdog(ctx)
+
 	// Accept connections.
 	d.wg.Add(1)
 	go func() {
