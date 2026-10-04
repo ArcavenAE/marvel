@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -617,5 +618,20 @@ func TestRowsSeparateAtCeilingFromRefusing(t *testing.T) {
 	rows = Rows(plain, Snapshot{LiveSessions: 1, DeclaredSessions: 2})
 	if rows[0].State != RowOK || rows[0].Note != "" {
 		t.Errorf("row = %+v, want %q with no note", rows[0], RowOK)
+	}
+}
+
+// A team row must serialize exactly as it did before account rows existed:
+// the account fields are additive and absent from it.
+func TestTeamRowJSONCarriesNoAccountFields(t *testing.T) {
+	t.Parallel()
+	b, err := json.Marshal(Row{Workspace: "w", Team: "t", Dimension: api.DimMaxSessions, Limit: 3, Observed: 2, Headroom: 1, State: RowOK})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"account", "account_window", "reading", "resets_at"} {
+		if strings.Contains(string(b), `"`+key+`"`) {
+			t.Errorf("team row carries %q: %s", key, b)
+		}
 	}
 }
