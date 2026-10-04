@@ -2554,6 +2554,9 @@ type DialOptions struct {
 	// is on a TTY, marvel prompts; when false and off-TTY, marvel
 	// refuses with a pointer to `marvel keys trust`.
 	StrictHostKey bool
+	// Timeout bounds the whole request/response exchange when positive. Zero
+	// keeps the historical behavior of no deadline; a best-effort sender sets it.
+	Timeout time.Duration
 }
 
 // SendRequest sends a request to the daemon and returns the response,
@@ -2579,6 +2582,9 @@ func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Respons
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
+	if opts.Timeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(opts.Timeout))
+	}
 
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return nil, fmt.Errorf("send request: %w", err)

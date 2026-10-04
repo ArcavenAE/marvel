@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -129,7 +130,8 @@ func newCodexCtxCmd() *cobra.Command {
 			}
 			// The account's windows go to their own RPC, whether or not this
 			// hook has an occupancy figure to hold or forward.
-			sendAccountLimits(socket, workspace, session, codexAccountWindows(raw))
+			windows, observedAt := codexAccountWindows(raw, time.Now())
+			sendAccountLimits(socket, workspace, session, windows, observedAt)
 			if !send {
 				return nil
 			}

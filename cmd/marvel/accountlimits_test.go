@@ -58,9 +58,9 @@ func TestClaudeAccountWindowsDropsWhatIsNotAReading(t *testing.T) {
 		{"no percentage", `{"rate_limits":{"five_hour":{"resets_at":1786000000}}}`, nil},
 		{"null percentage", `{"rate_limits":{"seven_day":{"used_percentage":null,"resets_at":1786000000}}}`, nil},
 		{"null window", `{"rate_limits":{"five_hour":null,"seven_day":null}}`, nil},
-		{"over 100 is the scaling trap", `{"rate_limits":{"seven_day":{"used_percentage":4100}}}`, nil},
+		{"over 100 is clamped, not lost", `{"rate_limits":{"seven_day":{"used_percentage":104}}}`, []string{"seven_day"}},
 		{"negative", `{"rate_limits":{"seven_day":{"used_percentage":-1}}}`, nil},
-		{"one good one bad", `{"rate_limits":{"five_hour":{"used_percentage":4100},"seven_day":{"used_percentage":50}}}`, []string{"seven_day"}},
+		{"one good one bad", `{"rate_limits":{"five_hour":{"used_percentage":-3},"seven_day":{"used_percentage":50}}}`, []string{"seven_day"}},
 		{"exactly 100 is a reading", `{"rate_limits":{"seven_day":{"used_percentage":100,"resets_at":1786400000}}}`, []string{"seven_day"}},
 		{"no reset is carried as zero", `{"rate_limits":{"seven_day":{"used_percentage":5}}}`, []string{"seven_day"}},
 	}
@@ -92,9 +92,31 @@ func TestCodexAccountWindowsFromARealRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(map[string]string{"transcript_path": path})
-	got := codexAccountWindows(raw)
+	got, observed := codexAccountWindows(raw, time.Unix(1785937989-3600, 0))
 	if len(got) != 1 || got[0].Name != "seven_day" || *got[0].UsedPercent != 22 {
 		t.Fatalf("windows = %+v, want seven_day at 22", got)
+	}
+	if observed.IsZero() {
+		t.Fatal("the rollout's own timestamp was dropped")
+	}
+	// Past its reset, the same rollout offers nothing.
+	if past, _ := codexAccountWindows(raw, time.Unix(1785937989+1, 0)); past != nil {
+		t.Fatalf("a window past its reset was sent: %+v", past)
+	}
+}
+
+// A reading above 100 is a limit reached, not a scaling trap: it is clamped
+// to 100 so the binding rule still sees it.
+func TestOverOneHundredIsClampedNotLost(t *testing.T) {
+	t.Parallel()
+	w := claudeAccountWindows([]byte(`{"rate_limits":{"seven_day":{"used_percentage":104.5,"resets_at":1786400000}}}`))
+	if len(w) != 1 || *w[0].UsedPercent != 100 {
+		t.Fatalf("windows = %+v, want one at 100", w)
+	}
+	for _, bad := range []string{`-1`, `"NaN"`} {
+		if got := claudeAccountWindows([]byte(`{"rate_limits":{"seven_day":{"used_percentage":` + bad + `}}}`)); len(got) != 0 {
+			t.Errorf("%s was sent: %+v", bad, got)
+		}
 	}
 }
 
@@ -106,7 +128,7 @@ func TestCodexAccountWindowsHoldsOnAnyFailure(t *testing.T) {
 		"missing file":       `{"transcript_path":"/nonexistent/rollout.jsonl"}`,
 		"garbage":            `not json`,
 	} {
-		if got := codexAccountWindows([]byte(raw)); got != nil {
+		if got, _ := codexAccountWindows([]byte(raw), time.Now()); got != nil {
 			t.Errorf("%s: windows = %+v, want none", name, got)
 		}
 	}
@@ -117,7 +139,8 @@ func TestCodexAccountWindowsHoldsOnAnyFailure(t *testing.T) {
 func TestAccountLimitsRequest(t *testing.T) {
 	t.Parallel()
 	pct := 87.0
-	req, ok := accountLimitsRequest("ws", "seat-0", "tok", []api.AccountWindow{{Name: "seven_day", UsedPercent: &pct}})
+	observed := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	req, ok := accountLimitsRequest("ws", "seat-0", "tok", []api.AccountWindow{{Name: "seven_day", UsedPercent: &pct}}, observed)
 	if !ok || req.Method != "account.limits" {
 		t.Fatalf("req = %+v ok=%v", req, ok)
 	}
@@ -125,10 +148,13 @@ func TestAccountLimitsRequest(t *testing.T) {
 	if err := json.Unmarshal(req.Params, &body); err != nil {
 		t.Fatal(err)
 	}
+	if !body.ObservedAt.Equal(observed) {
+		t.Fatalf("observed_at = %v", body.ObservedAt)
+	}
 	if body.Session != "ws/seat-0" || body.SessionToken != "tok" || len(body.Windows) != 1 || *body.Windows[0].UsedPercent != 87 {
 		t.Fatalf("body = %+v", body)
 	}
-	if _, ok := accountLimitsRequest("ws", "seat-0", "tok", nil); ok {
+	if _, ok := accountLimitsRequest("ws", "seat-0", "tok", nil, observed); ok {
 		t.Fatal("a request was built with nothing to send")
 	}
 }

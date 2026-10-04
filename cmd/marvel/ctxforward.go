@@ -437,7 +437,7 @@ func newCtxForwardCmd() *cobra.Command {
 			// session, and the account is not a property of any session
 			// (see the rateLimits type). It is sent whether or not the
 			// context half has a figure to forward yet.
-			sendAccountLimits(socket, workspace, session, claudeAccountWindows(raw))
+			sendAccountLimits(socket, workspace, session, claudeAccountWindows(raw), time.Time{})
 			if !send {
 				return nil
 			}

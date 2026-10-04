@@ -129,6 +129,12 @@ type AccountLimitsRequest struct {
 	// process that holds the token of the session it names.
 	SessionToken string          `json:"session_token,omitempty"`
 	Windows      []AccountWindow `json:"windows"`
+	// ObservedAt is when the harness made the observation, when the sender
+	// knows (codex stamps each rollout record). Zero means "now", which is
+	// right for a statusline tick. The daemon keeps the newest reading by this
+	// time, so a sender re-posting an old figure cannot replace a newer one.
+	// Additive: an older daemon ignores it, an older sender omits it.
+	ObservedAt time.Time `json:"observed_at,omitempty"`
 }
 
 // ErrAccountReportUnbound is returned when a reading names a session whose
@@ -186,6 +192,11 @@ func (a *AccountReadings) Record(key AccountKey, windows []AccountWindow, sessio
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// The newest observation wins. An older one is not an error, it is
+	// information the account already has newer.
+	if held, ok := a.m[key]; ok && at.Before(held.At) {
+		return false
+	}
 	a.m[key] = AccountReading{Windows: usable, Session: session, At: at}
 	return true
 }

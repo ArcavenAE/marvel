@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -167,11 +168,7 @@ func TestCtxForwardWithoutASeatEnvironmentIsSilent(t *testing.T) {
 func TestCodexCtxPostsTheAccountReading(t *testing.T) {
 	socket, methods, _ := fakeDaemon(t)
 	seatEnv(t, socket)
-	path, err := filepath.Abs("../../internal/runtime/codex/testdata/rollout-compaction.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, _ := json.Marshal(map[string]string{"transcript_path": path})
+	payload, _ := json.Marshal(map[string]string{"transcript_path": liveRollout(t)})
 	withStdin(t, payload, func() {
 		if err := newCodexCtxCmd().RunE(newCodexCtxCmd(), nil); err != nil {
 			t.Fatalf("hook: %v", err)
@@ -205,11 +202,7 @@ func TestCodexCtxPresentsTheSessionToken(t *testing.T) {
 	socket, methods, tokens := fakeDaemon(t)
 	seatEnv(t, socket)
 	t.Setenv(api.HeartbeatTokenEnv, "minted-at-spawn")
-	path, err := filepath.Abs("../../internal/runtime/codex/testdata/rollout-compaction.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, _ := json.Marshal(map[string]string{"transcript_path": path})
+	payload, _ := json.Marshal(map[string]string{"transcript_path": liveRollout(t)})
 	withStdin(t, payload, func() {
 		if err := newCodexCtxCmd().RunE(newCodexCtxCmd(), nil); err != nil {
 			t.Fatalf("hook: %v", err)
@@ -219,4 +212,19 @@ func TestCodexCtxPresentsTheSessionToken(t *testing.T) {
 	if got := tokens(); len(got) != 1 || got[0] != "minted-at-spawn" {
 		t.Fatalf("tokens presented = %v, want [minted-at-spawn]", got)
 	}
+}
+
+// liveRollout writes a synthetic codex rollout whose rate_limits block was
+// written a minute ago and resets in the future, so the sender treats it as a
+// current observation. The checked-in rollout is real but its reset has passed.
+func liveRollout(t *testing.T) string {
+	t.Helper()
+	now := time.Now().UTC()
+	line := fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":22.0,"window_minutes":10080,"resets_at":%d}}}}`+"\n",
+		now.Add(-time.Minute).Format("2006-01-02T15:04:05.000Z"), now.Add(48*time.Hour).Unix())
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

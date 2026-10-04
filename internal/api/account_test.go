@@ -334,3 +334,49 @@ func TestAccountKeyTreatsTheExplicitDefaultHomeAsTheDefault(t *testing.T) {
 		t.Fatalf("one login, two keys: %v and %v", AccountKeyOf(shared), AccountKeyOf(named))
 	}
 }
+
+// A reading older than the one held, by observation time, never replaces it:
+// a sender re-posting an hour-old figure cannot overwrite a fresh full window.
+func TestAccountRecordKeepsTheNewestObservation(t *testing.T) {
+	t.Parallel()
+	key := AccountKey{Harness: "codex", Backend: BackendDefaultName}
+	t0 := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	r := NewAccountReadings()
+	if !r.Record(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(100)}}, "ws/a", t0) {
+		t.Fatal("first reading refused")
+	}
+	if r.Record(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(40)}}, "ws/b", t0.Add(-time.Hour)) {
+		t.Error("an older observation was stored")
+	}
+	got, _ := r.Reading(key, t0)
+	if *got.Windows[0].UsedPercent != 100 || got.Session != "ws/a" || !got.At.Equal(t0) {
+		t.Fatalf("older observation replaced the newer: %+v", got)
+	}
+	if !r.Record(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(30)}}, "ws/b", t0) {
+		t.Error("an equal-time reading was refused")
+	}
+	if !r.Record(key, []AccountWindow{{Name: "seven_day", UsedPercent: pct(20)}}, "ws/b", t0.Add(time.Minute)) {
+		t.Error("a newer reading was refused")
+	}
+}
+
+func TestAccountLimitsRequestObservedAtIsAdditive(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	raw, err := json.Marshal(AccountLimitsRequest{Session: "ws/a", ObservedAt: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old struct {
+		Session      string
+		SessionToken string `json:"session_token"`
+		Windows      []AccountWindow
+	}
+	if err := json.Unmarshal(raw, &old); err != nil || old.Session != "ws/a" {
+		t.Fatalf("old decode: %+v %v", old, err)
+	}
+	var back AccountLimitsRequest
+	if err := json.Unmarshal([]byte(`{"session":"ws/a","windows":[]}`), &back); err != nil || !back.ObservedAt.IsZero() {
+		t.Fatalf("a request without observed_at: %+v %v", back, err)
+	}
+}

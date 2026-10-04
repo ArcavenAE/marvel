@@ -111,13 +111,36 @@ func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time
 		d.noteRefusedAccountReport(req, err)
 		return Response{Error: fmt.Sprintf("account.limits: %v", err)}
 	}
+	observed, err := observationTime(req.ObservedAt, now)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("account.limits: %v", err)}
+	}
 	key := api.AccountKeyOf(sess)
-	stored := d.accounts.Record(key, req.Windows, sess.Key(), now)
+	stored := d.accounts.Record(key, req.Windows, sess.Key(), observed)
 	data, err := json.Marshal(map[string]any{"account": key.String(), "stored": stored})
 	if err != nil {
 		return Response{Error: fmt.Sprintf("encode account.limits result: %v", err)}
 	}
 	return Response{Result: data}
+}
+
+// accountObservationSkew is how far ahead of the daemon's clock a sender's
+// observation time may be before it is refused; within it, it is clamped to now.
+const accountObservationSkew = time.Minute
+
+// observationTime resolves a request's observed_at. Zero is now. A time past
+// the skew allowance is refused, since a future observation would outlive every
+// real one; within it, it is clamped to now.
+func observationTime(observed, now time.Time) (time.Time, error) {
+	switch {
+	case observed.IsZero():
+		return now, nil
+	case observed.After(now.Add(accountObservationSkew)):
+		return time.Time{}, fmt.Errorf("observed_at %s is in the future", observed.UTC().Format(time.RFC3339))
+	case observed.After(now):
+		return now, nil
+	}
+	return observed.UTC(), nil
 }
 
 func (d *Daemon) handleAccountLimits(params json.RawMessage) Response {
