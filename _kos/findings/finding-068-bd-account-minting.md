@@ -26,7 +26,7 @@ There are three identities, and only one is authenticated.
 
 - **The SQL user is recorded nowhere** (MEASURED).
   - `--author` overwrites BOTH the `author` and `committer` columns of `dolt_log` (`run3.txt` P1).
-  - Live, 14 days: 875 of 875 commits are author `beads`, while `events` carries 1,408 rows in at least three actor classes (host/tty for two people's terminals, and `marvel/<ws>/<session>`).
+  - Live, 14 days: 875 of 875 commits are author `beads` (a rolling window, measured 2026-10-03; over the fixed window 2026-09-19 to 2026-10-03, 857 of 857), while `events` carries 1,408 rows in at least three actor classes (host/tty for two people's terminals, and `marvel/<ws>/<session>`).
   - All-time: 4,478 `beads@local`, 8 `beads@localhost`, and 639 `root@%`, the last only between 2026-04-11 and 05-01.
 - **So skippy's writes and kinu's writes are indistinguishable in dolt history** except by the self-asserted actor string. finding-149's "distinct attribution" was that string.
 - **Per session over one connection:** only the actor can differ (it's a per-call flag). The SQL user is per connection, and the commit author is per process environment.
