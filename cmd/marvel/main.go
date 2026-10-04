@@ -1622,9 +1622,44 @@ at an empty composer and have no reader that can see a draft yet.`,
 	return cmd
 }
 
+// captureOpts are the capture command's flags as given.
+type captureOpts struct {
+	start, end         int
+	startSet, endSet   bool
+	repaint, settleSet bool
+	escapes, composer  bool
+	settle             time.Duration
+}
+
+// captureRequest builds the capture RPC's params. Only the bounds actually
+// given are sent: a defaulted end of 0 would pin the span to the TOP visible
+// line (marvel#114).
+func captureRequest(key string, o captureOpts) map[string]any {
+	p := map[string]any{"session_key": key}
+	if o.startSet {
+		p["start"] = o.start
+	}
+	if o.endSet {
+		p["end"] = o.end
+	}
+	if o.repaint {
+		p["repaint"] = true
+		if o.settleSet {
+			p["settle_ms"] = o.settle.Milliseconds()
+		}
+	}
+	if o.escapes {
+		p["escapes"] = true
+	}
+	if o.composer {
+		p["composer"] = true
+	}
+	return p
+}
+
 func captureCmd() *cobra.Command {
 	var start, end int
-	var repaint bool
+	var repaint, escapes, composerState bool
 	var settle time.Duration
 	cmd := &cobra.Command{
 		Use:   "capture <session-key>",
@@ -1650,24 +1685,22 @@ was left alone) or "repaint: unavailable: <reason>" on stderr, with the name of
 the foreground program. A nudge is not a redraw seen: whether a given harness
 repaints is its own behavior (measured for claude, codex and opencode; not for
 others). A seat sitting at a shell prompt has nothing to repaint; the result
-names the shell. A failed repaint never fails the capture.`,
+names the shell. A failed repaint never fails the capture.
+
+-e/--escapes keeps the pane's escape sequences (tmux capture-pane -e), byte for
+byte on stdout, so text drawn dim, such as a composer suggestion, can be told
+from a typed draft. --composer reports the composer state marvel's own reader
+gives the session ("composer: empty", "holds_text", "mid_turn", "unknown", ...)
+on stderr. It types nothing. Like --repaint it nudges the pane's size, because
+the reader repaints before it reads. A runtime with no reader reads unknown.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p := map[string]any{"session_key": args[0]}
-			// Send only the bounds actually given: a defaulted end of 0
-			// would pin the span to the TOP visible line (marvel#114).
-			if cmd.Flags().Changed("start") {
-				p["start"] = start
-			}
-			if cmd.Flags().Changed("end") {
-				p["end"] = end
-			}
-			if repaint {
-				p["repaint"] = true
-				if cmd.Flags().Changed("settle") {
-					p["settle_ms"] = settle.Milliseconds()
-				}
-			}
+			p := captureRequest(args[0], captureOpts{
+				start: start, end: end,
+				startSet: cmd.Flags().Changed("start"), endSet: cmd.Flags().Changed("end"),
+				repaint: repaint, settle: settle, settleSet: cmd.Flags().Changed("settle"),
+				escapes: escapes, composer: composerState,
+			})
 			params, _ := json.Marshal(p)
 			resp, err := send(daemon.Request{
 				Method: "capture",
@@ -1691,6 +1724,12 @@ names the shell. A failed repaint never fails the capture.`,
 				}
 				_, _ = fmt.Fprintf(os.Stderr, "repaint: %s\n", status)
 			}
+			if state := result["composer"]; state != "" {
+				if cerr := result["composer_error"]; cerr != "" {
+					state += " (" + cerr + ")"
+				}
+				_, _ = fmt.Fprintf(os.Stderr, "composer: %s\n", state)
+			}
 			return nil
 		},
 	}
@@ -1698,6 +1737,8 @@ names the shell. A failed repaint never fails the capture.`,
 	cmd.Flags().IntVarP(&end, "end", "E", 0, "end line (default bottom of visible)")
 	cmd.Flags().BoolVar(&repaint, "repaint", false, "ask the program to redraw first (widen the pane one column and restore it), then read")
 	cmd.Flags().DurationVar(&settle, "settle", 300*time.Millisecond, "with --repaint, how long to wait for the redraw before reading")
+	cmd.Flags().BoolVarP(&escapes, "escapes", "e", false, "keep the pane's escape sequences (dim text, colours), byte for byte")
+	cmd.Flags().BoolVar(&composerState, "composer", false, "also report the composer state marvel's reader gives (types nothing; nudges the pane's size)")
 	return cmd
 }
 

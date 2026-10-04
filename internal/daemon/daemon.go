@@ -2330,6 +2330,14 @@ type captureParams struct {
 	// SettleMS is how long the nudge is held, and then how long to wait for the
 	// restore's redraw before reading. Zero means the default.
 	SettleMS int `json:"settle_ms,omitempty"`
+	// Escapes keeps the pane's escape sequences (capture-pane -e), so a reader
+	// can tell dim text from typed text. Off by default: the output is what it
+	// was.
+	Escapes bool `json:"escapes,omitempty"`
+	// Composer returns the composer state the session's reader gives, beside
+	// the content. It types nothing. Like Repaint it nudges the pane's size,
+	// because reading the composer repaints first.
+	Composer bool `json:"composer,omitempty"`
 }
 
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
@@ -2381,9 +2389,15 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	}
 
 	var content string
-	if start, end, ranged := captureBounds(p); ranged {
+	start, end, ranged := captureBounds(p)
+	switch {
+	case ranged && p.Escapes:
+		content, err = d.driver.CapturePaneRangeEscapes(sess.PaneID, start, end)
+	case ranged:
 		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
-	} else {
+	case p.Escapes:
+		content, err = d.driver.CapturePaneEscapes(sess.PaneID)
+	default:
 		content, err = d.driver.CapturePane(sess.PaneID)
 	}
 	if err != nil {
@@ -2398,6 +2412,13 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	if p.Repaint {
 		out["repaint"] = repaint
 		out["repaint_target"] = target
+	}
+	if p.Composer {
+		state, cerr := d.readComposer(sess, composer.ReaderFor(sess.Runtime.Name), p.SettleMS)
+		out["composer"] = string(state)
+		if cerr != nil {
+			out["composer_error"] = cerr.Error()
+		}
 	}
 	result, _ := json.Marshal(out)
 	return Response{Result: result}

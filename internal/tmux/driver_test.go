@@ -781,3 +781,45 @@ func TestKillPaneOnGonePaneIsErrPaneGone(t *testing.T) {
 		t.Fatalf("KillPane on an unknown pane = %v, want ErrPaneGone", err)
 	}
 }
+
+// The ranged escapes capture keeps the attributes the plain ranged capture
+// drops, over the same bounds (marvel#571).
+func TestCapturePaneRangeEscapesKeepsDimText(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	sessionName := "marvel-test-capture-range-escapes"
+	t.Cleanup(func() { _ = d.KillSession(sessionName) })
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	paneID, err := d.NewPane(sessionName, "sh", "range-escapes", nil, false)
+	if err != nil {
+		t.Fatalf("new pane: %v", err)
+	}
+	// Octal escapes: POSIX printf reads them in every sh.
+	if err := d.SendKeys(paneID, `printf '\033[2mDIMTEXT\033[0m\n'`, true, true); err != nil {
+		t.Fatalf("send printf: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var esc, plain string
+	for time.Now().Before(deadline) {
+		esc, _ = d.CapturePaneRangeEscapes(paneID, 0, 4)
+		plain, _ = d.CapturePaneRange(paneID, 0, 4)
+		if strings.Contains(plain, "DIMTEXT") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(plain, "DIMTEXT") {
+		t.Fatalf("pane never showed DIMTEXT: %q", plain)
+	}
+	if strings.Contains(plain, "\x1b") {
+		t.Errorf("the plain ranged capture carries an escape: %q", plain)
+	}
+	if !strings.Contains(esc, "\x1b[2m") {
+		t.Errorf("the ranged escapes capture lost the dim attribute: %q", esc)
+	}
+}
