@@ -2660,6 +2660,14 @@ func renderSessionTable(sessions []api.Session) string {
 		// and no new column or SessionState value. The short tag is the
 		// Reason's own prefix; `describe session` carries the full text.
 		state := string(s.State)
+		// The limited condition reads in place of "running", the same width,
+		// with no until-time and no reason: the table stays narrow and
+		// `describe session` carries the rest. A script filtering on
+		// "running" misses a limited seat; the JSON keeps state and
+		// condition apart.
+		if s.State == api.SessionRunning && s.Condition == api.ConditionLimited {
+			state = string(api.ConditionLimited)
+		}
 		if s.State == api.SessionFailed && s.Reason != "" {
 			if tag, _, found := strings.Cut(s.Reason, ":"); found {
 				state += " (" + tag + ")"

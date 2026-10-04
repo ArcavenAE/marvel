@@ -45,9 +45,15 @@ const (
 	KindSessionCreated           Kind = "session.created"
 	KindSessionDeleted           Kind = "session.deleted"
 	KindSessionCrashed           Kind = "session.crashed"
-	KindSessionRestarted         Kind = "session.restarted"
-	KindSessionFailed            Kind = "session.failed"
-	KindSessionSucceeded         Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindSessionLimited and KindSessionUnlimited record the transitions of the
+	// restart-neutral "limited" condition: a session's account reached a rate
+	// limit, and it ended. Once per transition. Limited is a warning so the
+	// ring-to-NATS tap, which carries warning and above, reaches agent teams.
+	KindSessionLimited   Kind = "session.limited"
+	KindSessionUnlimited Kind = "session.unlimited"
+	KindSessionRestarted Kind = "session.restarted"
+	KindSessionFailed    Kind = "session.failed"
+	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
@@ -308,6 +314,8 @@ var allKinds = []Kind{
 	KindSessionCreated,
 	KindSessionDeleted,
 	KindSessionCrashed,
+	KindSessionLimited,
+	KindSessionUnlimited,
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,

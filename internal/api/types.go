@@ -308,6 +308,18 @@ type Session struct {
 	// to the account key (AccountKeyOf). Empty means the harness's own
 	// default home. Status, not spec; additive on the json path.
 	AccountHome string `json:"account_home,omitempty" toml:"-"`
+	// Condition is a restart-neutral advisory, stored beside ActivityState.
+	// It is "limited" while the session's account is at a rate limit. It is a
+	// condition and not a State: State stays running, and nothing in the
+	// restart, kill or shift paths reads it (see EvaluateLimit). Limit holds
+	// why it was set, so it survives a daemon restart without the reading
+	// that set it. Status, not spec; additive on the json path.
+	Condition SessionCondition `json:"condition,omitempty" toml:"-"`
+	Limit     *LimitProvenance `json:"limit,omitempty" toml:"-"`
+	// LimitReading and LimitReadingText are the account's reading state as a
+	// view, filled on the copies get and describe return and never stored.
+	LimitReading     ReadingState `json:"limit_reading,omitempty" toml:"-"`
+	LimitReadingText string       `json:"limit_reading_text,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,

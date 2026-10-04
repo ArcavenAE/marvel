@@ -119,6 +119,10 @@ func cloneRuntime(r Runtime) Runtime {
 func cloneSession(s *Session) Session {
 	out := *s
 	out.Runtime = cloneRuntime(s.Runtime)
+	if s.Limit != nil {
+		l := *s.Limit
+		out.Limit = &l
+	}
 	if s.HarnessState != nil {
 		hs := *s.HarnessState
 		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)

@@ -1,7 +1,12 @@
 package api
 
 import (
+	"crypto/subtle"
+	"errors"
+	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -66,8 +71,35 @@ func AccountKeyOf(s Session) AccountKey {
 		Harness:          s.Runtime.Name,
 		Backend:          b,
 		CredentialSource: s.BackendCredentialSource,
-		ConfigHome:       s.AccountHome,
+		ConfigHome:       canonicalConfigHome(s.Runtime.Name, s.AccountHome),
 	}
+}
+
+// defaultHomeDirs is each harness's own default state directory, relative to
+// the user's home. Naming it explicitly and naming nothing are the same login.
+var defaultHomeDirs = map[string]string{"claude": ".claude", "codex": ".codex"}
+
+// canonicalConfigHome reduces a recorded login home to one spelling: empty for
+// the harness's default directory, otherwise the cleaned path. Without it a
+// session that fell back to the shared home (empty) and one that names the
+// same directory (codex always does) would be two accounts for one login.
+func canonicalConfigHome(harness, home string) string {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		userHome = ""
+	}
+	return canonicalConfigHomeIn(harness, home, userHome)
+}
+
+func canonicalConfigHomeIn(harness, home, userHome string) string {
+	if home == "" {
+		return ""
+	}
+	home = filepath.Clean(home)
+	if def, ok := defaultHomeDirs[harness]; ok && userHome != "" && home == filepath.Join(userHome, def) {
+		return ""
+	}
+	return home
 }
 
 // AccountWindow is one rate-limit window of an account. UsedPercent is a
@@ -90,8 +122,41 @@ type AccountReading struct {
 // session, which the daemon resolves to the account key, and carries the
 // windows. It is not the heartbeat request and shares none of its fields.
 type AccountLimitsRequest struct {
-	Session string          `json:"session"`
-	Windows []AccountWindow `json:"windows"`
+	Session string `json:"session"`
+	// SessionToken is the secret marvel minted for the reporting session at
+	// spawn (MARVEL_HEARTBEAT_TOKEN). A reading can set the limited condition
+	// on every session of an account, so the daemon accepts it only from a
+	// process that holds the token of the session it names.
+	SessionToken string          `json:"session_token,omitempty"`
+	Windows      []AccountWindow `json:"windows"`
+}
+
+// ErrAccountReportUnbound is returned when a reading names a session whose
+// record carries no token. Unlike the heartbeat, which admits that case for
+// records written before tokens existed, a reading that can mark a whole
+// account limited is refused: such a session has no token to present, and the
+// record drains as those sessions end.
+var ErrAccountReportUnbound = errors.New("session carries no token, so a reading cannot be bound to it")
+
+// AuthenticateAccountReport returns the session a reading names, provided the
+// presented token is the one minted for it. A missing session is ErrNotFound,
+// a record with no token hash is ErrAccountReportUnbound, and a wrong or absent
+// token is ErrHeartbeatUnauthorized. The comparison is constant-time.
+func (s *Store) AuthenticateAccountReport(sessionKey, token string) (Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[sessionKey]
+	if !ok {
+		return Session{}, fmt.Errorf("session %s: %w", sessionKey, ErrNotFound)
+	}
+	if sess.HeartbeatTokenHash == "" {
+		return Session{}, fmt.Errorf("session %s: %w", sessionKey, ErrAccountReportUnbound)
+	}
+	presented := HashHeartbeatToken(token)
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(sess.HeartbeatTokenHash)) != 1 {
+		return Session{}, fmt.Errorf("session %s: %w", sessionKey, ErrHeartbeatUnauthorized)
+	}
+	return cloneSession(sess), nil
 }
 
 // AccountReadings holds the newest reading per account, in memory.

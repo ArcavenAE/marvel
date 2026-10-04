@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -231,6 +232,50 @@ func TestSessionWithAccountHomeDecodesInAnOldClient(t *testing.T) {
 	}
 }
 
+func storeWithSession(t *testing.T, hash string) *Store {
+	t.Helper()
+	st := NewStore()
+	sess := Session{Workspace: "ws", Name: "seat", Runtime: Runtime{Name: "claude"}, HeartbeatTokenHash: hash}
+	if err := st.CreateSession(&sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return st
+}
+
+func TestAuthenticateAccountReport(t *testing.T) {
+	t.Parallel()
+	token, hash, err := NewHeartbeatToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := storeWithSession(t, hash)
+	got, err := st.AuthenticateAccountReport("ws/seat", token)
+	if err != nil || got.Key() != "ws/seat" {
+		t.Fatalf("matching token: %v %v", got.Key(), err)
+	}
+	tests := []struct {
+		name, key, token string
+		want             error
+	}{
+		{"wrong token", "ws/seat", "nope", ErrHeartbeatUnauthorized},
+		{"empty token", "ws/seat", "", ErrHeartbeatUnauthorized},
+		{"unknown session", "ws/ghost", token, ErrNotFound},
+	}
+	for _, tc := range tests {
+		if _, err := st.AuthenticateAccountReport(tc.key, tc.token); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	// A record with no hash is refused, even for an empty token, unlike the
+	// heartbeat which admits it.
+	legacy := storeWithSession(t, "")
+	for _, tok := range []string{"", token} {
+		if _, err := legacy.AuthenticateAccountReport("ws/seat", tok); !errors.Is(err, ErrAccountReportUnbound) {
+			t.Errorf("unbound record, token %q: err = %v, want ErrAccountReportUnbound", tok, err)
+		}
+	}
+}
+
 // Percentages outside what a window can hold are not readings.
 func TestAccountRecordRefusesNegativeAndNonFinitePercentages(t *testing.T) {
 	t.Parallel()
@@ -255,5 +300,37 @@ func TestAccountRecordRefusesNegativeAndNonFinitePercentages(t *testing.T) {
 	r := NewAccountReadings()
 	if !r.Record(key, []AccountWindow{{Name: "w", UsedPercent: &zero}}, "ws/a", t0) {
 		t.Error("zero percent is a reading and was refused")
+	}
+}
+
+// Naming the harness's default home and naming nothing are one login.
+func TestCanonicalConfigHome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, harness, home, user, want string
+	}{
+		{"empty stays empty", "claude", "", "/h", ""},
+		{"claude's default dir", "claude", "/h/.claude", "/h", ""},
+		{"with a trailing slash", "claude", "/h/.claude/", "/h", ""},
+		{"codex's default dir", "codex", "/h/.codex", "/h", ""},
+		{"another harness's default is not this one's", "claude", "/h/.codex", "/h", "/h/.codex"},
+		{"a different directory is a different login", "claude", "/h/.claude-work", "/h", "/h/.claude-work"},
+		{"a harness with no known default keeps the path", "forestage", "/h/.forestage", "/h", "/h/.forestage"},
+		{"no user home known keeps the cleaned path", "claude", "/h/.claude/", "", "/h/.claude"},
+	}
+	for _, tc := range tests {
+		if got := canonicalConfigHomeIn(tc.harness, tc.home, tc.user); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// No t.Parallel: it sets HOME for the process.
+func TestAccountKeyTreatsTheExplicitDefaultHomeAsTheDefault(t *testing.T) {
+	t.Setenv("HOME", "/home/acct-test")
+	shared := sessionOn("codex", BackendDefaultName, "", "", "")
+	named := sessionOn("codex", BackendDefaultName, "", "/home/acct-test/.codex", "/state/homes/aaa")
+	if AccountKeyOf(shared) != AccountKeyOf(named) {
+		t.Fatalf("one login, two keys: %v and %v", AccountKeyOf(shared), AccountKeyOf(named))
 	}
 }

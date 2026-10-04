@@ -470,6 +470,34 @@ func TestRenderBudgetTableAccountRows(t *testing.T) {
 	}
 }
 
+// Test 2: the STATE cell reads exactly "limited" while the condition holds, the
+// same width as "running", with no until-time or reason in the table. A
+// terminal session is not news and keeps its state word.
+func TestRenderSessionTableLimitedCell(t *testing.T) {
+	limited := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		Condition: api.ConditionLimited,
+		Limit:     &api.LimitProvenance{Source: api.LimitSourceReading, Window: "seven_day", ResetsAt: time.Now().Add(time.Hour)},
+	}
+	table := renderSessionTable([]api.Session{limited})
+	if got := column(t, table, "STATE"); got != "limited" {
+		t.Errorf("STATE = %q, want exactly limited", got)
+	}
+	if strings.Contains(table, "seven_day") || strings.Contains(table, "until") {
+		t.Errorf("the table carries the reason or until-time:\n%s", table)
+	}
+	if len("limited") != len(string(api.SessionRunning)) {
+		t.Errorf("limited is not the width of running")
+	}
+
+	ended := limited
+	ended.State = api.SessionCrashed
+	if got := column(t, renderSessionTable([]api.Session{ended}), "STATE"); got != "crashed" {
+		t.Errorf("a crashed session's STATE = %q, want crashed", got)
+	}
+}
+
 // The harness-state watchdog's logged-out verdict rides in HEALTH as the same
 // parenthetical idiom, and only for a high-confidence verdict on a running
 // session: a low-confidence "unknown" shows nothing here (it is in describe).
