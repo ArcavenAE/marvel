@@ -3,16 +3,17 @@
 **Status: idea. Pre-hypothesis. Nothing here is designed or measured.**
 
 Captured: 2026-10-04
-Source: operator, relayed by director.
+Source: operator, relayed by director to arcaven-supervisor, who passed it on (supervisor message 01M43TRVF923SCX871Q3RAZEYX, 2026-10-04T16:08Z). Director's own message id is not in hand; the supervisor is getting it.
 
 ## Why this is worth reading
 
 A seat whose harness has an update pending is not unhealthy the way a seat out
-of context is, but today the only recovery marvel offers for a seat that needs
-restarting is a shift change, which discards a healthy context to fix a
-problem that context does not have. If the two conditions are told apart, a
-seat with a good context can be restarted in place and keep its work, and a
-shift is kept for the case that needs it.
+of context is, yet the restarts the code shows all start a new session: `marvel
+kill` ends the seat (cmd/marvel/main.go:1439) and the controller refills the
+missing replica (internal/team/controller.go:335), both read at origin/main
+b0a6d67. Whether any path keeps the session is unverified. If the two conditions are
+told apart, a seat with a good context could be restarted and resumed without
+discarding its work, and a shift change is kept for the case that needs it.
 
 ## The operator's words
 
@@ -54,7 +55,9 @@ each harness and is the first thing to measure.
 
 - Does each harness resume its session after an exit, and does the resumed
   session pick up the update? Claude Code, codex and others differ, and this
-  has not been measured.
+  has not been measured. One cited fact: for claude, marvel mints a session id
+  and declines to when the launch args carry `--resume`, `-r`, `--continue` or
+  `-c` (internal/runtime/claude.go:83-91), so a resume path would meet that rule.
 - What does "marvel-native tmux exit" mean in code: an existing path, or a
   new one? The inject path refuses menus it can place (marvel#560), so an exit
   key must not become a way to answer an update menu by accident.
