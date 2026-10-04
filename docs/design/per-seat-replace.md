@@ -140,7 +140,7 @@ recreation of a crash-looping successor.
   its own standing entry would count as the "one other".
 - The per-role count check, the selection and the entry write happen in one
   pass under the controller lock (`c.mu`; `evaluateShiftTriggers` already
-  runs under it, `controller.go:1931-1934`). The operator path
+  runs inside `ReconcileOnce`, which takes it at `controller.go:465-467`). The operator path
   (`--session`, D10) takes the same lock, as `InitiateShift` does
   (`controller.go:1798-1801`), and its replacements count toward the
   per-role limit like automatic ones.
@@ -178,20 +178,36 @@ acceptable only because the forced case is named and ruled.
 
 ### D9. Events and durable state
 
-- New kinds: `team.shift-seat-drained` (info), `team.shift-hold-released`
-  (info, from `dropShiftRequest` and an operator replacement),
-  `team.shift-replace-aborted` (warning).
-- New `Event` fields: `Peer` (successor on drained or started events,
-  predecessor on the successor's own), `Cause` (`max-age`,
-  `context-pressure`, `operator`), `Reason` (`marker`, `forced-deadline`,
-  `operator`, `seat-gone`, `window-expired`).
-- Shift events carry the seat's own generation, not the team's
+D9 lands in two parts, because half of it describes things that exist only
+once the replacement path does.
+
+**Part A, on what exists today** (ticket 2):
+
+- New `Event` fields `Cause` (`max-age`, `context-pressure`, `operator`) and
+  `Reason` (`marker`, `forced-deadline`, `operator`, `seat-gone`,
+  `window-expired`, `policy-removed`), set on today's shift events:
+  `shift-handoff-requested`, `shift-handoff-missing`, `shift-auto-triggered`.
+- Those events carry the seat's own generation, not the team's
   (`shift_handoff.go:122`, `:232`; `controller.go:2028`).
+- New kind `team.shift-hold-released` (info), emitted from
+  `dropShiftRequest` (`shift_handoff.go:267`) with reason `seat-gone` (the
+  asked seat is gone or replaced, `:132-139`) or `policy-removed` (the role
+  no longer declares max age, `controller.go:1962-1965`).
 - `EscalatedAt` on `ShiftRequest`, set where `Escalated` is set
   (`shift_handoff.go:178`).
-- `describe team` shows pending requests and standing replacements. Until
-  #453's delivery channel exists it is the supervisor's only read path, so
-  it ships with a test.
+- `describe team` shows pending requests (seat, cause, requested and
+  escalated times). Until #453's delivery channel exists it is the
+  supervisor's only read path, so it ships with a test.
+
+**Part B, with the replacement path** (ticket 3):
+
+- New `Event` field `Peer` (successor on drained events, predecessor on the
+  successor's own).
+- New kinds `team.shift-seat-drained` (info) and
+  `team.shift-replace-aborted` (warning, D6). `shift-hold-released` also
+  fires on an operator replacement.
+- `describe team` shows standing replacements (predecessor, successor,
+  cause, reason).
 - Every forced or seat-gone outcome is reconstructable from durable team
   state after a restart, not only from the 2000-event ring.
 - No per-seat `shift-started` event: nothing reads it.
@@ -249,13 +265,15 @@ per-tick check is the acceptance criterion.
 | 16 | Two entries in one role (a forced pressure replacement beside a max-age one): both pairs collapse, the delete list names neither successor nor the sibling | collapse not per entry | no |
 | 17 | Pressure at an older generation (clone of `TestMaxAgeAsksSeatAtAnOlderGeneration`, `:773`) | the F6 filter survives | no |
 | 18 | Double trigger: A under pressure with its entry standing, then more ticks with A still over `headroom_tokens`, and once a `--session` request for A. Exactly one successor exists, the entry is unchanged, and B is untouched after every pass | a seat in an entry is selected again; a second write overwrites the entry; `--session` bypasses the per-role count | no |
-| 19 | Seat events: a full replacement emits `shift-seat-drained` with `Peer` (the successor), `Cause` and `Reason`, at the predecessor's own generation on a team whose counter is higher; a dropped request emits `shift-hold-released` with its reason; a deadline emits `shift-replace-aborted` | an event omits the seat fields or carries the team generation | no |
+| 19 | Today's shift events (`handoff-requested`, `handoff-missing`, `auto-triggered`) carry `Cause` and `Reason` and the seat's own generation, on a team whose counter is higher than the seat's; a request dropped because its seat is gone, and one dropped because the policy no longer declares max age, each emit `shift-hold-released` with that reason | an event omits the fields or carries the team generation; a drop is silent | no |
 | 20 | `EscalatedAt` is set when a request escalates and survives a controller restart | escalation time held in memory only | no |
-| 21 | `describe team` shows each pending request (seat, cause, requested and escalated times) and each standing replacement (predecessor, successor, cause, reason) | describe reads neither field | no |
+| 21 | `describe team` shows each pending request (seat, cause, requested and escalated times) | describe omits the requests | no |
 | 22 | Apply checks for `request_headroom`: refused when not above `headroom_tokens`; refused without the `handoff` and `handoff_marker` pair; a pressure role with the pair and no `request_headroom` applies with a warning | a check missing, or the warning raised as a refusal | no |
 | 23 | Soft stage: at `request_headroom` the seat gets the notice and a per-seat request; its marker before the hard line starts the replacement early, with reason `marker` | soft stage never fires, or replaces without the marker | no |
 | 24 | Hard stage: at `headroom_tokens` with no marker the seat is replaced, and reason `forced-deadline` is on the durable entry and survives a restart | forced replace not recorded durably, or skipped | no |
 | 25 | Lift: apply and `scale` accept `max-age` on a role with `replicas = 2` (fails today on `manifest_shift.go:178` and `daemon.go:1589-1594`) | either refusal left in place | no |
+| 26 | Replacement events: a full replacement emits `shift-seat-drained` with `Peer` (the successor), `Cause` and `Reason`, at the predecessor's own generation; a deadline emits `shift-replace-aborted` | the drain or the abort is silent, or omits the seat fields | no |
+| 27 | `describe team` shows each standing replacement (predecessor, successor, cause, reason) | describe omits the replacements | no |
 
 ## 6. Plan (flat tickets, dependency edges)
 
@@ -263,10 +281,11 @@ The builder may land these as one PR with commits in this order (the party's
 vote), or as separate PRs in the same order.
 
 1. Context pressure lists seats at every generation. Red test: 17.
-2. Event fields and kinds, `EscalatedAt`, `describe team` (D9). Red tests:
-   19 to 21.
-3. Requests keyed by session, and the replacement path D1 to D7 and D10.
-   Red tests: 1 to 16 and 18. Depends on 1 and 2.
+2. D9 part A: `Cause`, `Reason` and seat generation on today's shift
+   events, `shift-hold-released`, `EscalatedAt`, pending requests in
+   `describe team`. Red tests: 19, 20, 21.
+3. Requests keyed by session, the replacement path D1 to D7 and D10, and D9
+   part B. Red tests: 1 to 16, 18, 26, 27. Depends on 1 and 2.
 4. Pressure's soft stage and the forced hard stage (D8). Red tests: 22 to 24.
    Depends on 3 and on ruling 1.
 5. Lift #458 (D11). Red test: 25. Depends on 3 and 4.
