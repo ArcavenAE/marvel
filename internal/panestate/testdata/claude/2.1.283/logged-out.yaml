@@ -1,0 +1,10 @@
+# SYNTHETIC fixture, not a capture. It exercises the matcher only.
+id: logged-out
+version: 1
+harness: claude
+harness_version: 2.1.283
+sample_width: 80
+rows:
+  - "Synthetic harness: not signed in"
+  - "Open {{var}} to continue"
+  - "Press Enter after signing in"
