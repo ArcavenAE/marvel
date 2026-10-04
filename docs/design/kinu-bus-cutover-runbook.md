@@ -211,6 +211,16 @@ Then:
    `GLOBAL_TO_mokuzai`; one respawned seat's `#{pane_start_path}` is the
    team's `WorkDir` from `$W` (precondition 6). A seat that starts somewhere
    else stops the roll for that team until the operator decides.
+   **Before the next team, capture every respawned pane** (`marvel capture
+   <session>`) and read it. A seat should be at its harness prompt, or working.
+   A seat respawned in auto mode can instead stop on a Claude Code onboarding
+   dialog with an option already selected. On corporate this was the
+   shell-history scan (aae-orc#461 S12-9). If any pane shows such a dialog,
+   stop that team's roll, and stop the teams after it. The dialog is **never
+   answered automatically**, by marvel, by a seat, or by an inject: the
+   operator reads it and decides each one by hand. That is a choice about what
+   the harness may read on the operator's machine, not a step in this
+   cutover.
 10. Watch 30 minutes. Keep `store.pre-managed-*` and `$W` until the operator
    deletes them.
 
