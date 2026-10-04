@@ -9,10 +9,21 @@ two-cluster deployment), marvel#434, FR-2026-10-04e.
 hub leaves the network for under an hour, what does each seat notice and
 when, what fails and how loudly, what reconnects on its own, what work is
 parked, lost or duplicated, and what it takes to come back.
-**Status:** OPEN. The brief was written before the cut (19:57Z) and its
-pre-registered parts are unchanged. The window closed on 2026-10-04: the
-remote cluster's leaf returned at 22:19:29Z. Seat logs are collected; the
-finding follows once director rules whether the window evidence is enough.
+**Status:** OPEN. The cut came between 19:59:15Z and 20:04:57Z on
+2026-10-04 (about 20:02Z, C3); 19:57:32Z is only the first GitHub failure
+seen from the host that left (C6). The return is marked two ways: the
+mokuzai leaf's first clean global poll at 22:19:08Z (on mokuzai), and the
+first message from mokuzai received on the host that came back at
+22:19:29Z, 21 seconds later. Seat logs are collected; the finding follows
+once director rules whether the window evidence is enough.
+
+**Pre-cut record.** The questions and hypotheses were written before the
+cut, but the file stayed uncommitted until 22:25Z and no hash was taken
+then. The only record from before the cut is this seat's bus message to its
+supervisor at 19:58:10Z (message 01M447XKF4WJV9A1TPH5MHYP8R), which says
+the brief was written with "six questions, four pre-registered
+hypotheses". Read the hypotheses as pre-registered on that message's
+word, not on a commit.
 
 ## Why
 
@@ -120,7 +131,9 @@ candidate until the seat logs and leaf timestamps back it.
   - name resolution: a remote leaf dialed the hub host by a `.local` name.
     Whether that stopped resolving is not established. mDNS answers per
     link, not per IPv4 subnet, and the remote leaf returned at 22:19:29Z
-    over an IPv6 link-local address, which may contradict the lead;
+    over an IPv6 link-local address (22:19:29Z is the first message received
+    on the returning host; mokuzai's own first clean poll was 22:19:08Z),
+    which may contradict the lead;
   - trust: host keys pinned to addresses refused a moved cluster in
     marvel#434's earlier event. Nothing yet records that it recurred in
     this window.
@@ -131,12 +144,17 @@ candidate until the seat logs and leaf timestamps back it.
 - **C3. Seats on the host that left cannot see the cut on the bus.** The
   local bus and the hub run on that host, so for its own seats the bus
   stayed up. The cut showed only as GitHub failures and as R-92 refusals
-  for sends to remote clusters, from about 20:02Z until the remote
-  cluster's return at 22:19:29Z (supervisor roll-up).
-- **C4. A wait for messages reports silence, not failure, during an
-  outage.** `wait_for_message` returns "no message within the window" whether
-  or not the bus behind it is reachable (the director#66 class; inferred,
-  not measured).
+  for sends to remote clusters, from about 20:02Z (bounded 19:59:15Z to
+  20:04:57Z) until the first message from mokuzai arrived at 22:19:29Z
+  (supervisor roll-up).
+- **C4. On the host that left, a wait for messages reports silence, not
+  failure.** For an idle seat on that host, `wait_for_message` on its
+  local tier returned "no message within the window" through the outage,
+  because the local bus never went down there; it could not tell an empty
+  inbox from a cut-off fleet (the director#66 class; inferred, not
+  measured). This does not hold on the far side: on mokuzai the
+  reviewer-supervisor's global drain failed loudly at 20:04:57Z ("no
+  responders"), and so did its send at 20:05:09Z.
 - **C5. Coverage depends on who was polling.** Idle seats, prompt-driven
   seats and seats on a two-hour cadence saw nothing. A 90-minute watch that
   started early ended before the cut. Polling once per turn cost 11 turns
