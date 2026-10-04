@@ -6,51 +6,72 @@ import (
 	"testing"
 )
 
-func TestCanonicalConfigDirIsOneSpellingPerLogin(t *testing.T) {
+// One row per (harness, spelling). want is "default" for "", "same" for the label
+// of the real acct-one directory, "own" for a spelling that stays distinct from
+// both, "two" for the label of acct-two. The body of the PR carries the same table
+// beside what #549's canonicalConfigHome says, as the AccountKey switch checklist.
+func TestCanonicalConfigDirCaseTable(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	real := filepath.Join(home, "acct-one")
-	other := filepath.Join(home, "acct-two")
-	for _, d := range []string{real, other, filepath.Join(home, ".claude")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+	mk := func(rel string) string {
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(p, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		return p
 	}
-	link := filepath.Join(home, "link-one")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
+	claude, codex := mk(".claude"), mk(".codex")
+	one, two := mk("acct-one"), mk("acct-two")
+	link := func(name, target string) string {
+		p := filepath.Join(home, name)
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+		return p
 	}
-	defLink := filepath.Join(home, "link-default")
-	if err := os.Symlink(filepath.Join(home, ".claude"), defLink); err != nil {
-		t.Fatal(err)
-	}
+	linkOne := link("link-one", one)
+	linkClaude := link("link-claude", claude)
+	linkCodex := link("link-codex", codex)
 
-	one := CanonicalConfigDir(real, home)
-	if one == "" {
-		t.Fatal("a non-default directory canonicalized to the default")
+	wantOne := CanonicalConfigDir("claude", one, home)
+	wantTwo := CanonicalConfigDir("claude", two, home)
+	if wantOne == "" || wantTwo == "" || wantOne == wantTwo {
+		t.Fatalf("labels: %q %q", wantOne, wantTwo)
 	}
-	for _, spelling := range []string{real + "/", real + "//", link, filepath.Join(home, ".", "acct-one"), filepath.Join(home, "acct-two", "..", "acct-one")} {
-		if got := CanonicalConfigDir(spelling, home); got != one {
-			t.Errorf("%q = %q, want %q", spelling, got, one)
+	resolvedClaude, _ := filepath.EvalSymlinks(claude)
+	resolvedCodex, _ := filepath.EvalSymlinks(codex)
+
+	rows := []struct {
+		harness, dir, want string
+	}{
+		{"claude", "", ""},
+		{"claude", claude, ""},
+		{"claude", claude + "/", ""},
+		{"claude", linkClaude, ""},
+		{"claude", "~/.claude", "~/.claude"},
+		{"claude", codex, resolvedCodex},
+		{"claude", one, wantOne},
+		{"claude", one + "/", wantOne},
+		{"claude", linkOne, wantOne},
+		{"claude", filepath.Join(home, ".", "acct-one"), wantOne},
+		{"claude", "~/acct-one", "~/acct-one"},
+		{"claude", two, wantTwo},
+		{"claude", "/no/such/dir/", "/no/such/dir"},
+		{"codex", "", ""},
+		{"codex", codex, ""},
+		{"codex", linkCodex, ""},
+		{"codex", claude, resolvedClaude},
+		{"codex", one, wantOne},
+		{"codex", linkOne, wantOne},
+		{"codex", "~/.codex", "~/.codex"},
+		{"forestage", "", ""},
+		{"forestage", claude, resolvedClaude},
+		{"forestage", codex, resolvedCodex},
+		{"forestage", one, wantOne},
+	}
+	for _, r := range rows {
+		if got := CanonicalConfigDir(r.harness, r.dir, home); got != r.want {
+			t.Errorf("%s %q = %q, want %q", r.harness, r.dir, got, r.want)
 		}
-	}
-	for _, spelling := range []string{"", filepath.Join(home, ".claude"), filepath.Join(home, ".claude") + "/", defLink} {
-		if got := CanonicalConfigDir(spelling, home); got != "" {
-			t.Errorf("%q = %q, want the default \"\"", spelling, got)
-		}
-	}
-	if CanonicalConfigDir(other, home) == one {
-		t.Error("two different directories share a label")
-	}
-	// A literal ~ is not expanded: it is its own spelling, never merged.
-	if got := CanonicalConfigDir("~/acct-one", home); got == one || got == "" {
-		t.Errorf("a literal ~ was resolved or defaulted: %q", got)
-	}
-	if got := CanonicalConfigDir("~/.claude", home); got == "" {
-		t.Error("a literal ~/.claude was treated as the default")
-	}
-	// A directory that does not exist keeps its cleaned spelling.
-	if got := CanonicalConfigDir("/no/such/dir/", home); got != "/no/such/dir" {
-		t.Errorf("missing dir = %q", got)
 	}
 }

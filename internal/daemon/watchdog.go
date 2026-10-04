@@ -216,7 +216,7 @@ func (w *watchdog) clear(s api.Session, why string) {
 // reduced to a short hash so no path reaches an event.
 func accountLabel(s api.Session) string {
 	home, _ := os.UserHomeDir()
-	dir := api.CanonicalConfigDir(s.Runtime.Env["CLAUDE_CONFIG_DIR"], home)
+	dir := api.CanonicalConfigDir(s.Runtime.Name, s.Runtime.Env["CLAUDE_CONFIG_DIR"], home)
 	if dir == "" {
 		return s.Runtime.Name + ":default"
 	}
