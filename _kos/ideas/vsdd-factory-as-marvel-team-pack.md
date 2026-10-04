@@ -52,32 +52,30 @@ speed, and other factors.**
 
 ## Prior art this builds on
 
-All of these are in the aae-orc graph.
-
-- **finding-093, coexistence over supersession.** sideshow is a
+- **orc finding-093, coexistence over supersession.** sideshow is a
   mechanism-plural installer, so a factory installed as a plugin and as a
   sideshow pack can coexist.
-- **finding-094, unshaping over plugin delivery.** The ratified direction is
+- **orc finding-094, unshaping over plugin delivery.** The ratified direction is
   to take plugin-packaged work, remove the limiting shape, and deliver it as a
   sideshow pack, and it names a future multi-agent conversion. This idea is
   that conversion, stated concretely.
-- **ideas/post-plugin-pack-delivery.md.** What sideshow installs when the
+- **orc `_kos/ideas/post-plugin-pack-delivery.md`.** What sideshow installs when the
   factory outgrows the plugin envelope (vsdd-factory#410 and its children).
-- **ideas/marvel-agentic-resource-matrix.md.** "marvel is the substrate that
+- **orc `_kos/ideas/marvel-agentic-resource-matrix.md`.** "marvel is the substrate that
   vsdd-factory #410's `replatform` disposition asks for." Arm B is a
   replatformed run.
-- **finding-168, wardrobe roles for dark-factory operations.** The role
+- **orc finding-168, wardrobe roles for dark-factory operations.** The role
   library a converted factory would be cast from. That subject (the role
   library itself) is the composition and sits at the orc; this idea's
   subject is the marvel run.
-- **finding-138, the drbothen comparative analysis.** The earlier landscape
+- **orc finding-138, the drbothen comparative analysis.** The earlier landscape
   comparison between the factory ecosystem and this platform.
-- **question-agent-arena-evaluation.** critic's arena: judges, holdout, and
+- **orc question-agent-arena-evaluation.** critic's arena: judges, holdout, and
   how runs are compared.
-- **question-model-selection-optimization.** Cost per accepted deliverable,
+- **orc question-model-selection-optimization.** Cost per accepted deliverable,
   and per-role model and effort choices, which arm B exposes and arm A does
   not.
-- **question-marvel-beyond-mvp.** Packs and the organizational model among
+- **orc question-marvel-beyond-mvp.** Packs and the organizational model among
   marvel's next steps.
 
 ## Pointers
