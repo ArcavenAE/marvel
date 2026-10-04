@@ -186,6 +186,22 @@ const (
 	// KindScheduleFresh is the freshness alarm's recovery: a stale
 	// scheduled role is fresh again (#431 ruling on default 2).
 	KindScheduleFresh Kind = "schedule.fresh"
+	// The schedule clock (scheduled-runs sections 2a and 3). fired: a
+	// firing advanced and its run may spawn; skipped: a due firing was not
+	// run (overlap, posture, frozen); missed: due firings older than
+	// starting_deadline were dropped; replaced: concurrency = replace
+	// killed the previous run; suspended: suspend was set or cleared;
+	// frozen: on_failure = freeze stopped the schedule; dst-shift: the next
+	// firing's UTC offset differs from the last; dst-unacknowledged: the
+	// zone observes daylight saving and the role has no dst_ack.
+	KindScheduleFired             Kind = "schedule.fired"
+	KindScheduleSkipped           Kind = "schedule.skipped"
+	KindScheduleMissed            Kind = "schedule.missed"
+	KindScheduleReplaced          Kind = "schedule.replaced"
+	KindScheduleSuspended         Kind = "schedule.suspended"
+	KindScheduleFrozen            Kind = "schedule.frozen"
+	KindScheduleDSTShift          Kind = "schedule.dst-shift"
+	KindScheduleDSTUnacknowledged Kind = "schedule.dst-unacknowledged"
 	// KindRunSucceeded and KindRunFailed record that a run of a scheduled
 	// role ended and was added to the role's run history. They carry
 	// status only, never the run's result text (scheduled-runs section 5).
@@ -386,6 +402,14 @@ var allKinds = []Kind{
 	KindScheduleDSTAcknowledged,
 	KindScheduleStale,
 	KindScheduleFresh,
+	KindScheduleFired,
+	KindScheduleSkipped,
+	KindScheduleMissed,
+	KindScheduleReplaced,
+	KindScheduleSuspended,
+	KindScheduleFrozen,
+	KindScheduleDSTShift,
+	KindScheduleDSTUnacknowledged,
 	KindRunSucceeded,
 	KindRunFailed,
 	KindRunCancelled,

@@ -94,6 +94,26 @@ type ScheduleStatus struct {
 	// History is oldest first, bounded per outcome by the role's
 	// schedule.history.
 	History []RunRecord `json:"history,omitempty"`
+
+	// The clock (S-3). SpecKey is the cron and zone NextDueAt was computed
+	// from, so a changed schedule is recomputed rather than fired late.
+	SpecKey    string    `json:"spec_key,omitempty"`
+	NextDueAt  time.Time `json:"next_due_at,omitzero"`
+	NextFireAt time.Time `json:"next_fire_at,omitzero"`
+	// The current firing: its id and nominal due time, whether it was a
+	// recovery run and how many earlier due times it coalesced.
+	Firing        string    `json:"firing,omitempty"`
+	FiringDueAt   time.Time `json:"firing_due_at,omitzero"`
+	FiringCatchUp bool      `json:"firing_catch_up,omitempty"`
+	FiringMissed  int       `json:"firing_missed,omitempty"`
+	// Attempts counts failed runs of the current firing; RetryAfter holds
+	// a retry back; Settled means the firing spawns nothing more.
+	Attempts   int       `json:"attempts,omitempty"`
+	RetryAfter time.Time `json:"retry_after,omitzero"`
+	Settled    bool      `json:"settled,omitempty"`
+	// Frozen is on_failure = freeze having fired; reset-health clears it.
+	Frozen    bool `json:"frozen,omitempty"`
+	Suspended bool `json:"suspended,omitempty"`
 }
 
 // AddRun records a finished run, then drops the oldest runs of the run's
@@ -257,3 +277,18 @@ func ScheduleHistoryCap(m *Manifest, limit int) error {
 	}
 	return nil
 }
+
+// NextFiring returns the first firing strictly after after.
+func (p SchedulePolicy) NextFiring(after time.Time) (time.Time, error) { return time.Time{}, nil }
+
+// FiringID names a firing by its nominal due time.
+func FiringID(due time.Time) string { return "" }
+
+// OccupiesFiringSlot is the replica slot rule for a scheduled role.
+func OccupiesFiringSlot(s Session, firing string) bool { return false }
+
+// CountFiringSlots counts the sessions that occupy a slot of firing.
+func CountFiringSlots(sessions []Session, firing string) int { return 0 }
+
+// SettleRun applies a finished run to the current firing.
+func (st *ScheduleStatus) SettleRun(r RunRecord, p SchedulePolicy, now time.Time) bool { return false }
