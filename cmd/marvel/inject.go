@@ -22,6 +22,10 @@ type injectStep struct {
 	Clear    bool
 	Verify   bool
 	SettleMS int
+	// AllowBareDigit lifts the daemon's refusal of a bare digit to a claude pane
+	// whose screen cannot be ruled out as a usage-limit menu (marvel#559). It
+	// never lifts the refusal on a menu the daemon finds.
+	AllowBareDigit bool
 }
 
 // namedTmuxKeys are the key names a person is most likely to type as if they
@@ -135,7 +139,22 @@ func injectRequestParams(sessionKey string, step injectStep) map[string]any {
 	if step.SettleMS > 0 {
 		p["settle_ms"] = step.SettleMS
 	}
+	if step.AllowBareDigit {
+		p["allow_bare_digit"] = true
+	}
 	return p
+}
+
+// withAllowBareDigit marks every step as sent with --allow-bare-digit.
+func withAllowBareDigit(steps []injectStep, allow bool) []injectStep {
+	if !allow {
+		return steps
+	}
+	out := append([]injectStep(nil), steps...)
+	for i := range out {
+		out[i].AllowBareDigit = true
+	}
+	return out
 }
 
 // injectorDeclaration is what this process claims about itself: the seat it

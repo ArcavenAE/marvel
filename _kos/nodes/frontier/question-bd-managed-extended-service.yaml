@@ -90,6 +90,9 @@ edges:
   - target: question-permission-model
     type: derives
     note: "Custody of the dolt credentials and identity at the binding boundary are enforcement questions the permission model owns."
+  - target: question-credential-custody-beyond-nkey
+    type: supports
+    note: "finding-068: a marvel signing key trusted by the bd server is custody-adjacent (operator ruling i); the issuance-versus-custody line is the same one."
 provenance:
   created_by: agent
   session: arcaven-author-g5-0, 2026-09-26, operator request relayed via director
@@ -105,3 +108,11 @@ notes: >
   question-bd-dolt-server-architecture) and director's R-151 are objects.
   Related bd: aae-orc-166h, aae-orc-aaj5, aae-orc-k41dg, aae-orc-sf8rt,
   aae-orc-4ascm, aae-orc-u028.
+
+  2026-10-04, finding-068 (answers (d), and (e) in part): bd attribution is
+  self-asserted today; dolt can authenticate a seat by JWT, but a delegated
+  CREATE USER credential is root-equivalent. Operator rulings: a marvel
+  signing key trusted by the bd server is custody-adjacent and nothing is
+  built on it yet; the identity is the slot, not the session; path C now
+  (per-cluster SQL users, BEADS_ACTOR from the slot), path B parked behind
+  TLS on the bd server (aae-orc-4ascm).

@@ -212,3 +212,41 @@ DIRECTOR_AGENT_ID = "ops/operator"
 		}
 	}
 }
+
+// The account key's config home is the login the private home is linked from,
+// not the private home, which differs for every session.
+func TestPrivateHomeRecordsTheLoginSourceAsTheAccountHome(t *testing.T) {
+	// No t.Parallel: this one sets CODEX_HOME for the process.
+	mgr := homeManager(t)
+	source := t.TempDir()
+	t.Setenv("CODEX_HOME", source)
+
+	a := sessionFor("coder", "codex")
+	b := sessionFor("coder", "codex")
+	b.Name = "squad-coder-g1-1"
+	mgr.planLaunch(a)
+	mgr.planLaunch(b)
+
+	if a.AccountHome != source || b.AccountHome != source {
+		t.Fatalf("account homes = %q and %q, want both %q", a.AccountHome, b.AccountHome, source)
+	}
+	if a.HarnessHome == b.HarnessHome {
+		t.Fatal("test premise broken: the private homes should differ")
+	}
+	if api.AccountKeyOf(*a) != api.AccountKeyOf(*b) {
+		t.Fatalf("two sessions on one login got different account keys")
+	}
+}
+
+// A relaunch that no longer gets a private home must not keep the previous
+// launch's account home.
+func TestAccountHomeIsClearedWhenThereIsNoPrivateHome(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	sess := sessionFor("coder", "claude")
+	sess.AccountHome = "/stale/home"
+	mgr.planLaunch(sess)
+	if sess.AccountHome != "" {
+		t.Fatalf("account home = %q, want it cleared for a harness with no private home", sess.AccountHome)
+	}
+}

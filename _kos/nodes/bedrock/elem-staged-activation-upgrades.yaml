@@ -95,6 +95,22 @@ content: |
   fingerprint for this. Whether reexec's own `selfExecPath` on a Linux brew
   host lands on the new keg is not checked here.
 
+  STATE 2026-10-04 (harvest, finding-065). Under mise, `marvel daemon reexec`
+  restarts the OLD binary: mise keeps each version in its own directory, the
+  daemon's own path still points at the old one, and `selfExecPath` resolves
+  that path, while the version text says reexec adopts the installed binary
+  (marvel#523, open, at e979fc2). The measured way through is `stop
+  --keep-bus` and a fresh daemon from the new path (4 sessions adopted);
+  marvel#525 documents it. This narrows the finding-042 claim further: reexec
+  is an in-place activation, not a way onto a new mise version. Related
+  signals that disagree with what happened or say nothing: the v1 to v2 store
+  migration logs neither that it ran nor where the backup is (marvel#524),
+  and a running daemon answers from its start-time config (marvel#514).
+  Closed: marvel#485, #486, #497. Wire rule from marvel#510, which added the
+  daemon build report: a released client reads only the fields it knew, so a
+  field's meaning never changes on the wire; new meaning gets a new additive
+  field, tested by decoding the new JSON with the old client's struct.
+
 edges:
   - target: elem-release-pipeline
     type: derives

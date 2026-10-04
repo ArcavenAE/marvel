@@ -413,3 +413,116 @@ func TestRenderSessionTableMarksTerminalRoles(t *testing.T) {
 		})
 	}
 }
+
+// Account rows share the budget table. A none or stale row must not read as a
+// number or as healthy: no percent sign, no "ok", and the cells that mean
+// nothing for an account are dashes.
+func TestRenderBudgetTableAccountRows(t *testing.T) {
+	resets := time.Now().UTC().Add(49*time.Hour + 30*time.Minute)
+	rows := []admission.Row{
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "claude default - default-home",
+			AccountWindow: "-", Reading: "none", Note: "no reading received for this account",
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "codex default - /h/.codex",
+			AccountWindow: "seven_day", Reading: "stale", ResetsAt: &resets, Note: "reading from ws/a at 2026-10-04T12:00:00Z",
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "forestage default - default-home",
+			AccountWindow: "seven_day", Reading: "fresh", Observed: 87, ResetsAt: &resets, Note: "reading from ws/b at 2026-10-04T12:00:00Z",
+		},
+	}
+	table := renderBudgetTable(rows)
+	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("got %d lines, want header and 3 rows:\n%s", len(lines), table)
+	}
+	line := func(sub string) string {
+		for _, l := range lines {
+			if strings.Contains(l, sub) {
+				return l
+			}
+		}
+		t.Fatalf("no row for %q:\n%s", sub, table)
+		return ""
+	}
+	none, stale, fresh := line("claude default"), line("codex default"), line("forestage default")
+	if !strings.Contains(none, "none") || strings.Contains(none, "%") || strings.Contains(none, " ok") {
+		t.Errorf("none row reads as a number or as ok: %q", none)
+	}
+	if !strings.Contains(stale, "stale") || strings.Contains(stale, "%") || strings.Contains(stale, " ok") {
+		t.Errorf("stale row reads as a number or as ok: %q", stale)
+	}
+	if !strings.Contains(fresh, "87%") {
+		t.Errorf("fresh row does not show the percentage: %q", fresh)
+	}
+	if !strings.Contains(fresh, "2d1h") {
+		t.Errorf("fresh row does not show the time to reset: %q", fresh)
+	}
+	if !strings.Contains(fresh, "seven_day") {
+		t.Errorf("fresh row does not name its window: %q", fresh)
+	}
+	for _, l := range []string{none, stale, fresh} {
+		if !strings.Contains(l, string(api.DimAccountWindow)) {
+			t.Errorf("row lacks its dimension: %q", l)
+		}
+	}
+}
+
+// Test 2: the STATE cell reads exactly "limited" while the condition holds, the
+// same width as "running", with no until-time or reason in the table. A
+// terminal session is not news and keeps its state word.
+func TestRenderSessionTableLimitedCell(t *testing.T) {
+	limited := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		Condition: api.ConditionLimited,
+		Limit:     &api.LimitProvenance{Source: api.LimitSourceReading, Window: "seven_day", ResetsAt: time.Now().Add(time.Hour)},
+	}
+	table := renderSessionTable([]api.Session{limited})
+	if got := column(t, table, "STATE"); got != "limited" {
+		t.Errorf("STATE = %q, want exactly limited", got)
+	}
+	if strings.Contains(table, "seven_day") || strings.Contains(table, "until") {
+		t.Errorf("the table carries the reason or until-time:\n%s", table)
+	}
+	if len("limited") != len(string(api.SessionRunning)) {
+		t.Errorf("limited is not the width of running")
+	}
+
+	ended := limited
+	ended.State = api.SessionCrashed
+	if got := column(t, renderSessionTable([]api.Session{ended}), "STATE"); got != "crashed" {
+		t.Errorf("a crashed session's STATE = %q, want crashed", got)
+	}
+}
+
+// The harness-state watchdog's logged-out verdict rides in HEALTH as the same
+// parenthetical idiom, and only for a high-confidence verdict on a running
+// session: a low-confidence "unknown" shows nothing here (it is in describe).
+func TestRenderSessionTableLoggedOutAdvisory(t *testing.T) {
+	base := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy,
+	}
+	cases := []struct {
+		name string
+		hs   *api.HarnessState
+		st   api.SessionState
+		want string
+	}{
+		{"logged-out", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionRunning, "healthy (logged-out)"},
+		{"low unknown", &api.HarnessState{State: "unknown", Confidence: "low"}, api.SessionRunning, "healthy"},
+		{"none", nil, api.SessionRunning, "healthy"},
+		{"not running", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionCrashed, "healthy"},
+	}
+	for _, c := range cases {
+		s := base
+		s.HarnessState, s.State = c.hs, c.st
+		if got := column(t, renderSessionTable([]api.Session{s}), "HEALTH"); got != c.want {
+			t.Errorf("%s: HEALTH = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

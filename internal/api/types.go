@@ -233,7 +233,12 @@ type Session struct {
 	// Recomputed every evaluateHealth tick from ContextAt/CreatedAt against
 	// the role's ActivityTimeout; orthogonal to HealthState and never read
 	// by the restart path. Status, not spec (toml:"-"), same as HealthState.
-	ActivityState   ActivityState `toml:"-"`
+	ActivityState ActivityState `toml:"-"`
+	// HarnessState is what the harness-state watchdog classified the pane as
+	// (docs/design/harness-state-watchdog-p1.md). Nil until it has looked and
+	// found something. Advisory and restart-neutral, like ActivityState: nothing
+	// in the restart or shift path reads it. Status, not spec.
+	HarnessState    *HarnessState `json:"harness_state,omitempty" toml:"-"`
 	FailureCount    int           `toml:"-"`
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
@@ -297,6 +302,24 @@ type Session struct {
 	// written before it. Stable across restarts of the same session key.
 	// Status, not spec; additive on the json path.
 	HarnessHome string `json:"harness_home,omitempty" toml:"-"`
+	// AccountHome is the harness home this session's login comes from: the
+	// directory a private harness home is seeded and linked from, never the
+	// private home itself, which differs for every session. It is one input
+	// to the account key (AccountKeyOf). Empty means the harness's own
+	// default home. Status, not spec; additive on the json path.
+	AccountHome string `json:"account_home,omitempty" toml:"-"`
+	// Condition is a restart-neutral advisory, stored beside ActivityState.
+	// It is "limited" while the session's account is at a rate limit. It is a
+	// condition and not a State: State stays running, and nothing in the
+	// restart, kill or shift paths reads it (see EvaluateLimit). Limit holds
+	// why it was set, so it survives a daemon restart without the reading
+	// that set it. Status, not spec; additive on the json path.
+	Condition SessionCondition `json:"condition,omitempty" toml:"-"`
+	Limit     *LimitProvenance `json:"limit,omitempty" toml:"-"`
+	// LimitReading and LimitReadingText are the account's reading state as a
+	// view, filled on the copies get and describe return and never stored.
+	LimitReading     ReadingState `json:"limit_reading,omitempty" toml:"-"`
+	LimitReadingText string       `json:"limit_reading_text,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
@@ -874,3 +897,27 @@ func (t *Team) Key() string       { return fmt.Sprintf("%s/%s", t.Workspace, t.N
 func (e *Endpoint) Key() string   { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }
 func (p *Policy) Key() string     { return fmt.Sprintf("%s/%s", p.Workspace, p.Name) }
 func (c *Credential) Key() string { return c.Name }
+
+// HarnessState is one watchdog verdict on a session's pane. State is
+// "logged-out" only at high confidence; a low-confidence match is kept as
+// "unknown" so describe can show it while HEALTH stays silent. Evidence is the
+// matched pattern's fixed rows with each variable span masked; no captured row
+// is stored anywhere (section 5).
+type HarnessState struct {
+	State          string    `json:"state"`
+	Confidence     string    `json:"confidence"`
+	Harness        string    `json:"harness"`
+	HarnessVersion string    `json:"harness_version,omitempty"`
+	PatternID      string    `json:"pattern_id"`
+	PatternVersion int       `json:"pattern_version"`
+	PatternFor     string    `json:"pattern_for,omitempty"`
+	PaneWidth      int       `json:"pane_width,omitempty"`
+	Evidence       []string  `json:"evidence,omitempty"`
+	CapturedAt     time.Time `json:"captured_at"`
+	// ContextAt is the session's ContextAt when this was seen. A later
+	// ContextAt means the seat did work, which clears the state.
+	ContextAt time.Time `json:"context_at,omitempty"`
+}
+
+// HarnessStateLoggedOut is the one state Phase 1 sets.
+const HarnessStateLoggedOut = "logged-out"

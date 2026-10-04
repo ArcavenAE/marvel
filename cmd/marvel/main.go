@@ -1541,7 +1541,7 @@ restart_policy=never, short of deleting and re-applying the whole team.`,
 }
 
 func injectCmd() *cobra.Command {
-	var literal, enter, verify, clearDraft bool
+	var literal, enter, verify, clearDraft, allowBareDigit bool
 	var settle time.Duration
 	var keys []string
 	cmd := &cobra.Command{
@@ -1589,6 +1589,7 @@ at an empty composer and have no reader that can see a draft yet.`,
 				return err
 			}
 			steps = applyInjectOptions(steps, verify, clearDraft, settle)
+			steps = withAllowBareDigit(steps, allowBareDigit)
 			var unconfirmed error
 			for _, step := range steps {
 				params, _ := json.Marshal(injectRequestParams(args[0], step))
@@ -1612,6 +1613,7 @@ at an empty composer and have no reader that can see a draft yet.`,
 		},
 	}
 	cmd.Flags().BoolVar(&verify, "verify", false, "read the composer afterwards and exit non-zero if the effect was not seen")
+	cmd.Flags().BoolVar(&allowBareDigit, "allow-bare-digit", false, "send a bare 1, 2 or 3 to a claude pane that might be showing a usage-limit menu (it never answers a menu marvel can see)")
 	cmd.Flags().BoolVar(&clearDraft, "clear", false, "clear a staged draft first (refused wherever no reader can vouch for it)")
 	cmd.Flags().DurationVar(&settle, "settle", 0, "with --verify or --clear, how long to wait for a redraw (default is the repaint default)")
 	cmd.Flags().BoolVarP(&literal, "literal", "l", true, "send keys literally (no special key interpretation)")
@@ -2644,6 +2646,12 @@ func renderSessionTable(sessions []api.Session) string {
 		if s.State == api.SessionRunning && s.ActivityState == api.ActivityStalled {
 			health += " (stalled)"
 		}
+		// The harness-state watchdog's verdict (docs/design/harness-state-
+		// watchdog-p1.md section 5): only a high-confidence logged-out shows
+		// here; a low-confidence match is in describe. Advisory, no new column.
+		if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateLoggedOut {
+			health += " (logged-out)"
+		}
 		// A failed row carrying a projection Reason is TERMINAL: the role
 		// will spawn no replacement. Without this suffix it is byte-identical
 		// to an ordinary failure the reconciler is about to replace, so the
@@ -2652,6 +2660,14 @@ func renderSessionTable(sessions []api.Session) string {
 		// and no new column or SessionState value. The short tag is the
 		// Reason's own prefix; `describe session` carries the full text.
 		state := string(s.State)
+		// The limited condition reads in place of "running", the same width,
+		// with no until-time and no reason: the table stays narrow and
+		// `describe session` carries the rest. A script filtering on
+		// "running" misses a limited seat; the JSON keeps state and
+		// condition apart.
+		if s.State == api.SessionRunning && s.Condition == api.ConditionLimited {
+			state = string(api.ConditionLimited)
+		}
 		if s.State == api.SessionFailed && s.Reason != "" {
 			if tag, _, found := strings.Cut(s.Reason, ":"); found {
 				state += " (" + tag + ")"
@@ -2965,12 +2981,22 @@ func renderBudgetTable(rows []admission.Row) string {
 		if rows[i].Team != rows[j].Team {
 			return rows[i].Team < rows[j].Team
 		}
-		return rows[i].Dimension < rows[j].Dimension
+		if rows[i].Dimension != rows[j].Dimension {
+			return rows[i].Dimension < rows[j].Dimension
+		}
+		if rows[i].Account != rows[j].Account {
+			return rows[i].Account < rows[j].Account
+		}
+		return rows[i].AccountWindow < rows[j].AccountWindow
 	})
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tDIMENSION\tLIMIT\tOBSERVED\tHEADROOM\tSTATE\tWINDOW\tNOTE\n")
 	for _, r := range rows {
+		if r.Reading != "" {
+			writeAccountRow(w, r)
+			continue
+		}
 		note := r.Note
 		if note == "" {
 			note = "-"
@@ -2981,6 +3007,40 @@ func renderBudgetTable(rows []admission.Row) string {
 	}
 	_ = w.Flush()
 	return buf.String()
+}
+
+// writeAccountRow renders an account_window row into the budget table. The
+// cells that mean nothing for an account (limit, headroom, state) are dashes.
+// OBSERVED is the percentage only for a fresh reading; a stale or absent
+// reading reads as that word, never as a number and never as ok.
+func writeAccountRow(w io.Writer, r admission.Row) {
+	observed := r.Reading
+	if r.Reading == "fresh" {
+		observed = fmt.Sprintf("%d%%", r.Observed)
+	}
+	resets := "-"
+	if r.ResetsAt != nil {
+		resets = formatUntil(time.Until(*r.ResetsAt))
+	}
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t-\t%s\t%s %s; %s\n",
+		r.Workspace, r.Team, r.Dimension, observed, resets, r.Account, r.AccountWindow, r.Note)
+}
+
+// formatUntil renders a time to go as days and hours, hours and minutes, or
+// minutes, whichever is the coarsest that is not zero.
+func formatUntil(d time.Duration) string {
+	if d <= 0 {
+		return "now"
+	}
+	h := int(d.Hours())
+	switch {
+	case h >= 24:
+		return fmt.Sprintf("%dd%dh", h/24, h%24)
+	case h >= 1:
+		return fmt.Sprintf("%dh%dm", h, int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
 }
 
 // formatWindow renders how long a cumulative figure has been accumulating.

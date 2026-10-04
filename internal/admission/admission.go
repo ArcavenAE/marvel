@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -440,6 +441,22 @@ type Row struct {
 	State     string        `json:"state"`
 	Window    time.Time     `json:"window,omitempty"`
 	Note      string        `json:"note,omitempty"`
+
+	// The fields below are set only on an account_window row, which reports an
+	// account's rate-limit reading rather than a team clause. They are
+	// additive and omitted from every team row, so a client that predates them
+	// reads a team row exactly as before and an account row as a row with a
+	// dimension it does not know.
+	//
+	// Account is the derived account key, for people. AccountWindow names the
+	// window ("seven_day"), or "-" for an account with no reading. Reading is
+	// fresh, stale or none; on a stale or none row Observed carries no
+	// percentage and must not be read as one. ResetsAt is when the window
+	// resets.
+	Account       string     `json:"account,omitempty"`
+	AccountWindow string     `json:"account_window,omitempty"`
+	Reading       string     `json:"reading,omitempty"`
+	ResetsAt      *time.Time `json:"resets_at,omitempty"`
 }
 
 // Row states.
@@ -527,4 +544,25 @@ func Rows(t api.Team, s Snapshot) []Row {
 		out = append(out, row)
 	}
 	return out
+}
+
+// MarshalJSON leaves the numbers an account row does not have out of the wire
+// form: limit and headroom mean nothing for an account, and observed carries a
+// percentage only for a fresh reading, so a stale or none row must not read
+// "observed": 0. A team row marshals exactly as before.
+func (r Row) MarshalJSON() ([]byte, error) {
+	type plain Row
+	if r.Reading == "" {
+		return json.Marshal(plain(r))
+	}
+	out := struct {
+		plain
+		Limit    *int `json:"limit,omitempty"`
+		Observed *int `json:"observed,omitempty"`
+		Headroom *int `json:"headroom,omitempty"`
+	}{plain: plain(r)}
+	if r.Reading == "fresh" {
+		out.Observed = &r.Observed
+	}
+	return json.Marshal(out)
 }

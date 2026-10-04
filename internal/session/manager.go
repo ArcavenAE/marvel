@@ -668,6 +668,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		// survives a daemon restart. Empty when the runtime shares the
 		// operator's own home.
 		live.HarnessHome = sess.HarnessHome
+		live.AccountHome = sess.AccountHome
 		// What the harness was told to load, kept for describe and restart.
 		live.SettingSources = sess.SettingSources
 		return nil
@@ -823,6 +824,9 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 	}
 	lctx.HarnessHomePath = dir
 	lctx.Session.HarnessHome = dir
+	// The login the private home links from, for the account key. The private
+	// home itself differs for every session and would give each its own key.
+	lctx.Session.AccountHome = spec.Source
 }
 
 // checkHomeSocket logs when the socket a harness opens under its home would
@@ -873,6 +877,10 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// below. A fallback to the direct command passes none, and a re-plan must
 	// not carry the previous launch's value forward.
 	sess.SettingSources = ""
+	// Likewise the login this launch's private home links from: only a launch
+	// that gets a private home names one, so a re-plan that does not must not
+	// carry the previous launch's value forward.
+	sess.AccountHome = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this

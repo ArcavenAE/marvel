@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -617,5 +618,73 @@ func TestRowsSeparateAtCeilingFromRefusing(t *testing.T) {
 	rows = Rows(plain, Snapshot{LiveSessions: 1, DeclaredSessions: 2})
 	if rows[0].State != RowOK || rows[0].Note != "" {
 		t.Errorf("row = %+v, want %q with no note", rows[0], RowOK)
+	}
+}
+
+// A team row must serialize exactly as it did before account rows existed:
+// the account fields are additive and absent from it.
+func TestTeamRowJSONCarriesNoAccountFields(t *testing.T) {
+	t.Parallel()
+	b, err := json.Marshal(Row{Workspace: "w", Team: "t", Dimension: api.DimMaxSessions, Limit: 3, Observed: 2, Headroom: 1, State: RowOK})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"account", "account_window", "reading", "resets_at"} {
+		if strings.Contains(string(b), `"`+key+`"`) {
+			t.Errorf("team row carries %q: %s", key, b)
+		}
+	}
+}
+
+// A stale or none account row must not read "observed": 0, and limit and
+// headroom mean nothing for an account; a fresh row keeps its percentage.
+func TestAccountRowJSONOmitsWhatItDoesNotHave(t *testing.T) {
+	t.Parallel()
+	row := func(reading string, observed int) map[string]any {
+		b, err := json.Marshal(Row{Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "a", AccountWindow: "seven_day", Reading: reading, Observed: observed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	for _, reading := range []string{"stale", "none"} {
+		m := row(reading, 0)
+		for _, k := range []string{"observed", "limit", "headroom"} {
+			if _, ok := m[k]; ok {
+				t.Errorf("%s row carries %q: %v", reading, k, m)
+			}
+		}
+		if m["reading"] != reading {
+			t.Errorf("%s row lost its reading: %v", reading, m)
+		}
+	}
+	fresh := row("fresh", 0)
+	if v, ok := fresh["observed"]; !ok || v.(float64) != 0 {
+		t.Errorf("a fresh 0%% row must keep observed: %v", fresh)
+	}
+	if _, ok := fresh["limit"]; ok {
+		t.Errorf("a fresh row carries limit: %v", fresh)
+	}
+	// And it still decodes into a Row.
+	b, _ := json.Marshal(Row{Dimension: api.DimAccountWindow, Reading: "fresh", Observed: 87})
+	var back Row
+	if err := json.Unmarshal(b, &back); err != nil || back.Observed != 87 || back.Reading != "fresh" {
+		t.Fatalf("round trip: %v %+v", err, back)
+	}
+}
+
+// A team row keeps its zero numbers: observed 0 on a count dimension is a
+// measurement, not an absence.
+func TestTeamRowJSONKeepsZeroNumbers(t *testing.T) {
+	t.Parallel()
+	b, _ := json.Marshal(Row{Workspace: "w", Team: "t", Dimension: api.DimMaxSessions, Limit: 3, Observed: 0, Headroom: 3, State: RowOK})
+	for _, k := range []string{`"observed":0`, `"limit":3`, `"headroom":3`} {
+		if !strings.Contains(string(b), k) {
+			t.Errorf("team row lost %s: %s", k, b)
+		}
 	}
 }

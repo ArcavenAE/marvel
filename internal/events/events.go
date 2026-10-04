@@ -45,14 +45,39 @@ const (
 	KindSessionCreated           Kind = "session.created"
 	KindSessionDeleted           Kind = "session.deleted"
 	KindSessionCrashed           Kind = "session.crashed"
-	KindSessionRestarted         Kind = "session.restarted"
-	KindSessionFailed            Kind = "session.failed"
-	KindSessionSucceeded         Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindSessionLimited and KindSessionUnlimited record the transitions of the
+	// restart-neutral "limited" condition: a session's account reached a rate
+	// limit, and it ended. Once per transition. Limited is a warning so the
+	// ring-to-NATS tap, which carries warning and above, reaches agent teams.
+	KindSessionLimited   Kind = "session.limited"
+	KindSessionUnlimited Kind = "session.unlimited"
+	// KindLimitMenuResumedBeforeReset records that a seat the limit menu held
+	// left it before the reset time the menu named, so a resume that may have
+	// cost money or moved the seat to another account is visible. It changes
+	// nothing. KindLimitMenuResetUnknown records a clear where the menu's reset
+	// time could not be read, so "before the reset" cannot be judged.
+	KindLimitMenuResumedBeforeReset Kind = "limit-menu.resumed-before-reset"
+	KindLimitMenuResetUnknown       Kind = "limit-menu.reset-unknown"
+	KindSessionRestarted            Kind = "session.restarted"
+	KindSessionFailed               Kind = "session.failed"
+	KindSessionSucceeded            Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
 	// reap that finds the pane gone finishes the delete (marvel#364).
 	KindSessionKillFailed Kind = "session.kill-failed"
+	// KindSessionHarnessState records the harness-state watchdog classifying a
+	// quiet pane as logged-out (docs/design/harness-state-watchdog-p1.md). It
+	// carries the state, confidence, pattern id and version and the pattern's
+	// fixed rows with each variable span masked, never captured text. It informs
+	// an operator; no consumer may act on it before Phase 3.
+	KindSessionHarnessState Kind = "session.harness-state"
+	// KindSessionHarnessStateCleared records that state ending.
+	KindSessionHarnessStateCleared Kind = "session.harness-state-cleared"
+	// KindAccountLoggedOut rolls up three or more seats of one account reading
+	// logged-out within one watchdog window, so a fleet-wide expiry reads as
+	// one fact.
+	KindAccountLoggedOut Kind = "account.logged-out"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
 	// nothing it execs inherits them (aae-orc#418).
@@ -301,10 +326,17 @@ var allKinds = []Kind{
 	KindSessionCreated,
 	KindSessionDeleted,
 	KindSessionCrashed,
+	KindSessionLimited,
+	KindSessionUnlimited,
+	KindLimitMenuResumedBeforeReset,
+	KindLimitMenuResetUnknown,
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,
 	KindSessionKillFailed,
+	KindSessionHarnessState,
+	KindSessionHarnessStateCleared,
+	KindAccountLoggedOut,
 	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,

@@ -117,6 +117,13 @@ content: |
   for opencode; repaint needs a real size change. marvel#511 records it per
   adapter. A harness upgrade needs the probes re-run.
 
+  STATE 2026-10-04 (harvest, finding-065). Apply's pre-flight and the claude
+  adapter disagree about `command`: `ValidateRuntimes` runs `exec.LookPath`
+  on the whole string, so `claude --flag value` is refused with "not on PATH",
+  while the adapter splits with `strings.Fields` and takes the first field.
+  `sh` passes and `sh -c true` fails. Measured with a throwaway unit test in
+  package `api` (marvel#517, open, at 889e49a). Arguments go in `args`.
+
 edges:
   - target: elem-console-agnostic
     type: implements

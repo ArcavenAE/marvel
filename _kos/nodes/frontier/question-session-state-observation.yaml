@@ -190,6 +190,10 @@ content: |
   showed only that Escape leaves a staged draft alone), and approval-menu
   cancel for codex and opencode.
 
+  STATE 2026-10-04 (harvest, finding-065). A repaint test flake was reported
+  by a seat on a CI run (internal/tmux/repaint_test.go:212, the assertion that
+  the pane painted twice). Whether it is SIGWINCH coalescing is unmeasured.
+
 edges:
   - target: elem-agentic-resource-matrix
     type: supports
