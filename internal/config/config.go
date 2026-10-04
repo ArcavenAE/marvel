@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -172,6 +173,29 @@ func isLocalSocket(addr string) bool {
 type Config struct {
 	Clusters       []Cluster `yaml:"clusters"`
 	CurrentCluster string    `yaml:"current_cluster"`
+	// Watchdog tunes the harness-state watchdog
+	// (docs/design/harness-state-watchdog-p1.md section 3).
+	Watchdog Watchdog `yaml:"watchdog,omitempty"`
+}
+
+// Watchdog is the harness-state watchdog's own settings.
+type Watchdog struct {
+	// Window is how long a session must be quiet before it is a candidate, as
+	// a Go duration ("10m"). Empty means the default of ten minutes.
+	Window string `yaml:"window,omitempty"`
+}
+
+// WatchdogWindow parses Watchdog.Window. Zero with a nil error means the
+// default; a value that is not a positive duration is an error.
+func (c *Config) WatchdogWindow() (time.Duration, error) {
+	if c == nil || c.Watchdog.Window == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(c.Watchdog.Window)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("watchdog.window %q is not a positive duration", c.Watchdog.Window)
+	}
+	return d, nil
 }
 
 // Cluster defines how to connect to a marvel daemon.

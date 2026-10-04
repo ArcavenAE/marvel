@@ -611,6 +611,58 @@ row, and fixtures (iv) and (v) move to accepted. If either shows anything else,
 item 4 stays as written. If `2` does not select option 2 at all, item 5's
 "not buildable" path applies.
 
+### 9.7a P-UL7 capture checklist
+
+Two things in the code wait on P-UL7's captures: the limit action sends nothing
+until a menu sample and a post-selection sample exist for the harness version
+(9.9, "No samples, no key"), and the refusal of an inject into the limit menu
+(marvel#559, `preflightRefusal` in `internal/daemon/daemon.go`) turns on only
+when a sample ships. This checklist is what the person at the pane records, so
+the capture is read from one place. Each item names where it comes from.
+
+1. **A menu block with a composer line under it.** Capture the screen that 9.7
+   step 4 leaves, where the operator chose option 1 the usual way, or one left by
+   a menu the operator answered in the normal course, with the composer drawn
+   below the old menu block, and say whether the block is still on screen.
+   Nobody answers or dismisses the menu for this item. `Match` takes the last
+   place where the whole block appears and allows only blank rows and the
+   sample's own trailing rows after it (`internal/limitmenu/limitmenu.go:127-150`,
+   `RefusalTrailingRows`), and a declined block is refused as the usage-limit
+   menu (`internal/daemon/daemon.go:2154`). A review planted a `> composer ready`
+   line under the block and the inject of `hello` was refused; if claude leaves
+   the block on screen after the menu is answered, a seat would refuse every
+   inject until the block scrolls off (review 5405270263 on marvel#560, section
+   (b)). The review asked for this to be checked against the real capture before
+   a sample ships.
+2. **Raw bytes, captured with `tmux capture-pane -e`.** Keep the capture with its
+   escape sequences as well as the plain rows the matcher compares. No document
+   or test in this repository says what the limit menu's escape sequences hold.
+   The precedent is the composer reader, which is built from `-e` captures
+   because a plain capture cannot tell a dim placeholder from typed text
+   (`internal/composer/claude.go`, the reader's header comment;
+   `internal/composer/testdata/claude/*.ansi.txt`). Source for this item: the
+   director's list for this checklist.
+3. **One Enterprise and one subscription statusline payload.** Save the
+   statusline JSON a seat on each kind of account sends, so UL-2 can answer
+   whether `rate_limits` is absent on Enterprise, present without percentages,
+   or present only near a limit (9.8, "The Enterprise payload"). The windows the
+   reading takes from it are `five_hour` and `seven_day`, each with
+   `used_percentage` and `resets_at` (`cmd/marvel/ctxforward.go:111-124`). That
+   file's own comment says "NOT VERIFIED: a populated payload observed in the
+   wild", so a populated capture is the first such observation. Strip local paths
+   and session identifiers from the JSON before a capture is committed.
+4. **Whether a digit selects an option (operator-run, at a real limit, 9.7).** This is steps 1 to 5 of 9.7, in the
+   order given there: the menu sample, then the `2` press from row 1, then (only
+   if that took option 2) from row 3, then option 1 chosen the usual way as the
+   must-not-match fixture, each stored with the harness version, the key and the
+   starting cursor row. Until it is measured the claim stays unproven
+   (9.4 item 4: "Nothing yet measures that the digit `2` selects option 2
+   wherever the cursor sits").
+
+Items 1 to 3 ask for no key to be pressed. Item 4 does, and stays
+interventional: the operator runs it, at a real limit, as 9.7 says, and no seat
+runs it.
+
 ### 9.8 Open questions added
 
 - **The Enterprise payload.** Is `rate_limits` absent on Enterprise, present

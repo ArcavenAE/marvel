@@ -123,6 +123,11 @@ func cloneSession(s *Session) Session {
 		l := *s.Limit
 		out.Limit = &l
 	}
+	if s.HarnessState != nil {
+		hs := *s.HarnessState
+		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)
+		out.HarnessState = &hs
+	}
 	return out
 }
 
@@ -826,6 +831,26 @@ func (s *Store) UpdateSessionContext(key string, c SessionContext) {
 	}
 	c.ContextAt = time.Now().UTC()
 	sess.SessionContext = c
+}
+
+// SetHarnessState records the watchdog's verdict on a session, nil to clear
+// it. It writes that one field and does not persist: a verdict is stale the
+// moment the daemon stops, and the watchdog re-derives it. A missing session is
+// ignored, since the watchdog works from a snapshot.
+func (s *Store) SetHarnessState(key string, hs *HarnessState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		return
+	}
+	if hs == nil {
+		sess.HarnessState = nil
+		return
+	}
+	c := *hs
+	c.Evidence = append([]string(nil), hs.Evidence...)
+	sess.HarnessState = &c
 }
 
 // UpdateSessionMetrics records one process-sampler reading. m.MetricsAt

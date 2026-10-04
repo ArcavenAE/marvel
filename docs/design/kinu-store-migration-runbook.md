@@ -219,10 +219,12 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
      further;
    - write the unrehearsed binary's version in the window note, named by its
      path before `PATH` changes. On the tap branch that is the keg,
-     `"$(brew --prefix arcavenae/tap/marvel)/bin/marvel" version`. On the
+     `"$(HOMEBREW_NO_AUTO_UPDATE=1 brew --prefix arcavenae/tap/marvel)/bin/marvel" version`. On the
      asset or mise branch the keg was never touched, so that command records
      the old pinned keg, not what was installed; record `"$(command -v
-     marvel)" version` and the path it printed instead;
+     marvel)" version` and the path it printed instead. On the mise branch,
+     run it from the seats' start directory (precondition 5), since a mise
+     shim resolves its version from the current directory's config;
    - put `~/.marvel/rollback` first on the operator's `PATH`, then prove it:
      `command -v marvel` must print `~/.marvel/rollback/marvel`, and `marvel
      version` must name b533ca5;
