@@ -51,9 +51,16 @@ const (
 	// ring-to-NATS tap, which carries warning and above, reaches agent teams.
 	KindSessionLimited   Kind = "session.limited"
 	KindSessionUnlimited Kind = "session.unlimited"
-	KindSessionRestarted Kind = "session.restarted"
-	KindSessionFailed    Kind = "session.failed"
-	KindSessionSucceeded Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
+	// KindLimitMenuResumedBeforeReset records that a seat the limit menu held
+	// left it before the reset time the menu named, so a resume that may have
+	// cost money or moved the seat to another account is visible. It changes
+	// nothing. KindLimitMenuResetUnknown records a clear where the menu's reset
+	// time could not be read, so "before the reset" cannot be judged.
+	KindLimitMenuResumedBeforeReset Kind = "limit-menu.resumed-before-reset"
+	KindLimitMenuResetUnknown       Kind = "limit-menu.reset-unknown"
+	KindSessionRestarted            Kind = "session.restarted"
+	KindSessionFailed               Kind = "session.failed"
+	KindSessionSucceeded            Kind = "session.succeeded" // headless pane exited 0; the job finished (ADR-010)
 	// KindSessionKillFailed records a delete whose pane kill did not take.
 	// The row is kept, marked failed with the kill error, so its name is not
 	// handed to a replacement while the old process may still run; a later
@@ -304,6 +311,8 @@ var allKinds = []Kind{
 	KindSessionCrashed,
 	KindSessionLimited,
 	KindSessionUnlimited,
+	KindLimitMenuResumedBeforeReset,
+	KindLimitMenuResetUnknown,
 	KindSessionRestarted,
 	KindSessionFailed,
 	KindSessionSucceeded,

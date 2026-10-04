@@ -191,6 +191,14 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
+	// limitMenu holds the captured limit-menu samples; empty until a real
+	// capture is supplied, so the pane-menu source sets nothing. paneMenu is
+	// its per-seat capture cadence. paneCapture and hostLocation are test
+	// seams: nil means the tmux driver and the host's own zone.
+	limitMenu    limitMenuSamples
+	paneMenu     paneMenuState
+	paneCapture  func(paneID string) (string, error)
+	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table
 	// from writing the same line every interval for the life of the

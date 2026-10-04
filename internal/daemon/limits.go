@@ -69,7 +69,9 @@ func (d *Daemon) RunLimits(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			d.evaluateLimits(time.Now().UTC())
+			now := time.Now().UTC()
+			d.evaluateLimits(now)
+			d.evaluatePaneMenus(now)
 		}
 	}
 }
