@@ -176,13 +176,15 @@ func TestAllowBareDigitLiftsOnlyTheCannotRuleOutRefusal(t *testing.T) {
 	}
 }
 
+// The seat's script is run by whatever sh is: dash on CI prints \xHH literally, so the
+// no-break space is written in octal, which POSIX printf reads everywhere.
 // A seat showing a composer with a staged draft: a prompt line (a glyph and a
 // no-break space) between two rules, holding text that is not the dim
 // placeholder, under a finished turn's done line. The reader places it HoldsText.
 const stagedDraftSeat = `stty -echo
 printf '✻ Worked for 2s · done 5:23 PM\n\n'
 printf '────────────────────────────────────────────────────────────────────────\n'
-printf '❯\xc2\xa0fix the build\n'
+printf '❯\302\240fix the build\n'
 printf '────────────────────────────────────────────────────────────────────────\n'
 printf 'staged draft ready\n'
 while IFS= read -r line; do echo "got:$line"; done
