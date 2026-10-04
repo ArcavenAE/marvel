@@ -71,7 +71,7 @@ func assertRefusedOnLimitMenu(t *testing.T, d *Daemon, key, text string) {
 // limit menu is refused and nothing reaches the pane: option 3 spends money.
 func TestInjectIsRefusedWhileClaudeShowsTheLimitMenu(t *testing.T) {
 	d := newHandlerDaemon(t)
-	d.limitMenus = []limitmenu.Sample{limitMenuSample()}
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	key := verifySeat(t, d, limitMenuSeat, "claude", "Switch to usage credits")
 
 	assertRefusedOnLimitMenu(t, d, key, "3")
@@ -85,7 +85,7 @@ func TestInjectIsRefusedWhileClaudeShowsTheLimitMenu(t *testing.T) {
 // Escape alone is the key that dismisses a menu, so it is still sent.
 func TestEscapeStillPassesOnTheLimitMenu(t *testing.T) {
 	d := newHandlerDaemon(t)
-	d.limitMenus = []limitmenu.Sample{limitMenuSample()}
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	key := verifySeat(t, d, limitMenuSeat, "claude", "Switch to usage credits")
 
 	if resp := injectOf(t, d, map[string]any{"session_key": key, "text": "Escape"}); resp.Error != "" {
@@ -96,7 +96,7 @@ func TestEscapeStillPassesOnTheLimitMenu(t *testing.T) {
 // The max-age handoff request is typed text like any inject.
 func TestNotifyIsRefusedWhileClaudeShowsTheLimitMenu(t *testing.T) {
 	d := newHandlerDaemon(t)
-	d.limitMenus = []limitmenu.Sample{limitMenuSample()}
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	key := verifySeat(t, d, limitMenuSeat, "claude", "Switch to usage credits")
 
 	err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff")
@@ -114,7 +114,7 @@ func TestNotifyIsRefusedWhileClaudeShowsTheLimitMenu(t *testing.T) {
 // picks an option from there.
 func TestInjectIsRefusedOnTheLimitMenuWithTheCursorOnOptionOne(t *testing.T) {
 	d := newHandlerDaemon(t)
-	d.limitMenus = []limitmenu.Sample{limitMenuSample()}
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	key := verifySeat(t, d, limitMenuSeatCursorOne, "claude", "Switch to usage credits")
 
 	assertRefusedOnLimitMenu(t, d, key, "3")
@@ -123,8 +123,8 @@ func TestInjectIsRefusedOnTheLimitMenuWithTheCursorOnOptionOne(t *testing.T) {
 // With no sample, which is what production ships, nothing is refused.
 func TestInjectIsDeliveredToTheLimitMenuWhenNoSampleIsShipped(t *testing.T) {
 	d := newHandlerDaemon(t)
-	if len(d.limitMenus) != 0 {
-		t.Fatalf("the daemon ships %d limit-menu samples; production ships none until P-UL7", len(d.limitMenus))
+	if len(d.limitMenu.Menus) != 0 {
+		t.Fatalf("the daemon ships %d limit-menu samples; production ships none until P-UL7", len(d.limitMenu.Menus))
 	}
 	key := verifySeat(t, d, limitMenuSeat, "claude", "Switch to usage credits")
 
@@ -137,7 +137,7 @@ func TestInjectIsDeliveredToTheLimitMenuWhenNoSampleIsShipped(t *testing.T) {
 // With a sample but a pane that is not showing the menu, an inject is delivered.
 func TestInjectIsDeliveredToAClaudeSeatNotOnTheLimitMenu(t *testing.T) {
 	d := newHandlerDaemon(t)
-	d.limitMenus = []limitmenu.Sample{limitMenuSample()}
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	key := verifySeat(t, d, quietSeat, "claude", "composer ready")
 
 	if resp := injectOf(t, d, map[string]any{"session_key": key, "text": "hello", "literal": true, "enter": true}); resp.Error != "" {
@@ -161,31 +161,31 @@ func TestPreflightFailsClosedForClaudeOnlyWhenThereIsASample(t *testing.T) {
 	}
 }
 
-// The sample list is set once, in the constructor, from shippedLimitMenus, and
+// The sample set is set once, in the constructor, from shippedLimitMenus, and
 // nothing in the package assigns it afterwards: the only writers are tests. A
 // second writer would be a second source of what the refusal checks against.
-func TestLimitMenusIsSetOnlyInTheConstructor(t *testing.T) {
+func TestLimitMenuIsSetOnlyInTheConstructor(t *testing.T) {
 	t.Parallel()
 	literal := 0
 	eachLimitMenuSourceNode(t, func(file string, n ast.Node) {
 		switch x := n.(type) {
 		case *ast.AssignStmt:
 			for _, l := range x.Lhs {
-				if sel, ok := l.(*ast.SelectorExpr); ok && sel.Sel.Name == "limitMenus" {
-					t.Errorf("%s assigns %s; limitMenus is set once, in the Daemon literal", file, types.ExprString(l))
+				if sel, ok := l.(*ast.SelectorExpr); ok && (sel.Sel.Name == "limitMenu" || types.ExprString(sel.X) == "d.limitMenu") {
+					t.Errorf("%s assigns %s; limitMenu is set once, in the Daemon literal", file, types.ExprString(l))
 				}
 			}
 		case *ast.KeyValueExpr:
-			if types.ExprString(x.Key) == "limitMenus" {
+			if types.ExprString(x.Key) == "limitMenu" {
 				literal++
 				if got := types.ExprString(x.Value); got != "shippedLimitMenus()" {
-					t.Errorf("%s: limitMenus is %s, pinned as shippedLimitMenus()", file, got)
+					t.Errorf("%s: limitMenu is %s, pinned as shippedLimitMenus()", file, got)
 				}
 			}
 		}
 	})
 	if literal != 1 {
-		t.Errorf("limitMenus appears in %d composite literals, want 1", literal)
+		t.Errorf("limitMenu appears in %d composite literals, want 1", literal)
 	}
 }
 

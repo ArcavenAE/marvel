@@ -290,7 +290,7 @@ func (p pkgFiles) eachFunc(fn func(file, fun string, n ast.Node) bool) {
 func TestEveryKeyPressInTheDaemonIsInventoried(t *testing.T) {
 	t.Parallel()
 	want := map[string]int{
-		"NewWithOptions":         1, // the startup injection of a spawn prompt
+		"*Daemon.notifyHandoff":  1, // the max-age handoff request, after the pre-flight
 		"*Daemon.handleInjectAs": 2, // the operator's inject: clear key, then the text
 		"limitSender":            1, // the limit action's digit
 	}
@@ -342,7 +342,9 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.readComposer d.driver.CapturePane":         true,
 		"*Daemon.readComposer d.driver.CapturePaneEscapes":  true,
 		"*Daemon.repaintSettled d.driver.Repaint":           true,
-		"NewWithOptions driver.SendKeys":                    true,
+		"*Daemon.notifyHandoff d.driver.SendKeys":           true,
+		"*Daemon.startWatchdog d.driver.PaneForeground":     true,
+		"*Daemon.startWatchdog d.driver.CapturePaneJoined":  true,
 		"preflightRefusal driver.CapturePaneJoined":         true,
 		"limitSender drv.SendKeys":                          true,
 		"*Daemon.newLimitAction d.driver.CapturePaneJoined": true,
@@ -351,6 +353,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 	}
 	wantValue := map[string]bool{
 		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...)
+		"*Daemon.notifyHandoff":  true, // preflightRefusal(d.driver, ...)
 		"*Daemon.newLimitAction": true, // limitSender(d.driver)
 	}
 	wiring := map[string]bool{"CapturePaneJoined": true, "PaneForeground": true}
@@ -561,18 +564,34 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	called := map[ast.Node]bool{}
 	// A write to the controller's Notify field installs the sender; it is not a
 	// call and not a read. What the installed function can do is covered by the
-	// key-press inventory.
-	p.each(func(file string, n ast.Node) bool {
+	// key-press inventory. Exactly one write is allowed, pinned by file, function
+	// and expression (teamCtrl.Notify = d.notifyHandoff in the daemon
+	// constructor), not by the field's name: any other assignment installs a
+	// second sender the inventory does not know.
+	notifyWrites := 0
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
 		if as, ok := n.(*ast.AssignStmt); ok {
-			for _, l := range as.Lhs {
-				if sel, ok := l.(*ast.SelectorExpr); ok && sel.Sel.Name == "Notify" {
-					called[sel] = true
-					called[sel.Sel] = true
+			for i, l := range as.Lhs {
+				sel, ok := l.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Notify" {
+					continue
 				}
+				notifyWrites++
+				if file != "daemon.go" || fun != "NewWithOptions" || types.ExprString(l) != "teamCtrl.Notify" ||
+					len(as.Rhs) != len(as.Lhs) || types.ExprString(as.Rhs[i]) != "d.notifyHandoff" {
+					t.Errorf("%s: %s writes %s = %s; the only allowed write is teamCtrl.Notify = d.notifyHandoff in daemon.go NewWithOptions", file, fun, types.ExprString(l), types.ExprString(as.Rhs[min(i, len(as.Rhs)-1)]))
+				}
+				called[sel] = true
+				called[sel.Sel] = true
 			}
 		}
 		return true
 	})
+	defer func() {
+		if notifyWrites != 1 {
+			t.Errorf("%d writes to a Notify field, want exactly the one pinned", notifyWrites)
+		}
+	}()
 	p.eachFunc(func(file, fun string, n ast.Node) bool {
 		c, ok := n.(*ast.CallExpr)
 		if !ok {
