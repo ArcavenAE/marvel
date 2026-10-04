@@ -1,8 +1,10 @@
 # Runbook: kinu's bus from the hand-started phase-0 broker to `mode: managed`
 
-Status: runbook for review, 2026-10-04. Docs only. **Nothing here touches
-kinu's live bus or hub until the operator is present, in a scheduled window,
-and says go.** Written to assume the cutover goes badly.
+Status: runbook for review, 2026-10-04. Docs only. **Nothing here runs on
+kinu without the operator present.** The rehearsal (section 3) is an
+operator-attended session of its own and never touches the live bus, hub or
+daemon; the cutover (section 6) is a scheduled window after it, run only when
+the operator says go. Written to assume the cutover goes badly.
 
 - Issue: #534 (the runbook link goes there). Tracks aae-orc-bxg5f. Design:
   `bus-as-service.md` sections 6 and 8.2; director brief 10
@@ -10,7 +12,7 @@ and says go.** Written to assume the cutover goes badly.
   it `managed: true`; the config spells it `mode: managed`).
 - Run after `kinu-store-migration-runbook.md`, in its own window (that
   runbook, section 7).
-- Checked against marvel `origin/main` 39a4a4c, director `origin/main`
+- Checked against marvel `origin/main` c99ce98, director `origin/main`
   faed978, and the live kinu processes on 2026-10-04 at about 03:45Z
   (read-only).
 
@@ -20,7 +22,7 @@ and says go.** Written to assume the cutover goes badly.
 |---|---|---|
 | Phase-0 broker | `nats-server -c director/probe/nats-phase-0/nats-server.conf`, started by `start.sh` on 2026-09-26; 127.0.0.1:4222, monitor 8222, anonymous, store `~/.director/nats/store`, one leaf out to the hub (`include "leaf-kinu.conf"`) | **replaced** |
 | Global hub | `nats-server --config ~/.director/nats-global/nats-server.conf`, started 2026-09-25; 0.0.0.0:4242, monitor 127.0.0.1:8242, leafnodes 0.0.0.0:7442, domain `global`. Three leaves: kinu's phase-0, mokuzai, and a third that is probably corporate (inferred from its address) | **not touched**: no stop, reload or edit |
-| marvel daemon | b533ca5 (or the release from the store-migration window), cwd `~/work/aae-orc`; `~/.marvel/config.yaml` has no bus entry; `marvel bus status` says none is configured; `marvel credential list` is empty | gains a bus entry; restarted |
+| marvel daemon | b533ca5 today; the release from the store-migration window by the time this runs. Its cwd is `~/work/aae-orc`; `~/.marvel/config.yaml` has no bus entry; `marvel bus status` says none is configured; `marvel credential list` is empty | gains a bus entry; restarted |
 | kinu sessions | 32, across 6 teams (arcaven 13) | every one respawned |
 | The operator's director session | its `director-mcp` entry in `~/.claude.json` has no `DIRECTOR_NATS_USER` or `DIRECTOR_NATS_PASS_FILE` key | gains both |
 
@@ -46,15 +48,26 @@ and says go.** Written to assume the cutover goes badly.
 5. **Quiet fleet.** No merge, shift or apply in flight. mokuzai's and
    corporate's supervisors are told kinu seats will be unreachable for the
    window, and that global mail to them queues at the hub.
-6. **Handoffs.** Every kinu seat is told before the window to write its
+6. **Start directories.** The store-migration window has run, and its
+   precondition 5 has settled where each team spawns: either each team
+   declares its root, or the operator accepted the legacy stamp of the
+   daemon's cwd. This window's step 9 is the first fleet-wide spawn since then,
+   so every one of the 32 seats lands wherever that decision put it. Today 30
+   of the 38 panes on the marvel tmux server start in the tmux server's cwd,
+   a worktree path (`tmux list-panes -a -F '#{pane_start_path}'` on the marvel
+   socket). After the stamp they would start in `~/work/aae-orc` instead.
+   Capture each team's `WorkDir` (`marvel describe team`) into `$W` at step 0.
+7. **Handoffs.** Every kinu seat is told before the window to write its
    handoff at the window's start. A respawn without one loses that seat's
    context.
 
-## 3. Rehearsal on scratch processes (before the window, no operator needed)
+## 3. Rehearsal (operator-attended, on kinu, before the window)
 
-Every process is scratch: scratch HOME, scratch ports, scratch NKeys, a
-scratch tmux server. The real seed, the real stores and the live hub are
-never read or touched.
+It runs on kinu with the operator present, because it starts nats-servers, a
+daemon and a shim beside the live ones. Every process is scratch: scratch
+HOME, scratch ports, scratch NKeys, a scratch tmux server. The real seed, the
+real stores, the live hub and the live daemon are never read, signalled or
+touched, and that is checked, not assumed.
 
 ```sh
 for v in ${(k)parameters[(I)MARVEL_*]}; do unset "$v"; done   # zsh; bash: unset $(compgen -v MARVEL_)
@@ -67,6 +80,25 @@ S=$(mktemp -d)                              # scratch HOME: config, StateDir, st
 The daemon reads `~/.marvel/config.yaml` through `os.UserHomeDir`
 (`internal/config/config.go:742-748`), so `HOME="$S"` gives the scratch daemon
 its own config; the client must still name `--socket` (marvel `CLAUDE.md`).
+
+**Isolation checks, before each scratch process starts:**
+
+- `env | grep '^MARVEL_'` prints nothing in the shell that starts it.
+- Its port is free: `lsof -nP -iTCP:<port> -sTCP:LISTEN` prints nothing for
+  14222, 18222, 14242, 17442 and 24222. This is the guard against a scratch
+  broker binding a live port.
+- A scratch nats-server's `-c` path and store are under `$S`, never
+  `~/.director`. Read back with `ps -o command= -p <pid>` after it starts.
+- The scratch daemon's socket is `$S/m.sock`, and `MARVEL_TMUX_SOCKET` is
+  `rehearse-a3`. `tmux -L rehearse-a3 ls` lists only the scratch server. Its
+  first call is a read-only `bus status` with no "is rooted at" warning.
+  It cannot take the live socket, since it takes the socket lock first
+  (`daemon.go:447-457`).
+- Every client command names its server: `nats -s nats://127.0.0.1:14222` (or
+  the scratch hub), never a default context. The shim gets an explicit
+  `NATS_URL` to a scratch port.
+- After each step, the live checks are unchanged: the phase-0 broker on 4222 and the hub's
+  `/leafz` show the same processes and leaves as at the start.
 
 Steps, each with a pass condition:
 
@@ -141,7 +173,8 @@ Capture first, into `W=~/.marvel/window-bus-$(date +%Y%m%d)`:
    `DIRECTOR_PHASE0_STORE` path (a path, not a secret); `cp -p
    ~/.marvel/config.yaml $W/config.yaml.pre-bus`; `curl -s
    127.0.0.1:8242/leafz` and `127.0.0.1:8222/jsz?streams=true` into `$W`;
-   `marvel get sessions > $W/sessions-before`; the daemon's start command.
+   `marvel get sessions > $W/sessions-before`; `marvel describe team` for each
+   team into `$W/teams-workdir` (precondition 6); the daemon's start command.
 
 Then:
 
@@ -175,7 +208,9 @@ Then:
 9. Roll kinu sessions, supervisors first, then the rest, team by team, each
    after its handoff marker. Pass per team: a respawned seat answers a
    roll-call message; a global publish from a kinu supervisor lands in
-   `GLOBAL_TO_mokuzai`.
+   `GLOBAL_TO_mokuzai`; one respawned seat's `#{pane_start_path}` is the
+   team's `WorkDir` from `$W` (precondition 6). A seat that starts somewhere
+   else stops the roll for that team until the operator decides.
 10. Watch 30 minutes. Keep `store.pre-managed-*` and `$W` until the operator
    deletes them.
 
