@@ -564,6 +564,7 @@ marvel upgrade                                        # self-upgrade
   (Max, API key, Bedrock, Vertex) is permitted. Orchestrating agents that route
   other people's consumer credentials is not — multi-user distribution requires
   API key auth. See SOUL.md §3.
+- **PR and issue bodies:** the first one or two sentences say why to read it and why merging is worth the risk. See `.claude/rules/lead-with-why.md` in aae-orc (aae-orc#486).
 - **No file deletion:** Never delete user files. Overwrite only with explicit intent.
 - **Parallel-safe:** Each session gets a UUID. Volumes provide isolation.
 - **Session substrate:** tmux. Panes = sessions. Sessions = agent processes.
