@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -347,5 +349,114 @@ func TestWatchdogMasksTheVariableSpanOnEverySurface(t *testing.T) {
 				t.Errorf("esc screen was classified: %+v", r.get("a").HarnessState)
 			}
 		})
+	}
+}
+
+// With no pattern set the watchdog reads nothing: no pane is queried and none is
+// captured, however quiet the seat. Deleting the empty-set guard must fail this
+// (it survived every suite before; must-fix before P-WD1 ships a set).
+func TestWatchdogWithNoPatternSetNeverTouchesAPane(t *testing.T) {
+	r := newWDRig(t)
+	p := r.seat("a", "claude", "2.1.283", 60*time.Minute, 0)
+	r.w.sets = nil
+	r.w.Once()
+	r.now = r.now.Add(time.Hour)
+	r.w.Once()
+	if p.reads != 0 || p.caps != 0 {
+		t.Fatalf("with no pattern set: %d pane reads, %d captures", p.reads, p.caps)
+	}
+	if r.get("a").HarnessState != nil || r.ring.Len() != 0 {
+		t.Fatal("state or events appeared with no pattern set")
+	}
+}
+
+// The loop is not even built for an empty set.
+func TestWatchdogForAnEmptySetStartsNothing(t *testing.T) {
+	store, ring := api.NewStore(), events.NewRing(8)
+	if w := watchdogFor(store, ring, nil, time.Minute); w != nil {
+		t.Fatal("a watchdog was built with no pattern set")
+	}
+	sets, err := panestate.Load(os.DirFS("../panestate/testdata"), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := watchdogFor(store, ring, sets, time.Minute); w == nil {
+		t.Fatal("no watchdog was built for a real set")
+	}
+}
+
+// The watchdog's reach into a pane is its field types: the guard that reads
+// source is file-scoped, so a field that could do more would pass it. Each field
+// is pinned to a type that cannot send a key.
+func TestWatchdogFieldTypesArePinned(t *testing.T) {
+	want := map[string]string{
+		"store":       "*api.Store",
+		"ring":        "*events.Ring",
+		"sets":        "[]panestate.Pattern",
+		"window":      "time.Duration",
+		"reg":         "*runtime.Registry",
+		"now":         "func() time.Time",
+		"readPane":    "func(string) (string, int, error)",
+		"capture":     "func(string) (string, error)",
+		"mu":          "sync.Mutex",
+		"lastCapture": "map[string]time.Time",
+		"rolled":      "map[string]string",
+	}
+	typ := reflect.TypeOf(watchdog{})
+	got := map[string]bool{}
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		got[f.Name] = true
+		w, ok := want[f.Name]
+		if !ok {
+			t.Errorf("watchdog gained an unpinned field %s %s; pin it here after checking it cannot reach a pane", f.Name, f.Type)
+			continue
+		}
+		if f.Type.String() != w {
+			t.Errorf("watchdog.%s is %s, pinned as %s", f.Name, f.Type, w)
+		}
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("pinned field %s is gone", name)
+		}
+	}
+}
+
+func TestAccountLabelCanonicalizesTheConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	real := filepath.Join(home, "acct-one")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "link-one")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	label := func(dir string) string {
+		s := api.Session{Runtime: api.Runtime{Name: "claude", Env: map[string]string{"CLAUDE_CONFIG_DIR": dir}}}
+		return accountLabel(s)
+	}
+	one := label(real)
+	for _, spelling := range []string{real + "/", link, filepath.Join(home, ".", "acct-one"), real + "//"} {
+		if got := label(spelling); got != one {
+			t.Errorf("%q labels %s, want %s", spelling, got, one)
+		}
+	}
+	def := label("")
+	for _, spelling := range []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude") + "/"} {
+		if got := label(spelling); got != def {
+			t.Errorf("%q labels %s, want the default %s", spelling, got, def)
+		}
+	}
+	if label(real) == def {
+		t.Error("a different directory labels as the default")
+	}
+	if strings.Contains(one, home) {
+		t.Errorf("a path reached the label: %s", one)
 	}
 }

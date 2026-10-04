@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -79,6 +80,12 @@ func (w *watchdog) Run(ctx context.Context) {
 
 // Once runs one pass over every session.
 func (w *watchdog) Once() {
+	if len(w.sets) == 0 {
+		// No pattern set, nothing can match, so nothing is read: no pane is
+		// queried and none is captured. The loop guard in startWatchdog says the
+		// same; this one holds if that is ever bypassed.
+		return
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	now := w.now()
@@ -208,7 +215,8 @@ func (w *watchdog) clear(s api.Session, why string) {
 // accountLabel groups seats by runtime and config directory. The directory is
 // reduced to a short hash so no path reaches an event.
 func accountLabel(s api.Session) string {
-	dir := s.Runtime.Env["CLAUDE_CONFIG_DIR"]
+	home, _ := os.UserHomeDir()
+	dir := api.CanonicalConfigDir(s.Runtime.Name, s.Runtime.Env["CLAUDE_CONFIG_DIR"], home)
 	if dir == "" {
 		return s.Runtime.Name + ":default"
 	}
@@ -253,6 +261,16 @@ func (w *watchdog) rollup(now time.Time) {
 	}
 }
 
+// watchdogFor builds the watchdog, or returns nil when there is no pattern set:
+// with none, nothing can match, so no loop is started and no pane is touched.
+// Split out so a test can pin that the empty set starts nothing.
+func watchdogFor(store *api.Store, ring *events.Ring, sets []panestate.Pattern, window time.Duration) *watchdog {
+	if len(sets) == 0 {
+		return nil
+	}
+	return newWatchdog(store, ring, sets, window)
+}
+
 // startWatchdog runs the harness-state watchdog beside the metrics sampler.
 // Only the shipped pattern sets are read: with none, nothing can match, so the
 // loop is not started at all.
@@ -260,9 +278,6 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	sets, err := panestate.LoadEmbedded()
 	if err != nil {
 		log.Printf("watchdog: pattern sets unreadable, watchdog off: %v", err)
-		return
-	}
-	if len(sets) == 0 {
 		return
 	}
 	var window time.Duration
@@ -275,7 +290,10 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	} else if cerr != nil {
 		log.Printf("watchdog: client config unreadable, using the default window: %v", cerr)
 	}
-	w := newWatchdog(d.store, d.events, sets, window)
+	w := watchdogFor(d.store, d.events, sets, window)
+	if w == nil {
+		return
+	}
 	w.readPane = d.driver.PaneForeground
 	w.capture = d.driver.CapturePaneJoined
 	d.wg.Add(1)

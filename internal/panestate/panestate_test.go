@@ -175,3 +175,23 @@ func TestLoadRefusesMoreThanOneVariableSpanPerRow(t *testing.T) {
 		t.Fatal("two spans in a row were accepted")
 	}
 }
+
+// Tripwire: no pattern set ships until probe P-WD1 captures one. A set is a claim
+// that a real harness drew that screen; the fixtures here are synthetic. Shipping
+// any set under patterns/ must change this test in the same commit, alongside the
+// capture record (isolated scratch capture, harness version, pane_current_command)
+// that justifies it. The test over the shipped sets passes vacuously with none, so
+// this is what keeps an uncaptured fixture from shipping (marvel#557 review).
+func TestNoPatternSetShipsWithoutAPWD1Capture(t *testing.T) {
+	sets, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("load embedded: %v", err)
+	}
+	if len(sets) != 0 {
+		var names []string
+		for _, p := range sets {
+			names = append(names, p.Harness+"/"+p.HarnessVersion+"/"+p.ID)
+		}
+		t.Fatalf("pattern sets are shipped (%v) with no P-WD1 capture record. Probe P-WD1 (docs/design/harness-state-watchdog-p1.md section 7) captures the screen on an isolated scratch server; add that record (harness version, pane_current_command, how it was isolated) and update this test with the set", names)
+	}
+}
