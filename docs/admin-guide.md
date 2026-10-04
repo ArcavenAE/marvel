@@ -448,10 +448,11 @@ services:
       url: nats-leaf://<hub-address>:7442
 ```
 
-Write `<hub-address>` as a hostname, not a literal IP. A hostname the broker
-re-resolves lets the leaf follow the hub to another subnet with no restart and
-no seed push, as the 2026-10-04 network move showed. A literal IP breaks when
-the hub host changes subnet: the leaf keeps dialing the old address. The key
+Prefer a hostname that every leaf can resolve through ordinary DNS from its own
+network, not a `.local` (mDNS) name, which does not resolve across subnets
+(marvel#575). A literal IP breaks when the hub host changes subnet: the leaf
+keeps dialing the old address. Whether a leaf then follows the hub with no
+restart was observed once, on 2026-10-04, and has not been reproduced. The key
 takes one URL; a list of hub URLs is requested in marvel#575.
 
 A cluster written in the older `bus:` block spelling puts the same `hub:` key
@@ -497,12 +498,13 @@ If a cluster's hub URL has to change (the hub host moved subnets and the URL
 is a literal IP), the sequence two clusters ran on 2026-10-04 is:
 
 1. Change the hub URL in the client config.
-2. Restart the daemon, because it reads that config once, at start.
+2. Restart the daemon so it re-reads the config, which it reads once, at start.
+   `marvel daemon reexec` does this and keeps the agents running.
 3. From the hub's side, push `bus/leaf` again.
 
-Step 3 is needed because of marvel#339: the restart drops the leaf seed, and
-until it is pushed again the cluster runs local-only. With a hostname the
-broker re-resolves, none of the three steps is needed.
+Step 3 is needed because of marvel#339: a restart or reexec drops the leaf seed, and
+until it is pushed again the cluster runs local-only. A hostname that still
+resolves may make these steps unnecessary; that has not been reproduced.
 
 ### Ports
 
