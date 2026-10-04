@@ -4,6 +4,10 @@
   reviewed and its rulings are made. Tracks marvel#452. Run as 3ptdd (a
   three-round party, then the standard lifecycle); the party record is in
   section 9.
+- **Amended 2026-10-04 on the operator's rulings** (section 7). Ruling 1
+  was reversed from its default: context pressure never replaces a seat
+  without an observed handoff. D7, D8, D9, section 4, the tests for ticket 4
+  and the plan changed to match; ruling 2 stands.
 - **Checked at:** marvel main e1dcaa5. Every line reference below is at that
   commit.
 - **Scope:** both automatic triggers (`max-age`, `context-pressure`) replace
@@ -127,17 +131,17 @@ recreation of a crash-looping successor.
 
 - At most one replacement in flight per role. A second seat that crosses
   keeps its request, pending and visible in `describe team`.
-- **Exception:** a context-pressure replacement at the hard stage (D8) may
-  start while one other replacement of the same role stands, a cap of two,
-  with an event saying so. A seat about to auto-compact does not queue
-  behind a healthy one.
+- **Exception:** a context-pressure replacement (D8) may start while one
+  other replacement of the same role stands, a cap of two, with an event
+  saying so. Its seat has written its handoff close to auto-compaction, and
+  it does not queue behind a healthy one.
 - Starts count against `maxAutoShiftsPerTick`. Admission asks for one seat
   (`Want: 1`), not the role's replica count (F11).
 - **A seat already in a replacement is never selected again.** Trigger
   selection, for both triggers, skips any seat that is the predecessor or the
   successor of a standing entry. Without this, a predecessor still over
-  `headroom_tokens` on a later tick would fire the hard stage for itself, and
-  its own standing entry would count as the "one other".
+  `headroom_tokens` on a later tick would start a second replacement for
+  itself, and its own standing entry would count as the "one other".
 - The per-role count check, the selection and the entry write happen in one
   pass under the controller lock (`c.mu`; `evaluateShiftTriggers` already
   runs inside `ReconcileOnce`, which takes it at `controller.go:465-467`). The operator path
@@ -153,28 +157,35 @@ Requests are keyed by session key, and a role may hold several.
 replace on the marker, otherwise escalate and leave the seat running. It now
 works for any replica count, which is what lets #458's refusal go (D11).
 
-**Context pressure** gains an optional soft stage:
+**Context pressure** becomes handoff-first, like max age (ruling 1, as
+ruled: "no handoff is worse than autocompaction"):
 
-- `request_headroom` (optional, larger than `headroom_tokens`): send the
-  max-age notice and record a per-seat request; replace early when the
-  seat's marker appears.
-- `headroom_tokens` (the hard stage, today's meaning): replace the seat
-  whether or not the marker came, recorded durably with reason
-  `forced-deadline`. This is today's pressure behavior, now scoped to one
-  seat. It needs a ruling (section 7, ruling 1).
-- Unset `request_headroom` means off: today's behavior exactly. When set it
-  requires the `handoff` and `handoff_marker` pair and must exceed
-  `headroom_tokens`, checked at apply. At runtime it is skipped for a
-  session whose `ContextLimit` it is not below. A pressure role that
-  declares the handoff pair but no `request_headroom` gets an apply warning,
-  not a refusal.
+- At `headroom_tokens` (today's threshold, `s.ContextTokens >
+  s.ContextLimit-headroom`), the seat gets the max-age notice and a per-seat
+  request with cause `context-pressure`. It is replaced when its marker
+  appears, with reason `marker`.
+- **It is never replaced without the marker.** With no marker by the end of
+  `handoff_window`, marvel emits `shift-handoff-missing` with cause
+  `context-pressure`, leaves the seat running and repeats once per window,
+  as max age does. A seat that crosses into auto-compaction meanwhile
+  compacts; that is the outcome the ruling prefers over a replacement with
+  no handoff.
+- A `context-pressure` condition requires the `handoff` and
+  `handoff_marker` pair, checked at apply: without it the trigger could
+  never observe a handoff, so it would look configured and never act (the
+  finding-044 class). Refused, naming the ruling (section 7, ruling 3).
+- There is no second threshold. The earlier `request_headroom` soft stage
+  existed only to come before a forced hard stage, and ruling 1 removed
+  that stage. Set `headroom_tokens` above the cost of writing a handoff plus
+  a clean replacement.
 - Seat selection lists the role's running seats at every generation (fixes
   F6, as #473 did for age), minus any seat in a standing entry (D7).
 
 Immediately before deleting a predecessor, either trigger re-probes the
-marker and records `handoff_present_at_drain`. The probe records; it does not
-gate the delete. A marker that lands after the delete is lost, which is
-acceptable only because the forced case is named and ruled.
+marker and records `handoff_present_at_drain`. Every automatic replacement
+now starts on an observed marker, so the probe confirms it; a marker gone at
+drain is recorded, and does not stop the delete of a seat whose handoff was
+already read.
 
 ### D9. Events and durable state
 
@@ -184,8 +195,8 @@ once the replacement path does.
 **Part A, on what exists today** (ticket 2):
 
 - New `Event` fields `Cause` (`max-age`, `context-pressure`, `operator`) and
-  `Reason` (`marker`, `forced-deadline`, `operator`, `seat-gone`,
-  `window-expired`, `policy-removed`), set on today's shift events:
+  `Reason` (`marker`, `operator`, `seat-gone`, `window-expired`,
+  `policy-removed`), set on today's shift events:
   `shift-handoff-requested`, `shift-handoff-missing`, `shift-auto-triggered`.
 - Those events carry the seat's own generation, not the team's
   (`shift_handoff.go:122`, `:232`; `controller.go:2028`).
@@ -208,7 +219,7 @@ once the replacement path does.
   fires on an operator replacement.
 - `describe team` shows standing replacements (predecessor, successor,
   cause, reason).
-- Every forced or seat-gone outcome is reconstructable from durable team
+- Every seat-gone or aborted outcome is reconstructable from durable team
   state after a restart, not only from the 2000-event ring.
 - No per-seat `shift-started` event: nothing reads it.
 
@@ -228,9 +239,9 @@ commit, revertable alone, once the tests in section 5 are green.
 - **#453's delivery channel.** Escalations still reach only the event ring
   and `describe team`. Its own design.
 - **#451.** Closed by #473.
-- **A per-role `on_no_handoff = "escalate"` opt-out for pressure.** Voted 3
-  to 2 to defer: it rests on an escalation no one receives until #453 lands.
-  Its own ticket after #453.
+- **A per-role opt-out for pressure** (`on_no_handoff`). The party voted
+  3 to 2 to defer it; ruling 1 made escalation the only behavior, so there
+  is nothing left to opt out of.
 - **The kill branch** (`shift-trigger-list.md` D8).
 
 ## 5. Tests (red first)
@@ -262,15 +273,15 @@ per-tick check is the acceptance criterion.
 | 13 | Failed kill of the predecessor: entry stands, retried, cleared when the row goes | entry cleared on "Delete returned" | no |
 | 14 | `scale` refused while an entry stands | refusal keyed on `t.Shift` only | no |
 | 15 | Marker lands between successor ready and delete: `handoff_present_at_drain` true, not reported missing | probe skipped or read too early | no |
-| 16 | Two entries in one role (a forced pressure replacement beside a max-age one): both pairs collapse, the delete list names neither successor nor the sibling | collapse not per entry | no |
+| 16 | Two entries in one role (a pressure replacement beside a max-age one): both pairs collapse, the delete list names neither successor nor the sibling | collapse not per entry | no |
 | 17 | Pressure at an older generation (clone of `TestMaxAgeAsksSeatAtAnOlderGeneration`, `:773`) | the F6 filter survives | no |
 | 18 | Double trigger: A under pressure with its entry standing, then more ticks with A still over `headroom_tokens`, and once a `--session` request for A. Exactly one successor exists, the entry is unchanged, and B is untouched after every pass | a seat in an entry is selected again; a second write overwrites the entry; `--session` bypasses the per-role count | no |
 | 19 | Today's shift events (`handoff-requested`, `handoff-missing`, `auto-triggered`) carry `Cause` and `Reason` and the seat's own generation, on a team whose counter is higher than the seat's; a request dropped because its seat is gone, and one dropped because the policy no longer declares max age, each emit `shift-hold-released` with that reason | an event omits the fields or carries the team generation; a drop is silent | no |
 | 20 | `EscalatedAt` is set when a request escalates and survives a controller restart | escalation time held in memory only | no |
 | 21 | `describe team` shows each pending request (seat, cause, requested and escalated times) | describe omits the requests | no |
-| 22 | Apply checks for `request_headroom`: refused when not above `headroom_tokens`; refused without the `handoff` and `handoff_marker` pair; a pressure role with the pair and no `request_headroom` applies with a warning | a check missing, or the warning raised as a refusal | no |
-| 23 | Soft stage: at `request_headroom` the seat gets the notice and a per-seat request; its marker before the hard line starts the replacement early, with reason `marker` | soft stage never fires, or replaces without the marker | no |
-| 24 | Hard stage: at `headroom_tokens` with no marker the seat is replaced, and reason `forced-deadline` is on the durable entry and survives a restart | forced replace not recorded durably, or skipped | no |
+| 22 | Apply: a `context-pressure` condition without the `handoff` and `handoff_marker` pair is refused, naming ruling 1; with the pair it applies | the check missing, or raised only as a warning |
+| 23 | Pressure with a marker: at `headroom_tokens` the seat gets the notice and a per-seat request with cause `context-pressure`; its marker starts the replacement, with reason `marker` | the request never fires, or the replacement starts before the marker |
+| 24 | Pressure with no marker: at `headroom_tokens` and on every tick after, through and past `handoff_window`, the seat is never deleted and no successor is created (asserted after every pass); `shift-handoff-missing` fires once per window with cause `context-pressure`, and the seat stays running | a forced replacement at the threshold or at the window's end, or a silent window |
 | 25 | Lift: apply and `scale` accept `max-age` on a role with `replicas = 2` (fails today on `manifest_shift.go:178` and `daemon.go:1589-1594`) | either refusal left in place | no |
 | 26 | Replacement events: a full replacement emits `shift-seat-drained` with `Peer` (the successor), `Cause` and `Reason`, at the predecessor's own generation; a deadline emits `shift-replace-aborted` | the drain or the abort is silent, or omits the seat fields | no |
 | 27 | `describe team` shows each standing replacement (predecessor, successor, cause, reason) | describe omits the replacements | no |
@@ -286,26 +297,34 @@ vote), or as separate PRs in the same order.
    `describe team`. Red tests: 19, 20, 21.
 3. Requests keyed by session, the replacement path D1 to D7 and D10, and D9
    part B. Red tests: 1 to 16, 18, 26, 27. Depends on 1 and 2.
-4. Pressure's soft stage and the forced hard stage (D8). Red tests: 22 to 24.
-   Depends on 3 and on ruling 1.
+4. Pressure becomes handoff-first (D8, ruling 1 as ruled): the request at
+   `headroom_tokens`, replacement on the marker only, the apply check. Also
+   amends `shift-trigger-list.md` D5, whose last paragraph describes today's
+   pressure shift with no notice. Red tests: 22 to 24. Depends on 3.
 5. Lift #458 (D11). Red test: 25. Depends on 3 and 4.
 
 ## 7. Rulings needed (operator, via director)
 
 | # | Question | Default | Expiry |
 |---|---|---|---|
-| 1 | Context pressure replaces the seat at `headroom_tokens` without an observed handoff (reason `forced-deadline`). That is an exception to "never auto-shift unwatched", the same shape as ruling 2 of `shift-trigger-list.md`, which stays "no" for max age. Allow it for pressure? | Yes, for pressure only: the alternative is auto-compaction, which summarizes the seat's context with nothing to restore it. When ruled, amend `shift-trigger-list.md` D5 and the succession pointer so the exception is written, quoting the trigger and threshold verbatim (`on = "context-pressure"`, at `s.ContextTokens > s.ContextLimit-headroom`, `controller.go:2050`), so it cannot stretch to `request_headroom` or a future trigger | The default holds when ticket 4 starts |
-| 2 | Lift #458's refusal on `replicas > 1` once the tests are green | Yes, in its own commit | The default holds when ticket 5 starts |
+| 1 | Context pressure replaces the seat at `headroom_tokens` without an observed handoff? | **Ruled no, 2026-10-04, reversing the default.** The operator, verbatim: "1 context pressure: no, it should NOT, no handoff is worse than autocompaction". D8 is written to it: pressure asks, replaces on the marker only, and otherwise escalates and leaves the seat running | ruled |
+| 2 | Lift #458's refusal on `replicas > 1` once the tests are green | **Ruled yes, 2026-10-04**, the operator verbatim: "2 yes". In its own commit (D11) | ruled |
+| 3 | A `context-pressure` condition without the handoff pair: refuse at apply, or apply with a warning and leave it inert? Refusal breaks applying any manifest that declares pressure without the pair (`examples/auto-shift.toml` and `.yaml` today) until it adds them | Refuse, naming ruling 1, and update the example in the same change: a trigger that can never act should not look configured | The default holds when ticket 4 starts |
 
-Recorded as believed, not measured: that a forced replacement loses less
-live work than auto-compaction. Sampling `ContextTokens` against `ContextAt`
-for the architect seat would measure it. It is not evidence for ruling 1.
+The ruling-1 default had rested on an unmeasured claim, that a forced
+replacement loses less live work than auto-compaction. The ruling went the
+other way, so the claim is no longer load-bearing.
 
 ## 8. Rollout note
 
-Nothing changes a running cluster until its daemon is rolled. The `aae/arcaven`
-architect role is the only live multi-replica role with a shift trigger
-(context pressure), so it is the one to watch after the roll.
+Nothing changes a running cluster until its daemon is rolled. Until
+ticket 4 ships, today's pressure shift replaces the whole role at once with
+no handoff (F7), which ruling 1 forbids. The `aae/arcaven` architect role
+removed its pressure block on 2026-10-04 for that reason (the manifest's
+own comment), and its live `Shift` is `null`, so its seats auto-compact for
+now; it is the role to re-arm, with the handoff pair, after the roll.
+Before rolling a daemon with ticket 4, check each cluster's manifests for a
+`context-pressure` condition without the pair (ruling 3).
 
 ## 9. Party record (3ptdd)
 
@@ -333,3 +352,6 @@ checks on panelist claims appended. The record is in the orchestrator's
     not gate.
   - Context, Distributed-systems: for the opt-out now.
   - Evals: the ruling-1 default rests on an unmeasured claim (section 7).
+- **After the party.** The operator reversed ruling 1 (section 7), which
+  carried Evals' dissent further than the dissent asked: pressure is now
+  handoff-first, and the soft and hard stages are gone.
