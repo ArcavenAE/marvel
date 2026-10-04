@@ -355,8 +355,15 @@ Where each state shows:
   width constraint holds, and nothing in the table reads as "not limited".
   The not-limited answer is `describe` or `limit_reading`, never the cell.
 
-With no reading, `limited` can come only from a refusal, and UL-3 does not
-recognize one yet. 9.3 adds the interactive source.
+Which state kinu reads depends on when UL-1 ships. Shipped today, its keys
+read `none`: no reading was ever stored, since nothing is built. Had UL-1 been
+running before the move to Enterprise, the keys would read `stale`, holding
+the personal plan's last reading. That stale 100% neither sets nor holds
+`limited` (section 2, test 4), and whether a `/login` should start a new key is
+9.7's open question.
+
+With no fresh reading, `limited` can come only from a refusal, and UL-3 does
+not recognize one yet. 9.3 adds the interactive source.
 
 ### 9.3 The named exception to "no pane-text scraping"
 
@@ -375,6 +382,16 @@ exception, and only one:
 - **What it may do.** Set and clear the condition, with the capture time and
   the sample's version in its provenance. It never sends a key; that is UL-7's
   question (9.4).
+- **How it clears.** A `pane-menu` condition has no `resets_at` and no
+  reading, so section 3's clear rule cannot end it. While it holds, the seat's
+  pane is captured once a minute (the "working seat is not captured" rule
+  applies only to setting). It clears at the first of:
+  1. a capture that shows neither the menu block nor the post-selection
+     screen of the second sample (9.4, matcher item 6);
+  2. the seat's activity signal advancing (`SessionContext.ContextAt`, the
+     restart-neutral advisory's signal), which means it is working again;
+  3. a `fresh` reading for its account below 100.
+  Each clear emits `session.unlimited` with which rule cleared it.
 - **Why an exception and not a change of rule.** The matcher is narrow,
   versioned with the harness, and refuses on any mismatch. "Scrape the pane"
   stays ruled out everywhere else.
@@ -382,12 +399,16 @@ exception, and only one:
 This reverses part of a reviewed section, so it is ruling **UL-R2**:
 default, adopt the exception; alternative, keep the ban and accept that an
 interactive seat on a plan with no reading is never seen as `limited`.
+Expiry, in UL-R1's form: the default holds until the build of UL-3 starts;
+with no ruling by then, the builder builds the alternative (no `pane-menu`
+source), the conservative choice.
 
 ### 9.4 Seen is not survived, if the menu waits
 
 Section 1 summarized finding-056 as "the harness resumed on its own at the
-reset". finding-056 recorded that on 2026-09-29: the harness printed
-"continuing automatically at 9pm" and the limited seats resumed at 02:01Z.
+reset". finding-056 recorded that for the limit of 2026-09-29 to 09-30: the
+harness printed "continuing automatically at 9pm" and the limited seats
+resumed at 02:01Z on 2026-09-30.
 What a seat left on the 2026-10-03 weekly menu does at the reset was **not
 observed**. The reset is Oct 6 at 21:00, and every seat moved to Enterprise by
 `/login` before it. The menu offers "Wait here, then continue automatically"
@@ -413,22 +434,43 @@ The option that injected a resume line at a prompt is dropped. It does not
 help a seat that stays on the menu, which is the observed case, and a line
 typed into a live menu would become keystrokes.
 
-**The matcher (used by B and by 9.3).** It is built from a captured sample
-stored as a fixture with its harness version:
+**The matcher (used by B and by 9.3).** It is built from two captured
+samples stored as fixtures with their harness version: the menu as shown, and
+the screen after a human picked the second option by hand.
 
-1. The menu's first and third option lines match the sample byte for byte.
-2. The second option line matches as three parts: the fixed prefix `Wait
-   here, then continue automatically at `, a time span matching one fixed
-   pattern taken from the sample (for the 2026-10-03 sample, `Oct 6 at 9pm`,
-   so `[A-Z][a-z]{2} [0-9]{1,2} at [0-9]{1,2}(:[0-9]{2})?(am|pm)`), and the
-   sample's exact remainder of the line. Only that span is a pattern.
-3. The key that selects the second option is read from the sample (its
-   number, or the cursor moves the sample shows), never guessed. If the
-   sample shows no way to select option 2 without passing through option 3,
-   B is not buildable. The build then ships A and emits
+1. **Input.** The visible screen from `marvel capture`, no scrollback. Rows
+   are compared whole, after trailing spaces are stripped, including the
+   option number, its punctuation and the cursor-glyph column. Nothing is
+   matched anywhere inside a row.
+2. **Location.** The menu block is the sample's run of consecutive rows (the
+   title row, the three option rows and the footer rows), found at the
+   **last** position in the capture where the whole run matches, and only if
+   no non-blank row follows it except the sample's own trailing rows. A menu
+   quoted higher in the pane is never the block; a quoted copy below a real
+   one fails the trailing-rows check and refuses.
+3. **The option rows.** Row 1 is the sample's "1." row and row 3 the sample's
+   "3." row, byte for byte. Row 2 is the sample's "2." prefix through `Wait
+   here, then continue automatically at `, then a time span matching one fixed
+   pattern taken from the sample (for 2026-10-03, `Oct 6 at 9pm`, so
+   `[A-Z][a-z]{2} [0-9]{1,2} at [0-9]{1,2}(:[0-9]{2})?(am|pm)`), then the
+   sample's exact remainder. Only that span is a pattern. A reordered menu,
+   whatever its texts, refuses.
+4. **The cursor glyph.** Exactly one option row carries the sample's glyph
+   and the other two carry the sample's blank form. Which row has it does not
+   matter, because the cursor is never used (item 5).
+5. **The key.** The digit `2` and nothing else: no arrow, no Enter, no
+   Escape. If the samples show that `2` alone does not select the second
+   option, B is not buildable. The build then ships A and emits
    `limit-menu.unselectable` once, so the downgrade is visible, not silent.
-4. Any mismatch refuses: no key is sent, and `limit-menu.refused` carries the
-   reason and the sample version.
+6. **Confirmation.** Within 5 seconds of the key, a re-capture must match the
+   post-selection sample under the same rules (the time span as in item 3).
+   If it does, `limit-menu.answered` is emitted. If the menu is still there,
+   nothing is sent again and `limit-menu.unconfirmed` is emitted. Anything
+   else emits `limit-menu.unexpected` at error severity, with the capture,
+   and that seat is never answered again until an operator clears it. One
+   key per limit per seat, whatever happens.
+7. **Refusal.** Any mismatch sends nothing and emits `limit-menu.refused`
+   with the reason and the sample version.
 
 **Default: B**, under that matcher. The third option spends the operator's
 money, and choosing it stays a human act (ADR-007); B is written so it cannot
@@ -445,7 +487,7 @@ of UL-7 starts; with no ruling by then, the builder builds A.
 |---|---|---|
 | UL-1 | As before, plus the three reading states and the `none` budget row (9.2) | none |
 | UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures | UL-1 |
-| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3, if UL-R2 rules the exception) | UL-1 |
+| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3; built only if UL-R2 adopts the exception, see its expiry) | UL-1 |
 | UL-7 | UL-R1: A's events always; B's guarded selection only if the operator rules B; the matcher and its fixture shared with UL-3 | UL-3, UL-R1 |
 
 Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so the
@@ -464,17 +506,33 @@ next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
 22. (9.3) A stalled interactive seat with reading `none` whose capture matches
     the sample is marked `limited` with source `pane-menu`; a capture differing
     in any byte outside the time span sets nothing; a working seat is never
-    captured.
+    captured to set the condition.
+22a. (9.3, clear) A `pane-menu` condition clears on a capture showing neither
+    the menu nor the post-selection screen, on an advancing activity signal,
+    and on a fresh reading below 100, each emitting `session.unlimited` with
+    its rule; with none of the three it stays set across 10 captures.
 23. (Matcher) The 2026-10-03 sample matches with its own time span and with
     `Nov 12 at 10:30am`; it refuses `Oct 6 at 9pm` followed by any other
-    remainder, and it refuses a first or third line differing by one byte.
-24. (UL-7, B) A matching pane receives exactly one selection of the second
-    option, and the event carries `injector=marvel:limit-wait`. A
-    non-matching pane receives nothing and emits `limit-menu.refused`.
+    remainder, and a first or third row differing by one byte. Hostile
+    fixtures, each refused: (i) the options reordered so the "2." row reads
+    "Switch to usage credits"; (ii) a quoted copy of the real menu above a
+    reordered real menu (the last block is the reordered one); (iii) a real
+    menu followed by any non-blank row not in the sample. And one accepted:
+    (iv) the real menu with the cursor glyph on row 3.
+24. (UL-7, B) A matching pane receives exactly the key `2`, once, and the
+    event carries `injector=marvel:limit-wait`. A re-capture matching the
+    post-selection sample emits `limit-menu.answered`; the menu still showing
+    emits `limit-menu.unconfirmed` and sends nothing more; any other screen
+    emits `limit-menu.unexpected` at error severity and the seat is not
+    answered again. A non-matching pane receives nothing and emits
+    `limit-menu.refused`.
 25. (UL-7) A sample that offers no way to reach option 2 without option 3
     builds A and emits `limit-menu.unselectable` once.
-26. (UL-7, guard) No path in UL-7 or UL-3 sends a key that selects the third
-    option; the guard runs over every branch, and over the shared matcher.
+26. (UL-7, guard) The only key UL-7 can send is `2`, and UL-3 sends none: a
+    guard asserts this over every branch and the shared matcher. Run against
+    hostile fixtures (i) to (iv), no fixture leads to a key that would select
+    "Switch to usage credits". In (iv), with the cursor on row 3, the guard
+    asserts that neither Enter nor an arrow is ever sent.
 27. (UL-7, A) At the clear, `seat.resume-proposed` is emitted once per limited
     seat and nothing is injected.
 
