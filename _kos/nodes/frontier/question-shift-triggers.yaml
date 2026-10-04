@@ -307,6 +307,17 @@ content: |
   design, for any successor that cannot pass readiness. Whether it is
   turned on at all: `question-auto-shift-handoff-quality`.
 
+  STATE 2026-10-04 (harvest, finding-065). Max age had three gaps, each
+  filed. One is fixed: the selector filtered on the team generation, so seats
+  at older generations were invisible (marvel#451; the review counted 9 of 14
+  over-age seats). marvel#473 merged on 2026-10-02 as 3b15508 and
+  `firstSessionOverAge` now lists the role's seats at any generation; only the
+  issue #451 is still open. Two remain open: on a role with more than one
+  replica a max-age shift drains siblings that were never asked for a handoff
+  (marvel#452), and `team.shift-handoff-missing` lives only in the in-memory
+  ring while the escalation is sticky, so a restart leaves a seat held with no
+  one told (marvel#453).
+
 edges:
   - target: question-shifts
     type: derives
