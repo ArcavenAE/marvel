@@ -26,15 +26,15 @@ When the subscription a cluster's Claude seats run on hits its usage limit, can 
 
 ## Constraint met during the probe
 
-Sending a raw Escape key to close a seat's `/status` panel was refused by the auto-mode classifier ("Interfere With Workloads"). I stopped there. that filer seat is left showing its `/status` panel ("Esc to cancel"), and the operator closes it by hand.
+Sending a raw Escape key to close a seat's `/status` panel was refused by the auto-mode classifier ("Interfere With Workloads"). I stopped there. That filer seat is left showing its `/status` panel ("Esc to cancel"), and the operator closes it by hand.
 
 ## Later evidence (2026-10-04, about 01:10Z): leans toward "not switched"
 
-Seats that were serving work after the operator's Enterprise `/login` went on to hit the limit. two supervisor seats sent at 23:01Z and 23:09Z; both now sit on the same menu, which offers to continue at the personal subscription's reset (Oct 6, 9pm). If their requests had moved to the Enterprise credential, a new limit on the personal plan would not stop them. This is indirect: an Enterprise limit with that reset time would look the same. The decisive one-prompt test is still the clean answer.
+Seats that were serving work after the operator's Enterprise `/login` went on to hit the limit. Two supervisor seats sent at 23:01Z and 23:09Z; both now sit on the same menu, which offers to continue at the personal subscription's reset (Oct 6, 9pm). If their requests had moved to the Enterprise credential, a new limit on the personal plan would not stop them. This is indirect: an Enterprise limit with that reset time would look the same. The decisive one-prompt test is still the clean answer.
 
 ## Result (2026-10-04), reported by the director, not re-measured here
 
-- All 30 kinu seats were moved to the other subscription by a per-seat `/login`. Most completed from the shared browser session; 3 needed the operator at the browser. So the "not served" branch above, where each seat needs its own `/login`, is what happened in practice.
+- All 30 kinu seats were moved to the other subscription by a per-seat `/login`. Most completed from the shared browser session; 3 needed the operator at the browser. This says how the seats were moved, not whether a running seat's requests would have switched without it; that question is still open.
 - The decisive test was not run cleanly: whether a seat's requests switch to the new credential without a `/login`, by sending one small prompt to a limited seat after it picks "Stop and wait". No clean answer to "does one `/login` reach the in-memory token".
 - The later evidence above still leans toward "not switched": seats that kept working after the operator's own `/login` later hit the personal limit.
 - Not resolved by this result: whether a respawn would have been cheaper than 30 logins, the scope question, and reversal after the reset.

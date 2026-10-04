@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-03
 **Placement:** marvel. The subject is marvel minting the identity a seat writes to bd under. It answers `question-bd-managed-extended-service` (d) and part of (e).
-**Number:** 068 (origin/main tops out at 064; marvel#528 holds 065; marvel#530 holds 066 and 067).
+**Number:** 068 (origin/main tops out at 064; marvel#528 holds 065 (merged); marvel#530 holds 066 and 067).
 **Rulings (operator, 2026-10-04, ratified defaults):**
 - (i) a marvel signing key trusted by the bd server is custody-adjacent until ruled otherwise, and nothing is built on it in the meantime;
 - (ii) the identity is the slot, not the session;
@@ -116,6 +116,6 @@ On kinu today, no account other than root holds CREATE USER (`SHOW GRANTS` read-
   - `question-marvel-identity-authority-topology` (orc, RELOCATION-PENDING): JWT as the bd projection of a marvel-minted principal;
   - aae-orc-ep8n3, aae-orc-64kn2, aae-orc-cwhwt, aae-orc-4ascm
 - extends: aae-orc finding-149 (its attribution was the actor string)
-- supports (kos schema has no relates type): `question-credential-custody-beyond-nkey` (new in marvel#528); the credential-delivery finding draft (`.session/research/2026-10-04-bd-credential-via-marvel/`)
+- supports (kos schema has no relates type): `question-credential-custody-beyond-nkey` (added by marvel#528, merged); the credential-delivery finding draft (`.session/research/2026-10-04-bd-credential-via-marvel/`)
 
 Data: `.session/research/2026-10-03-bd-account-minting/data/` (probe.py, probe2.py and probe3.py with run2-5.txt; jwtprobe-main.go; the scratch config with paths elided).
