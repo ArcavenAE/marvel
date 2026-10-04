@@ -43,9 +43,18 @@ sits in, the cluster it belongs to and the services that cluster depends on.
      a remote cluster, or the socket path for a local one;
    - the cluster name, which has to be the name other tools use. On
      2026-10-04 the marvel cluster named `skippy` was `mokuzai` on the global
-     bus, so a send to `global://skippy/supervisor` was refused (R-92). A view
-     that shows the client's own name for a cluster would have shown the name
-     the bus refused. Which name is canonical is open (bd aae-orc-4hku4 holds
+     bus. Director's send to `global://skippy/supervisor` at about 19:55Z was
+     refused (hub audit seq 11416, 2026-10-04) with:
+
+     > nothing is registered under "presence.skippy." in GLOBAL_PRESENCE for
+     > global://skippy/supervisor, though 16 other presence key(s) exist; the
+     > cluster name is likely wrong. no session would consume this send, so it
+     > is refused rather than stored on a subject nobody reads (R-92 liveness)
+
+     The retry to `global://mokuzai/supervisor` was accepted. The refusal
+     comes from director's liveness check (`global.go:233` in director). A
+     view that shows the client's own name for a cluster would have shown
+     the name the bus refused. Which name is canonical is open (bd aae-orc-4hku4 holds
      the fleet's name grammar).
 
 2. **The state of the cluster's services.** From an earlier operator note:

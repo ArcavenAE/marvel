@@ -55,7 +55,11 @@ the motivating case; `get teams` and `events` are the next likely ones.
 
 1. **Cluster naming and identity.** The same cluster can carry two names.
    On 2026-10-04 the marvel cluster named `skippy` was `mokuzai` on the
-   global bus, so a send to `global://skippy/supervisor` was refused (R-92).
+   global bus. Director's send to `global://skippy/supervisor` was refused
+   under R-92 (hub audit seq 11416, 2026-10-04): "nothing is registered
+   under "presence.skippy." ... the cluster name is likely wrong", and the
+   retry to `global://mokuzai/supervisor` was accepted. The full text is
+   in [[get-views-connection-and-service-context]] item 1.
    A merged view keyed on the client's name would disagree with the bus and
    with director about which cluster a row came from. Which name is the
    identity: the client config entry, the daemon's own name, the host, or
