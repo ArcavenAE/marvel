@@ -120,6 +120,11 @@ stewardship. No graph mentions it yet, and it is not defined here.
   question.
 - **aae-orc SOUL §8 and ADR-007, the automation boundary.**
 - **Director's open research on how a session validates that a message
-  came from director or the operator.** No record of it was found in
-  director's graph or in the orc graph on main; the pointer is to be added
-  when it has one.
+  came from director.** It is a requirement, not yet a probe: director's
+  `sim/requirements.md` R-05, "Addressed sessions must be able to validate
+  that a message is in fact from director, with nonrepudiation", the
+  identity plane. R-53 ties it to the seat's nonrepudiation gap ("R-55
+  proves recency, not identity"), and director's skill calls it research
+  ("That is research, not something to solve in prose here"). An
+  operator-originated directive would need the same property, extended from
+  director to the operator.
