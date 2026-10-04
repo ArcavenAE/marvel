@@ -1,0 +1,3 @@
+Synthetic harness: not signed in
+Open https://example.invalid/device?code=ABCD-1234 to continue
+Press Enter after signing in

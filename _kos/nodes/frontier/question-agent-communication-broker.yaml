@@ -103,6 +103,21 @@ content: |
   behaved as written (review 5397145046). Design:
   docs/design/bus-role-users.md.
 
+  STATE 2026-10-04 (harvest, finding-065). The global tier is granted by two
+  keys, not by a role's name: the manifest declares `global_role` and the
+  cluster's config admits the name (`global_roles` on the bus entry;
+  `supervisor` is admitted unlisted). One resolver, `ResolvedGlobalRole`,
+  serves the renderer, `Credential` and the seat env. Admission is checked at
+  every render, since the renderer builds from stored teams and a restart
+  rehydrates without an apply; apply's refusal is the early half. With no bus
+  a declaration is inert, and with an adopted bus nothing renders and
+  `bus.global-role-unadmitted` never fires, but apply still refuses and the
+  env is still gated. `DIRECTOR_GLOBAL_ROLE` is exported for a fresh spawn
+  only. Design marvel#519, build marvel#520, note marvel#522; all merged.
+  STILL OPEN: whether the director shim retries or exits when its broker user
+  is revoked. Only a nats CLI subscriber was measured (nats-server v2.14.6,
+  loopback scratch), which stayed disconnected and retrying.
+
 edges:
   - target: aae-orc::finding-166-dead-bus-session-reports-running
     type: derives

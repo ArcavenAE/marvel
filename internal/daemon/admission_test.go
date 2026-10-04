@@ -382,9 +382,15 @@ teams:
 	if resp.Error != "" {
 		t.Fatalf("get budgets: %s", resp.Error)
 	}
-	var rows []admission.Row
-	if err := json.Unmarshal(resp.Result, &rows); err != nil {
+	var all, rows []admission.Row
+	if err := json.Unmarshal(resp.Result, &all); err != nil {
 		t.Fatalf("unmarshal rows: %v", err)
+	}
+	// Account rows share the view; this test is about the team rows.
+	for _, r := range all {
+		if r.Dimension != api.DimAccountWindow {
+			rows = append(rows, r)
+		}
 	}
 	if len(rows) != 1 {
 		t.Fatalf("got %d row(s), want 1 (only the budgeted team): %+v", len(rows), rows)

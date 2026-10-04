@@ -20,6 +20,13 @@ content: |
   bypasses crash accounting and leaks panes; backoff-held roles are
   invisible). See finding-010-shift-abort-rollback-defects; fixes
   tracked as bd aae-orc-d0pt (P2) and aae-orc-pyre (P1).
+
+  STATE 2026-10-04 (harvest, finding-065). `shiftOrder` in
+  internal/team/controller.go still hard-codes `supervisor` as the role that
+  shifts last. Whether a declared global role should order there too was left
+  to a separate ticket by the global-role design (marvel#519); the stage-3
+  `blocks` edge is a bd action.
+
 edges:
   - target: question-org-model
     type: derives

@@ -88,3 +88,22 @@ func TestUnconfirmedErrorFollowsTheDaemonsVerdict(t *testing.T) {
 		}
 	}
 }
+
+// --allow-bare-digit reaches the daemon as allow_bare_digit on every step, and a
+// plain inject carries no such field.
+func TestAllowBareDigitReachesTheRequest(t *testing.T) {
+	steps := []injectStep{{Text: "3", Literal: true}, {Text: "Enter"}}
+	for i, s := range withAllowBareDigit(steps, true) {
+		if p := injectRequestParams("ws/sess", s); p["allow_bare_digit"] != true {
+			t.Errorf("step %d params = %v, want allow_bare_digit true", i, p)
+		}
+	}
+	for i, s := range withAllowBareDigit(steps, false) {
+		if p := injectRequestParams("ws/sess", s); p["allow_bare_digit"] != nil {
+			t.Errorf("step %d carries allow_bare_digit without the flag: %v", i, p)
+		}
+	}
+	if steps[0].AllowBareDigit {
+		t.Error("withAllowBareDigit changed its input")
+	}
+}
