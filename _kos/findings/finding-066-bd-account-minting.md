@@ -97,7 +97,9 @@ There are three identities, and only one is authenticated.
 
 ## Decision as ruled
 
-Path C now: per-cluster SQL users, as finding-149 did for skippy, and `BEADS_ACTOR` keyed off the slot (aae-orc-ep8n3). Path B waits for TLS on the bd server (aae-orc-4ascm). Path A is ruled out against kinu's server.
+Path C now: per-cluster SQL users, as finding-149 did for skippy, and `BEADS_ACTOR` keyed off the slot (aae-orc-ep8n3). Path B waits for TLS on the bd server (aae-orc-4ascm).
+
+Not part of the ruling: section 3.A finds that path A would be custody against kinu's server (ADR-009), because a delegated CREATE USER credential is root-equivalent. That is this finding's analysis; the operator ruled on (i) to (iii) only.
 
 Two upstream bd items from section 2 go to the beads project:
 - the cleartext DSN setting is already in flight upstream (gastownhall/beads#6667, PR #6668);
