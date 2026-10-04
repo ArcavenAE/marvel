@@ -510,11 +510,12 @@ authority to exist is the question. Expiry: none; UL-R1 was ruled
 |---|---|---|
 | UL-1 | As before, plus the three reading states and the `none` budget row (9.2) | none |
 | UL-2 | As before, plus one captured payload per plan type (subscription and Enterprise) as fixtures | UL-1 |
-| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3; adopted with UL-R1, see 9.9) | UL-1 |
+| UL-3 | As before, plus `limit_reading` in describe and JSON (9.2) and the `pane-menu` source under the matcher (9.3). **The `pane-menu` source is HELD until the operator answers UL-R2 (9.9, Conflict)**; the rest of UL-3 is not | UL-1 |
 | UL-7 | UL-R1, ruled (9.9): A's events always; B's guarded selection built now, as the first limit action; the matcher and its fixtures shared with UL-3 | UL-3, UL-R1, and for B the samples from probe P-UL7 (9.7) |
 
-Build order for the builder's red/green PR: UL-1, UL-3 and UL-2 first, so the
-next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
+Build order for the builder's red/green PR: UL-1, UL-3 (without its held
+`pane-menu` source and tests 22, 22a and 29) and UL-2 first, so the next limit
+is seen. UL-7 follows its ruling (9.9). UL-4 to UL-6 are unchanged.
 
 ### 9.6 Tests added (red first)
 
@@ -526,11 +527,11 @@ next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
     `none`, not as 0%.
 21. A reading 16 minutes old (fake clock) shows `stale` in the budget view and
     `describe`, and `limit_reading` is `stale`; section 2's test 4 still holds.
-22. (9.3) A stalled interactive seat with reading `none` whose capture matches
+22. (9.3; HELD with the `pane-menu` source, 9.9 Conflict) A stalled interactive seat with reading `none` whose capture matches
     the sample is marked `limited` with source `pane-menu`; a capture differing
     in any byte outside the time span sets nothing; a working seat is never
     captured to set the condition.
-22a. (9.3, clear) A `pane-menu` condition clears on a capture showing neither
+22a. (9.3, clear; HELD with the `pane-menu` source, 9.9 Conflict) A `pane-menu` condition clears on a capture showing neither
     the menu nor the post-selection screen, on an advancing activity signal,
     and on a fresh reading below 100, each emitting `session.unlimited` with
     its rule; with none of the three it stays set across 10 captures. With
@@ -567,14 +568,20 @@ next limit is seen. UL-7 follows its ruling. UL-4 to UL-6 are unchanged.
     version with no post-selection sample, receives no key; A's events and
     `limit-menu.unsampled` are emitted once, and a second matching capture in
     the same limit emits nothing more.
-29. (9.3, `until` parsing, fake clock) A capture on Dec 30 of `Jan 2 at 9pm`
+29. (9.3, `until` parsing, fake clock; HELD with the `pane-menu` source, 9.9 Conflict) A capture on Dec 30 of `Jan 2 at 9pm`
     stores Jan 2 of the next year, and an activity clear on Dec 31 emits
     `limit-menu.resumed-before-reset`. With the host in America/Chicago and
     the seat's `TZ=UTC`, `Oct 6 at 2am` is stored as 02:00Z, and the
     provenance names UTC; with no seat zone it is 07:00Z and names the host
-    zone. with the clock in October 2026, `Nov 1 at 1:30am` in America/Chicago
+    zone. With the clock in October 2026, `Nov 1 at 1:30am` in America/Chicago
     (occurs twice) and `Mar 14 at 2:30am` (2027, does not occur) store an empty `until`, and the clear emits
     `limit-menu.reset-unknown`.
+    Implementation note: Go's `time.Date` does not fail on these. It shifts a
+    nonexistent time and picks one instance of an ambiguous one, silently.
+    Detection is explicit: build the time, convert it back to wall-clock
+    fields in the zone and require them unchanged (a nonexistent time fails),
+    and probe both of the zone's offsets around the instant (an ambiguous
+    time matches both).
 
 ### 9.7 Pre-build probe P-UL7 (operator-run, at the next real limit)
 
@@ -660,7 +667,7 @@ What it changes in this design:
   account reading (UL-1, UL-2) and its thresholds serve that. A threshold
   action before 100% is a follow-up design, not part of UL-7.
 - **UL-R2 was not ruled separately.** It is taken as adopted under "marvel can
-  do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3, and
+  do SOMETHING about it": the `pane-menu` source of 9.3 is built with UL-3 once the Conflict below is answered, and
   its expiry no longer applies.
 
   **Conflict, awaiting the operator.** That adoption line and 9.3's expiry
