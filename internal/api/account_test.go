@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -227,5 +229,76 @@ func TestSessionWithAccountHomeDecodesInAnOldClient(t *testing.T) {
 	plain, _ := json.Marshal(Session{Name: "x"})
 	if strings.Contains(string(plain), "account_home") {
 		t.Fatalf("an empty AccountHome is on the wire: %s", plain)
+	}
+}
+
+func storeWithSession(t *testing.T, hash string) *Store {
+	t.Helper()
+	st := NewStore()
+	sess := Session{Workspace: "ws", Name: "seat", Runtime: Runtime{Name: "claude"}, HeartbeatTokenHash: hash}
+	if err := st.CreateSession(&sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return st
+}
+
+func TestAuthenticateAccountReport(t *testing.T) {
+	t.Parallel()
+	token, hash, err := NewHeartbeatToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := storeWithSession(t, hash)
+	got, err := st.AuthenticateAccountReport("ws/seat", token)
+	if err != nil || got.Key() != "ws/seat" {
+		t.Fatalf("matching token: %v %v", got.Key(), err)
+	}
+	tests := []struct {
+		name, key, token string
+		want             error
+	}{
+		{"wrong token", "ws/seat", "nope", ErrHeartbeatUnauthorized},
+		{"empty token", "ws/seat", "", ErrHeartbeatUnauthorized},
+		{"unknown session", "ws/ghost", token, ErrNotFound},
+	}
+	for _, tc := range tests {
+		if _, err := st.AuthenticateAccountReport(tc.key, tc.token); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	// A record with no hash is refused, even for an empty token, unlike the
+	// heartbeat which admits it.
+	legacy := storeWithSession(t, "")
+	for _, tok := range []string{"", token} {
+		if _, err := legacy.AuthenticateAccountReport("ws/seat", tok); !errors.Is(err, ErrAccountReportUnbound) {
+			t.Errorf("unbound record, token %q: err = %v, want ErrAccountReportUnbound", tok, err)
+		}
+	}
+}
+
+// Percentages outside what a window can hold are not readings.
+func TestAccountRecordRefusesNegativeAndNonFinitePercentages(t *testing.T) {
+	t.Parallel()
+	key := AccountKey{Harness: "claude", Backend: BackendDefaultName}
+	t0 := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	for name, v := range map[string]float64{
+		"negative":      -0.1,
+		"minus one":     -1,
+		"not a number":  math.NaN(),
+		"infinity":      math.Inf(1),
+		"minus infinty": math.Inf(-1),
+	} {
+		r := NewAccountReadings()
+		if r.Record(key, []AccountWindow{{Name: "w", UsedPercent: &v}}, "ws/a", t0) {
+			t.Errorf("%s was stored", name)
+		}
+		if _, st := r.Reading(key, t0); st != ReadingNone {
+			t.Errorf("%s: state %q, want none", name, st)
+		}
+	}
+	zero := 0.0
+	r := NewAccountReadings()
+	if !r.Record(key, []AccountWindow{{Name: "w", UsedPercent: &zero}}, "ws/a", t0) {
+		t.Error("zero percent is a reading and was refused")
 	}
 }

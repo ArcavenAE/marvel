@@ -119,6 +119,10 @@ func cloneRuntime(r Runtime) Runtime {
 func cloneSession(s *Session) Session {
 	out := *s
 	out.Runtime = cloneRuntime(s.Runtime)
+	if s.Limit != nil {
+		l := *s.Limit
+		out.Limit = &l
+	}
 	return out
 }
 

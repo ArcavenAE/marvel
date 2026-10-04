@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -9,14 +10,30 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
-// limitReporting names the harnesses whose account limits marvel can learn
-// (finding-050): a live session of any other runtime has no reading to wait
-// for, so it gets no "none" row. A none row means "a reading is expected and
-// has not arrived", and would mislead for a runtime that can never send one.
-// A reading that does arrive is shown whatever the runtime.
-var limitReporting = map[string]bool{"claude": true, "codex": true}
+// harnessRuntimes are the registered harness runtimes, whose sessions spend
+// against an account. The value says whether marvel has a way to learn that
+// account's limits (finding-050): claude through its statusline and codex
+// through its rollout do; forestage and opencode are not verified to. The
+// test runtimes (generic, simulator, and a bare command such as sleep) are not
+// harnesses and have no account, so they get no row.
+//
+// An account with live harness sessions always gets a row, because "none"
+// means no reading has been received and is true whether or not a source
+// exists. The note tells the two apart.
+var harnessRuntimes = map[string]bool{
+	"claude":    true,
+	"codex":     true,
+	"forestage": false,
+	"opencode":  false,
+}
+
+const (
+	noteNoReading     = "no reading received for this account"
+	noteUnverifiedSrc = "no reading received; this harness is not known to report limits"
+)
 
 // accountRows builds the `get budgets` rows for accounts: one row per window
 // for an account with a reading (fresh or stale), and a single row with window
@@ -26,6 +43,7 @@ var limitReporting = map[string]bool{"claude": true, "codex": true}
 // refuses anything (diagnostic-not-gate).
 func accountRows(readings *api.AccountReadings, sessions []api.Session, now time.Time) []admission.Row {
 	seen := map[api.AccountKey]bool{}
+	unverified := map[api.AccountKey]bool{}
 	var keys []api.AccountKey
 	add := func(k api.AccountKey) {
 		if !seen[k] {
@@ -37,8 +55,11 @@ func accountRows(readings *api.AccountReadings, sessions []api.Session, now time
 		add(k)
 	}
 	for i := range sessions {
-		if sessions[i].State.CountsAsAlive() && limitReporting[sessions[i].Runtime.Name] {
+		if _, harness := harnessRuntimes[sessions[i].Runtime.Name]; harness && sessions[i].State.CountsAsAlive() {
 			add(api.AccountKeyOf(sessions[i]))
+			if !harnessRuntimes[sessions[i].Runtime.Name] {
+				unverified[api.AccountKeyOf(sessions[i])] = true
+			}
 		}
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
@@ -52,7 +73,10 @@ func accountRows(readings *api.AccountReadings, sessions []api.Session, now time
 		}
 		if state == api.ReadingNone {
 			base.AccountWindow = "-"
-			base.Note = "no reading received for this account"
+			base.Note = noteNoReading
+			if unverified[k] {
+				base.Note = noteUnverifiedSrc
+			}
 			out = append(out, base)
 			continue
 		}
@@ -75,13 +99,16 @@ func accountRows(readings *api.AccountReadings, sessions []api.Session, now time
 	return out
 }
 
-// recordAccountLimits stores one reading reported by a session. The account
-// key is derived from the reporting session's own record, so a reporter cannot
-// name an account it is not on. The clock is the daemon's: a sender's own
-// time is not trusted to decide what is stale.
+// recordAccountLimits stores one reading reported by a session. The reporter
+// must hold the token minted for the session it names, and a session with no
+// token is refused: a reading can mark every session of an account limited.
+// The account key is derived from that session's own record, so a reporter
+// cannot name an account it is not on. The clock is the daemon's: a sender's
+// own time is not trusted to decide what is stale.
 func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time) Response {
-	sess, err := d.store.GetSession(req.Session)
+	sess, err := d.store.AuthenticateAccountReport(req.Session, req.SessionToken)
 	if err != nil {
+		d.noteRefusedAccountReport(req, err)
 		return Response{Error: fmt.Sprintf("account.limits: %v", err)}
 	}
 	key := api.AccountKeyOf(sess)
@@ -99,4 +126,23 @@ func (d *Daemon) handleAccountLimits(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("account.limits: %v", err)}
 	}
 	return d.recordAccountLimits(req, time.Now().UTC())
+}
+
+// noteRefusedAccountReport says why a reading was refused, on the ring and in
+// the log with the heartbeat's throttle, since the sender is best effort and
+// would otherwise fail silently. An unknown session is not reported: it names
+// nothing to filter by.
+func (d *Daemon) noteRefusedAccountReport(req api.AccountLimitsRequest, err error) {
+	var cause, msg string
+	switch {
+	case errors.Is(err, api.ErrAccountReportUnbound):
+		cause, msg = "account-unbound", "account.limits refused: the session record carries no token, so the reading cannot be bound to it; restart it"
+	case errors.Is(err, api.ErrHeartbeatUnauthorized) && req.SessionToken == "":
+		cause, msg = "account-no-token", "account.limits refused: no token presented while the session carries one, so its producer is not sending MARVEL_HEARTBEAT_TOKEN"
+	case errors.Is(err, api.ErrHeartbeatUnauthorized):
+		cause, msg = "account-stale-token", "account.limits refused: the token does not match the session named; see 'marvel orphans'"
+	default:
+		return
+	}
+	d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, req.Session, msg)
 }
