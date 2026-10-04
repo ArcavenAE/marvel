@@ -116,6 +116,10 @@ type AccountReading struct {
 	Windows []AccountWindow `json:"windows"`
 	Session string          `json:"session"`
 	At      time.Time       `json:"at"`
+	// unstamped marks a reading whose sender gave no observation time, so At is
+	// only when the daemon received it. Such a reading never displaces a stamped
+	// one and is displaced by any later reading.
+	unstamped bool
 }
 
 // AccountLimitsRequest is the account.limits RPC body. It names the reporting
@@ -129,6 +133,12 @@ type AccountLimitsRequest struct {
 	// process that holds the token of the session it names.
 	SessionToken string          `json:"session_token,omitempty"`
 	Windows      []AccountWindow `json:"windows"`
+	// ObservedAt is when the harness made the observation, when the sender
+	// knows (codex stamps each rollout record). Zero means "now", which is
+	// right for a statusline tick. The daemon keeps the newest reading by this
+	// time, so a sender re-posting an old figure cannot replace a newer one.
+	// Additive: an older daemon ignores it, an older sender omits it.
+	ObservedAt time.Time `json:"observed_at,omitempty"`
 }
 
 // ErrAccountReportUnbound is returned when a reading names a session whose
@@ -174,6 +184,13 @@ func NewAccountReadings() *AccountReadings {
 // percentage is dropped; a reading with no usable window is not stored, and
 // does not replace an earlier one.
 func (a *AccountReadings) Record(key AccountKey, windows []AccountWindow, session string, at time.Time) bool {
+	return a.RecordObserved(key, windows, session, at, at)
+}
+
+// RecordObserved is Record with the receiving clock. A stamped reading that is
+// no longer fresh at now does not displace a held unstamped one: the stamp says
+// the figure is old, and the unstamped reading is the daemon's newest news.
+func (a *AccountReadings) RecordObserved(key AccountKey, windows []AccountWindow, session string, at, now time.Time) bool {
 	var usable []AccountWindow
 	for _, w := range windows {
 		if w.UsedPercent == nil || math.IsNaN(*w.UsedPercent) || math.IsInf(*w.UsedPercent, 0) || *w.UsedPercent < 0 {
@@ -186,7 +203,42 @@ func (a *AccountReadings) Record(key AccountKey, windows []AccountWindow, sessio
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// The newest observation wins. An older one is not an error, it is
+	// information the account already has newer.
+	if held, ok := a.m[key]; ok {
+		if !held.unstamped && at.Before(held.At) {
+			return false
+		}
+		if held.unstamped && now.Sub(at) > ReadingMaxAge {
+			return false
+		}
+	}
 	a.m[key] = AccountReading{Windows: usable, Session: session, At: at}
+	return true
+}
+
+// RecordUnstamped stores a reading whose sender gave no observation time. The
+// time is unknown, so it is treated as unknown: it is stored only when nothing
+// stamped is held (an older sender that never stamps still gets its readings
+// through, one replacing the last), and it never displaces a stamped reading.
+// now is when the daemon received it.
+func (a *AccountReadings) RecordUnstamped(key AccountKey, windows []AccountWindow, session string, now time.Time) bool {
+	var usable []AccountWindow
+	for _, w := range windows {
+		if w.UsedPercent == nil || math.IsNaN(*w.UsedPercent) || math.IsInf(*w.UsedPercent, 0) || *w.UsedPercent < 0 {
+			continue
+		}
+		usable = append(usable, cloneWindow(w))
+	}
+	if len(usable) == 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if held, ok := a.m[key]; ok && !held.unstamped {
+		return false
+	}
+	a.m[key] = AccountReading{Windows: usable, Session: session, At: now, unstamped: true}
 	return true
 }
 

@@ -32,6 +32,18 @@ func TestEvaluateLimitSetsAtOneHundredWithAFutureReset(t *testing.T) {
 	}
 }
 
+// A stale reading at 100 with a reset still ahead may set the condition: the
+// window cannot have reset yet, so the last word is still "full". It binds like
+// a fresh one, and it can end only by its reset or a newer fresh reading.
+func TestEvaluateLimitStaleFullWindowSets(t *testing.T) {
+	t.Parallel()
+	reset := limT0.Add(2 * time.Hour)
+	next, ch, _ := EvaluateLimit(nil, limKey(), reading(limT0, win("seven_day", 100, reset)), ReadingStale, limT0.Add(time.Hour))
+	if ch != LimitSet || next == nil || next.Window != "seven_day" || !next.ResetsAt.Equal(reset) {
+		t.Fatalf("a stale 100 with a future reset: change = %q next = %+v, want set", ch, next)
+	}
+}
+
 func TestEvaluateLimitDoesNotSet(t *testing.T) {
 	t.Parallel()
 	reset := limT0.Add(2 * time.Hour)
@@ -43,7 +55,8 @@ func TestEvaluateLimitDoesNotSet(t *testing.T) {
 		{"99 percent", reading(limT0, win("seven_day", 99.9, reset)), ReadingFresh},
 		{"100 with the reset already past", reading(limT0, win("seven_day", 100, limT0.Add(-time.Second))), ReadingFresh},
 		{"100 with no reset time", reading(limT0, win("seven_day", 100, time.Time{})), ReadingFresh},
-		{"a stale 100", reading(limT0, win("seven_day", 100, reset)), ReadingStale},
+		{"a stale 99", reading(limT0, win("seven_day", 99, reset)), ReadingStale},
+		{"a stale 100 with the reset already past", reading(limT0, win("seven_day", 100, limT0.Add(-time.Second))), ReadingStale},
 		{"no reading", AccountReading{}, ReadingNone},
 	}
 	for _, tc := range tests {

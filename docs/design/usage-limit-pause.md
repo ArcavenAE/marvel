@@ -82,7 +82,7 @@ A session is `limited` when either holds:
    limit or usage limit). UL-3 adds it only after capturing a real sample, so
    until then a headless run is `limited` through its account's reading only.
 
-It clears at the window's `resets_at`, or earlier when a newer reading for its
+It clears at the window's `resets_at`, or earlier when a newer fresh reading for its
 account is below 100.
 
 The session stores the condition with its provenance: the window, `resets_at`,
@@ -233,8 +233,10 @@ doc supplies them.
 2. The column cell is exactly `limited`; no until-time appears in the table.
 3. At `resets_at` (fake clock) the condition clears and `session.unlimited` is
    emitted once.
-4. A reading older than 15 minutes renders `stale` in the budget view, and
-   does not set or hold `limited`.
+4. A reading older than 15 minutes renders `stale` in the budget view.
+   Staleness never clears `limited`: a stale 40 leaves a stored condition as
+   it is. A stale 100 whose reset is still ahead sets `limited` (ruled by the
+   operator on #551), and a stale 100 whose reset has passed sets nothing.
 5. `limited` never triggers a restart, a kill or a shift.
 6. A pause with `--until reset` refuses a scale-up in scope, admits repair,
    and lifts itself at the reset with `pause.lifted`.
@@ -358,11 +360,12 @@ Where each state shows:
 Which state kinu reads depends on when UL-1 ships. Shipped today, its keys
 read `none`: no reading was ever stored, since nothing is built. Had UL-1 been
 running before the move to Enterprise, the keys would read `stale`, holding
-the personal plan's last reading. That stale 100% neither sets nor holds
-`limited` (section 2, test 4), and whether a `/login` should start a new key is
+the personal plan's last reading. That stale 100% sets `limited` while its
+reset is ahead and never clears it (section 2, test 4); it ends at its reset or
+at a newer fresh reading below 100. Whether a `/login` should start a new key is
 9.8's open question.
 
-With no fresh reading, `limited` can come only from a refusal, and UL-3 does
+With no reading, `limited` can come only from a refusal, and UL-3 does
 not recognize one yet. 9.3 adds the interactive source.
 
 ### 9.3 The named exception to "no pane-text scraping"
@@ -524,7 +527,9 @@ source and tests 22, 22a and 29) and UL-2 first, so the next limit is seen. UL-7
 20. A payload whose `rate_limits` windows carry no percentage is stored as
     `none`, not as 0%.
 21. A reading 16 minutes old (fake clock) shows `stale` in the budget view and
-    `describe`, and `limit_reading` is `stale`; section 2's test 4 still holds.
+    `describe`, and `limit_reading` is `stale`. Section 2's test 4 holds: at
+    100% with its reset ahead the same reading also sets `limited`, at 40 it
+    sets nothing, and at 100 with its reset passed it sets nothing.
 22. (9.3) A stalled interactive seat with reading `none` whose capture matches
     the sample is marked `limited` with source `pane-menu`; a capture differing
     in any byte outside the time span sets nothing; a working seat is never
@@ -672,6 +677,12 @@ runs it.
   `/login` in the shared store is the probe brief's open decisive test. If they
   do, the account key in section 2 can change under a live session, and the
   key must be re-read on each reading, not cached per session.
+- **How long a stale 100% may set `limited`.** Section 2's test 4 lets a stale
+  100% with a reset ahead set the condition, which ends at that reset or at a
+  newer fresh reading below 100. A figure that has not changed for hours, or a
+  `/login` to another account that shares the key, could keep a seat `limited`
+  on old news. Whether a stale reading should stop setting after a longer bound
+  is open.
 - **What an unanswered weekly menu does at its reset** (9.4). The first reset
   observed with the menu up answers it, and may make UL-7 unnecessary.
 

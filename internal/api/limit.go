@@ -82,15 +82,15 @@ const (
 // EvaluateLimit decides a session's reading-sourced condition from its
 // account's reading. cur is the stored provenance, nil if not limited.
 //
-// A session is limited when a fresh reading has a window at 100 percent or
-// more whose reset is still ahead. It is bound to the full window that resets
+// A session is limited when a reading, fresh or stale, has a window at 100
+// percent or more whose reset is still ahead. It is bound to the full window that resets
 // last. It stays limited until that reset, or until a newer fresh reading
 // leaves no window at 100 with a reset ahead. If a newer reading puts the bound
 // window below 100 while another window is still full, the session stays
 // limited and is rebound to the one that still binds it, with no clear and no
 // new set: a false unlimited followed by limited would break once per
-// transition. A stale reading never sets a condition and never clears one; a
-// stored condition ends by its own reset time, so it needs no reading and
+// transition. A stale reading may set a condition (a full window cannot
+// have reset before its reset time) but never clears one; a stored condition ends by its own reset time, so it needs no reading and
 // survives a daemon restart. A condition another source set (the pane menu) is
 // left alone.
 func EvaluateLimit(cur *LimitProvenance, key AccountKey, reading AccountReading, state ReadingState, now time.Time) (next *LimitProvenance, change LimitChange, reason string) {
@@ -117,7 +117,7 @@ func EvaluateLimit(cur *LimitProvenance, key AccountKey, reading AccountReading,
 		}
 		return cur, LimitUnchanged, ""
 	}
-	if state != ReadingFresh {
+	if state == ReadingNone {
 		return nil, LimitUnchanged, ""
 	}
 	bind := bindingWindow(reading, now)

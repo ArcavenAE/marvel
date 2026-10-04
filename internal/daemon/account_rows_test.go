@@ -267,3 +267,153 @@ func TestAccountRowsAReadingFromAnUnverifiedHarnessIsShown(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
+
+// A stale lower reading posted after a fresh full one is ignored, so the
+// limited condition stays set (marvel#551 review: a codex session re-posting an
+// hour-old figure every tick).
+func TestAccountLimitsStaleLowerReadingLeavesLimitedSet(t *testing.T) {
+	d := newHandlerDaemon(t)
+	token := tokenedSession(t, d, "seat")
+	now := time.Now().UTC()
+	reset := now.Add(2 * time.Hour)
+	post := func(pct float64, observed time.Time) Response {
+		return d.recordAccountLimits(api.AccountLimitsRequest{
+			Session: "ws/seat", SessionToken: token, ObservedAt: observed,
+			Windows: []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(pct), ResetsAt: reset}},
+		}, now)
+	}
+	if resp := post(100, now.Add(-time.Minute)); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	d.evaluateLimits(now)
+	if got, _ := d.store.GetSession("ws/seat"); got.Condition != api.ConditionLimited {
+		t.Fatalf("not limited by a fresh full window: %q", got.Condition)
+	}
+	resp := post(40, now.Add(-time.Hour))
+	if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":false`) {
+		t.Fatalf("stale reading: %+v", resp)
+	}
+	d.evaluateLimits(now.Add(time.Second))
+	if got, _ := d.store.GetSession("ws/seat"); got.Condition != api.ConditionLimited || got.Limit == nil {
+		t.Fatalf("a stale lower reading lifted the limit: %q", got.Condition)
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 0 {
+		t.Fatalf("session.unlimited emitted %d times", n)
+	}
+}
+
+func TestAccountLimitsObservedAtFutureRejectedSkewClamped(t *testing.T) {
+	d := newHandlerDaemon(t)
+	token := tokenedSession(t, d, "seat")
+	now := time.Now().UTC()
+	req := func(observed time.Time) api.AccountLimitsRequest {
+		return api.AccountLimitsRequest{
+			Session: "ws/seat", SessionToken: token, ObservedAt: observed,
+			Windows: []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(10)}},
+		}
+	}
+	if resp := d.recordAccountLimits(req(now.Add(time.Hour)), now); resp.Error == "" {
+		t.Fatal("an observation an hour in the future was accepted")
+	}
+	if got := accountRowsOf(d); len(got) != 1 || got[0] != "none:-" {
+		t.Fatalf("a rejected reading left rows %v", got)
+	}
+	if resp := d.recordAccountLimits(req(now.Add(20*time.Second)), now); resp.Error != "" {
+		t.Fatalf("small skew refused: %s", resp.Error)
+	}
+	r, _ := d.accounts.Reading(api.AccountKeyOf(accountSession("seat", "claude")), now)
+	if r.At.After(now) {
+		t.Fatalf("skewed observation stored in the future: %v", r.At)
+	}
+	// No observed_at: stamped now, as the claude statusline sender does.
+	if resp := d.recordAccountLimits(req(time.Time{}), now.Add(time.Minute)); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+}
+
+// A claude reading with no observation time (an older sender) posted after a
+// stamped fresh 100 is not stored, and limited stays set (marvel#551 r2).
+func TestAccountLimitsZeroTimeReadingNeverDisplacesAStampedOne(t *testing.T) {
+	d := newHandlerDaemon(t)
+	token := tokenedSession(t, d, "seat")
+	now := time.Now().UTC()
+	reset := now.Add(2 * time.Hour)
+	post := func(pct float64, observed time.Time) Response {
+		return d.recordAccountLimits(api.AccountLimitsRequest{
+			Session: "ws/seat", SessionToken: token, ObservedAt: observed,
+			Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(pct), ResetsAt: reset}},
+		}, now)
+	}
+	if resp := post(100, now.Add(-time.Second)); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	d.evaluateLimits(now)
+	resp := post(40, time.Time{})
+	if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":false`) {
+		t.Fatalf("zero-time reading: %+v", resp)
+	}
+	d.evaluateLimits(now.Add(time.Second))
+	if got, _ := d.store.GetSession("ws/seat"); got.Condition != api.ConditionLimited {
+		t.Fatalf("a zero-time 40 lifted the limit: %q", got.Condition)
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 0 {
+		t.Fatalf("session.unlimited emitted %d times", n)
+	}
+}
+
+// With nothing stored, a zero-time reading is stored (an older sender).
+func TestAccountLimitsZeroTimeReadingIsStoredWhenNothingIs(t *testing.T) {
+	d := newHandlerDaemon(t)
+	token := tokenedSession(t, d, "seat")
+	resp := d.recordAccountLimits(api.AccountLimitsRequest{
+		Session: "ws/seat", SessionToken: token,
+		Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(40)}},
+	}, time.Now().UTC())
+	if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":true`) {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+// The forwarder path, two seats of one account: seat a posts a stamped 100 and
+// is limited; seat b's statusline re-renders the same old 40 over and over, each
+// time stamped with the first time it saw that figure (earlier than a's 100).
+// Limited holds and nothing is unlimited (marvel#551 r3).
+func TestAccountLimitsTwoSeatsAReRenderingSiblingNeverLiftsALimit(t *testing.T) {
+	d := newHandlerDaemon(t)
+	tokA := tokenedSession(t, d, "seat-a")
+	tokB := tokenedSession(t, d, "seat-b")
+	now := time.Now().UTC()
+	reset := now.Add(3 * time.Hour)
+	post := func(session, token string, pct float64, firstSeen time.Time) Response {
+		return d.recordAccountLimits(api.AccountLimitsRequest{
+			Session: session, SessionToken: token, ObservedAt: firstSeen,
+			Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(pct), ResetsAt: reset}},
+		}, now)
+	}
+	bSaw40 := now.Add(-20 * time.Minute)
+	if resp := post("ws/seat-b", tokB, 40, bSaw40); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	if resp := post("ws/seat-a", tokA, 100, now.Add(-time.Minute)); resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	d.evaluateLimits(now)
+	for _, k := range []string{"ws/seat-a", "ws/seat-b"} {
+		if got, _ := d.store.GetSession(k); got.Condition != api.ConditionLimited {
+			t.Fatalf("%s not limited: %q", k, got.Condition)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		resp := post("ws/seat-b", tokB, 40, bSaw40) // the same figure, the same first-seen stamp
+		if resp.Error != "" || !strings.Contains(string(resp.Result), `"stored":false`) {
+			t.Fatalf("re-render %d: %+v", i, resp)
+		}
+		d.evaluateLimits(now.Add(time.Duration(i+1) * time.Second))
+	}
+	if n := len(eventsOf(d, events.KindSessionUnlimited)); n != 0 {
+		t.Fatalf("session.unlimited emitted %d times", n)
+	}
+	if got, _ := d.store.GetSession("ws/seat-b"); got.Condition != api.ConditionLimited {
+		t.Fatalf("seat b lost the limit: %q", got.Condition)
+	}
+}
