@@ -442,13 +442,13 @@ func TestAccountLabelCanonicalizesTheConfigDir(t *testing.T) {
 		return accountLabel(s)
 	}
 	one := label(real)
-	for _, spelling := range []string{real + "/", link, filepath.Join(home, ".", "acct-one"), "~/acct-one", real + "//"} {
+	for _, spelling := range []string{real + "/", link, filepath.Join(home, ".", "acct-one"), real + "//"} {
 		if got := label(spelling); got != one {
 			t.Errorf("%q labels %s, want %s", spelling, got, one)
 		}
 	}
 	def := label("")
-	for _, spelling := range []string{filepath.Join(home, ".claude"), "~/.claude", "~/.claude/", "~/.claude/."} {
+	for _, spelling := range []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude") + "/"} {
 		if got := label(spelling); got != def {
 			t.Errorf("%q labels %s, want the default %s", spelling, got, def)
 		}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -216,7 +215,8 @@ func (w *watchdog) clear(s api.Session, why string) {
 // accountLabel groups seats by runtime and config directory. The directory is
 // reduced to a short hash so no path reaches an event.
 func accountLabel(s api.Session) string {
-	dir := canonicalConfigDir(s.Runtime.Env["CLAUDE_CONFIG_DIR"])
+	home, _ := os.UserHomeDir()
+	dir := api.CanonicalConfigDir(s.Runtime.Env["CLAUDE_CONFIG_DIR"], home)
 	if dir == "" {
 		return s.Runtime.Name + ":default"
 	}
@@ -301,31 +301,4 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 		defer d.wg.Done()
 		w.Run(ctx)
 	}()
-}
-
-// canonicalConfigDir reduces a config directory to one spelling, "" for the
-// harness's default: empty, the explicit default (~/.claude), a leading ~, a
-// trailing slash or a symlink to the same place are one account, not several.
-func canonicalConfigDir(dir string) string {
-	if dir == "" {
-		return ""
-	}
-	home, _ := os.UserHomeDir()
-	if dir == "~" || strings.HasPrefix(dir, "~/") {
-		dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
-	}
-	dir = filepath.Clean(dir)
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
-	}
-	if home != "" {
-		def := filepath.Join(home, ".claude")
-		if resolved, err := filepath.EvalSymlinks(def); err == nil {
-			def = resolved
-		}
-		if dir == def {
-			return ""
-		}
-	}
-	return dir
 }
