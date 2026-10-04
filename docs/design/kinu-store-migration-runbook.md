@@ -58,11 +58,15 @@ window after it. Written to assume the upgrade goes badly.
      and it also sets the workspace root (`cmd/marvel/workroot.go:19`). A workdir change
      alone moves nothing live. But any other drift between a team's manifest
      and the live team, across about 30 teams, would be applied at the same
-     moment. So, per team, with the operator present: save `marvel describe
-     team <ws/team>` into `$W/describe-pre-root-<team>` (the way back); diff
-     the live team against the manifest; and apply only when the only
-     difference is the root. A team with any other difference is left
-     unapplied and takes the default branch.
+     moment. And `marvel work` applies a whole manifest file, whose
+     `Manifest.Teams` is a list, so one file can carry several teams. The gate
+     is therefore **per file**, with the operator present: for every team the
+     file lists, save `marvel describe team <ws/team>` into
+     `$W/describe-pre-root-<team>` (the way back) and diff the live team
+     against the file. Apply the file only when, for every team in it, the
+     only difference is the root. If any one team in the file differs in
+     anything else, the file is not applied, and every team in it takes the
+     default branch.
 
 ## 3. Rehearsal (operator-attended, on kinu, before the window)
 
@@ -88,7 +92,7 @@ so a leaked `MARVEL_BACKEND_OVERLAY_DIR` or `MARVEL_SOCKET` would pass through).
 After each start: the scratch daemon's first answer is a read-only `cli <bin>
 bus status` with no "is rooted at" warning, and two live counts taken before
 the rehearsal are unchanged: `marvel get sessions | wc -l` against the live
-daemon, and `tmux -S /private/tmp/tmux-501/marvel-75c803c5 list-panes -a | wc
+daemon, and `tmux -L marvel-75c803c5 list-panes -a | wc
 -l` on the live marvel tmux server. A hand-run daemon cannot take the live socket, since it takes the
 socket lock first (`daemon.go:447-457`). It reaches the live panes only through
 `MARVEL_TMUX_SOCKET`, which is set to the scratch server.
@@ -185,8 +189,17 @@ Capture first, into `W=~/.marvel/window-$(date +%Y%m%d)`:
      mise at that exact version.
 
    Then `marvel version` must name the rehearsed release. **If it does not, do
-   not start the daemon.** Go to section 6 step 5 with the old binary instead:
-   the store is still v1, since nothing has opened it.
+   not start the daemon.** The store is still v1, since nothing has opened it,
+   but `PATH` now holds an unrehearsed binary, and the tap branch left the
+   formula unpinned. Before going to section 6 step 5 with the old binary:
+   - re-pin, `HOMEBREW_NO_AUTO_UPDATE=1 brew pin arcavenae/tap/marvel`,
+     verified with `brew list --pinned --formula`, so nothing upgrades it
+     further;
+   - put `~/.marvel/rollback` first on the operator's `PATH`, and write the
+     installed version (`marvel version` of the keg) in the window note;
+   - seats' `ctx-forward` still runs the keg's client, so rehearsal step 4's
+     result (new client against the old daemon) says whether that works.
+   Replacing the keg is the operator's call after the window.
 6. Start the daemon with `$W/daemon-cmd`, from the directory in `$W/daemon-cwd`.
 7. Verify, each a pass condition:
    - `~/.marvel/state/marvel.bolt.v1.bak` exists;
