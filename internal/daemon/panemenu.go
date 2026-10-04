@@ -15,10 +15,10 @@ import (
 // captured only where marvel's spawn record says it is the process in front.
 // The daemon wiring of those two is the whole of what this file adds; the
 // source itself cannot send a key.
-func (d *Daemon) paneMenuSource() *panemenu.Source {
+func (d *Daemon) paneMenuSource() panemenu.Evaluator {
 	d.paneMenuOnce.Do(func() {
 		reg := runtime.NewRegistry()
-		d.paneMenu = &panemenu.Source{
+		cfg := panemenu.Config{
 			Samples:  d.limitMenu,
 			Store:    d.store,
 			Readings: d.accounts,
@@ -36,8 +36,10 @@ func (d *Daemon) paneMenuSource() *panemenu.Source {
 				_, front := rule.Foreground(cmd)
 				return front
 			},
+			Hooks:    d.newLimitAction().Hooks(),
 			HostZone: d.hostLocation,
 		}
+		d.paneMenu = panemenu.New(cfg)
 	})
 	return d.paneMenu
 }

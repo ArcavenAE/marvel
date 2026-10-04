@@ -125,13 +125,8 @@ type Daemon struct {
 	sessMgr   *session.Manager
 	teamCtrl  *team.Controller
 	driver    *tmux.Driver
-	// limitMenus are the captured usage-limit menus an inject is checked against.
-	// Production ships none (limitmenu: no sample, no match), so nothing is
-	// refused and no extra capture is taken until P-UL7 supplies one. Set once,
-	// by shippedLimitMenus in the constructor; tests set it directly.
-	limitMenus []limitmenu.Sample
-	listener   net.Listener
-	sshServer  *SSHServer
+	listener  net.Listener
+	sshServer *SSHServer
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -199,12 +194,19 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
-	// limitMenu holds the captured limit-menu samples; empty until a real
-	// capture is supplied, so the pane-menu source sets nothing. paneMenu is
-	// built from it on first use. hostLocation is a test seam: nil means the
-	// host's own zone.
+	// limitMenu holds the captured limit-menu samples, the one list the inject
+	// refusal (its Menus) and the pane-menu source and limit action read. Production
+	// ships none (limitmenu: no sample, no match), so nothing is refused, no extra
+	// capture is taken and the source sets nothing until P-UL7 supplies one. Set
+	// once, by shippedLimitMenus in the constructor; tests set Menus directly.
+	// paneMenu is
+	// built from it on first use and held as an Evaluate-only value: the daemon
+	// cannot address the source's fields (its capture, its hooks) after the one
+	// constructor in panemenu.go has built it, and it keeps no handle on the
+	// limit action at all. hostLocation is a test seam: nil means the host's own
+	// zone.
 	limitMenu    panemenu.Samples
-	paneMenu     *panemenu.Source
+	paneMenu     panemenu.Evaluator
 	paneMenuOnce sync.Once
 	hostLocation *time.Location
 
@@ -394,22 +396,22 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		build:      opts.Build,
-		startedAt:  time.Now().UTC(),
-		store:      store,
-		sessMgr:    sessMgr,
-		teamCtrl:   teamCtrl,
-		driver:     driver,
-		limitMenus: shippedLimitMenus(),
-		pidFile:    opts.PidFile,
-		reclaim:    opts.Reclaim,
-		home:       home,
-		logs:       buf,
-		events:     evRing,
-		usage:      acct,
-		accounts:   api.NewAccountReadings(),
-		orphans:    newOrphanRegistry(),
-		reexec:     syscall.Exec,
+		build:     opts.Build,
+		startedAt: time.Now().UTC(),
+		store:     store,
+		sessMgr:   sessMgr,
+		teamCtrl:  teamCtrl,
+		driver:    driver,
+		limitMenu: shippedLimitMenus(),
+		pidFile:   opts.PidFile,
+		reclaim:   opts.Reclaim,
+		home:      home,
+		logs:      buf,
+		events:    evRing,
+		usage:     acct,
+		accounts:  api.NewAccountReadings(),
+		orphans:   newOrphanRegistry(),
+		reexec:    syscall.Exec,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
@@ -432,9 +434,18 @@ func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
 	if sess.PaneID == "" {
 		return fmt.Errorf("session %s has no pane", sess.Key())
 	}
-	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenus); why != "" {
+	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 		emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
 		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+	}
+	// The same bare-digit refusal as an inject, with no flag to lift it: a text
+	// that starts with a menu digit is not typed into a pane the capture cannot
+	// place.
+	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
+		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
+			emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
+			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		}
 	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
@@ -2124,13 +2135,13 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	// A harness with a state where a keystroke is dangerous is read before any
 	// input. Escape alone passes: it is the key that dismisses such a menu.
 	if !isDismissKey(p) {
-		if why := preflightRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+		if why := preflightRefusal(d.driver, sess, reader, d.limitMenu.Menus); why != "" {
 			return d.refuseInject(sess, p, origin, why)
 		}
 	}
 
 	if startsWithMenuDigit(p) {
-		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenu.Menus); why != "" {
 			if !p.AllowBareDigit {
 				return d.refuseInject(sess, p, origin, why)
 			}
