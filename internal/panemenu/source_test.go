@@ -594,3 +594,35 @@ func TestPaneMenuHasNoPackageLevelFuncVariables(t *testing.T) {
 		}
 	}
 }
+
+// The type system is not to be sidestepped inside the package: no `any`, no
+// empty interface, no type assertion (marvel#556 review).
+func TestPaneMenuHasNoLooseTypingOrAssertions(t *testing.T) {
+	t.Parallel()
+	files, _ := filepath.Glob("*.go")
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.TypeAssertExpr:
+				t.Errorf("%s: type assertion", fset.Position(x.Pos()))
+			case *ast.Ident:
+				if x.Name == "any" {
+					t.Errorf("%s: any", fset.Position(x.Pos()))
+				}
+			case *ast.InterfaceType:
+				if x.Methods == nil || len(x.Methods.List) == 0 {
+					t.Errorf("%s: empty interface", fset.Position(x.Pos()))
+				}
+			}
+			return true
+		})
+	}
+}

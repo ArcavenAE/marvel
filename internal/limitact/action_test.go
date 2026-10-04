@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -454,5 +455,71 @@ func TestPackageCanOnlyCallTheInjectedSender(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no non-test source was read")
+	}
+}
+
+// Deps is the whole of what the action reaches, so its field types are pinned: no
+// `any`, no interface that could carry a driver. The one interface, events.Emitter,
+// has a single method, Emit. Adding a field fails here until it is reviewed.
+func TestDepsFieldTypesArePinned(t *testing.T) {
+	t.Parallel()
+	want := map[string]string{
+		"Samples": "panemenu.Samples",
+		"Events":  "events.Emitter",
+		"Send":    "func(string) error",
+		"Capture": "func(string) (string, error)",
+		"Sleep":   "func(time.Duration)",
+	}
+	typ := reflect.TypeOf(Deps{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		w, ok := want[f.Name]
+		if !ok {
+			t.Errorf("Deps gained a field %s %s; pin it here after checking it cannot carry a way into a pane", f.Name, f.Type)
+			continue
+		}
+		if f.Type.String() != w {
+			t.Errorf("Deps.%s is %s, pinned as %s", f.Name, f.Type, w)
+		}
+		delete(want, f.Name)
+	}
+	for name := range want {
+		t.Errorf("pinned Deps field %s is gone", name)
+	}
+	em := reflect.TypeOf((*events.Emitter)(nil)).Elem()
+	if em.NumMethod() != 1 || em.Method(0).Name != "Emit" {
+		t.Errorf("events.Emitter is %d methods; it must stay Emit alone", em.NumMethod())
+	}
+}
+
+// The type system is not to be sidestepped inside the package: no `any`, no
+// empty interface, no type assertion.
+func TestPackageHasNoLooseTypingOrAssertions(t *testing.T) {
+	t.Parallel()
+	files, _ := filepath.Glob("*.go")
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.TypeAssertExpr:
+				t.Errorf("%s: type assertion", fset.Position(x.Pos()))
+			case *ast.Ident:
+				if x.Name == "any" {
+					t.Errorf("%s: any", fset.Position(x.Pos()))
+				}
+			case *ast.InterfaceType:
+				if x.Methods == nil || len(x.Methods.List) == 0 {
+					t.Errorf("%s: empty interface", fset.Position(x.Pos()))
+				}
+			}
+			return true
+		})
 	}
 }
