@@ -9,7 +9,9 @@ two-cluster deployment), marvel#434, FR-2026-10-04e.
 hub leaves the network for under an hour, what does each seat notice and
 when, what fails and how loudly, what reconnects on its own, what work is
 parked, lost or duplicated, and what it takes to come back.
-**Status:** OPEN. The cut came between 19:59:15Z and 20:04:57Z on
+**Status:** CLOSED 2026-10-05 by finding-069, which also corrects C1:
+mokuzai's return followed the operator's local credential re-put at 22:12:58Z.
+Was: OPEN. The cut came between 19:59:15Z and 20:04:57Z on
 2026-10-04 (about 20:02Z, C3); 19:57:32Z is only the first GitHub failure
 seen from the host that left (C6). The return is marked two ways: the
 mokuzai leaf's first clean global poll at 22:19:08Z (on mokuzai), and the
