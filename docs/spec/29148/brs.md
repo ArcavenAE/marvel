@@ -61,11 +61,11 @@ The processes below are the ones the records describe as shipped. What each is m
 - **C-019** [OBSERVED] marvel is distributed as macOS binaries (arm64, amd64), code-signed and Apple-notarized; as Linux binaries (amd64, arm64); and through a Homebrew tap and mise. Alpha releases are cut on push to main and stable releases on `v*` tags. {src: README, NODE:elem-release-pipeline}
 - **C-020** [OBSERVED] The Gateway resource type names at least three services as sub-types: switchboard (remote tmux access), director (the inter-agent supervisor protocol), and an external API or webhook interface. The first two are designed; the external one is not. Whether each is a Gateway sub-type, and whether the set stops at three, is open (Q-008). {src: CHARTER, NODE:question-gateway-external-api}
 
-No market, competitive or regulatory evidence is recorded. See Q-004.
+- **C-045** [RULED] marvel is open source. Inference service providers' terms of service for the use of their harnesses and services are important non-regulatory restrictions to be aware of (operator, 2026-10-05, Q-004). {src: OPERATOR:2026-10-05}
 
 ### 4.2 Mission and Vision
 
-No mission or vision statement is recorded beyond what C-001 and C-004 already say. See Q-002.
+- **C-043** [RULED] marvel orchestrates and organizes agents on a scale beyond what an individual can manage, and enables people to advance with the tooling used by heroic solo developers, because it works with rather than against the industry momentum in current REPL and harness tooling (operator, 2026-10-05, Q-002). {src: OPERATOR:2026-10-05}
 
 ### 4.3 Business Goals and Objectives
 
@@ -73,7 +73,11 @@ No mission or vision statement is recorded beyond what C-001 and C-004 already s
 - **C-022** [OBSERVED] Enforcement has three loci. Environment construction at spawn is built. Runtime admission and metering has its first component shipped, and full metering across the matrix rows is open. Mid-flight revocation is missing, and the M1 authority model is its prerequisite. {src: NODE:elem-agentic-resource-matrix}
 - **C-023** [FORWARD] Whether automatic shifts may be turned on depends on whether a handoff is good enough to replace a working seat. This is recorded as an open question about automatic shift triggers. {src: NODE:question-auto-shift-handoff-quality, NODE:question-shift-triggers}
 
-No measurable objectives or timelines are recorded. See Q-001.
+- **C-039** [RULED] marvel is an open source project without a specific intent around revenue (operator, 2026-10-05, Q-001). {src: OPERATOR:2026-10-05}
+- **C-040** [RULED] Objective: within the next two months, marvel provides stable services for its author (operator, 2026-10-05, Q-001). {src: OPERATOR:2026-10-05}
+- **C-041** [RULED] Objective: within four months, other users have chosen to use marvel to run some of their agent systems (operator, 2026-10-05, Q-001). {src: OPERATOR:2026-10-05}
+- **C-042** [RULED] Objective: marvel is deployed on cloud computers for long-term team agents. No date was given (operator, 2026-10-05, Q-001). {src: OPERATOR:2026-10-05}
+- **C-044** [RULED] Objective: within six months, improve the new user experience and introduce majordomo, leveraging AI for cluster-internal operations (operator, 2026-10-05, Q-001). {src: OPERATOR:2026-10-05}
 
 ## 5. Stakeholders
 
@@ -81,7 +85,9 @@ No measurable objectives or timelines are recorded. See Q-001.
 - **C-025** [OBSERVED] The managed workload is agents grouped in teams of heterogeneous roles. The README's example review team has one supervisor, three reviewers and one architect. {src: README}
 - **C-026** [OBSERVED] Remote clients reach a daemon over the mrvl:// protocol, which uses the daemon's own SSH server. Clients authenticate with ed25519 keys listed in the daemon's authorized keys, and a client records a daemon's host key on first use. {src: CHARTER, NODE:elem-mrvl-protocol-ssh}
 
-Influence and key interests per stakeholder are not recorded. See Q-003.
+- **C-046** [RULED] The stakeholders are individuals operating major harnesses individually today; individuals who would like to work better at scale; and teams of individuals who would like to learn to work together to achieve more with their AI than they are able to operate without relying on SaaS for this function (operator, 2026-10-05, Q-003). {src: OPERATOR:2026-10-05}
+
+Influence and key interests per stakeholder are not recorded.
 
 ## 6. Business Requirements
 
@@ -111,18 +117,19 @@ This brief treats the kos nodes as authoritative over charter prose where the tw
 
 ### 8.1 Glossary
 
-- **C-036** [OBSERVED] BYOH: Bring Your Own Harness. The user brings the harness, and marvel manages what they pick. BYOA (Bring Your Own Agent) stays valid: the user brings agent definitions, or gets them from sideshow, wardrobe, bmad, vsdd-factory or, in future, gastown. {src: README, NODE:elem-console-agnostic}
+- **C-036** [OBSERVED] BYOH: Bring Your Own Harness. The user brings the harness, and marvel manages what they bring. BYOA (Bring Your Own Agent) stays valid: the user brings agent definitions, or gets them from sideshow, wardrobe, bmad, vsdd-factory or, in future, gastown. {src: README, NODE:elem-console-agnostic}
 - **C-037** [OBSERVED] Shift: a rolling replacement of agent sessions with fresh ones. {src: README}
 - **C-038** [OBSERVED] Harness: the agent program a session runs, such as claude, codex or opencode, named by a role's `runtime` field. {src: NODE:elem-runtime-names-harness}
 
 ### 8.2 Open Questions
 
-- **Q-001** What are marvel's measurable business objectives and their timelines? The records give design intents but no objectives with a measure or a date.
-- **Q-002** Is there a mission or vision statement for marvel beyond its purpose line and the resource matrix?
-- **Q-003** Who are marvel's stakeholders beyond the operator, and what are their influence and key interests? The records name roles inside a team, not the people or groups with a stake in marvel.
-- **Q-004** What is the business environment: market conditions, competing products, and any regulatory constraints? The records hold none.
-- **Q-005** Where are the requirements and decision records that apply to marvel? The gather step found no ADRs, no requirements register and no sim-lesson register in this repository, while the charter cites an orchestrator-level ADR for the resource model.
-- **Q-006** Do two bedrock nodes disagree about persistence? The node for the shipped MVP says state is in-memory and persistence is open, while the transaction-log node records a bbolt-backed durable record that is shipped. Which one is current? The two nodes are elem-mvp-complete and question-marvel-transaction-log.
-- **Q-007** The evidence index lists two findings under the same id, finding-039 (the b69n contract-lane harvest, and the tap push race). No claim here cites either, because the id cannot say which is meant. Should the finding ids be made unique?
-- **Q-008** The three Gateway sub-types in C-020 are services. Is "Gateway sub-type" the right classification for each, and what other services belong in the set? The set is not limited to these three, and the classification of each is not clear (operator verdict on C-020).
+- **Q-001** What are marvel's measurable business objectives and their timelines? The records give design intents but no objectives with a measure or a date. Answered by the operator on 2026-10-05; see brs-review.md.
+- **Q-002** Is there a mission or vision statement for marvel beyond its purpose line and the resource matrix? Answered by the operator on 2026-10-05; see brs-review.md.
+- **Q-003** Who are marvel's stakeholders beyond the operator, and what are their influence and key interests? The records name roles inside a team, not the people or groups with a stake in marvel. Answered by the operator on 2026-10-05; see brs-review.md.
+- **Q-004** What is the business environment: market conditions, competing products, and any regulatory constraints? The records hold none. Answered by the operator on 2026-10-05; see brs-review.md.
+- **Q-005** Where are the requirements and decision records that apply to marvel? The gather step found no ADRs, no requirements register and no sim-lesson register in this repository, while the charter cites an orchestrator-level ADR for the resource model. Answered by the operator on 2026-10-05; see brs-review.md.
+- **Q-006** Do two bedrock nodes disagree about persistence? The node for the shipped MVP says state is in-memory and persistence is open, while the transaction-log node records a bbolt-backed durable record that is shipped. Which one is current? The two nodes are elem-mvp-complete and question-marvel-transaction-log. Answered by the operator on 2026-10-05: no. bd/dolt is not a native feature of marvel; it is a service scheduled to become a marvel-managed service option. Neither persistence node stands as written. See brs-review.md.
+- **Q-007** The evidence index lists two findings under the same id, finding-039 (the b69n contract-lane harvest, and the tap push race). No claim here cites either, because the id cannot say which is meant. Should the finding ids be made unique? Still open: the operator says it is not the only finding conflict, and a fix or renumber is in progress.
+- **Q-008** The three Gateway sub-types in C-020 are services. Is "Gateway sub-type" the right classification for each, and what other services belong in the set? The set is not limited to these three, and the classification of each is not clear (operator verdict on C-020). The operator answers that Gateway is probably not the right classification, and names candidate services: vault (credential and secrets manager), bd/dolt (tasks), nats (agent bus and communications), litellm (router), PAIR (backend), and more. The classification stays open. See brs-review.md.
 - **Q-009** The operator's verdict on C-018 widens the ruling beyond macOS, but the node `grv-private-claude-config-home-macos` is macOS-only and its reopener names a Linux or container host, and finding-063 line 24 says "Where the login is a file (Linux, a container) the question is open and needs its own run." Should the node and finding be harvested to match the operator's verdict, or does the ruling need a Linux or container run first? The node is not edited here.
+- **Q-010** `marvel daemon reexec` under mise restarts the old version, because mise installs each version in its own directory and reexec re-executes the binary at the running daemon's own path (docs/admin-guide.md:666-680 at main 9343a8f, "Under mise: stop and start, not reexec"; marvel#523). The operator wants reexec to work under mise, even if the architecture has to change. Tracked in marvel#592.
