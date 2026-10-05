@@ -52,7 +52,7 @@ The processes below are the ones the records describe as shipped. What each is m
 ### 3.3 Out of Scope
 
 - **C-017** [RULED] Ruled out: building pack management as a separate tool outside marvel. Packs are agent configuration, and marvel already manages agent lifecycle, so pack management is a control plane concern. The ruling would be reopened if marvel becomes too large, or a non-marvel orchestration path needs pack resolution. {src: NODE:grv-standalone-pack-manager}
-- **C-018** [RULED] Ruled out: a private Claude Code config directory per interactive claude seat on macOS. Measured result: the seat loses the operator's login. marvel manages the needed keys in the operator's own config instead. {src: NODE:grv-private-claude-config-home-macos, FINDING:finding-063}
+- **C-018** [RULED] Ruled out: a private Claude Code config directory per interactive claude seat. Measured on macOS, where the seat loses the operator's login; the macOS specifics reflect the platform in use at development time, and the ruling is not limited to macOS. marvel manages the needed keys in the operator's own config instead. {src: NODE:grv-private-claude-config-home-macos, FINDING:finding-063}
 
 ## 4. Business Overview
 
@@ -124,3 +124,4 @@ This brief treats the kos nodes as authoritative over charter prose where the tw
 - **Q-005** Where are the requirements and decision records that apply to marvel? The gather step found no ADRs, no requirements register and no sim-lesson register in this repository, while the charter cites an orchestrator-level ADR for the resource model.
 - **Q-006** Do two bedrock nodes disagree about persistence? The node for the shipped MVP says state is in-memory and persistence is open, while the transaction-log node records a bbolt-backed durable record that is shipped. Which one is current? The two nodes are elem-mvp-complete and question-marvel-transaction-log.
 - **Q-007** The evidence index lists two findings under the same id, finding-039 (the b69n contract-lane harvest, and the tap push race). No claim here cites either, because the id cannot say which is meant. Should the finding ids be made unique?
+- **Q-008** The three Gateway sub-types in C-020 are services. Is "Gateway sub-type" the right classification for each, and what other services belong in the set? The set is not limited to these three, and the classification of each is not clear (operator verdict on C-020).
