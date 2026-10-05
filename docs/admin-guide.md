@@ -452,8 +452,12 @@ Prefer a hostname that every leaf can resolve through ordinary DNS from its own
 network, not a `.local` (mDNS) name, which does not resolve across subnets
 (marvel#575). A literal IP breaks when the hub host changes subnet: the leaf
 keeps dialing the old address. Whether a leaf then follows the hub with no
-restart was observed once, on 2026-10-04, and has not been reproduced. The key
-takes one URL; a list of hub URLs is requested in marvel#575.
+restart is not settled: the record is mixed. On 2026-10-04 one leaf followed.
+On 2026-10-05 a third cluster, whose hub was named by a `.local` name, did not:
+after the hub host moved, the broker kept dialing the old addresses while the
+host's resolver already returned the new ones. The cause is not established.
+The key takes one URL; a list of hub URLs is requested in marvel#575, which
+holds the evidence.
 
 A cluster written in the older `bus:` block spelling puts the same `hub:` key
 under its `bus:` block instead; the third cluster's bring-up (aae-orc#461)
@@ -504,7 +508,9 @@ is a literal IP), the sequence two clusters ran on 2026-10-04 is:
 
 Step 3 is needed because of marvel#339: a restart or reexec drops the leaf seed, and
 until it is pushed again the cluster runs local-only. A hostname that still
-resolves may make these steps unnecessary; that has not been reproduced.
+resolves may make these steps unnecessary, but the record is mixed (one leaf
+followed, one kept a stale lookup and did not; see marvel#575), so do not
+count on it.
 
 ### Ports
 
