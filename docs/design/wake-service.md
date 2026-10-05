@@ -16,7 +16,9 @@ as a marvel service, rather than case by case.
 
 ## 2. The direction
 
-The operator, verbatim, 2026-10-05:
+The operator, verbatim, from an interview on 2026-10-05. This is the
+operator's ruling of that date, relayed word for word by director to the
+arcaven supervisor (bus message `01M469BEJA`, item 5):
 
 > "this is a service that marvel can expose to authorized systems, marvel bus
 > can be configured to use nats, and director is a user of those. It might
@@ -43,8 +45,8 @@ The mechanics of reaching the seat are marvel's.
 
 | Fact | Where |
 |---|---|
-| The leaf check polls `/leafz` every 30 s and emits only on a change | `internal/bus/supervisor.go:152`, `:701`, `:725-727` |
-| A leaf already down at the first poll after a start or reexec emits nothing (`down` needs `prev != nil`) | `supervisor.go:730-731` |
+| The leaf check polls `/leafz` every 30 s and emits only on a change | `internal/bus/supervisor.go:152`, `:701`, `:726-728` |
+| A leaf already down at the first poll after a start or reexec emits nothing (`down` needs `prev != nil`). The same guard keeps an unenrolled hub from ever emitting `down`, which a test pins | `supervisor.go:731-732`; `internal/bus/supervisor_test.go:279-283` |
 | Leaf states `Status()` reports: `n/a`, `unenrolled`, `detached`, `unknown`, `up`, `down` | `supervisor.go:678-692` |
 | A reexec drops the transient leaf seed, and the cluster runs local-only until the seed is pushed again (#339) | `docs/admin-guide.md:509-510`; `credential.transient-dropped`, `internal/events/events.go:258` |
 | The hub URL is read once, at start (#514) | `docs/admin-guide.md:468-472` |
@@ -70,8 +72,12 @@ are two cases #580 needs:
   because the seed was dropped. This is the case aae-orc#461 hit on a third
   cluster.
 
-There is also one gap to close whatever else is decided: a leaf found down at
-the first poll must still be reported. Today it is silent until it comes up.
+There is also one gap to close whatever else is decided: an **enrolled** leaf
+found down at the first poll must still be reported. Today it is silent until
+it comes up. An unenrolled hub stays out of it: no link was ever promised, it
+already has its own state (`unenrolled`, `leafEnrolled`,
+`supervisor.go:682`), and `TestSupervisorReportsUnenrolledHubOnce` pins that it
+never gets `bus.leaf.down` (`supervisor_test.go:279-283`).
 
 **Seat states.** No new reading is needed. These are the composer states,
 the stalled advisory, a held usage-limit menu, and a pending or missed
@@ -116,7 +122,9 @@ Two consequences follow:
   something marvel can check itself?
 - **Q6.** Seats carry `MARVEL_SOCKET`, and the local socket is admin. Does a
   seat count as a principal under this model, or as the daemon owner? This
-  is an inference from `scope.go:108`, not something measured.
+  is an inference from `scope.go:108`, not something measured. One read-only
+  measurement settles it: `marvel --socket "$MARVEL_SOCKET" get sessions`
+  from a seat's shell. It has not been run.
 
 ## 6. Actions: on its own, or on a service's behalf
 
@@ -138,12 +146,16 @@ authority"). Under this direction, its own actions on these states are:
   This is the mechanism for seats the channel cue cannot reach today:
   projected seats until #422, and harnesses other than Claude.
 
-**Guards on a wake.** These belong to marvel, whoever asks:
+**Guards on a wake.** These belong to marvel, whoever asks. Two exist today
+and three are proposed:
 
-- the composer must read `empty`;
-- a usage-limit menu refuses the wake (the bare-digit rule);
-- the wake is rate-limited per seat;
-- every wake is an event naming its principal.
+- **Existing:** a usage-limit menu refuses the send (`daemon.go:2211-2217`).
+- **Existing:** a text that starts with a menu digit is refused on a pane the
+  capture cannot place, the bare-digit rule (`daemon.go:441-448`, as the
+  max-age handoff uses it).
+- **Proposed:** the composer must read `empty`.
+- **Proposed:** the wake is rate-limited per seat.
+- **Proposed:** every wake is an event naming its principal.
 
 marvel does not decide that a seat should be woken for a service. The
 service decides, and marvel checks and carries it out.
@@ -187,7 +199,7 @@ could, and they layer rather than compete:
 The smallest step that answers #580 and fits the direction:
 
 - record when the leaf state was entered;
-- report a leaf that is down at the first poll;
+- report an enrolled leaf that is down at the first poll;
 - emit a repeated event while it stays down past the Q1 bound;
 - show the duration in the bus status.
 
