@@ -18,7 +18,8 @@
   (a WORKDIR column, an instance of "one more hardcoded column" this idea
   generalizes). aae-orc-dc1j (CTX% acquisition for interactive sessions,
   the same three-state discipline). [[max-session-age]] (the clock Feature D
-  displays).
+  displays). [[multicluster-view]] (a CLUSTER column, selectable, for output
+  that merges several clusters).
 
 ## The two features
 

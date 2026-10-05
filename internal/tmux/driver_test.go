@@ -781,3 +781,50 @@ func TestKillPaneOnGonePaneIsErrPaneGone(t *testing.T) {
 		t.Fatalf("KillPane on an unknown pane = %v, want ErrPaneGone", err)
 	}
 }
+
+// The ranged escapes capture keeps the attributes the plain ranged capture
+// drops, over the same bounds (marvel#571).
+func TestCapturePaneRangeEscapesKeepsDimText(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	sessionName := "marvel-test-capture-range-escapes"
+	t.Cleanup(func() { _ = d.KillSession(sessionName) })
+	if err := d.NewSession(sessionName); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	paneID, err := d.NewPane(sessionName, "sh", "range-escapes", nil, false)
+	if err != nil {
+		t.Fatalf("new pane: %v", err)
+	}
+	// Octal escapes: POSIX printf reads them in every sh. The short sleep makes the
+	// output land after the echo of the command, which is the order that exposed
+	// the old wait.
+	if err := d.SendKeys(paneID, `sleep 0.3; printf '\033[2mDIMTEXT\033[0m\n'`, true, true); err != nil {
+		t.Fatalf("send printf: %v", err)
+	}
+	// Wait on the escapes capture itself, for the dim attribute followed by the
+	// text, then take the plain one. Two things made the old wait flaky: the
+	// escapes capture was taken first and the wait ran on the plain one, so the
+	// text could be drawn between the two; and "DIMTEXT" also appears in the
+	// echo of the typed command, so waiting on the word alone could stop before
+	// printf had run. A real ESC before the word only comes from printf's output.
+	deadline := time.Now().Add(5 * time.Second)
+	var esc string
+	for time.Now().Before(deadline) {
+		esc, _ = d.CapturePaneRangeEscapes(paneID, 0, 4)
+		if strings.Contains(esc, "\x1b[2mDIMTEXT") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(esc, "\x1b[2mDIMTEXT") {
+		t.Fatalf("the ranged escapes capture never showed the dim text: %q", esc)
+	}
+	plain, _ := d.CapturePaneRange(paneID, 0, 4)
+	if strings.Contains(plain, "\x1b") {
+		t.Errorf("the plain ranged capture carries an escape: %q", plain)
+	}
+}

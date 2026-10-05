@@ -128,13 +128,8 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
-	// limitMenus are the captured usage-limit menus an inject is checked against.
-	// Production ships none (limitmenu: no sample, no match), so nothing is
-	// refused and no extra capture is taken until P-UL7 supplies one. Set once,
-	// by shippedLimitMenus in the constructor; tests set it directly.
-	limitMenus []limitmenu.Sample
-	listener   net.Listener
-	sshServer  *SSHServer
+	listener           net.Listener
+	sshServer          *SSHServer
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -202,12 +197,19 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
-	// limitMenu holds the captured limit-menu samples; empty until a real
-	// capture is supplied, so the pane-menu source sets nothing. paneMenu is
-	// built from it on first use. hostLocation is a test seam: nil means the
-	// host's own zone.
+	// limitMenu holds the captured limit-menu samples, the one list the inject
+	// refusal (its Menus) and the pane-menu source and limit action read. Production
+	// ships none (limitmenu: no sample, no match), so nothing is refused, no extra
+	// capture is taken and the source sets nothing until P-UL7 supplies one. Set
+	// once, by shippedLimitMenus in the constructor; tests set Menus directly.
+	// paneMenu is
+	// built from it on first use and held as an Evaluate-only value: the daemon
+	// cannot address the source's fields (its capture, its hooks) after the one
+	// constructor in panemenu.go has built it, and it keeps no handle on the
+	// limit action at all. hostLocation is a test seam: nil means the host's own
+	// zone.
 	limitMenu    panemenu.Samples
-	paneMenu     *panemenu.Source
+	paneMenu     panemenu.Evaluator
 	paneMenuOnce sync.Once
 	hostLocation *time.Location
 
@@ -397,22 +399,22 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		build:      opts.Build,
-		startedAt:  time.Now().UTC(),
-		store:      store,
-		sessMgr:    sessMgr,
-		teamCtrl:   teamCtrl,
-		driver:     driver,
-		limitMenus: shippedLimitMenus(),
-		pidFile:    opts.PidFile,
-		reclaim:    opts.Reclaim,
-		home:       home,
-		logs:       buf,
-		events:     evRing,
-		usage:      acct,
-		accounts:   api.NewAccountReadings(),
-		orphans:    newOrphanRegistry(),
-		reexec:     syscall.Exec,
+		build:     opts.Build,
+		startedAt: time.Now().UTC(),
+		store:     store,
+		sessMgr:   sessMgr,
+		teamCtrl:  teamCtrl,
+		driver:    driver,
+		limitMenu: shippedLimitMenus(),
+		pidFile:   opts.PidFile,
+		reclaim:   opts.Reclaim,
+		home:      home,
+		logs:      buf,
+		events:    evRing,
+		usage:     acct,
+		accounts:  api.NewAccountReadings(),
+		orphans:   newOrphanRegistry(),
+		reexec:    syscall.Exec,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
@@ -435,9 +437,18 @@ func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
 	if sess.PaneID == "" {
 		return fmt.Errorf("session %s has no pane", sess.Key())
 	}
-	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenus); why != "" {
+	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 		emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
 		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+	}
+	// The same bare-digit refusal as an inject, with no flag to lift it: a text
+	// that starts with a menu digit is not typed into a pane the capture cannot
+	// place.
+	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
+		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
+			emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
+			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		}
 	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
@@ -2131,13 +2142,13 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	// A harness with a state where a keystroke is dangerous is read before any
 	// input. Escape alone passes: it is the key that dismisses such a menu.
 	if !isDismissKey(p) {
-		if why := preflightRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+		if why := preflightRefusal(d.driver, sess, reader, d.limitMenu.Menus); why != "" {
 			return d.refuseInject(sess, p, origin, why)
 		}
 	}
 
 	if startsWithMenuDigit(p) {
-		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenus); why != "" {
+		if why := bareDigitRefusal(d.driver, sess, reader, d.limitMenu.Menus); why != "" {
 			if !p.AllowBareDigit {
 				return d.refuseInject(sess, p, origin, why)
 			}
@@ -2252,6 +2263,13 @@ func (d *Daemon) repaintSettled(paneID string, settleMS int) (tmux.RepaintResult
 // reader would make of the screen.
 func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS int) (composer.State, error) {
 	res, _ := d.repaintSettled(sess.PaneID, settleMS)
+	return d.readComposerAfterNudge(sess, reader, res.Target)
+}
+
+// readComposerAfterNudge is readComposer for a caller that has already nudged
+// the pane, so it is not nudged twice. target is the foreground program the
+// nudge reported.
+func (d *Daemon) readComposerAfterNudge(sess api.Session, reader composer.Reader, target string) (composer.State, error) {
 	capture := d.driver.CapturePane
 	if reader.Escapes() {
 		capture = d.driver.CapturePaneEscapes
@@ -2260,10 +2278,16 @@ func (d *Daemon) readComposer(sess api.Session, reader composer.Reader, settleMS
 	if err != nil {
 		return composer.Unknown, err
 	}
-	if composer.ShellTarget(res.Target) {
-		return composer.Shell, nil
+	return composerState(reader, target, content), nil
+}
+
+// composerState places a capture taken in the reader's mode. A shell in the
+// foreground means no harness is running, whatever the screen would read as.
+func composerState(reader composer.Reader, target, content string) composer.State {
+	if composer.ShellTarget(target) {
+		return composer.Shell
 	}
-	return reader.Read(content), nil
+	return reader.Read(content)
 }
 
 // clearKeyFor returns the key to clear a staged draft, or the reason a clear
@@ -2326,6 +2350,14 @@ type captureParams struct {
 	// SettleMS is how long the nudge is held, and then how long to wait for the
 	// restore's redraw before reading. Zero means the default.
 	SettleMS int `json:"settle_ms,omitempty"`
+	// Escapes keeps the pane's escape sequences (capture-pane -e), so a reader
+	// can tell dim text from typed text. Off by default: the output is what it
+	// was.
+	Escapes bool `json:"escapes,omitempty"`
+	// Composer returns the composer state the session's reader gives, beside
+	// the content. It types nothing. Like Repaint it nudges the pane's size,
+	// because reading the composer repaints first.
+	Composer bool `json:"composer,omitempty"`
 }
 
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
@@ -2370,16 +2402,24 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 
 	// A repaint is a request, not a promise: a failure to signal is reported
 	// beside the capture and never fails it.
+	// Reading the composer repaints first, so --composer nudges once whether or
+	// not --repaint is also given, and the read after it does not nudge again.
 	repaint, target := "", ""
-	if p.Repaint {
+	if p.Repaint || p.Composer {
 		res, rerr := d.repaintSettled(sess.PaneID, p.SettleMS)
 		repaint, target = repaintStatus(res, rerr), res.Target
 	}
 
 	var content string
-	if start, end, ranged := captureBounds(p); ranged {
+	start, end, ranged := captureBounds(p)
+	switch {
+	case ranged && p.Escapes:
+		content, err = d.driver.CapturePaneRangeEscapes(sess.PaneID, start, end)
+	case ranged:
 		content, err = d.driver.CapturePaneRange(sess.PaneID, start, end)
-	} else {
+	case p.Escapes:
+		content, err = d.driver.CapturePaneEscapes(sess.PaneID)
+	default:
 		content, err = d.driver.CapturePane(sess.PaneID)
 	}
 	if err != nil {
@@ -2394,6 +2434,23 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	if p.Repaint {
 		out["repaint"] = repaint
 		out["repaint_target"] = target
+	}
+	if p.Composer {
+		// The state is read from a capture in the reader's mode. When the content
+		// is that same capture (an unranged read in the same mode), content and
+		// state come from the same bytes and cannot disagree.
+		reader := composer.ReaderFor(sess.Runtime.Name)
+		var state composer.State
+		var cerr error
+		if !ranged && p.Escapes == reader.Escapes() {
+			state = composerState(reader, target, content)
+		} else {
+			state, cerr = d.readComposerAfterNudge(sess, reader, target)
+		}
+		out["composer"] = string(state)
+		if cerr != nil {
+			out["composer_error"] = cerr.Error()
+		}
 	}
 	result, _ := json.Marshal(out)
 	return Response{Result: result}

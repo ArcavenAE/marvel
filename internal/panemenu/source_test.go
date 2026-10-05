@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ var (
 // paneRig is a source with one interactive claude seat whose pane shows
 // whatever capture holds, a counter of captures, and the sample set loaded.
 type paneRig struct {
-	src      *Source
+	src      *source
 	store    *api.Store
 	ring     *events.Ring
 	readings *api.AccountReadings
@@ -87,7 +88,7 @@ func newPaneRig(t *testing.T, env map[string]string) *paneRig {
 	if err := r.store.CreateSession(&sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	r.src = &Source{
+	r.src = &source{
 		Samples:  Samples{Menus: []limitmenu.Sample{menuSample()}, PostSelection: []limitmenu.Screen{postSelectionScreen()}},
 		Store:    r.store,
 		Readings: r.readings,
@@ -555,5 +556,88 @@ func TestPaneMenuCapturesOnlyWhereTheHarnessIsInFront(t *testing.T) {
 	r.src.Evaluate(paneT0.Add(6 * time.Minute))
 	if r.calls != before || r.session().Condition != api.ConditionLimited {
 		t.Fatalf("held pane captured with a pager in front (calls +%d)", r.calls-before)
+	}
+}
+
+// A package-level func variable is a hole the import check cannot see: it can be
+// assigned from anywhere at init. None may exist in the package (marvel#552).
+func TestPaneMenuHasNoPackageLevelFuncVariables(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no sources: %v", err)
+	}
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, perr := parser.ParseFile(fset, name, nil, 0)
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs := spec.(*ast.ValueSpec)
+				if _, isFunc := vs.Type.(*ast.FuncType); isFunc {
+					t.Errorf("%s: package-level func variable %v", fset.Position(vs.Pos()), vs.Names)
+				}
+				for _, v := range vs.Values {
+					if _, lit := v.(*ast.FuncLit); lit {
+						t.Errorf("%s: package-level func literal %v", fset.Position(vs.Pos()), vs.Names)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The type system is not to be sidestepped inside the package: no `any`, no
+// empty interface, no type assertion (marvel#556 review).
+func TestPaneMenuHasNoLooseTypingOrAssertions(t *testing.T) {
+	t.Parallel()
+	files, _ := filepath.Glob("*.go")
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.TypeAssertExpr:
+				t.Errorf("%s: type assertion", fset.Position(x.Pos()))
+			case *ast.Ident:
+				if x.Name == "any" {
+					t.Errorf("%s: any", fset.Position(x.Pos()))
+				}
+			case *ast.InterfaceType:
+				if x.Methods == nil || len(x.Methods.List) == 0 {
+					t.Errorf("%s: empty interface", fset.Position(x.Pos()))
+				}
+			}
+			return true
+		})
+	}
+}
+
+// New hands back an interface with Evaluate only, over an unexported type, so no
+// caller can reach or replace the built source's Capture, InFront or Hooks.
+func TestNewReturnsAnEvaluateOnlyValueOverAnUnexportedType(t *testing.T) {
+	t.Parallel()
+	ret := reflect.TypeOf(New).Out(0)
+	if ret.Kind() != reflect.Interface || ret.NumMethod() != 1 || ret.Method(0).Name != "Evaluate" {
+		t.Fatalf("New returns %v, want an interface with Evaluate only", ret)
+	}
+	dyn := reflect.TypeOf(New(Config{}))
+	if dyn.Kind() != reflect.Pointer || dyn.Elem().Name() != "source" || ast.IsExported(dyn.Elem().Name()) {
+		t.Errorf("New builds %v, want the unexported *source", dyn)
 	}
 }
