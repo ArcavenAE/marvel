@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -163,7 +164,15 @@ func RenderConf(s Spec) (string, error) {
 		if s.HubCAFile != "" {
 			tls = fmt.Sprintf(", tls { ca_file: %q }", s.HubCAFile)
 		}
-		fmt.Fprintf(&b, "\nleafnodes {\n  remotes: [\n    { urls: [%q], nkey: $%s%s }\n  ]\n}\n", s.HubURL, LeafSeedEnv, tls)
+		urls := s.HubURLs
+		if len(urls) == 0 {
+			urls = []string{s.HubURL}
+		}
+		quoted := make([]string, len(urls))
+		for i, u := range urls {
+			quoted[i] = fmt.Sprintf("%q", u)
+		}
+		fmt.Fprintf(&b, "\nleafnodes {\n  remotes: [\n    { urls: [%s], nkey: $%s%s }\n  ]\n}\n", strings.Join(quoted, ", "), LeafSeedEnv, tls)
 	}
 	return b.String(), nil
 }

@@ -480,6 +480,18 @@ type Hub struct {
 	CAFile string `yaml:"ca_file,omitempty"`
 }
 
+// AllURLs is every hub address in order: urls when it is set, else the one
+// url, else none.
+func (h *Hub) AllURLs() []string {
+	if len(h.URLs) > 0 {
+		return append([]string(nil), h.URLs...)
+	}
+	if h.URL != "" {
+		return []string{h.URL}
+	}
+	return nil
+}
+
 // ReservedBusUsers are broker user names the renderer owns; a team or
 // seat by either name is refused, never merged.
 var ReservedBusUsers = []string{"director", "marvel_admin"}
@@ -624,8 +636,19 @@ func ValidateBus(cluster string, b *Bus) error {
 		}
 	}
 	if b.Hub != nil {
-		if err := checkNATSURL(b.Hub.URL, "nats-leaf", "nats", "tls"); err != nil {
-			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.url: %v", ErrInvalidBus, cluster, err))
+		switch {
+		case b.Hub.URL != "" && len(b.Hub.URLs) > 0:
+			errs = append(errs, fmt.Errorf("%w: cluster %q: hub sets both url and urls; set one, not both", ErrInvalidBus, cluster))
+		case len(b.Hub.URLs) > 0:
+			for i, u := range b.Hub.URLs {
+				if err := checkNATSURL(u, "nats-leaf", "nats", "tls"); err != nil {
+					errs = append(errs, fmt.Errorf("%w: cluster %q: hub.urls[%d]: %v", ErrInvalidBus, cluster, i, err))
+				}
+			}
+		default:
+			if err := checkNATSURL(b.Hub.URL, "nats-leaf", "nats", "tls"); err != nil {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: hub.url: %v", ErrInvalidBus, cluster, err))
+			}
 		}
 		if b.Hub.CAFile != "" && !filepath.IsAbs(cleanPath(b.Hub.CAFile)) {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.ca_file %q must be an absolute path (or ~-relative); the broker resolves it, not the daemon", ErrInvalidBus, cluster, b.Hub.CAFile))
@@ -727,7 +750,10 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 		r.StoreDir = filepath.Join(stateDir, "nats")
 	}
 	if b.Hub != nil {
-		r.HubURL = b.Hub.URL
+		r.HubURLs = b.Hub.AllURLs()
+		if len(r.HubURLs) > 0 {
+			r.HubURL = r.HubURLs[0]
+		}
 		if b.Hub.CAFile != "" {
 			r.HubCAFile = cleanPath(b.Hub.CAFile)
 		}
