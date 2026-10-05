@@ -96,7 +96,7 @@ No requirements register exists (see Q-005). The lines below are inferences from
 
 ### 7.1 Business Constraints
 
-- **C-031** [OBSERVED] The daemon must start in a keychain-capable macOS session. {src: FINDING:finding-041}
+- **C-031** [OBSERVED] The daemon must start in a keychain-capable session. macOS and Linux are both target platforms. The Linux keychain system is not yet chosen, and it will not require a GUI desktop or a display server (no GNOME, KDE, X or Wayland). {src: FINDING:finding-041}
 - **C-032** [OBSERVED] Overriding HOME isolates marvel but de-authenticates the harness. {src: FINDING:finding-025}
 - **C-033** [OBSERVED] The `~/.marvel/` data directory enforces OpenSSH-style permissions, and marvel refuses to load a private key with weaker permissions. {src: NODE:elem-data-directory-permissions, CHARTER}
 
@@ -111,7 +111,7 @@ This brief treats the kos nodes as authoritative over charter prose where the tw
 
 ### 8.1 Glossary
 
-- **C-036** [OBSERVED] BYOA: Bring Your Own Agent. The user picks the console and the agent, and marvel manages what they pick. {src: README, NODE:elem-console-agnostic}
+- **C-036** [OBSERVED] BYOH: Bring Your Own Harness. The user brings the harness, and marvel manages what they pick. BYOA (Bring Your Own Agent) stays valid: the user brings agent definitions, or gets them from sideshow, wardrobe, bmad, vsdd-factory or, in future, gastown. {src: README, NODE:elem-console-agnostic}
 - **C-037** [OBSERVED] Shift: a rolling replacement of agent sessions with fresh ones. {src: README}
 - **C-038** [OBSERVED] Harness: the agent program a session runs, such as claude, codex or opencode, named by a role's `runtime` field. {src: NODE:elem-runtime-names-harness}
 

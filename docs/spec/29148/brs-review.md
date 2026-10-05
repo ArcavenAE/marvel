@@ -40,16 +40,16 @@ The correction count is `correct` plus `reject` plus `add`. It is computed after
 | C-026 | OBSERVED | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
 | C-027 | JUDGMENT | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
 | C-028 | JUDGMENT | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
-| C-029 | JUDGMENT | | |
-| C-030 | JUDGMENT | | |
-| C-031 | OBSERVED | | |
-| C-032 | OBSERVED | | |
-| C-033 | OBSERVED | | |
-| C-034 | OBSERVED | | |
-| C-035 | OBSERVED | | |
-| C-036 | OBSERVED | | |
-| C-037 | OBSERVED | | |
-| C-038 | OBSERVED | | |
+| C-029 | JUDGMENT | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-030 | JUDGMENT | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-031 | OBSERVED | accept-reworded | Operator: "C-031 reword, this is an artifact of rapid development, macos AND linux are the target platforms we haven't determined which keychain system we'll require and support in linux, but it will NOT require GUI/Gnome/KDE/etc x or wayland". Claim text now covers macOS and Linux, says the Linux keychain is not yet chosen, and rules out a GUI desktop or display server. |
+| C-032 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". Accepted as written. |
+| C-033 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-034 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-035 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-036 | OBSERVED | accept-reworded | Operator: "C-036 but we've shifted from BYOA to BYOH (harness) although BYOA is still valid (bring your own harness, bring your own agent definitions or get them with sideshow or wardrobe, or bmad or vsdd-factory or gastown (future))". Claim text now frames BYOH and keeps BYOA valid. |
+| C-037 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-038 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
 
 ## Added claims
 
