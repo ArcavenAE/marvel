@@ -266,7 +266,7 @@ jobs:
     needs: [build-binaries, sign-and-notarize]
     if: github.event_name == 'push' && !cancelled() && needs.build-binaries.result == 'success'
     # Release jobs for successive pushes queue rather than interleave: two of
-    # them racing on the tap push left the tap behind head (finding-039).
+    # them racing on the tap push left the tap behind head (finding-070).
     concurrency:
       group: release-tap-push
       cancel-in-progress: false
@@ -420,7 +420,7 @@ jobs:
             # Another release run, or another formula's bump, may have pushed
             # the tap since the clone. This is the bot's own fresh checkout, so
             # rebasing it rewrites nothing anyone holds; give up only after a
-            # bounded number of attempts (finding-039).
+            # bounded number of attempts (finding-070).
             pushed=""
             for attempt in 1 2 3 4 5; do
               if git push origin main; then
