@@ -5,7 +5,8 @@
 **Placement:** marvel, where the probe was filed. Its subject is how a cluster
 and its leaf behave when the hub host leaves; bd and director are objects.
 **Number:** 069, the next free id after finding-068 on main and in open PRs.
-**Sources:** none committed. All are on kinu, outside any repo:
+**Sources:** none committed, and none in a repo. The first three are on kinu;
+the last is on mokuzai:
 - the arcaven supervisor's roll-up of 13 seat logs (sent to director 22:24Z);
 - the separate logs of the envoy, maintainer and both architect seats;
 - director's own log;
@@ -36,10 +37,13 @@ Two things happened, and the logs separate them:
 | builder | 19:58:22Z (push failed, retry ok 3s later) | 19:58:25Z |
 
 The window closed at 22:21Z (director), about 2h18m after the cut. A second,
-shorter event followed: 23:46Z to about 00:03Z, global tier down and GitHub
-intermittent from kinu (supervisor roll-up). On mokuzai the leaf dropped
-twice in that span and reconnected each time with no restart or put
-(mokuzai's logs). Its cause is not established.
+shorter event followed, from 23:43:56Z (mokuzai's first leaf drop) to about
+00:03Z: global tier down from 23:46Z and GitHub intermittent from kinu
+(supervisor roll-up). On mokuzai the leaf dropped twice in that span and
+reconnected each time with no restart or put (mokuzai's logs). The mokuzai
+reviewer's relay of a review it held through that span was sent at 00:05:21Z,
+while GitHub showed the review at 23:43:20Z, so a relayed time can lag the
+event it reports. Its cause is not established.
 
 ## The six questions
 
@@ -95,7 +99,7 @@ twice in that span and reconnected each time with no restart or put
 |---|---|---|
 | H1, bd fails loudly on every host | **unsettled** | bd stayed up for kinu's seats (claude-reviewer correction: reachable throughout). No log records a bd call from mokuzai or corporate in the window |
 | H2, a send is accepted and not delivered | **failed for arcaven, unsettled overall** | arcaven's sends were refused under R-92, not accepted. Another team's undelivered asks may be H2, unconfirmed |
-| H3, leaves reconnect on their own within minutes | **failed for the cut, held for the later blips** | the cut's return took about 2h18m and came only after kinu changed networks again. Corporate needed a seed re-push, and its leaf dropped again at 00:01Z. mokuzai's return followed two fallback cycles outside marvel. In the second event mokuzai's leaf did reconnect unaided: down 23:43:56Z, back 23:47:43Z, down 23:52:22Z, back 23:56:00Z, with no restart or put (mokuzai's logs) |
+| H3, leaves reconnect on their own within minutes | **failed for the cut, held for mokuzai's later blips** | the cut's return took about 2h18m and came only after kinu changed networks again. Corporate needed a seed re-push, and its leaf dropped again at 00:01Z. mokuzai's return followed two fallback cycles outside marvel. In the second event mokuzai's leaf did reconnect unaided: down 23:43:56Z, back 23:47:43Z, down 23:52:22Z, back 23:56:00Z, with no restart or put (mokuzai's logs). No log read here records corporate's leaf in that span |
 | H4, seats that read the notice parked cleanly | **held** | 13/13 arcaven seats parked, nothing lost. The only unread notices were corporate's two idle seats, which had no work at risk on record |
 
 ## The candidate findings
