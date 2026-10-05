@@ -373,3 +373,64 @@ func TestDeleteOfAnEndedUnreapedRunIsClassifiedLikeReap(t *testing.T) {
 		})
 	}
 }
+
+// TestReapAfterAFailedKillRecordsACancelledRun: a delete whose kill did
+// not take left KillError on the row; when the pane is later found dead,
+// the reap finishes that delete. The kill was asked for, so the run is
+// cancelled, with the exit status the pane reported, not failed or
+// succeeded by that status.
+func TestReapAfterAFailedKillRecordsACancelledRun(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+	mgr.StreamDir = filepath.Join(t.TempDir(), "streams")
+	ws := "test-run-reap-killerr"
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	rt := api.Runtime{Name: "claude", Command: exitingHarness(t, 0), Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
+	if err := store.CreateTeam(&api.Team{
+		Name: "timers", Workspace: ws,
+		Roles: []api.Role{{Name: "refresh", Replicas: 1, Runtime: rt, Schedule: runTestSchedule()}},
+	}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	sess := &api.Session{Name: "timers-refresh-g1-0", Workspace: ws, Team: "timers", Role: "refresh", Runtime: rt}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionFailed
+		live.KillError = "kill-pane: refused"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark kill-failed: %v", err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		mgr.ReapDead()
+		if _, err := store.GetSession(sess.Key()); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the reap never finished the delete")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	st, ok := store.GetScheduleStatus(ws + "/timers/refresh")
+	if !ok || len(st.History) != 1 {
+		t.Fatalf("status = %+v (found %v), want one run", st, ok)
+	}
+	if r := st.History[0]; r.Outcome != api.RunCancelled || r.ExitStatus != "0" {
+		t.Fatalf("run = %+v, want cancelled with the pane's exit 0", r)
+	}
+	if !st.LastSucceededAt.IsZero() {
+		t.Fatalf("a cancelled run set last succeeded: %v", st.LastSucceededAt)
+	}
+}
