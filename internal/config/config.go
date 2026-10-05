@@ -472,6 +472,9 @@ type Seat struct {
 // bus.leaf.up and bus.leaf.down.
 type Hub struct {
 	URL string `yaml:"url"`
+	// URLs is the list form of URL, for a hub reachable at more than one
+	// address. Set one of url or urls, not both (marvel#575).
+	URLs []string `yaml:"urls,omitempty"`
 	// CAFile trusts the hub's TLS listener from the rendered leaf remote
 	// (aae-orc-i9i23). Empty for a plaintext hub.
 	CAFile string `yaml:"ca_file,omitempty"`
@@ -685,6 +688,8 @@ type ResolvedBus struct {
 	URL      string
 	StoreDir string
 	HubURL   string
+	// HubURLs is every hub address, in order; HubURL is its first entry.
+	HubURLs []string
 	// HubCAFile is ~-expanded, since the broker process reads it.
 	HubCAFile string
 	// Seat is copied through when declared.
