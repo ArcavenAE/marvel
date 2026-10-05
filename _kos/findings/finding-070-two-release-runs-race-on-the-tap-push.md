@@ -1,4 +1,4 @@
-# finding-039: two release runs race on the tap push; the loser leaves the tap behind
+# finding-070: two release runs race on the tap push; the loser leaves the tap behind
 
 **Date:** 2026-09-15
 **Probe:** merging the brief 10 stack (#264 through #269) into main in one sitting
