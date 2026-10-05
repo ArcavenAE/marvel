@@ -12,18 +12,18 @@ The correction count is `correct` plus `reject` plus `add`. It is computed after
 
 | Claim | Class | Verdict | Note |
 |-------|-------|---------|------|
-| C-001 | OBSERVED | | |
-| C-002 | OBSERVED | | |
-| C-003 | OBSERVED | | |
-| C-004 | RULED | | |
-| C-005 | OBSERVED | | |
-| C-006 | OBSERVED | | |
-| C-007 | RULED | | |
-| C-008 | RULED | | |
-| C-009 | RULED | | |
-| C-010 | OBSERVED | | |
-| C-011 | OBSERVED | | |
-| C-012 | OBSERVED | | |
+| C-001 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-002 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-003 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-004 | RULED | accept | Operator: "accept c-001 .. c-012". |
+| C-005 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-006 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-007 | RULED | accept | Operator: "accept c-001 .. c-012". |
+| C-008 | RULED | accept | Operator: "accept c-001 .. c-012". |
+| C-009 | RULED | accept | Operator: "accept c-001 .. c-012". |
+| C-010 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-011 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
+| C-012 | OBSERVED | accept | Operator: "accept c-001 .. c-012". |
 | C-013 | RULED | accept | Operator: "all the rest that were displayed are good/approved". |
 | C-014 | OBSERVED | accept | Operator: "all the rest that were displayed are good/approved". |
 | C-015 | OBSERVED | accept | Operator: "all the rest that were displayed are good/approved". |
