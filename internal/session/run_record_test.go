@@ -21,13 +21,13 @@ const runFixture = `{"type":"system","subtype":"init","session_id":"run-1","cwd"
 {"type":"result","subtype":"success","is_error":false,"session_id":"run-1","num_turns":1,"stop_reason":"end_turn","result":"board refreshed","total_cost_usd":0.0421,"usage":{"input_tokens":1200,"output_tokens":13},"modelUsage":{"claude-haiku-4-5":{"inputTokens":1200,"outputTokens":13,"costUSD":0.0421}},"permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_1"}]}
 `
 
-// exitingHarness replays transcript and then exits with code, so a run
+// exitingHarness replays runFixture and then exits with code, so a run
 // can end in either outcome after a full stream.
-func exitingHarness(t *testing.T, transcript string, code int) string {
+func exitingHarness(t *testing.T, code int) string {
 	t.Helper()
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "transcript.ndjson")
-	if err := os.WriteFile(fixture, []byte(transcript), 0o600); err != nil {
+	if err := os.WriteFile(fixture, []byte(runFixture), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 	script := filepath.Join(dir, "stub-claude")
@@ -91,8 +91,8 @@ func TestReapRecordsScheduledRuns(t *testing.T) {
 	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	okCmd := exitingHarness(t, runFixture, 0)
-	failCmd := exitingHarness(t, runFixture, 3)
+	okCmd := exitingHarness(t, 0)
+	failCmd := exitingHarness(t, 3)
 	rt := func(cmd string) api.Runtime {
 		return api.Runtime{Name: "claude", Command: cmd, Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
 	}
@@ -270,7 +270,7 @@ func TestDeleteOfAnEndedRunRecordsNothingMore(t *testing.T) {
 	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	rt := api.Runtime{Name: "claude", Command: exitingHarness(t, runFixture, 0), Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
+	rt := api.Runtime{Name: "claude", Command: exitingHarness(t, 0), Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
 	if err := store.CreateTeam(&api.Team{
 		Name: "timers", Workspace: ws,
 		Roles: []api.Role{{Name: "refresh", Replicas: 1, Runtime: rt, Schedule: runTestSchedule()}},
@@ -288,5 +288,88 @@ func TestDeleteOfAnEndedRunRecordsNothingMore(t *testing.T) {
 	st, _ := store.GetScheduleStatus(ws + "/timers/refresh")
 	if len(st.History) != 1 || st.History[0].Outcome != api.RunSucceeded {
 		t.Fatalf("history = %+v, want only the succeeded run from reap", st.History)
+	}
+}
+
+// TestDeleteOfAnEndedUnreapedRunIsClassifiedLikeReap: a headless run that
+// exited keeps its PaneID until the next reap, so a delete in that window
+// sees a pane but not a live run. It is recorded by its exit status, as
+// reap would have: exit 0 succeeded (and moves last succeeded), non-zero
+// failed. It is never "cancelled" (marvel#531 review).
+func TestDeleteOfAnEndedUnreapedRunIsClassifiedLikeReap(t *testing.T) {
+	skipIfNoTmux(t)
+
+	for _, tc := range []struct {
+		name    string
+		code    int
+		outcome api.RunOutcome
+		exit    string
+	}{
+		{"exit0", 0, api.RunSucceeded, "0"},
+		{"exit3", 3, api.RunFailed, "3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := api.NewStore()
+			driver, err := tmux.NewDriver()
+			if err != nil {
+				t.Fatalf("new driver: %v", err)
+			}
+			ring := events.NewRing(400)
+			mgr := NewManager(store, driver)
+			mgr.Events = ring
+			mgr.StreamDir = filepath.Join(t.TempDir(), "streams")
+			ws := "test-run-del-" + tc.name
+			t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+			if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+				t.Fatalf("create workspace: %v", err)
+			}
+			rt := api.Runtime{Name: "claude", Command: exitingHarness(t, tc.code), Mode: api.RuntimeModeHeadless, Prompt: "refresh"}
+			if err := store.CreateTeam(&api.Team{
+				Name: "timers", Workspace: ws,
+				Roles: []api.Role{{Name: "refresh", Replicas: 1, Runtime: rt, Schedule: runTestSchedule()}},
+			}); err != nil {
+				t.Fatalf("create team: %v", err)
+			}
+			sess := &api.Session{Name: "timers-refresh-g1-0", Workspace: ws, Team: "timers", Role: "refresh", Runtime: rt}
+			if err := mgr.Create(sess); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			// Wait for the pane to die, and do NOT reap: the row keeps its
+			// PaneID, which is the window this test is about.
+			got, err := store.GetSession(sess.Key())
+			if err != nil {
+				t.Fatalf("get session: %v", err)
+			}
+			deadline := time.Now().Add(15 * time.Second)
+			for {
+				if st, _ := driver.PaneStatus(got.PaneID); st.Exists && st.Dead {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("pane never died")
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			if cur, _ := store.GetSession(sess.Key()); cur.PaneID == "" {
+				t.Fatal("precondition: the row lost its PaneID before the delete")
+			}
+
+			if err := mgr.Delete(sess.Key()); err != nil {
+				t.Fatalf("delete: %v", err)
+			}
+			st, ok := store.GetScheduleStatus(ws + "/timers/refresh")
+			if !ok || len(st.History) != 1 {
+				t.Fatalf("status = %+v (found %v), want one run", st, ok)
+			}
+			if r := st.History[0]; r.Outcome != tc.outcome || r.ExitStatus != tc.exit {
+				t.Fatalf("run = %+v, want outcome %s with exit %s", r, tc.outcome, tc.exit)
+			}
+			if gotSucceeded := !st.LastSucceededAt.IsZero(); gotSucceeded != (tc.outcome == api.RunSucceeded) {
+				t.Fatalf("last succeeded set = %v for outcome %s", gotSucceeded, tc.outcome)
+			}
+			if n := len(ring.Snapshot(events.Filter{Kind: events.KindRunCancelled}, 0)); n != 0 {
+				t.Fatalf("run.cancelled events = %d, want 0", n)
+			}
+		})
 	}
 }
