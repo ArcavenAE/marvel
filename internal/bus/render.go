@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -42,10 +43,12 @@ const (
 // Spec is everything the renderer needs. Every name in it is a subject token
 // already, or Render refuses.
 type Spec struct {
-	Domain    string // the cluster name; becomes the JetStream domain
-	Listen    string // explicit host:port
-	StoreDir  string // JetStream store root; the store itself is StoreDir/store
-	HubURL    string // empty for a local-only cluster
+	Domain   string // the cluster name; becomes the JetStream domain
+	Listen   string // explicit host:port
+	StoreDir string // JetStream store root; the store itself is StoreDir/store
+	HubURL   string // empty for a local-only cluster
+	// HubURLs is every hub address the leaf remote lists; empty means just HubURL.
+	HubURLs   []string
 	HubCAFile string // trusts a TLS hub from the leaf remote; empty for plaintext
 	LeafSeed  bool   // a bus/leaf credential is in the Store; the leaf block renders only then
 	// LeafAttached is the operator's connect/disconnect decision. The leaf
@@ -161,7 +164,15 @@ func RenderConf(s Spec) (string, error) {
 		if s.HubCAFile != "" {
 			tls = fmt.Sprintf(", tls { ca_file: %q }", s.HubCAFile)
 		}
-		fmt.Fprintf(&b, "\nleafnodes {\n  remotes: [\n    { urls: [%q], nkey: $%s%s }\n  ]\n}\n", s.HubURL, LeafSeedEnv, tls)
+		urls := s.HubURLs
+		if len(urls) == 0 {
+			urls = []string{s.HubURL}
+		}
+		quoted := make([]string, len(urls))
+		for i, u := range urls {
+			quoted[i] = fmt.Sprintf("%q", u)
+		}
+		fmt.Fprintf(&b, "\nleafnodes {\n  remotes: [\n    { urls: [%s], nkey: $%s%s }\n  ]\n}\n", strings.Join(quoted, ", "), LeafSeedEnv, tls)
 	}
 	return b.String(), nil
 }

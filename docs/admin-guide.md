@@ -456,8 +456,20 @@ restart is not settled: the record is mixed. On 2026-10-04 one leaf followed.
 On 2026-10-05 a third cluster, whose hub was named by a `.local` name, did not:
 after the hub host moved, the broker kept dialing the old addresses while the
 host's resolver already returned the new ones. The cause is not established.
-The key takes one URL; a list of hub URLs is requested in marvel#575, which
-holds the evidence.
+`url` takes one address. A hub reachable at more than one address (two names,
+or a name and a fallback address) takes `urls` instead, and the leaf remote
+lists every entry so NATS rotates between them:
+
+```yaml
+    hub:
+      urls:
+        - nats-leaf://<hub-name-a>:7442
+        - nats-leaf://<hub-name-b>:7442
+```
+
+Set one of `url` or `urls`, not both; every entry gets the same scheme check.
+A list does not make the leaf re-resolve a name when a dial fails: the record
+above (marvel#575) shows a restart can still dial stale addresses.
 
 A cluster written in the older `bus:` block spelling puts the same `hub:` key
 under its `bus:` block instead; the third cluster's bring-up (aae-orc#461)

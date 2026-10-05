@@ -472,9 +472,24 @@ type Seat struct {
 // bus.leaf.up and bus.leaf.down.
 type Hub struct {
 	URL string `yaml:"url"`
+	// URLs is the list form of URL, for a hub reachable at more than one
+	// address. Set one of url or urls, not both (marvel#575).
+	URLs []string `yaml:"urls,omitempty"`
 	// CAFile trusts the hub's TLS listener from the rendered leaf remote
 	// (aae-orc-i9i23). Empty for a plaintext hub.
 	CAFile string `yaml:"ca_file,omitempty"`
+}
+
+// AllURLs is every hub address in order: urls when it is set, else the one
+// url, else none.
+func (h *Hub) AllURLs() []string {
+	if len(h.URLs) > 0 {
+		return append([]string(nil), h.URLs...)
+	}
+	if h.URL != "" {
+		return []string{h.URL}
+	}
+	return nil
 }
 
 // ReservedBusUsers are broker user names the renderer owns; a team or
@@ -621,8 +636,19 @@ func ValidateBus(cluster string, b *Bus) error {
 		}
 	}
 	if b.Hub != nil {
-		if err := checkNATSURL(b.Hub.URL, "nats-leaf", "nats", "tls"); err != nil {
-			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.url: %v", ErrInvalidBus, cluster, err))
+		switch {
+		case b.Hub.URL != "" && len(b.Hub.URLs) > 0:
+			errs = append(errs, fmt.Errorf("%w: cluster %q: hub sets both url and urls; set one, not both", ErrInvalidBus, cluster))
+		case len(b.Hub.URLs) > 0:
+			for i, u := range b.Hub.URLs {
+				if err := checkNATSURL(u, "nats-leaf", "nats", "tls"); err != nil {
+					errs = append(errs, fmt.Errorf("%w: cluster %q: hub.urls[%d]: %v", ErrInvalidBus, cluster, i, err))
+				}
+			}
+		default:
+			if err := checkNATSURL(b.Hub.URL, "nats-leaf", "nats", "tls"); err != nil {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: hub.url: %v", ErrInvalidBus, cluster, err))
+			}
 		}
 		if b.Hub.CAFile != "" && !filepath.IsAbs(cleanPath(b.Hub.CAFile)) {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.ca_file %q must be an absolute path (or ~-relative); the broker resolves it, not the daemon", ErrInvalidBus, cluster, b.Hub.CAFile))
@@ -685,6 +711,8 @@ type ResolvedBus struct {
 	URL      string
 	StoreDir string
 	HubURL   string
+	// HubURLs is every hub address, in order; HubURL is its first entry.
+	HubURLs []string
 	// HubCAFile is ~-expanded, since the broker process reads it.
 	HubCAFile string
 	// Seat is copied through when declared.
@@ -722,7 +750,10 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 		r.StoreDir = filepath.Join(stateDir, "nats")
 	}
 	if b.Hub != nil {
-		r.HubURL = b.Hub.URL
+		r.HubURLs = b.Hub.AllURLs()
+		if len(r.HubURLs) > 0 {
+			r.HubURL = r.HubURLs[0]
+		}
 		if b.Hub.CAFile != "" {
 			r.HubCAFile = cleanPath(b.Hub.CAFile)
 		}
