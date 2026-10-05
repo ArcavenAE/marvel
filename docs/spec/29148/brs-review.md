@@ -32,14 +32,14 @@ The correction count is `correct` plus `reject` plus `add`. It is computed after
 | C-018 | RULED | correct | Operator: "c-018 the macos specifics are an artifact of rapid development and not having a linux system in active use at development time, this should not be limited to macos". Claim reworded in `brs.md` to be platform-neutral; the macOS measurement is kept as the evidence, not as the scope. |
 | C-019 | OBSERVED | accept | Operator: "all the rest that were displayed are good/approved". |
 | C-020 | OBSERVED | correct | Operator: "c-020 these are \"services\" and it's not clear this is the correct classification for each and they are not limited these". The three are services; whether each is correctly classified is open, and the set is not limited to these three. See Q-008. No new classification is made here. |
-| C-021 | FORWARD | | |
-| C-022 | OBSERVED | | |
-| C-023 | FORWARD | | |
-| C-024 | RULED | | |
-| C-025 | OBSERVED | | |
-| C-026 | OBSERVED | | |
-| C-027 | JUDGMENT | | |
-| C-028 | JUDGMENT | | |
+| C-021 | FORWARD | accept-reworded | Operator: "15 C-021 raccept reworded to include that marvel daemon reexec performs an upgrade while retaining running processes / accept the rest". Claim text now says `marvel daemon reexec` performs an upgrade while keeping running processes. |
+| C-022 | OBSERVED | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
+| C-023 | FORWARD | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
+| C-024 | RULED | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
+| C-025 | OBSERVED | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
+| C-026 | OBSERVED | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
+| C-027 | JUDGMENT | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
+| C-028 | JUDGMENT | accept | Operator: "accept the rest" (relayed with the C-021 verdict). |
 | C-029 | JUDGMENT | | |
 | C-030 | JUDGMENT | | |
 | C-031 | OBSERVED | | |

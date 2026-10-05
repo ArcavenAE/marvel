@@ -69,7 +69,7 @@ No mission or vision statement is recorded beyond what C-001 and C-004 already s
 
 ### 4.3 Business Goals and Objectives
 
-- **C-021** [FORWARD] Upgrades are to separate fetch from activation across two planes: a bootstrap plane that installs and stages, and a cluster plane that runs pre-flight checks, activates and rolls back, with a version store holding staged versions. Zero-downtime upgrade is the long-term acceptance test. A design study precedes implementation. {src: NODE:elem-staged-activation-upgrades}
+- **C-021** [FORWARD] Upgrades are to separate fetch from activation across two planes: a bootstrap plane that installs and stages, and a cluster plane that runs pre-flight checks, activates and rolls back, with a version store holding staged versions. `marvel daemon reexec` performs an upgrade while keeping running processes: sessions keep running across the reexec. Zero-downtime upgrade is the long-term acceptance test. A design study precedes implementation. {src: NODE:elem-staged-activation-upgrades}
 - **C-022** [OBSERVED] Enforcement has three loci. Environment construction at spawn is built. Runtime admission and metering has its first component shipped, and full metering across the matrix rows is open. Mid-flight revocation is missing, and the M1 authority model is its prerequisite. {src: NODE:elem-agentic-resource-matrix}
 - **C-023** [FORWARD] Whether automatic shifts may be turned on depends on whether a handoff is good enough to replace a working seat. This is recorded as an open question about automatic shift triggers. {src: NODE:question-auto-shift-handoff-quality, NODE:question-shift-triggers}
 
