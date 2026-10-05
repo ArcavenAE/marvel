@@ -23,7 +23,7 @@ jobs:
     # Default off — enable by setting repo variable SCORECARD_ENABLED=true
     # (same opt-in pattern as SIGNING_ENABLED).
     if: vars.SCORECARD_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # Needed to upload the results to code-scanning dashboard.
       security-events: write
