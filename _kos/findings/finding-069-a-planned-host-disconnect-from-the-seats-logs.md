@@ -8,7 +8,9 @@ and its leaf behave when the hub host leaves; bd and director are objects.
 **Sources:** none committed. All are on kinu, outside any repo:
 - the arcaven supervisor's roll-up of 13 seat logs (sent to director 22:24Z);
 - the separate logs of the envoy, maintainer and both architect seats;
-- director's own log.
+- director's own log;
+- mokuzai's daemon and nats logs, read on that host by the reviewer
+  (review 5418470362 on this PR). Those times are relayed, not re-measured.
 
 Seats are cited by role. Times are UTC on 2026-10-04. Where a time comes from
 one seat's report and was not re-measured, it says so. Host addresses in
@@ -35,7 +37,9 @@ Two things happened, and the logs separate them:
 
 The window closed at 22:21Z (director), about 2h18m after the cut. A second,
 shorter event followed: 23:46Z to about 00:03Z, global tier down and GitHub
-intermittent from kinu (supervisor roll-up). Its cause is not established.
+intermittent from kinu (supervisor roll-up). On mokuzai the leaf dropped
+twice in that span and reconnected each time with no restart or put
+(mokuzai's logs). Its cause is not established.
 
 ## The six questions
 
@@ -55,15 +59,22 @@ intermittent from kinu (supervisor roll-up). Its cause is not established.
    - On kinu, nothing failed on the bus. `wait_for_message` returned "silence,
      not failure" throughout, because the bus never left (maintainer, filer).
 4. **Recovery.**
-   - mokuzai: a leaf joined the hub at 22:13:04Z from a new address (director).
+   - mokuzai came back twice, each time after its local fallback ran a full
+     cycle (mokuzai's logs):
+     - 22:12:52Z daemon restart with the hub set to a literal address,
+       22:12:58Z credential put, 22:13:03Z nats restart, and 22:13:03.6Z leaf
+       up over IPv4;
+     - 22:17:55Z a second daemon restart with the hub back to its name,
+       22:18:01Z a second put, 22:18:06Z nats restart, and 22:18:09.9Z leaf up
+       over IPv6.
      mokuzai's first clean global poll was at 22:19:08Z (probe brief, from the
      mokuzai reviewer's log). The first mokuzai message reached kinu at
-     22:19:29Z. Both leaves came back over IPv6, with no hub-side change, after
-     kinu changed networks again (director).
-   - corporate: director re-pushed the seed by hand.
-   - The return was not clean: kinu's address flipped again at 22:2xZ, and the
-     leaf dropped again at 00:01Z because `.local` did not cross subnets
-     (director).
+     22:19:29Z.
+   - corporate: director re-pushed the seed by hand. Its leaf came back over
+     IPv6 after kinu changed networks again (director).
+   - The return was not clean: kinu's address flipped again at 22:2xZ, and
+     corporate's leaf dropped again at 00:01Z because `.local` did not cross
+     subnets (director). mokuzai had no 00:01Z drop.
 5. **Work.**
    - arcaven lost nothing and duplicated nothing. Every send to mokuzai was
      refused loudly and parked, not dropped.
@@ -73,7 +84,8 @@ intermittent from kinu (supervisor roll-up). Its cause is not established.
    - One push failed and succeeded on retry, but its stderr was cut to one line
      by `tail -1`, so the cause is lost (builder).
 6. **By hand.** Director re-pushed corporate's seed. On mokuzai, the operator's
-   local fallback re-put the bus and leaf credentials at 22:12:58Z. Under the
+   local fallback ran twice: 2 credential puts (22:12:58Z, 22:18:01Z), 2
+   daemon restarts and 2 nats restarts. Under the
    operator's ruling, that fallback is outside marvel and is not counted as
    marvel recovering. No arcaven seat took a manual step.
 
@@ -83,20 +95,24 @@ intermittent from kinu (supervisor roll-up). Its cause is not established.
 |---|---|---|
 | H1, bd fails loudly on every host | **unsettled** | bd stayed up for kinu's seats (claude-reviewer correction: reachable throughout). No log records a bd call from mokuzai or corporate in the window |
 | H2, a send is accepted and not delivered | **failed for arcaven, unsettled overall** | arcaven's sends were refused under R-92, not accepted. Another team's undelivered asks may be H2, unconfirmed |
-| H3, leaves reconnect on their own within minutes | **failed** | the return took about 2h18m and came only after kinu changed networks again. Corporate needed a seed re-push. mokuzai's return followed a local credential re-put outside marvel. The link dropped again at 00:01Z |
+| H3, leaves reconnect on their own within minutes | **failed for the cut, held for the later blips** | the cut's return took about 2h18m and came only after kinu changed networks again. Corporate needed a seed re-push, and its leaf dropped again at 00:01Z. mokuzai's return followed two fallback cycles outside marvel. In the second event mokuzai's leaf did reconnect unaided: down 23:43:56Z, back 23:47:43Z, down 23:52:22Z, back 23:56:00Z, with no restart or put (mokuzai's logs) |
 | H4, seats that read the notice parked cleanly | **held** | 13/13 arcaven seats parked, nothing lost. The only unread notices were corporate's two idle seats, which had no work at risk on record |
 
 ## The candidate findings
 
 - **C1, one hub URL: held, with one correction.** The probe says mokuzai
   recovered "with no re-push or restart on its side". That is wrong. The
-  operator's mokuzai fallback did a bus and leaf credential re-put at
-  22:12:58Z, and the leaf joined 6 seconds later, at 22:13:04Z. The
+  operator's mokuzai fallback ran its cycle twice: 2 credential puts, 2
+  daemon restarts and 2 nats restarts. The first leaf came up over IPv4 at
+  22:13:03.6Z with the hub set to a literal address; the second came up over
+  IPv6 at 22:18:09.9Z with the hub back to its name. The
   structural point stands: a single `hub.url` gives a leaf no second address
   (marvel#575).
 - **C2, addresses in discovery and trust: partly confirmed.** The `.local`
-  name did not cross subnets at 00:01Z (director). Host-key refusals did not
-  recur in this window on any log read here.
+  name did not cross subnets at 00:01Z, dropping corporate's leaf (director).
+  On host keys, mokuzai's logs show 5 ssh failures with "no common algorithm
+  for host key" at 22:10:40Z to 22:10:42Z. That is a host-key negotiation
+  failure in the window, though not the address-pinned refusal of marvel#434.
 - **C3, kinu's seats cannot see the cut on the bus: confirmed.** The
   maintainer measured it after a GitHub failure at 21:30:38Z: `wait_for_message`
   and `set_presence` still answered at 21:31:15Z.
@@ -137,5 +153,6 @@ intermittent from kinu (supervisor roll-up). Its cause is not established.
 - **R-92 refusals did their job.** Nothing was silently dropped from arcaven.
   The refusal text blames the name ("the cluster name is likely wrong") when
   the cause is liveness (supervisor).
-- **Count manual steps honestly.** mokuzai's return included a credential
-  re-put by the operator's fallback; corporate's included a seed re-push.
+- **Count manual steps honestly.** mokuzai's return took two fallback cycles
+  (two puts, two daemon and two nats restarts); corporate's took a seed
+  re-push.
