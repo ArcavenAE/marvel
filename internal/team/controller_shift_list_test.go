@@ -554,8 +554,9 @@ func TestMaxAgeRequestDroppedWhenPolicyNoLongerDeclaresIt(t *testing.T) {
 }
 
 // The handoff path is written by the seat, so marvel must not trust what is
-// there. A FIFO would block a plain open forever while the controller holds
-// c.mu, wedging every team; a directory or a symlink is not a handoff either.
+// there. A FIFO would block a plain open forever in the background read,
+// stalling that session's handoff check; a directory or a symlink is not a
+// handoff either.
 // handoffComplete must answer false for each, promptly (review 5392253372).
 func TestHandoffCompleteRefusesNonRegularFiles(t *testing.T) {
 	dir := t.TempDir()
@@ -585,7 +586,7 @@ func TestHandoffCompleteRefusesNonRegularFiles(t *testing.T) {
 				t.Errorf("%s: handoffComplete = true, want false", name)
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatalf("%s: handoffComplete blocked; a seat can wedge the controller", name)
+			t.Fatalf("%s: handoffComplete blocked; a seat can wedge that session's handoff check", name)
 		}
 	}
 	if !handoffComplete(target, "END HANDOFF") {
