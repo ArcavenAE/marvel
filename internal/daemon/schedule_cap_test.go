@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,5 +53,42 @@ func TestScheduleHistoryMaxFromCluster(t *testing.T) {
 		if got := scheduleHistoryMaxFrom(tc.cl); got != tc.want {
 			t.Errorf("%s: got %d, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestLoadScheduleHistoryMaxReadsTheConfig covers the wiring the pure
+// lookup test cannot: the cluster whose socket is ours supplies the cap
+// through ~/.marvel/config.yaml, another cluster's cap is not used, and a
+// config that loads with a validation error (a bad bus) still counts, as it
+// does for attachServices.
+func TestLoadScheduleHistoryMaxReadsTheConfig(t *testing.T) {
+	const sock = "/tmp/m-cap.sock"
+	const clusters = "clusters:\n" +
+		"  - name: other\n    socket: /tmp/m-other.sock\n    schedule_history_max: 7\n" +
+		"  - name: mine\n    socket: " + sock + "\n    schedule_history_max: 120\n"
+	for _, tc := range []struct {
+		name, yaml string
+		want       int
+	}{
+		{"matching cluster", clusters, 120},
+		{"no matching cluster", "clusters:\n  - name: other\n    socket: /tmp/m-other.sock\n    schedule_history_max: 7\n", 0},
+		{"unparseable config", "clusters: [", 0},
+		{"validation error still read", "clusters:\n  - name: \"bad name!\"\n    socket: /tmp/m-bad.sock\n  - name: mine\n    socket: " + sock + "\n    schedule_history_max: 120\n", 120},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			if err := os.MkdirAll(filepath.Join(home, ".marvel"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			d := &Daemon{}
+			d.loadScheduleHistoryMax(sock)
+			if d.scheduleHistoryMax != tc.want {
+				t.Fatalf("scheduleHistoryMax = %d, want %d", d.scheduleHistoryMax, tc.want)
+			}
+		})
 	}
 }

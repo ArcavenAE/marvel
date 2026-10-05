@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"log"
 
 	"github.com/arcavenae/marvel/internal/config"
@@ -16,12 +17,23 @@ func scheduleHistoryMaxFrom(cl *config.Cluster) int {
 	return cl.ScheduleHistoryMax
 }
 
+// configLoadUsable reports whether config.Load's error still leaves a
+// config worth reading: a bad cluster name, bus or service list comes back
+// beside the parsed config, and each caller proceeds per cluster. Any other
+// error means no config was read.
+func configLoadUsable(err error) bool {
+	return err == nil || errors.Is(err, config.ErrInvalidClusterName) ||
+		errors.Is(err, config.ErrInvalidBus) || errors.Is(err, config.ErrInvalidService)
+}
+
 // loadScheduleHistoryMax sets the daemon's history ceiling from the
-// cluster entry whose socket is ours, the same lookup attachServices
-// makes. An unreadable config leaves the default.
+// cluster entry whose socket is ours, found the way attachServices finds
+// it and under the same tolerance for a config that loads with a
+// validation error (configLoadUsable). A config that cannot be read at
+// all leaves the default.
 func (d *Daemon) loadScheduleHistoryMax(socketPath string) {
 	cfg, err := config.Load()
-	if err != nil || cfg == nil {
+	if !configLoadUsable(err) || cfg == nil {
 		return
 	}
 	cl := cfg.ClusterForSocket(socketPath)

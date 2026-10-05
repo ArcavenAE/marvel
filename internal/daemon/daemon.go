@@ -3102,7 +3102,7 @@ const busLeafCredential = "bus/leaf"
 // bespoke function.
 func (d *Daemon) attachServices(socketPath string) error {
 	cfg, err := config.Load()
-	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidBus) && !errors.Is(err, config.ErrInvalidService) {
+	if !configLoadUsable(err) {
 		log.Printf("services: client config unreadable, no managed service: %v", err)
 		return nil
 	}
