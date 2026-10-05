@@ -1,4 +1,8 @@
+ratified: 2026-10-05
+
 # BRS review
+
+Note on the ratified line: the operator delegated writing it (option b), in the words "1 add them 2 b". The date 2026-10-05 came from the example wording in director's question ("write ratified: 2026-10-05 for me"); the operator did not type it.
 
 The operator reviews `brs.md` and fills this file in. The verdicts on rows C-013 to C-020 were relayed by director on 2026-10-05, quoted verbatim in the Notes; check a row against that relay to repeat the fidelity check. One row per claim, with a verdict:
 
@@ -50,10 +54,18 @@ The correction count is `correct` plus `reject` plus `add`. It is computed after
 | C-036 | OBSERVED | accept-reworded | Operator: "C-036 but we've shifted from BYOA to BYOH (harness) although BYOA is still valid (bring your own harness, bring your own agent definitions or get them with sideshow or wardrobe, or bmad or vsdd-factory or gastown (future))". Claim text now frames BYOH and keeps BYOA valid. |
 | C-037 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
 | C-038 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
+| C-039 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-001. |
+| C-040 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-001. |
+| C-041 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-001. |
+| C-042 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-001. |
+| C-043 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-002. |
+| C-044 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-001. |
+| C-045 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-004. |
+| C-046 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-003. |
 
 ## Added claims
 
-(none recorded yet)
+C-039 to C-046, all RULED, recorded in `brs.md` from the operator's answers to Q-001 to Q-004 (see the rows above and the Open questions section). Operator: "1 add them 2 b".
 
 ## Open questions (Q-001 to Q-010)
 
