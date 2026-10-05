@@ -40,10 +40,12 @@ The window closed at 22:21Z (director), about 2h18m after the cut. A second,
 shorter event followed, from 23:43:56Z (mokuzai's first leaf drop) to about
 00:03Z: global tier down from 23:46Z and GitHub intermittent from kinu
 (supervisor roll-up). On mokuzai the leaf dropped twice in that span and
-reconnected each time with no restart or put (mokuzai's logs). The mokuzai
-reviewer's relay of a review it held through that span was sent at 00:05:21Z,
-while GitHub showed the review at 23:43:20Z, so a relayed time can lag the
-event it reports. Its cause is not established.
+reconnected each time with no restart or put (mokuzai's logs). For a review
+posted at 23:43:20Z, the reviewer seat relayed its verdict on the local tier
+12 s after posting; the supervisor's onward relay to the global tier failed at
+23:47:02Z, was held, and went out at 00:05:18Z as a short note, because a
+re-GATE had superseded the verdict (the mokuzai reviewer-supervisor's
+transcript, relayed). Its cause is not established.
 
 ## The six questions
 
@@ -157,6 +159,9 @@ event it reports. Its cause is not established.
 - **R-92 refusals did their job.** Nothing was silently dropped from arcaven.
   The refusal text blames the name ("the cluster name is likely wrong") when
   the cause is liveness (supervisor).
+- **A held relay lags at the hop that holds it.** The 18-minute gap above sat
+  at the mokuzai supervisor's global hop, not at the reviewer seat. Read a
+  relayed time against the seat that sent it on.
 - **Count manual steps honestly.** mokuzai's return took two fallback cycles
   (two puts, two daemon and two nats restarts); corporate's took a seed
   re-push.
