@@ -47,6 +47,9 @@ edges:
   - target: aae-orc::question-multi-host
     type: derives
     note: "Cross-repo projection from orchestrator F7"
+  - target: finding-069-a-planned-host-disconnect-from-the-seats-logs
+    type: supports
+    note: "first observed answer to 'what happens when a remote host becomes unreachable': a planned cut of the hub host took about 2h18m to recover; mokuzai came back only after two cycles of a local fallback outside marvel and corporate after a seed re-push; in a later short event mokuzai's leaf reconnected unaided twice; R-92 refused cross-host sends loudly instead of dropping them"
 provenance:
   created_by: human
   session: session-008
