@@ -99,6 +99,9 @@ type Manager struct {
 	// is the driver's KillPane; a field so a test can make the kill fail
 	// without wedging a real tmux server.
 	killPane func(paneID string) error
+	// paneStatus is the driver's PaneStatus, a field for the same reason.
+	// Nil when there is no driver; Delete then treats the pane as live.
+	paneStatus func(paneID string) (tmux.PaneStatus, error)
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
@@ -116,6 +119,7 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	}
 	if driver != nil {
 		m.killPane = driver.KillPane
+		m.paneStatus = driver.PaneStatus
 	}
 	return m
 }
@@ -1325,6 +1329,16 @@ func (m *Manager) Delete(key string) error {
 	// Prefer the instance: it kills the pane and retires the stream in
 	// one step. Sessions with no instance (adopted panes, or a row kept by
 	// an earlier failed kill) fall back to the driver.
+	// Read the pane before the kill: a headless run that already ended
+	// keeps its PaneID until the next reap, and its outcome is the exit
+	// status, not a cancellation. A status that cannot be read counts as
+	// live, which is the conservative record (cancelled, no exit status).
+	ended, endedSt := false, tmux.PaneStatus{}
+	if sess.PaneID != "" && m.paneStatus != nil {
+		if st, serr := m.paneStatus(sess.PaneID); serr == nil && (!st.Exists || st.Dead) {
+			ended, endedSt = true, st
+		}
+	}
 	had, tail, kerr := m.retireInstance(key)
 	if !had && sess.PaneID != "" {
 		if err := m.killPane(sess.PaneID); err != nil && !errors.Is(err, tmux.ErrPaneGone) {
@@ -1336,8 +1350,16 @@ func (m *Manager) Delete(key string) error {
 	}
 
 	// A live run this delete ended is a cancelled run. A row whose pane
-	// was already gone was recorded when it was reaped.
-	if sess.PaneID != "" {
+	// was already gone was recorded when it was reaped. A pane that had
+	// already ended but was not yet reaped is classified as reap would:
+	// exit 0 on a headless run succeeded, anything else failed.
+	switch {
+	case sess.PaneID == "":
+	case ended && headlessCompleted(sess, endedSt):
+		m.recordScheduledRun(sess, api.RunSucceeded, endedSt.ExitStatus, tail)
+	case ended:
+		m.recordScheduledRun(sess, api.RunFailed, endedSt.ExitStatus, tail)
+	default:
 		m.recordScheduledRun(sess, api.RunCancelled, "", tail)
 	}
 	return m.dropSession(sess, "session deleted")
