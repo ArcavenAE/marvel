@@ -1,6 +1,6 @@
 # BRS review
 
-The operator reviews `brs.md` and fills this file in. One row per claim, with a verdict:
+The operator reviews `brs.md` and fills this file in. The verdicts on rows C-013 to C-020 were relayed by director on 2026-10-05, quoted verbatim in the Notes; check a row against that relay to repeat the fidelity check. One row per claim, with a verdict:
 
 - `accept`: the claim stands as written.
 - `accept-reworded`: the claim stands and only the wording changed. Listed, not counted as a correction.
@@ -55,8 +55,9 @@ The correction count is `correct` plus `reject` plus `add`. It is computed after
 
 (none recorded yet)
 
-## Open questions (Q-001 to Q-008)
+## Open questions (Q-001 to Q-009)
 
 Answer or reclassify here.
 
 - **Q-008** (from C-020, open) The three Gateway sub-types in C-020 are services. Is "Gateway sub-type" the right classification for each of them, and what other services belong in the set? The operator says the set is not limited to these three and the classification of each is not clear.
+- **Q-009** (from C-018, open) The widened ruling conflicts with finding-063 line 24 and the node's reopener, which keep the question open for Linux or a container. See Q-009 in `brs.md`.

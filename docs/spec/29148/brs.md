@@ -52,14 +52,14 @@ The processes below are the ones the records describe as shipped. What each is m
 ### 3.3 Out of Scope
 
 - **C-017** [RULED] Ruled out: building pack management as a separate tool outside marvel. Packs are agent configuration, and marvel already manages agent lifecycle, so pack management is a control plane concern. The ruling would be reopened if marvel becomes too large, or a non-marvel orchestration path needs pack resolution. {src: NODE:grv-standalone-pack-manager}
-- **C-018** [RULED] Ruled out: a private Claude Code config directory per interactive claude seat. Measured on macOS, where the seat loses the operator's login; the macOS specifics reflect the platform in use at development time, and the ruling is not limited to macOS. marvel manages the needed keys in the operator's own config instead. {src: NODE:grv-private-claude-config-home-macos, FINDING:finding-063}
+- **C-018** [RULED] Ruled out: a private Claude Code config directory per interactive claude seat. Measured on macOS, where the seat loses the operator's login. The cited node and finding limit the ruling to macOS; the operator's verdict of 2026-10-05 widens it: the macOS specifics reflect the platform in use at development time, and the ruling should not be limited to macOS (see Q-009). marvel manages the needed keys in the operator's own config instead. {src: NODE:grv-private-claude-config-home-macos, FINDING:finding-063}
 
 ## 4. Business Overview
 
 ### 4.1 Business Environment
 
 - **C-019** [OBSERVED] marvel is distributed as macOS binaries (arm64, amd64), code-signed and Apple-notarized; as Linux binaries (amd64, arm64); and through a Homebrew tap and mise. Alpha releases are cut on push to main and stable releases on `v*` tags. {src: README, NODE:elem-release-pipeline}
-- **C-020** [OBSERVED] marvel's Gateway resource type has three sub-types: switchboard (remote tmux access), director (the inter-agent supervisor protocol), and an external API or webhook interface. The first two are designed; the external one is not. {src: CHARTER, NODE:question-gateway-external-api}
+- **C-020** [OBSERVED] The Gateway resource type names at least three services as sub-types: switchboard (remote tmux access), director (the inter-agent supervisor protocol), and an external API or webhook interface. The first two are designed; the external one is not. Whether each is a Gateway sub-type, and whether the set stops at three, is open (Q-008). {src: CHARTER, NODE:question-gateway-external-api}
 
 No market, competitive or regulatory evidence is recorded. See Q-004.
 
@@ -125,3 +125,4 @@ This brief treats the kos nodes as authoritative over charter prose where the tw
 - **Q-006** Do two bedrock nodes disagree about persistence? The node for the shipped MVP says state is in-memory and persistence is open, while the transaction-log node records a bbolt-backed durable record that is shipped. Which one is current? The two nodes are elem-mvp-complete and question-marvel-transaction-log.
 - **Q-007** The evidence index lists two findings under the same id, finding-039 (the b69n contract-lane harvest, and the tap push race). No claim here cites either, because the id cannot say which is meant. Should the finding ids be made unique?
 - **Q-008** The three Gateway sub-types in C-020 are services. Is "Gateway sub-type" the right classification for each, and what other services belong in the set? The set is not limited to these three, and the classification of each is not clear (operator verdict on C-020).
+- **Q-009** The operator's verdict on C-018 widens the ruling beyond macOS, but the node `grv-private-claude-config-home-macos` is macOS-only and its reopener names a Linux or container host, and finding-063 line 24 says "Where the login is a file (Linux, a container) the question is open and needs its own run." Should the node and finding be harvested to match the operator's verdict, or does the ruling need a Linux or container run first? The node is not edited here.
