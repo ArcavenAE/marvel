@@ -191,6 +191,19 @@ content: |
   pane process holds them before the harness starts was not re-measured.
   MARVEL_SESSION is the seat name, not the transcript id.
 
+  STATE 2026-10-04 (harvest, the errand team's report). A marvel key carries
+  one of two scopes, `admin` and `credential-push`
+  (`internal/daemon/scope.go:19` and `:26`; `ParseScope` rejects anything
+  else, `:36-46`), checked per method at `internal/daemon/daemon.go:943`.
+  There is no team-scoped scope for `inject` or `capture`, so a peer cannot
+  be given shared access to one team's seats without full admin on the
+  daemon. The code defers new grants to the principal model: the leaf
+  toggle reuses credential-push because "a dedicated grant waits on the
+  principal model (aae-orc-bs3x)" (`scope.go:54-59`). marvel#312 (R-94 is
+  advisory inside a team) is open. This is layer 2 above, still unbuilt;
+  open question: is a team-scoped operational grant a bs3x principal, or a
+  third key scope before it?
+
 edges:
   - target: elem-runtime-adapter-framework
     type: derives

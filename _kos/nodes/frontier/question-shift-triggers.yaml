@@ -318,6 +318,16 @@ content: |
   ring while the escalation is sticky, so a restart leaves a seat held with no
   one told (marvel#453).
 
+  STATE 2026-10-04 (harvest, finding-067). Max age assumes a seat that can
+  write a file. Its only path to a shift is the seat writing the declared
+  handoff file with the marker as its last line; otherwise it escalates
+  `shift.handoff-missing` once per handoff window, sticky, for as long as
+  the seat runs. A seat with no write surface (a read-only codex seat,
+  crush, opencode with no prompt surface, a supervisor under a
+  coordination contract) cannot answer it. The operator excluded such
+  seats; whether apply should check that a max-age role declares a handoff
+  path, or the manifest reference should state the precondition, is open.
+
 edges:
   - target: question-shifts
     type: derives
