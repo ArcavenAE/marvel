@@ -360,7 +360,7 @@ func extractTar(r io.Reader, dest string) error {
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return resolveLinks(links)
+			return checkLinks(root, links)
 		}
 		if err != nil {
 			return err
@@ -481,6 +481,24 @@ const maxLinkHops = 40
 func resolveLinks(links map[string]string) error {
 	for name := range links {
 		if err := resolveLink(links, name); err != nil {
+			return fmt.Errorf("archive symlink %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// checkLinks refuses the links the archive wrote that could leave the tree.
+// resolveLinks reads the archive's names byte for byte; the filesystem may not
+// (APFS folds case and treats NFC and NFD as one name), so each link is then
+// handed to the root itself, which resolves it the way a reader on this
+// volume would and reports a path that escapes. A link to nothing is not an
+// escape and stays; any other failure refuses the archive.
+func checkLinks(root *os.Root, links map[string]string) error {
+	if err := resolveLinks(links); err != nil {
+		return err
+	}
+	for name := range links {
+		if _, err := root.Stat(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("archive symlink %q: %w", name, err)
 		}
 	}

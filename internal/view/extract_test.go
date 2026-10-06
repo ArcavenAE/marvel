@@ -370,3 +370,11 @@ func TestExtractRefusesALinkTargetThatNamesALinkByAnotherSpelling(t *testing.T) 
 		})
 	}
 }
+
+// Control: a link to nothing is not an escape and extracts.
+func TestExtractKeepsADanglingLinkInsideTheTree(t *testing.T) {
+	tree, _ := scratch(t)
+	if err := extractTar(craftTar(t, entry{name: "gone", typ: tar.TypeSymlink, link: "missing/file"}), tree); err != nil {
+		t.Fatalf("extractTar refused a dangling in-tree link: %v", err)
+	}
+}

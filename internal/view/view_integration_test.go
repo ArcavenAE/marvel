@@ -276,7 +276,7 @@ func TestRealGitRefusesALinkThatPassesThroughAnotherLink(t *testing.T) {
 // the second name is the first, so up is the tree's parent. Refresh refuses it.
 func TestRealGitRefusesACaseFoldedLinkTarget(t *testing.T) {
 	repo, b := realViewFixture(t)
-	if !sameName(t, filepath.Dir(b.Dir), "x", "X") {
+	if !sameName(t, t.TempDir(), "x", "X") {
 		t.Skip("this filesystem keeps x and X apart")
 	}
 	commitPayload(t, repo, 0)
