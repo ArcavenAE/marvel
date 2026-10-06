@@ -68,6 +68,18 @@ func TestViewRefusals(t *testing.T) {
 		{"empty name", viewManifest(ok("")), "name is required"},
 		{"below the floor", viewManifest(viewTable(`name = "repo"`, `remote = "r"`, `ref = "main"`, `refresh_every = "30s"`)), "below the 1m0s floor"},
 		{"not a duration", viewManifest(viewTable(`name = "repo"`, `remote = "r"`, `ref = "main"`, `refresh_every = "soon"`)), "refresh_every"},
+		{"one second under the floor", viewManifest(viewTable(`name = "repo"`, `remote = "r"`, `ref = "main"`, `refresh_every = "59s"`)), "below the 1m0s floor"},
+		{"reenter_grace not a duration", viewManifest(viewTable(`name = "repo"`, `remote = "r"`, `ref = "main"`, `reenter_grace = "soon"`)), "reenter_grace"},
+		{"negative reenter_grace", viewManifest(viewTable(`name = "repo"`, `remote = "r"`, `ref = "main"`, `reenter_grace = "-1m"`)), "reenter_grace"},
+		{"no remote", viewManifest(viewTable(`name = "repo"`, `ref = "main"`)), "remote is required"},
+		{"no ref", viewManifest(viewTable(`name = "repo"`, `remote = "r"`)), "ref is required"},
+		{"backslash in name", viewManifest(ok("a\\b")), "must be one path element"},
+		{"dot in name", viewManifest(ok("a.b")), "must be one path element"},
+		{"space in name", viewManifest(ok("a b")), "must be one path element"},
+		{"equals in name", viewManifest(ok("a=b")), "must be one path element"},
+		{"newline in name", viewManifest(ok("a\nb")), "must be one path element"},
+		{"names that share a variable", viewManifest(ok("a-b"), ok("a_b")), "MARVEL_VIEW_A_B"},
+		{"names that differ only in case", viewManifest(ok("Repo"), ok("repo")), "MARVEL_VIEW_REPO"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
