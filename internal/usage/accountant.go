@@ -212,8 +212,10 @@ type teamState struct {
 
 // foldResult is what a fold decided to do after the lock is released.
 type foldResult struct {
-	write       bool
-	reading     api.SessionContext
+	write   bool
+	reading api.SessionContext
+	// spend, when set, is a spend-only update for a feed with no occupancy.
+	spend       *api.SessionSpend
 	unresolved  bool
 	learnModel  string
 	learnWindow int
@@ -303,6 +305,9 @@ func (a *Accountant) Observe(c Coords, ev rtevents.Event) {
 	if res.write && a.sink != nil {
 		a.sink.UpdateSessionContext(c.AgentID, res.reading)
 	}
+	if res.spend != nil && a.sink != nil {
+		a.sink.UpdateSessionSpend(c.AgentID, *res.spend)
+	}
 }
 
 // observeStart captures the model a harness names at session start and
@@ -385,6 +390,10 @@ func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult 
 	if s.Cumulation == CumulationSession {
 		a.stats.CumulativeSamples++
 		a.setSpendLocked(st, s)
+		// The tokens are real spend, so the session shows them; the occupancy
+		// fields and their source stay as they were, which is absent.
+		sp := st.spendReading()
+		res.spend = &sp
 		if a.warnOnceLocked("cumulative:" + s.Harness) {
 			res.warnings = append(res.warnings, fmt.Sprintf(
 				"harness %s: per-turn usage is a running session total, not a per-request level, so its tokens count toward spend and CTX%% is reported absent; occupancy needs that harness's own per-request record",
@@ -885,9 +894,19 @@ func (st *sessionState) reading() api.SessionContext {
 	// Spend rides the same record so a reader needs no second call. It is
 	// set only once a request has been folded: a session that never spent
 	// stays absent rather than reading as zero (api.SessionContext).
+	sp := st.spendReading()
+	out.SpendOut, out.SpendPromptTokens, out.OutRate = sp.Out, sp.PromptTokens, sp.OutRate
+	return out
+}
+
+// spendReading is the spend half of a reading: cumulative output and prompt
+// tokens, once a request has been folded, and the output-token rate once it has
+// been sampled.
+func (st *sessionState) spendReading() api.SessionSpend {
+	var out api.SessionSpend
 	if st.spend.Requests > 0 {
 		spendOut, spendPrompt := st.spend.Out, st.spend.PromptTokens
-		out.SpendOut, out.SpendPromptTokens = &spendOut, &spendPrompt
+		out.Out, out.PromptTokens = &spendOut, &spendPrompt
 	}
 	if !st.rateAt.IsZero() {
 		out.OutRate = asof.Cell[float64]{

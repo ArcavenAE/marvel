@@ -851,7 +851,23 @@ func (s *Store) UpdateSessionContext(key string, c SessionContext) {
 // activity stays a separate decision. A missing session is ignored and nothing
 // is persisted, as with UpdateSessionContext.
 func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
-	_, _ = key, sp
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		return
+	}
+	sess.SpendOut, sess.SpendPromptTokens = copyInt(sp.Out), copyInt(sp.PromptTokens)
+	sess.OutRate = sp.OutRate
+}
+
+// copyInt returns a pointer to a copy of *p, or nil.
+func copyInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // SetHarnessState records the watchdog's verdict on a session, nil to clear
