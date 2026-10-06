@@ -81,9 +81,18 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 // the team, durably, so a daemon restart inside the window resumes it.
 func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, age time.Duration, stage string, now time.Time) {
 	text := handoffNotice
+	dirError := ""
 	if role.Shift.Handoff != "" {
 		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
-			text += fmt.Sprintf(" to %s, ending with the line %q", path, role.Shift.HandoffMarker)
+			text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault())
+			// {session} carries the generation, so each successor's handoff
+			// directory is new and nothing else would create it (marvel#608).
+			// MkdirAll leaves an existing directory's mode alone. A failure
+			// does not hold the notice back: it is named in the event and in
+			// the missing reason.
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				dirError = fmt.Sprintf("create handoff directory: %v", err)
+			}
 		}
 	}
 	delivery, undelivered := "delivered", ""
@@ -96,7 +105,7 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		delivery = fmt.Sprintf("not delivered (%s)", undelivered)
 	}
 
-	req := api.ShiftRequest{Session: sess.Key(), Cause: cond.On, RequestedAt: now, NoticeUndelivered: undelivered}
+	req := api.ShiftRequest{Session: sess.Key(), Cause: cond.On, RequestedAt: now, NoticeUndelivered: undelivered, DirError: dirError}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		if live.ShiftRequests == nil {
 			live.ShiftRequests = make(map[string]api.ShiftRequest)
@@ -112,6 +121,10 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 	}
 	t.ShiftRequests[role.Name] = req
 
+	dirNote := ""
+	if dirError != "" {
+		dirNote = "; " + dirError
+	}
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftHandoffRequested,
 		Severity:   events.SeverityInfo,
@@ -121,7 +134,7 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		Session:    sess.Key(),
 		Generation: t.Generation,
 		Message: fmt.Sprintf("cause=%s: session %s age %s >= %s, %s threshold; notice %s; handoff window %s",
-			cond.On, sess.Key(), age.Round(time.Second), cond.MaxAge, stage, delivery, role.Shift.HandoffWindowOrDefault()),
+			cond.On, sess.Key(), age.Round(time.Second), cond.MaxAge, stage, delivery, role.Shift.HandoffWindowOrDefault()) + dirNote,
 	})
 }
 
@@ -202,6 +215,9 @@ func handoffMissingReason(role *api.Role, sess api.Session, req api.ShiftRequest
 	never := ""
 	if req.NoticeUndelivered != "" {
 		never = fmt.Sprintf("the notice was never delivered (%s), so the seat may not have been asked; ", req.NoticeUndelivered)
+	}
+	if req.DirError != "" {
+		never += req.DirError + "; "
 	}
 	if role.Shift.Handoff == "" {
 		return never + "no handoff path is declared, so marvel cannot observe one"
