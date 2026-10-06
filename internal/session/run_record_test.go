@@ -3,7 +3,10 @@ package session
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -340,7 +343,12 @@ func TestDeleteOfAnEndedUnreapedRunIsClassifiedLikeReap(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get session: %v", err)
 			}
-			waitForExitStatus(t, driver, got.PaneID)
+			kept := waitForExitStatus(t, driver, got.PaneID)
+			wantOutcome, wantExit := tc.outcome, tc.exit
+			if !kept {
+				// A lost status reads as unknown, which is a failed run.
+				wantOutcome, wantExit = api.RunFailed, ""
+			}
 			if cur, _ := store.GetSession(sess.Key()); cur.PaneID == "" {
 				t.Fatal("precondition: the row lost its PaneID before the delete")
 			}
@@ -352,11 +360,11 @@ func TestDeleteOfAnEndedUnreapedRunIsClassifiedLikeReap(t *testing.T) {
 			if !ok || len(st.History) != 1 {
 				t.Fatalf("status = %+v (found %v), want one run", st, ok)
 			}
-			if r := st.History[0]; r.Outcome != tc.outcome || r.ExitStatus != tc.exit {
-				t.Fatalf("run = %+v, want outcome %s with exit %s", r, tc.outcome, tc.exit)
+			if r := st.History[0]; r.Outcome != wantOutcome || r.ExitStatus != wantExit {
+				t.Fatalf("run = %+v, want outcome %s with exit %q", r, wantOutcome, wantExit)
 			}
-			if gotSucceeded := !st.LastSucceededAt.IsZero(); gotSucceeded != (tc.outcome == api.RunSucceeded) {
-				t.Fatalf("last succeeded set = %v for outcome %s", gotSucceeded, tc.outcome)
+			if gotSucceeded := !st.LastSucceededAt.IsZero(); gotSucceeded != (wantOutcome == api.RunSucceeded) {
+				t.Fatalf("last succeeded set = %v for outcome %s", gotSucceeded, wantOutcome)
 			}
 			if n := len(ring.Snapshot(events.Filter{Kind: events.KindRunCancelled}, 0)); n != 0 {
 				t.Fatalf("run.cancelled events = %d, want 0", n)
@@ -403,10 +411,11 @@ func TestReapAfterAFailedKillRecordsACancelledRun(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("mark kill-failed: %v", err)
 	}
+	wantExit := "0"
 	if cur, err := store.GetSession(sess.Key()); err != nil {
 		t.Fatalf("get session: %v", err)
-	} else {
-		waitForExitStatus(t, driver, cur.PaneID)
+	} else if !waitForExitStatus(t, driver, cur.PaneID) {
+		wantExit = ""
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -423,19 +432,22 @@ func TestReapAfterAFailedKillRecordsACancelledRun(t *testing.T) {
 	if !ok || len(st.History) != 1 {
 		t.Fatalf("status = %+v (found %v), want one run", st, ok)
 	}
-	if r := st.History[0]; r.Outcome != api.RunCancelled || r.ExitStatus != "0" {
-		t.Fatalf("run = %+v, want cancelled with the pane's exit 0", r)
+	if r := st.History[0]; r.Outcome != api.RunCancelled || r.ExitStatus != wantExit {
+		t.Fatalf("run = %+v, want cancelled with the pane's exit %q", r, wantExit)
 	}
 	if !st.LastSucceededAt.IsZero() {
 		t.Fatalf("a cancelled run set last succeeded: %v", st.LastSucceededAt)
 	}
 }
 
-// waitForExitStatus waits for the pane to die and its exit status to read, and
-// skips the test when the status never arrives: below tmux 3.5 a dead pane's
-// status is lossy, and an empty one is read as unknown on purpose (a failed
-// run), so a test that asserts the recorded status cannot hold there.
-func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) {
+// waitForExitStatus waits for the pane to die and reports whether tmux kept
+// its exit status. Below tmux 3.5 a dead pane's status is lossy, and an empty
+// one is read as unknown on purpose (a failed run), so the caller asserts the
+// degraded contract there instead of skipping: the delete and reap
+// classification stays covered on every tmux. A tmux that should keep the
+// status (3.5 and later) and does not fails the test, so a silent green on a
+// new tmux is impossible.
+func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) (kept bool) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	var deadSince time.Time
@@ -443,16 +455,55 @@ func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) {
 		st, _ := driver.PaneStatus(paneID)
 		switch {
 		case st.Exists && st.Dead && st.ExitStatus != "":
-			return
+			return true
 		case st.Exists && st.Dead:
 			if deadSince.IsZero() {
 				deadSince = time.Now()
 			} else if time.Since(deadSince) > 3*time.Second {
-				t.Skip("tmux lost the dead pane's exit status (below 3.5); an empty status reads as unknown")
+				out, _ := exec.Command("tmux", "-V").Output()
+				if statusExpected(string(out)) {
+					t.Fatalf("%s lost a dead pane's exit status, which 3.5 and later keep", strings.TrimSpace(string(out)))
+				}
+				t.Logf("%s loses a dead pane's exit status: asserting the unknown-status contract", strings.TrimSpace(string(out)))
+				return false
 			}
 		case time.Now().After(deadline):
 			t.Fatal("pane never died")
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// statusExpected reports whether `tmux -V` output names a tmux that keeps a
+// dead pane's exit status (3.5 and later). An unparseable version is treated
+// as expected, so a surprise fails loudly instead of degrading quietly.
+func statusExpected(version string) bool {
+	m := regexp.MustCompile(`(\d+)\.(\d+)`).FindStringSubmatch(version)
+	if m == nil {
+		return true
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	return major > 3 || (major == 3 && minor >= 5)
+}
+
+func TestStatusExpectedFollowsTheTmuxVersion(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"tmux 3.4", false},
+		{"tmux 3.5", true},
+		{"tmux 3.5a", true},
+		{"tmux 3.7b", true},
+		{"tmux 2.9a", false},
+		{"tmux 4.0", true},
+		{"tmux next-3.6", true},
+		{"tmux master", true},
+		{"", true},
+	} {
+		if got := statusExpected(tc.in); got != tc.want {
+			t.Errorf("statusExpected(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }
