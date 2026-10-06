@@ -966,6 +966,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns string
+	var header bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
@@ -992,13 +993,19 @@ func getCmd() *cobra.Command {
 				}
 				return watchSessionsLoop(time.Duration(secs)*time.Second, cols)
 			}
-			return getResources(args[0], cols)
+			headerText := ""
+			if sessions && wantHeader(header) {
+				headerText = renderHeader(collectHeader(), time.Now())
+			}
+			return getResources(args[0], cols, headerText)
 		},
 	}
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
 	f.NoOptDefVal = ""
 	cmd.Flags().StringVar(&columns, "columns", "",
 		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
+	cmd.Flags().BoolVar(&header, "header", false,
+		"print the daemon header above the sessions table even when stdout is not a terminal")
 	return cmd
 }
 
@@ -1012,7 +1019,7 @@ func (o *optionalString) String() string          { return *o.val }
 func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
-func getResources(resourceType string, cols []sessionColumn) error {
+func getResources(resourceType string, cols []sessionColumn, header string) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
 	resp, err := send(daemon.Request{
 		Method: "get",
@@ -1027,7 +1034,7 @@ func getResources(resourceType string, cols []sessionColumn) error {
 
 	switch resourceType {
 	case "sessions", "session":
-		return printSessions(resp.Result, cols)
+		return printSessions(resp.Result, cols, header)
 	case "teams", "team":
 		return printTeams(resp.Result)
 	case "workspaces", "workspace":
@@ -2958,7 +2965,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 
 // --- Table printers (non-watch) ---
 
-func printSessions(data json.RawMessage, cols []sessionColumn) error {
+func printSessions(data json.RawMessage, cols []sessionColumn, header string) error {
 	var sessions []api.Session
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
@@ -2967,7 +2974,7 @@ func printSessions(data json.RawMessage, cols []sessionColumn) error {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Name < sessions[j].Name
 	})
-	fmt.Print(renderSessionTableCols(sessions, cols))
+	fmt.Print(header + renderSessionTableCols(sessions, cols))
 	return nil
 }
 
