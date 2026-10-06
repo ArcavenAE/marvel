@@ -285,6 +285,10 @@ internal/
                             never a sum; unresolved windows report absence over
                             a guessed denominator (internal/usage/doc.go)
 
+  asof/                     The one as-of cell for `get sessions`: value, observed_at,
+                            valid_until, source. `-` never observed, `?` expired,
+                            never `0` for no sample (internal/asof/asof.go)
+
   events/                   Structured event ring (control-plane + agent.* events)
   keys/                     SSH client keypair management (~/.marvel/keys)
   knownhosts/               Host-key trust (~/.marvel/known_hosts)
