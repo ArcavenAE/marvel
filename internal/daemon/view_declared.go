@@ -1,0 +1,68 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/view"
+)
+
+// viewDeclarations lists the sessions whose role declares views, for the
+// keeper's tick and the verb. It reads the store only. A pending session is
+// included: it is mid-spawn, its views are being built, and leaving it out
+// would let the tick sweep them away.
+func (d *Daemon) viewDeclarations() []view.Declaration {
+	var out []view.Declaration
+	for _, s := range d.store.ListSessions() {
+		if s.State != api.SessionRunning && s.State != api.SessionPending {
+			continue
+		}
+		t, err := d.store.GetTeam(s.Workspace + "/" + s.Team)
+		if err != nil {
+			continue
+		}
+		for _, r := range t.Roles {
+			if r.Name == s.Role && len(r.Views) > 0 {
+				out = append(out, view.Declaration{Session: s, Views: r.Views})
+			}
+		}
+	}
+	return out
+}
+
+// startViews runs the keeper's tick beside the other daemon loops.
+func (d *Daemon) startViews(ctx context.Context) {
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.views.Run(ctx)
+	}()
+}
+
+type viewRefreshParams struct {
+	Session string `json:"session"`
+	Name    string `json:"name"`
+}
+
+// handleViewRefresh follows one named view of a session, or all of them.
+func (d *Daemon) handleViewRefresh(params json.RawMessage) Response {
+	var p viewRefreshParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	if strings.TrimSpace(p.Session) == "" {
+		return Response{Error: "view.refresh requires a session"}
+	}
+	if d.views == nil {
+		return Response{Error: "views are not running"}
+	}
+	lines, err := d.views.Refresh(p.Session, p.Name)
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+	result, _ := json.Marshal(map[string]any{"lines": lines})
+	return Response{Result: result}
+}
