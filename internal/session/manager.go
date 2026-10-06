@@ -24,6 +24,7 @@ import (
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
+	"github.com/arcavenae/marvel/internal/view"
 )
 
 // Manager creates and destroys sessions.
@@ -49,6 +50,9 @@ type Manager struct {
 	// and callers that don't care about the event stream don't need to
 	// wire a ring.
 	Events events.Emitter
+	// Views builds each seat's read-only views at spawn and removes them with
+	// the session. Nil means no views are built.
+	Views *view.Keeper
 	// StreamDir holds the per-session FIFOs marvel reads agent output
 	// from. Defaults to a per-layout temp directory (see daemonTempDir).
 	// The pipes carry no content at rest, so nothing here needs to survive

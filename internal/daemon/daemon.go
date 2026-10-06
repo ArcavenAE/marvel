@@ -43,6 +43,7 @@ import (
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
+	"github.com/arcavenae/marvel/internal/view"
 )
 
 const (
@@ -120,6 +121,8 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	// views follows each seat's read-only views (marvel#609).
+	views *view.Keeper
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
 	// schedule.history; zero means the default.
 	scheduleHistoryMax int

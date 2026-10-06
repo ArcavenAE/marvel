@@ -196,3 +196,22 @@ func TestViewsAreClonedOutOfTheStore(t *testing.T) {
 		t.Errorf("a caller edit reached the store: name = %q", again.Roles[0].Views[0].Name)
 	}
 }
+
+// A zero reenter_grace is allowed and is not replaced by the default: it seals
+// a superseded tree at the first quiet after the notice is delivered
+// (docs/design/readonly-view.md section 2).
+func TestViewZeroReenterGraceStaysZero(t *testing.T) {
+	t.Parallel()
+	for _, zero := range []string{"0s", "0"} {
+		views := appliedViews(t, viewManifest(
+			viewTable(`name = "now"`, `remote = "r"`, `ref = "main"`, `reenter_grace = "`+zero+`"`),
+			viewTable(`name = "dflt"`, `remote = "r"`, `ref = "main"`),
+		))
+		if views[0].ReenterGrace != 0 {
+			t.Errorf("reenter_grace %q = %s, want 0", zero, views[0].ReenterGrace)
+		}
+		if views[1].ReenterGrace != 2*time.Minute {
+			t.Errorf("omitted reenter_grace = %s, want the 2m default", views[1].ReenterGrace)
+		}
+	}
+}

@@ -92,6 +92,16 @@ const (
 	// logged-out within one watchdog window, so a fleet-wide expiry reads as
 	// one fact.
 	KindAccountLoggedOut Kind = "account.logged-out"
+	// KindViewRefreshed records a seat's read-only view moving to a new commit
+	// (marvel#609).
+	KindViewRefreshed Kind = "view.refreshed"
+	// KindViewRefreshFailed records a refresh that failed: the current tree
+	// stays, and the next tick tries again.
+	KindViewRefreshFailed Kind = "view.refresh-failed"
+	// KindViewUnavailable records a view that could not be built when its seat
+	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
+	// change of cause.
+	KindViewUnavailable Kind = "view.unavailable"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
 	// nothing it execs inherits them (aae-orc#418).
@@ -358,6 +368,9 @@ var allKinds = []Kind{
 	KindSessionHarnessState,
 	KindSessionHarnessStateCleared,
 	KindAccountLoggedOut,
+	KindViewRefreshed,
+	KindViewRefreshFailed,
+	KindViewUnavailable,
 	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
