@@ -81,6 +81,10 @@ type Supervisor struct {
 	// leafReportedAt when a down event was last emitted for it.
 	leafSince      time.Time
 	leafReportedAt time.Time
+	// leafObservedAt is when /leafz was last read successfully. A failed
+	// read is no information and leaves it where it was, so the reading
+	// ages instead of being refreshed by an error.
+	leafObservedAt time.Time
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
@@ -139,6 +143,14 @@ type Status struct {
 	// two hours". Empty for the other leaf states.
 	LeafSince string `json:"leaf_since,omitempty"`
 	LeafFor   string `json:"leaf_for,omitempty"`
+	// LeafObservedAt is when the last successful /leafz probe was read
+	// (RFC3339), and LeafValidUntil when that reading stops being current.
+	// They are the probe's age, which LeafSince is not: a leaf that has been
+	// up for a day and was last read a second ago, or last read ten minutes
+	// ago because the monitor stopped answering, has the same LeafSince.
+	// Set only with an up or down reading.
+	LeafObservedAt string `json:"leaf_observed_at,omitempty"`
+	LeafValidUntil string `json:"leaf_valid_until,omitempty"`
 	// Structure is the structural-health reading on a managed broker
 	// (provisioned, authorized, tls, what is missing); nil before the first
 	// reading and on an adopted or external bus, where marvel holds no
@@ -164,6 +176,10 @@ const (
 	restartBackoffMax     = 5 * time.Minute
 	defaultDialTimeout    = 10 * time.Second
 	defaultLeafPoll       = 30 * time.Second
+	// leafValidPolls is how many poll intervals a /leafz reading stays
+	// current. Two tolerates one missed poll before the reading reads as
+	// expired.
+	leafValidPolls = 2
 	// defaultLeafDownRepeat is one fleet value, changeable as this constant:
 	// operator ruling 2026-10-06 recorded under Q1 in
 	// docs/design/wake-service.md.
@@ -714,6 +730,10 @@ func (s *Supervisor) Status() Status {
 		st.LeafSince = s.leafSince.Format(time.RFC3339)
 		st.LeafFor = leafDuration(s.now().Sub(s.leafSince))
 	}
+	if (st.Leaf == "up" || st.Leaf == "down") && !s.leafObservedAt.IsZero() {
+		st.LeafObservedAt = s.leafObservedAt.Format(time.RFC3339)
+		st.LeafValidUntil = s.leafObservedAt.Add(leafValidPolls * s.leafPoll).Format(time.RFC3339)
+	}
 	if !s.ready && s.backoffTill.After(time.Now()) {
 		st.BackoffUntil = s.backoffTill.Format(time.RFC3339)
 	}
@@ -761,6 +781,7 @@ func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	prev := s.leafUp
 	s.leafUp = &up
 	changed := prev == nil || *prev != up
+	s.leafObservedAt = now
 	if changed {
 		s.leafSince = now
 		s.leafReportedAt = time.Time{}
