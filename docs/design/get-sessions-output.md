@@ -1,7 +1,6 @@
 # `get sessions` output: the daemon that answered, columns, and load
 
-Design for review. No code lands until this doc is reviewed and the operator
-has ruled on it.
+Accepted by the operator on 2026-10-06, with the rulings in section 9.
 
 - Author: the architect seat, team arcaven.
 - Issue: #601 (the team rollup, judged a separate design below). Tracks:
@@ -237,8 +236,11 @@ scale (SOUL section 8, ADR-007). Ticket text for ACTIVE% says so.
 - **The team rollup (#601)** is a separate design (5 of 5). It aggregates
   across hosts, so it needs a per-host as-of and "n of m hosts answered".
   It also needs its own review against the diagnostic-not-gate rule.
-- **#502's refusal.** Whether an unknown `--cluster` should exit nonzero is
-  #502's own ruling. This design only exposes the rung (vote V3).
+- **#502's refusal.** Whether an unknown `--cluster` should exit nonzero
+  was #502's own ruling, and this design only exposes the rung (vote V3).
+  The operator has since ruled that it is refused (section 9, ruling 2).
+  That change is its own ticket, P2b, filed against #502 beside this plan,
+  not inside it.
 - **Credits.** No codex payload fixture exists yet.
 
 So the load question is answered in part. Idle and active are answered
@@ -262,7 +264,7 @@ computation; the other required the rate to carry `valid_until`. The edge
 moves to the RATE render (P9c). This reconciliation is the architect's, not
 a vote.
 
-**Post-party correction, not a party result.** The party settled ACTIVE%
+**Post-party correction, not a party result; accepted as ruling 4.** The party settled ACTIVE%
 5-0 as "a measurement inside the quiet window" but never defined that
 window. Review found that the shared predicate returns nothing for any role
 without `activity_timeout`, and that no manifest sets one. Section 4.4 now
@@ -279,14 +281,19 @@ the TTY seam the legend uses. The ruling list in section 9 covers it.
 
 ## 8. The plan
 
-The plan is recorded here and not filed yet. The tickets are filed flat,
-with these edges, after this doc is reviewed and the operator has ruled.
-"Deps" are `blocks` edges. Each ticket writes its red tests first.
+The tickets are filed flat in bd, with these edges, now that the operator
+has ruled. "Deps" are `blocks` edges. Each ticket writes its red tests
+first. Three notes from the review are applied:
+- the width fit counts the source mark, so P11 and P12b depend on P6;
+- a test names the `--help` line that documents the mark;
+- the mark is part of the rendered value, so a JSON output keeps the source
+  as its own field.
 
 | # | Ticket | Red tests | Deps |
 |---|---|---|---|
 | P1 | As-of cell type and renderer | `TestAsOfDashWhenNeverObserved`, `TestAsOfStaleNeverPrintsNumber`, `TestAsOfJSONRoundTrip` | none |
 | P2a | Expose the resolution rung | `TestResolveRungEnvBeatsCluster` | none |
+| P2b | An unknown `--cluster` refuses nonzero and dials nothing (#502; ruling 2, outside this plan's chain) | `TestUnknownClusterRefuses` | none |
 | P3a | Status reports daemon identity and the mrvl:// bind; `SSHServer` publishes its listener | `TestStatusReportsBoundAddrWhenMRVLStarted`, `TestStatusOffWithoutMRVLFlag`, `TestStatusWildcardBindIsNetwork`, `TestStatusReportsDaemonIdentity` | none |
 | P3b | Leaf probe age on the bus status | `TestStatusLeafCarriesObservedAt` | P1; #600 merged |
 | P4a | Header block, TTY seam, "link up" wording | `TestHeaderShowsBothNamesWhenDomainDiffers`, `TestHeaderRungNamesSocketEnvOverCluster`, `TestHeaderBindThreeValues`, `TestHeaderLinkUpWording`, `TestHeaderOmittedWhenStdoutNotTTY`, `TestHeaderFlagForcesWhenPiped` | P1, P2a, P3a |
@@ -299,25 +306,25 @@ with these edges, after this doc is reviewed and the operator has ruled.
 | P9b | TOUT cell | `TestSpendCellDashWhenAbsent` | P5, P7 |
 | P9c | RATE cell | `TestRateCellSortsByValue`, `TestRateCellStaleRendersQuestion` | P1, P5, P8 |
 | P10 | One quiet predicate and the cluster quiet window (`watchdog.window`, else `DefaultQuietWindow`), shared with the watchdog | `TestRateSnapsToZeroExactlyWhenQuiet`, `TestQuietWindowDefaultsWhenNoActivityTimeout`, `TestQuietWindowFollowsWatchdogWindowConfig`, `TestWatchdogWindowReadsDefaultQuietWindow`; characterization `TestQuietPredicateMatchesEvaluateActivityForObservedSessions` (non-zero `ContextAt` only, timeout set) | P8 |
-| P11 | LAST-ACTIVE, with the source mark | `TestLastActiveFromContextAt`, `TestLastActiveDashWhenUnmeasured`, `TestLastActiveMarksStatuslineSource` | P1, P4a, P5 |
+| P11 | LAST-ACTIVE, with the source mark | `TestLastActiveFromContextAt`, `TestLastActiveDashWhenUnmeasured`, `TestLastActiveMarksStatuslineSource`, `TestFitCountsSourceMark` | P1, P4a, P5, P6 |
 | P12a | Per-session tick ring | `TestTickRingHoldsFifteenMinutes` | P10 |
-| P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActivePctUsesRoleTimeoutWhenSet`, `TestActivePctUsesDefaultWindowWhenUnset`, `TestActivePctStatuslineAndStreamRenderDifferently` (same 80%, two sources, two cells), `TestSourceLegendOnTTYWhenAMarkIsShown`, `TestSourceLegendAbsentWhenNoMarkOrPiped`, `TestDescribeNamesActivitySource` | P1, P4a, P5, P12a |
+| P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActivePctUsesRoleTimeoutWhenSet`, `TestActivePctUsesDefaultWindowWhenUnset`, `TestActivePctStatuslineAndStreamRenderDifferently` (same 80%, two sources, two cells), `TestSourceLegendOnTTYWhenAMarkIsShown`, `TestSourceLegendAbsentWhenNoMarkOrPiped`, `TestDescribeNamesActivitySource`, `TestHelpDocumentsSourceMark`, `TestJSONKeepsSourceSeparateFromMark` | P1, P4a, P5, P6, P12a |
 | P13 | ACCT key column, opt-in | `TestAcctColumnRepeatsNeverAggregates`, `TestAcctStaleReadingPrintsWordNotNumber` | P5 |
 
-Six tickets have no dependencies: P1, P2a, P3a, P5, P7 and P8. The WORKDIR
+Seven tickets have no dependencies: P1, P2a, P2b, P3a, P5, P7 and P8. The WORKDIR
 column (aae-orc-vdcwm) becomes selectable through P5.
 
-## 9. Rulings needed
+## 9. Rulings
 
-1. Accept or amend this design.
-2. V3: should an unknown `--cluster` refuse (#502)?
-3. Whether the 4-1 votes (V1 to V4) stand.
-4. The post-party correction in section 4.4. The architect recommends the
-   role's `activity_timeout`, else the cluster quiet window
-   (`watchdog.window`, else a 10-minute `DefaultQuietWindow`),
-   as ACTIVE%'s window. Its effect is that ACTIVE% reads for every role
-   that has an activity channel, while the `(stalled)` advisory stays
-   opt-in.
+The operator ruled on 2026-10-06, verbatim via director: "design accepted
+(1) and (2) unknown cluster should be refused (3) accept the 4-1 votes 4
+accept the architect recommendation".
 
-These recommendations are valid until 2026-10-20. The architect re-checks
-them then; no default applies without a ruling.
+Director's mapping, which this doc follows:
+
+1. The design is accepted.
+2. V3: an unknown `--cluster` is refused (#502). This is built as P2b.
+3. V1 to V4 stand as voted.
+4. ACTIVE%'s window is the role's `activity_timeout`, else `watchdog.window`,
+   else the 10-minute `DefaultQuietWindow`, and the `(stalled)` advisory
+   stays opt-in (section 4.4).
