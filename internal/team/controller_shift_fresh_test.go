@@ -54,3 +54,48 @@ func TestAutoShiftIgnoresAStaleReading(t *testing.T) {
 		})
 	}
 }
+
+// The bound is the cluster's ten-minute quiet window, not a looser one.
+func TestShiftReadingMaxAgeIsTenMinutes(t *testing.T) {
+	if shiftReadingMaxAge != 10*time.Minute {
+		t.Errorf("shiftReadingMaxAge = %v, want 10m", shiftReadingMaxAge)
+	}
+}
+
+// With the clock fixed, a reading exactly the bound old still arms the
+// trigger and one nanosecond older does not, the same strict edge as the
+// quiet predicate.
+func TestAutoShiftFreshnessEdgeIsExact(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		want api.ShiftPhase
+	}{
+		{"exactly the bound arms", shiftReadingMaxAge, api.ShiftLaunching},
+		{"one nanosecond past does not", shiftReadingMaxAge + time.Nanosecond, api.ShiftNone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _, ctrl, cleanup := setup(t)
+			t.Cleanup(cleanup)
+			ctrl.now = func() time.Time { return now }
+			createTeamFixture(t, store, "test-edge", "squad", []api.Role{shiftTriggerRole()})
+			seedContext(t, store, "test-edge", "squad", 900_000, 1_000_000)
+			sess := api.Session{Name: "squad-" + testShiftRole + "-g1-0", Workspace: "test-edge"}
+			if err := store.UpdateSession(sess.Key(), func(s *api.Session) error {
+				s.ContextAt = now.Add(-tc.age)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			team, _ := store.GetTeam("test-edge/squad")
+			ctrl.evaluateShiftTriggers(&team)
+
+			got, _ := store.GetTeam("test-edge/squad")
+			if got.Shift.Phase != tc.want {
+				t.Errorf("shift phase = %q, want %q for a reading %v old", got.Shift.Phase, tc.want, tc.age)
+			}
+		})
+	}
+}
