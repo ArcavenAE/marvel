@@ -147,3 +147,48 @@ func TestExtractKeepsASymlinkInsideTheTree(t *testing.T) {
 		t.Errorf("read through an inside symlink = %q, want hello", got)
 	}
 }
+
+// A relative symlink that climbs out of a nested directory and still lands
+// inside the tree extracts as a link and reads through to its target. This is
+// the shape aae-orc tracks (.agents/skills/<name> -> ../../.claude/skills/<name>):
+// a test on a "../" prefix alone would refuse it. The link entry comes before
+// its target, so it is created dangling and resolves once the target exists.
+func TestExtractKeepsANestedRelativeSymlinkThatResolvesInside(t *testing.T) {
+	tree, _ := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: ".agents/", typ: tar.TypeDir},
+		entry{name: ".agents/skills/", typ: tar.TypeDir},
+		entry{name: ".agents/skills/review", typ: tar.TypeSymlink, link: "../../.claude/skills/review"},
+		entry{name: ".claude/", typ: tar.TypeDir},
+		entry{name: ".claude/skills/", typ: tar.TypeDir},
+		entry{name: ".claude/skills/review/", typ: tar.TypeDir},
+		entry{name: ".claude/skills/review/SKILL.md", typ: tar.TypeReg, body: "the skill"},
+	), tree)
+	if err != nil {
+		t.Fatalf("extractTar refused a link that resolves inside the tree: %v", err)
+	}
+	link := filepath.Join(tree, ".agents", "skills", "review")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("the entry is not a symlink: %v", err)
+	}
+	if target != filepath.FromSlash("../../.claude/skills/review") {
+		t.Errorf("link target = %q, want it kept as written", target)
+	}
+	if got := mustRead(t, filepath.Join(link, "SKILL.md")); got != "the skill" {
+		t.Errorf("read through the link = %q, want the target's content", got)
+	}
+}
+
+// One level further up than the tree has: refused, though it starts the same.
+func TestExtractRefusesANestedRelativeSymlinkOneLevelTooHigh(t *testing.T) {
+	tree, _ := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: ".agents/", typ: tar.TypeDir},
+		entry{name: ".agents/skills/", typ: tar.TypeDir},
+		entry{name: ".agents/skills/review", typ: tar.TypeSymlink, link: "../../../outside"},
+	), tree)
+	if err == nil {
+		t.Fatal("extractTar accepted a link that climbs one level above the tree")
+	}
+}
