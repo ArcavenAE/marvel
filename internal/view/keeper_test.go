@@ -450,24 +450,24 @@ func TestKeeperSpawnBuildIsBoundedAndTheTickFinishesIt(t *testing.T) {
 	}
 }
 
-// The bound is for the whole of a seat's views, not each: two hung views cost
-// one bound, not two.
+// The bound is one budget for the whole of a seat's views, not one each: three
+// hung views cost one bound, not three.
 func TestKeeperSpawnBoundCoversAllViewsTogether(t *testing.T) {
 	r := newKRig(t)
 	r.k.SpawnTimeout = 200 * time.Millisecond
-	r.g.sha["a"], r.g.sha["b"] = shaOne, shaTwo
+	r.g.sha["a"], r.g.sha["b"], r.g.sha["c"] = shaOne, shaTwo, shaOne
 	gate := make(chan struct{})
 	t.Cleanup(func() { close(gate) })
-	r.g.block["a"], r.g.block["b"] = gate, gate
-	views := []api.View{kView("alpha", "a", time.Minute), kView("beta", "b", time.Minute)}
+	r.g.block["a"], r.g.block["b"], r.g.block["c"] = gate, gate, gate
+	views := []api.View{kView("alpha", "a", time.Minute), kView("beta", "b", time.Minute), kView("gamma", "c", time.Minute)}
 	sess := r.session("seat", views...)
 
 	start := time.Now()
 	r.k.Build(sess, views)
 	if took := time.Since(start); took > 350*time.Millisecond {
-		t.Fatalf("Build took %s for two hung views, want about one bound (200ms)", took)
+		t.Fatalf("Build took %s for three hung views, want about one bound (200ms), not three", took)
 	}
-	if got := len(r.kinds(events.KindViewUnavailable)); got != 2 {
+	if got := len(r.kinds(events.KindViewUnavailable)); got != 3 {
 		t.Fatalf("view.unavailable events = %d, want one per view", got)
 	}
 }
