@@ -32,9 +32,18 @@ re-enter the view and giving it a file to check against.
   reenter_grace = "2m"              # optional; default 2m (section 6)
 ```
 
-A role may declare several views, one per repository. Apply refuses a
-duplicate `name` in one role, a `name` that is not one path element, and a
-`refresh_every` below the floor. A view is per seat, not per role: two
+A role may declare several views, one per repository. Apply refuses:
+
+- a `name` that is empty or has a character outside `[A-Za-z0-9_-]`, which
+  also keeps it one path element;
+- two names in one role that map to the same `MARVEL_VIEW_<NAME>` (for
+  example `a-b` and `a_b`, or `Repo` and `repo`), a duplicate name included;
+- an empty `remote` or an empty `ref`. Both are required, with no default:
+  marvel does not guess a repository from the workdir or a branch from the
+  remote's HEAD;
+- a `refresh_every` below the floor;
+- a negative `reenter_grace`. Zero is allowed and means a superseded tree is
+  sealed at the first quiet after the notice is delivered. A view is per seat, not per role: two
 replicas each get their own, so one seat's refresh never moves another's
 tree.
 
