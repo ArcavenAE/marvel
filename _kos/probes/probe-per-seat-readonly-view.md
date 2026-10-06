@@ -8,7 +8,10 @@ bears on the orc question `question-slotefs-agent-filesystem-mediation`.
 **Status:** OPEN, pre-registered, not run.
 
 Everything under "Pre-registration" was written before any rig exists. The
-outcome is appended in a dated section; nothing above it is revised.
+outcome is appended in a dated section; nothing above it is revised after
+data exists. One revision was made before any run, after review 5428265052
+on marvel#597: H5 added, H3 states its writable window, and H4 times a
+local clone (see "Revision before the run").
 
 ## Why
 
@@ -51,7 +54,8 @@ commits.
 
 On the hosts the fleet runs, can a detached worktree with read-only files
 and directories (1) refuse every write a seat's tools make, (2) stay
-unmoved by any other seat's git use in the shared checkout, and (3) be
+unmoved by any other seat's git use, in the shared checkout or aimed at the
+view itself, and (3) be
 refreshed by marvel to a newer default-branch commit with HEAD and files
 agreeing, within a cost that fits a spawn step?
 
@@ -68,9 +72,20 @@ agreeing, within a cost that fits a spawn step?
   `git -C view checkout --force --detach <sha>`, then `chmod -R a-w`, leaves
   `git -C view status --porcelain` empty and HEAD equal to `<sha>`. The torn
   state from the premise check is not reachable through this sequence.
-- **H4, the cost fits spawn.** Create plus first chmod for the aae-orc
-  checkout (the largest tree a seat reads) takes under 5 s, and a refresh
-  under 5 s, median of 5 runs.
+  The view is writable between the first and last chmod; the rig records
+  how long that window is, and a seat reading during it may see a
+  half-updated tree.
+- **H4, the cost fits spawn.** Create plus first chmod for a local clone of
+  the aae-orc checkout (the largest tree a seat reads) takes under 5 s, and
+  a refresh under 5 s, median of 5 runs.
+- **H5, git aimed at the view cannot move it.** `git -C <view>` with
+  `checkout --detach <sha>`, `switch --detach <sha>`, `reset --hard <sha>`,
+  `reset --soft <sha>` and `commit --allow-empty`, run once from the seat's
+  own Bash and once from another seat, each leaves the view's HEAD and
+  files unchanged. The architect expects this to fail. The view's HEAD and
+  index live in the shared `.git/worktrees/<name>/`, which `chmod` on the
+  view does not touch, and the premise check already saw a checkout move
+  HEAD. It is pre-registered so the result is measured, not assumed.
 
 ### What H1 does not claim
 
@@ -100,7 +115,13 @@ result is macOS only. Transcript kept:
 6. H3: reproduce the torn state on purpose (naive checkout), confirm it,
    then run the H3 refresh from both a clean and a torn view; record HEAD
    and status after each.
-7. H4: time steps 3 and 6 five times each on the orc checkout.
+7. H4: time steps 3 and 6 five times each on `git clone --local` of the orc
+   checkout, never on the live checkout, whose `.git/worktrees/` other
+   seats use.
+8. H5: from the view's cwd and from the shared checkout, run each H5
+   command; after each, record the view's HEAD, `git -C view status
+   --porcelain`, and the files' content hash. Restore with the H3 refresh
+   between commands.
 
 ### What would change the plan
 
@@ -111,12 +132,26 @@ result is macOS only. Transcript kept:
 - H3 fails: the refresh needs a different primitive (a fresh worktree per
   refresh, swapped in by path); measure that before any build.
 - H4 fails: the view is made on demand, not at spawn.
+- H5 fails for any command: a git worktree cannot be a fixed view, however
+  its files are protected. Measure, in the same rig, a view with no git
+  metadata at all: `git archive <sha> | tar -x` into a directory made
+  read-only, refreshed by extracting into a fresh directory and swapping
+  the path. Report both, and that alternative becomes the build candidate.
+
+## Revision before the run
+
+2026-10-06, before any rig existed, after review 5428265052 on marvel#597:
+H1 and H2 together left git commands aimed at the view untested, so H1 and
+H2 could pass while the view stayed movable. H5 and rig step 8 add that
+case, with a failure branch. H3 now states its writable window. H4 times a
+local clone, not the live orc checkout.
 
 ## What a builder builds
 
 For the probe: the rig script above, under `scripts/probes/`, and its two
 transcripts. No marvel code changes.
 
-After the probe, and only if H1 to H3 hold: a spawn step that creates one
+After the probe, and only if H1 to H3 hold for the worktree view, or H1
+and H3 hold for the archive view after an H5 failure: a spawn step that creates one
 view per repository the seat declares, a refresh verb, and teardown
 removal. That is a separate ticket, filed from the finding.
