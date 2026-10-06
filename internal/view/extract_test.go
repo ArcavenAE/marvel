@@ -192,3 +192,66 @@ func TestExtractRefusesANestedRelativeSymlinkOneLevelTooHigh(t *testing.T) {
 		t.Fatal("extractTar accepted a link that climbs one level above the tree")
 	}
 }
+
+// A link is judged by where it really sits. After a link to "." (what a
+// case-fold collision leaves behind), "x/y" is the tree's own y, so a link at
+// x/y/up with target ../.. resolves above the tree even though its name alone
+// looks like it stays inside. An entry whose parent path passes through a
+// symlink is refused.
+func TestExtractRefusesAnEntryUnderASymlinkedParent(t *testing.T) {
+	tree, outside := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: "x", typ: tar.TypeSymlink, link: "."},
+		entry{name: "x/y", typ: tar.TypeDir},
+		entry{name: "x/y/up", typ: tar.TypeSymlink, link: "../.."},
+	), tree)
+	if err == nil {
+		t.Fatal("extractTar accepted an entry whose parent is a symlink")
+	}
+	if up := filepath.Join(tree, "y", "up"); func() bool { _, e := os.Lstat(up); return e == nil }() {
+		resolved, rerr := filepath.EvalSymlinks(up)
+		if rerr == nil && !isInside(tree, resolved) {
+			t.Errorf("%s resolves to %s, outside the tree", up, resolved)
+		}
+	}
+	assertOutsideUntouched(t, outside)
+}
+
+// A regular file under a symlinked parent is refused too, even when the link
+// stays inside the tree.
+func TestExtractRefusesAFileUnderAnInsideSymlink(t *testing.T) {
+	tree, _ := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: "real", typ: tar.TypeDir},
+		entry{name: "alias", typ: tar.TypeSymlink, link: "real"},
+		entry{name: "alias/f", typ: tar.TypeReg, body: "x"},
+	), tree)
+	if err == nil {
+		t.Fatal("extractTar wrote a file through a symlinked parent")
+	}
+}
+
+// A directory entry that names an existing symlink (what a case-fold pair does
+// on a case-insensitive filesystem) is refused, not adopted.
+func TestExtractRefusesADirectoryEntryOverASymlink(t *testing.T) {
+	tree, _ := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: "real", typ: tar.TypeDir},
+		entry{name: "alias", typ: tar.TypeSymlink, link: "real"},
+		entry{name: "alias", typ: tar.TypeDir},
+	), tree)
+	if err == nil {
+		t.Fatal("extractTar adopted a symlink as a directory")
+	}
+}
+
+// isInside reports whether path is dir or below it, comparing resolved
+// paths so a temp directory behind a link does not read as outside.
+func isInside(dir, path string) bool {
+	d, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(d, path)
+	return err == nil && filepath.IsLocal(rel)
+}

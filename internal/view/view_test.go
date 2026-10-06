@@ -21,6 +21,8 @@ type fakeGit struct {
 	fetchErr   error
 	archiveErr error
 	archives   int
+	// archiveFn, when set, replaces the default tree Archive writes.
+	archiveFn func(dest string) error
 }
 
 func (g *fakeGit) Fetch(context.Context, string, string, string) error { return g.fetchErr }
@@ -29,6 +31,9 @@ func (g *fakeGit) Resolve(context.Context, string, string) (string, error) { ret
 
 func (g *fakeGit) Archive(_ context.Context, _, sha, dest string) error {
 	g.archives++
+	if g.archiveFn != nil {
+		return g.archiveFn(dest)
+	}
 	if err := os.MkdirAll(filepath.Join(dest, "sub"), 0o755); err != nil {
 		return err
 	}
@@ -205,4 +210,42 @@ func names(entries []os.DirEntry) []string {
 		out = append(out, e.Name())
 	}
 	return out
+}
+
+// An archive that places VIEW_SHA as a symlink to a file outside the tree must
+// not have that file written: VIEW_SHA is created through the tree's root with
+// O_EXCL, so the link makes the build fail and the file outside is untouched.
+func TestRefreshRefusesAVIEWSHASymlinkFromTheArchive(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "ESCAPED_VIEW_SHA")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g := &fakeGit{sha: shaOne, archiveFn: func(dest string) error {
+		return os.Symlink(outside, filepath.Join(dest, "VIEW_SHA"))
+	}}
+	b := newBuilder(t, g)
+
+	_, err := b.Refresh(context.Background())
+	asRefreshError(t, err, StepExtract)
+	if got := mustRead(t, outside); got != "keep" {
+		t.Errorf("the file outside the tree holds %q, want it untouched", got)
+	}
+	if _, serr := os.Lstat(filepath.Join(b.Dir, "cur")); !os.IsNotExist(serr) {
+		t.Errorf("cur exists after a refused build (err %v)", serr)
+	}
+}
+
+// An archive that carries a VIEW_SHA of its own is refused: marvel writes that
+// file, so a committed one would be silently replaced.
+func TestRefreshRefusesAnArchiveThatCarriesAVIEWSHA(t *testing.T) {
+	g := &fakeGit{sha: shaOne, archiveFn: func(dest string) error {
+		return os.WriteFile(filepath.Join(dest, "VIEW_SHA"), []byte("not the commit\n"), 0o644)
+	}}
+	b := newBuilder(t, g)
+
+	_, err := b.Refresh(context.Background())
+	asRefreshError(t, err, StepExtract)
+	if _, serr := os.Lstat(filepath.Join(b.Dir, "trees", shaOne)); !os.IsNotExist(serr) {
+		t.Errorf("a tree was built from an archive with its own VIEW_SHA (err %v)", serr)
+	}
 }

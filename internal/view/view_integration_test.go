@@ -231,3 +231,20 @@ func TestRealGitWriteIntoATreeFails(t *testing.T) {
 		t.Error("a file in the tree was removed")
 	}
 }
+
+// A commit that holds a VIEW_SHA at its root is refused: the file is marvel's.
+func TestRealGitRefusesACommitThatCarriesAVIEWSHA(t *testing.T) {
+	repo, b := realViewFixture(t)
+	commitPayload(t, repo, 0)
+	if err := os.WriteFile(filepath.Join(repo, "VIEW_SHA"), []byte("0000000000000000000000000000000000000000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "commit", "-q", "-m", "carries a VIEW_SHA")
+
+	_, err := b.Refresh(context.Background())
+	var re *RefreshError
+	if !errors.As(err, &re) || re.Step != StepExtract {
+		t.Fatalf("Refresh = %v, want an extract refusal", err)
+	}
+}
