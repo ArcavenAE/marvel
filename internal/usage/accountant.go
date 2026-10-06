@@ -751,10 +751,9 @@ func (a *Accountant) SessionOccupancy(agentID string) (Occupancy, bool) {
 const OutRateHalfLife = 20 * time.Second
 
 // OutRateValidFor is how long a rate reading stays current after the sample
-// that produced it. It matches the design's default quiet window of ten
-// minutes, so a stopped stream reads as a rate decaying toward zero for ten
+// that produced it. It is the default quiet window, one constant, so a stopped stream reads as a rate decaying toward zero for ten
 // minutes and then as expired, not as a frozen last value.
-const OutRateValidFor = 10 * time.Minute
+const OutRateValidFor = api.DefaultQuietWindow
 
 // OutRate returns the session's output-token rate, in tokens per second,
 // decayed to now. The second result is false when the session has never
@@ -923,4 +922,24 @@ func orNone(s string) string {
 		return "(unnamed)"
 	}
 	return s
+}
+
+// QuietRate is a rate cell as a renderer shows it at now: the value, and the
+// state that says how to print it. A seat quiet by the shared predicate
+// (api.Quiet over window) with an activity channel attached reads exactly 0,
+// fresh, instead of a number still decaying toward it, and that rule is
+// checked before expiry: the expired ? is for a reading whose channel is
+// gone. Without a channel, quiet proves nothing, so the cell's own expiry
+// decides. A cell never sampled is absent, not zero.
+func QuietRate(c asof.Cell[float64], s *api.Session, window time.Duration, channel bool, now time.Time) (float64, asof.State) {
+	if c.State(now) == asof.None {
+		return 0, asof.None
+	}
+	if channel && api.Quiet(s, window, now) {
+		return 0, asof.Fresh
+	}
+	if c.State(now) == asof.Stale {
+		return 0, asof.Stale
+	}
+	return DecayedRate(c, now), asof.Fresh
 }
