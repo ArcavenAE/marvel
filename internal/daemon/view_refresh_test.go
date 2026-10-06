@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/view"
@@ -175,6 +176,8 @@ func TestViewOfACrashLoopBackoffSeatSurvivesTheTickFrozen(t *testing.T) {
 		t.Fatal(err)
 	}
 	git.sha = "5555555555555555555555555555555555555555"
+	// A day on, every view is due, so a seat the tick would refresh is refreshed.
+	d.views.Now = func() time.Time { return time.Now().Add(24 * time.Hour) }
 	d.views.Tick()
 
 	after, err := os.Readlink(cur)

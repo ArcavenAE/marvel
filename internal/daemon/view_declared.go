@@ -6,18 +6,21 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/view"
 )
 
 // viewDeclarations lists the sessions whose role declares views, for the
-// keeper's tick and the verb. It reads the store only. A pending session is
-// included: it is mid-spawn, its views are being built, and leaving it out
-// would let the tick sweep them away.
+// keeper's tick and the verb. It reads the store only. A session that counts as
+// alive is included: a pending one is mid-spawn and its views are being built,
+// and one in crashloop-backoff still has its pane, so leaving either out would
+// let the sweep take its views for orphans. A tree goes only at teardown or when
+// its view leaves the manifest, never while the seat lives
+// (docs/design/readonly-view.md). The tick refreshes only running seats, so a
+// backoff seat's view is kept but frozen.
 func (d *Daemon) viewDeclarations() []view.Declaration {
 	var out []view.Declaration
 	for _, s := range d.store.ListSessions() {
-		if s.State != api.SessionRunning && s.State != api.SessionPending {
+		if !s.State.CountsAsAlive() {
 			continue
 		}
 		t, err := d.store.GetTeam(s.Workspace + "/" + s.Team)
