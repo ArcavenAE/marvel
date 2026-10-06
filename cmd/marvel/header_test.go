@@ -88,7 +88,7 @@ func TestHeaderBindThreeValues(t *testing.T) {
 		{"off", daemon.MRVLStatus{State: daemon.MRVLOff}, "mrvl://  off"},
 		{"loopback", daemon.MRVLStatus{State: daemon.MRVLLoopback, Addr: "127.0.0.1:6785"}, "mrvl://  loopback 127.0.0.1:6785"},
 		{"wildcard network", daemon.MRVLStatus{State: daemon.MRVLNetwork, Addr: "[::]:6785"}, "mrvl://  network :6785"},
-		{"named network", daemon.MRVLStatus{State: daemon.MRVLNetwork, Addr: "10.0.0.5:6785"}, "mrvl://  network 10.0.0.5:6785"},
+		{"named network", daemon.MRVLStatus{State: daemon.MRVLNetwork, Addr: "192.0.2.5:6785"}, "mrvl://  network 192.0.2.5:6785"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,6 +118,8 @@ func TestHeaderLinkUpWording(t *testing.T) {
 	}{
 		{"fresh up", busAt("up", 12*time.Second, time.Minute), []string{"link up, 12s ago"}, []string{"connected", "down"}},
 		{"fresh down", busAt("down", 40*time.Second, time.Minute), []string{"link down, 40s ago"}, []string{"connected"}},
+		{"never observed", &bus.Status{Managed: true, Leaf: "up"}, []string{"link up (age unknown)"}, []string{" ago", "connected", "?"}},
+		{"never observed down", &bus.Status{Managed: true, Leaf: "down"}, []string{"link down (age unknown)"}, []string{" ago", "connected"}},
 		{"expired", busAt("up", 9*time.Minute, time.Minute), []string{"link ?"}, []string{"link up", "connected"}},
 		{"unknown", &bus.Status{Managed: true, Leaf: "unknown"}, []string{"bus      unknown"}, []string{"down", "link up", "connected"}},
 		{"no hub", &bus.Status{Managed: true, Leaf: "n/a"}, []string{"bus      n/a"}, []string{"connected", "link"}},
@@ -295,5 +297,83 @@ func TestGetSessionsSurvivesADaemonWithoutStatus(t *testing.T) {
 	})
 	if !strings.Contains(out, "no status (unknown method: daemon.status)") || !strings.Contains(out, "agent-0") {
 		t.Errorf("want the header's no-status line and the table:\n%s", out)
+	}
+}
+
+// captureStderr is captureStdout for os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	done := make(chan string)
+	go func() {
+		var b bytes.Buffer
+		_, _ = io.Copy(&b, r)
+		done <- b.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	return <-done
+}
+
+// A daemon rooted at another home makes the client warn. The header asks the
+// daemon for its status before the listing does, and the listing's own call
+// already warns, so the warning must reach stderr once for the whole command.
+func TestHeaderDoesNotRepeatTheDaemonHomeWarning(t *testing.T) {
+	resolveFixture(t, false)
+	t.Setenv("MARVEL_HOME", t.TempDir())
+	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
+		resp := daemon.Response{DaemonHome: "/elsewhere/other-marvel"}
+		switch req.Method {
+		case "get":
+			resp.Result, _ = json.Marshal(headerSessions())
+		case "daemon.status":
+			resp.Result, _ = json.Marshal(daemon.DaemonStatus{Cluster: "alpha"})
+		default:
+			resp.Error = "unexpected " + req.Method
+		}
+		return resp
+	})
+	t.Setenv(config.SocketEnv, socket)
+
+	var out string
+	errOut := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			cmd := getCmd()
+			cmd.SetArgs([]string{"sessions", "--header"})
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+			if err := cmd.Execute(); err != nil {
+				t.Errorf("get sessions --header: %v", err)
+			}
+		})
+	})
+	if !strings.Contains(out, "agent-0") {
+		t.Fatalf("the listing should print:\n%s", out)
+	}
+	if n := strings.Count(errOut, "is rooted at /elsewhere/other-marvel"); n != 1 {
+		t.Errorf("the daemon-home warning should print once, printed %d times:\n%s", n, errOut)
+	}
+}
+
+// A daemon that cannot be reached at all is a transport error, not a status
+// error. The header names the reason and the listing's own error is the
+// command's failure.
+func TestCollectHeaderReportsATransportError(t *testing.T) {
+	resolveFixture(t, false)
+	t.Setenv(config.SocketEnv, filepath.Join(t.TempDir(), "nobody-home.sock"))
+	h := collectHeader()
+	if h.Status != nil {
+		t.Errorf("an unreachable daemon should give no status, got %+v", h.Status)
+	}
+	if h.StatusErr == "" {
+		t.Error("an unreachable daemon should leave the reason in StatusErr")
+	}
+	if out := renderHeader(h, headerNow); !strings.Contains(out, "no status (") || strings.Contains(out, "no status (-)") {
+		t.Errorf("the header should name why there is no status:\n%s", out)
 	}
 }

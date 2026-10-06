@@ -58,13 +58,15 @@ func clientClusterName(rung resolveRung) string {
 // reason, so the listing itself is never refused for want of a header.
 func collectHeader() headerInfo {
 	var h headerInfo
-	addr, _, rung, err := resolveDaemonRung()
+	addr, opts, rung, err := resolveDaemonRung()
 	if err != nil {
 		h.StatusErr = err.Error()
 		return h
 	}
 	h.Address, h.Rung, h.ClientName = addr, rung, clientClusterName(rung)
-	resp, err := send(daemon.Request{Method: "daemon.status"})
+	// Not send(): its daemon-home warning would print here and again on the
+	// listing's own request, and the listing's is the one that stays.
+	resp, err := daemon.SendRequestWith(addr, daemon.Request{Method: "daemon.status"}, opts)
 	switch {
 	case err != nil:
 		h.StatusErr = err.Error()
