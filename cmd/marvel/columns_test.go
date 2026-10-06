@@ -117,6 +117,52 @@ func TestColumnsWideIsNamedSet(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("llm,wide = %v, want %v (wide expands in place)", got, want)
 	}
+
+	// In the middle, not just at an end: the names after the set stay after it.
+	got = headersOf(columnsOrFatal(t, "state,wide,llm", nil))
+	want = append(append([]string{"STATE"}, todaysHeaders...), "LLM")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("state,wide,llm = %v, want %v", got, want)
+	}
+}
+
+// Both orders of the same pair print as named, so the result is neither
+// the registry order nor an alphabetical one that one order happens to match.
+func TestColumnsBothOrdersHonored(t *testing.T) {
+	for _, flag := range []string{"name,state", "state,name"} {
+		want := map[string][]string{
+			"name,state": {"AGENT NAME", "STATE"},
+			"state,name": {"STATE", "AGENT NAME"},
+		}[flag]
+		if got := headersOf(columnsOrFatal(t, flag, nil)); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: headers = %v, want %v", flag, got, want)
+		}
+	}
+}
+
+// --columns is a sessions flag. On another resource it is refused before
+// anything is dialed, so a typo does not look like a working listing.
+func TestColumnsFlagRefusedForOtherResources(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd := getCmd()
+	cmd.SetArgs([]string{"teams", "--columns", "name"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--columns") {
+		t.Errorf("get teams --columns name: err = %v, want a --columns refusal", err)
+	}
+}
+
+// An unknown name on the sessions command line fails before any dial.
+func TestColumnsUnknownNameRefusedByGetSessions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd := getCmd()
+	cmd.SetArgs([]string{"sessions", "--columns", "name,bogus"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("get sessions --columns name,bogus: err = %v, want an unknown-column error", err)
+	}
 }
 
 // The preference is read from display.session_columns in the client
