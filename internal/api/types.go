@@ -695,6 +695,11 @@ type ShiftRequest struct {
 	// the refusal, because that ring wraps and empties on a restart, and the
 	// escalation must still say the seat may never have been asked.
 	NoticeUndelivered string
+	// DirError is why marvel could not create the handoff file's directory
+	// when it asked, empty when it could or had no path to create. It is kept
+	// on the request for the same reason as NoticeUndelivered: the escalation
+	// must still name the cause after the event ring is gone (marvel#608).
+	DirError string
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.

@@ -150,7 +150,14 @@ write. The default conforms to the contract:
 
 1. **Request.** On the quiet or hard threshold (D4), marvel delivers a notice
    to the seat (`shift: max age reached; write your handoff now`) and records
-   `shift.handoff-requested` with the time.
+   `shift.handoff-requested` with the time. A role that declares a handoff
+   gets the path, the marker and the window in the notice: `... write your
+   handoff now to <path>, ending with the line "<marker>"; you have <window>`.
+   Before it sends the notice marvel creates the path's directory (mode 0700;
+   an existing directory keeps its mode), because `{session}` carries the
+   generation and each successor's directory is new. A failure to create it
+   is named in the event and in the missing reason, and the notice still goes
+   out. A role with no declared handoff gets the bare notice.
 2. **Observe (the seam).** A role that declares
    `handoff = "<path with {session}>"` and `handoff_marker = "<line>"` gets a
    terminal-marker check: marvel shifts when the file exists and its last
