@@ -442,11 +442,9 @@ func (k *Keeper) owned(sessKey string) bool {
 	return false
 }
 
-// refresh runs one refresh of one view, off the keeper's lock, and reports it
-// as an event. It returns a line describing the outcome.
-
-// refreshLocked is refresh for a caller that already holds t.run; it releases
-// it.
+// refreshLocked runs one refresh of one view for a caller that already holds
+// t.run, which it releases. It runs off the keeper's lock, reports the outcome
+// as an event, and returns a line describing it.
 func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) string {
 	defer t.release()
 	ctx, cancel := context.WithTimeout(parent, k.timeout())

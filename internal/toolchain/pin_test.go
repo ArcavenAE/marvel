@@ -12,8 +12,11 @@
 package toolchain
 
 import (
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -173,48 +176,131 @@ func TestNatsServerPinMatchesCI(t *testing.T) {
 }
 
 // TestNatsServerInstallIsVerifiedByChecksum requires the CI install to carry
-// the release asset's SHA-256, so a changed or substituted download fails the
-// job instead of running.
+// the release asset's SHA-256 and to check the download against it, so a
+// changed or substituted download fails the job instead of running.
 func TestNatsServerInstallIsVerifiedByChecksum(t *testing.T) {
 	t.Parallel()
 
-	sum := ciEnvValue(t, filepath.Join("..", "..", ".github", "workflows", "ci.yml"), "NATS_SERVER_SHA256")
-	if len(sum) != 64 || strings.Trim(sum, "0123456789abcdef") != "" {
-		t.Errorf("NATS_SERVER_SHA256 = %q, want 64 lowercase hex digits", sum)
+	step, err := ciEnvStep(filepath.Join("..", "..", ".github", "workflows", "ci.yml"), "NATS_SERVER_SHA256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(step.value) != 64 || strings.Trim(step.value, "0123456789abcdef") != "" {
+		t.Errorf("NATS_SERVER_SHA256 = %q, want 64 lowercase hex digits", step.value)
+	}
+	if !checksumChecked(step.run, "NATS_SERVER_SHA256") {
+		t.Errorf("the install step sets NATS_SERVER_SHA256 but never checks the download against it:\n%s", step.run)
 	}
 }
 
-// ciEnvValue returns the value of a step env var in the CI workflow, without
-// any leading "v", failing when no step sets it or it is empty.
-func ciEnvValue(t *testing.T, path, key string) string {
-	t.Helper()
+func TestChecksumChecked(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, run string
+		want      bool
+	}{
+		{"checked strictly", `echo "${NATS_SERVER_SHA256}  ${f}" | sha256sum --check --strict -`, true},
+		{"checked", `echo "${NATS_SERVER_SHA256}  f" | sha256sum --check -`, true},
+		{"line deleted", "curl -o f url\ntar -xzf f", false},
+		{"sum named but not checked", `echo "${NATS_SERVER_SHA256}"`, false},
+		{"check of another variable", `echo "${OTHER}  f" | sha256sum --check -`, false},
+		{"checker without the sum", "sha256sum f", false},
+	} {
+		if got := checksumChecked(tc.run, "NATS_SERVER_SHA256"); got != tc.want {
+			t.Errorf("%s: checksumChecked = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
 
+func TestCIEnvStepRefusesTwoJobsThatDisagree(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ci.yml")
+	write := func(a, b string) {
+		t.Helper()
+		doc := "jobs:\n  one:\n    steps:\n      - env:\n          K: " + a + "\n  two:\n    steps:\n      - env:\n          K: " + b + "\n"
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("v1", "v2")
+	if _, err := ciEnvStep(path, "K"); err == nil {
+		t.Error("two jobs setting K to different values read without error")
+	}
+	write("v1", "v1")
+	step, err := ciEnvStep(path, "K")
+	if err != nil || step.value != "1" {
+		t.Errorf("two jobs agreeing on K = %+v, %v, want 1", step, err)
+	}
+}
+
+type ciStep struct {
+	value string
+	run   string
+}
+
+// ciEnvStep returns the value of a step env var in the CI workflow, without any
+// leading "v", with the step's run script. It fails when no step sets it, when
+// it is empty, or when two jobs set it to different values, so which job is
+// read never depends on map order.
+func ciEnvStep(path, key string) (ciStep, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		return ciStep{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var wf struct {
 		Jobs map[string]struct {
 			Steps []struct {
 				Env map[string]string `yaml:"env"`
+				Run string            `yaml:"run"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &wf); err != nil {
-		t.Fatalf("parse %s: %v", path, err)
+		return ciStep{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	for _, job := range wf.Jobs {
-		for _, step := range job.Steps {
+	var found *ciStep
+	for _, name := range slices.Sorted(maps.Keys(wf.Jobs)) {
+		for _, step := range wf.Jobs[name].Steps {
 			value, ok := step.Env[key]
 			if !ok {
 				continue
 			}
 			if value == "" {
-				t.Fatalf("%s sets %s to an empty value", path, key)
+				return ciStep{}, fmt.Errorf("%s sets %s to an empty value in job %s", path, key, name)
 			}
-			return strings.TrimPrefix(value, "v")
+			got := ciStep{value: strings.TrimPrefix(value, "v"), run: step.Run}
+			if found != nil && found.value != got.value {
+				return ciStep{}, fmt.Errorf("%s sets %s to %q and %q in different jobs", path, key, found.value, got.value)
+			}
+			if found == nil {
+				found = &got
+			}
 		}
 	}
-	t.Fatalf("%s has no step setting %s", path, key)
-	return ""
+	if found == nil {
+		return ciStep{}, fmt.Errorf("%s has no step setting %s", path, key)
+	}
+	return *found, nil
+}
+
+// checksumChecked reports whether a run script checks a download against the
+// SHA-256 held in the named env var: a line that names the variable and pipes
+// it to sha256sum --check.
+func checksumChecked(run, envVar string) bool {
+	for _, line := range strings.Split(run, "\n") {
+		if strings.Contains(line, envVar) && strings.Contains(line, "sha256sum") && strings.Contains(line, "--check") {
+			return true
+		}
+	}
+	return false
+}
+
+// ciEnvValue returns the value of a step env var in the CI workflow.
+func ciEnvValue(t *testing.T, path, key string) string {
+	t.Helper()
+	step, err := ciEnvStep(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return step.value
 }
