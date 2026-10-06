@@ -85,7 +85,34 @@ agreeing, within a cost that fits a spawn step?
   files unchanged. The architect expects this to fail. The view's HEAD and
   index live in the shared `.git/worktrees/<name>/`, which `chmod` on the
   view does not touch, and the premise check already saw a checkout move
-  HEAD. It is pre-registered so the result is measured, not assumed.
+  HEAD. It is pre-registered so the result is measured, not assumed. The
+  rig also records `git count-objects -v` in the shared store before and
+  after, since a commit aimed at the view writes objects there even if the
+  view is later restored.
+
+### H6, the archive view (run only if H5 fails)
+
+A view with no git metadata: `git archive <sha> | tar -x` into a directory
+made read-only. The seat reads it through a path that is a symlink. A
+refresh extracts into a fresh directory, makes it read-only, and replaces
+the symlink by `rename(2)` of a new symlink over it (BSD `mv -h`, GNU
+`mv -T`). It has its own criteria, since H3's checkout test does not apply
+to a tree without `.git`:
+
+- **H6a, content.** A content hash of the view equals the hash of
+  `git archive <sha>` extracted fresh.
+- **H6b, atomic swap.** A reader looping over one file's hash through the
+  path during a refresh sees only the old or the new hash, never a mix and
+  never a missing file.
+- **H6c, no repository reachable.** The view lives outside any work tree
+  (under the rig's temp dir; in a build, under marvel's state directory).
+  `git -C <view> rev-parse` reports "not a git repository", and each H5
+  command fails without changing anything. Control: the same archive
+  placed inside a checkout lets `git -C <view>` reach the enclosing repo,
+  which shows why the location is part of the mechanism.
+- **H6d, cost.** Extract plus chmod for the orc clone under 5 s, median of
+  5 runs; a refresh, including the swap, under 5 s.
+- **H6 also repeats H1** against the archive view.
 
 ### What H1 does not claim
 
@@ -122,6 +149,9 @@ result is macOS only. Transcript kept:
    command; after each, record the view's HEAD, `git -C view status
    --porcelain`, and the files' content hash. Restore with the H3 refresh
    between commands.
+9. H6, only if H5 failed: build the archive view at `HEAD~1` outside any
+   work tree, then run H6a to H6d and H1 against it, and the H6c control
+   inside the shared checkout.
 
 ### What would change the plan
 
@@ -133,10 +163,14 @@ result is macOS only. Transcript kept:
   refresh, swapped in by path); measure that before any build.
 - H4 fails: the view is made on demand, not at spawn.
 - H5 fails for any command: a git worktree cannot be a fixed view, however
-  its files are protected. Measure, in the same rig, a view with no git
-  metadata at all: `git archive <sha> | tar -x` into a directory made
-  read-only, refreshed by extracting into a fresh directory and swapping
-  the path. Report both, and that alternative becomes the build candidate.
+  its files are protected. Run H6 in the same rig and report both.
+- H6a, H6b or H1 fails for the archive view: neither cheap mechanism gives
+  a fixed view, and the idea's mechanism 3 (a read-only mount) is the next
+  probe. H6c fails: the location rule is wrong; name what the view
+  reached. H6d fails: the view is made on demand, not at spawn.
+- H3's writable window is recorded, not judged. It does not fail the
+  worktree view; if it is longer than a second, the builder ticket uses the
+  H6 swap refresh for worktree views too, so readers never see the window.
 
 ## Revision before the run
 
@@ -146,12 +180,16 @@ H2 could pass while the view stayed movable. H5 and rig step 8 add that
 case, with a failure branch. H3 now states its writable window. H4 times a
 local clone, not the live orc checkout.
 
+Second, after review 5428374958: the archive fallback had no criteria of
+its own and no location rule. H6 gives it both, H5 records objects written
+to the shared store, and the H3 window has a stated consequence.
+
 ## What a builder builds
 
 For the probe: the rig script above, under `scripts/probes/`, and its two
 transcripts. No marvel code changes.
 
-After the probe, and only if H1 to H3 hold for the worktree view, or H1
-and H3 hold for the archive view after an H5 failure: a spawn step that creates one
+After the probe, and only if H1, H2, H3 and H5 hold for the worktree
+view, or H1 and H6a to H6c hold for the archive view: a spawn step that creates one
 view per repository the seat declares, a refresh verb, and teardown
 removal. That is a separate ticket, filed from the finding.
