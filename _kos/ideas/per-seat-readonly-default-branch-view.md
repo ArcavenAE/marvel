@@ -2,6 +2,9 @@
 
 **Status: idea. Pre-hypothesis. Nothing here is built or tested.**
 
+**Became:** `_kos/probes/probe-per-seat-readonly-view.md` (2026-10-06), which
+tests mechanism 2. Nothing is built yet.
+
 Raised from a client team's harvest, 2026-09-27. Filed here because the
 view would be something marvel builds for a seat when it spawns one, which
 makes it a filesystem-access question for marvel (resource matrix row 6:
