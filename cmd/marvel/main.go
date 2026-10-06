@@ -81,15 +81,13 @@ func resolveDaemonAddr() (string, daemon.DialOptions, error) {
 	}
 	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
-		// A name the operator typed that matches nothing is refused: acting
-		// on the local daemon instead could land a mutating command on the
-		// wrong host (#502). A current_cluster in the config that names
-		// nothing keeps the warning and the local fallback.
-		if clusterName != "" {
-			return "", daemon.DialOptions{}, err
-		}
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
+		// A cluster name that matches nothing is refused, whether the
+		// operator typed it with --cluster or the config's current_cluster
+		// names it: acting on the local daemon instead could land a mutating
+		// command on the wrong host (#502). The commands that define or
+		// configure a cluster (config add-cluster, use-cluster, ...) never
+		// reach this path; they take the name as an argument.
+		return "", daemon.DialOptions{}, err
 	}
 	if cl == nil {
 		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
