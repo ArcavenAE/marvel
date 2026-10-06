@@ -195,11 +195,30 @@ func TestColumnsOverflowWarns(t *testing.T) {
 	}
 }
 
-// Not a terminal means no width, so the full default prints as it always has.
+// Not a terminal means no width, so the table prints byte for byte as it did
+// before the fit: nothing dropped and nothing cut, for the default and for a
+// list the operator named. The fixture has a runtime path and a long workdir,
+// the two cells the fit cuts on a terminal.
 func TestFitSilentWithoutAWidth(t *testing.T) {
-	got := fitSessionTable([]api.Session{fitSession("agent-0")}, defaultSessionColumns(), fitOptions{})
-	if want := renderSessionTableCols([]api.Session{fitSession("agent-0")}, defaultSessionColumns()); got.table != want || got.hidden != 0 || got.warn != "" {
-		t.Errorf("no width should change nothing; hidden %d warn %q:\n%s", got.hidden, got.warn, got.table)
+	s := fitSession("agent-0")
+	s.Runtime.Command = "/opt/tools/bin/codex"
+	s.WorkDir = "/home/user/work/a-very-long-orchestrator/subrepo-wt-builder-width-fit"
+	sessions := []api.Session{s}
+	lists := map[string][]sessionColumn{
+		"default":  defaultSessionColumns(),
+		"explicit": columnsOrFatal(t, "name,runtime,workdir", nil),
+	}
+	for name, cols := range lists {
+		for _, explicit := range []bool{false, true} {
+			got := fitSessionTable(sessions, cols, fitOptions{explicit: explicit})
+			if want := renderSessionTableCols(sessions, cols); got.table != want || got.hidden != 0 || got.warn != "" {
+				t.Errorf("%s list, explicit=%v: no width should change nothing; hidden %d warn %q:\n%s\nwant:\n%s",
+					name, explicit, got.hidden, got.warn, got.table, want)
+			}
+		}
+	}
+	if out := renderSessionTableCols(sessions, lists["explicit"]); !strings.Contains(out, "/opt/tools/bin/codex") || !strings.Contains(out, s.WorkDir) {
+		t.Fatalf("setup: the unfitted table should hold the full cells:\n%s", out)
 	}
 }
 

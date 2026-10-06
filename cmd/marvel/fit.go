@@ -141,7 +141,9 @@ func tableWidth(table string) int {
 // named is never cut, and warns when it does not fit.
 func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions) fitResult {
 	if o.width <= 0 {
-		return fitResult{table: renderTrimmed(sessions, cols, o)}
+		// Not a terminal: byte for byte what get sessions printed before the
+		// fit, nothing cut, whatever the columns hold.
+		return fitResult{table: renderSessionTableCols(sessions, cols)}
 	}
 	if o.explicit {
 		table := renderTrimmed(sessions, cols, o)
