@@ -1169,10 +1169,13 @@ func renderPlanTable(plans []team.RolePlan) string {
 
 func describeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "describe <resource-type> <name>",
-		Short: "Show detailed information about a resource",
-		Args:  cobra.ExactArgs(2),
+		Use:   "describe <resource-type> <name> | describe daemon",
+		Short: "Show detailed information about a resource, or the daemon that answers",
+		Args:  describeArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if args[0] == "daemon" {
+				return describeDaemon(cmd.OutOrStdout())
+			}
 			params, _ := json.Marshal(map[string]string{
 				"resource_type": args[0],
 				"name":          args[1],
