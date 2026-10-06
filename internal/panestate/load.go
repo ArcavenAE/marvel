@@ -19,6 +19,7 @@ type patternFile struct {
 	Harness        string   `yaml:"harness"`
 	HarnessVersion string   `yaml:"harness_version"`
 	SampleWidth    int      `yaml:"sample_width"`
+	VarRunes       int      `yaml:"var_runes"`
 	Rows           []string `yaml:"rows"`
 }
 
@@ -43,12 +44,16 @@ func Load(fsys fs.FS, root string) ([]Pattern, error) {
 		if f.ID == "" || f.Harness == "" || f.HarnessVersion == "" || len(f.Rows) == 0 {
 			return fmt.Errorf("pattern %s: id, harness, harness_version and rows are required", p)
 		}
+		if f.VarRunes < 0 {
+			return fmt.Errorf("pattern %s: var_runes must not be negative", p)
+		}
 		pat := Pattern{ID: f.ID, Version: f.Version, Harness: f.Harness, HarnessVersion: f.HarnessVersion, SampleWidth: f.SampleWidth}
 		for _, r := range f.Rows {
 			row, err := parseRow(r)
 			if err != nil {
 				return fmt.Errorf("pattern %s: %w", p, err)
 			}
+			row.MaxVar = f.VarRunes
 			pat.Rows = append(pat.Rows, row)
 		}
 		out = append(out, pat)

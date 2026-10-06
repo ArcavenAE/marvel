@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func fixtureSet(t *testing.T) []Pattern {
@@ -283,5 +284,12 @@ func TestShippedVariableSpansAreBounded(t *testing.T) {
 				t.Errorf("%s/%s/%s: row %q has an unbounded variable span", p.Harness, p.HarnessVersion, p.ID, r.Render())
 			}
 		}
+	}
+}
+
+func TestLoadRefusesANegativeVarRunes(t *testing.T) {
+	fsys := fstest.MapFS{"h/1/x.yaml": {Data: []byte("id: x\nharness: h\nharness_version: \"1\"\nvar_runes: -1\nrows:\n  - \"a\"\n")}}
+	if _, err := Load(fsys, "."); err == nil {
+		t.Fatal("a negative var_runes was accepted")
 	}
 }
