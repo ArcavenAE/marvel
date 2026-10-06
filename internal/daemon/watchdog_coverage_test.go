@@ -56,10 +56,13 @@ func TestWatchdogMarksAVersionWhoseEveryPatternFailedItsControl(t *testing.T) {
 	r := newWDRig(t)
 	r.w.sample = func(panestate.Pattern) (string, error) { return "some other screen\n", nil }
 	r.w.control()
-	r.seat("a", "claude", "2.1.283", 11*time.Minute, 0)
+	p := r.seat("a", "claude", "2.1.283", 11*time.Minute, 0)
 
 	r.w.Once()
 
+	if p.caps != 0 {
+		t.Errorf("a control-failed seat was captured %d times: there is nothing it could match", p.caps)
+	}
 	hs := r.get("a").HarnessState
 	if hs == nil || hs.State != api.HarnessStateControlFailed {
 		t.Fatalf("harness state = %+v, want control-failed", hs)
@@ -198,5 +201,40 @@ func TestWatchdogCoverageIsEvaluatedAtTheQuietGateOnly(t *testing.T) {
 		if hs := r.get(n).HarnessState; hs != nil {
 			t.Errorf("%s read %+v without being examined", n, hs)
 		}
+	}
+}
+
+// When every pattern of the harness failed its control, a seat on a version
+// none of them was for reads uncovered, with no versions covered: the harness
+// is one the watchdog has patterns for, so it does not read as unwatched.
+func TestWatchdogHarnessWithOnlyFailedPatternsReadsOtherVersionsUncovered(t *testing.T) {
+	r := newWDRig(t)
+	r.w.sample = func(panestate.Pattern) (string, error) { return "some other screen\n", nil }
+	r.w.control()
+	p := r.seat("a", "claude", "2.1.291", 11*time.Minute, 0)
+
+	r.w.Once()
+
+	hs := r.get("a").HarnessState
+	if hs == nil || hs.State != api.HarnessStateUncovered || len(hs.Covered) != 0 {
+		t.Fatalf("harness state = %+v, want uncovered with no covered versions", hs)
+	}
+	if p.caps != 0 {
+		t.Errorf("captured %d times", p.caps)
+	}
+}
+
+// A coverage state records the session's ContextAt when it was seen, as every
+// harness state does, so a reader can tell how stale it is against the seat's
+// last work.
+func TestWatchdogCoverageStateRecordsTheSessionsContextAt(t *testing.T) {
+	r := coverageRig(t)
+	r.seat("a", "claude", "2.1.291", 30*time.Minute, 15*time.Minute)
+
+	r.w.Once()
+
+	hs := r.get("a").HarnessState
+	if hs == nil || hs.ContextAt.IsZero() || !hs.ContextAt.Equal(r.get("a").ContextAt) {
+		t.Fatalf("state = %+v, want ContextAt equal to the session's %s", hs, r.get("a").ContextAt)
 	}
 }

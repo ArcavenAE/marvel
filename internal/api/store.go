@@ -862,6 +862,7 @@ func (s *Store) SetHarnessState(key string, hs *HarnessState) {
 	}
 	c := *hs
 	c.Evidence = append([]string(nil), hs.Evidence...)
+	c.Covered = append([]string(nil), hs.Covered...)
 	sess.HarnessState = &c
 }
 
