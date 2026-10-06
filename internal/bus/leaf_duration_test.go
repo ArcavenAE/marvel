@@ -2,6 +2,7 @@ package bus
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,5 +105,54 @@ func TestStatusShowsHowLongTheLeafHasBeenDown(t *testing.T) {
 	s.now = func() time.Time { return t0.Add(3*time.Hour + 40*time.Second) }
 	if st := s.Status(); st.Leaf != "up" || st.LeafFor != "40s" {
 		t.Fatalf("status after the link came up: leaf=%q for=%q, want up for 40s", st.Leaf, st.LeafFor)
+	}
+}
+
+// TestLeafEnrolledWhileDownIsReported: a hub with no seed is silent by design,
+// but once the seed is stored the leaf has promised a link, so a leaf still
+// down is reported on the next poll and repeats from there (marvel#600 review).
+func TestLeafEnrolledWhileDownIsReported(t *testing.T) {
+	s, m, ring := newTestSupervisor(t, "nats-leaf://hub.example:7442")
+	var seeded atomic.Bool
+	m.hasLeafSeed = seeded.Load
+	s.leafRepeatEvery = time.Hour
+	t0 := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.observeLeaf(0, t0)
+	s.observeLeaf(0, t0.Add(time.Hour))
+	if got := len(leafDownEvents(ring)); got != 0 {
+		t.Fatalf("bus.leaf.down events = %d before the seed, want 0", got)
+	}
+	seeded.Store(true) // credential put bus/leaf
+	s.observeLeaf(0, t0.Add(2*time.Hour))
+	if got := len(leafDownEvents(ring)); got != 1 {
+		t.Fatalf("bus.leaf.down events = %d after the seed arrived on a down leaf, want 1", got)
+	}
+	s.observeLeaf(0, t0.Add(3*time.Hour))
+	if got := len(leafDownEvents(ring)); got != 2 {
+		t.Fatalf("bus.leaf.down events = %d an hour later, want the repeat (2)", got)
+	}
+}
+
+// TestLeafAttachedWhileDownIsReported: the same for an operator connect. A
+// leaf found down while disconnected is silent; connecting it makes the down
+// state a promise broken, so it is reported and repeats.
+func TestLeafAttachedWhileDownIsReported(t *testing.T) {
+	s, ring := enrolledLeaf(t)
+	s.leafRepeatEvery = time.Hour
+	s.mgr.leafAttached.Store(false)
+	t0 := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.observeLeaf(0, t0)
+	s.observeLeaf(0, t0.Add(time.Hour))
+	if got := len(leafDownEvents(ring)); got != 0 {
+		t.Fatalf("bus.leaf.down events = %d while disconnected, want 0", got)
+	}
+	s.mgr.leafAttached.Store(true) // marvel bus connect
+	s.observeLeaf(0, t0.Add(2*time.Hour))
+	if got := len(leafDownEvents(ring)); got != 1 {
+		t.Fatalf("bus.leaf.down events = %d after connecting a down leaf, want 1", got)
+	}
+	s.observeLeaf(0, t0.Add(3*time.Hour))
+	if got := len(leafDownEvents(ring)); got != 2 {
+		t.Fatalf("bus.leaf.down events = %d an hour later, want the repeat (2)", got)
 	}
 }
