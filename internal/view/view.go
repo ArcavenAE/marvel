@@ -353,11 +353,14 @@ func extractTar(r io.Reader, dest string) error {
 
 	// verified holds directories already shown to be real, not links.
 	verified := map[string]bool{}
+	// links holds every symlink written, by tree-relative name, for the
+	// resolution pass once the whole archive is down.
+	links := map[string]string{}
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return resolveLinks(links)
 		}
 		if err != nil {
 			return err
@@ -402,6 +405,7 @@ func extractTar(r io.Reader, dest string) error {
 			if err := root.Symlink(hdr.Linkname, name); err != nil {
 				return fmt.Errorf("archive symlink %q: %w", hdr.Name, err)
 			}
+			links[name] = filepath.FromSlash(hdr.Linkname)
 		default:
 			return fmt.Errorf("archive entry %q has unsupported type %q", hdr.Name, hdr.Typeflag)
 		}
@@ -461,6 +465,64 @@ func symlinkStaysInside(name, target string) bool {
 		return false
 	}
 	return filepath.IsLocal(filepath.Join(filepath.Dir(name), filepath.FromSlash(target)))
+}
+
+// maxLinkHops bounds how many links one resolution may follow, as the kernel
+// does, so a cycle ends in an error.
+const maxLinkHops = 40
+
+// resolveLinks follows every symlink in links component by component, the way
+// a reader would, and returns an error for one that ends outside the tree, is
+// absolute, or does not resolve within maxLinkHops. The name check done as
+// each link was written is lexical and cannot see a target that passes
+// through another link ("x/.." with x -> "."), and that depends on the order
+// the entries arrived in. Running after the last entry makes the verdict
+// independent of that order.
+func resolveLinks(links map[string]string) error {
+	for name := range links {
+		if err := resolveLink(links, name); err != nil {
+			return fmt.Errorf("archive symlink %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func resolveLink(links map[string]string, name string) error {
+	var cur []string
+	if dir := filepath.Dir(name); dir != "." {
+		cur = strings.Split(dir, string(filepath.Separator))
+	}
+	pending := strings.Split(links[name], string(filepath.Separator))
+	hops := 0
+	for len(pending) > 0 {
+		c := pending[0]
+		pending = pending[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if len(cur) == 0 {
+				return fmt.Errorf("target %q resolves outside the tree", links[name])
+			}
+			cur = cur[:len(cur)-1]
+			continue
+		}
+		cur = append(cur, c)
+		target, isLink := links[strings.Join(cur, string(filepath.Separator))]
+		if !isLink {
+			continue
+		}
+		hops++
+		if hops > maxLinkHops {
+			return fmt.Errorf("target %q does not resolve within %d links", links[name], maxLinkHops)
+		}
+		if target == "" || filepath.IsAbs(target) {
+			return fmt.Errorf("target %q passes through a link to %q", links[name], target)
+		}
+		cur = cur[:len(cur)-1]
+		pending = append(strings.Split(target, string(filepath.Separator)), pending...)
+	}
+	return nil
 }
 
 // cleanGitEnv is the process environment without the variables that point git

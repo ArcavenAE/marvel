@@ -248,3 +248,26 @@ func TestRealGitRefusesACommitThatCarriesAVIEWSHA(t *testing.T) {
 		t.Fatalf("Refresh = %v, want an extract refusal", err)
 	}
 }
+
+// A real commit that holds x -> "." and up -> "x/..": each name is local, but
+// up resolves to the tree's parent. Refresh refuses it and leaves no cur.
+func TestRealGitRefusesALinkThatPassesThroughAnotherLink(t *testing.T) {
+	repo, b := realViewFixture(t)
+	commitPayload(t, repo, 0)
+	for name, target := range map[string]string{"x": ".", "up": "x/.."} {
+		if err := os.Symlink(target, filepath.Join(repo, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "commit", "-q", "-m", "links through links")
+
+	_, err := b.Refresh(context.Background())
+	var re *RefreshError
+	if !errors.As(err, &re) || re.Step != StepExtract {
+		t.Fatalf("Refresh = %v, want an extract refusal", err)
+	}
+	if _, serr := os.Lstat(filepath.Join(b.Dir, "cur")); serr == nil {
+		t.Fatal("a refused refresh left a cur link")
+	}
+}
