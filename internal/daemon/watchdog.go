@@ -48,6 +48,10 @@ type watchdog struct {
 	readPane func(paneID string) (string, int, error)
 	capture  func(paneID string) (string, error)
 
+	// sample returns a pattern's captured screen, for the control that runs
+	// once at start. Injected so a test needs no embedded sample.
+	sample func(panestate.Pattern) (string, error)
+
 	mu          sync.Mutex
 	lastCapture map[string]time.Time
 	rolled      map[string]string
@@ -59,9 +63,56 @@ func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, 
 	}
 	return &watchdog{
 		store: store, ring: ring, sets: sets, window: window,
-		reg: runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
+		sample: panestate.EmbeddedSample,
+		reg:    runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
 		lastCapture: map[string]time.Time{}, rolled: map[string]string{},
 	}
+}
+
+// control runs each pattern against its own sample once, keeps the patterns
+// that pass, and says so: one watchdog.control event per pattern (info on a
+// pass, warning on a fail, never sample text) and a log line. It runs at
+// start, never per pass, so a failed pattern can never match a pane
+// (docs/design/watchdog-control-and-uncovered.md sections 2, 3 and 5).
+func (w *watchdog) control() {
+	results := panestate.Control(w.sets, w.sample)
+	kept := make([]panestate.Pattern, 0, len(w.sets))
+	passed := map[string]int{}
+	var order []string
+	for i, res := range results {
+		who := fmt.Sprintf("%s %s", res.Harness, res.HarnessVersion)
+		label := fmt.Sprintf("pattern %s@%d for %s", res.PatternID, res.PatternVersion, who)
+		if res.Pass {
+			kept = append(kept, w.sets[i])
+			if passed[who] == 0 {
+				order = append(order, who)
+			}
+			passed[who]++
+			events.Emit(w.ring, events.Event{
+				Kind: events.KindWatchdogControl, Severity: events.SeverityInfo,
+				Message: "control passed: " + label,
+			})
+			continue
+		}
+		why := fmt.Sprintf("result %s, confidence %q", res.State, res.Confidence)
+		if res.Err != nil {
+			why = "sample error: " + res.Err.Error()
+		}
+		events.Emit(w.ring, events.Event{
+			Kind: events.KindWatchdogControl, Severity: events.SeverityWarning,
+			Message: fmt.Sprintf("control failed: %s: %s", label, why),
+		})
+		log.Printf("watchdog: control failed for %s pattern %s@%d: %s", who, res.PatternID, res.PatternVersion, why)
+	}
+	for _, who := range order {
+		n := passed[who]
+		noun := "patterns"
+		if n == 1 {
+			noun = "pattern"
+		}
+		log.Printf("watchdog: controls passed for %s (%d %s)", who, n, noun)
+	}
+	w.sets = kept
 }
 
 // Run looks every WatchdogInterval until ctx is cancelled.
@@ -261,14 +312,17 @@ func (w *watchdog) rollup(now time.Time) {
 	}
 }
 
-// watchdogFor builds the watchdog, or returns nil when there is no pattern set:
-// with none, nothing can match, so no loop is started and no pane is touched.
+// watchdogFor builds the watchdog and runs its control once, or returns nil
+// when there is no pattern set: with none, nothing can match, so no loop is
+// started and no pane is touched.
 // Split out so a test can pin that the empty set starts nothing.
 func watchdogFor(store *api.Store, ring *events.Ring, sets []panestate.Pattern, window time.Duration) *watchdog {
 	if len(sets) == 0 {
 		return nil
 	}
-	return newWatchdog(store, ring, sets, window)
+	w := newWatchdog(store, ring, sets, window)
+	w.control()
+	return w
 }
 
 // startWatchdog runs the harness-state watchdog beside the metrics sampler.

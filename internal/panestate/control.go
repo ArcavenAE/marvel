@@ -48,6 +48,11 @@ func Control(sets []Pattern, sample func(Pattern) (string, error)) []ControlResu
 		}
 		got := Classify([]Pattern{p}, p.Harness, p.HarnessVersion, rows)
 		res.State, res.Confidence = got.State, got.Confidence
+		// The state and confidence checks are redundant with the pattern id
+		// today: Classify over a one-pattern set returns logged-out at high
+		// only for that pattern. They are kept on purpose, so a later change
+		// to Classify (a second state, another confidence tier) cannot make a
+		// pattern pass on a weaker verdict than the one a pane needs.
 		res.Pass = got.State == StateLoggedOut && got.Confidence == ConfHigh && got.PatternID == p.ID
 		out = append(out, res)
 	}
