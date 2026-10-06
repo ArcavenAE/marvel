@@ -1,7 +1,8 @@
 # A per-seat read-only view of the default branch
 
 - **Status:** design for review, 2026-10-06, revised the same day for the
-  first review (seal instead of delete; retention keyed to delivery). No
+  first review (seal instead of delete; retention keyed to delivery), and
+  on 2026-10-06 after merge for the swap contract (#621) and CI coverage. No
   code lands until this is reviewed. Tracks marvel#609.
 - **Basis:** finding marvel-jj0s (`_kos/findings/finding-marvel-jj0s-per-seat-readonly-view.md`,
   #603) and the operator's ruling of 2026-10-06, relayed by director:
@@ -60,9 +61,13 @@ checkout):
   every file in it are read-only, because the probe found that a read-only
   file in a writable directory is replaced by the Edit tool (H1 control).
 - **The swap** writes `cur.new -> trees/<sha>` and renames it over `cur`
-  (`rename(2)`; BSD `mv -h`, GNU `mv -T`). Readers that resolve the path see
-  the old tree or the new one, never a mix (H6b, 3,189 reads across 20
-  swaps).
+  (`rename(2)`; BSD `mv -h`, GNU `mv -T`). A read through the path returns
+  content from the old tree or the new one, never a mix and never the wrong
+  file. A lookup that races a swap can fail instead: on macOS, open through
+  the symlink returns EINVAL while rename(2) replaces it, about 1 in 100
+  reads when swaps run back to back (measured 2026-10-06, and by the akocr
+  build). Production swaps are minutes apart, so a failed lookup is rare,
+  transient, and loud. Linux is measured by the CI job.
 - **What this guards against is accident, not intent.** The seat runs as
   the same user, so it can still `chmod` a tree or replace `cur`. The same
   limit is stated in the probe brief and the finding.
@@ -123,6 +128,9 @@ the absolute path equals the one in its own directory's tree:
 A seat that reads only by absolute path through `$MARVEL_VIEW_<NAME>` never
 needs the check. That is the recommended way to use a view, and the seat
 guidance that ships with the feature says so.
+
+A read through the path that fails with an error during a refresh is retried
+once; a second failure is real.
 
 ## 6. Retention, and what a seat that ignores the notice sees
 
@@ -211,14 +219,18 @@ Per the ruling, Linux is tested and does not hold the build up.
   teardown; `view.retention-held` past five; the restart resume, including a
   pending notice and a delivery time that survive it.
 - **An integration test with real git**, in a temp directory: build, swap,
-  read through the path during swaps (the H6b reader), `git -C <path>
+  read through the path during swaps (the H6b reader: no torn or wrong
+  content, and failed lookups bounded, section 3), `git -C <path>
   rev-parse` refused (H6c), the Edit-tool control replaced by a write to
   a read-only directory, and a held shell in a sealed tree getting a nonzero
-  exit from `ls` and `cat` (the section 6 measurement, on both platforms).
-- **Linux coverage is CI.** marvel's CI has `ubuntu-24.04` jobs and one
-  `macos-latest` job (`.github/workflows/ci.yml`), so the integration test
-  runs on both on every PR. The swap is one `rename(2)` call in Go, the same
-  on both, so neither `mv -h` nor `mv -T` is needed.
+  exit from `ls` and `cat` (the section 6 measurement).
+- **Linux coverage is CI; macOS coverage is local.** marvel's one PR test
+  job is `quality-gate` on `ubuntu-24.04` (`.github/workflows/ci.yml`), so
+  the integration test runs on Linux on every PR. No macOS PR test job
+  exists today; macOS is covered by local runs. The `macos-latest` job in
+  that file is the push-only signing job and runs no tests. The swap is one
+  `rename(2)` call in Go, the same on both, so neither `mv -h` nor `mv -T` is
+  needed.
 - **The probe rig** (`scripts/probes/per-seat-readonly-view.sh`) is
   macOS-shaped (its socket default and `mv -h`). A Linux run of it is a
   follow-up, not a gate.
