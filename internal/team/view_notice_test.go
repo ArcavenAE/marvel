@@ -34,6 +34,7 @@ func noticeFixture(t *testing.T, ws string, lastActive time.Duration) (*listFixt
 	t.Helper()
 	f := newListFixture(t, ws, viewRole())
 	sess := f.seed(time.Hour, lastActive, 0, 0)
+	f.quietSince(sess, f.clock.Now().Add(-lastActive))
 	return f, sess
 }
 
@@ -58,7 +59,12 @@ func (f *listFixture) deliver() api.Team {
 
 func (f *listFixture) quietSince(sess api.Session, at time.Time) {
 	f.t.Helper()
-	f.store.UpdateSessionContext(sess.Key(), api.SessionContext{ContextAt: at})
+	if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.ContextAt = at // UpdateSessionContext stamps wall time, not the fake clock
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func noticeKey(sess api.Session) string { return sess.Key() + "/repo" }

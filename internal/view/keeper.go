@@ -483,6 +483,9 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 	}
 	t.down, t.cause = false, ""
 	k.mu.Unlock()
+	if res.Changed && res.Previous != "" && k.OnMoved != nil {
+		k.OnMoved(sess, name, filepath.Join(t.builder.Dir, "cur"), res.Commit)
+	}
 	if !res.Changed {
 		return fmt.Sprintf("%s: unchanged at %s", name, short(res.Commit))
 	}

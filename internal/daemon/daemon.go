@@ -436,6 +436,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// and followed on a tick here (marvel#609).
 	if layout, lerr := paths.Default(); lerr == nil {
 		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
+		d.views.OnMoved = teamCtrl.NoteViewMoved
 		sessMgr.Views = d.views
 	}
 	return d, nil

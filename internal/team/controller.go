@@ -846,6 +846,9 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	// operator path takes (handleShift initiates, the next reconcile drives).
 	c.evaluateShiftTriggers(t)
 
+	// Tell each seat whose view moved, on the handoff timing, during a shift too.
+	c.deliverViewNotices(t)
+
 	if t.Shift.Phase != api.ShiftNone {
 		c.reconcileShift(t)
 		return
