@@ -98,3 +98,34 @@ func TestViewRefreshVerbIsAdminOnly(t *testing.T) {
 		t.Fatalf("credential-push reached view.refresh: %+v", resp)
 	}
 }
+
+// A session that is still being spawned is declared: its views are being built,
+// and the keeper's sweep must not take them for orphans. A crashed one is not.
+func TestViewDeclarationsIncludeASessionBeingSpawned(t *testing.T) {
+	d := newHandlerDaemon(t)
+	m, err := api.ParseManifestBytes([]byte(viewTeamManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(d.store); err != nil {
+		t.Fatal(err)
+	}
+	for name, state := range map[string]api.SessionState{
+		"squad-reader-g1-0": api.SessionPending,
+		"squad-reader-g1-1": api.SessionRunning,
+		"squad-reader-g1-2": api.SessionCrashed,
+	} {
+		sess := &api.Session{Name: name, Workspace: "acme", Team: "squad", Role: "reader", State: state}
+		if err := d.store.CreateSession(sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := map[string]bool{}
+	for _, decl := range d.viewDeclarations() {
+		got[decl.Session.Name] = true
+	}
+	if !got["squad-reader-g1-0"] || !got["squad-reader-g1-1"] || got["squad-reader-g1-2"] {
+		t.Fatalf("declared = %v, want the pending and the running session and not the crashed one", got)
+	}
+}

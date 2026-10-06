@@ -18,12 +18,13 @@ import (
 const DefaultFetchTimeout = 2 * time.Minute
 
 // DefaultSpawnTimeout bounds the build at spawn. The spawn runs inside the
-// reconcile that holds the controller's lock, so the build must be short: a
-// first clone of an ordinary repository over a healthy link finishes in a few
-// seconds, and a build that is still running at 30s is slow or hung. It is cut
-// off, the seat starts without the view, and the tick finishes the build off
-// the lock with the longer bound (design section 7, first build at spawn).
-const DefaultSpawnTimeout = 30 * time.Second
+// reconcile that holds the controller's lock, so every team waits while the
+// bound runs, and the bound is the stall. 15s is long enough for a first fetch
+// of an ordinary repository (marvel's own mirror is under 8 MB) and short
+// enough that a hung remote costs one short pause. A build cut off at 15s starts
+// the seat without the view, and the tick finishes it off the lock with the
+// longer bound (design section 7, first build at spawn).
+const DefaultSpawnTimeout = 15 * time.Second
 
 // TickInterval is how often the keeper looks for views that are due.
 const TickInterval = 30 * time.Second
@@ -74,10 +75,13 @@ type tracked struct {
 
 	// run serializes refreshes of this view, so a tick and a verb never race.
 	run sync.Mutex
-	// next, down and cause are guarded by the keeper's lock.
+	// next, down, cause and gone are guarded by the keeper's lock. gone is set
+	// when the seat is torn down or forgotten, so a refresh still in flight
+	// removes what it wrote instead of recreating the seat's directory.
 	next  time.Time
 	down  bool
 	cause string
+	gone  bool
 }
 
 func (k *Keeper) now() time.Time {
@@ -194,12 +198,14 @@ func (k *Keeper) Tick() {
 			}
 		}
 		k.mu.Lock()
-		for id := range k.tracked {
+		for id, t := range k.tracked {
 			if !live[id] {
+				t.gone = true
 				delete(k.tracked, id)
 			}
 		}
 		k.mu.Unlock()
+		k.sweep(live)
 	}
 	now := k.now()
 	k.mu.Lock()
@@ -241,6 +247,7 @@ func (k *Keeper) Teardown(sessKey string) error {
 	k.mu.Lock()
 	for id, t := range k.tracked {
 		if t.session.Key() == sessKey {
+			t.gone = true
 			delete(k.tracked, id)
 		}
 	}
@@ -250,6 +257,48 @@ func (k *Keeper) Teardown(sessKey string) error {
 		return nil
 	}
 	return forceRemove(dir)
+}
+
+// sweep removes a views directory that no live session owns and no refresh is
+// building: what a refresh in flight at teardown left, or a crashed daemon did.
+// A seat being spawned is tracked and so is skipped.
+func (k *Keeper) sweep(live map[string]bool) {
+	workspaces, err := os.ReadDir(k.ViewsDir)
+	if err != nil {
+		return
+	}
+	for _, ws := range workspaces {
+		if !ws.IsDir() {
+			continue
+		}
+		seats, err := os.ReadDir(filepath.Join(k.ViewsDir, ws.Name()))
+		if err != nil {
+			continue
+		}
+		for _, seat := range seats {
+			key := ws.Name() + "/" + seat.Name()
+			if live[key] {
+				continue
+			}
+			k.mu.Lock()
+			if !k.owned(key) {
+				_ = forceRemove(filepath.Join(k.ViewsDir, key))
+			}
+			k.mu.Unlock()
+		}
+		_ = os.Remove(filepath.Join(k.ViewsDir, ws.Name()))
+	}
+}
+
+// owned reports whether a tracked view belongs to the session key. The caller
+// holds the keeper's lock.
+func (k *Keeper) owned(sessKey string) bool {
+	for _, t := range k.tracked {
+		if t.session.Key() == sessKey {
+			return true
+		}
+	}
+	return false
 }
 
 // refresh runs one refresh of one view, off the keeper's lock, and reports it
@@ -268,6 +317,16 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 	res, err := t.builder.Refresh(ctx)
 
 	k.mu.Lock()
+	if t.gone {
+		// The seat was torn down while this refresh was in flight. What it
+		// wrote is removed unless a newer seat has taken the key, whose own
+		// refresh then owns the directory. No event: the seat is gone.
+		if !k.owned(t.session.Key()) {
+			_ = forceRemove(filepath.Join(k.ViewsDir, t.session.Key()))
+		}
+		k.mu.Unlock()
+		return fmt.Sprintf("%s: seat is gone", t.view.Name)
+	}
 	every := t.view.RefreshEvery
 	if every <= 0 {
 		every = api.DefaultViewRefreshEvery

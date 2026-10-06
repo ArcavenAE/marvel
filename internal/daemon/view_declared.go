@@ -10,12 +10,14 @@ import (
 	"github.com/arcavenae/marvel/internal/view"
 )
 
-// viewDeclarations lists the running sessions whose role declares views, for
-// the keeper's tick and the verb. It reads the store only.
+// viewDeclarations lists the sessions whose role declares views, for the
+// keeper's tick and the verb. It reads the store only. A pending session is
+// included: it is mid-spawn, its views are being built, and leaving it out
+// would let the tick sweep them away.
 func (d *Daemon) viewDeclarations() []view.Declaration {
 	var out []view.Declaration
 	for _, s := range d.store.ListSessions() {
-		if s.State != api.SessionRunning {
+		if s.State != api.SessionRunning && s.State != api.SessionPending {
 			continue
 		}
 		t, err := d.store.GetTeam(s.Workspace + "/" + s.Team)
