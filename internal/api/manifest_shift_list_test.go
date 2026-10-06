@@ -470,3 +470,51 @@ func TestMaxAgeRefusedOnAMultiReplicaRole(t *testing.T) {
 		}
 	}
 }
+
+// A view notice persists with the team, so a restart neither forgets an
+// undelivered notice nor starts a grace early, and a snapshot does not alias the
+// store's map.
+func TestViewNoticesPersistAndAreCloned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.db")
+	at := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	notice := ViewNotice{
+		Commit: "c2", Path: "/v/ws/s/repo/cur", PendingSince: at, Undelivered: "refused: update menu",
+		DeliveredCommit: "c1", DeliveredAt: at.Add(-time.Hour), GraceStart: at.Add(-time.Hour + time.Minute),
+	}
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CreateWorkspace(&Workspace{Name: "ws", CreatedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CreateTeam(&Team{
+		Name: "squad", Workspace: "ws", CreatedAt: at,
+		Roles:       []Role{{Name: "worker", Replicas: 1, Runtime: Runtime{Command: "sleep"}}},
+		ViewNotices: map[string]ViewNotice{"ws/squad-worker-g1-0/repo": notice},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	team, err := s2.GetTeam("ws/squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := team.ViewNotices["ws/squad-worker-g1-0/repo"]; got != notice {
+		t.Fatalf("notice after rehydrate = %+v, want %+v", got, notice)
+	}
+	team.ViewNotices["ws/squad-worker-g1-0/repo"] = ViewNotice{Commit: "mutated"}
+	live, _ := s2.GetTeam("ws/squad")
+	if live.ViewNotices["ws/squad-worker-g1-0/repo"].Commit != "c2" {
+		t.Fatal("a snapshot's notice map aliases the store's")
+	}
+}
