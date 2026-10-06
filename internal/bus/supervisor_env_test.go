@@ -2,11 +2,57 @@ package bus
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+// environFromProc reads a process environment from a /proc/<pid>/environ file,
+// which holds NUL-separated KEY=value entries, and returns it one entry per
+// line.
+func environFromProc(path string) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+// brokerEnviron returns the environment of a running process: /proc where the
+// kernel offers it (Linux), else ps -E (BSD and macOS, whose ps has the flag).
+func brokerEnviron(pid int) (string, error) {
+	if env, err := environFromProc(fmt.Sprintf("/proc/%d/environ", pid)); err == nil {
+		return env, nil
+	}
+	out, err := exec.Command("ps", "-E", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil || !strings.Contains(string(out), "=") {
+		return "", fmt.Errorf("cannot read the process environment from the kernel here (%v)", err)
+	}
+	return string(out), nil
+}
+
+func TestEnvironFromProcSplitsNULSeparatedEntries(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "environ")
+	if err := os.WriteFile(path, []byte("A=1\x00MARVEL_TEST_MINTED=1\x00EMPTY=\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := environFromProc(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "A=1\nMARVEL_TEST_MINTED=1\nEMPTY=\n"; got != want {
+		t.Errorf("environ = %q, want %q", got, want)
+	}
+}
+
+func TestEnvironFromProcReportsAMissingFile(t *testing.T) {
+	t.Parallel()
+	if _, err := environFromProc(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Fatal("a missing environ file read without error")
+	}
+}
 
 // TestBrokerEnvironmentExcludesOperatorSecrets: the daemon's environment
 // carries whatever the operator's shell exported (the bd client password,
@@ -21,11 +67,10 @@ func TestBrokerEnvironmentExcludesOperatorSecrets(t *testing.T) {
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("ps", "-E", "-o", "command=", "-p", strconv.Itoa(s.Status().PID)).Output()
-	if err != nil || !strings.Contains(string(out), "=") {
-		t.Skipf("cannot read the broker's environment from the kernel here (%v)", err)
+	env, err := brokerEnviron(s.Status().PID)
+	if err != nil {
+		t.Skipf("cannot read the broker's environment: %v", err)
 	}
-	env := string(out)
 	if !strings.Contains(env, "MARVEL_TEST_MINTED=1") {
 		t.Errorf("broker environment lacks the minted variable:\n%s", env)
 	}
