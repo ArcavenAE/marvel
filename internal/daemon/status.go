@@ -3,7 +3,9 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
+	"slices"
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
@@ -76,9 +78,25 @@ func (d *Daemon) identifyCluster(socketPath string) {
 	if err != nil || cfg == nil {
 		return
 	}
-	if cl := cfg.ClusterForSocket(socketPath); cl != nil {
-		d.cluster = cl.Name
+	first := cfg.ClusterForSocket(socketPath)
+	if first == nil {
+		return
 	}
+	// ClusterForSocket returns the first entry that matches. When a second
+	// one also matches (two entries on one path, or a socketless entry beside
+	// an alias at the default), the daemon cannot tell which one a client
+	// came in through, so it reports no name and a client sees no mismatch it
+	// did not cause. The same function is shared with the schedule cap and the
+	// services attach, so the check is made here, by asking again without the
+	// first match.
+	rest := &config.Config{Clusters: slices.DeleteFunc(slices.Clone(cfg.Clusters), func(c config.Cluster) bool {
+		return c.Name == first.Name
+	})}
+	if other := rest.ClusterForSocket(socketPath); other != nil {
+		log.Printf("cluster identity: entries %q and %q both name %s; reporting no cluster name", first.Name, other.Name, socketPath)
+		return
+	}
+	d.cluster = first.Name
 }
 
 // handleDaemonStatus answers daemon.status.
