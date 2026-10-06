@@ -1,57 +1,154 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
+	"text/tabwriter"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 // sessionColumn is one selectable `get sessions` column. name is the long
 // name the --columns flag and display.session_columns use; header is what
-// the table prints.
+// the table prints; pick reads the cell from a derived row.
 type sessionColumn struct {
 	name   string
 	header string
+	pick   func(sessionRow) string
+}
+
+// sessionColumnRegistry is every selectable column, in the order the
+// default table prints them. A new column is one entry here; the
+// selector, the error text and the renderer all read this list.
+var sessionColumnRegistry = []sessionColumn{
+	{"workspace", "WORKSPACE", func(r sessionRow) string { return r.workspace }},
+	{"team", "TEAM", func(r sessionRow) string { return r.team }},
+	{"role", "ROLE", func(r sessionRow) string { return r.role }},
+	{"generation", "GEN", func(r sessionRow) string { return r.generation }},
+	{"name", "AGENT NAME", func(r sessionRow) string { return r.name }},
+	{"state", "STATE", func(r sessionRow) string { return r.state }},
+	{"health", "HEALTH", func(r sessionRow) string { return r.health }},
+	{"context", "CTX%", func(r sessionRow) string { return r.context }},
+	{"cpu", "CPU%", func(r sessionRow) string { return r.cpu }},
+	{"rss", "RSS", func(r sessionRow) string { return r.rss }},
+	{"desk", "DESK", func(r sessionRow) string { return r.desk }},
+	{"runtime", "RUNTIME", func(r sessionRow) string { return r.runtime }},
+	{"llm", "LLM", func(r sessionRow) string { return r.llm }},
+}
+
+// columnSetWide is the one named set. A set expands in place wherever its
+// name appears, because no `-o wide` exists (`-w` is --watch). It starts
+// as today's columns and is where later columns that belong in a wide view
+// are added.
+const columnSetWide = "wide"
+
+var wideSessionColumns = []string{
+	"workspace", "team", "role", "generation", "name", "state", "health",
+	"context", "cpu", "rss", "desk", "runtime", "llm",
 }
 
 // defaultSessionColumns is today's table, in today's order.
 func defaultSessionColumns() []sessionColumn {
-	return []sessionColumn{
-		{"workspace", "WORKSPACE"},
-		{"team", "TEAM"},
-		{"role", "ROLE"},
-		{"generation", "GEN"},
-		{"name", "AGENT NAME"},
-		{"state", "STATE"},
-		{"health", "HEALTH"},
-		{"context", "CTX%"},
-		{"cpu", "CPU%"},
-		{"rss", "RSS"},
-		{"desk", "DESK"},
-		{"runtime", "RUNTIME"},
-		{"llm", "LLM"},
+	out := make([]sessionColumn, len(sessionColumnRegistry))
+	copy(out, sessionColumnRegistry)
+	return out
+}
+
+// validColumnNames lists what a name may be, for an error message.
+func validColumnNames() string {
+	names := make([]string, 0, len(sessionColumnRegistry)+1)
+	for _, c := range sessionColumnRegistry {
+		names = append(names, c.name)
 	}
+	names = append(names, columnSetWide)
+	return strings.Join(names, ", ")
+}
+
+// lookupSessionColumn finds a column by long name.
+func lookupSessionColumn(name string) (sessionColumn, bool) {
+	for _, c := range sessionColumnRegistry {
+		if c.name == name {
+			return c, true
+		}
+	}
+	return sessionColumn{}, false
+}
+
+// expandColumnNames turns names into columns, in the order given, with a
+// set name expanding in place. source names where the list came from, so
+// an error says which setting to fix.
+func expandColumnNames(names []string, source string) ([]sessionColumn, error) {
+	var out []sessionColumn
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, fmt.Errorf("%s: empty column name (valid: %s)", source, validColumnNames())
+		}
+		if name == columnSetWide {
+			cols, err := expandColumnNames(wideSessionColumns, source)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, cols...)
+			continue
+		}
+		c, ok := lookupSessionColumn(name)
+		if !ok {
+			return nil, fmt.Errorf("%s: unknown column %q (valid: %s)", source, name, validColumnNames())
+		}
+		out = append(out, c)
+	}
+	return out, nil
 }
 
 // selectSessionColumns resolves the columns to print: the flag over the
-// preference over the default.
+// preference over the default. An empty flag means it was not given.
 func selectSessionColumns(flag string, preference []string) ([]sessionColumn, error) {
-	if flag == "" && len(preference) == 0 {
+	switch {
+	case flag != "":
+		return expandColumnNames(strings.Split(flag, ","), "--columns")
+	case len(preference) > 0:
+		return expandColumnNames(preference, "display.session_columns")
+	default:
 		return defaultSessionColumns(), nil
 	}
-	return nil, fmt.Errorf("column selection is not built yet: flag %q, preference %v", flag, preference)
 }
 
 // loadSessionColumns reads the preference from the client config and
-// resolves it against the flag.
+// resolves it against the flag. The config is not read when the flag is
+// given. A config that cannot be read leaves the default table, as an
+// unreadable config already leaves the default socket: a display
+// preference is never a reason to refuse a listing.
 func loadSessionColumns(flag string) ([]sessionColumn, error) {
-	return selectSessionColumns(flag, nil)
+	if flag != "" {
+		return selectSessionColumns(flag, nil)
+	}
+	cfg, _ := config.Load()
+	if cfg == nil {
+		return selectSessionColumns("", nil)
+	}
+	return selectSessionColumns("", cfg.Display.SessionColumns)
 }
 
 // renderSessionTableCols renders the table with the given columns.
 func renderSessionTableCols(sessions []api.Session, cols []sessionColumn) string {
-	if len(cols) != len(defaultSessionColumns()) {
-		return fmt.Sprintf("column selection is not built yet: %d columns\n", len(cols))
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
+	headers := make([]string, len(cols))
+	for i, c := range cols {
+		headers[i] = c.header
 	}
-	return renderSessionTable(sessions)
+	_, _ = fmt.Fprintln(w, strings.Join(headers, "\t"))
+	cells := make([]string, len(cols))
+	for _, s := range sessions {
+		row := newSessionRow(s)
+		for i, c := range cols {
+			cells[i] = c.pick(row)
+		}
+		_, _ = fmt.Fprintln(w, strings.Join(cells, "\t"))
+	}
+	_ = w.Flush()
+	return buf.String()
 }
