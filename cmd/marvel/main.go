@@ -64,16 +64,36 @@ func resolveDaemon() (string, daemon.DialOptions, error) {
 	return addr, opts, nil
 }
 
+// resolveRung names the step of the resolution order that chose the daemon
+// address: flag, env, cluster or default.
+type resolveRung string
+
+const (
+	rungFlag    resolveRung = "flag"
+	rungEnv     resolveRung = "env"
+	rungCluster resolveRung = "cluster"
+	rungDefault resolveRung = "default"
+)
+
+// resolveDaemonAddr returns the daemon address and dial options. Callers
+// that need to know which step chose the address use resolveDaemonRung.
 func resolveDaemonAddr() (string, daemon.DialOptions, error) {
+	addr, opts, _, err := resolveDaemonRung()
+	return addr, opts, err
+}
+
+// resolveDaemonRung resolves the daemon address and reports the rung that
+// chose it: flag, env, cluster or default.
+func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if socketPath != "" {
-		return socketPath, daemon.DialOptions{Identity: identityPath}, nil
+		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
 	if env := os.Getenv(config.SocketEnv); env != "" {
-		return env, daemon.DialOptions{Identity: identityPath}, nil
+		return env, daemon.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	if err != nil {
 		// Another cluster's bad name does not stop this one from resolving.
@@ -87,23 +107,24 @@ func resolveDaemonAddr() (string, daemon.DialOptions, error) {
 		// command on the wrong host (#502). The commands that define or
 		// configure a cluster (config add-cluster, use-cluster, ...) never
 		// reach this path; they take the name as an argument.
-		return "", daemon.DialOptions{}, err
+		return "", daemon.DialOptions{}, rungDefault, err
 	}
 	if cl == nil {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	addr := cl.Socket
 	if cl.Server != "" {
 		addr = cl.Server
 	}
+	rung := rungCluster
 	if addr == "" {
-		addr = config.ResolveSocket()
+		addr, rung = config.ResolveSocket(), rungDefault
 	}
 	id := identityPath
 	if id == "" {
 		id = cl.Identity
 	}
-	return addr, daemon.DialOptions{Identity: id}, nil
+	return addr, daemon.DialOptions{Identity: id}, rung, nil
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
