@@ -160,13 +160,34 @@ func (b *Builder) extract(ctx context.Context, mirror, sha, trees, final string)
 	if err := b.Git.Archive(ctx, mirror, sha, part); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(part, viewSHAName), []byte(sha+"\n"), 0o600); err != nil {
+	if err := writeViewSHA(part, sha); err != nil {
 		return err
 	}
 	if err := makeReadOnly(part); err != nil {
 		return err
 	}
 	return os.Rename(part, final)
+}
+
+// writeViewSHA creates VIEW_SHA at the root of the tree, through an os.Root and
+// with O_EXCL. The file is marvel's: an archive that carries one of its own, as
+// a file or as a link, is refused, and a link can never carry the write out of
+// the tree.
+func writeViewSHA(tree, sha string) error {
+	root, err := os.OpenRoot(tree)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(viewSHAName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("write %s (an archive that carries its own is refused): %w", viewSHAName, err)
+	}
+	if _, err := f.WriteString(sha + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // swap points cur at trees/<sha> by writing cur.new and renaming it over cur.
@@ -330,6 +351,8 @@ func extractTar(r io.Reader, dest string) error {
 	}
 	defer func() { _ = root.Close() }()
 
+	// verified holds directories already shown to be real, not links.
+	verified := map[string]bool{}
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -348,9 +371,20 @@ func extractTar(r io.Reader, dest string) error {
 		}
 		// A directory entry ends in a slash, which os.Root does not take.
 		name = filepath.Clean(name)
+		// git never stores an entry under a symlink, so an archive that does
+		// is hostile: a later link judged by its name would resolve somewhere
+		// else once a parent is a link (a case-fold collision leaves one).
+		if err := refuseLinkedParent(root, name, verified); err != nil {
+			return fmt.Errorf("archive entry %q: %w", hdr.Name, err)
+		}
 		mode := os.FileMode(hdr.Mode).Perm()
 		switch hdr.Typeflag {
 		case tar.TypeDir:
+			// A directory entry that lands on an existing link (a case-fold
+			// pair on a case-insensitive filesystem) is not adopted.
+			if fi, lerr := root.Lstat(name); lerr == nil && fi.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("archive directory %q is an existing symlink", hdr.Name)
+			}
 			if err := root.MkdirAll(name, 0o700|mode); err != nil {
 				return fmt.Errorf("archive directory %q: %w", hdr.Name, err)
 			}
@@ -372,6 +406,35 @@ func extractTar(r io.Reader, dest string) error {
 			return fmt.Errorf("archive entry %q has unsupported type %q", hdr.Name, hdr.Typeflag)
 		}
 	}
+}
+
+// refuseLinkedParent returns an error when any directory on the way to name is
+// a symlink. A missing parent ends the walk: nothing below it exists, and
+// MkdirAll will create it as a real directory.
+func refuseLinkedParent(root *os.Root, name string, verified map[string]bool) error {
+	dir := filepath.Dir(name)
+	if dir == "." {
+		return nil
+	}
+	cur := ""
+	for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		if verified[cur] {
+			continue
+		}
+		fi, err := root.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("parent %q is a symlink", cur)
+		}
+		verified[cur] = true
+	}
+	return nil
 }
 
 // writeRegular creates one file inside root with the archive's content.
