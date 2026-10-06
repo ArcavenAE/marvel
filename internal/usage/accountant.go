@@ -191,6 +191,13 @@ type sessionState struct {
 	// rateAt; rateAt is zero until the first sample.
 	rateSum float64
 	rateAt  time.Time
+
+	// started is set once a session-start event has been seen for this
+	// session under this accountant. Without it, the session was already
+	// running when the accountant began (a daemon restart or reexec), so a
+	// cumulative feed's first total is output from before this accountant
+	// existed.
+	started bool
 }
 
 type teamState struct {
@@ -299,6 +306,12 @@ func (a *Accountant) Observe(c Coords, ev rtevents.Event) {
 // re-resolves the denominator against it. Claude is the only harness that
 // names one; codex and opencode leave the launch args as the only key.
 func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
+	// Note the start before the model check: codex and opencode name no
+	// model, and the start is what the rate needs to know about them.
+	a.mu.Lock()
+	a.stateLocked(c, ev.Harness, prof).started = true
+	a.mu.Unlock()
+
 	d, ok := ev.Data.(rtevents.SessionStartedData)
 	if !ok || d.Model == "" {
 		return
@@ -560,8 +573,15 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
 	now := a.clock()
 	// The running total replaced here is not new output: only the part
-	// above the previous total is.
-	st.noteOutLocked(s.Out-st.spend.Out, now)
+	// above the previous total is. The first total of a session this
+	// accountant did not see start is a baseline, not a burst: the session
+	// was already running (a daemon restart or reexec), and that total is
+	// output from before there was an accountant to rate it.
+	delta := s.Out - st.spend.Out
+	if st.spend.Requests == 0 && !st.started {
+		delta = 0
+	}
+	st.noteOutLocked(delta, now)
 	st.spend.In = s.In
 	st.spend.Out = s.Out
 	st.spend.CacheReadIn = s.CacheReadIn
@@ -743,6 +763,10 @@ func (a *Accountant) OutRate(agentID string, now time.Time) (float64, bool) {
 // DecayedRate is a rate cell's value decayed from its observation to now.
 // A renderer calls it so a stopped stream reads as a falling number between
 // readings instead of its last value.
+//
+// It returns 0 for a cell that was never sampled, the same figure as a
+// measured quiet stream, so the renderer must check the cell's ObservedAt
+// first and render never-sampled as absent.
 func DecayedRate(c asof.Cell[float64], now time.Time) float64 {
 	if c.ObservedAt.IsZero() {
 		return 0
