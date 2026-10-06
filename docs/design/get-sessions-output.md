@@ -89,7 +89,8 @@ Every derived or status cell uses one shape, defined once:
   use (`internal/admission/admission.go:453`).
 - **Rendering:** the existing three-state grammar. `-` means never
   measured. `?` means the reading expired. A value means fresh. A cell with
-  no sample never prints `0`.
+  no sample never prints `0`. Where a cell's source can be weaker than its
+  name claims, the source is rendered as a mark on the value (section 4.4).
 
 Levels that cannot go stale need no as-of: a bind address, an identity, or
 a cumulative total. The rate, ACTIVE%, LAST-ACTIVE, the bus state and the
@@ -155,11 +156,17 @@ TEAM stays reachable through `--columns` and `describe`.
   last 15 minutes at which the session was not quiet.
   - **The predicate.** A session is quiet at time `now` when its
     `ContextAt` is zero or older than `now - W`. One function holds this
-    test. `evaluateActivity` and the rate call it, and so does ACTIVE%.
+    test, and the rate and ACTIVE% call it. `evaluateActivity` calls it
+    only for a session with a non-zero `ContextAt`. Its own path for a zero
+    `ContextAt` (the observability check and the startup grace,
+    `controller.go:1543-1552`) stays as it is.
   - **The window `W`.** It is the role's `activity_timeout` when declared.
-    Otherwise it is one shared default, `DefaultQuietWindow`, 10 minutes,
-    which the watchdog's `DefaultWatchdogWindow` (`watchdog.go:28`) also
-    reads. That leaves one default quiet window in marvel, not two.
+    Otherwise it is the cluster's quiet window. That window is the
+    operator's `watchdog.window` when set (`internal/config/config.go:183-196`),
+    else `DefaultQuietWindow`, 10 minutes. The watchdog's
+    `DefaultWatchdogWindow` (`watchdog.go:28`) reads the same constant.
+    So one knob moves both the watchdog and ACTIVE%, and marvel has one
+    default quiet window, not two.
   - **The default matters.** `activity_timeout` is opt-in
     (`internal/api/manifest.go:154-158`), and no manifest in this repo sets
     it (`git grep -l activity_timeout -- '*.toml' '*.yaml'` returns none).
@@ -184,6 +191,19 @@ TEAM stays reachable through `--columns` and `describe`.
     reported". That is weaker than token flow and can read active while
     no work happens.
   - **Heartbeat seats.** The same as statusline seats.
+
+  The difference shows in the cell, not only in `describe`:
+  - an ACTIVE% or LAST-ACTIVE value from a statusline or heartbeat source
+    carries a trailing `*` (`80%*`, `3m*`); a value from the token stream
+    carries none;
+  - when any cell on screen carries the mark, one legend line prints on the
+    header's stream (stdout, TTY only, per V1): `* reported by statusline
+    or heartbeat, not token flow`;
+  - `--help` documents the mark.
+
+  Piped output keeps the mark and drops the legend. The mark is part of
+  the value; the legend is part of the header. This is the source field of
+  the as-of cell (section 3), rendered.
 
   Either way, a seat in a long tool call reads quiet, and the number claims
   activity, not "busy". LAST-ACTIVE carries the same caveat per source.
@@ -247,12 +267,15 @@ a vote.
 window. Review found that the shared predicate returns nothing for any role
 without `activity_timeout`, and that no manifest sets one. Section 4.4 now
 makes three changes, each the architect's, after the party:
-- it defines the window as the role's timeout, else a 10-minute default
-  that the watchdog shares;
+- it defines the window as the role's timeout, else the cluster quiet
+  window, which the watchdog shares (`watchdog.window`, else 10 minutes);
 - it keeps the `(stalled)` advisory opt-in;
-- it states what a measurement means for each source.
+- it states what a measurement means for each source, and renders the
+  weaker source as a `*` mark on the cell with a TTY legend line, so a
+  statusline 80% and a headless 80% no longer look identical.
 
-P10 and P12b carry tests to match. The ruling list in section 9 covers it.
+P10, P11 and P12b carry tests to match; P11 and P12b gain a P4a edge for
+the TTY seam the legend uses. The ruling list in section 9 covers it.
 
 ## 8. The plan
 
@@ -275,10 +298,10 @@ with these edges, after this doc is reviewed and the operator has ruled.
 | P9a | PROMPT in `wide` and `describe` | `TestPromptTokensLayoutNormalized` | P5, P7 |
 | P9b | TOUT cell | `TestSpendCellDashWhenAbsent` | P5, P7 |
 | P9c | RATE cell | `TestRateCellSortsByValue`, `TestRateCellStaleRendersQuestion` | P1, P5, P8 |
-| P10 | One quiet predicate and `DefaultQuietWindow`, read by the watchdog too | `TestRateSnapsToZeroExactlyWhenQuiet`, `TestQuietWindowDefaultsWhenNoActivityTimeout`, `TestWatchdogWindowReadsDefaultQuietWindow`; characterization `TestQuietPredicateMatchesEvaluateActivityWhenTimeoutSet` | P8 |
-| P11 | LAST-ACTIVE | `TestLastActiveFromContextAt`, `TestLastActiveDashWhenUnmeasured` | P1, P5 |
+| P10 | One quiet predicate and the cluster quiet window (`watchdog.window`, else `DefaultQuietWindow`), shared with the watchdog | `TestRateSnapsToZeroExactlyWhenQuiet`, `TestQuietWindowDefaultsWhenNoActivityTimeout`, `TestQuietWindowFollowsWatchdogWindowConfig`, `TestWatchdogWindowReadsDefaultQuietWindow`; characterization `TestQuietPredicateMatchesEvaluateActivityForObservedSessions` (non-zero `ContextAt` only, timeout set) | P8 |
+| P11 | LAST-ACTIVE, with the source mark | `TestLastActiveFromContextAt`, `TestLastActiveDashWhenUnmeasured`, `TestLastActiveMarksStatuslineSource` | P1, P4a, P5 |
 | P12a | Per-session tick ring | `TestTickRingHoldsFifteenMinutes` | P10 |
-| P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActivePctUsesRoleTimeoutWhenSet`, `TestActivePctUsesDefaultWindowWhenUnset`, `TestDescribeNamesActivitySource` | P1, P5, P12a |
+| P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActivePctUsesRoleTimeoutWhenSet`, `TestActivePctUsesDefaultWindowWhenUnset`, `TestActivePctStatuslineAndStreamRenderDifferently` (same 80%, two sources, two cells), `TestSourceLegendOnTTYWhenAMarkIsShown`, `TestSourceLegendAbsentWhenNoMarkOrPiped`, `TestDescribeNamesActivitySource` | P1, P4a, P5, P12a |
 | P13 | ACCT key column, opt-in | `TestAcctColumnRepeatsNeverAggregates`, `TestAcctStaleReadingPrintsWordNotNumber` | P5 |
 
 Six tickets have no dependencies: P1, P2a, P3a, P5, P7 and P8. The WORKDIR
@@ -290,7 +313,8 @@ column (aae-orc-vdcwm) becomes selectable through P5.
 2. V3: should an unknown `--cluster` refuse (#502)?
 3. Whether the 4-1 votes (V1 to V4) stand.
 4. The post-party correction in section 4.4. The architect recommends the
-   role's `activity_timeout`, else a shared 10-minute `DefaultQuietWindow`,
+   role's `activity_timeout`, else the cluster quiet window
+   (`watchdog.window`, else a 10-minute `DefaultQuietWindow`),
    as ACTIVE%'s window. Its effect is that ACTIVE% reads for every role
    that has an activity channel, while the `(stalled)` advisory stays
    opt-in.
