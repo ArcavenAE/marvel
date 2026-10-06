@@ -66,6 +66,7 @@ func TestHeartbeatIgnoresADropInsideTheHysteresisBand(t *testing.T) {
 		compaction int
 	}{
 		{"inside the fractional band", 300_000, 271_000, 0},
+		{"exactly the fractional band", 300_000, 270_000, 0},
 		{"just past the fractional band", 300_000, 269_000, 1},
 		{"inside the absolute band", 10_000, 8_500, 0},
 		{"just past the absolute band", 10_000, 7_900, 1},

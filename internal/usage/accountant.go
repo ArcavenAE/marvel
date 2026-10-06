@@ -26,8 +26,8 @@ import (
 // Because the numerator is a level rather than an accumulator, a
 // mis-tuned value costs a wrong Compactions count and nothing else.
 const (
-	defaultHysteresisTokens   = 2048
-	defaultHysteresisFraction = 0.10
+	defaultHysteresisTokens   = api.CompactionHysteresisTokens
+	defaultHysteresisFraction = api.CompactionHysteresisFraction
 )
 
 // Coords is the marvel-side identity of an observed session, passed in by

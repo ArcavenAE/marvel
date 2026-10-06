@@ -788,6 +788,16 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 			}
 		}
 	}
+	// A heartbeat replaces the reading, so the count of compactions this
+	// producer has seen is carried forward by hand, and a drop from the
+	// previous heartbeat reading on this record is one more. A reading from
+	// another producer is not a prior occupancy to drop from (marvel#630).
+	if sess.ContextSource == ContextSourceHeartbeat {
+		reading.ContextCompactions = sess.ContextCompactions
+		if CompactionDropped(sess.ContextTokens, reading.ContextTokens) {
+			reading.ContextCompactions++
+		}
+	}
 	sess.SessionContext = reading
 	sess.LastHeartbeat = time.Now().UTC()
 	// A cooperative reporter that knows its model names it (the

@@ -441,6 +441,26 @@ type SessionContext struct {
 	ContextAt   time.Time
 }
 
+// The hysteresis band a context reading must fall past before the fall counts
+// as a compaction. Smaller steps are noise. One rule for both producers: the
+// accountant's request path and the heartbeat path (marvel#630).
+const (
+	CompactionHysteresisTokens   = 2048
+	CompactionHysteresisFraction = 0.10
+)
+
+// CompactionDropped reports whether a reading of now tokens after a reading of
+// prev is a drop past the hysteresis band: the larger of
+// CompactionHysteresisTokens and CompactionHysteresisFraction of prev. With no
+// prior reading (prev of zero or less) there is nothing to drop from.
+func CompactionDropped(prev, now int) bool {
+	if prev <= 0 {
+		return false
+	}
+	band := max(int(float64(prev)*CompactionHysteresisFraction), CompactionHysteresisTokens)
+	return prev-now > band
+}
+
 // ContextSourceKind identifies a CTX% producer.
 type ContextSourceKind string
 
