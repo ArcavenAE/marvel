@@ -104,6 +104,18 @@ to a tree without `.git`:
 - **H6b, atomic swap.** A reader looping over one file's hash through the
   path during a refresh sees only the old or the new hash, never a mix and
   never a missing file.
+- **The old directory's lifetime.** Each extracted tree carries a
+  `VIEW_SHA` file naming its commit. After a swap the old tree is kept,
+  read-only, until the next refresh, which removes it. Teardown removes
+  every tree.
+- **H6b2, a reader that holds its cwd.** A shell whose cwd was entered
+  through the path before a refresh reads `./VIEW_SHA` and one file by
+  relative path, once after one refresh and once after a second. The
+  architect expects this to fail: a held cwd stays on the old tree, so
+  after one refresh it reads the old commit without any error, and after
+  the second it finds the files missing. The rig's own seats hold a cwd
+  this way (step 4's H1 seat, step 8's H5 commands, any persistent Bash
+  cwd), so this is the common case, not an edge.
 - **H6c, no repository reachable.** The view lives outside any work tree
   (under the rig's temp dir; in a build, under marvel's state directory).
   `git -C <view> rev-parse` reports "not a git repository", and each H5
@@ -150,8 +162,10 @@ result is macOS only. Transcript kept:
    --porcelain`, and the files' content hash. Restore with the H3 refresh
    between commands.
 9. H6, only if H5 failed: build the archive view at `HEAD~1` outside any
-   work tree, then run H6a to H6d and H1 against it, and the H6c control
-   inside the shared checkout.
+   work tree, then run H6a to H6d, H6b2 and H1 against it, and the H6c
+   control inside the shared checkout. For H6b2, start the holding shell
+   before the first refresh and record `pwd -P`, `./VIEW_SHA` and the
+   relative read after each of two refreshes.
 
 ### What would change the plan
 
@@ -166,11 +180,24 @@ result is macOS only. Transcript kept:
   its files are protected. Run H6 in the same rig and report both.
 - H6a, H6b or H1 fails for the archive view: neither cheap mechanism gives
   a fixed view, and the idea's mechanism 3 (a read-only mount) is the next
-  probe. H6c fails: the location rule is wrong; name what the view
+  probe.
+- H6b2 fails (expected): the swap is atomic only for readers that resolve
+  the path on each read. The builder ticket then picks one of: (i) seats
+  read the view only by absolute path through the symlink, which is a rule
+  nothing enforces; (ii) a refresh tells each holding seat to re-enter its
+  cwd, and the seat checks `VIEW_SHA` against the path's; (iii) mechanism 3,
+  where content changes under a held cwd. The architect recommends (ii),
+  and the operator decides, from the finding. That recommendation is valid
+  until the finding is written or 2026-10-27, whichever comes first; the
+  architect re-checks it then. H6c fails: the location rule is wrong; name what the view
   reached. H6d fails: the view is made on demand, not at spawn.
 - H3's writable window is recorded, not judged. It does not fail the
-  worktree view; if it is longer than a second, the builder ticket uses the
-  H6 swap refresh for worktree views too, so readers never see the window.
+  worktree view. An in-place refresh changes the tree under a held cwd, so
+  it has a window but no stale reads. A swap refresh closes the window but
+  brings the H6b2 problem with it. So if the window is longer than a
+  second, the builder ticket uses the swap refresh for worktree views only
+  together with the H6b2 remedy chosen above, and the finding states the
+  trade.
 
 ## Revision before the run
 
@@ -184,12 +211,18 @@ Second, after review 5428374958: the archive fallback had no criteria of
 its own and no location rule. H6 gives it both, H5 records objects written
 to the shared store, and the H3 window has a stated consequence.
 
+Third, after review 5428565167: H6b covered only readers that resolve the
+path each time. The old tree's lifetime is now stated, H6b2 measures a
+reader that holds its cwd across two refreshes, and the H3 clause names the
+trade between a writable window and stale reads.
+
 ## What a builder builds
 
 For the probe: the rig script above, under `scripts/probes/`, and its two
 transcripts. No marvel code changes.
 
 After the probe, and only if H1, H2, H3 and H5 hold for the worktree
-view, or H1 and H6a to H6c hold for the archive view: a spawn step that creates one
+view, or H1 and H6a to H6c hold for the archive view and an H6b2 remedy is
+chosen: a spawn step that creates one
 view per repository the seat declares, a refresh verb, and teardown
 removal. That is a separate ticket, filed from the finding.
