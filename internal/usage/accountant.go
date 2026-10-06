@@ -3,10 +3,12 @@ package usage
 import (
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/asof"
 	"github.com/arcavenae/marvel/internal/events"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 )
@@ -184,6 +186,11 @@ type sessionState struct {
 
 	firstAt time.Time
 	lastAt  time.Time
+
+	// rateSum is the exponentially decayed count of output tokens as of
+	// rateAt; rateAt is zero until the first sample.
+	rateSum float64
+	rateAt  time.Time
 }
 
 type teamState struct {
@@ -523,6 +530,8 @@ func (a *Accountant) foldTerminalLocked(st *sessionState, s Sample, res *foldRes
 }
 
 func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
+	now := a.clock()
+	st.noteOutLocked(s.Out, now)
 	st.spend.In += s.In
 	st.spend.Out += s.Out
 	st.spend.CacheReadIn += s.CacheReadIn
@@ -539,7 +548,7 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 		st.spend.CostUSD += *s.CostUSD
 		st.spend.CostReported = true
 	}
-	st.spend.ObservedAt = a.clock()
+	st.spend.ObservedAt = now
 }
 
 // setSpendLocked records a sample whose classes are running session
@@ -549,6 +558,10 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 // column. Requests counts observations, so it still increments; for a
 // cumulative feed that is turns rather than requests.
 func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
+	now := a.clock()
+	// The running total replaced here is not new output: only the part
+	// above the previous total is.
+	st.noteOutLocked(s.Out-st.spend.Out, now)
 	st.spend.In = s.In
 	st.spend.Out = s.Out
 	st.spend.CacheReadIn = s.CacheReadIn
@@ -560,7 +573,7 @@ func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
 		st.spend.CostUSD = *s.CostUSD
 		st.spend.CostReported = true
 	}
-	st.spend.ObservedAt = a.clock()
+	st.spend.ObservedAt = now
 }
 
 func (a *Accountant) hysteresis(tokens int) int {
@@ -715,11 +728,56 @@ const OutRateValidFor = 10 * time.Minute
 // decayed to now. The second result is false when the session has never
 // been sampled, which is not a rate of zero.
 func (a *Accountant) OutRate(agentID string, now time.Time) (float64, bool) {
-	spend, seen := a.SessionSpend(agentID)
-	if !seen || now.IsZero() {
+	if a == nil {
 		return 0, false
 	}
-	return float64(spend.Out), true
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st, ok := a.state[agentID]
+	if !ok || st.rateAt.IsZero() {
+		return 0, false
+	}
+	return rateOf(st.rateSum * decayFactor(now.Sub(st.rateAt))), true
+}
+
+// DecayedRate is a rate cell's value decayed from its observation to now.
+// A renderer calls it so a stopped stream reads as a falling number between
+// readings instead of its last value.
+func DecayedRate(c asof.Cell[float64], now time.Time) float64 {
+	if c.ObservedAt.IsZero() {
+		return 0
+	}
+	return c.Value * decayFactor(now.Sub(c.ObservedAt))
+}
+
+// decayFactor is the share of a decayed count that survives dt. A dt at or
+// below zero (a clock that stepped back) decays nothing.
+func decayFactor(dt time.Duration) float64 {
+	if dt <= 0 {
+		return 1
+	}
+	return math.Exp2(-dt.Seconds() / OutRateHalfLife.Seconds())
+}
+
+// rateOf turns a decayed token count into tokens per second. A steady
+// stream of r tokens a second settles at a count of r*halfLife/ln2.
+func rateOf(decayed float64) float64 {
+	return decayed * math.Ln2 / OutRateHalfLife.Seconds()
+}
+
+// noteOutLocked folds out new output tokens into the session's decayed
+// count at now. The count is an exponentially decayed sum, not the delta of
+// the last two samples: two large samples a millisecond apart add to the
+// count and do not divide by a millisecond.
+func (st *sessionState) noteOutLocked(out int, now time.Time) {
+	if !st.rateAt.IsZero() {
+		st.rateSum *= decayFactor(now.Sub(st.rateAt))
+		if now.Before(st.rateAt) {
+			now = st.rateAt
+		}
+	}
+	st.rateSum += float64(max(out, 0))
+	st.rateAt = now
 }
 
 // SessionSpend returns one session's cumulative token and cost spend.
@@ -803,6 +861,13 @@ func (st *sessionState) reading() api.SessionContext {
 	if st.spend.Requests > 0 {
 		spendOut, spendPrompt := st.spend.Out, st.spend.PromptTokens
 		out.SpendOut, out.SpendPromptTokens = &spendOut, &spendPrompt
+	}
+	if !st.rateAt.IsZero() {
+		out.OutRate = asof.Cell[float64]{
+			Value:      rateOf(st.rateSum),
+			ObservedAt: st.rateAt,
+			ValidUntil: st.rateAt.Add(OutRateValidFor),
+		}
 	}
 	return out
 }
