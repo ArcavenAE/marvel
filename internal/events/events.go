@@ -92,6 +92,13 @@ const (
 	// logged-out within one watchdog window, so a fleet-wide expiry reads as
 	// one fact.
 	KindAccountLoggedOut Kind = "account.logged-out"
+	// KindWatchdogControl records one watchdog pattern's positive control at
+	// start: the pattern run against its own sample. Info on a pass, warning
+	// on a fail; never sample text (marvel#626).
+	KindWatchdogControl Kind = "watchdog.control"
+	// KindWatchdogUncovered records a harness version the watchdog has no
+	// passing pattern for, on a transition only (marvel#626).
+	KindWatchdogUncovered Kind = "watchdog.uncovered"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
 	// nothing it execs inherits them (aae-orc#418).
@@ -358,6 +365,8 @@ var allKinds = []Kind{
 	KindSessionHarnessState,
 	KindSessionHarnessStateCleared,
 	KindAccountLoggedOut,
+	KindWatchdogControl,
+	KindWatchdogUncovered,
 	KindDaemonEnvScrubbed,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,

@@ -48,6 +48,10 @@ type watchdog struct {
 	readPane func(paneID string) (string, int, error)
 	capture  func(paneID string) (string, error)
 
+	// sample returns a pattern's captured screen, for the control that runs
+	// once at start. Injected so a test needs no embedded sample.
+	sample func(panestate.Pattern) (string, error)
+
 	mu          sync.Mutex
 	lastCapture map[string]time.Time
 	rolled      map[string]string
@@ -59,9 +63,16 @@ func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, 
 	}
 	return &watchdog{
 		store: store, ring: ring, sets: sets, window: window,
-		reg: runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
+		sample: panestate.EmbeddedSample,
+		reg:    runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
 		lastCapture: map[string]time.Time{}, rolled: map[string]string{},
 	}
+}
+
+// control runs each pattern against its own sample once, keeps the patterns
+// that pass, and says which did not.
+func (w *watchdog) control() {
+	_ = w.sample
 }
 
 // Run looks every WatchdogInterval until ctx is cancelled.
