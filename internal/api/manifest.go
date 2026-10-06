@@ -159,6 +159,20 @@ type ManifestRole struct {
 	// Schedule puts a headless role on a clock (ADR-010 Amendment 1,
 	// docs/design/scheduled-runs.md). Parsed into Role.Schedule.
 	Schedule *ManifestSchedule `toml:"schedule,omitempty"            yaml:"schedule,omitempty"`
+	// Views declares read-only views of a repository's default branch, one
+	// per repository (docs/design/readonly-view.md section 2). Parsed into
+	// Role.Views.
+	Views []ManifestView `toml:"view,omitempty"                yaml:"views,omitempty"`
+}
+
+// ManifestView is one [[team.role.view]] entry. The durations are strings
+// ("10m"), parsed and defaulted when the manifest is applied.
+type ManifestView struct {
+	Name         string `toml:"name"                    yaml:"name"`
+	Remote       string `toml:"remote"                  yaml:"remote"`
+	Ref          string `toml:"ref"                     yaml:"ref"`
+	RefreshEvery string `toml:"refresh_every,omitempty" yaml:"refresh_every,omitempty"`
+	ReenterGrace string `toml:"reenter_grace,omitempty" yaml:"reenter_grace,omitempty"`
 }
 
 // ManifestHealthCheck is the healthcheck section within a role.

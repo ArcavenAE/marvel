@@ -53,6 +53,9 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// ViewsDir is the directory the session views live under
+	// (<state>/views). Empty means no view can be present.
+	ViewsDir string
 	// BusURL, BusUser, and BusPassword come from the cluster's bus section
 	// (brief 10 section 4, aae-orc-1qyo3). BusURL alone means an adopted
 	// broker with no authorization; the shim then connects anonymously, as
