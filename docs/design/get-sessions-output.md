@@ -85,8 +85,8 @@ cluster  skippy (rung: cluster)   mrvl://  network :6785   bus  link up, 12s ago
 Every derived or status cell uses one shape, defined once:
 
 - **Fields:** value, `observed_at`, `valid_until`, source.
-- **States:** fresh, stale or absent. Admission readings already use these
-  three (`internal/admission/admission.go:453`).
+- **States:** fresh, stale or none, the words admission readings already
+  use (`internal/admission/admission.go:453`).
 - **Rendering:** the existing three-state grammar. `-` means never
   measured. `?` means the reading expired. A value means fresh. A cell with
   no sample never prints `0`.
@@ -151,15 +151,42 @@ TEAM stays reachable through `--columns` and `describe`.
 
 - **LAST-ACTIVE:** time since `ContextAt`. It is not LAST-OUT, because
   marvel cannot see bus sends; true LAST-OUT is a director fact.
-- **ACTIVE%:** the share of evaluation ticks (`controller.go:1403`) that
-  had a measurement inside the quiet window.
+- **ACTIVE%:** the share of evaluation ticks (`controller.go:1403`) in the
+  last 15 minutes at which the session was not quiet.
+  - **The predicate.** A session is quiet at time `now` when its
+    `ContextAt` is zero or older than `now - W`. One function holds this
+    test. `evaluateActivity` and the rate call it, and so does ACTIVE%.
+  - **The window `W`.** It is the role's `activity_timeout` when declared.
+    Otherwise it is one shared default, `DefaultQuietWindow`, 10 minutes,
+    which the watchdog's `DefaultWatchdogWindow` (`watchdog.go:28`) also
+    reads. That leaves one default quiet window in marvel, not two.
+  - **The default matters.** `activity_timeout` is opt-in
+    (`internal/api/manifest.go:154-158`), and no manifest in this repo sets
+    it (`git grep -l activity_timeout -- '*.toml' '*.yaml'` returns none).
+    Without the default, ACTIVE% would have no window for any current
+    role.
+  - **What the default does not change.** `evaluateActivity` keeps its
+    opt-in gate (`controller.go:1530-1531`), so the `(stalled)` advisory
+    still fires only for roles that declare a timeout. Only ACTIVE% and
+    the rate use the default.
+  - **Where it reads `-`.** A session marvel has no activity channel for
+    (`activityObservable`, `controller.go:1571`) reads `-`. So does a
+    session whose 15-minute ring has not filled, including after a daemon
+    restart.
   - It is counted per session in an in-memory ring and computed when read.
-  - It uses one quiet predicate, shared with `evaluateActivity` and the
-    rate.
-  - It reads `-` until the window fills, including after a daemon restart.
 
-  It claims "tokens were moving", not "busy". A seat in a long tool call
-  reads quiet. `describe` prints the window and the predicate.
+  What a measurement means depends on its source, and `describe` names the
+  source along with `W`:
+  - **Headless seats.** `ContextAt` moves when the usage accountant sees a
+    token-bearing stream sample, so ACTIVE% means "tokens were moving".
+  - **Statusline seats.** Every cooperative heartbeat stamps `ContextAt`
+    (`internal/api/store.go:802`), so ACTIVE% means "the statusline
+    reported". That is weaker than token flow and can read active while
+    no work happens.
+  - **Heartbeat seats.** The same as statusline seats.
+
+  Either way, a seat in a long tool call reads quiet, and the number claims
+  activity, not "busy". LAST-ACTIVE carries the same caveat per source.
 
 The party renamed the requested BUSY% for this reason. Quoting the finops
 seat: "BUSY% from rate measures generating, not working. Name it for what
@@ -215,6 +242,18 @@ computation; the other required the rate to carry `valid_until`. The edge
 moves to the RATE render (P9c). This reconciliation is the architect's, not
 a vote.
 
+**Post-party correction, not a party result.** The party settled ACTIVE%
+5-0 as "a measurement inside the quiet window" but never defined that
+window. Review found that the shared predicate returns nothing for any role
+without `activity_timeout`, and that no manifest sets one. Section 4.4 now
+makes three changes, each the architect's, after the party:
+- it defines the window as the role's timeout, else a 10-minute default
+  that the watchdog shares;
+- it keeps the `(stalled)` advisory opt-in;
+- it states what a measurement means for each source.
+
+P10 and P12b carry tests to match. The ruling list in section 9 covers it.
+
 ## 8. The plan
 
 The plan is recorded here and not filed yet. The tickets are filed flat,
@@ -236,10 +275,10 @@ with these edges, after this doc is reviewed and the operator has ruled.
 | P9a | PROMPT in `wide` and `describe` | `TestPromptTokensLayoutNormalized` | P5, P7 |
 | P9b | TOUT cell | `TestSpendCellDashWhenAbsent` | P5, P7 |
 | P9c | RATE cell | `TestRateCellSortsByValue`, `TestRateCellStaleRendersQuestion` | P1, P5, P8 |
-| P10 | One quiet predicate | `TestRateSnapsToZeroExactlyWhenQuiet`; characterization `TestQuietPredicateAgreesWithActivityStalled` | P8 |
+| P10 | One quiet predicate and `DefaultQuietWindow`, read by the watchdog too | `TestRateSnapsToZeroExactlyWhenQuiet`, `TestQuietWindowDefaultsWhenNoActivityTimeout`, `TestWatchdogWindowReadsDefaultQuietWindow`; characterization `TestQuietPredicateMatchesEvaluateActivityWhenTimeoutSet` | P8 |
 | P11 | LAST-ACTIVE | `TestLastActiveFromContextAt`, `TestLastActiveDashWhenUnmeasured` | P1, P5 |
 | P12a | Per-session tick ring | `TestTickRingHoldsFifteenMinutes` | P10 |
-| P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActiveAndStalledShareQuietPredicate` | P1, P5, P12a |
+| P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActivePctUsesRoleTimeoutWhenSet`, `TestActivePctUsesDefaultWindowWhenUnset`, `TestDescribeNamesActivitySource` | P1, P5, P12a |
 | P13 | ACCT key column, opt-in | `TestAcctColumnRepeatsNeverAggregates`, `TestAcctStaleReadingPrintsWordNotNumber` | P5 |
 
 Six tickets have no dependencies: P1, P2a, P3a, P5, P7 and P8. The WORKDIR
@@ -250,6 +289,11 @@ column (aae-orc-vdcwm) becomes selectable through P5.
 1. Accept or amend this design.
 2. V3: should an unknown `--cluster` refuse (#502)?
 3. Whether the 4-1 votes (V1 to V4) stand.
+4. The post-party correction in section 4.4. The architect recommends the
+   role's `activity_timeout`, else a shared 10-minute `DefaultQuietWindow`,
+   as ACTIVE%'s window. Its effect is that ACTIVE% reads for every role
+   that has an activity channel, while the `(stalled)` advisory stays
+   opt-in.
 
 These recommendations are valid until 2026-10-20. The architect re-checks
 them then; no default applies without a ruling.
