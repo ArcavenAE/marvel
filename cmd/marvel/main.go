@@ -53,24 +53,27 @@ var (
 // branch below lands on the same answer; four of them used to reach a
 // hardcoded machine-global path instead. See
 // docs/design/daemon-isolation.md decision 3.
-func resolveDaemon() (string, daemon.DialOptions) {
-	addr, opts := resolveDaemonAddr()
+func resolveDaemon() (string, daemon.DialOptions, error) {
+	addr, opts, err := resolveDaemonAddr()
+	if err != nil {
+		return "", daemon.DialOptions{}, err
+	}
 	if w := config.LegacySocketWarning(addr); w != "" {
 		fmt.Fprintln(os.Stderr, w)
 	}
-	return addr, opts
+	return addr, opts, nil
 }
 
-func resolveDaemonAddr() (string, daemon.DialOptions) {
+func resolveDaemonAddr() (string, daemon.DialOptions, error) {
 	if socketPath != "" {
-		return socketPath, daemon.DialOptions{Identity: identityPath}
+		return socketPath, daemon.DialOptions{Identity: identityPath}, nil
 	}
 	if env := os.Getenv(config.SocketEnv); env != "" {
-		return env, daemon.DialOptions{Identity: identityPath}
+		return env, daemon.DialOptions{Identity: identityPath}, nil
 	}
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
 	}
 	if err != nil {
 		// Another cluster's bad name does not stop this one from resolving.
@@ -78,11 +81,15 @@ func resolveDaemonAddr() (string, daemon.DialOptions) {
 	}
 	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
+		// Stub for the red commit: refuses the wrong case.
+		if clusterName == "" {
+			return "", daemon.DialOptions{}, err
+		}
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
 	}
 	if cl == nil {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, nil
 	}
 	addr := cl.Socket
 	if cl.Server != "" {
@@ -95,7 +102,7 @@ func resolveDaemonAddr() (string, daemon.DialOptions) {
 	if id == "" {
 		id = cl.Identity
 	}
-	return addr, daemon.DialOptions{Identity: id}
+	return addr, daemon.DialOptions{Identity: id}, nil
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
@@ -104,7 +111,10 @@ func resolveDaemonAddr() (string, daemon.DialOptions) {
 // against. All subcommands should use this instead of
 // daemon.SendRequest directly.
 func send(req daemon.Request) (*daemon.Response, error) {
-	addr, opts := resolveDaemon()
+	addr, opts, err := resolveDaemon()
+	if err != nil {
+		return nil, err
+	}
 	resp, err := daemon.SendRequestWith(addr, req, opts)
 	if err != nil {
 		return nil, err
@@ -652,7 +662,10 @@ func printEventBatch(w io.Writer, evs []events.Event, header bool) {
 // behind the ring) is reported once per gap on stderr; stdout carries
 // only events, so a script reading it sees nothing but rows.
 func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, printBatch func([]events.Event, bool)) error {
-	addr, opts := resolveDaemon()
+	addr, opts, err := resolveDaemon()
+	if err != nil {
+		return err
+	}
 	first := true
 	return daemon.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemon.Response, b daemon.EventsBatch) error {
 		if first {
