@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -784,5 +786,40 @@ func TestBaseEnvCarriesTheResolvedGlobalRole(t *testing.T) {
 	}
 	if _, ok := mk("", "supervisor")["DIRECTOR_GLOBAL_ROLE"]; ok {
 		t.Error("DIRECTOR_GLOBAL_ROLE set with no bus URL")
+	}
+}
+
+// A seat that declares a view carries MARVEL_VIEW_<NAME>, the name upper-cased
+// with - turned into _, set to the view's cur path. Until a view is built the
+// variable is absent, so a seat never reads a path that does not exist.
+func TestBaseEnvCarriesTheViewPathOnceTheViewExists(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.ViewsDir = t.TempDir()
+	ctx.Role.Views = []api.View{{Name: "my-repo"}, {Name: "other"}}
+
+	if got, ok := baseEnv(ctx)["MARVEL_VIEW_MY_REPO"]; ok {
+		t.Errorf("MARVEL_VIEW_MY_REPO = %q before the view exists, want it absent", got)
+	}
+
+	cur := filepath.Join(ctx.ViewsDir, ctx.Session.Key(), "my-repo", "cur")
+	if err := os.MkdirAll(filepath.Dir(cur), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(filepath.Dir(cur), "trees", "abc")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, cur); err != nil {
+		t.Fatal(err)
+	}
+
+	env := baseEnv(ctx)
+	if got := env["MARVEL_VIEW_MY_REPO"]; got != cur {
+		t.Errorf("MARVEL_VIEW_MY_REPO = %q, want %q", got, cur)
+	}
+	if got, ok := env["MARVEL_VIEW_OTHER"]; ok {
+		t.Errorf("MARVEL_VIEW_OTHER = %q for a view that was not built, want it absent", got)
 	}
 }

@@ -110,6 +110,10 @@ func (l Layout) RunDir() string { return filepath.Join(l.Home, "run") }
 // bbolt-backed L2 WAL added in aae-orc-k4e4 (orc finding-050).
 func (l Layout) StateDir() string { return filepath.Join(l.Home, "state") }
 
+// ViewsDir is where per-seat read-only views live, one directory per
+// session key (docs/design/readonly-view.md section 3).
+func (l Layout) ViewsDir() string { return filepath.Join(l.StateDir(), "views") }
+
 // DaemonBolt returns the canonical path for the daemon's bbolt L2 file.
 func (l Layout) DaemonBolt() string { return filepath.Join(l.StateDir(), "marvel.bolt") }
 
