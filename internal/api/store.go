@@ -143,6 +143,7 @@ func cloneRole(r Role) Role {
 		sp.Any = slices.Clone(r.Shift.Any)
 		out.Shift = &sp
 	}
+	out.Views = slices.Clone(r.Views)
 	if r.Schedule != nil {
 		sc := *r.Schedule
 		if r.Schedule.History != nil {

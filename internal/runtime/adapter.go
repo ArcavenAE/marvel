@@ -37,6 +37,7 @@ package runtime
 import (
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -454,6 +455,7 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 	if ctx.Session.WorkDir != "" {
 		env["MARVEL_WORKDIR"] = ctx.Session.WorkDir
 	}
+	addViewEnv(ctx, env)
 	return env
 }
 
@@ -622,4 +624,26 @@ type ForegroundRule interface {
 	// Foreground reports whether paneCommand is this harness in front, and
 	// the harness version the command carries, "" when it carries none.
 	Foreground(paneCommand string) (harnessVersion string, ok bool)
+}
+
+// ViewEnvName is the seat variable that names a view's path:
+// MARVEL_VIEW_<NAME>, the name upper-cased with - turned into _.
+func ViewEnvName(view string) string {
+	return "MARVEL_VIEW_" + strings.ToUpper(strings.ReplaceAll(view, "-", "_"))
+}
+
+// addViewEnv sets MARVEL_VIEW_<NAME> for each view the role declares, to the
+// view's cur path under the session's views directory. It sets the variable
+// only when that path exists: until a view is built a seat gets no path to
+// read (docs/design/readonly-view.md section 7, first build at spawn).
+func addViewEnv(ctx *LaunchContext, env map[string]string) {
+	if ctx.ViewsDir == "" || ctx.Role == nil {
+		return
+	}
+	for _, v := range ctx.Role.Views {
+		cur := filepath.Join(ctx.ViewsDir, ctx.Session.Key(), v.Name, "cur")
+		if _, err := os.Lstat(cur); err == nil {
+			env[ViewEnvName(v.Name)] = cur
+		}
+	}
 }

@@ -426,6 +426,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// bad threshold would fire on the first sample or never. Reject
 			// them so a misconfigured trigger is an error at apply, not a
 			// no-op at runtime (marvel#437 D2).
+			if _, err := r.views(fmt.Sprintf("parse manifest: team[%d].role[%d]", i, j)); err != nil {
+				return nil, err
+			}
 			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
@@ -830,6 +833,11 @@ func (m *Manifest) Apply(store *Store) error {
 				return fmt.Errorf("apply manifest: %w", err)
 			}
 			role.Shift = shift
+			views, err := mr.views("team " + mt.Name + " role " + mr.Name)
+			if err != nil {
+				return fmt.Errorf("apply manifest: %w", err)
+			}
+			role.Views = views
 			if mr.Schedule != nil {
 				sched, err := mr.Schedule.policy()
 				if err != nil {
