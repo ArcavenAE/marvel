@@ -185,12 +185,16 @@ func TestWatchdogGateByContextAtAndAge(t *testing.T) {
 	}
 }
 
-func TestWatchdogOtherVersionReadsLowAndUnknown(t *testing.T) {
+// A seat on a version with no pattern reads uncovered, not a low-confidence
+// cross-version match: coverage is checked before the screen is read, so there
+// is no evidence to show (docs/design/watchdog-control-and-uncovered.md
+// section 4).
+func TestWatchdogOtherVersionReadsUncovered(t *testing.T) {
 	r := newWDRig(t)
 	r.seat("a", "claude", "2.1.285", 30*time.Minute, 0)
 	r.w.Once()
 	hs := r.get("a").HarnessState
-	if hs == nil || hs.State != "unknown" || hs.Confidence != "low" || len(hs.Evidence) != 3 {
+	if hs == nil || hs.State != api.HarnessStateUncovered || hs.Confidence != "" || len(hs.Evidence) != 0 {
 		t.Fatalf("state = %+v", hs)
 	}
 	if len(r.kinds(events.KindSessionHarnessState)) != 0 {
@@ -300,7 +304,7 @@ func TestWatchdogCrossVersion(t *testing.T) {
 		t.Fatalf("v283 = %+v", hs)
 	}
 	for _, n := range []string{"v285", "bare"} {
-		if hs := r.get(n).HarnessState; hs == nil || hs.State != "unknown" || hs.Confidence != "low" || len(hs.Evidence) == 0 {
+		if hs := r.get(n).HarnessState; hs == nil || hs.State != api.HarnessStateUncovered || hs.Confidence != "" || len(hs.Evidence) != 0 {
 			t.Fatalf("%s = %+v", n, hs)
 		}
 	}

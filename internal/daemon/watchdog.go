@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -119,6 +120,66 @@ func (w *watchdog) control() {
 		log.Printf("watchdog: controls passed for %s (%d %s)", who, n, noun)
 	}
 	w.sets = kept
+	// A version whose patterns all failed is control-failed, not uncovered:
+	// the watchdog was meant to cover it and cannot.
+	w.failed = map[string]bool{}
+	for _, res := range results {
+		if !res.Pass && !versionCovered(kept, res.Harness, res.HarnessVersion) {
+			w.failed[res.Harness+"/"+res.HarnessVersion] = true
+		}
+	}
+}
+
+// versionCovered reports whether sets holds a pattern for the harness version.
+func versionCovered(sets []panestate.Pattern, harness, version string) bool {
+	for _, p := range sets {
+		if p.Harness == harness && p.HarnessVersion == version {
+			return true
+		}
+	}
+	return false
+}
+
+// coveredVersions lists the versions of a harness that have a passing pattern,
+// sorted.
+func coveredVersions(sets []panestate.Pattern, harness string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range sets {
+		if p.Harness == harness && !seen[p.HarnessVersion] {
+			seen[p.HarnessVersion] = true
+			out = append(out, p.HarnessVersion)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// coverage says what the watchdog could do for a seat on this harness version:
+// "" when a passing pattern covers it, otherwise the coverage state. A harness
+// with no pattern at all, passing or failed, is never claimed: the empty answer
+// there means "not examined", and ok is false.
+func (w *watchdog) coverage(harness, version string) (state string, ok bool) {
+	if versionCovered(w.sets, harness, version) {
+		return "", true
+	}
+	if w.failed[harness+"/"+version] {
+		return api.HarnessStateControlFailed, true
+	}
+	if len(coveredVersions(w.sets, harness)) > 0 || w.harnessFailed(harness) {
+		return api.HarnessStateUncovered, true
+	}
+	return "", false
+}
+
+// harnessFailed reports whether any pattern of the harness failed its control.
+func (w *watchdog) harnessFailed(harness string) bool {
+	for k := range w.failed {
+		if strings.HasPrefix(k, harness+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // Run looks every WatchdogInterval until ctx is cancelled.
@@ -137,10 +198,11 @@ func (w *watchdog) Run(ctx context.Context) {
 
 // Once runs one pass over every session.
 func (w *watchdog) Once() {
-	if len(w.sets) == 0 {
+	if len(w.sets) == 0 && len(w.failed) == 0 {
 		// No pattern set, nothing can match, so nothing is read: no pane is
 		// queried and none is captured. The loop guard in startWatchdog says the
-		// same; this one holds if that is ever bypassed.
+		// same; this one holds if that is ever bypassed. A set whose every
+		// pattern failed its control is not empty: its seats read control-failed.
 		return
 	}
 	w.mu.Lock()
@@ -167,7 +229,11 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 		delete(w.lastCapture, key)
 		return
 	}
-	if hs := s.HarnessState; hs != nil && s.ContextAt.After(hs.ContextAt) {
+	// The did-work clear is for a state that describes the screen the seat was
+	// looking at. A coverage state describes the version, not the screen, so it
+	// stays: a seat that alternates work and quiet would otherwise clear and
+	// re-set it every cycle.
+	if hs := s.HarnessState; hs != nil && !isCoverageState(hs.State) && s.ContextAt.After(hs.ContextAt) {
 		w.clear(s, "the session did work")
 		return
 	}
@@ -195,6 +261,15 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 		return
 	}
 	w.lastCapture[key] = now
+	// Coverage is checked before the screen is read: a version with no passing
+	// pattern has nothing to match, so it is not captured, and only a covered
+	// version reaches Classify and its no-match clear.
+	if state, ok := w.coverage(adapter.Name(), version); !ok {
+		return
+	} else if state != "" {
+		w.setCoverage(now, s, state, adapter.Name(), version, width)
+		return
+	}
 	raw, err := w.capture(s.PaneID)
 	if err != nil {
 		log.Printf("watchdog: %s: pane capture failed", key)
@@ -215,6 +290,26 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 		w.clearEvent(s, "the block no longer fully matches")
 		w.store.SetHarnessState(key, harnessState(now, s, res, adapter.Name(), version, width))
 	}
+}
+
+func isCoverageState(state string) bool {
+	return state == api.HarnessStateUncovered || state == api.HarnessStateControlFailed
+}
+
+// setCoverage records that no passing pattern covers the seat's version. It
+// writes only when the verdict is new or changed, so a pass that finds the same
+// fact leaves the stored state as it was.
+func (w *watchdog) setCoverage(now time.Time, s api.Session, state, harness, version string, width int) {
+	covered := coveredVersions(w.sets, harness)
+	if hs := s.HarnessState; hs != nil && hs.State == state && hs.Harness == harness &&
+		hs.HarnessVersion == version && slices.Equal(hs.Covered, covered) {
+		return
+	}
+	w.clearEvent(s, "the version is not covered")
+	w.store.SetHarnessState(s.Key(), &api.HarnessState{
+		State: state, Harness: harness, HarnessVersion: version, Covered: covered,
+		PaneWidth: width, CapturedAt: now, ContextAt: s.ContextAt,
+	})
 }
 
 func harnessState(now time.Time, s api.Session, res panestate.Result, harness, version string, width int) *api.HarnessState {
