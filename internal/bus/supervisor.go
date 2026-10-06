@@ -60,6 +60,11 @@ type Supervisor struct {
 	dialTimeout time.Duration
 	// leafPoll is the /leafz cadence (R-56, 30s).
 	leafPoll time.Duration
+	// leafRepeatEvery is how long an enrolled leaf stays down before the
+	// event is repeated, and how often after that (defaultLeafDownRepeat).
+	leafRepeatEvery time.Duration
+	// now is the clock the leaf record reads; tests replace it.
+	now func() time.Time
 
 	mu          sync.Mutex
 	parent      context.Context
@@ -72,6 +77,10 @@ type Supervisor struct {
 	restarts    int
 	backoffTill time.Time
 	leafUp      *bool
+	// leafSince is when the current leaf state was entered, and
+	// leafReportedAt when a down event was last emitted for it.
+	leafSince      time.Time
+	leafReportedAt time.Time
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
@@ -125,6 +134,11 @@ type Status struct {
 	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
 	// polled yet).
 	Leaf string `json:"leaf"`
+	// LeafSince is when the up or down reading was entered (RFC3339) and
+	// LeafFor how long ago that was, so "down" reads apart from "down for
+	// two hours". Empty for the other leaf states.
+	LeafSince string `json:"leaf_since,omitempty"`
+	LeafFor   string `json:"leaf_for,omitempty"`
 	// Structure is the structural-health reading on a managed broker
 	// (provisioned, authorized, tls, what is missing); nil before the first
 	// reading and on an adopted or external bus, where marvel holds no
@@ -150,6 +164,10 @@ const (
 	restartBackoffMax     = 5 * time.Minute
 	defaultDialTimeout    = 10 * time.Second
 	defaultLeafPoll       = 30 * time.Second
+	// defaultLeafDownRepeat is one fleet value, changeable as this constant:
+	// operator ruling 2026-10-06 recorded under Q1 in
+	// docs/design/wake-service.md.
+	defaultLeafDownRepeat = 30 * time.Minute
 	stopGrace             = 5 * time.Second
 )
 
@@ -173,15 +191,17 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		return nil, fmt.Errorf("nats-server not found on PATH; cluster %s declares a managed bus, install it (mise or brew) or set bus.managed: false: %w", mgr.Domain(), err)
 	}
 	return &Supervisor{
-		mgr:         mgr,
-		binary:      bin,
-		version:     binaryVersion(bin),
-		pidFile:     filepath.Join(runDir, "nats-server.pid"),
-		logPath:     filepath.Join(logDir, "nats-server.log"),
-		ring:        ring,
-		backoff:     computeBackoff,
-		dialTimeout: defaultDialTimeout,
-		leafPoll:    defaultLeafPoll,
+		mgr:             mgr,
+		binary:          bin,
+		version:         binaryVersion(bin),
+		pidFile:         filepath.Join(runDir, "nats-server.pid"),
+		logPath:         filepath.Join(logDir, "nats-server.log"),
+		ring:            ring,
+		backoff:         computeBackoff,
+		dialTimeout:     defaultDialTimeout,
+		leafPoll:        defaultLeafPoll,
+		leafRepeatEvery: defaultLeafDownRepeat,
+		now:             time.Now,
 	}, nil
 }
 
@@ -690,6 +710,10 @@ func (s *Supervisor) Status() Status {
 	default:
 		st.Leaf = "down"
 	}
+	if (st.Leaf == "up" || st.Leaf == "down") && !s.leafSince.IsZero() {
+		st.LeafSince = s.leafSince.Format(time.RFC3339)
+		st.LeafFor = leafDuration(s.now().Sub(s.leafSince))
+	}
 	if !s.ready && s.backoffTill.After(time.Now()) {
 		st.BackoffUntil = s.backoffTill.Format(time.RFC3339)
 	}
@@ -718,19 +742,54 @@ func (s *Supervisor) pollLeaf() {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return
 	}
-	up := body.Leafnodes > 0
+	s.observeLeaf(body.Leafnodes, s.now())
+}
+
+// observeLeaf records one /leafz reading taken at now and reports it. It
+// reports when the state changes (a drop is reported once, whatever the
+// enrollment), when an enrolled, attached leaf is found down at the first poll
+// (before this, silent until it came up), when a leaf already down becomes
+// enrolled (its seed is stored) or attached (the operator connects it) and has
+// not been reported yet, and again at every leafRepeatEvery while an enrolled,
+// attached leaf stays down. A hub with no seed and a leaf the operator
+// disconnected promised no link, so neither is repeated, and a hub with no seed
+// is never reported as down.
+func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
+	up := leafnodes > 0
+	promised := s.mgr.leafEnrolled() && s.mgr.LeafAttached()
 	s.mu.Lock()
 	prev := s.leafUp
 	s.leafUp = &up
+	changed := prev == nil || *prev != up
+	if changed {
+		s.leafSince = now
+		s.leafReportedAt = time.Time{}
+	}
+	since := s.leafSince
+	repeat := !changed && !up && promised && !s.leafReportedAt.IsZero() && now.Sub(s.leafReportedAt) >= s.leafRepeatEvery
+	report := (changed && !up && prev != nil) || (!up && promised && s.leafReportedAt.IsZero())
+	if report || repeat {
+		s.leafReportedAt = now
+	}
 	s.mu.Unlock()
-	if prev != nil && *prev == up {
-		return
+	hub := s.mgr.bus.HubURL
+	switch {
+	case changed && up:
+		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", hub, leafnodes))
+	case report:
+		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", hub))
+	case repeat:
+		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is still down: down for %s; local bus keeps serving, nothing is restarted", hub, leafDuration(now.Sub(since))))
 	}
-	if up {
-		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", s.mgr.bus.HubURL, body.Leafnodes))
-	} else if prev != nil {
-		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", s.mgr.bus.HubURL))
+}
+
+// leafDuration renders how long a leaf state has lasted: whole seconds under a
+// minute, whole minutes after ("45s", "2h9m").
+func leafDuration(d time.Duration) string {
+	if d < time.Minute {
+		return d.Round(time.Second).String()
 	}
+	return strings.TrimSuffix(d.Round(time.Minute).String(), "0s")
 }
 
 func (s *Supervisor) pidFileAlive() (int, bool) {

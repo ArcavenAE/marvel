@@ -72,3 +72,18 @@ func TestPrintBusStatusStructuralReading(t *testing.T) {
 		t.Error("structural lines printed with no reading")
 	}
 }
+
+// The leaf line says how long the state has lasted when the daemon knows.
+func TestPrintBusStatusLeafDuration(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	printBusStatus(&b, bus.Status{Managed: true, Leaf: "down", LeafFor: "2h9m", URL: "nats://h:4222"})
+	if got := b.String(); !strings.Contains(got, "leaf:     down for 2h9m\n") {
+		t.Errorf("leaf line with a duration:\n%s", got)
+	}
+	b.Reset()
+	printBusStatus(&b, bus.Status{Managed: true, Leaf: "unenrolled", URL: "nats://h:4222"})
+	if got := b.String(); !strings.Contains(got, "leaf:     unenrolled\n") || strings.Contains(got, " for ") {
+		t.Errorf("leaf line without a duration:\n%s", got)
+	}
+}
