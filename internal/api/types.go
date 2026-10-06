@@ -493,7 +493,8 @@ const (
 	// MinViewRefreshEvery is the floor for refresh_every.
 	MinViewRefreshEvery = time.Minute
 	// DefaultViewReenterGrace is how long a superseded tree stays readable
-	// after its seat was told about the next one.
+	// after its seat was told about the next one and its pane was next
+	// observed quiet.
 	DefaultViewReenterGrace = 2 * time.Minute
 )
 
@@ -509,8 +510,9 @@ type View struct {
 	Ref    string
 	// RefreshEvery is how often the view follows Ref, defaulted at parse.
 	RefreshEvery time.Duration
-	// ReenterGrace is how long a superseded tree stays readable after the
-	// seat was told, defaulted at parse.
+	// ReenterGrace is how long a superseded tree stays readable, counted
+	// from the first quiet after the seat was told, defaulted at parse. Zero
+	// seals it at that quiet.
 	ReenterGrace time.Duration
 }
 
