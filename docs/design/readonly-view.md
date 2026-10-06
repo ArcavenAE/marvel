@@ -70,6 +70,15 @@ checkout):
   its root holding the full commit id, then `chmod -R a-w`. A directory and
   every file in it are read-only, because the probe found that a read-only
   file in a writable directory is replaced by the Edit tool (H1 control).
+- **Extraction refuses what could leave the tree.** A symlink whose target
+  is absolute, or whose resolved target climbs out of the tree, fails the
+  refresh, and so does an entry of an unsupported type; nothing is skipped,
+  so the current view stays and `view.refresh-failed` names the entry. A
+  relative symlink that resolves inside the tree is extracted as a link, as
+  aae-orc's `.agents/skills/*` links (`../../.claude/skills/...`) need.
+  Relaxing absolute links (kept dangling, or rewritten, never followed) is
+  deferred until a viewed repository needs it; on 2026-10-06 none of marvel,
+  director, kos or wardrobe tracked a symlink at all.
 - **The swap** writes `cur.new -> trees/<sha>` and renames it over `cur`
   (`rename(2)`; BSD `mv -h`, GNU `mv -T`). A read through the path returns
   content from the old tree or the new one, never a mix and never the wrong
@@ -240,7 +249,9 @@ Per the ruling, Linux is tested and does not hold the build up.
 - **An integration test with real git**, in a temp directory: build, swap,
   read through the path during swaps (the H6b reader: no torn or wrong
   content, and failed lookups bounded, section 3), `git -C <path>
-  rev-parse` refused (H6c), the Edit-tool control replaced by a write to
+  rev-parse` refused (H6c), an absolute or escaping symlink failing the
+  refresh while an in-tree relative one extracts, the Edit-tool control
+  replaced by a write to
   a read-only directory, and a held shell in a sealed tree getting a nonzero
   exit from `ls` and `cat` (the section 6 measurement).
 - **Linux coverage is CI; macOS coverage is local.** marvel's one PR test
