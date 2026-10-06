@@ -21,8 +21,8 @@ func resolveFixture(t *testing.T, withCluster bool) {
 		return
 	}
 	cfg := &config.Config{
-		Clusters:       []config.Cluster{{Name: "skippy", Socket: "/scratch/cluster.sock"}},
-		CurrentCluster: "skippy",
+		Clusters:       []config.Cluster{{Name: "testcluster", Socket: "/scratch/cluster.sock"}},
+		CurrentCluster: "testcluster",
 	}
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
