@@ -80,7 +80,7 @@ Each is named with how it is checked. None is assumed to work.
 
 | id | Mechanism | How it is checked | Privilege to record |
 |---|---|---|---|
-| L1 | Read-only bind mount: `mount --bind <src> <view>` then `mount -o remount,bind,ro <view>` | as root, then inside `unshare -rm` (user and mount namespace) | root, or unprivileged user namespaces |
+| L1 | Read-only bind mount: `mount --bind <src> <view>` then `mount -o remount,bind,ro <view>` | first inside `unshare -rm` (user and mount namespace) as the seat's user, then as root only under the ruling below | unprivileged user namespaces, or root |
 | L2 | `bwrap --ro-bind <src> <view>` wrapping the seat's process | launch a test process in it, run H1 to H5 | unprivileged user namespaces; on some distributions an AppArmor or sysctl setting restricts them; record the setting's value |
 | L3 | overlayfs, read-only, archive as the lower layer and no upper | mount, run H1 to H5; refresh by remounting with a new lower | root, or a user namespace on a kernel that allows it; record the kernel version |
 | L4 | squashfs image of the archive, mounted read-only | loop mount as root, or `squashfuse` as the user | root or FUSE |
@@ -103,15 +103,45 @@ Each hypothesis runs per mechanism that mounts at all.
   or a missing file. The refresh form is the mechanism's own: a remount, a
   new mount plus a symlink swap, or an in-place update of the source.
 - **H4, a held cwd follows the refresh (the H6b2 case).** This is the
-  hypothesis the probe exists for. A shell holding a cwd at the view root,
-  and one in a directory the target commit removes, run `cat ./VIEW_SHA` and
-  `pwd` after each refresh. **Holds** if both read the new commit, or the
-  removed-directory shell gets an error at once. **Fails** if either reads
-  the old content with no error. Pre-registered expectation: a remount or a
-  new mount leaves a held cwd on the old mount, so it fails like jj0s; an
-  in-place update of a source behind a read-only bind or FUSE view may hold
-  for files but not for removed directories. The probe measures this rather
-  than assuming it.
+  hypothesis the probe exists for.
+
+  **The fixture.** Two default-branch commits, picked by the rig before the
+  run and named in the transcript:
+  - a directory K present in both, holding a file F whose content differs
+    between them;
+  - a directory R present only in the old commit, holding a file G.
+
+  **Three shells** hold a cwd: one at the view root, one in K, one in R.
+
+  **Baseline, before the refresh.** Each shell records:
+  - `VIEW_SHA` read by a relative path to the view root (`./VIEW_SHA`,
+    `../VIEW_SHA` and so on);
+  - the hash of its named file (none at the root, F in K, G in R);
+  - `ls` with its exit code;
+  - `pwd`.
+
+  Every read must succeed and match the old commit. A baseline that fails
+  voids the trial; it does not count as a pass.
+
+  **After each refresh** the same reads run again, and each is compared
+  with the baseline and with the new commit's blob hashes.
+  - **Holds:**
+    - the root and K shells read the new `VIEW_SHA`;
+    - the K shell reads F at the new hash;
+    - the R shell's `cat G` and `ls` both fail at once with an error
+      (`ENOENT`, `ESTALE` or similar).
+  - **Fails:**
+    - any shell reads the old `VIEW_SHA` or an old hash with no error;
+    - or the R shell's `ls` exits 0, whether it lists old entries or
+      lists nothing. An empty `ls` that exits 0 is the silent case jj0s
+      found.
+  - `pwd` is recorded but decides nothing, since it can print a removed
+    path without an error.
+
+  **Pre-registered expectation.** A remount or a new mount leaves a held
+  cwd on the old mount, so it fails like jj0s. An in-place update of a
+  source behind a read-only bind or FUSE view may hold in K but not in R.
+  The probe measures this rather than assuming it.
 - **H5, the cost fits spawn.** Create plus mount, and refresh, each timed
   over 5 runs on the jj0s orc clone (761 tracked files). The bar is jj0s's
   archive view: create median 182 ms, refresh median 186 ms. Record disk use
@@ -139,7 +169,7 @@ operator's. What each option can test:
 |---|---|---|
 | A Linux VM on a fleet Mac | L1 to L5 with root inside the VM; user-namespace settings as the VM's distribution ships them | a fleet seat's real host, its distribution and kernel settings |
 | A container (docker or podman) | L1 to L5 only with added privileges (`CAP_SYS_ADMIN` or `--privileged`); `bwrap` often blocked by the default seccomp profile | unprivileged behavior, because the container's own restrictions mask the host's |
-| A fleet Linux host | the real kernel, distribution and seat user | nothing missing, but root forms need the ruling above |
+| A fleet Linux host | the real kernel, distribution and seat user | nothing missing, but root forms need the ruling above. The run happens on that host, in a session on it, not driven over ssh from another host, so the seat user, its namespaces and its mounts are that host's own |
 
 Recommended: a Linux VM first. It is the cheapest way to test both the
 unprivileged and the root forms without touching a fleet host. This
