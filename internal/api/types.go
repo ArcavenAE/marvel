@@ -1012,6 +1012,17 @@ type HarnessState struct {
 // HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"
 
+// SessionSpend is the spend-only slice of a session's context reading: the
+// cumulative output and prompt tokens and the output-token rate. The usage
+// accountant writes it for a seat whose feed carries spend and no occupancy
+// (a running-total feed such as codex's), where publishing a whole reading
+// would stamp an occupancy source and a 0% level that were never measured.
+type SessionSpend struct {
+	Out          *int
+	PromptTokens *int
+	OutRate      asof.Cell[float64]
+}
+
 // The two coverage states say the watchdog could not have matched this seat
 // (docs/design/watchdog-control-and-uncovered.md section 4). They carry no
 // confidence and no evidence, and only the version becoming covered, or the
