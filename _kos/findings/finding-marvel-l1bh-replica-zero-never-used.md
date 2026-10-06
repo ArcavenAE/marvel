@@ -8,7 +8,7 @@ Brief: `_kos/probes/brief-replica-zero-never-used.md`
 
 A seat that has never taken a turn still holds a harness process, its MCP children and a pane. On one cluster on 2026-10-06, four interactive seats had been up for about four and a half hours with no turn at all, at about 430 MB RSS each. Scaling three of them to 0 freed about 1.3 GB, and nothing they carried was lost. This finding says how to spot such a seat, what replicas 0 keeps and drops, and who should act.
 
-Tags: **MEASURED** (a command run on the cluster or on a scratch daemon), **CODE** (read at `origin/main`), **INFERRED** (reasoning, not observed).
+Tags: **MEASURED** (a command run on the cluster or on a scratch daemon), **CODE** (read at marvel `0006250` and director `813c595`; marvel `main` has since moved, so line numbers are pinned to that sha), **INFERRED** (reasoning, not observed).
 
 ## 1. Telling never used from idle
 
@@ -22,11 +22,12 @@ Tags: **MEASURED** (a command run on the cluster or on a scratch daemon), **CODE
 - **MEASURED (scratch):** a `marvel work` re-apply after a scale to 0 restored the manifest's count, 1. `marvel scale` changes only the live team's replicas (CODE `internal/daemon/daemon.go:1692-1700`), and an apply resets the roles from the manifest (`internal/api/manifest.go:868`). **So a lasting 0 belongs in the manifest; a bare scale lasts only until the next apply.**
 - **MEASURED (live, read only):** the three seats scaled to 0 left the director roster, and their harness and shim processes exited.
 - **CODE (director shim):**
-  Read at ArcavenAE/director `main`, under `probe/nats-phase-0/director-mcp/`:
+  Read at ArcavenAE/director `813c595`, under `probe/nats-phase-0/director-mcp/`:
   - presence lapses about 90 s after the last beat (`askledger.go:22`).
-  - Mail sent to a seat at 0 waits on the inbox stream, which keeps 72 h (`bus.go:71-76`).
+  - Mail sent to a seat at 0 waits on the `AGENT_INBOX` stream for as long as the stream's `max_age` allows; that is the value that governs. The two sources disagree. director's docs declare 72 h (`docs/getting-started.md:69`, `README.md:223`). marvel's own provisioning declares 24 h (marvel `internal/bus/declared.go:107`), and it creates the stream only when it is absent and alters nothing already present (`internal/bus/provision.go:20-21`). So the window is whichever was created first on a given bus. **Not measured here:** which value this cluster's stream carries. The read-only check is the stream's `max_age` key alone (`nats stream info AGENT_INBOX --json`), and it was not run because this probe touches nothing on the live bus.
+  - The shim's `localConsumerInactive` of 73 h (`bus.go:71-76`) only cleans up a departed instance's durable, which decides whether the resume floor below survives. It does not keep mail.
   - A new instance with the same agent id resumes after the departed instance's last acknowledged message (`bus.go:195-238`).
-  - **INFERRED** from those three: mail sent while a seat is at 0 is delivered on scale-up within 72 h, and lost after that.
+  - **INFERRED** from these: mail sent while a seat is at 0 is delivered on scale-up within the stream's `max_age` (24 h or 72 h, as above), and lost after that.
   - **Not tested here.** The brief planned one message sent at 0 on the scratch run. It was not sent, and the reason is the scratch rig, not the live bus: the scratch daemon ran a `sleep` runtime with no director shim and no message bus, so there was nothing to receive it. Testing it needs a scratch bus server and a shim-backed seat, which this probe did not build. A message to a live seat at 0 was ruled out because it writes to the live bus.
 
 ## 3. Who acts
