@@ -340,16 +340,7 @@ func TestDeleteOfAnEndedUnreapedRunIsClassifiedLikeReap(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get session: %v", err)
 			}
-			deadline := time.Now().Add(15 * time.Second)
-			for {
-				if st, _ := driver.PaneStatus(got.PaneID); st.Exists && st.Dead {
-					break
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("pane never died")
-				}
-				time.Sleep(25 * time.Millisecond)
-			}
+			waitForExitStatus(t, driver, got.PaneID)
 			if cur, _ := store.GetSession(sess.Key()); cur.PaneID == "" {
 				t.Fatal("precondition: the row lost its PaneID before the delete")
 			}
@@ -412,6 +403,11 @@ func TestReapAfterAFailedKillRecordsACancelledRun(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("mark kill-failed: %v", err)
 	}
+	if cur, err := store.GetSession(sess.Key()); err != nil {
+		t.Fatalf("get session: %v", err)
+	} else {
+		waitForExitStatus(t, driver, cur.PaneID)
+	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		mgr.ReapDead()
@@ -432,5 +428,31 @@ func TestReapAfterAFailedKillRecordsACancelledRun(t *testing.T) {
 	}
 	if !st.LastSucceededAt.IsZero() {
 		t.Fatalf("a cancelled run set last succeeded: %v", st.LastSucceededAt)
+	}
+}
+
+// waitForExitStatus waits for the pane to die and its exit status to read, and
+// skips the test when the status never arrives: below tmux 3.5 a dead pane's
+// status is lossy, and an empty one is read as unknown on purpose (a failed
+// run), so a test that asserts the recorded status cannot hold there.
+func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	var deadSince time.Time
+	for {
+		st, _ := driver.PaneStatus(paneID)
+		switch {
+		case st.Exists && st.Dead && st.ExitStatus != "":
+			return
+		case st.Exists && st.Dead:
+			if deadSince.IsZero() {
+				deadSince = time.Now()
+			} else if time.Since(deadSince) > 3*time.Second {
+				t.Skip("tmux lost the dead pane's exit status (below 3.5); an empty status reads as unknown")
+			}
+		case time.Now().After(deadline):
+			t.Fatal("pane never died")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
