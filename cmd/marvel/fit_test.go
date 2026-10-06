@@ -140,13 +140,13 @@ func TestRuntimeBasename(t *testing.T) {
 // tells two seats apart is.
 func TestLongWorkdirMiddleEllipsis(t *testing.T) {
 	s := fitSession("agent-0")
-	s.WorkDir = "/Users/someone/work/a-very-long-orchestrator/subrepo-wt-builder-g13-0-width-fit"
+	s.WorkDir = "/home/user/work/a-very-long-orchestrator/subrepo-wt-builder-width-fit"
 	cols := columnsOrFatal(t, "name,workdir", nil)
 	got := fitSessionTable([]api.Session{s}, cols, fitOptions{width: 80, explicit: true})
-	if !strings.Contains(got.table, "…") || !strings.Contains(got.table, "builder-g13-0-width-fit") {
+	if !strings.Contains(got.table, "…") || !strings.Contains(got.table, "builder-width-fit") {
 		t.Errorf("workdir should keep its tail behind a middle ellipsis:\n%s", got.table)
 	}
-	if !strings.Contains(got.table, "/Users/") {
+	if !strings.Contains(got.table, "/home/") {
 		t.Errorf("workdir should keep a head:\n%s", got.table)
 	}
 	_, row, _ := strings.Cut(strings.TrimRight(got.table, "\n"), "\n")
@@ -160,7 +160,7 @@ func TestLongWorkdirMiddleEllipsis(t *testing.T) {
 func TestNoTruncRestores(t *testing.T) {
 	s := fitSession("agent-0")
 	s.Runtime.Command = "/opt/tools/lib/node_modules/.bin/claude"
-	s.WorkDir = "/Users/someone/work/a-very-long-orchestrator/subrepo-wt-builder-g13-0-width-fit"
+	s.WorkDir = "/home/user/work/a-very-long-orchestrator/subrepo-wt-builder-width-fit"
 	cols := columnsOrFatal(t, "name,runtime,workdir", nil)
 	got := fitSessionTable([]api.Session{s}, cols, fitOptions{width: 300, explicit: true, noTrunc: true})
 	for _, want := range []string{s.Runtime.Command, s.WorkDir} {
