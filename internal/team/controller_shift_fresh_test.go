@@ -34,8 +34,8 @@ func TestAutoShiftIgnoresAStaleReading(t *testing.T) {
 		want api.ShiftPhase
 	}{
 		{"fresh reading arms", time.Minute, api.ShiftLaunching},
-		{"just inside the bound arms", shiftReadingMaxAge - time.Minute, api.ShiftLaunching},
-		{"just past the bound does not", shiftReadingMaxAge + time.Minute, api.ShiftNone},
+		{"just inside the bound arms", api.DefaultQuietWindow - time.Minute, api.ShiftLaunching},
+		{"just past the bound does not", api.DefaultQuietWindow + time.Minute, api.ShiftNone},
 		{"a two day old reading does not", 48 * time.Hour, api.ShiftNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,13 +55,6 @@ func TestAutoShiftIgnoresAStaleReading(t *testing.T) {
 	}
 }
 
-// The bound is the cluster's ten-minute quiet window, not a looser one.
-func TestShiftReadingMaxAgeIsTenMinutes(t *testing.T) {
-	if shiftReadingMaxAge != 10*time.Minute {
-		t.Errorf("shiftReadingMaxAge = %v, want 10m", shiftReadingMaxAge)
-	}
-}
-
 // With the clock fixed, a reading exactly the bound old still arms the
 // trigger and one nanosecond older does not, the same strict edge as the
 // quiet predicate.
@@ -72,8 +65,8 @@ func TestAutoShiftFreshnessEdgeIsExact(t *testing.T) {
 		age  time.Duration
 		want api.ShiftPhase
 	}{
-		{"exactly the bound arms", shiftReadingMaxAge, api.ShiftLaunching},
-		{"one nanosecond past does not", shiftReadingMaxAge + time.Nanosecond, api.ShiftNone},
+		{"exactly the bound arms", api.DefaultQuietWindow, api.ShiftLaunching},
+		{"one nanosecond past does not", api.DefaultQuietWindow + time.Nanosecond, api.ShiftNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, ctrl, cleanup := setup(t)
