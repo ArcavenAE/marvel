@@ -86,7 +86,7 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung) {
 		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag
 	}
 	if env := os.Getenv(config.SocketEnv); env != "" {
-		return env, daemon.DialOptions{Identity: identityPath}, rungDefault
+		return env, daemon.DialOptions{Identity: identityPath}, rungEnv
 	}
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
@@ -108,14 +108,15 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung) {
 	if cl.Server != "" {
 		addr = cl.Server
 	}
+	rung := rungCluster
 	if addr == "" {
-		addr = config.ResolveSocket()
+		addr, rung = config.ResolveSocket(), rungDefault
 	}
 	id := identityPath
 	if id == "" {
 		id = cl.Identity
 	}
-	return addr, daemon.DialOptions{Identity: id}, rungDefault
+	return addr, daemon.DialOptions{Identity: id}, rung
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
