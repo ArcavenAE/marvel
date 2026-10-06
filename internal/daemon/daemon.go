@@ -1354,6 +1354,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	now := time.Now().UTC()
 	acks := m.DSTAcknowledgements(now)
 	scheduleAdvisories := m.ScheduleAdvisories(now)
+	headroomAdvisories := m.ShiftHeadroomAdvisories()
 
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
@@ -1362,6 +1363,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range scheduleAdvisories {
+		log.Printf("apply: %s", a)
+	}
+	for _, a := range headroomAdvisories {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range acks {
