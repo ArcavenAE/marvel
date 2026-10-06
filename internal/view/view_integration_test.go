@@ -64,7 +64,7 @@ func realViewFixture(t *testing.T) (repo string, b *Builder) {
 // returns the payload of some commit, whole.
 //
 // A lookup can fail for an instant while rename(2) replaces the symlink. On
-// macOS 15 (Darwin 25.5) a bare reader loop against a symlink swapped as fast
+// macOS 26.5 (Darwin 25.5) a bare reader loop against a symlink swapped as fast
 // as possible, with no marvel code in it, failed about 1 read in 100 with
 // EINVAL, and about 1 in 100,000 here at twenty swaps. RENAME_SWAP cut the
 // bare-loop rate to about 1 in 100,000 and did not remove it. So this test
