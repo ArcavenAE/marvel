@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/asof"
 	"github.com/arcavenae/marvel/internal/runtime/claudecode"
 	"github.com/arcavenae/marvel/internal/runtime/codex"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
@@ -143,6 +144,7 @@ func TestOutRateRidesTheReading(t *testing.T) {
 func TestCumulativeFeedRatesTheDelta(t *testing.T) {
 	t.Parallel()
 	cum, _, cclk := newRateAccountant(t)
+	cum.Observe(testCoords, codexStarted())
 	for _, total := range []int{1000, 2000} {
 		r := rtevents.RequestUsage{Layout: rtevents.LayoutSubsumptive, In: 5000, Out: total}
 		cum.Observe(testCoords, turnEvent(codex.Harness, r))
@@ -221,4 +223,61 @@ func mustReading(t *testing.T, sink *recordSink) api.SessionContext {
 		t.Fatal("no reading written")
 	}
 	return got
+}
+
+// codexStarted is codex's session-start event. It names no model, which is
+// all the accountant needs to know the stream began under this daemon.
+func codexStarted() rtevents.Event {
+	return rtevents.Event{
+		SchemaVersion: rtevents.SchemaVersion,
+		Event:         rtevents.KindSessionStarted,
+		Harness:       codex.Harness,
+		Data:          rtevents.SessionStartedData{},
+	}
+}
+
+func codexTotal(out int) rtevents.Event {
+	return turnEvent(codex.Harness, rtevents.RequestUsage{Layout: rtevents.LayoutSubsumptive, In: 5000, Out: out})
+}
+
+// A daemon restart or reexec leaves the accountant fresh while a codex
+// session keeps running, so its first sample is a running total of output
+// produced before this accountant existed. That total is a baseline, not a
+// burst: a 500k total read as 17k tokens a second at once, and still 271 two
+// minutes on, and made a real 20 tokens-a-second turn read 12k.
+func TestFreshAccountantFedALargeCumulativeTotalReportsNoBurst(t *testing.T) {
+	t.Parallel()
+	a, _, clk := newRateAccountant(t)
+	a.Observe(testCoords, codexTotal(500_000))
+	if got := rateAt(t, a, clk.now); got != 0 {
+		t.Errorf("rate at the first cumulative total = %v t/s, want 0 (a baseline, measured)", got)
+	}
+
+	clk.now = clk.now.Add(time.Second)
+	a.Observe(testCoords, codexTotal(500_020))
+	if got := rateAt(t, a, clk.now); got <= 0 || got > 5 {
+		t.Errorf("rate after a real 20 token turn = %v t/s, want a small figure under 5", got)
+	}
+}
+
+// A session that began under this daemon starts from zero, so its first
+// total is all new output and counts.
+func TestStartedSessionsFirstCumulativeTotalCounts(t *testing.T) {
+	t.Parallel()
+	a, _, clk := newRateAccountant(t)
+	a.Observe(testCoords, codexStarted())
+	a.Observe(testCoords, codexTotal(1000))
+	if got := rateAt(t, a, clk.now); got <= 0 {
+		t.Errorf("rate after the first total of a started session = %v, want positive", got)
+	}
+}
+
+// The renderer must look at ObservedAt: DecayedRate says 0 for a cell that
+// was never sampled, which is the same figure as a measured quiet stream.
+func TestDecayedRateOfAnUnsampledCellIsZeroAndIndistinguishable(t *testing.T) {
+	t.Parallel()
+	var unsampled asof.Cell[float64]
+	if got := DecayedRate(unsampled, time.Now()); got != 0 {
+		t.Errorf("DecayedRate of a never-sampled cell = %v, want 0", got)
+	}
 }
