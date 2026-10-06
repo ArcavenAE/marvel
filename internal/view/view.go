@@ -318,9 +318,18 @@ func (ExecGit) Archive(ctx context.Context, mirror, sha, dest string) error {
 	return extractErr
 }
 
-// extractTar writes a tar stream under dest. Entries that would land outside
-// dest are refused.
+// extractTar writes a tar stream under dest. Every write goes through an
+// os.Root on dest, so no path, and no symlink the archive itself created, can
+// lead a write out of the tree. An entry that cannot be written inside, a
+// symlink whose target leaves the tree, and an entry type this code does not
+// handle are errors: the archive is refused, never partly skipped.
 func extractTar(r io.Reader, dest string) error {
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -337,37 +346,58 @@ func extractTar(r io.Reader, dest string) error {
 		if !filepath.IsLocal(name) {
 			return fmt.Errorf("archive entry %q is outside the tree", hdr.Name)
 		}
-		path := filepath.Join(dest, name)
+		// A directory entry ends in a slash, which os.Root does not take.
+		name = filepath.Clean(name)
 		mode := os.FileMode(hdr.Mode).Perm()
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0o700|mode); err != nil {
-				return err
+			if err := root.MkdirAll(name, 0o700|mode); err != nil {
+				return fmt.Errorf("archive directory %q: %w", hdr.Name, err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				return err
-			}
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600|mode)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(f, tr); err != nil {
-				_ = f.Close()
-				return err
-			}
-			if err := f.Close(); err != nil {
-				return err
+			if err := writeRegular(root, name, mode, tr); err != nil {
+				return fmt.Errorf("archive file %q: %w", hdr.Name, err)
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				return err
+			if !symlinkStaysInside(name, hdr.Linkname) {
+				return fmt.Errorf("archive symlink %q points to %q, outside the tree", hdr.Name, hdr.Linkname)
 			}
-			if err := os.Symlink(hdr.Linkname, path); err != nil {
-				return err
+			if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+				return fmt.Errorf("archive symlink %q: %w", hdr.Name, err)
 			}
+			if err := root.Symlink(hdr.Linkname, name); err != nil {
+				return fmt.Errorf("archive symlink %q: %w", hdr.Name, err)
+			}
+		default:
+			return fmt.Errorf("archive entry %q has unsupported type %q", hdr.Name, hdr.Typeflag)
 		}
 	}
+}
+
+// writeRegular creates one file inside root with the archive's content.
+func writeRegular(root *os.Root, name string, mode os.FileMode, content io.Reader) error {
+	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		return err
+	}
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600|mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// symlinkStaysInside reports whether a symlink at name with the given target
+// resolves to a path inside the tree, judged by the names alone. An absolute
+// target never does.
+func symlinkStaysInside(name, target string) bool {
+	if target == "" || filepath.IsAbs(target) {
+		return false
+	}
+	return filepath.IsLocal(filepath.Join(filepath.Dir(name), filepath.FromSlash(target)))
 }
 
 // cleanGitEnv is the process environment without the variables that point git

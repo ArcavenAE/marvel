@@ -102,16 +102,19 @@ func TestExtractRefusesARelativeSymlinkThatClimbsOut(t *testing.T) {
 
 // The case-fold pair of CVE-2021-21300: a symlink and a directory whose names
 // differ only by case. On a case-insensitive filesystem the directory entry
-// lands on the symlink; on a case-sensitive one they are two names. Either
-// way nothing is written outside the view, and an archive that tries is
-// refused or extracted whole inside.
+// lands on the symlink; on a case-sensitive one they are two names. The
+// symlink leaves the view, so the archive is refused, and on either kind of
+// filesystem nothing is written outside.
 func TestExtractCaseFoldPairNeverWritesOutside(t *testing.T) {
 	tree, outside := scratch(t)
-	_ = extractTar(craftTar(t,
+	err := extractTar(craftTar(t,
 		entry{name: "Foo", typ: tar.TypeSymlink, link: outside},
 		entry{name: "foo", typ: tar.TypeDir},
 		entry{name: "foo/pwned", typ: tar.TypeReg, body: "x"},
 	), tree)
+	if err == nil {
+		t.Error("extractTar accepted a symlink that leaves the view")
+	}
 	assertOutsideUntouched(t, outside)
 }
 
