@@ -60,6 +60,12 @@ type Supervisor struct {
 	dialTimeout time.Duration
 	// leafPoll is the /leafz cadence (R-56, 30s).
 	leafPoll time.Duration
+	// leafRepeatEvery is how long an enrolled leaf stays down before the
+	// event is repeated, and how often after that. A placeholder for the
+	// bound design/wake-service.md Q1 leaves to the operator.
+	leafRepeatEvery time.Duration
+	// now is the clock the leaf record reads; tests replace it.
+	now func() time.Time
 
 	mu          sync.Mutex
 	parent      context.Context
@@ -72,6 +78,10 @@ type Supervisor struct {
 	restarts    int
 	backoffTill time.Time
 	leafUp      *bool
+	// leafSince is when the current leaf state was entered, and
+	// leafReportedAt when a down event was last emitted for it.
+	leafSince      time.Time
+	leafReportedAt time.Time
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
@@ -125,6 +135,11 @@ type Status struct {
 	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
 	// polled yet).
 	Leaf string `json:"leaf"`
+	// LeafSince is when the up or down reading was entered (RFC3339) and
+	// LeafFor how long ago that was, so "down" reads apart from "down for
+	// two hours". Empty for the other leaf states.
+	LeafSince string `json:"leaf_since,omitempty"`
+	LeafFor   string `json:"leaf_for,omitempty"`
 	// Structure is the structural-health reading on a managed broker
 	// (provisioned, authorized, tls, what is missing); nil before the first
 	// reading and on an adopted or external bus, where marvel holds no
@@ -150,6 +165,7 @@ const (
 	restartBackoffMax     = 5 * time.Minute
 	defaultDialTimeout    = 10 * time.Second
 	defaultLeafPoll       = 30 * time.Second
+	defaultLeafDownRepeat = 30 * time.Minute
 	stopGrace             = 5 * time.Second
 )
 
@@ -173,15 +189,17 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		return nil, fmt.Errorf("nats-server not found on PATH; cluster %s declares a managed bus, install it (mise or brew) or set bus.managed: false: %w", mgr.Domain(), err)
 	}
 	return &Supervisor{
-		mgr:         mgr,
-		binary:      bin,
-		version:     binaryVersion(bin),
-		pidFile:     filepath.Join(runDir, "nats-server.pid"),
-		logPath:     filepath.Join(logDir, "nats-server.log"),
-		ring:        ring,
-		backoff:     computeBackoff,
-		dialTimeout: defaultDialTimeout,
-		leafPoll:    defaultLeafPoll,
+		mgr:             mgr,
+		binary:          bin,
+		version:         binaryVersion(bin),
+		pidFile:         filepath.Join(runDir, "nats-server.pid"),
+		logPath:         filepath.Join(logDir, "nats-server.log"),
+		ring:            ring,
+		backoff:         computeBackoff,
+		dialTimeout:     defaultDialTimeout,
+		leafPoll:        defaultLeafPoll,
+		leafRepeatEvery: defaultLeafDownRepeat,
+		now:             time.Now,
 	}, nil
 }
 
@@ -718,16 +736,22 @@ func (s *Supervisor) pollLeaf() {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return
 	}
-	up := body.Leafnodes > 0
+	s.observeLeaf(body.Leafnodes, s.now())
+}
+
+// observeLeaf records one /leafz reading taken at now and reports it.
+func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
+	up := leafnodes > 0
 	s.mu.Lock()
 	prev := s.leafUp
 	s.leafUp = &up
+	s.leafSince, s.leafReportedAt = now, now
 	s.mu.Unlock()
 	if prev != nil && *prev == up {
 		return
 	}
 	if up {
-		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", s.mgr.bus.HubURL, body.Leafnodes))
+		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", s.mgr.bus.HubURL, leafnodes))
 	} else if prev != nil {
 		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", s.mgr.bus.HubURL))
 	}
