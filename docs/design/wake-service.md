@@ -104,8 +104,9 @@ not add new ones.
   over?
 
   **Answered 2026-10-06.** The operator's words, relayed by director in
-  message `01M492CZRX41N4E276G6J6D3Z9`: "it restarts at zero". A leaf's down-for duration is kept in the daemon's
-  memory and starts again from zero when the daemon restarts. That is what
+  message `01M492CZRX41N4E276G6J6D3Z9`: "it restarts at zero". A leaf's
+  down-for duration is kept in the daemon's memory and starts again from zero
+  when the daemon restarts. That is what
   #600 ships and what the admin guide says (the duration is not stored with
   the record).
 
