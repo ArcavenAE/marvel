@@ -165,4 +165,4 @@ wrote HEAD. That made a failed checkout look as if it left HEAD alone. Run by
 hand without the pipe, the failed checkout moved HEAD in 10 of 10 trials
 with git -C, 10 of 10 with cd, and 5 of 5 each after a fresh worktree add,
 after a status refresh, and after an H3 refresh. The rig now writes git
-output to a file before shortening it. Both sections are re-run below.
+output to a file before shortening it. The clean run at the top of this file carries the fixed H3 and H5.

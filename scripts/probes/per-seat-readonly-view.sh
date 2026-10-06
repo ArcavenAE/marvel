@@ -16,6 +16,7 @@ S="$1"; MARVEL_SRC="$2"; ORC_SRC="$3"; SECTION="$4"
 SHARED="$S/shared"; VIEW="$S/view"
 # A unix socket path is capped near 104 bytes on macOS, and the scratch path is
 # longer, so the scratch tmux server's socket lives at a short per-run path.
+# The default below is a macOS scratch root; set TSOCK elsewhere on Linux.
 TSOCK="${TSOCK:-/tmp/claude-501/rov-$(basename "$S")-$PPID.sock}"
 [[ -f "$S/tsock" ]] && TSOCK=$(cat "$S/tsock") || echo "$TSOCK" > "$S/tsock"
 unset TMUX
@@ -71,6 +72,7 @@ build_arch() { # build_arch <repo> <sha> <dir>: archive view tree, read-only
   mkdir -p "$3"; git -C "$1" archive "$2" | tar -x -C "$3"; echo "$2" > "$3/VIEW_SHA"; ro "$3"
 }
 swap_arch() { # swap_arch <base> <newdir>: replace base/cur by rename of a new symlink
+  # BSD mv -h renames the link itself; on Linux use mv -T.
   ln -s "$2" "$1/cur.new"; mv -h "$1/cur.new" "$1/cur"
 }
 

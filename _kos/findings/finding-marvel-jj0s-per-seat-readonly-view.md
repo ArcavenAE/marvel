@@ -26,7 +26,7 @@ inside the view keeps reading the old tree after a refresh, with no error.
 | H3, marvel can refresh it whole | **held** | From a torn view (HEAD at the new commit, files at the old) and from a clean one, `chmod -R u+w`, `checkout --force --detach <sha>`, `chmod -R a-w` left HEAD at `<sha>`, status empty, and the tree hash equal to a fresh archive of `<sha>`. Writable window 107 to 306 ms over the three refreshes of the clean run, and 146 ms for the removed-directory case | The window is under a second, so the brief's swap clause does not apply |
 | H3, held cwds (run note 1) | **held, with one silent case** | Shells holding a cwd at the view root and in `internal/api` read the new content after an in-place refresh. A shell holding a cwd in `docs/reviews`, which the target commit removes, kept printing the removed path from `pwd`, and `ls` returned nothing with no error | An in-place refresh never serves stale content, but a seat inside a removed directory sees an empty one without being told |
 | H4, the cost fits spawn | **held** | Local clone of the orc, 761 tracked files: create plus chmod median 168 ms, refresh median 151 ms (5 runs) | Spawn-time creation is affordable |
-| H5, git aimed at the view cannot move it | **failed** | From the seat's own shell and from another seat: `checkout --detach`, `switch --detach`, `reset --soft` and `update-ref HEAD` each moved HEAD to the new commit while the files stayed at the old one (17 status lines). `reset --hard` failed and left HEAD alone. A failed `checkout` printed `unable to unlink old 'CLAUDE.md': Permission denied` and **exited 0**. No objects were written to the shared store (`count-objects` unchanged) | A worktree view cannot be a fixed view however its files are protected, because HEAD and the index live in the shared `.git/worktrees/<name>/`. The torn state is reachable with an exit code of 0 |
+| H5, git aimed at the view cannot move it | **failed** | From the seat's own shell and from another seat: `checkout --detach`, `switch --detach`, `reset --soft` and `update-ref HEAD` each moved HEAD to the new commit while the files stayed at the old one (17 status lines). `reset --hard` failed and left HEAD alone. A failed `checkout` printed `unable to unlink old 'CLAUDE.md': Permission denied` and **exited 0**. No objects were written by the commands run (`count-objects` unchanged); `commit --allow-empty`, not run, would add one commit object to the shared store and update the worktree's index and reflog, so that side effect is unmeasured | A worktree view cannot be a fixed view however its files are protected, because HEAD and the index live in the shared `.git/worktrees/<name>/`. The torn state is reachable with an exit code of 0 |
 | H6a, archive content | **held** | View tree hash equals a fresh `git archive` extract (`14f1e823...` both) | |
 | H6b, atomic swap | **held** | A reader loop through the symlink made 3,189 reads across 20 swaps: 3,065 saw the old file hash and 124 the new one; none saw a mix or a missing file | `rename(2)` of a new symlink over the old is atomic for readers that resolve the path |
 | H6c, no repository reachable | **held** | `git -C <view> rev-parse` and all five H5 commands gave `fatal: not a git repository`, tree hash unchanged. Control: the same archive inside the shared checkout resolved to that checkout's top level | The view must live outside any work tree; that is part of the mechanism |
@@ -67,6 +67,9 @@ the architect re-checks it then.
 - **`commit --allow-empty` was not run.** A commit in the scratch clone
   needs a signing key touch, and the fleet rule forbids unsigned commits.
   `update-ref HEAD`, the ref move a commit makes, was run in its place.
+  It writes no object, so the `count-objects` check the brief added for a
+  commit's side effect on the shared store did not measure that effect.
+  H5's fail does not depend on it.
 - **The rig was fixed during the run.** The tmux socket path exceeded the
   macOS socket path limit; a worktree registration from a failed attempt
   was left behind; and piping git's error output to `head` killed git with
@@ -74,7 +77,13 @@ the architect re-checks it then.
   harmless. Run by hand without the pipe, that checkout moved HEAD in 10 of
   10 trials. After the fixes the whole rig was run again top to bottom on a
   fresh scratch directory, and that run is the transcript.
-- **macOS only.** No Linux host was free.
+- **H6b did not apply the old-tree removal rule.** The 20 trees the reader
+  loop swapped between were all kept, so a reader resolving the path while
+  a tree is removed was not tested. H6b2 covers removal only for a held
+  cwd.
+- **macOS only.** No Linux host was free. The rig's tmux socket defaults to
+  a short `/tmp` path and its swap uses BSD `mv -h`; on Linux the swap is
+  `mv -T`.
 
 ## What follows
 
