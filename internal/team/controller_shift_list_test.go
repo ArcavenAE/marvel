@@ -857,3 +857,130 @@ func TestHandoffMissingDoesNotBlameADeliveredNotice(t *testing.T) {
 		t.Fatalf("handoff-missing = %+v, want one that does not say the notice was never delivered", evs)
 	}
 }
+
+// A handoff path with {session} in its directory names a new directory for
+// every generation, so marvel creates it when it asks (marvel#608).
+
+// nestedHandoffRole declares a handoff whose directory is per session, under
+// base, so the parent of the file does not exist until something makes it.
+func nestedHandoffRole(base string) api.Role {
+	role := maxAgeRole("")
+	role.Shift.Handoff = filepath.Join(base, "{session}", "handoff.md")
+	role.Shift.HandoffMarker = "END HANDOFF"
+	return role
+}
+
+func TestHandoffRequestCreatesParentDir(t *testing.T) {
+	base := t.TempDir()
+	f := newListFixture(t, "test-handoff-mkdir", nestedHandoffRole(base))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+
+	f.evaluate()
+
+	dir := filepath.Join(base, s.Name)
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("the handoff directory was not created: %v", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("handoff directory = %v, want a directory at mode 0700", info.Mode())
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "handoff.md")); !os.IsNotExist(err) {
+		t.Fatalf("marvel created the handoff file itself (err %v); the seat writes it", err)
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %d, want 1", len(f.notices))
+	}
+}
+
+func TestHandoffRequestKeepsExistingParentMode(t *testing.T) {
+	base := t.TempDir()
+	f := newListFixture(t, "test-handoff-keepmode", nestedHandoffRole(base))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	dir := filepath.Join(base, s.Name)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	f.evaluate()
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("existing directory mode = %v, want 0755 unchanged", info.Mode().Perm())
+	}
+}
+
+func TestHandoffRequestMkdirFailureIsNamed(t *testing.T) {
+	base := t.TempDir()
+	f := newListFixture(t, "test-handoff-mkdirfail", nestedHandoffRole(base))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	// A regular file where the directory should be blocks the mkdir.
+	if err := os.WriteFile(filepath.Join(base, s.Name), []byte("in the way"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f.evaluate()
+
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %d, want the notice delivered despite the mkdir failure", len(f.notices))
+	}
+	reqs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffRequested}, 0)
+	if len(reqs) != 1 || !strings.Contains(reqs[0].Message, "create handoff directory") {
+		t.Fatalf("handoff-requested = %+v, want it to name the mkdir error", reqs)
+	}
+
+	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	f.evaluate()
+	miss := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+	if len(miss) != 1 || !strings.Contains(miss[0].Message, "create handoff directory") {
+		t.Fatalf("handoff-missing = %+v, want the missing reason to name the mkdir error", miss)
+	}
+}
+
+func TestHandoffNoticeNamesWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		window time.Duration
+		want   string
+	}{
+		{"default", 0, "; you have 5m0s"},
+		{"declared", 25 * time.Minute, "; you have 25m0s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			role := nestedHandoffRole(t.TempDir())
+			role.Shift.HandoffWindow = tc.window
+			f := newListFixture(t, "test-handoff-window-"+tc.name, role)
+			f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+
+			f.evaluate()
+
+			if len(f.notices) != 1 || !strings.HasSuffix(f.notices[0], tc.want) {
+				t.Fatalf("notices = %q, want one ending %q", f.notices, tc.want)
+			}
+			if !strings.Contains(f.notices[0], `ending with the line "END HANDOFF"`) {
+				t.Fatalf("notice = %q, want the marker still named", f.notices[0])
+			}
+		})
+	}
+}
+
+func TestHandoffNoticeWithoutDeclaredPathIsBare(t *testing.T) {
+	f := newListFixture(t, "test-handoff-bare", maxAgeRole(""))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+
+	f.evaluate()
+
+	want := s.Key() + ": shift: max age reached; write your handoff now"
+	if len(f.notices) != 1 || f.notices[0] != want {
+		t.Fatalf("notices = %q, want exactly %q", f.notices, want)
+	}
+}
