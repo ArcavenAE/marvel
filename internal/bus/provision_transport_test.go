@@ -2,11 +2,16 @@ package bus
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 // dropFirst fronts a broker address with a listener that closes the first
@@ -85,5 +90,27 @@ func TestProvisionFailsAtOnceOnARefusedAddress(t *testing.T) {
 	}
 	if d := time.Since(start); d > authRetryWindow/2 {
 		t.Errorf("a refused address took %s to fail, want it to fail at once", d)
+	}
+}
+
+func TestRetryableConnect(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"authorization", nats.ErrAuthorization, true},
+		{"reset", fmt.Errorf("read: %w", syscall.ECONNRESET), true},
+		{"broken pipe", fmt.Errorf("write: %w", syscall.EPIPE), true},
+		{"eof", io.EOF, true},
+		{"unexpected eof", io.ErrUnexpectedEOF, true},
+		{"refused", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), false},
+		{"no servers", nats.ErrNoServers, false},
+		{"other", errors.New("boom"), false},
+	} {
+		if got := retryableConnect(tc.err); got != tc.want {
+			t.Errorf("%s: retryableConnect = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

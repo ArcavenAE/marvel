@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -134,7 +136,10 @@ func join(names []string) string {
 // connectAdmin dials as the admin identity. An authorization refusal is
 // retried briefly: the daemon has usually just rewritten authorization.conf
 // and asked the broker to reload it, and the reload is asynchronous, so the
-// first connect can race the old credential set. Anything else fails at once.
+// first connect can race the old credential set. A connection the broker
+// resets or closes while it is being dialed is retried the same way (a
+// broker just adopted from a predecessor, on a loaded host, has done this).
+// Anything else, a refused address included, fails at once.
 func connectAdmin(ctx context.Context, url, user, password string) (*nats.Conn, error) {
 	deadline := time.Now().Add(authRetryWindow)
 	for {
@@ -147,9 +152,21 @@ func connectAdmin(ctx context.Context, url, user, password string) (*nats.Conn, 
 		if err == nil {
 			return nc, nil
 		}
-		if !errors.Is(err, nats.ErrAuthorization) || time.Now().After(deadline) || ctx.Err() != nil {
+		if !retryableConnect(err) || time.Now().After(deadline) || ctx.Err() != nil {
 			return nil, fmt.Errorf("connect to %s as %s: %w", url, user, err)
 		}
 		time.Sleep(authRetryStep)
 	}
+}
+
+// retryableConnect reports whether a failed connect is worth another try
+// inside authRetryWindow: an authorization refusal, or a connection that was
+// established and then dropped (reset, broken pipe, early EOF). A connection
+// refused is not in the set, since nothing is listening to retry against.
+func retryableConnect(err error) bool {
+	return errors.Is(err, nats.ErrAuthorization) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }
