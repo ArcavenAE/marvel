@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -310,10 +311,10 @@ func TestRestartCarriesTheSeedIntoTheChildEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	have := false
-	m.hasLeafSeed = func() bool { return have }
+	var have atomic.Bool // the poll goroutine now reads it too
+	m.hasLeafSeed = have.Load
 	s.Env = func() []string {
-		if !have {
+		if !have.Load() {
 			return nil
 		}
 		return []string{LeafSeedEnv + "=" + string(seed)}
@@ -326,7 +327,7 @@ func TestRestartCarriesTheSeedIntoTheChildEnvironment(t *testing.T) {
 		t.Fatal("no bus.leaf.unenrolled before the seed")
 	}
 
-	have = true
+	have.Store(true)
 	if changed, err := m.Regenerate(); err != nil || !changed {
 		t.Fatalf("regenerate with seed: changed=%v err=%v", changed, err)
 	}
