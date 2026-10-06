@@ -708,6 +708,10 @@ func (s *Supervisor) Status() Status {
 	default:
 		st.Leaf = "down"
 	}
+	if (st.Leaf == "up" || st.Leaf == "down") && !s.leafSince.IsZero() {
+		st.LeafSince = s.leafSince.Format(time.RFC3339)
+		st.LeafFor = leafDuration(s.now().Sub(s.leafSince))
+	}
 	if !s.ready && s.backoffTill.After(time.Now()) {
 		st.BackoffUntil = s.backoffTill.Format(time.RFC3339)
 	}
@@ -739,22 +743,48 @@ func (s *Supervisor) pollLeaf() {
 	s.observeLeaf(body.Leafnodes, s.now())
 }
 
-// observeLeaf records one /leafz reading taken at now and reports it.
+// observeLeaf records one /leafz reading taken at now and reports it. It
+// reports when the state changes, when an enrolled leaf is found down at the
+// first poll (before this, silent until it came up), and again at every
+// leafRepeatEvery while an enrolled, attached leaf stays down. A hub with no
+// seed and a leaf the operator disconnected promised no link, so neither is
+// reported as down for lasting.
 func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	up := leafnodes > 0
+	promised := s.mgr.leafEnrolled() && s.mgr.LeafAttached()
 	s.mu.Lock()
 	prev := s.leafUp
 	s.leafUp = &up
-	s.leafSince, s.leafReportedAt = now, now
+	changed := prev == nil || *prev != up
+	if changed {
+		s.leafSince = now
+		s.leafReportedAt = time.Time{}
+	}
+	since := s.leafSince
+	repeat := !changed && !up && promised && !s.leafReportedAt.IsZero() && now.Sub(s.leafReportedAt) >= s.leafRepeatEvery
+	report := changed && !up && (prev != nil || promised)
+	if report || repeat {
+		s.leafReportedAt = now
+	}
 	s.mu.Unlock()
-	if prev != nil && *prev == up {
-		return
+	hub := s.mgr.bus.HubURL
+	switch {
+	case changed && up:
+		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", hub, leafnodes))
+	case report:
+		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", hub))
+	case repeat:
+		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is still down: down for %s; local bus keeps serving, nothing is restarted", hub, leafDuration(now.Sub(since))))
 	}
-	if up {
-		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", s.mgr.bus.HubURL, leafnodes))
-	} else if prev != nil {
-		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", s.mgr.bus.HubURL))
+}
+
+// leafDuration renders how long a leaf state has lasted: whole seconds under a
+// minute, whole minutes after ("45s", "2h9m").
+func leafDuration(d time.Duration) string {
+	if d < time.Minute {
+		return d.Round(time.Second).String()
 	}
+	return strings.TrimSuffix(d.Round(time.Minute).String(), "0s")
 }
 
 func (s *Supervisor) pidFileAlive() (int, bool) {

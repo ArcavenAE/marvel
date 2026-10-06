@@ -508,6 +508,15 @@ Storing the same seed again is not a rotation and restarts nothing.
 A leaf link that goes down is reported and nothing is restarted: the local
 broker keeps serving its own sessions.
 
+A leaf that stays down is reported again. The event (`bus.leaf.down`) fires when
+the link drops, when an enrolled leaf is found already down at the first poll
+after a start or reexec, and every 30 minutes after that while it stays down,
+each repeat naming how long. A hub with no seed, and a leaf you disconnected,
+promised no link and are not repeated. `marvel bus status` shows how long the
+current state has lasted (`leaf: down for 2h9m`; `leaf_since` in the JSON). The
+30 minutes is a placeholder for the repeat bound that design/wake-service.md
+leaves open as Q1.
+
 ### Moving a cluster to another network
 
 If a cluster's hub URL has to change (the hub host moved subnets and the URL

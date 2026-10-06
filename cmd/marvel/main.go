@@ -2454,7 +2454,11 @@ func printBusStatus(w io.Writer, st bus.Status) {
 		ready = "yes"
 	}
 	record()
-	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\n", ready, st.Leaf)
+	leaf := st.Leaf
+	if st.LeafFor != "" {
+		leaf += " for " + st.LeafFor
+	}
+	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\n", ready, leaf)
 	if s := st.Structure; s != nil {
 		// The structural reading (aae-orc-vy6k7): what ready is made of
 		// beyond the listener, so a "no" above has its reason right here.
