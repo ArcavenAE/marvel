@@ -73,6 +73,8 @@ func Normalize(pane, raw string) ([]string, error) {
 type Row struct {
 	Prefix, Suffix string
 	Var            bool
+	// MaxVar bounds the variable span in runes; 0 leaves it unbounded.
+	MaxVar int
 }
 
 func parseRow(s string) (Row, error) {
