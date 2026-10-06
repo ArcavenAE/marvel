@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/config"
@@ -35,7 +37,7 @@ func TestResolveRungEnvBeatsCluster(t *testing.T) {
 	resolveFixture(t, true)
 	t.Setenv(config.SocketEnv, "/scratch/env.sock")
 
-	addr, _, rung := resolveDaemonRung()
+	addr, _, rung, _ := resolveDaemonRung()
 	if addr != "/scratch/env.sock" {
 		t.Errorf("addr = %q, want the env socket", addr)
 	}
@@ -50,21 +52,56 @@ func TestResolveRungNamesEachRung(t *testing.T) {
 		resolveFixture(t, true)
 		t.Setenv(config.SocketEnv, "/scratch/env.sock")
 		socketPath = "/scratch/flag.sock"
-		addr, _, rung := resolveDaemonRung()
+		addr, _, rung, _ := resolveDaemonRung()
 		if addr != "/scratch/flag.sock" || rung != rungFlag {
 			t.Errorf("got (%q, %q), want the flag socket on rung %q", addr, rung, rungFlag)
 		}
 	})
 	t.Run("cluster", func(t *testing.T) {
 		resolveFixture(t, true)
-		addr, _, rung := resolveDaemonRung()
+		addr, _, rung, _ := resolveDaemonRung()
 		if addr != "/scratch/cluster.sock" || rung != rungCluster {
 			t.Errorf("got (%q, %q), want the cluster socket on rung %q", addr, rung, rungCluster)
 		}
 	})
+	t.Run("unknown cluster refuses", func(t *testing.T) {
+		resolveFixture(t, true)
+		clusterName = "nosuch"
+		if _, _, _, err := resolveDaemonRung(); err == nil {
+			t.Error("an unknown cluster resolved, want a refusal")
+		}
+	})
+	t.Run("no cluster configured is the default rung", func(t *testing.T) {
+		resolveFixture(t, true)
+		if err := config.Save(&config.Config{}); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		addr, _, rung, err := resolveDaemonRung()
+		if err != nil || addr != config.ResolveSocket() || rung != rungDefault {
+			t.Errorf("got (%q, %q, %v), want the default socket on rung %q", addr, rung, err, rungDefault)
+		}
+	})
+	t.Run("unreadable config is the default rung", func(t *testing.T) {
+		resolveFixture(t, false)
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(home, ".marvel")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("clusters: [unclosed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		addr, _, rung, err := resolveDaemonRung()
+		if err != nil || addr != config.ResolveSocket() || rung != rungDefault {
+			t.Errorf("got (%q, %q, %v), want the default socket on rung %q", addr, rung, err, rungDefault)
+		}
+	})
 	t.Run("default", func(t *testing.T) {
 		resolveFixture(t, false)
-		addr, _, rung := resolveDaemonRung()
+		addr, _, rung, _ := resolveDaemonRung()
 		if addr != config.ResolveSocket() || rung != rungDefault {
 			t.Errorf("got (%q, %q), want the default socket on rung %q", addr, rung, rungDefault)
 		}
@@ -77,8 +114,8 @@ func TestResolveDaemonAddrMatchesRungAddr(t *testing.T) {
 	resolveFixture(t, true)
 	t.Setenv(config.SocketEnv, "/scratch/env.sock")
 
-	want, _, _ := resolveDaemonRung()
-	if got, _ := resolveDaemonAddr(); got != want {
+	want, _, _, _ := resolveDaemonRung()
+	if got, _, _ := resolveDaemonAddr(); got != want {
 		t.Errorf("resolveDaemonAddr = %q, want %q", got, want)
 	}
 }

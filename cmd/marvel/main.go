@@ -53,12 +53,15 @@ var (
 // branch below lands on the same answer; four of them used to reach a
 // hardcoded machine-global path instead. See
 // docs/design/daemon-isolation.md decision 3.
-func resolveDaemon() (string, daemon.DialOptions) {
-	addr, opts := resolveDaemonAddr()
+func resolveDaemon() (string, daemon.DialOptions, error) {
+	addr, opts, err := resolveDaemonAddr()
+	if err != nil {
+		return "", daemon.DialOptions{}, err
+	}
 	if w := config.LegacySocketWarning(addr); w != "" {
 		fmt.Fprintln(os.Stderr, w)
 	}
-	return addr, opts
+	return addr, opts, nil
 }
 
 // resolveRung names the step of the resolution order that chose the daemon
@@ -74,23 +77,29 @@ const (
 
 // resolveDaemonAddr returns the daemon address and dial options. Callers
 // that need to know which step chose the address use resolveDaemonRung.
-func resolveDaemonAddr() (string, daemon.DialOptions) {
-	addr, opts, _ := resolveDaemonRung()
-	return addr, opts
+func resolveDaemonAddr() (string, daemon.DialOptions, error) {
+	addr, opts, _, err := resolveDaemonRung()
+	return addr, opts, err
 }
 
 // resolveDaemonRung resolves the daemon address and reports the rung that
 // chose it: flag, env, cluster or default.
-func resolveDaemonRung() (string, daemon.DialOptions, resolveRung) {
+func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if socketPath != "" {
-		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag
+		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
 	if env := os.Getenv(config.SocketEnv); env != "" {
-		return env, daemon.DialOptions{Identity: identityPath}, rungEnv
+		return env, daemon.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault
+		// A name given with --cluster cannot be looked up in a config that
+		// does not parse, and the default socket is not what the operator
+		// asked for (#502). Without --cluster the fallback is unchanged.
+		if clusterName != "" {
+			return "", daemon.DialOptions{}, rungDefault, fmt.Errorf("cluster %q: the client config is unreadable: %w", clusterName, err)
+		}
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	if err != nil {
 		// Another cluster's bad name does not stop this one from resolving.
@@ -98,11 +107,16 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung) {
 	}
 	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault
+		// A cluster name that matches nothing is refused, whether the
+		// operator typed it with --cluster or the config's current_cluster
+		// names it: acting on the local daemon instead could land a mutating
+		// command on the wrong host (#502). The commands that define or
+		// configure a cluster (config add-cluster, use-cluster, ...) never
+		// reach this path; they take the name as an argument.
+		return "", daemon.DialOptions{}, rungDefault, err
 	}
 	if cl == nil {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault
+		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	addr := cl.Socket
 	if cl.Server != "" {
@@ -116,7 +130,7 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung) {
 	if id == "" {
 		id = cl.Identity
 	}
-	return addr, daemon.DialOptions{Identity: id}, rung
+	return addr, daemon.DialOptions{Identity: id}, rung, nil
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
@@ -125,7 +139,10 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung) {
 // against. All subcommands should use this instead of
 // daemon.SendRequest directly.
 func send(req daemon.Request) (*daemon.Response, error) {
-	addr, opts := resolveDaemon()
+	addr, opts, err := resolveDaemon()
+	if err != nil {
+		return nil, err
+	}
 	resp, err := daemon.SendRequestWith(addr, req, opts)
 	if err != nil {
 		return nil, err
@@ -673,7 +690,10 @@ func printEventBatch(w io.Writer, evs []events.Event, header bool) {
 // behind the ring) is reported once per gap on stderr; stdout carries
 // only events, so a script reading it sees nothing but rows.
 func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, printBatch func([]events.Event, bool)) error {
-	addr, opts := resolveDaemon()
+	addr, opts, err := resolveDaemon()
+	if err != nil {
+		return err
+	}
 	first := true
 	return daemon.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemon.Response, b daemon.EventsBatch) error {
 		if first {
