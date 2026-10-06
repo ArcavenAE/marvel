@@ -471,3 +471,130 @@ func TestKeeperSpawnBoundCoversAllViewsTogether(t *testing.T) {
 		t.Fatalf("view.unavailable events = %d, want one per view", got)
 	}
 }
+
+// blockedTick starts a tick whose fetch for remote is held open, and returns
+// once the fetch has begun, with a function that releases it and waits for the
+// tick to finish.
+func blockedTick(t *testing.T, r *kRig, remote string) (release func()) {
+	t.Helper()
+	gate := make(chan struct{})
+	r.g.mu.Lock()
+	r.g.block[remote] = gate
+	r.g.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		r.k.Tick()
+		close(done)
+	}()
+	select {
+	case <-r.g.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held fetch never started")
+	}
+	return func() {
+		close(gate)
+		<-done
+	}
+}
+
+// A teardown that lands while a tick's refresh is in flight must not be undone
+// by it: the late refresh finds its seat gone and removes what it wrote.
+func TestKeeperTeardownDuringATickRefreshLeavesNothingBehind(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	views := []api.View{kView("alpha", "a", time.Minute)}
+	sess := r.session("seat", views...)
+	r.k.Build(sess, views)
+
+	r.g.sha["a"] = shaTwo
+	r.now = r.now.Add(time.Minute)
+	release := blockedTick(t, r, "a")
+	if err := r.k.Teardown(sess.Key()); err != nil {
+		t.Fatal(err)
+	}
+	release()
+
+	if _, err := os.Lstat(filepath.Join(r.k.ViewsDir, sess.Key())); !os.IsNotExist(err) {
+		t.Fatalf("a refresh that was in flight at teardown recreated the seat's views: %v", err)
+	}
+}
+
+// The same for the build at spawn: a session deleted while its first build is
+// held in a fetch leaves no directory when the fetch returns.
+func TestKeeperTeardownDuringASpawnBuildLeavesNothingBehind(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	gate := make(chan struct{})
+	r.g.block["a"] = gate
+	views := []api.View{kView("alpha", "a", time.Minute)}
+	sess := r.session("seat", views...)
+
+	done := make(chan struct{})
+	go func() {
+		r.k.Build(sess, views)
+		close(done)
+	}()
+	select {
+	case <-r.g.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held fetch never started")
+	}
+	if err := r.k.Teardown(sess.Key()); err != nil {
+		t.Fatal(err)
+	}
+	close(gate)
+	<-done
+
+	if _, err := os.Lstat(filepath.Join(r.k.ViewsDir, sess.Key())); !os.IsNotExist(err) {
+		t.Fatalf("a spawn build that was in flight at teardown left the seat's views: %v", err)
+	}
+}
+
+// The tick removes a views directory that no live session owns: one a late
+// refresh or a crashed daemon left, and the directory of a seat that is gone.
+func TestKeeperTickSweepsDirectoriesWithNoLiveSession(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	views := []api.View{kView("alpha", "a", time.Hour)}
+	keep := r.session("keep", views...)
+	r.k.Build(keep, views)
+	gone := api.Session{Name: "gone", Workspace: "ws", Team: "t", Role: "r"}
+	r.k.Build(gone, views)
+	orphan := filepath.Join(r.k.ViewsDir, "ws", "orphan", "alpha", "trees", shaOne)
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r.k.Tick()
+
+	if _, err := os.Lstat(filepath.Join(r.k.ViewsDir, "ws", "orphan")); !os.IsNotExist(err) {
+		t.Errorf("a directory no session owns survived the tick: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(r.k.ViewsDir, gone.Key())); !os.IsNotExist(err) {
+		t.Errorf("the directory of a seat that is no longer declared survived the tick: %v", err)
+	}
+	if _, ok := r.curOf(keep, "alpha"); !ok {
+		t.Error("the sweep removed a live seat's view")
+	}
+}
+
+// A key reused by a respawn (the controller names a replica max+1, so the top
+// replica's key comes back) starts afresh: the same failure is news again, not
+// suppressed by what the earlier session saw.
+func TestKeeperReusedKeyReportsTheSameFailureAgain(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	r.g.fetchErr["a"] = errors.New("network down")
+	views := []api.View{kView("alpha", "a", time.Hour)}
+	sess := r.session("seat", views...)
+
+	r.k.Build(sess, views)
+	if err := r.k.Teardown(sess.Key()); err != nil {
+		t.Fatal(err)
+	}
+	r.k.Build(sess, views)
+
+	if got := len(r.kinds(events.KindViewUnavailable)); got != 2 {
+		t.Fatalf("view.unavailable events = %d across a teardown and a respawn of one key, want 2", got)
+	}
+}
