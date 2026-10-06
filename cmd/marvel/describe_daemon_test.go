@@ -221,20 +221,58 @@ func TestDescribeCmdRoutesDaemon(t *testing.T) {
 }
 
 // describe daemon prints the client's address and rung beside the daemon's
-// own record, flattened into one object, so a daemon status key named
-// "address" or "rung" would silently shadow the client's facts. Guard the
-// status type against ever growing one.
+// own record, flattened into one object. encoding/json keeps the shallowest
+// field of a name, so a daemon status key named "address" or "rung" would not
+// win: the client's value would print and the daemon's would be dropped
+// without a word. Guard the status type, embedded structs included, against
+// ever growing one.
 func TestDaemonStatusKeysNeverShadowTheClientsFacts(t *testing.T) {
-	typ := reflect.TypeOf(daemon.DaemonStatus{})
+	for _, name := range jsonKeys(reflect.TypeOf(daemon.DaemonStatus{})) {
+		if name == "address" || name == "rung" {
+			t.Errorf("DaemonStatus marshals a key %q, which describe daemon's own key would shadow and drop", name)
+		}
+	}
+}
+
+// jsonKeys is every key a struct marshals with its fields flattened the way
+// encoding/json does it: an embedded struct with no json name contributes its
+// fields as if they were the outer type's own.
+func jsonKeys(typ reflect.Type) []string {
+	var keys []string
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if f.Anonymous && name == "" && f.Type.Kind() == reflect.Struct {
+			keys = append(keys, jsonKeys(f.Type)...)
+			continue
+		}
 		if name == "" {
 			name = f.Name
 		}
-		if name == "address" || name == "rung" {
-			t.Errorf("DaemonStatus.%s marshals as %q, which shadows describe daemon's own key", f.Name, name)
-		}
+		keys = append(keys, name)
+	}
+	return keys
+}
+
+// The guard sees through an embedded struct, where a promoted field would
+// marshal as the outer type's own.
+func TestJSONKeysWalksEmbeddedStructs(t *testing.T) {
+	type inner struct {
+		Rung string `json:"rung"`
+	}
+	type outer struct {
+		inner
+		Plain  string
+		Tagged string `json:"tagged,omitempty"`
+		Hidden string `json:"-"`
+	}
+	got := jsonKeys(reflect.TypeOf(outer{}))
+	want := []string{"rung", "Plain", "tagged"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("jsonKeys = %v, want %v", got, want)
 	}
 }
 

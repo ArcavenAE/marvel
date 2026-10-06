@@ -125,7 +125,7 @@ func TestWatchRendersTheSelectedColumns(t *testing.T) {
 		return daemon.Response{Result: data}
 	})
 	t.Setenv(config.SocketEnv, live)
-	ws := &watchSort{column: "name", columns: cols}
+	ws := newWatchState(cols)
 	frame := renderWatch(ws, time.Second)
 	if got := frameHeader(frame); !reflect.DeepEqual(got, []string{"STATE", "AGENT NAME"}) {
 		t.Errorf("live frame header = %v, want only STATE and AGENT NAME:\n%s", got, frame)
@@ -152,4 +152,20 @@ func frameHeader(frame string) []string {
 		}
 	}
 	return nil
+}
+
+// The watch screen starts sorted by name, ascending, in the columns it was
+// given, so a first frame lists the same order `get sessions` does.
+func TestNewWatchStateStartsByNameAscending(t *testing.T) {
+	cols, err := selectSessionColumns("state,name", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := newWatchState(cols)
+	if ws.column != "name" || ws.desc {
+		t.Errorf("watch starts sorted by %q desc=%v, want name ascending", ws.column, ws.desc)
+	}
+	if got := headersOf(ws.columns); !reflect.DeepEqual(got, []string{"STATE", "AGENT NAME"}) {
+		t.Errorf("watch columns = %v, want the ones passed in", got)
+	}
 }

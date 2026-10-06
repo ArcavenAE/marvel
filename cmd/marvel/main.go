@@ -2866,6 +2866,12 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	return buf.String()
 }
 
+// newWatchState is the watch screen's starting state: sorted by name,
+// ascending, in the selected columns.
+func newWatchState(cols []sessionColumn) *watchSort {
+	return &watchSort{column: "name", desc: false, columns: cols}
+}
+
 func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
@@ -2893,7 +2899,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 		}
 	}()
 
-	ws := &watchSort{column: "name", desc: false, columns: cols}
+	ws := newWatchState(cols)
 
 	render := func() {
 		output := renderWatch(ws, interval)
