@@ -211,7 +211,7 @@ seals a tree early to save disk.
 | the swap | keep the current tree; remove `trees/<new>`; emit `view.refresh-failed` |
 | sealing a tree | log it, leave it readable, retry on the next tick; a stuck seal never blocks a swap |
 | the notice | record it undelivered, keep it pending, retry each tick; superseded trees stay readable until it lands |
-| first build at spawn | the session still starts, without `MARVEL_VIEW_<NAME>`; emit `view.unavailable` once per change |
+| first build at spawn | the build runs in the background, off the controller's lock, and the spawn waits for it a tick at a time up to the spawn bound (15s); past it, or on a failure, the session still starts, without `MARVEL_VIEW_<NAME>`; emit `view.unavailable` once per change |
 | daemon restart | trees on disk persist; the pending notice, its delivery time and each superseded tree's state are stored with the team, as a pending handoff request is, so a restart neither re-seals early nor forgets an undelivered notice |
 | teardown | restore owner permissions top down, then remove `views/<session-key>/` |
 
