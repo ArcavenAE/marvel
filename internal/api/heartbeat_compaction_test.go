@@ -108,3 +108,46 @@ func TestHeartbeatCountsNoCompactionWithoutAPriorOccupancy(t *testing.T) {
 		t.Fatalf("a percentage-only feed counted %d compactions, want 0", got.ContextCompactions)
 	}
 }
+
+// The band's absolute floor is 2048 tokens: a drop of exactly 2048 is inside
+// it, one more is a compaction.
+func TestHeartbeatAbsoluteBandIs2048Tokens(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		to         int
+		compaction int
+	}{
+		{"exactly the floor", 7_952, 0},
+		{"one past the floor", 7_951, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := NewStore()
+			s.SetContextLimitResolver(ladderResolver(&resolverCall{}))
+			token := gradedSession(t, s, 0)
+			beat(t, s, token, 10_000)
+			if got := beat(t, s, token, tc.to); got.ContextCompactions != tc.compaction {
+				t.Fatalf("10000 -> %d: ContextCompactions = %d, want %d", tc.to, got.ContextCompactions, tc.compaction)
+			}
+		})
+	}
+}
+
+// A reading another producer left is not a prior occupancy to drop from, and
+// its compaction count is not this producer's to carry: the first heartbeat
+// after an accountant reading starts both afresh.
+func TestHeartbeatAfterAnAccountantReadingCountsAndCarriesNothing(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	s.SetContextLimitResolver(ladderResolver(&resolverCall{}))
+	token := gradedSession(t, s, 0)
+	s.UpdateSessionContext(gradedSessionKey, SessionContext{
+		ContextSource: ContextSourceAccountant, ContextTokens: 400_000, ContextRequests: 5, ContextCompactions: 3,
+	})
+
+	got := beat(t, s, token, 20_000)
+	if got.ContextCompactions != 0 {
+		t.Fatalf("ContextCompactions = %d after an accountant reading, want 0 (not carried, no drop counted)", got.ContextCompactions)
+	}
+}
