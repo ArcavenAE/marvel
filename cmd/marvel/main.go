@@ -966,6 +966,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns string
+	var noTrunc bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
@@ -974,10 +975,11 @@ func getCmd() *cobra.Command {
 			watching := cmd.Flags().Changed("watch")
 			sessions := args[0] == "sessions" || args[0] == "session"
 			var cols []sessionColumn
+			var explicit bool
 			switch {
 			case sessions || watching:
 				var err error
-				if cols, err = loadSessionColumns(columns); err != nil {
+				if cols, explicit, err = loadSessionColumnsSel(columns); err != nil {
 					return err
 				}
 			case columns != "":
@@ -992,9 +994,10 @@ func getCmd() *cobra.Command {
 				}
 				return watchSessionsLoop(time.Duration(secs)*time.Second, cols)
 			}
-			return getResources(args[0], cols)
+			return getResources(args[0], cols, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
+	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
 	f.NoOptDefVal = ""
 	cmd.Flags().StringVar(&columns, "columns", "",
@@ -1012,7 +1015,7 @@ func (o *optionalString) String() string          { return *o.val }
 func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
-func getResources(resourceType string, cols []sessionColumn) error {
+func getResources(resourceType string, cols []sessionColumn, fit fitOptions) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
 	resp, err := send(daemon.Request{
 		Method: "get",
@@ -1027,7 +1030,7 @@ func getResources(resourceType string, cols []sessionColumn) error {
 
 	switch resourceType {
 	case "sessions", "session":
-		return printSessions(resp.Result, cols)
+		return printSessions(resp.Result, cols, fit)
 	case "teams", "team":
 		return printTeams(resp.Result)
 	case "workspaces", "workspace":
@@ -2688,7 +2691,7 @@ func formatBytes(n int64) string {
 type sessionRow struct {
 	workspace, team, role, generation, name string
 	state, health, context, cpu, rss        string
-	desk, runtime, llm                      string
+	desk, runtime, llm, workdir             string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2798,7 +2801,12 @@ func newSessionRow(s api.Session) sessionRow {
 	if (s.State == api.SessionSucceeded || s.State == api.SessionCrashed) && s.ExitStatus != "" {
 		state += " (exit " + s.ExitStatus + ")"
 	}
+	workdir := s.WorkDir
+	if workdir == "" {
+		workdir = "-"
+	}
 	return sessionRow{
+		workdir:   workdir,
 		workspace: s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
@@ -2958,7 +2966,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 
 // --- Table printers (non-watch) ---
 
-func printSessions(data json.RawMessage, cols []sessionColumn) error {
+func printSessions(data json.RawMessage, cols []sessionColumn, fit fitOptions) error {
 	var sessions []api.Session
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
@@ -2967,7 +2975,16 @@ func printSessions(data json.RawMessage, cols []sessionColumn) error {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Name < sessions[j].Name
 	})
-	fmt.Print(renderSessionTableCols(sessions, cols))
+	// The note and the warning are TTY chrome on the header's stream,
+	// stdout; off a terminal nothing is fitted, so neither prints into a pipe.
+	res := fitSessionTable(sessions, cols, fit)
+	fmt.Print(res.table)
+	if res.warn != "" {
+		fmt.Println(res.warn)
+	}
+	if res.hidden > 0 {
+		fmt.Printf("%d columns hidden at this width\n", res.hidden)
+	}
 	return nil
 }
 
