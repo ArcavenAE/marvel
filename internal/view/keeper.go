@@ -2,6 +2,7 @@ package view
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,14 +18,20 @@ import (
 // hold a spawn or a tick for ever.
 const DefaultFetchTimeout = 2 * time.Minute
 
-// DefaultSpawnTimeout bounds the build at spawn. The spawn runs inside the
-// reconcile that holds the controller's lock, so every team waits while the
-// bound runs, and the bound is the stall. 15s is long enough for a first fetch
-// of an ordinary repository (marvel's own mirror is under 8 MB) and short
-// enough that a hung remote costs one short pause. A build cut off at 15s starts
-// the seat without the view, and the tick finishes it off the lock with the
-// longer bound (design section 7, first build at spawn).
+// DefaultSpawnTimeout bounds how long a seat's spawn waits for its views. The
+// controller defers the spawn, tick by tick, while the views build in the
+// background (Prepare), so the wait costs no one the controller's lock. 15s is
+// long enough for a first fetch of an ordinary repository (marvel's own mirror
+// is under 8 MB) and short enough that a hung remote delays one seat briefly. A
+// view not built by then starts the seat without it, and the tick finishes it
+// off the lock with the longer bound (design section 7, first build at spawn).
 const DefaultSpawnTimeout = 15 * time.Second
+
+// prepareTTL is how long a view prepared for a seat that has not been created
+// yet is kept, counted from the last time the controller asked about it. It
+// outlasts DefaultFetchTimeout, so a slow build is not swept before its seat
+// spawns, and a seat that never comes is cleaned up.
+const prepareTTL = 5 * time.Minute
 
 // TickInterval is how often the keeper looks for views that are due.
 const TickInterval = 30 * time.Second
@@ -88,6 +95,16 @@ type tracked struct {
 	down  bool
 	cause string
 	gone  bool
+	// prepared is set when the controller asked for this view ahead of the
+	// seat's spawn (Prepare), so the spawn binds what was built and does not
+	// fetch again. prepAt is when it was first asked, the start of the spawn
+	// bound. tried is set when the background build has finished, whether or
+	// not it succeeded. pre is how long an unclaimed prepared view is kept; it
+	// is zero once the seat exists.
+	prepared bool
+	prepAt   time.Time
+	tried    bool
+	pre      time.Time
 }
 
 func (k *Keeper) now() time.Time {
@@ -128,7 +145,11 @@ func (k *Keeper) track(sess api.Session, v api.View) *tracked {
 	}
 	if t, ok := k.tracked[id]; ok {
 		t.session, t.view = sess, v
-		t.builder.Remote, t.builder.Ref = v.Remote, v.Ref
+		// A refresh in flight reads these without the keeper's lock, so they are
+		// written only when the manifest changed them.
+		if t.builder.Remote != v.Remote || t.builder.Ref != v.Ref {
+			t.builder.Remote, t.builder.Ref = v.Remote, v.Ref
+		}
 		return t
 	}
 	t := &tracked{
@@ -142,16 +163,28 @@ func (k *Keeper) track(sess api.Session, v api.View) *tracked {
 	return t
 }
 
-// Build builds each declared view for a session being spawned. It returns once
-// every view has been tried or the spawn bound, shared by all the seat's views,
-// has run out; one that failed or was cut off leaves its cur absent, so the
-// seat starts without MARVEL_VIEW_<NAME>, and the tick builds it off the spawn
-// path with the longer bound.
+// Build builds each declared view for a session being spawned. A view the
+// controller already prepared (Prepare) is bound as it stands and nothing is
+// fetched. Any other view is built here, and Build returns once every view has
+// been tried or the spawn bound, shared by all the seat's views, has run out;
+// one that failed or was cut off leaves its cur absent, so the seat starts
+// without MARVEL_VIEW_<NAME>, and the tick builds it off the spawn path with the
+// longer bound. The controller prepares first, so the fetching branch is for a
+// caller that creates a session without it.
 func (k *Keeper) Build(sess api.Session, views []api.View) {
 	ctx, cancel := context.WithTimeout(context.Background(), k.spawnTimeout())
 	defer cancel()
 	for _, v := range views {
 		t := k.track(sess, v)
+		k.mu.Lock()
+		prepared := t.prepared
+		t.pre = time.Time{}
+		k.mu.Unlock()
+		if prepared {
+			// Built ahead of the spawn, off the controller's lock, or given up on
+			// at the bound: either way the spawn does not fetch.
+			continue
+		}
 		// A tick may already be refreshing this view. The build waits for it
 		// only within its own bound, so the tick's longer fetch timeout cannot
 		// stretch a spawn.
@@ -161,6 +194,61 @@ func (k *Keeper) Build(sess api.Session, views []api.View) {
 		}
 		k.refreshLocked(ctx, t, "spawn")
 	}
+}
+
+// errNotBuiltInTime is the cause reported when a seat is spawned without a view
+// that had not finished building at the spawn bound.
+var errNotBuiltInTime = errors.New("not built within the spawn bound")
+
+// Prepare starts building a seat's views ahead of its spawn, in the background,
+// and reports whether the spawn may go ahead: every view is built or has failed,
+// or the spawn bound has run out since it was first asked. The controller calls
+// it before creating the session and defers the spawn to a later tick while it
+// returns false, so no fetch runs under the controller's lock. The bound runs
+// from the first call. A view still unbuilt at the bound is reported as
+// view.unavailable and the seat starts without it; the build carries on and the
+// tick follows the view once the seat exists (design section 7, first build at
+// spawn). Build, called at the spawn, then binds what is there and fetches
+// nothing.
+func (k *Keeper) Prepare(sess api.Session, views []api.View) bool {
+	ready := true
+	for _, v := range views {
+		t := k.track(sess, v)
+		now := k.now()
+		k.mu.Lock()
+		first := !t.prepared
+		if first {
+			t.prepared, t.prepAt = true, now
+		}
+		t.pre = now.Add(prepareTTL)
+		tried, cutoff := t.tried, now.Sub(t.prepAt) >= k.spawnTimeout()
+		k.mu.Unlock()
+		if first {
+			go k.prepareBuild(t)
+		}
+		if tried {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(t.builder.Dir, "cur")); err == nil {
+			continue
+		}
+		if cutoff {
+			k.emitFailure(sess, v.Name, "spawn", errNotBuiltInTime, k.noteDown(t, errNotBuiltInTime))
+			continue
+		}
+		ready = false
+	}
+	return ready
+}
+
+// prepareBuild runs the first build of a prepared view, off every lock but the
+// view's own refresh slot.
+func (k *Keeper) prepareBuild(t *tracked) {
+	t.run <- struct{}{}
+	k.refreshLocked(context.Background(), t, "spawn")
+	k.mu.Lock()
+	t.tried = true
+	k.mu.Unlock()
 }
 
 // acquire takes the view's refresh slot, or gives up when ctx ends.
@@ -253,7 +341,7 @@ func (k *Keeper) Tick() {
 		for id, t := range k.tracked {
 			// An entry created since this tick began was not in its snapshot
 			// and is not stale.
-			if !live[id] && t.gen < gen {
+			if !live[id] && t.gen < gen && !t.pre.After(k.now()) {
 				t.gone = true
 				delete(k.tracked, id)
 			}

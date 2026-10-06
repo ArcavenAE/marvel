@@ -1292,6 +1292,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
 			}
+			// A seat whose views are still building waits for a later tick: the
+			// build runs in the background, never under this lock.
+			if !c.sessMgr.PrepareViews(sess, role) {
+				break
+			}
 			// A refused placement is reported, at a low rate, by the manager.
 			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
@@ -2229,6 +2234,11 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				if req.Session == sess.Predecessor {
 					sess.HandoffRequestedAt = req.RequestedAt
 				}
+			}
+			// The successor's views build in the background; the shift stays in
+			// launching and tries again next tick.
+			if !c.sessMgr.PrepareViews(sess, role) {
+				return
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				if !errors.Is(err, session.ErrPlacementRefused) {
