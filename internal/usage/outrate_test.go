@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/runtime/claudecode"
 	"github.com/arcavenae/marvel/internal/runtime/codex"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
@@ -156,4 +157,68 @@ func TestCumulativeFeedRatesTheDelta(t *testing.T) {
 	if math.Abs(got-want) > want*0.001 {
 		t.Errorf("cumulative feed rate = %v, additive feed rate = %v, want them equal", got, want)
 	}
+}
+
+// A renderer ages a stored cell with DecayedRate, and gets the figure the
+// accountant itself would report at that time.
+func TestDecayedRateMatchesTheAccountant(t *testing.T) {
+	t.Parallel()
+	a, sink, clk := newRateAccountant(t)
+	a.Observe(testCoords, outEvent(1000))
+	cell := mustReading(t, sink).OutRate
+
+	later := clk.now.Add(3 * OutRateHalfLife)
+	if got, want := DecayedRate(cell, later), rateAt(t, a, later); math.Abs(got-want) > 1e-9 {
+		t.Errorf("DecayedRate = %v, accountant = %v, want them equal", got, want)
+	}
+	if got := DecayedRate(cell, cell.ObservedAt); math.Abs(got-cell.Value) > 1e-12 {
+		t.Errorf("DecayedRate at the observation = %v, want the stored %v", got, cell.Value)
+	}
+	if got := DecayedRate(cell, cell.ObservedAt.Add(-time.Hour)); got != cell.Value {
+		t.Errorf("DecayedRate before the observation = %v, want the stored %v (a clock that stepped back decays nothing)", got, cell.Value)
+	}
+}
+
+// A cumulative total that falls (the harness restarted its count) is not
+// negative output: the rate never goes below zero.
+func TestCumulativeTotalFallingNeverGivesANegativeRate(t *testing.T) {
+	t.Parallel()
+	a, _, clk := newRateAccountant(t)
+	for _, total := range []int{5000, 100} {
+		r := rtevents.RequestUsage{Layout: rtevents.LayoutSubsumptive, In: 5000, Out: total}
+		a.Observe(testCoords, turnEvent(codex.Harness, r))
+		clk.now = clk.now.Add(time.Second)
+	}
+	if got := rateAt(t, a, clk.now); got < 0 {
+		t.Errorf("rate = %v after the total fell, want it non-negative", got)
+	}
+}
+
+// A sample stamped before the previous one (the clock stepped back) adds its
+// tokens without inflating the count: the rate stays finite and the
+// observation time does not move backwards.
+func TestRateSurvivesAClockThatStepsBack(t *testing.T) {
+	t.Parallel()
+	a, sink, clk := newRateAccountant(t)
+	a.Observe(testCoords, outEvent(1000))
+	first := clk.now
+	clk.now = clk.now.Add(-time.Hour)
+	a.Observe(testCoords, outEvent(1000))
+
+	cell := mustReading(t, sink).OutRate
+	if cell.ObservedAt.Before(first) {
+		t.Errorf("observed_at = %v moved before the earlier sample %v", cell.ObservedAt, first)
+	}
+	if got := rateAt(t, a, first); math.IsInf(got, 0) || math.IsNaN(got) || got <= 0 || got > 200 {
+		t.Errorf("rate = %v after a backwards sample, want a finite figure for 2000 tokens", got)
+	}
+}
+
+func mustReading(t *testing.T, sink *recordSink) api.SessionContext {
+	t.Helper()
+	got, ok := sink.get(testCoords.AgentID)
+	if !ok {
+		t.Fatal("no reading written")
+	}
+	return got
 }
