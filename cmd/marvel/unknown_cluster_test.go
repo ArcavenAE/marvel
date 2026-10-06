@@ -80,10 +80,10 @@ func TestUnknownClusterRefuses(t *testing.T) {
 	}
 }
 
-// The refusal is for a name the operator typed. A config whose own
-// current_cluster names nothing keeps the old warning and local fallback,
-// so an existing install does not stop working.
-func TestUnknownCurrentClusterStillFallsBackLocal(t *testing.T) {
+// Pins today's behavior, not a decision: a config whose own current_cluster
+// names nothing still warns and falls back to the local daemon. Whether it
+// should refuse too is an open question for the operator.
+func TestUnknownCurrentClusterTodayFallsBackLocal(t *testing.T) {
 	_ = unknownClusterFixture(t)
 	cfg := &config.Config{
 		Clusters:       []config.Cluster{{Name: "testcluster", Socket: "/scratch/cluster.sock"}},
