@@ -2,7 +2,6 @@ package bus
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,7 +15,17 @@ import (
 // which holds NUL-separated KEY=value entries, and returns it one entry per
 // line.
 func environFromProc(path string) (string, error) {
-	return "", errors.New("not implemented")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, entry := range strings.Split(string(data), "\x00") {
+		if entry != "" {
+			b.WriteString(entry + "\n")
+		}
+	}
+	return b.String(), nil
 }
 
 // brokerEnviron returns the environment of a running process: /proc where the

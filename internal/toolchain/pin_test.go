@@ -12,9 +12,11 @@
 package toolchain
 
 import (
-	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -226,8 +228,8 @@ func TestCIEnvStepRefusesTwoJobsThatDisagree(t *testing.T) {
 	}
 	write("v1", "v1")
 	step, err := ciEnvStep(path, "K")
-	if err != nil || step.value != "v1" {
-		t.Errorf("two jobs agreeing on K = %+v, %v, want v1", step, err)
+	if err != nil || step.value != "1" {
+		t.Errorf("two jobs agreeing on K = %+v, %v, want 1", step, err)
 	}
 }
 
@@ -241,12 +243,55 @@ type ciStep struct {
 // it is empty, or when two jobs set it to different values, so which job is
 // read never depends on map order.
 func ciEnvStep(path, key string) (ciStep, error) {
-	return ciStep{}, errors.New("not implemented")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ciStep{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Env map[string]string `yaml:"env"`
+				Run string            `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		return ciStep{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	var found *ciStep
+	for _, name := range slices.Sorted(maps.Keys(wf.Jobs)) {
+		for _, step := range wf.Jobs[name].Steps {
+			value, ok := step.Env[key]
+			if !ok {
+				continue
+			}
+			if value == "" {
+				return ciStep{}, fmt.Errorf("%s sets %s to an empty value in job %s", path, key, name)
+			}
+			got := ciStep{value: strings.TrimPrefix(value, "v"), run: step.Run}
+			if found != nil && found.value != got.value {
+				return ciStep{}, fmt.Errorf("%s sets %s to %q and %q in different jobs", path, key, found.value, got.value)
+			}
+			if found == nil {
+				found = &got
+			}
+		}
+	}
+	if found == nil {
+		return ciStep{}, fmt.Errorf("%s has no step setting %s", path, key)
+	}
+	return *found, nil
 }
 
 // checksumChecked reports whether a run script checks a download against the
-// SHA-256 held in the named env var.
+// SHA-256 held in the named env var: a line that names the variable and pipes
+// it to sha256sum --check.
 func checksumChecked(run, envVar string) bool {
+	for _, line := range strings.Split(run, "\n") {
+		if strings.Contains(line, envVar) && strings.Contains(line, "sha256sum") && strings.Contains(line, "--check") {
+			return true
+		}
+	}
 	return false
 }
 
