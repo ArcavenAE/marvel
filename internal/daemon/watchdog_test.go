@@ -398,6 +398,7 @@ func TestWatchdogFieldTypesArePinned(t *testing.T) {
 		"now":         "func() time.Time",
 		"readPane":    "func(string) (string, int, error)",
 		"capture":     "func(string) (string, error)",
+		"sample":      "func(panestate.Pattern) (string, error)",
 		"mu":          "sync.Mutex",
 		"lastCapture": "map[string]time.Time",
 		"rolled":      "map[string]string",

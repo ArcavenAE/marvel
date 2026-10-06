@@ -132,3 +132,23 @@ func TestWatchdogLogsTheControlResultAtStart(t *testing.T) {
 		t.Fatalf("log = %q, want the failed line", logs2.String())
 	}
 }
+
+// The watchdog the daemon builds has already run its control over the shipped
+// sets: one event per shipped pattern, and every shipped pattern kept.
+func TestWatchdogForRunsTheControlOverTheShippedSets(t *testing.T) {
+	sets, err := panestate.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring := events.NewRing(64)
+	w := watchdogFor(api.NewStore(), ring, sets, time.Minute)
+	if w == nil {
+		t.Fatal("watchdogFor returned nil over the shipped sets")
+	}
+	if got := len(ring.Snapshot(events.Filter{Kind: events.KindWatchdogControl}, 0)); got != len(sets) {
+		t.Fatalf("watchdog.control events = %d, want one per shipped pattern (%d)", got, len(sets))
+	}
+	if len(w.sets) != len(sets) {
+		t.Fatalf("kept %d of %d shipped patterns", len(w.sets), len(sets))
+	}
+}
