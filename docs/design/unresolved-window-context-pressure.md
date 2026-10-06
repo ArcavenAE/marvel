@@ -80,10 +80,22 @@ the raw payload (not to OTEL either).
 - **D5. ARM state.** A `get sessions` column: armed, no-window, stale,
   refused; qualifiers compaction-unknown and self-reported; a once-per-change
   event. It sits beside `context.limit-unresolved`, which stays as it is.
-- **D6. max-age is required** beside any context-pressure arm, as the
-  backstop for a faked or missing reading (a seat, or a prompt injected into
-  it, can report any number). Apply refuses a context-pressure arm with no
-  max-age arm.
+- **D6. max-age beside a context-pressure arm, where max-age is allowed.**
+  max-age is the backstop for a faked or missing reading (a seat, or a
+  prompt injected into it, can report any number). It is not allowed
+  everywhere: apply refuses max-age on a headless role
+  (`internal/api/manifest_shift.go:175-176`) and on a role with replicas > 1
+  (`:178-179`), and that refusal tells the operator to use context pressure
+  there instead (`:268-272`). So:
+  - on an interactive role with replicas <= 1, apply refuses a
+    context-pressure arm with no max-age arm;
+  - on a headless or multi-replica role, context pressure stays allowed on
+    its own, apply emits an advisory that the role has no age backstop, and
+    the ARM state (D5) shows the qualifier `no-backstop`. A headless run's
+    backstop is the kill branch for a stuck run (design D7 of the shift
+    trigger list), not a shift. A multi-replica role has no age backstop until
+    max-age can ask each seat separately (marvel#452); this design does not
+    add one.
 - **D7. Compaction is a miss, not a trigger.** A compaction on an armed seat
   that was not shifted emits `arm-late` and counts as a miss per role; a
   compaction on an unarmed seat emits `compacted-unarmed`. There is no
@@ -91,8 +103,10 @@ the raw payload (not to OTEL either).
 - **D8. No database read, enforced.** No marvel code opens opencode's
   database, as a probe or a build. A structural test fails if a marvel
   package imports a sqlite driver, runs `sqlite3` or `opencode db`, or opens a
-  path in opencode's data directory. `go.mod` carries no sqlite driver today,
-  so it passes on day one. It is a structural check, so it may gate (ADR-007).
+  path literal in opencode's data directory (`opencode.db` or the data
+  directory name). It reads source text, so a path assembled at runtime from
+  parts is outside what it can see; code review covers that case. `go.mod`
+  carries no sqlite driver today, so it passes on day one. It is a structural check, so it may gate (ADR-007).
 - **D9. opencode, in order.** The window comes from the manifest. Then a
   private opencode home per seat, only once a probe shows how it
   authenticates without marvel touching credential rows. Then occupancy from
@@ -116,14 +130,14 @@ Builds:
 
 | id | change | red test | after |
 |---|---|---|---|
-| T1 | occupancy contract (D1); fix the stale OpenCode note at `internal/runtime/events/events.go:155-160` | an adapter conformance test rejects a running total and a missing window source | |
+| T1 | occupancy contract (D1); fix the stale notes that call codex unresolved or describe OpenCode's totals: `internal/runtime/events/events.go:155-160`, `internal/team/controller.go:1941-1942`, `internal/api/types.go:689` | an adapter conformance test rejects a running total and a missing window source | |
 | T2 | ARM state column and event (D5) | a live seat with a context-pressure arm and no window shows `no-window`; the event fires once per change | T1 |
 | T3 | headroom fraction and runtime refusal (D2) | marvel#660's repro (window 258400, headroom_tokens 400000) is refused at arm time with an event; fraction 0.40 on 258400 arms above 155040 | T1, #663 |
 | T4 | freshness by compaction (D3); replaces #663's 10-minute bound for feed seats | a live current-generation seat with a six-day-old reading and no compaction since arms; a reading from before a compaction does not; a compaction-blind seat arms only within the bound | T1, #663 |
 | T5 | stale display (D4) | a reading older than its grade's bound renders `stale`, not a percentage | T1 |
-| T6 | max-age required (D6) | a manifest with a context-pressure arm and no max-age arm is refused at apply | |
+| T6 | max-age beside context pressure, where allowed (D6) | an interactive role at replicas 1 with a context-pressure arm and no max-age arm is refused at apply; the same arm on a role at replicas 3, or on a headless role, is accepted with a `no-backstop` advisory | |
 | T7 | `arm-late` and `compacted-unarmed` events (D7), from the same emitter as T2 | a compaction on an armed unshifted seat emits `arm-late`; on an unarmed seat, `compacted-unarmed` | T1, T2 |
-| T8 | structural test against database access (D8) | a fixture package that imports a sqlite driver, or shells out to `sqlite3` or `opencode db`, fails the test | |
+| T8 | structural test against database access (D8) | a fixture package that imports a sqlite driver, shells out to `sqlite3` or `opencode db`, or names an opencode database path literal, fails the test | |
 | T11 | refuse an opencode context-pressure arm at apply until T9 and T10 land (D9) | an opencode role with a context-pressure arm is refused at apply (today it is accepted and never fires) | |
 | T9 | opencode private home (D9), checking the opencode version P3 recorded at spawn | a seat's opencode state lands in its own home; the operator's database is untouched | P3, ruling 3 |
 | T10 | opencode plugin channel (D9) | a vendored plugin's readings arrive as D1 occupancy with grade and source | T1, T9, P4 |
@@ -143,9 +157,16 @@ T6, T8 and T11 have no dependencies and can ship first.
 ## 6. Rulings needed (the operator's)
 
 1. Adopt the design and plan as voted. Recommended: adopt.
-2. D6: require max-age beside a context-pressure arm (refuse at apply), or
-   advise only. Recommended: require. All 19 roles in the one staged
-   manifest change already carry a max-age arm, so nothing in flight breaks.
+2. D6: where max-age is allowed (an interactive role at replicas <= 1),
+   require it beside a context-pressure arm and refuse at apply without it;
+   on headless and multi-replica roles, where max-age is refused today,
+   accept context pressure alone with a `no-backstop` advisory. The other
+   option is an advisory everywhere. Requiring max-age everywhere is not an
+   option, because it would forbid context pressure on every headless or
+   multi-replica role. Recommended: require where allowed, advise elsewhere.
+   The 19 roles in the one staged manifest change all carry a max-age arm
+   and are allowed one; in the manifests on disk, every role at replicas 2
+   or more carries no shift block, so nothing in flight is refused.
 3. T9's authentication rule for an opencode private home, as the security
    seat stated it: authenticate from an operator-supplied env credential, or
    a link to a file holding only credentials; copying credential rows is
