@@ -844,6 +844,16 @@ func (s *Store) UpdateSessionContext(key string, c SessionContext) {
 	sess.SessionContext = c
 }
 
+// UpdateSessionSpend records the spend-only slice of a session's context
+// reading. It writes SpendOut, SpendPromptTokens and OutRate and nothing else:
+// not the occupancy fields, not ContextSource and not ContextAt, which is the
+// activity signal the watchdog reads, so whether a running-total turn counts as
+// activity stays a separate decision. A missing session is ignored and nothing
+// is persisted, as with UpdateSessionContext.
+func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
+	_, _ = key, sp
+}
+
 // SetHarnessState records the watchdog's verdict on a session, nil to clear
 // it. It writes that one field and does not persist: a verdict is stale the
 // moment the daemon stops, and the watchdog re-derives it. A missing session is

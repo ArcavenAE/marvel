@@ -67,6 +67,9 @@ type Bind struct {
 // Sink receives computed readings. *api.Store satisfies it.
 type Sink interface {
 	UpdateSessionContext(key string, c api.SessionContext)
+	// UpdateSessionSpend records spend alone, for a feed that carries spend and
+	// no occupancy.
+	UpdateSessionSpend(key string, sp api.SessionSpend)
 }
 
 // Accountant folds adapter events into per-session context occupancy and

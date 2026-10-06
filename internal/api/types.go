@@ -1008,3 +1008,14 @@ type HarnessState struct {
 
 // HarnessStateLoggedOut is the one state Phase 1 sets.
 const HarnessStateLoggedOut = "logged-out"
+
+// SessionSpend is the spend-only slice of a session's context reading: the
+// cumulative output and prompt tokens and the output-token rate. The usage
+// accountant writes it for a seat whose feed carries spend and no occupancy
+// (a running-total feed such as codex's), where publishing a whole reading
+// would stamp an occupancy source and a 0% level that were never measured.
+type SessionSpend struct {
+	Out          *int
+	PromptTokens *int
+	OutRate      asof.Cell[float64]
+}
