@@ -548,11 +548,12 @@ func (m *Manager) recordPanePID(sessKey, panePID string) {
 }
 
 // PrepareViews starts building the views a role declares for a seat that is
-// about to be created, off any lock, and reports whether the spawn may go
-// ahead: the views are built, or they have failed, or the spawn bound has run
-// out. The controller defers the spawn to a later tick while it is false, so a
-// slow remote never holds the controller's lock. A role with no views, or a
-// manager with no keeper, is always ready.
+// about to be created and reports whether the spawn may go ahead. The build runs
+// in the background, off every lock; the call itself is quick and is made under
+// the controller's. It is true when the views are built or have failed, or the
+// spawn bound has run out. The controller defers the spawn to a later tick while
+// it is false, so a slow remote never holds the controller's lock. A role with no
+// views, or a manager with no keeper, is always ready.
 func (m *Manager) PrepareViews(sess *api.Session, role *api.Role) bool {
 	if m.Views == nil || role == nil || len(role.Views) == 0 {
 		return true

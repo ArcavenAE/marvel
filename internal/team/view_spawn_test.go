@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,11 +21,14 @@ import (
 const viewSpawnSHA = "6666666666666666666666666666666666666666"
 
 // spawnGit resolves to viewSpawnSHA. When hang is set its fetch waits for its
-// context, as a hung remote does.
-type spawnGit struct{ hang bool }
+// context, as a hung remote does; a test can set it later through hung.
+type spawnGit struct {
+	hang bool
+	hung *atomic.Bool
+}
 
 func (g spawnGit) Fetch(ctx context.Context, _, _, _ string) error {
-	if g.hang {
+	if g.hang || (g.hung != nil && g.hung.Load()) {
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -168,5 +172,42 @@ func TestSeatSpawnsWithoutItsViewPastTheSpawnBound(t *testing.T) {
 	}
 	if unavailable != 1 {
 		t.Errorf("view.unavailable events = %d, want 1", unavailable)
+	}
+}
+
+// A shift's successor is prepared like any other seat: a hung remote at the
+// successor's spawn does not hold the controller's lock, so another team's pass
+// stays fast, and the shift waits in launching for a later tick.
+func TestHungViewFetchAtAShiftSuccessorDoesNotStallTheReconcile(t *testing.T) {
+	var hung atomic.Bool
+	store, ctrl, keeper, _ := viewSpawnRig(t, spawnGit{hung: &hung}, 10*time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	for len(teamSessions(store, "slow")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the seat with a view never spawned")
+		}
+		ctrl.ReconcileOnce()
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	hung.Store(true)
+	if err := ctrl.InitiateShift("test-view-spawn/slow", "reader"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done })
+	go func() {
+		defer close(done)
+		ctrl.ReconcileOnce()
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("a shift pass with a hung view fetch took more than 3s; the successor's build holds the controller lock (spawn bound %s)", keeper.SpawnTimeout)
+	}
+	for _, s := range teamSessions(store, "slow") {
+		if s.Generation > 1 {
+			t.Errorf("successor %s was created while its view was still building", s.Name)
+		}
 	}
 }

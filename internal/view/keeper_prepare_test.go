@@ -161,3 +161,44 @@ func TestPreparedViewIsKeptWhileTheControllerKeepsAsking(t *testing.T) {
 		t.Fatal("a view the controller kept asking about was swept")
 	}
 }
+
+// The spawn bound is inclusive: a seat is let go at exactly the bound and held a
+// moment before it.
+func TestPrepareLetsTheSeatGoAtExactlyTheSpawnBound(t *testing.T) {
+	r := newKRig(t)
+	r.k.SpawnTimeout = time.Minute
+	r.g.sha["a"] = shaOne
+	gate := make(chan struct{})
+	r.g.block["a"] = gate
+	views := []api.View{kView("alpha", "a", 10*time.Minute)}
+	sess := api.Session{Name: "seat", Workspace: "ws", Team: "t", Role: "r", State: api.SessionPending}
+	t.Cleanup(func() {
+		close(gate)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			r.k.mu.Lock()
+			done := true
+			for _, tr := range r.k.tracked {
+				done = done && tr.tried
+			}
+			r.k.mu.Unlock()
+			if done {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_ = r.k.Teardown(sess.Key())
+	})
+
+	if r.k.Prepare(sess, views) {
+		t.Fatal("ready at the first ask with the fetch hanging")
+	}
+	r.now = r.now.Add(time.Minute - time.Nanosecond)
+	if r.k.Prepare(sess, views) {
+		t.Fatal("ready a nanosecond before the bound")
+	}
+	r.now = r.now.Add(time.Nanosecond)
+	if !r.k.Prepare(sess, views) {
+		t.Fatal("still held at exactly the bound")
+	}
+}
