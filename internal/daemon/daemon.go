@@ -18,6 +18,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -129,7 +130,7 @@ type Daemon struct {
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
 	listener           net.Listener
-	sshServer          *SSHServer
+	sshServer          atomic.Pointer[SSHServer]
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -159,6 +160,9 @@ type Daemon struct {
 	// in the layout works either; the field is then simply absent from
 	// the wire and the client has nothing to compare.
 	home string
+	// cluster is the name the daemon's config gives the cluster it serves,
+	// set at start by identifyCluster. Empty when the config names none.
+	cluster string
 	// bus keeps a managed local broker's rendered configuration current
 	// with the applied teams (brief 10, aae-orc-e9g8i). Nil when this
 	// daemon's cluster has no managed bus section.
@@ -517,6 +521,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
+	d.identifyCluster(socketPath)
 	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()
 		if d.pidFile != "" {
@@ -652,7 +657,7 @@ func (d *Daemon) StartMRVL(addr string) error {
 	if err != nil {
 		return fmt.Errorf("init ssh server: %w", err)
 	}
-	d.sshServer = srv
+	d.sshServer.Store(srv)
 	return srv.Start(addr)
 }
 
@@ -756,8 +761,8 @@ func (d *Daemon) shutdown(teardown bool) {
 		d.cancel()
 	}
 
-	if d.sshServer != nil {
-		d.sshServer.Stop()
+	if srv := d.sshServer.Load(); srv != nil {
+		srv.Stop()
 	}
 
 	addr := ""
@@ -1015,6 +1020,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleBackendVerify(req.Params)
 	case "bus.status":
 		return d.handleBusStatus()
+	case "daemon.status":
+		return d.handleDaemonStatus()
 	case "bus.leaf.connect":
 		return d.handleBusLeafConnect()
 	case "bus.leaf.disconnect":
@@ -3242,10 +3249,9 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 	return nil
 }
 
-// handleBusStatus serves `marvel bus status`: the supervised broker when
-// there is one, the adopted URL when the cluster only points at a bus, and
-// a plain "no bus" otherwise.
-func (d *Daemon) handleBusStatus() Response {
+// busStatus is the bus.Status both bus.status and daemon.status return, and
+// false when the cluster has no bus.
+func (d *Daemon) busStatus() (bus.Status, bool) {
 	var st bus.Status
 	switch {
 	case d.busSup != nil:
@@ -3257,6 +3263,17 @@ func (d *Daemon) handleBusStatus() Response {
 			st.Class, st.Provider, st.Mode, st.CallerIdentity = rb.Class, rb.Provider, string(rb.Mode), rb.CallerIdentity
 		}
 	default:
+		return bus.Status{}, false
+	}
+	return st, true
+}
+
+// handleBusStatus serves `marvel bus status`: the supervised broker when
+// there is one, the adopted URL when the cluster only points at a bus, and
+// a plain "no bus" otherwise.
+func (d *Daemon) handleBusStatus() Response {
+	st, ok := d.busStatus()
+	if !ok {
 		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
 	}
 	data, err := json.Marshal(st)
