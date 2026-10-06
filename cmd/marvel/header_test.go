@@ -271,3 +271,29 @@ func headerSocket(t *testing.T, handler func(daemon.Request) daemon.Response) st
 	}()
 	return socket
 }
+
+// An older daemon has no daemon.status. The listing still works, and the
+// header says it could not get a status and why.
+func TestGetSessionsSurvivesADaemonWithoutStatus(t *testing.T) {
+	resolveFixture(t, false)
+	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
+		if req.Method == "get" {
+			data, _ := json.Marshal(headerSessions())
+			return daemon.Response{Result: data}
+		}
+		return daemon.Response{Error: "unknown method: " + req.Method}
+	})
+	t.Setenv(config.SocketEnv, socket)
+
+	out := captureStdout(t, func() {
+		cmd := getCmd()
+		cmd.SetArgs([]string{"sessions", "--header"})
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("get sessions --header against an older daemon: %v, want the listing", err)
+		}
+	})
+	if !strings.Contains(out, "no status (unknown method: daemon.status)") || !strings.Contains(out, "agent-0") {
+		t.Errorf("want the header's no-status line and the table:\n%s", out)
+	}
+}
