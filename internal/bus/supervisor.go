@@ -81,6 +81,10 @@ type Supervisor struct {
 	// leafReportedAt when a down event was last emitted for it.
 	leafSince      time.Time
 	leafReportedAt time.Time
+	// leafObservedAt is when /leafz was last read successfully. A failed
+	// read is no information and leaves it where it was, so the reading
+	// ages instead of being refreshed by an error.
+	leafObservedAt time.Time
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
@@ -172,6 +176,10 @@ const (
 	restartBackoffMax     = 5 * time.Minute
 	defaultDialTimeout    = 10 * time.Second
 	defaultLeafPoll       = 30 * time.Second
+	// leafValidPolls is how many poll intervals a /leafz reading stays
+	// current. Two tolerates one missed poll before the reading reads as
+	// expired.
+	leafValidPolls = 2
 	// defaultLeafDownRepeat is one fleet value, changeable as this constant:
 	// operator ruling 2026-10-06 recorded under Q1 in
 	// docs/design/wake-service.md.
@@ -722,6 +730,10 @@ func (s *Supervisor) Status() Status {
 		st.LeafSince = s.leafSince.Format(time.RFC3339)
 		st.LeafFor = leafDuration(s.now().Sub(s.leafSince))
 	}
+	if (st.Leaf == "up" || st.Leaf == "down") && !s.leafObservedAt.IsZero() {
+		st.LeafObservedAt = s.leafObservedAt.Format(time.RFC3339)
+		st.LeafValidUntil = s.leafObservedAt.Add(leafValidPolls * s.leafPoll).Format(time.RFC3339)
+	}
 	if !s.ready && s.backoffTill.After(time.Now()) {
 		st.BackoffUntil = s.backoffTill.Format(time.RFC3339)
 	}
@@ -769,6 +781,7 @@ func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	prev := s.leafUp
 	s.leafUp = &up
 	changed := prev == nil || *prev != up
+	s.leafObservedAt = now
 	if changed {
 		s.leafSince = now
 		s.leafReportedAt = time.Time{}
