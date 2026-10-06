@@ -3,13 +3,11 @@
 - **Status:** design for review, 2026-10-06, for #626. No code lands until this is
   reviewed. Checked against `origin/main` 6a509e0.
 - **Ruling:** the watchdog design panel's V6 (control cadence), split with
-  no majority on 2026-10-06, ruled by the operator the same day, relayed by
-  director: per covered version, plus at start and at reload, with
-  uncovered as its own state. **The letter is pending confirmation:** the
-  relay named option (b), whose text in the panel record is "start and
-  reload" only, while the content relayed is option (c). This design follows
-  the content. If the confirmed words differ, section 3 changes and nothing
-  else does.
+  no majority on 2026-10-06, ruled by the operator the same day as the
+  panel's option (c): one control per covered harness version, at start and
+  at reload, with uncovered as its own state. The operator answered "(b)"
+  against a list director had lettered differently; director confirmed the
+  mapping.
 - **Builds on:** `docs/design/harness-state-watchdog-p1.md` (#554) and the
   first shipped pattern set, `claude/2.1.290/logged-out` (#598).
 
