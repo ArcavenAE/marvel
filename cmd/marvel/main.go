@@ -965,26 +965,40 @@ func workCmd() *cobra.Command {
 }
 
 func getCmd() *cobra.Command {
-	var watchSec string
+	var watchSec, columns string
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("watch") {
+			watching := cmd.Flags().Changed("watch")
+			sessions := args[0] == "sessions" || args[0] == "session"
+			var cols []sessionColumn
+			switch {
+			case sessions || watching:
+				var err error
+				if cols, err = loadSessionColumns(columns); err != nil {
+					return err
+				}
+			case columns != "":
+				return fmt.Errorf("--columns applies to get sessions only")
+			}
+			if watching {
 				secs := 2
 				if watchSec != "" {
 					if _, err := fmt.Sscanf(watchSec, "%d", &secs); err != nil || secs < 1 {
 						return fmt.Errorf("invalid watch interval: %s", watchSec)
 					}
 				}
-				return watchSessionsLoop(time.Duration(secs) * time.Second)
+				return watchSessionsLoop(time.Duration(secs)*time.Second, cols)
 			}
-			return getResources(args[0])
+			return getResources(args[0], cols)
 		},
 	}
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
 	f.NoOptDefVal = ""
+	cmd.Flags().StringVar(&columns, "columns", "",
+		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
 	return cmd
 }
 
@@ -998,7 +1012,7 @@ func (o *optionalString) String() string          { return *o.val }
 func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
-func getResources(resourceType string) error {
+func getResources(resourceType string, cols []sessionColumn) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
 	resp, err := send(daemon.Request{
 		Method: "get",
@@ -1013,7 +1027,7 @@ func getResources(resourceType string) error {
 
 	switch resourceType {
 	case "sessions", "session":
-		return printSessions(resp.Result)
+		return printSessions(resp.Result, cols)
 	case "teams", "team":
 		return printTeams(resp.Result)
 	case "workspaces", "workspace":
@@ -2561,6 +2575,7 @@ type watchSort struct {
 	desc         bool
 	showHelp     bool
 	lastSessions []api.Session
+	columns      []sessionColumn
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -2665,119 +2680,131 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.0fP", value/unit)
 }
 
-func renderSessionTable(sessions []api.Session) string {
-	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tAGENT NAME\tSTATE\tHEALTH\tCTX%%\tCPU%%\tRSS\tDESK\tRUNTIME\tLLM\n")
-	for _, s := range sessions {
-		runtimeName := s.Runtime.Name
-		if runtimeName == "" {
-			runtimeName = s.Runtime.Command
-		}
-		// LLM is the model as the metering producer named it: the
-		// stream accountant's raw model for headless sessions, the
-		// statusline feed's display name for interactive ones.
-		llm := s.ContextModel
-		if llm == "" {
-			llm = "-"
-		}
-		// CTX% has two producers: the cooperative heartbeat RPC (the
-		// statusline/codex feeds and the simulator) and the usage
-		// accountant fed by adapter streams. Both stamp ContextAt, so that
-		// is the single "measured" sentinel.
-		//
-		// Three states, not two. "-" means marvel never measured this
-		// session's context: no stream, so an interactive launch, a pane
-		// adopted from a prior daemon, or a non-stream adapter. "?" means
-		// the tokens are real but the model's window could not be
-		// resolved, so a percentage would be a fiction against a guessed
-		// denominator. `marvel describe session` carries the reason, and
-		// the fix is usually one runtime.context_window line.
-		//
-		// Keyed on the DECLARED producer (ContextSource), not on which
-		// fields happen to be populated. The two producers report
-		// different shapes, and an accountant reading with an unresolved
-		// window is shaped like a heartbeat, so inferring from shape
-		// rendered real cooperative readings as "?". See aae-orc-ibu9.
-		ctx := "-"
-		switch {
-		case s.ContextAt.IsZero():
-		case s.ContextLimit == 0 && s.ContextSource != api.ContextSourceHeartbeat:
-			// No window resolved, so a percentage would be a fiction.
-			// The heartbeat is the one legitimate exception: a feed that
-			// carries a window now resolves one (aae-orc-38yr) and lands in
-			// the default branch like any measured reading, but a
-			// percentage-only heartbeat (the simulator, a feed too young to
-			// have classes) reports a figure the agent computed itself and
-			// never needed a window to do. Stating the exception explicitly
-			// is what stops that reading being rendered absent.
-			ctx = "?"
-		default:
-			ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
-		}
-		// Likewise for the sampler: a session the sampler has not
-		// reached (no pid, or a platform with no process table reader)
-		// shows absence rather than an idle-looking zero.
-		cpu, rss := "-", "-"
-		if !s.MetricsAt.IsZero() {
-			cpu = fmt.Sprintf("%.1f", s.CPUPercent)
-			rss = formatBytes(s.RSSBytes)
-		}
-		desk := strings.TrimPrefix(s.PaneID, "%")
-		gen := fmt.Sprintf("%d", s.Generation)
-		health := string(s.HealthState)
-		if health == "" {
-			health = "unknown"
-		}
-		// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
-		// HEALTH is LIVENESS — the process is alive and its pane exists — so a
-		// stalled session still reads healthy/unknown here; the "(stalled)"
-		// suffix says marvel has not observed it do work within its role's
-		// activity_timeout, which liveness cannot tell you. Running sessions
-		// only: a terminated session's last advisory is not news.
-		if s.State == api.SessionRunning && s.ActivityState == api.ActivityStalled {
-			health += " (stalled)"
-		}
-		// The harness-state watchdog's verdict (docs/design/harness-state-
-		// watchdog-p1.md section 5): only a high-confidence logged-out shows
-		// here; a low-confidence match is in describe. Advisory, no new column.
-		if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateLoggedOut {
-			health += " (logged-out)"
-		}
-		// A failed row carrying a projection Reason is TERMINAL: the role
-		// will spawn no replacement. Without this suffix it is byte-identical
-		// to an ordinary failure the reconciler is about to replace, so the
-		// operator cannot tell "done trying" from "coming back" — the whole
-		// point of aae-orc-kj5bq. Same suffix idiom as HEALTH's "(stalled)",
-		// and no new column or SessionState value. The short tag is the
-		// Reason's own prefix; `describe session` carries the full text.
-		state := string(s.State)
-		// The limited condition reads in place of "running", the same width,
-		// with no until-time and no reason: the table stays narrow and
-		// `describe session` carries the rest. A script filtering on
-		// "running" misses a limited seat; the JSON keeps state and
-		// condition apart.
-		if s.State == api.SessionRunning && s.Condition == api.ConditionLimited {
-			state = string(api.ConditionLimited)
-		}
-		if s.State == api.SessionFailed && s.Reason != "" {
-			if tag, _, found := strings.Cut(s.Reason, ":"); found {
-				state += " (" + tag + ")"
-			}
-		}
-		// The exit code rides the same suffix idiom on the rows the reap
-		// path wrote it to. "succeeded (exit 0)" is a finished headless run
-		// holding its slot (ADR-010); "crashed (exit 3)" tells a failed run
-		// from a killed one, whose status tmux reports empty and which
-		// therefore shows no suffix.
-		if (s.State == api.SessionSucceeded || s.State == api.SessionCrashed) && s.ExitStatus != "" {
-			state += " (exit " + s.ExitStatus + ")"
-		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.Workspace, s.Team, s.Role, gen, s.Name, state, health, ctx, cpu, rss, desk, runtimeName, llm)
+// sessionRow is one session's cells, computed once so every selectable
+// column reads the same values the fixed table always printed.
+type sessionRow struct {
+	workspace, team, role, generation, name string
+	state, health, context, cpu, rss        string
+	desk, runtime, llm                      string
+}
+
+// newSessionRow derives a session's cells. The absence rules live here, in
+// one place, whichever columns are selected: "-" is never measured, "?" is
+// a reading whose window could not be resolved.
+func newSessionRow(s api.Session) sessionRow {
+	runtimeName := s.Runtime.Name
+	if runtimeName == "" {
+		runtimeName = s.Runtime.Command
 	}
-	_ = w.Flush()
-	return buf.String()
+	// LLM is the model as the metering producer named it: the
+	// stream accountant's raw model for headless sessions, the
+	// statusline feed's display name for interactive ones.
+	llm := s.ContextModel
+	if llm == "" {
+		llm = "-"
+	}
+	// CTX% has two producers: the cooperative heartbeat RPC (the
+	// statusline/codex feeds and the simulator) and the usage
+	// accountant fed by adapter streams. Both stamp ContextAt, so that
+	// is the single "measured" sentinel.
+	//
+	// Three states, not two. "-" means marvel never measured this
+	// session's context: no stream, so an interactive launch, a pane
+	// adopted from a prior daemon, or a non-stream adapter. "?" means
+	// the tokens are real but the model's window could not be
+	// resolved, so a percentage would be a fiction against a guessed
+	// denominator. `marvel describe session` carries the reason, and
+	// the fix is usually one runtime.context_window line.
+	//
+	// Keyed on the DECLARED producer (ContextSource), not on which
+	// fields happen to be populated. The two producers report
+	// different shapes, and an accountant reading with an unresolved
+	// window is shaped like a heartbeat, so inferring from shape
+	// rendered real cooperative readings as "?". See aae-orc-ibu9.
+	ctx := "-"
+	switch {
+	case s.ContextAt.IsZero():
+	case s.ContextLimit == 0 && s.ContextSource != api.ContextSourceHeartbeat:
+		// No window resolved, so a percentage would be a fiction.
+		// The heartbeat is the one legitimate exception: a feed that
+		// carries a window now resolves one (aae-orc-38yr) and lands in
+		// the default branch like any measured reading, but a
+		// percentage-only heartbeat (the simulator, a feed too young to
+		// have classes) reports a figure the agent computed itself and
+		// never needed a window to do. Stating the exception explicitly
+		// is what stops that reading being rendered absent.
+		ctx = "?"
+	default:
+		ctx = fmt.Sprintf("%.0f%%", s.ContextPercent)
+	}
+	// Likewise for the sampler: a session the sampler has not
+	// reached (no pid, or a platform with no process table reader)
+	// shows absence rather than an idle-looking zero.
+	cpu, rss := "-", "-"
+	if !s.MetricsAt.IsZero() {
+		cpu = fmt.Sprintf("%.1f", s.CPUPercent)
+		rss = formatBytes(s.RSSBytes)
+	}
+	desk := strings.TrimPrefix(s.PaneID, "%")
+	gen := fmt.Sprintf("%d", s.Generation)
+	health := string(s.HealthState)
+	if health == "" {
+		health = "unknown"
+	}
+	// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
+	// HEALTH is LIVENESS — the process is alive and its pane exists — so a
+	// stalled session still reads healthy/unknown here; the "(stalled)"
+	// suffix says marvel has not observed it do work within its role's
+	// activity_timeout, which liveness cannot tell you. Running sessions
+	// only: a terminated session's last advisory is not news.
+	if s.State == api.SessionRunning && s.ActivityState == api.ActivityStalled {
+		health += " (stalled)"
+	}
+	// The harness-state watchdog's verdict (docs/design/harness-state-
+	// watchdog-p1.md section 5): only a high-confidence logged-out shows
+	// here; a low-confidence match is in describe. Advisory, no new column.
+	if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateLoggedOut {
+		health += " (logged-out)"
+	}
+	// A failed row carrying a projection Reason is TERMINAL: the role
+	// will spawn no replacement. Without this suffix it is byte-identical
+	// to an ordinary failure the reconciler is about to replace, so the
+	// operator cannot tell "done trying" from "coming back" — the whole
+	// point of aae-orc-kj5bq. Same suffix idiom as HEALTH's "(stalled)",
+	// and no new column or SessionState value. The short tag is the
+	// Reason's own prefix; `describe session` carries the full text.
+	state := string(s.State)
+	// The limited condition reads in place of "running", the same width,
+	// with no until-time and no reason: the table stays narrow and
+	// `describe session` carries the rest. A script filtering on
+	// "running" misses a limited seat; the JSON keeps state and
+	// condition apart.
+	if s.State == api.SessionRunning && s.Condition == api.ConditionLimited {
+		state = string(api.ConditionLimited)
+	}
+	if s.State == api.SessionFailed && s.Reason != "" {
+		if tag, _, found := strings.Cut(s.Reason, ":"); found {
+			state += " (" + tag + ")"
+		}
+	}
+	// The exit code rides the same suffix idiom on the rows the reap
+	// path wrote it to. "succeeded (exit 0)" is a finished headless run
+	// holding its slot (ADR-010); "crashed (exit 3)" tells a failed run
+	// from a killed one, whose status tmux reports empty and which
+	// therefore shows no suffix.
+	if (s.State == api.SessionSucceeded || s.State == api.SessionCrashed) && s.ExitStatus != "" {
+		state += " (exit " + s.ExitStatus + ")"
+	}
+	return sessionRow{
+		workspace: s.Workspace, team: s.Team, role: s.Role, generation: gen,
+		name: s.Name, state: state, health: health, context: ctx,
+		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
+	}
+}
+
+// renderSessionTable renders the default columns.
+func renderSessionTable(sessions []api.Session) string {
+	return renderSessionTableCols(sessions, defaultSessionColumns())
 }
 
 func renderWatch(ws *watchSort, interval time.Duration) string {
@@ -2825,18 +2852,18 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		if len(ws.lastSessions) > 0 {
 			fmt.Fprintf(&buf, "last known state:\n")
 			sortSessions(ws.lastSessions, ws)
-			buf.WriteString(renderSessionTable(ws.lastSessions))
+			buf.WriteString(renderSessionTableCols(ws.lastSessions, ws.columns))
 		}
 		return buf.String()
 	}
 
 	ws.lastSessions = sessions
 	sortSessions(sessions, ws)
-	buf.WriteString(renderSessionTable(sessions))
+	buf.WriteString(renderSessionTableCols(sessions, ws.columns))
 	return buf.String()
 }
 
-func watchSessionsLoop(interval time.Duration) error {
+func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("watch mode requires a terminal")
@@ -2863,7 +2890,7 @@ func watchSessionsLoop(interval time.Duration) error {
 		}
 	}()
 
-	ws := &watchSort{column: "name", desc: false}
+	ws := &watchSort{column: "name", desc: false, columns: cols}
 
 	render := func() {
 		output := renderWatch(ws, interval)
@@ -2928,7 +2955,7 @@ func watchSessionsLoop(interval time.Duration) error {
 
 // --- Table printers (non-watch) ---
 
-func printSessions(data json.RawMessage) error {
+func printSessions(data json.RawMessage, cols []sessionColumn) error {
 	var sessions []api.Session
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
@@ -2937,7 +2964,7 @@ func printSessions(data json.RawMessage) error {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Name < sessions[j].Name
 	})
-	fmt.Print(renderSessionTable(sessions))
+	fmt.Print(renderSessionTableCols(sessions, cols))
 	return nil
 }
 
