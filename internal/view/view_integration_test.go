@@ -15,19 +15,21 @@ import (
 )
 
 // gitIn runs git in dir with a clean environment and fails the test on error.
-func gitIn(t *testing.T, dir string, args ...string) {
+func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanGitEnv(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
+	return strings.TrimSpace(string(out))
 }
 
 // commitPayload writes payload files that name commit n and commits them.
-func commitPayload(t *testing.T, repo string, n int) {
+func commitPayload(t *testing.T, repo string, n int) string {
 	t.Helper()
 	deep := filepath.Join(repo, "a", "b")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
@@ -40,6 +42,7 @@ func commitPayload(t *testing.T, repo string, n int) {
 	}
 	gitIn(t, repo, "add", "-A")
 	gitIn(t, repo, "commit", "-q", "-m", fmt.Sprintf("commit %d", n))
+	return gitIn(t, repo, "rev-parse", "HEAD")
 }
 
 func realViewFixture(t *testing.T) (repo string, b *Builder) {
@@ -72,7 +75,18 @@ func realViewFixture(t *testing.T) (repo string, b *Builder) {
 // at 0.1% of reads, and logs the count. Production swaps are minutes apart.
 func TestRealGitReaderSeesNoTornFileDuringSwaps(t *testing.T) {
 	repo, b := realViewFixture(t)
-	commitPayload(t, repo, 0)
+	// payloads maps each commit id to the payload that commit holds. The
+	// writer adds a commit before it refreshes onto it, so a reader that sees
+	// a tree finds its commit here.
+	var pmu sync.Mutex
+	payloads := map[string]string{}
+	record := func(n int) {
+		sha := commitPayload(t, repo, n)
+		pmu.Lock()
+		payloads[sha] = fmt.Sprintf("payload-%d", n)
+		pmu.Unlock()
+	}
+	record(0)
 	if _, err := b.Refresh(context.Background()); err != nil {
 		t.Fatalf("first Refresh: %v", err)
 	}
@@ -108,7 +122,12 @@ func TestRealGitReaderSeesNoTornFileDuringSwaps(t *testing.T) {
 		_, err := fmt.Sscanf(s, "payload-%d", &n)
 		return err == nil && n >= 0 && n <= swaps && s == fmt.Sprintf("payload-%d", n)
 	}
-	isSHA := func(s string) bool { return validCommitID(strings.TrimSpace(s)) }
+	isSHA := func(s string) bool {
+		pmu.Lock()
+		defer pmu.Unlock()
+		_, known := payloads[strings.TrimSpace(s)]
+		return known
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -125,7 +144,7 @@ func TestRealGitReaderSeesNoTornFileDuringSwaps(t *testing.T) {
 	}()
 
 	for n := 1; n <= swaps; n++ {
-		commitPayload(t, repo, n)
+		record(n)
 		res, err := b.Refresh(context.Background())
 		if err != nil {
 			t.Fatalf("Refresh %d: %v", n, err)
@@ -142,6 +161,31 @@ func TestRealGitReaderSeesNoTornFileDuringSwaps(t *testing.T) {
 	}
 	if reads == 0 {
 		t.Fatal("the reader never ran")
+	}
+	// Every tree holds its own commit: VIEW_SHA names the directory it sits
+	// in, and the payload is that commit's, not the previous one's.
+	trees, err := os.ReadDir(filepath.Join(b.Dir, "trees"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trees) != swaps+1 {
+		t.Errorf("trees = %d, want %d, one per commit", len(trees), swaps+1)
+	}
+	for _, e := range trees {
+		root := filepath.Join(b.Dir, "trees", e.Name())
+		want, known := payloads[e.Name()]
+		if !known {
+			t.Errorf("tree %s is not a commit the test made", e.Name())
+			continue
+		}
+		if got := strings.TrimSpace(mustRead(t, filepath.Join(root, "VIEW_SHA"))); got != e.Name() {
+			t.Errorf("tree %s: VIEW_SHA = %s, want its own commit", e.Name(), got)
+		}
+		for _, f := range []string{filepath.Join("a", "b", "payload"), "top"} {
+			if got := mustRead(t, filepath.Join(root, f)); got != want {
+				t.Errorf("tree %s: %s = %q, want %q", e.Name(), f, got, want)
+			}
+		}
 	}
 	t.Logf("%d reads, %d transient lookup failures during %d swaps", reads, transient, swaps)
 	if float64(transient) > 0.001*float64(reads) {
