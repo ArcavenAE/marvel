@@ -36,7 +36,7 @@ says which part is left.
 | Today's header | `cmd/marvel/main.go:2626` | `WORKSPACE TEAM ROLE GEN AGENT NAME STATE HEALTH CTX% CPU% RSS DESK RUNTIME LLM`; no cluster, bus, token, age or load column |
 | A bare `--mrvl` binds all interfaces | `internal/daemon/daemon.go:640-643`, `internal/daemon/sshserver.go:59` | the address defaults to `":" + DefaultMRVLPort`, passed to `net.Listen("tcp", addr)` |
 | The bind is not reported | `internal/daemon/sshserver.go:27` | the listener is an unexported field; no API type carries it |
-| Address resolution order | `cmd/marvel/main.go:64-82` | `--socket`, then `MARVEL_SOCKET`, then `--cluster`; an unknown cluster warns and dials the local socket (#586, #502) |
+| Address resolution order | `cmd/marvel/main.go:87-120` | `--socket`, then `MARVEL_SOCKET`, then `--cluster`. When the design was written, an unknown cluster warned and dialed the local socket (#586, #502); #618 changed that to a refusal, so this row is superseded by section 9, "Later rulings on P2b (#618)" |
 | The bus status already has a domain and a leaf state | `internal/bus/supervisor.go:119`, `:124-127` | `Domain`; `Leaf` is up, down, detached, unenrolled, n/a, or unknown ("not polled yet"). No probe age |
 | "Leaf up" means a leafnode count above zero | `internal/bus/supervisor.go:721` | `up := body.Leafnodes > 0`; it does not mean the expected subjects are carried |
 | Token spend exists but is not on the wire | `internal/usage/reader.go:28`, `internal/usage/accountant.go:708`, `internal/session/manager.go:1123` | `usage.Spend`; `SessionSpend` has one caller; `api.Session` carries no spend field |
@@ -328,3 +328,18 @@ Director's mapping, which this doc follows:
 4. ACTIVE%'s window is the role's `activity_timeout`, else `watchdog.window`,
    else the 10-minute `DefaultQuietWindow`, and the `(stalled)` advisory
    stays opt-in (section 4.4).
+
+### Later rulings on P2b (#618)
+
+These rulings apply only when neither `--socket` nor `MARVEL_SOCKET` is set. Either one names the address outright, and resolution returns it before the client config is read (`cmd/marvel/main.go:88-93`), so no cluster name is looked up and nothing below is reached.
+
+- Refuse an unknown cluster in both the `--cluster` flag and the config's
+  `current_cluster`. A command that defines or configures a cluster may
+  name one not yet in the config. The operator's words, verbatim via
+  director: "yes, but permit the flag if it's defining/configuring a new
+  cluster".
+- A client config that does not parse, with no `--cluster` flag, falls back
+  to the default socket as before, and is not refused. The operator's
+  words, verbatim via director: "fallback to local is fine, do not refuse".
+  With `--cluster`, an unreadable config is refused, because the name
+  cannot be looked up.

@@ -919,6 +919,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
 	}
+	if layout, err := paths.Default(); err == nil {
+		lctx.ViewsDir = layout.ViewsDir()
+	}
 	if m.Bus != nil {
 		lctx.BusURL = m.Bus.URL()
 		lctx.GlobalRole = m.Bus.GlobalRole(*role)

@@ -284,13 +284,24 @@ func TestDeleteOfAnEndedRunRecordsNothingMore(t *testing.T) {
 	if err := mgr.Create(sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	// Wait for the exit status before the reap reads it: below tmux 3.5 a
+	// dead pane's status can be lost, and reap then records a failed run.
+	got, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	wantOutcome := api.RunSucceeded
+	if !waitForExitStatus(t, driver, got.PaneID) {
+		// A lost status reads as unknown, which is a failed run.
+		wantOutcome = api.RunFailed
+	}
 	reapUntilGone(t, mgr, store, sess.Key())
 	if err := mgr.Delete(sess.Key()); err != nil {
 		t.Fatalf("delete ended run: %v", err)
 	}
 	st, _ := store.GetScheduleStatus(ws + "/timers/refresh")
-	if len(st.History) != 1 || st.History[0].Outcome != api.RunSucceeded {
-		t.Fatalf("history = %+v, want only the succeeded run from reap", st.History)
+	if len(st.History) != 1 || st.History[0].Outcome != wantOutcome {
+		t.Fatalf("history = %+v, want only the %s run from reap", st.History, wantOutcome)
 	}
 }
 

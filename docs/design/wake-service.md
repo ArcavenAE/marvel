@@ -103,6 +103,13 @@ not add new ones.
   survive a daemon restart, or kept in memory, so a restart starts the clock
   over?
 
+  **Answered 2026-10-06.** The operator's words, relayed by director in
+  message `01M492CZRX41N4E276G6J6D3Z9`: "it restarts at zero". A leaf's
+  down-for duration is kept in the daemon's memory and starts again from zero
+  when the daemon restarts. That is what
+  #600 ships and what the admin guide says (the duration is not stored with
+  the record).
+
 ## 5. Who is authorized
 
 **Direction.** An authorized service is a principal that holds a grant
@@ -227,4 +234,4 @@ These are listed, not decided:
 - whether the wake action (section 6) is a separate issue;
 - the order of the three delivery paths (section 7).
 
-Q1 is answered (section 4, Q1). Q2 to Q10 are the operator's to answer, or to send to a party.
+Q1 and Q2 are answered (section 4). Q3 to Q10 are the operator's to answer, or to send to a party.
