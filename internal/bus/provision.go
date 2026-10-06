@@ -139,7 +139,9 @@ func join(names []string) string {
 // first connect can race the old credential set. A connection the broker
 // resets or closes while it is being dialed is retried the same way (a
 // broker just adopted from a predecessor, on a loaded host, has done this).
-// Anything else, a refused address included, fails at once.
+// Anything else, a refused address included, fails at once. A TLS/plain
+// mismatch reads as an early EOF, so it now waits out the window before it
+// fails.
 func connectAdmin(ctx context.Context, url, user, password string) (*nats.Conn, error) {
 	deadline := time.Now().Add(authRetryWindow)
 	for {

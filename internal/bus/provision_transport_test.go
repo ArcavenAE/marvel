@@ -114,3 +114,49 @@ func TestRetryableConnect(t *testing.T) {
 		}
 	}
 }
+
+// A broker that drops every connection is retried for the window and then
+// reported, with the transport error kept in the chain. Without the deadline
+// check this loop would not end. The context bounds the test, so a missing
+// check fails it instead of hanging.
+func TestProvisionGivesUpOnABrokerThatDropsEveryConnection(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if tc, ok := c.(*net.TCPConn); ok {
+				_ = tc.SetLinger(0)
+			}
+			_ = c.Close()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*authRetryWindow)
+	defer cancel()
+
+	start := time.Now()
+	_, perr := Provision(ctx, "nats://"+ln.Addr().String(), "u", "p")
+	took := time.Since(start)
+
+	if perr == nil {
+		t.Fatal("provision against a broker that drops every connection succeeded")
+	}
+	if !errors.Is(perr, syscall.ECONNRESET) && !errors.Is(perr, io.EOF) {
+		t.Errorf("error = %v, want it to wrap ECONNRESET or EOF", perr)
+	}
+	if ctx.Err() != nil {
+		t.Errorf("gave up only when the test context ended after %s, want it to stop at the %s window", took, authRetryWindow)
+	}
+	if took < authRetryWindow/2 {
+		t.Errorf("gave up after %s, want it to retry for most of the %s window", took, authRetryWindow)
+	}
+	if took > authRetryWindow+2*time.Second {
+		t.Errorf("took %s, want about the %s window", took, authRetryWindow)
+	}
+}
