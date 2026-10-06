@@ -123,6 +123,8 @@ func cloneSession(s *Session) Session {
 		l := *s.Limit
 		out.Limit = &l
 	}
+	out.SpendOut = copyInt(s.SpendOut)
+	out.SpendPromptTokens = copyInt(s.SpendPromptTokens)
 	if s.HarnessState != nil {
 		hs := *s.HarnessState
 		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)
