@@ -255,3 +255,65 @@ func isInside(dir, path string) bool {
 	rel, err := filepath.Rel(d, path)
 	return err == nil && filepath.IsLocal(rel)
 }
+
+// A link target can pass through another link. With x -> ".", the target
+// "x/.." of a link at up is the tree's parent, though each name looks local.
+// The verdict must not depend on the order the entries arrive in.
+func TestExtractRefusesALinkTargetThatPassesThroughAnotherLink(t *testing.T) {
+	cases := map[string][]entry{
+		"target link first": {
+			{name: "x", typ: tar.TypeSymlink, link: "."},
+			{name: "up", typ: tar.TypeSymlink, link: "x/.."},
+		},
+		"escaping link first": {
+			{name: "up", typ: tar.TypeSymlink, link: "x/.."},
+			{name: "x", typ: tar.TypeSymlink, link: "."},
+		},
+		"two hops": {
+			{name: "a", typ: tar.TypeSymlink, link: "b"},
+			{name: "b", typ: tar.TypeSymlink, link: "."},
+			{name: "up", typ: tar.TypeSymlink, link: "a/.."},
+		},
+		"link in a subdirectory": {
+			{name: "d", typ: tar.TypeDir},
+			{name: "d/x", typ: tar.TypeSymlink, link: ".."},
+			{name: "d/up", typ: tar.TypeSymlink, link: "x/.."},
+		},
+	}
+	for name, entries := range cases {
+		t.Run(name, func(t *testing.T) {
+			tree, outside := scratch(t)
+			if err := extractTar(craftTar(t, entries...), tree); err == nil {
+				t.Fatal("extractTar accepted a link whose target resolves outside the tree")
+			}
+			assertOutsideUntouched(t, outside)
+		})
+	}
+}
+
+// A cycle of links never resolves, so it is refused instead of followed.
+func TestExtractRefusesALinkCycle(t *testing.T) {
+	tree, _ := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: "a", typ: tar.TypeSymlink, link: "b"},
+		entry{name: "b", typ: tar.TypeSymlink, link: "a"},
+	), tree)
+	if err == nil {
+		t.Fatal("extractTar accepted a cycle of links")
+	}
+}
+
+// Control: a chain of links that stays inside the tree extracts.
+func TestExtractKeepsAChainOfLinksInsideTheTree(t *testing.T) {
+	tree, _ := scratch(t)
+	err := extractTar(craftTar(t,
+		entry{name: "dir", typ: tar.TypeDir},
+		entry{name: "dir/f", typ: tar.TypeReg, body: "x"},
+		entry{name: "a", typ: tar.TypeSymlink, link: "b/f"},
+		entry{name: "b", typ: tar.TypeSymlink, link: "dir"},
+		entry{name: "dir/back", typ: tar.TypeSymlink, link: "../a"},
+	), tree)
+	if err != nil {
+		t.Fatalf("extractTar refused an in-tree chain: %v", err)
+	}
+}
