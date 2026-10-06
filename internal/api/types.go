@@ -991,22 +991,25 @@ func (c *Credential) Key() string { return c.Name }
 // matched pattern's fixed rows with each variable span masked; no captured row
 // is stored anywhere (section 5).
 type HarnessState struct {
-	State          string    `json:"state"`
-	Confidence     string    `json:"confidence"`
-	Harness        string    `json:"harness"`
-	HarnessVersion string    `json:"harness_version,omitempty"`
-	PatternID      string    `json:"pattern_id"`
-	PatternVersion int       `json:"pattern_version"`
-	PatternFor     string    `json:"pattern_for,omitempty"`
-	PaneWidth      int       `json:"pane_width,omitempty"`
-	Evidence       []string  `json:"evidence,omitempty"`
-	CapturedAt     time.Time `json:"captured_at"`
+	State          string `json:"state"`
+	Confidence     string `json:"confidence"`
+	Harness        string `json:"harness"`
+	HarnessVersion string `json:"harness_version,omitempty"`
+	PatternID      string `json:"pattern_id"`
+	PatternVersion int    `json:"pattern_version"`
+	PatternFor     string `json:"pattern_for,omitempty"`
+	// Covered lists the harness versions that have at least one passing
+	// pattern. It is set on the two coverage states only.
+	Covered    []string  `json:"covered,omitempty"`
+	PaneWidth  int       `json:"pane_width,omitempty"`
+	Evidence   []string  `json:"evidence,omitempty"`
+	CapturedAt time.Time `json:"captured_at"`
 	// ContextAt is the session's ContextAt when this was seen. A later
 	// ContextAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
 }
 
-// HarnessStateLoggedOut is the one state Phase 1 sets.
+// HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"
 
 // SessionSpend is the spend-only slice of a session's context reading: the
@@ -1019,3 +1022,16 @@ type SessionSpend struct {
 	PromptTokens *int
 	OutRate      asof.Cell[float64]
 }
+
+// The two coverage states say the watchdog could not have matched this seat
+// (docs/design/watchdog-control-and-uncovered.md section 4). They carry no
+// confidence and no evidence, and only the version becoming covered, or the
+// session ending, clears them.
+const (
+	// HarnessStateUncovered means the harness has patterns, but none for the
+	// seat's version.
+	HarnessStateUncovered = "uncovered"
+	// HarnessStateControlFailed means the seat's version has patterns and every
+	// one of them failed its control.
+	HarnessStateControlFailed = "control-failed"
+)

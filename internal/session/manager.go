@@ -24,6 +24,7 @@ import (
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
+	"github.com/arcavenae/marvel/internal/view"
 )
 
 // Manager creates and destroys sessions.
@@ -49,6 +50,9 @@ type Manager struct {
 	// and callers that don't care about the event stream don't need to
 	// wire a ring.
 	Events events.Emitter
+	// Views builds each seat's read-only views at spawn and removes them with
+	// the session. Nil means no views are built.
+	Views *view.Keeper
 	// StreamDir holds the per-session FIFOs marvel reads agent output
 	// from. Defaults to a per-layout temp directory (see daemonTempDir).
 	// The pipes carry no content at rest, so nothing here needs to survive
@@ -581,6 +585,7 @@ func (m *Manager) Create(sess *api.Session) error {
 	overlayEnv, err := m.applyBackendOverlay(sess, &plan)
 	if err != nil {
 		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
 	// Classify the backend-selecting environment this session is launched into
@@ -639,6 +644,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		// different declared backend reads an overlay a crash left behind.
 		_ = m.store.DeleteSession(sess.Key())
 		m.sweepBackendOverlay(*sess)
+		m.teardownViews(sess.Key())
 		return fmt.Errorf("create pane for %s: %w", sess.Key(), err)
 	}
 	paneID := inst.PaneID()
@@ -911,6 +917,13 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		return m.directPlan(sess)
 	}
 
+	// Build the seat's views before the command line is made, so
+	// MARVEL_VIEW_<NAME> names a path that already holds its tree. A view that
+	// cannot be built is an event, never a failed launch.
+	if m.Views != nil && len(role.Views) > 0 {
+		m.Views.Build(*sess, role.Views)
+	}
+
 	adapter := m.adapters.Resolve(sess.Runtime.Name)
 	lctx := &runtime.LaunchContext{
 		Session:    sess,
@@ -919,7 +932,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
 	}
-	if layout, err := paths.Default(); err == nil {
+	if m.Views != nil {
+		lctx.ViewsDir = m.Views.ViewsDir
+	} else if layout, err := paths.Default(); err == nil {
 		lctx.ViewsDir = layout.ViewsDir()
 	}
 	if m.Bus != nil {
@@ -1397,6 +1412,17 @@ func (m *Manager) keepAfterFailedKill(sess api.Session, kerr error) error {
 	return fmt.Errorf("delete session %s: kill pane %s failed, row kept: %w", key, sess.PaneID, kerr)
 }
 
+// teardownViews removes a session's read-only views. A failure is logged: the
+// session's removal never waits on it.
+func (m *Manager) teardownViews(key string) {
+	if m.Views == nil {
+		return
+	}
+	if err := m.Views.Teardown(key); err != nil {
+		log.Printf("warning: session %s: remove views: %v", key, err)
+	}
+}
+
 // dropSession removes a session's row once its pane is known to be gone,
 // sweeps its overlay, and emits session.deleted.
 func (m *Manager) dropSession(sess api.Session, message string) error {
@@ -1408,6 +1434,7 @@ func (m *Manager) dropSession(sess api.Session, message string) error {
 	// Sweep the per-session backend overlay (design: ephemeral, swept with the
 	// session). Best-effort; a missing file is not an error.
 	m.sweepBackendOverlay(sess)
+	m.teardownViews(key)
 
 	log.Printf("session %s deleted", key)
 	events.Emit(m.Events, events.Event{
@@ -1647,6 +1674,7 @@ func (m *Manager) clearStaleCrashed(snapshot []api.Session, marked map[string]bo
 		if err := m.store.DeleteSession(other.Key()); err != nil && !errors.Is(err, api.ErrNotFound) {
 			log.Printf("warning: delete stale crashed %s: %v", other.Key(), err)
 		}
+		m.teardownViews(other.Key())
 	}
 }
 
@@ -1665,6 +1693,7 @@ func (m *Manager) ClearCrashedForRole(workspace, team, role string) {
 		if err := m.store.DeleteSession(sess.Key()); err != nil {
 			log.Printf("warning: clear crashed %s: %v", sess.Key(), err)
 		}
+		m.teardownViews(sess.Key())
 	}
 }
 

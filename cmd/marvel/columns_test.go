@@ -143,7 +143,7 @@ func TestColumnsBothOrdersHonored(t *testing.T) {
 // --columns is a sessions flag. On another resource it is refused before
 // anything is dialed, so a typo does not look like a working listing.
 func TestColumnsFlagRefusedForOtherResources(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	resolveFixture(t, false) // no HOME, MARVEL_SOCKET or flag from a live seat can be dialed
 	cmd := getCmd()
 	cmd.SetArgs([]string{"teams", "--columns", "name"})
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
@@ -155,7 +155,7 @@ func TestColumnsFlagRefusedForOtherResources(t *testing.T) {
 
 // An unknown name on the sessions command line fails before any dial.
 func TestColumnsUnknownNameRefusedByGetSessions(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	resolveFixture(t, false) // no HOME, MARVEL_SOCKET or flag from a live seat can be dialed
 	cmd := getCmd()
 	cmd.SetArgs([]string{"sessions", "--columns", "name,bogus"})
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true

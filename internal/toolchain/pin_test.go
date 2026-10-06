@@ -154,3 +154,67 @@ func ciGofumptVersion(t *testing.T, path string) string {
 	t.Fatalf("%s has no step setting %s", path, envKey)
 	return ""
 }
+
+// TestNatsServerPinMatchesCI keeps the broker CI installs the one mise.toml
+// pins and the fleet is verified against. The broker-backed internal/bus tests
+// skip when nats-server is not on PATH, so a CI that does not install it
+// quietly skips them; a CI that installs a different version tests another
+// broker than the one deployed.
+func TestNatsServerPinMatchesCI(t *testing.T) {
+	t.Parallel()
+
+	repo := filepath.Join("..", "..")
+	pinned := misePin(t, filepath.Join(repo, "mise.toml"), "github:nats-io/nats-server")
+	installed := ciEnvValue(t, filepath.Join(repo, ".github", "workflows", "ci.yml"), "NATS_SERVER_VERSION")
+
+	if pinned != installed {
+		t.Errorf("nats-server pin drift: mise.toml pins %q, ci.yml installs %q", pinned, installed)
+	}
+}
+
+// TestNatsServerInstallIsVerifiedByChecksum requires the CI install to carry
+// the release asset's SHA-256, so a changed or substituted download fails the
+// job instead of running.
+func TestNatsServerInstallIsVerifiedByChecksum(t *testing.T) {
+	t.Parallel()
+
+	sum := ciEnvValue(t, filepath.Join("..", "..", ".github", "workflows", "ci.yml"), "NATS_SERVER_SHA256")
+	if len(sum) != 64 || strings.Trim(sum, "0123456789abcdef") != "" {
+		t.Errorf("NATS_SERVER_SHA256 = %q, want 64 lowercase hex digits", sum)
+	}
+}
+
+// ciEnvValue returns the value of a step env var in the CI workflow, without
+// any leading "v", failing when no step sets it or it is empty.
+func ciEnvValue(t *testing.T, path, key string) string {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Env map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			value, ok := step.Env[key]
+			if !ok {
+				continue
+			}
+			if value == "" {
+				t.Fatalf("%s sets %s to an empty value", path, key)
+			}
+			return strings.TrimPrefix(value, "v")
+		}
+	}
+	t.Fatalf("%s has no step setting %s", path, key)
+	return ""
+}

@@ -43,6 +43,7 @@ import (
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
+	"github.com/arcavenae/marvel/internal/view"
 )
 
 const (
@@ -120,6 +121,8 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	// views follows each seat's read-only views (marvel#609).
+	views *view.Keeper
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
 	// schedule.history; zero means the default.
 	scheduleHistoryMax int
@@ -429,6 +432,12 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
 	// a draft typed into a seat, so it is recorded like any inject, from marvel.
 	teamCtrl.Notify = d.notifyHandoff
+	// Each seat's read-only views are built at spawn by the session manager
+	// and followed on a tick here (marvel#609).
+	if layout, lerr := paths.Default(); lerr == nil {
+		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
+		sessMgr.Views = d.views
+	}
 	return d, nil
 }
 
@@ -618,6 +627,9 @@ func (d *Daemon) Start(socketPath string) error {
 	}()
 
 	d.startWatchdog(ctx)
+	if d.views != nil {
+		d.startViews(ctx)
+	}
 
 	// Accept connections.
 	d.wg.Add(1)
@@ -1022,6 +1034,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleBusStatus()
 	case "daemon.status":
 		return d.handleDaemonStatus()
+	case "view.refresh":
+		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":
 		return d.handleBusLeafConnect()
 	case "bus.leaf.disconnect":
