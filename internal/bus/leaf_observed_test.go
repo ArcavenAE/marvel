@@ -1,6 +1,8 @@
 package bus
 
 import (
+	"net"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -62,5 +64,57 @@ func TestStatusLeafWithoutReadingCarriesNoObservedAt(t *testing.T) {
 	u.observeLeaf(0, time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
 	if st := u.Status(); st.Leaf != "unenrolled" || st.LeafObservedAt != "" {
 		t.Errorf("unenrolled: leaf=%q observed_at=%q, want unenrolled and no age", st.Leaf, st.LeafObservedAt)
+	}
+}
+
+// A failed read is no information, so it leaves the probe age where it was
+// and the reading ages out instead of being refreshed by an error. This is
+// the property the age exists for: a monitor that stopped answering reads as
+// an expired up, never as a fresh one.
+func TestFailedProbeLeavesTheAgeWhereItWas(t *testing.T) {
+	cases := []struct {
+		name  string
+		serve func(t *testing.T, monitor string)
+	}{
+		{"connection refused", func(*testing.T, string) {}},
+		{"body that is not json", func(t *testing.T, monitor string) {
+			ln, err := net.Listen("tcp", monitor)
+			if err != nil {
+				t.Skipf("monitor port %s is taken: %v", monitor, err)
+			}
+			srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte("this is not json"))
+			}), ReadHeaderTimeout: time.Second}
+			go func() { _ = srv.Serve(ln) }()
+			t.Cleanup(func() { _ = srv.Close() })
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := enrolledLeaf(t)
+			s.leafPoll = defaultLeafPoll
+			t0 := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+			s.observeLeaf(1, t0)
+
+			monitor, err := MonitorAddr(s.mgr.bus.Listen)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.serve(t, monitor)
+
+			s.now = func() time.Time { return t0.Add(10 * time.Minute) }
+			s.pollLeaf()
+
+			st := s.Status()
+			if st.Leaf != "up" {
+				t.Errorf("leaf = %q after a failed read, want the state left alone", st.Leaf)
+			}
+			if want := t0.Format(time.RFC3339); st.LeafObservedAt != want {
+				t.Errorf("observed_at = %q after a failed read, want %q", st.LeafObservedAt, want)
+			}
+			if want := t0.Add(2 * defaultLeafPoll).Format(time.RFC3339); st.LeafValidUntil != want {
+				t.Errorf("valid_until = %q after a failed read, want %q", st.LeafValidUntil, want)
+			}
+		})
 	}
 }
