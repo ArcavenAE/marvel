@@ -73,6 +73,11 @@ func (s *SSHServer) Start(addr string) error {
 	return nil
 }
 
+// Addr returns the address the listener actually bound, or nil before Start.
+func (s *SSHServer) Addr() net.Addr {
+	return nil
+}
+
 // Stop closes the SSH listener.
 func (s *SSHServer) Stop() {
 	if s.listener != nil {

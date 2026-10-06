@@ -159,6 +159,9 @@ type Daemon struct {
 	// in the layout works either; the field is then simply absent from
 	// the wire and the client has nothing to compare.
 	home string
+	// cluster is the name the daemon's config gives the cluster it serves,
+	// set at start by identifyCluster. Empty when the config names none.
+	cluster string
 	// bus keeps a managed local broker's rendered configuration current
 	// with the applied teams (brief 10, aae-orc-e9g8i). Nil when this
 	// daemon's cluster has no managed bus section.
@@ -1015,6 +1018,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleBackendVerify(req.Params)
 	case "bus.status":
 		return d.handleBusStatus()
+	case "daemon.status":
+		return d.handleDaemonStatus()
 	case "bus.leaf.connect":
 		return d.handleBusLeafConnect()
 	case "bus.leaf.disconnect":
