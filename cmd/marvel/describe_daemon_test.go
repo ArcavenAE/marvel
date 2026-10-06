@@ -245,8 +245,14 @@ func jsonKeys(typ reflect.Type) []string {
 		if name == "-" {
 			continue
 		}
-		if f.Anonymous && name == "" && f.Type.Kind() == reflect.Struct {
-			keys = append(keys, jsonKeys(f.Type)...)
+		// encoding/json flattens an embedded pointer to a struct the same way
+		// it flattens the struct, so look through the pointer first.
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if f.Anonymous && name == "" && ft.Kind() == reflect.Struct {
+			keys = append(keys, jsonKeys(ft)...)
 			continue
 		}
 		if name == "" {
@@ -263,14 +269,18 @@ func TestJSONKeysWalksEmbeddedStructs(t *testing.T) {
 	type inner struct {
 		Rung string `json:"rung"`
 	}
+	type viaPointer struct {
+		Address string `json:"address"`
+	}
 	type outer struct {
 		inner
+		*viaPointer
 		Plain  string
 		Tagged string `json:"tagged,omitempty"`
 		Hidden string `json:"-"`
 	}
 	got := jsonKeys(reflect.TypeOf(outer{}))
-	want := []string{"rung", "Plain", "tagged"}
+	want := []string{"rung", "address", "Plain", "tagged"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("jsonKeys = %v, want %v", got, want)
 	}
