@@ -159,6 +159,20 @@ type ManifestRole struct {
 	// Schedule puts a headless role on a clock (ADR-010 Amendment 1,
 	// docs/design/scheduled-runs.md). Parsed into Role.Schedule.
 	Schedule *ManifestSchedule `toml:"schedule,omitempty"            yaml:"schedule,omitempty"`
+	// Views declares read-only views of a repository's default branch, one
+	// per repository (docs/design/readonly-view.md section 2). Parsed into
+	// Role.Views.
+	Views []ManifestView `toml:"view,omitempty"                yaml:"views,omitempty"`
+}
+
+// ManifestView is one [[team.role.view]] entry. The durations are strings
+// ("10m"), parsed and defaulted when the manifest is applied.
+type ManifestView struct {
+	Name         string `toml:"name"                    yaml:"name"`
+	Remote       string `toml:"remote"                  yaml:"remote"`
+	Ref          string `toml:"ref"                     yaml:"ref"`
+	RefreshEvery string `toml:"refresh_every,omitempty" yaml:"refresh_every,omitempty"`
+	ReenterGrace string `toml:"reenter_grace,omitempty" yaml:"reenter_grace,omitempty"`
 }
 
 // ManifestHealthCheck is the healthcheck section within a role.
@@ -412,6 +426,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// bad threshold would fire on the first sample or never. Reject
 			// them so a misconfigured trigger is an error at apply, not a
 			// no-op at runtime (marvel#437 D2).
+			if _, err := r.views(fmt.Sprintf("parse manifest: team[%d].role[%d]", i, j)); err != nil {
+				return nil, err
+			}
 			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
@@ -816,6 +833,11 @@ func (m *Manifest) Apply(store *Store) error {
 				return fmt.Errorf("apply manifest: %w", err)
 			}
 			role.Shift = shift
+			views, err := mr.views("team " + mt.Name + " role " + mr.Name)
+			if err != nil {
+				return fmt.Errorf("apply manifest: %w", err)
+			}
+			role.Views = views
 			if mr.Schedule != nil {
 				sched, err := mr.Schedule.policy()
 				if err != nil {

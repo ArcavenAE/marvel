@@ -485,6 +485,35 @@ const (
 	GlobalRoleNone       = "none"
 )
 
+// View defaults and floor (docs/design/readonly-view.md section 2).
+const (
+	// DefaultViewRefreshEvery is how often a view follows its ref when the
+	// role does not say.
+	DefaultViewRefreshEvery = 10 * time.Minute
+	// MinViewRefreshEvery is the floor for refresh_every.
+	MinViewRefreshEvery = time.Minute
+	// DefaultViewReenterGrace is how long a superseded tree stays readable
+	// after its seat was told about the next one.
+	DefaultViewReenterGrace = 2 * time.Minute
+)
+
+// View is a read-only view of a repository's default branch that a seat
+// declares (marvel#609). This is the declaration; building the tree is a
+// separate step.
+type View struct {
+	// Name is one path element and names the view. It also names the seat
+	// variable MARVEL_VIEW_<NAME>.
+	Name string
+	// Remote is the repository to mirror and Ref the branch to follow.
+	Remote string
+	Ref    string
+	// RefreshEvery is how often the view follows Ref, defaulted at parse.
+	RefreshEvery time.Duration
+	// ReenterGrace is how long a superseded tree stays readable after the
+	// seat was told, defaulted at parse.
+	ReenterGrace time.Duration
+}
+
 // Role declares desired state for one kind of agent within a team.
 // Name is the job function (reviewer, supervisor, probe-runner).
 // Persona and Identity are the costume and lens per finding-019.
@@ -566,6 +595,8 @@ type Role struct {
 	// stretch. This is the "threshold is a role-level setting" the ticket
 	// names.
 	ActivityTimeout time.Duration `toml:"-"`
+	// Views are the read-only views each seat of this role declares.
+	Views []View `toml:"-"`
 }
 
 // ShiftTriggerContextPressure shifts a role before its context occupancy

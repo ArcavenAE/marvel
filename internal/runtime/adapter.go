@@ -37,6 +37,7 @@ package runtime
 import (
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -53,6 +54,9 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// ViewsDir is the directory the session views live under
+	// (<state>/views). Empty means no view can be present.
+	ViewsDir string
 	// BusURL, BusUser, and BusPassword come from the cluster's bus section
 	// (brief 10 section 4, aae-orc-1qyo3). BusURL alone means an adopted
 	// broker with no authorization; the shim then connects anonymously, as
@@ -451,6 +455,7 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 	if ctx.Session.WorkDir != "" {
 		env["MARVEL_WORKDIR"] = ctx.Session.WorkDir
 	}
+	addViewEnv(ctx, env)
 	return env
 }
 
@@ -619,4 +624,20 @@ type ForegroundRule interface {
 	// Foreground reports whether paneCommand is this harness in front, and
 	// the harness version the command carries, "" when it carries none.
 	Foreground(paneCommand string) (harnessVersion string, ok bool)
+}
+
+// addViewEnv sets MARVEL_VIEW_<NAME> for each view the role declares, to the
+// view's cur path under the session's views directory. It sets the variable
+// only when that path exists: until a view is built a seat gets no path to
+// read (docs/design/readonly-view.md section 7, first build at spawn).
+func addViewEnv(ctx *LaunchContext, env map[string]string) {
+	if ctx.ViewsDir == "" || ctx.Role == nil {
+		return
+	}
+	for _, v := range ctx.Role.Views {
+		cur := filepath.Join(ctx.ViewsDir, ctx.Session.Key(), v.Name, "cur")
+		if _, err := os.Lstat(cur); err == nil {
+			env[api.ViewEnvName(v.Name)] = cur
+		}
+	}
 }
