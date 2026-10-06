@@ -317,3 +317,56 @@ func TestExtractKeepsAChainOfLinksInsideTheTree(t *testing.T) {
 		t.Fatalf("extractTar refused an in-tree chain: %v", err)
 	}
 }
+
+// sameName reports whether the filesystem under dir treats a and b as the same
+// name (APFS folds case and treats NFC and NFD as equal), so a test that needs
+// that behavior skips where it does not exist.
+func sameName(t *testing.T, dir, a, b string) bool {
+	t.Helper()
+	probe, err := os.MkdirTemp(dir, "probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(probe, a), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = os.Lstat(filepath.Join(probe, b))
+	return err == nil
+}
+
+// The filesystem, not the archive's bytes, decides which names are equal. On
+// a volume that folds case or normalizes unicode, "x" and "X" are one link, so
+// a target that goes through "X" resolves through x, though a lookup by exact
+// bytes finds nothing. The same crafted links are refused wherever the
+// filesystem says they escape.
+func TestExtractRefusesALinkTargetThatNamesALinkByAnotherSpelling(t *testing.T) {
+	cases := map[string]struct {
+		a, b    string
+		entries []entry
+	}{
+		"case fold": {"x", "X", []entry{
+			{name: "x", typ: tar.TypeSymlink, link: "."},
+			{name: "up", typ: tar.TypeSymlink, link: "X/.."},
+		}},
+		"case fold, escaping link first": {"x", "X", []entry{
+			{name: "up", typ: tar.TypeSymlink, link: "X/.."},
+			{name: "x", typ: tar.TypeSymlink, link: "."},
+		}},
+		"nfc and nfd": {"é", "é", []entry{
+			{name: "é", typ: tar.TypeSymlink, link: "."},
+			{name: "up", typ: tar.TypeSymlink, link: "é/.."},
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tree, outside := scratch(t)
+			if !sameName(t, filepath.Dir(tree), tc.a, tc.b) {
+				t.Skip("this filesystem keeps the two spellings apart")
+			}
+			if err := extractTar(craftTar(t, tc.entries...), tree); err == nil {
+				t.Fatal("extractTar accepted a link that the filesystem resolves outside the tree")
+			}
+			assertOutsideUntouched(t, outside)
+		})
+	}
+}

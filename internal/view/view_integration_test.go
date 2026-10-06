@@ -271,3 +271,29 @@ func TestRealGitRefusesALinkThatPassesThroughAnotherLink(t *testing.T) {
 		t.Fatal("a refused refresh left a cur link")
 	}
 }
+
+// A real commit with x -> "." and up -> "X/..": on a case-insensitive volume
+// the second name is the first, so up is the tree's parent. Refresh refuses it.
+func TestRealGitRefusesACaseFoldedLinkTarget(t *testing.T) {
+	repo, b := realViewFixture(t)
+	if !sameName(t, filepath.Dir(b.Dir), "x", "X") {
+		t.Skip("this filesystem keeps x and X apart")
+	}
+	commitPayload(t, repo, 0)
+	for name, target := range map[string]string{"x": ".", "up": "X/.."} {
+		if err := os.Symlink(target, filepath.Join(repo, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "commit", "-q", "-m", "a link through another spelling")
+
+	_, err := b.Refresh(context.Background())
+	var re *RefreshError
+	if !errors.As(err, &re) || re.Step != StepExtract {
+		t.Fatalf("Refresh = %v, want an extract refusal", err)
+	}
+	if _, serr := os.Lstat(filepath.Join(b.Dir, "cur")); serr == nil {
+		t.Fatal("a refused refresh left a cur link")
+	}
+}
