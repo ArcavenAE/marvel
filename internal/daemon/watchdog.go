@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -62,6 +63,12 @@ type watchdog struct {
 	mu          sync.Mutex
 	lastCapture map[string]time.Time
 	rolled      map[string]string
+
+	// uncovered holds, per "<harness>/<version>", how many examined sessions
+	// were on that uncovered version at the last pass. A key is present while
+	// the set is non-empty and gone when it empties, so a count change alone is
+	// not a transition.
+	uncovered map[string]int
 }
 
 func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, window time.Duration) *watchdog {
@@ -73,6 +80,7 @@ func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, 
 		sample: panestate.EmbeddedSample,
 		reg:    runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
 		lastCapture: map[string]time.Time{}, rolled: map[string]string{}, failed: map[string]bool{},
+		uncovered: map[string]int{},
 	}
 }
 
@@ -219,6 +227,7 @@ func (w *watchdog) Once() {
 			delete(w.lastCapture, k)
 		}
 	}
+	w.uncoveredTransitions()
 	w.rollup(now)
 }
 
@@ -290,6 +299,64 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 		w.clearEvent(s, "the block no longer fully matches")
 		w.store.SetHarnessState(key, harnessState(now, s, res, adapter.Name(), version, width))
 	}
+}
+
+// uncoveredTransitions emits watchdog.uncovered once per harness version when
+// the set of examined sessions on an uncovered version goes from empty to
+// non-empty, naming the count then, and the cleared form when it goes back to
+// empty or a pattern set for the version loads. A count that changes while the
+// set stays non-empty emits nothing, so a point release reads as one fact
+// (docs/design/watchdog-control-and-uncovered.md section 5). Only the
+// uncovered state counts: control-failed has its own warning at start. An
+// ended session has already had its state cleared by visit, so it is not
+// counted.
+func (w *watchdog) uncoveredTransitions() {
+	now := map[string]int{}
+	names := map[string][2]string{}
+	for _, s := range w.store.ListSessions() {
+		hs := s.HarnessState
+		if hs == nil || hs.State != api.HarnessStateUncovered {
+			continue
+		}
+		if versionCovered(w.sets, hs.Harness, hs.HarnessVersion) {
+			continue
+		}
+		k := hs.Harness + "/" + hs.HarnessVersion
+		now[k]++
+		names[k] = [2]string{hs.Harness, hs.HarnessVersion}
+	}
+	for _, k := range slices.Sorted(maps.Keys(now)) {
+		if _, was := w.uncovered[k]; was {
+			continue
+		}
+		h, v := names[k][0], names[k][1]
+		noun := "sessions"
+		if now[k] == 1 {
+			noun = "session"
+		}
+		events.Emit(w.ring, events.Event{
+			Kind: events.KindWatchdogUncovered, Severity: events.SeverityInfo,
+			Message: fmt.Sprintf("uncovered: %s %s, %d %s with no passing pattern (covered: %s)",
+				h, v, now[k], noun, coveredList(coveredVersions(w.sets, h))),
+		})
+	}
+	for _, k := range slices.Sorted(maps.Keys(w.uncovered)) {
+		if _, still := now[k]; still {
+			continue
+		}
+		events.Emit(w.ring, events.Event{
+			Kind: events.KindWatchdogUncovered, Severity: events.SeverityInfo,
+			Message: "uncovered cleared: " + strings.Replace(k, "/", " ", 1),
+		})
+	}
+	w.uncovered = now
+}
+
+func coveredList(v []string) string {
+	if len(v) == 0 {
+		return "none"
+	}
+	return strings.Join(v, ", ")
 }
 
 func isCoverageState(state string) bool {

@@ -407,6 +407,7 @@ func TestWatchdogFieldTypesArePinned(t *testing.T) {
 		"mu":          "sync.Mutex",
 		"lastCapture": "map[string]time.Time",
 		"rolled":      "map[string]string",
+		"uncovered":   "map[string]int",
 	}
 	typ := reflect.TypeOf(watchdog{})
 	got := map[string]bool{}
