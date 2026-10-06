@@ -1,0 +1,168 @@
+# clean run 2026-10-06T14:12:30Z
+
+## setup
+OLD=fb5fd77 NEW=dd63426 git=git version 2.55.0 os=Darwin 25.5.0
+probe file (differs OLD to NEW): CLAUDE.md
+
+## positive control: a writable detached worktree accepts a write and a checkout
+write ok
+checkout ok: dd63426
+
+## step 3: create the view at OLD and make it read-only
+create+chmod ms=129
+HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+
+## H1 (shell half): a Bash redirect into the view
+scripts/probes/per-seat-readonly-view.sh: line 100: $S/view/CLAUDE.md: Permission denied
+exit=1
+scripts/probes/per-seat-readonly-view.sh: line 101: $S/view/newfile: Permission denied
+exit=1
+H1 tool trials target: $S/view/CLAUDE.md
+
+## H2: commands in the shared checkout
+> git switch -q -c h2-branch
+  exit=0
+  HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+> git checkout -q -b h2-branch2
+  exit=0
+  HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+> git fetch -q origin
+  exit=0
+  HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+> git gc -q
+  exit=0
+  HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+> git worktree prune
+  exit=0
+  HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+> git worktree remove $S/view
+  error: failed to delete '$S/view': Permission denied
+  exit=255
+  HEAD=fatal: not a git repository: (null) status_lines=0 hash=e7ac00be5d229d20
+
+## H3: refresh, from torn and from clean; held cwds during the in-place refresh (run note 1)
+HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+expected hash OLD=e7ac00be5d229d20 NEW=530d36f61fe64723
+> naive: git -C view checkout --detach NEW, while read-only
+exit=0
+error: unable to unlink old 'CLAUDE.md': Permission denied
+error: unable to create file examples/auto-shift-max-age.toml: Permission denied
+error: unable to create file examples/auto-shift-max-age.yaml: Permission denied
+HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+> H3 refresh from the torn view to NEW
+writable window ms=107
+HEAD=dd63426 status_lines=0 hash=530d36f61fe64723
+> H3 refresh from a clean view to OLD
+writable window ms=306
+HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+> held cwds: seat A at the view root, seat B in internal/api
+A before: b5b54bec77128bc4
+B before: 58a74e6585369ebd
+writable window ms=206
+HEAD=dd63426 status_lines=0 hash=530d36f61fe64723
+A after:  1d463a7f35960cb4  expect 1d463a7f35960cb4
+B after:  40e983276f1dfb34  expect 40e983276f1dfb34
+> held cwd in a directory the target commit removes: view2 at c143886, seat C in docs/reviews, refresh to c01452c
+C before: $S/view2/docs/reviews
+       1
+view2 window ms=146 HEAD=c01452c docs/reviews exists: no
+C after:  $S/view2/docs/reviews admin-guide.md architecture.md 
+
+## H5: git aimed at the view, from the seat's own shell and from another seat
+objects before: count: 0 in-pack: 9685 
+own   git checkout -q --detach dd63426 -> error: unable to unlink old 'CLAUDE.md': Permission denied error: unable to create file examples/auto-shift-max-age.toml: Permission denied 
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+own   git switch -q --detach dd63426   -> error: unable to unlink old 'CLAUDE.md': Permission denied error: unable to create file examples/auto-shift-max-age.toml: Permission denied 
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+own   git reset -q --hard dd63426      -> error: unable to unlink old 'CLAUDE.md': Permission denied error: unable to create file examples/auto-shift-max-age.toml: Permission denied 
+        HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+own   git reset -q --soft dd63426      -> ok
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+own   git update-ref HEAD dd63426      -> ok
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+other git checkout -q --detach dd63426 -> error: unable to unlink old 'CLAUDE.md': Permission denied error: unable to create file examples/auto-shift-max-age.toml: Permission denied 
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+other git switch -q --detach dd63426   -> error: unable to unlink old 'CLAUDE.md': Permission denied error: unable to create file examples/auto-shift-max-age.toml: Permission denied 
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+other git reset -q --hard dd63426      -> error: unable to unlink old '.claude/rules/_index.md': Permission denied error: unable to unlink old '.claude/rules/bash.md': Permission denied 
+        HEAD=fb5fd77 status_lines=0 hash=e7ac00be5d229d20
+other git reset -q --soft dd63426      -> ok
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+other git update-ref HEAD dd63426      -> ok
+        HEAD=dd63426 status_lines=17 hash=e7ac00be5d229d20
+commit --allow-empty: not run; a commit here needs a signing key touch, and the fleet rule forbids unsigned commits. update-ref HEAD is the ref move a commit makes.
+objects after: count: 0 in-pack: 9685 
+
+## H4 and H6d: cost on a local clone of the orc (5 runs each)
+orc tracked files: 761  O1=6a3964f O2=6a37b22
+worktree run 1: create+chmod ms=160 refresh ms=148
+worktree run 2: create+chmod ms=473 refresh ms=150
+worktree run 3: create+chmod ms=168 refresh ms=199
+worktree run 4: create+chmod ms=162 refresh ms=151
+worktree run 5: create+chmod ms=188 refresh ms=154
+archive run 1: create+chmod ms=506 refresh+swap ms=186
+archive run 2: create+chmod ms=175 refresh+swap ms=179
+archive run 3: create+chmod ms=174 refresh+swap ms=237
+archive run 4: create+chmod ms=182 refresh+swap ms=181
+archive run 5: create+chmod ms=517 refresh+swap ms=190
+
+## H6: the archive view (marvel clone), outside any work tree
+arch dir inside a work tree? fatal: not a git repository (or any of the parent directories): .git
+H6a: view hash=14f1e8233cdfe6f5 fresh hash=14f1e8233cdfe6f5
+H6c: git -C cur rev-parse: fatal: not a git repository (or any of the parent directories): .git
+  git checkout -q --detach dd63426 -> fatal: not a git repository (or any of the parent directories): .git  hash=14f1e8233cdfe6f5
+  git switch -q --detach dd63426 -> fatal: not a git repository (or any of the parent directories): .git  hash=14f1e8233cdfe6f5
+  git reset -q --hard dd63426 -> fatal: not a git repository (or any of the parent directories): .git  hash=14f1e8233cdfe6f5
+  git reset -q --soft dd63426 -> fatal: not a git repository (or any of the parent directories): .git  hash=14f1e8233cdfe6f5
+  git update-ref HEAD dd63426 -> fatal: not a git repository (or any of the parent directories): .git  hash=14f1e8233cdfe6f5
+H6c control: the same archive inside the shared checkout
+  git -C ctlarch rev-parse --show-toplevel: $S/shared
+H1 (shell half) on the archive view:
+Permission denied
+  exit=1
+H6b2: seat E enters the view through the path, then two refreshes
+E before:        fb5fd77 $S/arch/v0 
+path now:        dd63426
+E after one:     fb5fd77 b5b54bec77128bc4 $S/arch/v0 
+path now:        fb5fd77 (v0 removed, as the lifetime rule says)
+E after two:     cat: ./VIEW_SHA: No such file or directory pwd: error retrieving current directory: getcwd: cannot access parent directories: No such file or directory 
+H6b: a reader loop through the path during 20 swaps
+reader lines: 3189
+3065 b5b54bec77128bc4
+ 124 1d463a7f35960cb4
+expected file hashes: OLD=b5b54bec77128bc4 NEW=1d463a7f35960cb4
+H1 tool trials target: $S/arch/cur/CLAUDE.md
+teardown done
+
+
+# Tool trials, run by the Claude Code session against the same paths during the sectioned run
+
+## H1 (tool half): Claude Code Edit and Write against the read-only view (this session)
+Edit  view/CLAUDE.md        -> EACCES: permission denied, open '.../view/CLAUDE.md.tmp.62112.c6f4609a2210'
+Write view/h1-newfile.txt   -> EACCES: permission denied, open '.../view/h1-newfile.txt.tmp.62112.b927d158be93'
+Write view/CLAUDE.md        -> EACCES: permission denied, open '.../view/CLAUDE.md.tmp.62112.3af88e7f7ce4'
+Both tools write a temp file beside the target and rename it, so the
+directory's write bit is what refuses them.
+
+## H1 control: a read-only file (0444) in a writable directory
+Edit  filero/f.txt          -> "has been updated successfully"; content now
+                               "edited by the H1 control"; mode still -r--r--r--
+Bash redirect into the same file -> exit 1 (refused)
+So file permissions alone do not stop the Edit tool; only a read-only
+directory does.
+
+## H1 (tool half) on the archive view, through the cur symlink (this session)
+Edit  arch/cur/CLAUDE.md       -> EACCES: permission denied, open '.../arch/cur/CLAUDE.md.tmp.62112.0ebdb76dba09'
+Write arch/cur/h1-newfile.txt  -> EACCES: permission denied, open '.../arch/cur/h1-newfile.txt.tmp.62112.ff6950f3ce4a'
+Note: the directory holding the cur symlink is writable to the same user, so the
+link itself is not protected; in a build it belongs in a directory the seat
+cannot write.
+
+## Rig artifact found, H3 and H5 re-run
+The third H3 run and the first H5 run piped git's error output through head.
+head closed the pipe after 2 or 3 lines, and git died of SIGPIPE before it
+wrote HEAD. That made a failed checkout look as if it left HEAD alone. Run by
+hand without the pipe, the failed checkout moved HEAD in 10 of 10 trials
+with git -C, 10 of 10 with cd, and 5 of 5 each after a fresh worktree add,
+after a status refresh, and after an H3 refresh. The rig now writes git
+output to a file before shortening it. The clean run at the top of this file carries the fixed H3 and H5.

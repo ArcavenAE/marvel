@@ -5,7 +5,8 @@
 **Date opened:** 2026-10-06
 **Idea:** `_kos/ideas/per-seat-readonly-default-branch-view.md`, mechanism 2;
 bears on the orc question `question-slotefs-agent-filesystem-mediation`.
-**Status:** OPEN, pre-registered, not run.
+**Status:** RUN 2026-10-06 on macOS. Result in
+`_kos/findings/finding-marvel-jj0s-per-seat-readonly-view.md`.
 
 Everything under "Pre-registration" was written before any rig exists. The
 outcome is appended in a dated section; nothing above it is revised after
@@ -226,3 +227,11 @@ view, or H1 and H6a to H6c hold for the archive view and an H6b2 remedy is
 chosen: a spawn step that creates one
 view per repository the seat declares, a refresh verb, and teardown
 removal. That is a separate ticket, filed from the finding.
+
+## Outcome (2026-10-06)
+
+Run on one macOS host; no Linux host was free. H1, H3, H4, H6a to H6d
+held. H2 failed for `git worktree remove` without `--force`, H5 failed as
+expected, and H6b2 failed as expected. The worktree view does not meet the
+build condition; the archive view does once the operator picks an H6b2
+remedy. Deviations and the full table are in the finding.
