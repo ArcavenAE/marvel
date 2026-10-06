@@ -40,7 +40,10 @@ func (g *fakeGit) Archive(_ context.Context, _, sha, dest string) error {
 
 func newBuilder(t *testing.T, g Git) *Builder {
 	t.Helper()
-	return New(filepath.Join(t.TempDir(), "views", "ws", "seat", "repo"), "remote", "main", g)
+	b := New(filepath.Join(t.TempDir(), "views", "ws", "seat", "repo"), "remote", "main", g)
+	// The trees are read-only; restore write so TempDir can remove them.
+	t.Cleanup(func() { _ = forceRemove(b.Dir) })
+	return b
 }
 
 func curTarget(t *testing.T, b *Builder) string {
