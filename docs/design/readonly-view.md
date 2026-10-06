@@ -1,7 +1,8 @@
 # A per-seat read-only view of the default branch
 
 - **Status:** design for review, 2026-10-06, revised the same day for the
-  first review (seal instead of delete; retention keyed to delivery). No
+  first review (seal instead of delete; retention keyed to delivery), and
+  on 2026-10-06 after merge for the swap contract (#621) and CI coverage. No
   code lands until this is reviewed. Tracks marvel#609.
 - **Basis:** finding marvel-jj0s (`_kos/findings/finding-marvel-jj0s-per-seat-readonly-view.md`,
   #603) and the operator's ruling of 2026-10-06, relayed by director:
@@ -31,11 +32,21 @@ re-enter the view and giving it a file to check against.
   reenter_grace = "2m"              # optional; default 2m (section 6)
 ```
 
-A role may declare several views, one per repository. Apply refuses a
-duplicate `name` in one role, a `name` that is not one path element, and a
-`refresh_every` below the floor. A view is per seat, not per role: two
-replicas each get their own, so one seat's refresh never moves another's
-tree.
+A role may declare several views, one per repository. Apply refuses:
+
+- a `name` that is empty or has a character outside `[A-Za-z0-9_-]`, which
+  also keeps it one path element;
+- two names in one role that map to the same `MARVEL_VIEW_<NAME>` (for
+  example `a-b` and `a_b`, or `Repo` and `repo`), a duplicate name included;
+- an empty `remote` or an empty `ref`. Both are required, with no default:
+  marvel does not guess a repository from the workdir or a branch from the
+  remote's HEAD;
+- a `refresh_every` below the floor;
+- a negative `reenter_grace`. Zero is allowed and means a superseded tree is
+  sealed at the first quiet after the notice is delivered (section 6).
+
+A view is per seat, not per role: two replicas each get their own, so one
+seat's refresh never moves another's tree.
 
 The seat's environment carries `MARVEL_VIEW_<NAME>` (the name upper-cased,
 `-` to `_`) set to the view's path, the symlink in section 3.
@@ -59,10 +70,23 @@ checkout):
   its root holding the full commit id, then `chmod -R a-w`. A directory and
   every file in it are read-only, because the probe found that a read-only
   file in a writable directory is replaced by the Edit tool (H1 control).
+- **Extraction refuses what could leave the tree.** A symlink whose target
+  is absolute, or whose resolved target climbs out of the tree, fails the
+  refresh, and so does an entry of an unsupported type; nothing is skipped,
+  so the current view stays and `view.refresh-failed` names the entry. A
+  relative symlink that resolves inside the tree is extracted as a link, as
+  aae-orc's `.agents/skills/*` links (`../../.claude/skills/...`) need.
+  Relaxing absolute links (kept dangling, or rewritten, never followed) is
+  deferred until a viewed repository needs it; on 2026-10-06 none of marvel,
+  director, kos or wardrobe tracked a symlink at all.
 - **The swap** writes `cur.new -> trees/<sha>` and renames it over `cur`
-  (`rename(2)`; BSD `mv -h`, GNU `mv -T`). Readers that resolve the path see
-  the old tree or the new one, never a mix (H6b, 3,189 reads across 20
-  swaps).
+  (`rename(2)`; BSD `mv -h`, GNU `mv -T`). A read through the path returns
+  content from the old tree or the new one, never a mix and never the wrong
+  file. A lookup that races a swap can fail instead: on macOS, open through
+  the symlink returns EINVAL while rename(2) replaces it, about 1 in 100
+  reads when swaps run back to back (measured 2026-10-06, and by the akocr
+  build). Production swaps are minutes apart, so a failed lookup is rare,
+  transient, and loud. Linux will be measured by the CI job (#621).
 - **What this guards against is accident, not intent.** The seat runs as
   the same user, so it can still `chmod` a tree or replace `cur`. The same
   limit is stated in the probe brief and the finding.
@@ -104,8 +128,11 @@ menu is not typed into, and the attempt is recorded as undelivered.
 notice rather than queueing another, so a seat that is busy through three
 refreshes gets one line naming the latest commit. An undelivered notice
 stays pending and is tried again on the next tick. The controller records,
-per view, the time the notice for the current commit was **delivered**;
-that time, not the refresh, is what section 6 keys on.
+per view, the time the notice for the current commit was **delivered**,
+and the start of the re-entry grace: the first time the pane is observed
+quiet after that delivery. A notice delivered at `max_defer` lands
+mid-turn, when the seat cannot act on it, so the grace waits for the next
+quiet. Those times, not the refresh, are what section 6 keys on.
 
 **The text** (one line):
 
@@ -124,12 +151,17 @@ A seat that reads only by absolute path through `$MARVEL_VIEW_<NAME>` never
 needs the check. That is the recommended way to use a view, and the seat
 guidance that ships with the feature says so.
 
+A read through the path that fails with an error during a refresh is retried
+once; a second failure is real.
+
 ## 6. Retention, and what a seat that ignores the notice sees
 
 A superseded tree passes through three states, and only the notice moves it.
 
 1. **Readable.** From the swap until the notice naming a later commit has
-   been delivered, plus `reenter_grace` (default 2m, a field on the view).
+   been delivered, the pane has next been observed quiet, and
+   `reenter_grace` (default 2m, a field on the view) has run from that
+   quiet (section 5).
    A seat that has not been told yet, or was told moments ago, reads a
    complete, consistent old tree, and its own `VIEW_SHA` says which commit
    it is. However many refreshes happen while the notice is undelivered,
@@ -160,14 +192,15 @@ fails. A mode-`000` directory refuses all of them.
 Why delivery and not refresh count: the notice can be deferred up to
 `max_defer` (30m), and at `refresh_every = 10m` a count-keyed rule would
 remove a tree up to three refreshes before its seat was told. No ack verb
-is proposed. A seat cannot always run one, and delivery plus grace is
-something marvel observes for itself.
+is proposed. A seat cannot always run one, and delivery, the next quiet and
+the grace are all things marvel observes for itself.
 
 **The cost of a seat that is never told** (stuck at a limit menu): its
 superseded trees stay readable and accumulate, one per changed commit.
-marvel emits `view.retention-held` once per change when more than five are
-readable, so the supervisor sees it; it never seals a tree early to save
-disk.
+Past five readable superseded trees, marvel pauses that seat's refresh, so
+the view stays on its current tree until the notice lands, and emits
+`view.retention-held` once per change, so the supervisor sees it. It never
+seals a tree early to save disk.
 
 ## 7. Failure handling
 
@@ -207,18 +240,29 @@ Per the ruling, Linux is tested and does not hold the build up.
   layout; the refresh steps with a fake git; each failure row in section 7;
   the notice text; coalescing (three refreshes, one pending notice); a
   superseded tree stays readable while its notice is undelivered and through
-  the grace; sealing after delivery plus grace; no tree removed before
+  the grace; a notice delivered mid-turn starts no grace until the next
+  quiet; sealing after delivery, the next quiet and the grace; zero grace
+  seals at that quiet; past five readable trees the refresh pauses; no tree
+  removed before
   teardown; `view.retention-held` past five; the restart resume, including a
   pending notice and a delivery time that survive it.
 - **An integration test with real git**, in a temp directory: build, swap,
-  read through the path during swaps (the H6b reader), `git -C <path>
-  rev-parse` refused (H6c), the Edit-tool control replaced by a write to
+  read through the path during swaps (the H6b reader: no torn or wrong
+  content, and failed lookups bounded, section 3), `git -C <path>
+  rev-parse` refused (H6c), an absolute or escaping symlink failing the
+  refresh while an in-tree relative one extracts, the Edit-tool control
+  replaced by a write to
   a read-only directory, and a held shell in a sealed tree getting a nonzero
-  exit from `ls` and `cat` (the section 6 measurement, on both platforms).
-- **Linux coverage is CI.** marvel's CI has `ubuntu-24.04` jobs and one
-  `macos-latest` job (`.github/workflows/ci.yml`), so the integration test
-  runs on both on every PR. The swap is one `rename(2)` call in Go, the same
-  on both, so neither `mv -h` nor `mv -T` is needed.
+  exit from `ls` and `cat` (the section 6 measurement).
+- **Linux coverage is CI; macOS coverage is local.** marvel's one PR test
+  job is `quality-gate` on `ubuntu-24.04` (`.github/workflows/ci.yml`), so
+  the integration test runs on Linux on every PR. No macOS PR test job
+  exists today; macOS is covered by local runs. The `macos-latest` job in
+  that file is the push-only signing job and runs no tests. A
+  `macos-latest` PR test job scoped to `internal/view` is planned (operator
+  ruling 2026-10-06) and being built. The swap is one
+  `rename(2)` call in Go, the same on both, so neither `mv -h` nor `mv -T` is
+  needed.
 - **The probe rig** (`scripts/probes/per-seat-readonly-view.sh`) is
   macOS-shaped (its socket default and `mv -h`). A Linux run of it is a
   follow-up, not a gate.
