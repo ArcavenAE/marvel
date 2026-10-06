@@ -22,20 +22,24 @@ Tags: **MEASURED** (a command run on the cluster or on a scratch daemon), **CODE
 - **MEASURED (scratch):** a `marvel work` re-apply after a scale to 0 restored the manifest's count, 1. `marvel scale` changes only the live team's replicas (CODE `internal/daemon/daemon.go:1692-1700`), and an apply resets the roles from the manifest (`internal/api/manifest.go:868`). **So a lasting 0 belongs in the manifest; a bare scale lasts only until the next apply.**
 - **MEASURED (live, read only):** the three seats scaled to 0 left the director roster, and their harness and shim processes exited.
 - **CODE (director shim):**
+  Read at ArcavenAE/director `main`, under `probe/nats-phase-0/director-mcp/`:
   - presence lapses about 90 s after the last beat (`askledger.go:22`).
   - Mail sent to a seat at 0 waits on the inbox stream, which keeps 72 h (`bus.go:71-76`).
-  - A new instance with the same agent id resumes after the departed instance's last acknowledged message (`bus.go:195-238`). So mail sent while a seat is at 0 is delivered on scale-up within 72 h, and lost after that.
-  - **Not tested here:** no message was sent to a live seat at 0, because that writes to the live bus.
+  - A new instance with the same agent id resumes after the departed instance's last acknowledged message (`bus.go:195-238`).
+  - **INFERRED** from those three: mail sent while a seat is at 0 is delivered on scale-up within 72 h, and lost after that.
+  - **Not tested here.** The brief planned one message sent at 0 on the scratch run. It was not sent, and the reason is the scratch rig, not the live bus: the scratch daemon ran a `sleep` runtime with no director shim and no message bus, so there was nothing to receive it. Testing it needs a scratch bus server and a shim-backed seat, which this probe did not build. A message to a live seat at 0 was ruled out because it writes to the live bus.
 
 ## 3. Who acts
 
-- Today it is an operator act: a manifest edit to `replicas = 0` plus an apply, or a scale followed by the same edit. That is what was done on 2026-10-06, with backups of the manifests.
-- **Audit gap, MEASURED:** the live scale to 0 left three `session.deleted` lines in the event ring and the daemon log, and no scale event and no request line. CODE: `handleScale` emits no event (`internal/daemon/daemon.go:1614-1735`). marvel cannot say afterwards who scaled a role to 0 or why.
+- Today it is an operator act: a manifest edit to `replicas = 0` plus an apply, or a scale followed by the same edit. On 2026-10-06 the director ran the live scale at the operator's word, with backups of the manifests (reported by the team supervisor).
+- **Audit gap, MEASURED:** the live scale to 0 left three `session.deleted` lines in the event ring and the daemon log, and no scale event and no request line. CODE: `handleScale` emits no event (`internal/daemon/daemon.go:1614-1713`). marvel cannot say afterwards who scaled a role to 0 or why.
 - **Recommendation (SOUL section 8, marvel proposes and does not judge):**
   - emit a `team.scaled` event naming the role and the old and new counts;
   - surface "never used" as a proposal, either a marker in `get sessions` or a once-per-change event for a statusline-fed seat with no heartbeat some time after spawn.
 
   An automatic scale-to-zero with wake on first message is not recommended now. It would judge for the operator, and waking on mail needs the director to tell marvel, which neither does today.
+
+  These are proposals only; nothing here executes on silence or on a clock. Each of the three (the `team.scaled` event, the never-used proposal, and not recommending automatic scale-to-zero now) is valid until 2026-10-20, or a marvel change to `handleScale` or session liveness, whichever comes first; the architect seat that wrote this finding re-checks it then.
 
 ## 4. Interactions
 
