@@ -93,6 +93,12 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	}
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
+		// A name given with --cluster cannot be looked up in a config that
+		// does not parse, and the default socket is not what the operator
+		// asked for (#502). Without --cluster the fallback is unchanged.
+		if clusterName != "" {
+			return "", daemon.DialOptions{}, rungDefault, fmt.Errorf("cluster %q: the client config is unreadable: %w", clusterName, err)
+		}
 		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	if err != nil {
