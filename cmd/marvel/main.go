@@ -2755,7 +2755,7 @@ func newSessionRow(s api.Session) sessionRow {
 		health = "unknown"
 	}
 	// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
-	// HEALTH is LIVENESS — the process is alive and its pane exists — so a
+	// HEALTH is LIVENESS (the process is alive and its pane exists), so a
 	// stalled session still reads healthy/unknown here; the "(stalled)"
 	// suffix says marvel has not observed it do work within its role's
 	// activity_timeout, which liveness cannot tell you. Running sessions
@@ -2772,7 +2772,7 @@ func newSessionRow(s api.Session) sessionRow {
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
 	// to an ordinary failure the reconciler is about to replace, so the
-	// operator cannot tell "done trying" from "coming back" — the whole
+	// operator cannot tell "done trying" from "coming back": the whole
 	// point of aae-orc-kj5bq. Same suffix idiom as HEALTH's "(stalled)",
 	// and no new column or SessionState value. The short tag is the
 	// Reason's own prefix; `describe session` carries the full text.
