@@ -52,6 +52,12 @@ type watchdog struct {
 	// once at start. Injected so a test needs no embedded sample.
 	sample func(panestate.Pattern) (string, error)
 
+	// failed holds the harness and version of every pattern that failed its
+	// control and left its version with no passing pattern, as
+	// "<harness>/<version>", so the seat on it reads control-failed and not
+	// uncovered.
+	failed map[string]bool
+
 	mu          sync.Mutex
 	lastCapture map[string]time.Time
 	rolled      map[string]string
@@ -65,7 +71,7 @@ func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, 
 		store: store, ring: ring, sets: sets, window: window,
 		sample: panestate.EmbeddedSample,
 		reg:    runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
-		lastCapture: map[string]time.Time{}, rolled: map[string]string{},
+		lastCapture: map[string]time.Time{}, rolled: map[string]string{}, failed: map[string]bool{},
 	}
 }
 
