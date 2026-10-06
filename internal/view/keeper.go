@@ -64,6 +64,9 @@ type Keeper struct {
 
 	mu      sync.Mutex
 	tracked map[string]*tracked
+	// gen counts ticks. An entry created during or after a tick's snapshot is
+	// not older than that tick, so the tick does not forget it.
+	gen uint64
 }
 
 // tracked is one view of one session.
@@ -74,7 +77,10 @@ type tracked struct {
 	builder *Builder
 
 	// run serializes refreshes of this view, so a tick and a verb never race.
-	run sync.Mutex
+	// It is a one-slot channel so a caller can wait for it within a deadline.
+	run chan struct{}
+	// gen is the keeper's tick generation when the entry was created.
+	gen uint64
 	// next, down, cause and gone are guarded by the keeper's lock. gone is set
 	// when the seat is torn down or forgotten, so a refresh still in flight
 	// removes what it wrote instead of recreating the seat's directory.
@@ -129,6 +135,8 @@ func (k *Keeper) track(sess api.Session, v api.View) *tracked {
 		key: id, session: sess, view: v,
 		builder: New(filepath.Join(k.ViewsDir, sess.Key(), v.Name), v.Remote, v.Ref, k.git()),
 		next:    k.now(),
+		run:     make(chan struct{}, 1),
+		gen:     k.gen,
 	}
 	k.tracked[id] = t
 	return t
@@ -144,9 +152,47 @@ func (k *Keeper) Build(sess api.Session, views []api.View) {
 	defer cancel()
 	for _, v := range views {
 		t := k.track(sess, v)
-		t.run.Lock()
+		// A tick may already be refreshing this view. The build waits for it
+		// only within its own bound, so the tick's longer fetch timeout cannot
+		// stretch a spawn.
+		if !t.acquire(ctx) {
+			k.emitFailure(sess, v.Name, "spawn", ctx.Err(), k.noteDown(t, ctx.Err()))
+			continue
+		}
 		k.refreshLocked(ctx, t, "spawn")
 	}
+}
+
+// acquire takes the view's refresh slot, or gives up when ctx ends.
+func (t *tracked) acquire(ctx context.Context) bool {
+	select {
+	case t.run <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// tryAcquire takes the slot only if it is free.
+func (t *tracked) tryAcquire() bool {
+	select {
+	case t.run <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *tracked) release() { <-t.run }
+
+// noteDown records a failure and reports whether its cause is new.
+func (k *Keeper) noteDown(t *tracked, err error) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	cause := err.Error()
+	changed := !t.down || t.cause != cause
+	t.down, t.cause = true, cause
+	return changed
 }
 
 // Refresh follows one named view of a session, or every view when name is
@@ -179,7 +225,9 @@ func (k *Keeper) Refresh(sessKey, name string) ([]string, error) {
 	}
 	lines := make([]string, 0, len(picked))
 	for _, v := range picked {
-		lines = append(lines, k.refresh(k.track(decl.Session, v), "request"))
+		t := k.track(decl.Session, v)
+		t.run <- struct{}{}
+		lines = append(lines, k.refreshLocked(context.Background(), t, "request"))
 	}
 	return lines, nil
 }
@@ -189,6 +237,10 @@ func (k *Keeper) Refresh(sessKey, name string) ([]string, error) {
 // restart) is tracked from the tree its cur already names, and a seat that is
 // gone is forgotten.
 func (k *Keeper) Tick() {
+	k.mu.Lock()
+	k.gen++
+	gen := k.gen
+	k.mu.Unlock()
 	if k.Declared != nil {
 		live := map[string]bool{}
 		for _, d := range k.Declared() {
@@ -199,19 +251,23 @@ func (k *Keeper) Tick() {
 		}
 		k.mu.Lock()
 		for id, t := range k.tracked {
-			if !live[id] {
+			// An entry created since this tick began was not in its snapshot
+			// and is not stale.
+			if !live[id] && t.gen < gen {
 				t.gone = true
 				delete(k.tracked, id)
 			}
 		}
 		k.mu.Unlock()
-		k.sweep(live)
+		k.sweep()
 	}
 	now := k.now()
 	k.mu.Lock()
 	var due []*tracked
 	for _, t := range k.tracked {
-		if !now.Before(t.next) {
+		// A seat still spawning is tracked, so the sweep leaves it alone, but not
+		// refreshed: the spawn build owns its view until the seat is running.
+		if !now.Before(t.next) && t.session.State == api.SessionRunning {
 			due = append(due, t)
 		}
 	}
@@ -220,7 +276,7 @@ func (k *Keeper) Tick() {
 	for _, t := range due {
 		// A view already being refreshed (a slow fetch, or a verb) is not
 		// waited for: the tick must never queue behind one seat's remote.
-		if !t.run.TryLock() {
+		if !t.tryAcquire() {
 			continue
 		}
 		k.refreshLocked(context.Background(), t, "tick")
@@ -262,7 +318,7 @@ func (k *Keeper) Teardown(sessKey string) error {
 // sweep removes a views directory that no live session owns and no refresh is
 // building: what a refresh in flight at teardown left, or a crashed daemon did.
 // A seat being spawned is tracked and so is skipped.
-func (k *Keeper) sweep(live map[string]bool) {
+func (k *Keeper) sweep() {
 	workspaces, err := os.ReadDir(k.ViewsDir)
 	if err != nil {
 		return
@@ -277,9 +333,6 @@ func (k *Keeper) sweep(live map[string]bool) {
 		}
 		for _, seat := range seats {
 			key := ws.Name() + "/" + seat.Name()
-			if live[key] {
-				continue
-			}
 			k.mu.Lock()
 			if !k.owned(key) {
 				_ = forceRemove(filepath.Join(k.ViewsDir, key))
@@ -303,15 +356,11 @@ func (k *Keeper) owned(sessKey string) bool {
 
 // refresh runs one refresh of one view, off the keeper's lock, and reports it
 // as an event. It returns a line describing the outcome.
-func (k *Keeper) refresh(t *tracked, why string) string {
-	t.run.Lock()
-	return k.refreshLocked(context.Background(), t, why)
-}
 
 // refreshLocked is refresh for a caller that already holds t.run; it releases
 // it.
 func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) string {
-	defer t.run.Unlock()
+	defer t.release()
 	ctx, cancel := context.WithTimeout(parent, k.timeout())
 	defer cancel()
 	res, err := t.builder.Refresh(ctx)
