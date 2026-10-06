@@ -139,3 +139,30 @@ func TestConfigCommandsAcceptAnUnknownClusterFlag(t *testing.T) {
 		t.Fatalf("use-cluster on a config with an unknown current_cluster: %v", err)
 	}
 }
+
+// A --cluster name cannot be looked up when the client config does not parse,
+// so it is refused too, and nothing is dialed. Without --cluster the same
+// unreadable config still falls back to the default socket (see
+// TestResolveRungNamesEachRung, unreadable config).
+func TestUnreadableConfigWithClusterFlagRefuses(t *testing.T) {
+	dialed := unknownClusterFixture(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte("clusters: [unclosed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clusterName = "nosuch"
+
+	_, err = send(daemon.Request{Method: "status"})
+	if err == nil {
+		t.Fatal("send succeeded with --cluster and an unreadable config, want a refusal")
+	}
+	if !strings.Contains(err.Error(), `"nosuch"`) {
+		t.Errorf("error = %q, want it to name the cluster", err)
+	}
+	if n := dialed.Load(); n != 0 {
+		t.Errorf("the local daemon was dialed %d time(s), want 0", n)
+	}
+}
