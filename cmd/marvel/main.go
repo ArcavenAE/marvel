@@ -81,8 +81,11 @@ func resolveDaemonAddr() (string, daemon.DialOptions, error) {
 	}
 	cl, err := cfg.GetCluster(clusterName)
 	if err != nil {
-		// Stub for the red commit: refuses the wrong case.
-		if clusterName == "" {
+		// A name the operator typed that matches nothing is refused: acting
+		// on the local daemon instead could land a mutating command on the
+		// wrong host (#502). A current_cluster in the config that names
+		// nothing keeps the warning and the local fallback.
+		if clusterName != "" {
 			return "", daemon.DialOptions{}, err
 		}
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
