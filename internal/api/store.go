@@ -126,6 +126,7 @@ func cloneSession(s *Session) Session {
 	if s.HarnessState != nil {
 		hs := *s.HarnessState
 		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)
+		hs.Covered = append([]string(nil), s.HarnessState.Covered...)
 		out.HarnessState = &hs
 	}
 	return out
@@ -861,6 +862,7 @@ func (s *Store) SetHarnessState(key string, hs *HarnessState) {
 	}
 	c := *hs
 	c.Evidence = append([]string(nil), hs.Evidence...)
+	c.Covered = append([]string(nil), hs.Covered...)
 	sess.HarnessState = &c
 }
 

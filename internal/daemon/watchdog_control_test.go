@@ -67,8 +67,10 @@ func TestWatchdogDropsAPatternThatFailsItsControl(t *testing.T) {
 		t.Fatalf("sets after a failed control = %d, want the failed pattern dropped", len(r.w.sets))
 	}
 	r.w.Once()
-	if hs := r.get("a").HarnessState; hs != nil {
-		t.Fatalf("a seat read %+v from a pattern that failed its control", hs)
+	// The seat reads control-failed, never logged-out, from a pattern that
+	// failed its control.
+	if hs := r.get("a").HarnessState; hs == nil || hs.State != api.HarnessStateControlFailed {
+		t.Fatalf("a seat read %+v from a pattern that failed its control, want control-failed", hs)
 	}
 }
 
