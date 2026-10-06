@@ -1,0 +1,11 @@
+run: run-2026-10-03
+window: 2026-10-03T20:02:30Z to 2026-10-03T20:05:09Z (the whole end second)
+wall: 159 s, pauses: 0 s, active: 159 s
+messages: 11 distinct message ids from 29 usage records (counted once per id)
+
+tokens, all models: input 22, output 20251, cache_read 2981298, cache_creation 73073
+
+model claude-sonnet-5-5: input 22, output 20251, cache_read 2981298, cache_creation 73073
+
+parts:
+  e92314ee-6a2a-4157-9dc5-d88402fd4073 session: 11 messages, input 22, output 20251, cache_read 2981298, cache_creation 73073

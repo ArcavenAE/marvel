@@ -16,7 +16,7 @@ Related: `router-and-backend-as-first-class-concepts.md`,
 `finding-050-backend-usage-limit-observability.md`,
 `memory-pressure-and-emergency-messages.md` (marvel#349),
 `fleet-throughput-as-the-objective-function.md`, orc
-`marvel-agentic-resource-matrix.md` (rows 2, 4, 17), orc `finding-175`
+`marvel-agentic-resource-matrix.md` (rows 2, 4, 17), orc `finding-220`
 (cross-cluster work migration), ADR-007, ADR-009.
 
 ## The operator's words
@@ -48,7 +48,7 @@ frontier node ruled KNOW yes, PRESENT graded, MANAGE no. The headroom catalog
 provenance grades. The token-rate idea designed the per-session EMA. What
 nothing does is join them into one loop: **registry, then estimate, then
 forecast, then act, with work in flight protected.** Today the only instance
-of that loop ran through a person: in finding-175 the operator read one
+of that loop ran through a person: in finding-220 the operator read one
 host's status line (7d at 78%), saw another account at 8%, and moved the work
 by hand. "Budget is invisible to marvel."
 
@@ -210,15 +210,15 @@ shows as stale, per finding-050's downgrade-when-stale rule.
 | **Warn** | NOTICE / WARN to the supervisor and director with the forecast band | nothing moves | automatic (reminding) |
 | **Slow a team** | pause intake for the pool's seats (the demand-side idea's actuator); no new work admitted | running work finishes | proposal, confirmed by the supervisor |
 | **Route new work elsewhere** | new items go to seats on a pool with headroom | nothing in flight moves | proposal |
-| **Move an agent to another backend** | a shift whose successor spawns with a different declared backend | a shift with handoff, started while headroom remains: the predecessor writes DONE / REMAINING / RULED OUT / OPEN / RESUME (the finding-175 shape) and pushes its branch before it stops | proposal; the operator's backend choice is a custody decision ("Fallback policy is a custody decision, not a performance one", model-runtime node) |
-| **Move work to another marvel cluster** | finding-175, made routine | the handoff above, plus what finding-175 found missing: the spec travels in git (never in gitignored `.session/`), the role definition travels, a durable cross-cluster mailbox | proposal; operator-confirmed |
+| **Move an agent to another backend** | a shift whose successor spawns with a different declared backend | a shift with handoff, started while headroom remains: the predecessor writes DONE / REMAINING / RULED OUT / OPEN / RESUME (the finding-220 shape) and pushes its branch before it stops | proposal; the operator's backend choice is a custody decision ("Fallback policy is a custody decision, not a performance one", model-runtime node) |
+| **Move work to another marvel cluster** | finding-220, made routine | the handoff above, plus what finding-220 found missing: the spec travels in git (never in gitignored `.session/`), the role definition travels, a durable cross-cluster mailbox | proposal; operator-confirmed |
 | **Pause** | stop a seat before the wall | only at a turn boundary after a checkpoint, never mid-call | proposal |
 
 **The load-bearing rule: act on the forecast, not the refusal.** A seat that
 hits a 429 mid-turn is frozen with its work half done, which is the outcome
 the operator named. The trigger for a handoff is "the lower bound of T falls
 below the handoff lead time", where lead time is the measured wrap-up cost
-(about eight minutes in finding-175) plus a margin. The context-pressure shift
+(about eight minutes in finding-220) plus a margin. The context-pressure shift
 works the same way: fire before the boundary, not at it.
 
 **Emergency vocabulary.** The memory-pressure idea's NOTICE / WARN /

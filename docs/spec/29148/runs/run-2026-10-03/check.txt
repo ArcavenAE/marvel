@@ -1,0 +1,3 @@
+PASS claims: 38 claims, each classed and cited, every source resolves
+PASS sections: the BRS headings are present and in order
+PASS survival: 38 claims kept their id, class and sources

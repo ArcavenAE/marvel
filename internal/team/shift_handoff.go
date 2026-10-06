@@ -306,8 +306,9 @@ func handoffPath(template string, sess api.Session) (string, error) {
 
 // handoffComplete reports whether the file at path is a regular file whose
 // last non-empty line is marker. The path is written by the seat, and this
-// runs under c.mu, so it must not block: a FIFO would hold a plain open
-// forever and wedge every team (review 5392253372). So the path must be a
+// runs in a background read off the controller lock (marvel#444), but it must
+// not block: a FIFO would hold a plain open forever and wedge that read
+// (review 5392253372). So the path must be a
 // regular file, not a symlink; it is opened non-blocking without following
 // links, and the open file must be the regular file that was checked. It
 // reads at most the file's last maxHandoffTail bytes (D5 step 2).

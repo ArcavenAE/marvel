@@ -369,6 +369,7 @@ func (m *Manager) Render() (bool, error) {
 		Listen:       m.bus.Listen,
 		StoreDir:     m.bus.StoreDir,
 		HubURL:       m.bus.HubURL,
+		HubURLs:      m.bus.HubURLs,
 		HubCAFile:    m.bus.HubCAFile,
 		LeafSeed:     m.hasLeafSeed != nil && m.hasLeafSeed(),
 		LeafAttached: m.leafAttached.Load(),

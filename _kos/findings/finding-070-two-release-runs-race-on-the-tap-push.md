@@ -1,4 +1,6 @@
-# finding-039: two release runs race on the tap push; the loser leaves the tap behind
+# finding-070: two release runs race on the tap push; the loser leaves the tap behind
+
+**Renumbered:** this file was `finding-039-two-release-runs-race-on-the-tap-push` until 2026-10-05, when it moved to 070 because it shared 039 with `finding-039-b69n-contract-lane-harvest`. Cite it as finding-070.
 
 **Date:** 2026-09-15
 **Probe:** merging the brief 10 stack (#264 through #269) into main in one sitting

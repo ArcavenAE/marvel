@@ -12,7 +12,7 @@ permissions:
 jobs:
   quality-gate:
     name: Quality Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -79,7 +79,7 @@ jobs:
     name: Build Binaries
     needs: quality-gate
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -266,14 +266,14 @@ jobs:
     needs: [build-binaries, sign-and-notarize]
     if: github.event_name == 'push' && !cancelled() && needs.build-binaries.result == 'success'
     # Release jobs for successive pushes queue rather than interleave: two of
-    # them racing on the tap push left the tap behind head (finding-039).
+    # them racing on the tap push left the tap behind head (finding-070).
     concurrency:
       group: release-tap-push
       cancel-in-progress: false
     permissions:
       contents: write
     environment: release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -420,7 +420,7 @@ jobs:
             # Another release run, or another formula's bump, may have pushed
             # the tap since the clone. This is the bot's own fresh checkout, so
             # rebasing it rewrites nothing anyone holds; give up only after a
-            # bounded number of attempts (finding-039).
+            # bounded number of attempts (finding-070).
             pushed=""
             for attempt in 1 2 3 4 5; do
               if git push origin main; then
@@ -460,7 +460,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
