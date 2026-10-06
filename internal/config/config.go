@@ -176,6 +176,16 @@ type Config struct {
 	// Watchdog tunes the harness-state watchdog
 	// (docs/design/harness-state-watchdog-p1.md section 3).
 	Watchdog Watchdog `yaml:"watchdog,omitempty"`
+	// Display holds client display preferences. Nothing here changes what
+	// a daemon does.
+	Display Display `yaml:"display,omitempty"`
+}
+
+// Display is the client's display preferences.
+type Display struct {
+	// SessionColumns names the `marvel get sessions` columns, in order.
+	// The --columns flag overrides it; empty means the default columns.
+	SessionColumns []string `yaml:"session_columns,omitempty"`
 }
 
 // Watchdog is the harness-state watchdog's own settings.
