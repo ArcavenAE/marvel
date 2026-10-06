@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -216,5 +217,42 @@ func TestDescribeCmdRoutesDaemon(t *testing.T) {
 	}
 	if got := methods(); len(got) != 1 || got[0] != "daemon.status" {
 		t.Errorf("methods = %v, want exactly [daemon.status]", got)
+	}
+}
+
+// describe daemon prints the client's address and rung beside the daemon's
+// own record, flattened into one object, so a daemon status key named
+// "address" or "rung" would silently shadow the client's facts. Guard the
+// status type against ever growing one.
+func TestDaemonStatusKeysNeverShadowTheClientsFacts(t *testing.T) {
+	typ := reflect.TypeOf(daemon.DaemonStatus{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" {
+			name = f.Name
+		}
+		if name == "address" || name == "rung" {
+			t.Errorf("DaemonStatus.%s marshals as %q, which shadows describe daemon's own key", f.Name, name)
+		}
+	}
+}
+
+// A status the client cannot decode is an error, not an empty record printed
+// with exit 0.
+func TestDescribeDaemonRefusesAStatusItCannotDecode(t *testing.T) {
+	resolveFixture(t, false)
+	socket := fakeSocket(t, func(daemon.Request) daemon.Response {
+		return daemon.Response{Result: json.RawMessage(`[1,2,3]`)}
+	})
+	t.Setenv(config.SocketEnv, socket)
+
+	var out bytes.Buffer
+	err := describeDaemon(&out)
+	if err == nil || !strings.Contains(err.Error(), "decode daemon status") {
+		t.Errorf("err = %v, want a decode error", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("printed %q before failing, want nothing", out.String())
 	}
 }
