@@ -509,13 +509,17 @@ A leaf link that goes down is reported and nothing is restarted: the local
 broker keeps serving its own sessions.
 
 A leaf that stays down is reported again. The event (`bus.leaf.down`) fires when
-the link drops, when an enrolled leaf is found already down at the first poll
-after a start or reexec, and every 30 minutes after that while it stays down,
-each repeat naming how long. A hub with no seed, and a leaf you disconnected,
-promised no link and are not repeated. `marvel bus status` shows how long the
-current state has lasted (`leaf: down for 2h9m`; `leaf_since` in the JSON). The
-30 minutes is a placeholder for the repeat bound that design/wake-service.md
-leaves open as Q1.
+the link drops; when a leaf that is enrolled and connected is found already
+down at the first poll after a start or reexec; when a down leaf becomes
+enrolled (its seed is stored) or connected; and every 30 minutes after that
+while it stays down, each repeat naming how long. A hub with no seed, and a
+leaf you disconnected, promised no link and are not reported or repeated while
+that is so. `marvel bus status` shows how long the current state has lasted
+(`leaf: down for 2h9m`; `leaf_since` in the JSON). The duration is kept in the
+daemon's memory, so a restart or reexec starts it over; it is not stored with
+the record. The 30 minutes is a placeholder for the repeat bound that
+design/wake-service.md leaves open as Q1, and the in-memory choice answers that
+design's Q2 only until the operator rules.
 
 ### Moving a cluster to another network
 

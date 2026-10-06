@@ -762,7 +762,7 @@ func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	}
 	since := s.leafSince
 	repeat := !changed && !up && promised && !s.leafReportedAt.IsZero() && now.Sub(s.leafReportedAt) >= s.leafRepeatEvery
-	report := changed && !up && (prev != nil || promised)
+	report := (changed && !up && prev != nil) || (!up && promised && s.leafReportedAt.IsZero())
 	if report || repeat {
 		s.leafReportedAt = now
 	}
