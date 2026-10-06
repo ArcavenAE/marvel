@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func fixtureSet(t *testing.T) []Pattern {
@@ -213,5 +214,82 @@ func TestShippedPatternSetsAreNotEmpty(t *testing.T) {
 	}
 	if len(sets) == 0 {
 		t.Fatal("LoadEmbedded returned no pattern set, so the watchdog starts no loop")
+	}
+}
+
+// A chat-quoted copy of the shipped screen puts text in front of each row, so
+// the cursor column grows past its real two characters. It must not read as
+// logged-out (marvel#598 review).
+func TestShippedPatternRefusesAQuotedCopyOfItsSample(t *testing.T) {
+	sets, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("load embedded: %v", err)
+	}
+	for _, p := range sets {
+		raw, err := EmbeddedSample(p)
+		if err != nil {
+			t.Fatalf("sample for %s %s: %v", p.Harness, p.HarnessVersion, err)
+		}
+		var quoted []string
+		for _, l := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+			// Quote only the option rows: the fixed rows above them are kept
+			// whole, so the cursor column is the only thing that differs.
+			if t := strings.TrimLeft(l, " ❯"); len(t) > 2 && t[0] >= '1' && t[0] <= '3' && t[1] == '.' {
+				l = "> " + l
+			}
+			quoted = append(quoted, l)
+		}
+		if r := Classify(sets, p.Harness, p.HarnessVersion, rows(strings.Join(quoted, "\n"))); r.State == StateLoggedOut {
+			t.Fatalf("a quoted copy of %s %s matched: %+v", p.Harness, p.HarnessVersion, r)
+		}
+	}
+}
+
+func TestVarRunesBoundsTheSpan(t *testing.T) {
+	row, err := parseRow("{{var}} 1. x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.MaxVar = 2
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"   1. x", true},
+		{" ❯ 1. x", true},
+		{"> ❯ 1. x", false},
+		{"    1. x", false},
+		{" 1. x", false},
+	} {
+		if got := row.matches(tc.line); got != tc.want {
+			t.Errorf("matches(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+	row.MaxVar = 0
+	if !row.matches("anything at all 1. x") {
+		t.Error("an unbounded span stopped matching")
+	}
+}
+
+// A shipped pattern with a variable span must bound it: the span is where a
+// quoted or pasted copy gets in.
+func TestShippedVariableSpansAreBounded(t *testing.T) {
+	sets, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("load embedded: %v", err)
+	}
+	for _, p := range sets {
+		for _, r := range p.Rows {
+			if r.Var && r.MaxVar == 0 {
+				t.Errorf("%s/%s/%s: row %q has an unbounded variable span", p.Harness, p.HarnessVersion, p.ID, r.Render())
+			}
+		}
+	}
+}
+
+func TestLoadRefusesANegativeVarRunes(t *testing.T) {
+	fsys := fstest.MapFS{"h/1/x.yaml": {Data: []byte("id: x\nharness: h\nharness_version: \"1\"\nvar_runes: -1\nrows:\n  - \"a\"\n")}}
+	if _, err := Load(fsys, "."); err == nil {
+		t.Fatal("a negative var_runes was accepted")
 	}
 }

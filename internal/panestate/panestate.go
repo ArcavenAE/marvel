@@ -14,6 +14,7 @@ package panestate
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // State is what the screen was classified as.
@@ -73,6 +74,8 @@ func Normalize(pane, raw string) ([]string, error) {
 type Row struct {
 	Prefix, Suffix string
 	Var            bool
+	// MaxVar bounds the variable span in runes; 0 leaves it unbounded.
+	MaxVar int
 }
 
 func parseRow(s string) (Row, error) {
@@ -91,8 +94,12 @@ func (r Row) matches(line string) bool {
 	if !r.Var {
 		return line == r.Prefix
 	}
-	return len(line) > len(r.Prefix)+len(r.Suffix) &&
-		strings.HasPrefix(line, r.Prefix) && strings.HasSuffix(line, r.Suffix)
+	if len(line) <= len(r.Prefix)+len(r.Suffix) ||
+		!strings.HasPrefix(line, r.Prefix) || !strings.HasSuffix(line, r.Suffix) {
+		return false
+	}
+	span := line[len(r.Prefix) : len(line)-len(r.Suffix)]
+	return r.MaxVar == 0 || utf8.RuneCountInString(span) <= r.MaxVar
 }
 
 // Render is the row as every surface shows it.
