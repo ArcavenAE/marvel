@@ -1,7 +1,8 @@
 # A per-seat read-only view of the default branch
 
-- **Status:** design for review, 2026-10-06. No code lands until this is
-  reviewed. Tracks marvel#609.
+- **Status:** design for review, 2026-10-06, revised the same day for the
+  first review (seal instead of delete; retention keyed to delivery). No
+  code lands until this is reviewed. Tracks marvel#609.
 - **Basis:** finding marvel-jj0s (`_kos/findings/finding-marvel-jj0s-per-seat-readonly-view.md`,
   #603) and the operator's ruling of 2026-10-06, relayed by director:
   "slotefs ii now and also kick off iii but should include plans to test
@@ -27,6 +28,7 @@ re-enter the view and giving it a file to check against.
   remote = "git@github.com:ArcavenAE/marvel.git"
   ref    = "main"                   # the branch to follow
   refresh_every = "10m"             # optional; default 10m, floor 1m
+  reenter_grace = "2m"              # optional; default 2m (section 6)
 ```
 
 A role may declare several views, one per repository. Apply refuses a
@@ -72,13 +74,13 @@ On each `refresh_every` tick, and on `marvel view refresh <session> [<name>]`:
 1. `git fetch` into `mirror.git`. Resolve `ref` to a commit.
 2. If it equals the current tree's commit, stop.
 3. Extract `trees/<new>`, write `VIEW_SHA`, make it read-only.
-4. Swap `cur`.
-5. Remove the tree before the one just replaced, if any (section 6).
-6. Notify the seat (section 5).
-7. Emit `view.refreshed` with the session, view name, old and new commit.
+4. Swap `cur`. The tree it replaced becomes **superseded** (section 6).
+5. Set the view's pending notice to name the new commit (section 5).
+6. Emit `view.refreshed` with the session, view name, old and new commit.
 
 Steps 1 to 3 run off the controller lock, as the handoff-file read already
-does, so a slow fetch never stalls reconciliation.
+does, so a slow fetch never stalls reconciliation. A refresh never seals or
+removes a tree; that is keyed to the notice, not to the refresh count.
 
 ## 5. The notice and the seat-side check
 
@@ -92,10 +94,18 @@ at all, while a persistent shell can (H6b2). The notice goes to every
 declaring seat; the check is cheap.
 
 **How:** through the existing `Notify(sess, text)` path that the max-age
-handoff request uses, so the same refusals apply (a seat showing a usage
-limit menu or an update menu is not typed into, and the notice is recorded
-as undelivered). A seat that is mid-turn gets it when the pane is quiet, by
-the same `quiet_for` rule as the handoff request.
+handoff request uses, with the same timing: sent once the pane has been
+quiet for `quiet_for` (2m), or at `max_defer` (30m) however busy
+(`internal/api/types.go:582-583`, `internal/team/shift_handoff.go:50-92`).
+The same refusals apply: a seat showing a usage limit menu or an update
+menu is not typed into, and the attempt is recorded as undelivered.
+
+**One pending notice per view, coalesced.** A refresh replaces the pending
+notice rather than queueing another, so a seat that is busy through three
+refreshes gets one line naming the latest commit. An undelivered notice
+stays pending and is tried again on the next tick. The controller records,
+per view, the time the notice for the current commit was **delivered**;
+that time, not the refresh, is what section 6 keys on.
 
 **The text** (one line):
 
@@ -116,13 +126,48 @@ guidance that ships with the feature says so.
 
 ## 6. Retention, and what a seat that ignores the notice sees
 
-marvel keeps two trees: the current one and the one it replaced. A refresh
-removes the tree before that. So a seat that ignores one notice still reads
-a complete, consistent old tree, and its own `VIEW_SHA` says which commit it
-is. A seat that ignores two notices is in a removed directory: reads fail
-with `No such file or directory` and `pwd` with `getcwd: cannot access
-parent directories` (measured in H6b2). That failure is loud, which is the
-point of removing the tree rather than keeping it forever.
+A superseded tree passes through three states, and only the notice moves it.
+
+1. **Readable.** From the swap until the notice naming a later commit has
+   been delivered, plus `reenter_grace` (default 2m, a field on the view).
+   A seat that has not been told yet, or was told moments ago, reads a
+   complete, consistent old tree, and its own `VIEW_SHA` says which commit
+   it is. However many refreshes happen while the notice is undelivered,
+   every superseded tree stays readable; none is sealed before its seat
+   was told.
+2. **Sealed.** When the grace ends, marvel hollows the tree and seals it:
+   it deletes every file, keeps the directories, and sets each directory
+   to mode `000`, deepest first. A seat still holding a working directory
+   there now gets an error on every read instead of an empty answer.
+   Measured on macOS, 2026-10-06, with shells holding a directory at the
+   tree root and two levels down: `ls` printed `ls: .: Permission denied`
+   and exited 1, `cat ./f` printed `Permission denied` and exited 1,
+   `grep -r` warned `Permission denied` and exited 2, and `find .` printed
+   `Permission denied` on stderr but exited 0 (that shell's `find` is a
+   wrapper; BSD and GNU `find` are untested). `pwd` still printed the old
+   path and exited 0, which is why the notice names `VIEW_SHA` rather than
+   `pwd`. The skeleton is directories only, so it costs almost no disk.
+3. **Removed.** At session teardown, or when the role's view is removed
+   from the manifest. Not before: a removed tree is the silent case the
+   review found (finding marvel-jj0s, H3 and H6b2: `ls` in a removed
+   directory prints nothing and exits 0), so marvel never removes a tree a
+   seat may still hold while the seat lives.
+
+Why seal and not delete: deleting leaves a held directory that answers
+`ls`, globs, `find` and `grep -r` with silence, and only a named file read
+fails. A mode-`000` directory refuses all of them.
+
+Why delivery and not refresh count: the notice can be deferred up to
+`max_defer` (30m), and at `refresh_every = 10m` a count-keyed rule would
+remove a tree up to three refreshes before its seat was told. No ack verb
+is proposed. A seat cannot always run one, and delivery plus grace is
+something marvel observes for itself.
+
+**The cost of a seat that is never told** (stuck at a limit menu): its
+superseded trees stay readable and accumulate, one per changed commit.
+marvel emits `view.retention-held` once per change when more than five are
+readable, so the supervisor sees it; it never seals a tree early to save
+disk.
 
 ## 7. Failure handling
 
@@ -131,11 +176,11 @@ point of removing the tree rather than keeping it forever.
 | fetch (network, auth) | keep the current tree; emit `view.refresh-failed` with the cause; retry on the next tick |
 | archive or extract (disk full, a bad ref) | remove the partial `trees/<new>`; keep the current tree; emit `view.refresh-failed` |
 | the swap | keep the current tree; remove `trees/<new>`; emit `view.refresh-failed` |
-| removing the old tree | log it, leave it, retry on the next refresh; a stuck tree never blocks a swap |
-| the notice | record it undelivered on the event, as the handoff request does; the swap stands |
+| sealing a tree | log it, leave it readable, retry on the next tick; a stuck seal never blocks a swap |
+| the notice | record it undelivered, keep it pending, retry each tick; superseded trees stay readable until it lands |
 | first build at spawn | the session still starts, without `MARVEL_VIEW_<NAME>`; emit `view.unavailable` once per change |
-| daemon restart | views on disk persist; the controller reads `cur` and resumes the ticks |
-| teardown | remove `views/<session-key>/` (`chmod -R u+w` first) |
+| daemon restart | trees on disk persist; the pending notice, its delivery time and each superseded tree's state are stored with the team, as a pending handoff request is, so a restart neither re-seals early nor forgets an undelivered notice |
+| teardown | restore owner permissions top down, then remove `views/<session-key>/` |
 
 No failure fails a spawn, a shift or a reconcile. Every one is an event.
 
@@ -145,10 +190,11 @@ Not designed here. These are the parts a mount would reuse, so the seat sees
 one contract whichever mechanism serves it:
 
 - `[[team.role.view]]` and its fields;
+- the readable, sealed and removed states, if a mount keeps old trees;
 - `MARVEL_VIEW_<NAME>` naming the path;
 - `VIEW_SHA` at the root of the tree;
-- the notice text, and the `view.refreshed`, `view.refresh-failed` and
-  `view.unavailable` events.
+- the notice text, and the `view.refreshed`, `view.refresh-failed`,
+  `view.unavailable` and `view.retention-held` events.
 
 A mount would change what is under the path, and might make the notice
 unnecessary, since content changes under a held directory.
@@ -159,11 +205,16 @@ Per the ruling, Linux is tested and does not hold the build up.
 
 - **Unit tests, red first:** the manifest refusals; the env var name; the
   layout; the refresh steps with a fake git; each failure row in section 7;
-  retention of exactly two trees; the notice text; the restart resume.
+  the notice text; coalescing (three refreshes, one pending notice); a
+  superseded tree stays readable while its notice is undelivered and through
+  the grace; sealing after delivery plus grace; no tree removed before
+  teardown; `view.retention-held` past five; the restart resume, including a
+  pending notice and a delivery time that survive it.
 - **An integration test with real git**, in a temp directory: build, swap,
   read through the path during swaps (the H6b reader), `git -C <path>
-  rev-parse` refused (H6c), and the Edit-tool control replaced by a write to
-  a read-only directory.
+  rev-parse` refused (H6c), the Edit-tool control replaced by a write to
+  a read-only directory, and a held shell in a sealed tree getting a nonzero
+  exit from `ls` and `cat` (the section 6 measurement, on both platforms).
 - **Linux coverage is CI.** marvel's CI has `ubuntu-24.04` jobs and one
   `macos-latest` job (`.github/workflows/ci.yml`), so the integration test
   runs on both on every PR. The swap is one `rename(2)` call in Go, the same
