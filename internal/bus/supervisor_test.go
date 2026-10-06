@@ -196,8 +196,8 @@ func TestSupervisorKeepThenAdoptAcrossDaemons(t *testing.T) {
 	}
 	s2.Stop(false)
 	// Poll to a deadline rather than sleeping once: how long a broker takes
-	// to exit depends on the load on the machine, and a fixed second failed
-	// the test on a slow one.
+	// to exit depends on the load on the machine, and a fixed second could
+	// fail the test on a slow one.
 	eventually(t, "the adopted broker to exit after Stop(false)", func() bool {
 		return syscall.Kill(pid, 0) != nil
 	})
