@@ -1531,7 +1531,9 @@ func evaluateActivity(s *api.Session, role *api.Role, now time.Time) api.Activit
 		return api.ActivityUnknown
 	}
 	if !s.ContextAt.IsZero() {
-		if now.Sub(s.ContextAt) > role.ActivityTimeout {
+		// The one quiet test, shared with the rate and ACTIVE%; the zero
+		// ContextAt path below keeps its own rules.
+		if api.Quiet(s, role.ActivityTimeout, now) {
 			return api.ActivityStalled
 		}
 		return api.ActivityActive

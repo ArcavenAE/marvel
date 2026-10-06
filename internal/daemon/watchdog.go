@@ -26,7 +26,7 @@ const WatchdogInterval = 30 * time.Second
 
 // DefaultWatchdogWindow is how long a session must be quiet before it is a
 // candidate (docs/design/harness-state-watchdog-p1.md section 3).
-const DefaultWatchdogWindow = 10 * time.Minute
+const DefaultWatchdogWindow = api.DefaultQuietWindow
 
 // rollupSeats is how many seats of one account reading logged-out make one
 // account.logged-out event.
