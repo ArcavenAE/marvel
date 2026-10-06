@@ -485,9 +485,6 @@ const (
 	GlobalRoleNone       = "none"
 )
 
-// Role declares desired state for one kind of agent within a team.
-// Name is the job function (reviewer, supervisor, probe-runner).
-// Persona and Identity are the costume and lens per finding-019.
 // View defaults and floor (docs/design/readonly-view.md section 2).
 const (
 	// DefaultViewRefreshEvery is how often a view follows its ref when the
@@ -517,6 +514,9 @@ type View struct {
 	ReenterGrace time.Duration
 }
 
+// Role declares desired state for one kind of agent within a team.
+// Name is the job function (reviewer, supervisor, probe-runner).
+// Persona and Identity are the costume and lens per finding-019.
 type Role struct {
 	// SettingsSources, when declared, is the list of Claude Code settings
 	// sources a bare claude seat loads (user, project, local), passed as

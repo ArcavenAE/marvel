@@ -626,12 +626,6 @@ type ForegroundRule interface {
 	Foreground(paneCommand string) (harnessVersion string, ok bool)
 }
 
-// ViewEnvName is the seat variable that names a view's path:
-// MARVEL_VIEW_<NAME>, the name upper-cased with - turned into _.
-func ViewEnvName(view string) string {
-	return "MARVEL_VIEW_" + strings.ToUpper(strings.ReplaceAll(view, "-", "_"))
-}
-
 // addViewEnv sets MARVEL_VIEW_<NAME> for each view the role declares, to the
 // view's cur path under the session's views directory. It sets the variable
 // only when that path exists: until a view is built a seat gets no path to
@@ -643,7 +637,7 @@ func addViewEnv(ctx *LaunchContext, env map[string]string) {
 	for _, v := range ctx.Role.Views {
 		cur := filepath.Join(ctx.ViewsDir, ctx.Session.Key(), v.Name, "cur")
 		if _, err := os.Lstat(cur); err == nil {
-			env[ViewEnvName(v.Name)] = cur
+			env[api.ViewEnvName(v.Name)] = cur
 		}
 	}
 }
