@@ -442,23 +442,30 @@ type SessionContext struct {
 }
 
 // The hysteresis band a context reading must fall past before the fall counts
-// as a compaction. Smaller steps are noise. One rule for both producers: the
-// accountant's request path and the heartbeat path (marvel#630).
+// as a compaction. Smaller steps are noise. The defaults, and the one rule
+// that applies them, are shared by both producers: the accountant's request
+// path and the heartbeat path call CompactionDroppedBy (marvel#630).
 const (
 	CompactionHysteresisTokens   = 2048
 	CompactionHysteresisFraction = 0.10
 )
 
-// CompactionDropped reports whether a reading of now tokens after a reading of
-// prev is a drop past the hysteresis band: the larger of
-// CompactionHysteresisTokens and CompactionHysteresisFraction of prev. With no
-// prior reading (prev of zero or less) there is nothing to drop from.
+// CompactionBand is the size a drop from prev must exceed to count: the larger
+// of abs tokens and frac of prev.
+func CompactionBand(prev, abs int, frac float64) int {
+	return max(int(float64(prev)*frac), abs)
+}
+
+// CompactionDroppedBy reports whether a reading of now tokens after a reading
+// of prev is a drop past the band for abs and frac. With no prior reading
+// (prev of zero or less) there is nothing to drop from.
+func CompactionDroppedBy(prev, now, abs int, frac float64) bool {
+	return prev > 0 && prev-now > CompactionBand(prev, abs, frac)
+}
+
+// CompactionDropped is CompactionDroppedBy at the default band.
 func CompactionDropped(prev, now int) bool {
-	if prev <= 0 {
-		return false
-	}
-	band := max(int(float64(prev)*CompactionHysteresisFraction), CompactionHysteresisTokens)
-	return prev-now > band
+	return CompactionDroppedBy(prev, now, CompactionHysteresisTokens, CompactionHysteresisFraction)
 }
 
 // ContextSourceKind identifies a CTX% producer.
