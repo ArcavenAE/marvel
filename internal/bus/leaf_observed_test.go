@@ -10,6 +10,9 @@ import (
 // reading from a second ago from one the monitor stopped refreshing.
 func TestStatusLeafCarriesObservedAt(t *testing.T) {
 	s, _ := enrolledLeaf(t)
+	// The test supervisor polls every 200ms, which RFC3339's whole seconds
+	// cannot show; use the production cadence so valid_until is distinct.
+	s.leafPoll = defaultLeafPoll
 	t0 := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 	t1 := t0.Add(5 * time.Minute)
 
