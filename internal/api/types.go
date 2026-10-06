@@ -439,6 +439,18 @@ type SessionContext struct {
 	// ContextLimit > 0.
 	ContextPeak float64
 	ContextAt   time.Time
+	// SpendOut and SpendPromptTokens are the session's cumulative output
+	// tokens and layout-normalized prompt tokens, as the usage accountant
+	// has summed them (usage.Spend.Out and usage.Spend.PromptTokens).
+	//
+	// nil means never metered, which is not the same as zero: a seat that
+	// reports only a heartbeat percentage has no token stream, and a cell
+	// that printed 0 for it would read as an idle seat. Only the
+	// accountant writes them, and only once it has folded a request.
+	// Cumulative levels need no as-of stamp (docs/design/get-sessions-output.md,
+	// section 3).
+	SpendOut          *int
+	SpendPromptTokens *int
 }
 
 // The hysteresis band a context reading must fall past before the fall counts

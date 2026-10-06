@@ -775,6 +775,13 @@ func (st *sessionState) reading() api.SessionContext {
 	if st.limit > 0 {
 		out.ContextPercent = 100 * float64(st.tokens) / float64(st.limit)
 	}
+	// Spend rides the same record so a reader needs no second call. It is
+	// set only once a request has been folded: a session that never spent
+	// stays absent rather than reading as zero (api.SessionContext).
+	if st.spend.Requests > 0 {
+		spendOut, spendPrompt := st.spend.Out, st.spend.PromptTokens
+		out.SpendOut, out.SpendPromptTokens = &spendOut, &spendPrompt
+	}
 	return out
 }
 
