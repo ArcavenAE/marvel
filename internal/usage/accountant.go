@@ -3,10 +3,12 @@ package usage
 import (
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/asof"
 	"github.com/arcavenae/marvel/internal/events"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 )
@@ -184,6 +186,18 @@ type sessionState struct {
 
 	firstAt time.Time
 	lastAt  time.Time
+
+	// rateSum is the exponentially decayed count of output tokens as of
+	// rateAt; rateAt is zero until the first sample.
+	rateSum float64
+	rateAt  time.Time
+
+	// started is set once a session-start event has been seen for this
+	// session under this accountant. Without it, the session was already
+	// running when the accountant began (a daemon restart or reexec), so a
+	// cumulative feed's first total is output from before this accountant
+	// existed.
+	started bool
 }
 
 type teamState struct {
@@ -292,6 +306,12 @@ func (a *Accountant) Observe(c Coords, ev rtevents.Event) {
 // re-resolves the denominator against it. Claude is the only harness that
 // names one; codex and opencode leave the launch args as the only key.
 func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
+	// Note the start before the model check: codex and opencode name no
+	// model, and the start is what the rate needs to know about them.
+	a.mu.Lock()
+	a.stateLocked(c, ev.Harness, prof).started = true
+	a.mu.Unlock()
+
 	d, ok := ev.Data.(rtevents.SessionStartedData)
 	if !ok || d.Model == "" {
 		return
@@ -523,6 +543,8 @@ func (a *Accountant) foldTerminalLocked(st *sessionState, s Sample, res *foldRes
 }
 
 func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
+	now := a.clock()
+	st.noteOutLocked(s.Out, now)
 	st.spend.In += s.In
 	st.spend.Out += s.Out
 	st.spend.CacheReadIn += s.CacheReadIn
@@ -539,7 +561,7 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 		st.spend.CostUSD += *s.CostUSD
 		st.spend.CostReported = true
 	}
-	st.spend.ObservedAt = a.clock()
+	st.spend.ObservedAt = now
 }
 
 // setSpendLocked records a sample whose classes are running session
@@ -549,6 +571,17 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 // column. Requests counts observations, so it still increments; for a
 // cumulative feed that is turns rather than requests.
 func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
+	now := a.clock()
+	// The running total replaced here is not new output: only the part
+	// above the previous total is. The first total of a session this
+	// accountant did not see start is a baseline, not a burst: the session
+	// was already running (a daemon restart or reexec), and that total is
+	// output from before there was an accountant to rate it.
+	delta := s.Out - st.spend.Out
+	if st.spend.Requests == 0 && !st.started {
+		delta = 0
+	}
+	st.noteOutLocked(delta, now)
 	st.spend.In = s.In
 	st.spend.Out = s.Out
 	st.spend.CacheReadIn = s.CacheReadIn
@@ -560,7 +593,7 @@ func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
 		st.spend.CostUSD = *s.CostUSD
 		st.spend.CostReported = true
 	}
-	st.spend.ObservedAt = a.clock()
+	st.spend.ObservedAt = now
 }
 
 func (a *Accountant) hysteresis(tokens int) int {
@@ -700,6 +733,77 @@ func (a *Accountant) SessionOccupancy(agentID string) (Occupancy, bool) {
 	return out, true
 }
 
+// OutRateHalfLife is how fast the output-token rate forgets: a stream that
+// stops loses half its rate every OutRateHalfLife. One constant, so the
+// design owner can move it in one place.
+const OutRateHalfLife = 20 * time.Second
+
+// OutRateValidFor is how long a rate reading stays current after the sample
+// that produced it. It matches the design's default quiet window of ten
+// minutes, so a stopped stream reads as a rate decaying toward zero for ten
+// minutes and then as expired, not as a frozen last value.
+const OutRateValidFor = 10 * time.Minute
+
+// OutRate returns the session's output-token rate, in tokens per second,
+// decayed to now. The second result is false when the session has never
+// been sampled, which is not a rate of zero.
+func (a *Accountant) OutRate(agentID string, now time.Time) (float64, bool) {
+	if a == nil {
+		return 0, false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st, ok := a.state[agentID]
+	if !ok || st.rateAt.IsZero() {
+		return 0, false
+	}
+	return rateOf(st.rateSum * decayFactor(now.Sub(st.rateAt))), true
+}
+
+// DecayedRate is a rate cell's value decayed from its observation to now.
+// A renderer calls it so a stopped stream reads as a falling number between
+// readings instead of its last value.
+//
+// It returns 0 for a cell that was never sampled, the same figure as a
+// measured quiet stream, so the renderer must check the cell's ObservedAt
+// first and render never-sampled as absent.
+func DecayedRate(c asof.Cell[float64], now time.Time) float64 {
+	if c.ObservedAt.IsZero() {
+		return 0
+	}
+	return c.Value * decayFactor(now.Sub(c.ObservedAt))
+}
+
+// decayFactor is the share of a decayed count that survives dt. A dt at or
+// below zero (a clock that stepped back) decays nothing.
+func decayFactor(dt time.Duration) float64 {
+	if dt <= 0 {
+		return 1
+	}
+	return math.Exp2(-dt.Seconds() / OutRateHalfLife.Seconds())
+}
+
+// rateOf turns a decayed token count into tokens per second. A steady
+// stream of r tokens a second settles at a count of r*halfLife/ln2.
+func rateOf(decayed float64) float64 {
+	return decayed * math.Ln2 / OutRateHalfLife.Seconds()
+}
+
+// noteOutLocked folds out new output tokens into the session's decayed
+// count at now. The count is an exponentially decayed sum, not the delta of
+// the last two samples: two large samples a millisecond apart add to the
+// count and do not divide by a millisecond.
+func (st *sessionState) noteOutLocked(out int, now time.Time) {
+	if !st.rateAt.IsZero() {
+		st.rateSum *= decayFactor(now.Sub(st.rateAt))
+		if now.Before(st.rateAt) {
+			now = st.rateAt
+		}
+	}
+	st.rateSum += float64(max(out, 0))
+	st.rateAt = now
+}
+
 // SessionSpend returns one session's cumulative token and cost spend.
 func (a *Accountant) SessionSpend(agentID string) (Spend, bool) {
 	if a == nil {
@@ -781,6 +885,13 @@ func (st *sessionState) reading() api.SessionContext {
 	if st.spend.Requests > 0 {
 		spendOut, spendPrompt := st.spend.Out, st.spend.PromptTokens
 		out.SpendOut, out.SpendPromptTokens = &spendOut, &spendPrompt
+	}
+	if !st.rateAt.IsZero() {
+		out.OutRate = asof.Cell[float64]{
+			Value:      rateOf(st.rateSum),
+			ObservedAt: st.rateAt,
+			ValidUntil: st.rateAt.Add(OutRateValidFor),
+		}
 	}
 	return out
 }
