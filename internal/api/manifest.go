@@ -429,7 +429,14 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if _, err := r.views(fmt.Sprintf("parse manifest: team[%d].role[%d]", i, j)); err != nil {
 				return nil, err
 			}
-			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
+			policy, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j))
+			if err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			// A headroom that is not below the window the role declares
+			// would hold at any occupancy: the remainder test is
+			// tokens > window - headroom, and that bound is zero or less.
+			if err := checkHeadroomBelowWindow(fmt.Sprintf("team[%d].role[%d]", i, j), policy, r.Runtime.ContextWindow); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if err := validateSettingsSources(fmt.Sprintf("team[%d].role[%d]", i, j), r.SettingsSources); err != nil {
@@ -610,6 +617,34 @@ func (m *Manifest) ContextFeedAdvisories(canFeed ContextFeedCapableRole) []strin
 			}
 			out = append(out, fmt.Sprintf("team %s role %s: runtime %q cannot honour context_feed %q; it is advisory and feeds nothing",
 				t.Name, r.Name, runtimeName, r.Runtime.ContextFeed))
+		}
+	}
+	return out
+}
+
+// ShiftHeadroomAdvisories lists every role that has a context-pressure arm but
+// declares no runtime.context_window, so its headroom_tokens cannot be checked
+// against the window at apply. It is advisory, not a refusal: the window may
+// still resolve at runtime from the model table, and a role without one is
+// skipped by the arm.
+func (m *Manifest) ShiftHeadroomAdvisories() []string {
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.ContextWindow > 0 {
+				continue
+			}
+			policy, err := r.shiftPolicy(t.Name + "/" + r.Name)
+			if err != nil || policy == nil {
+				continue
+			}
+			for _, c := range policy.Conditions() {
+				if c.On != ShiftTriggerContextPressure {
+					continue
+				}
+				out = append(out, fmt.Sprintf("team %s role %s: shift on context-pressure with headroom_tokens %d, but runtime.context_window is not declared, so the headroom is not checked against the window",
+					t.Name, r.Name, c.HeadroomTokens))
+			}
 		}
 	}
 	return out

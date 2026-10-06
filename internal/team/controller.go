@@ -2043,15 +2043,27 @@ func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bo
 	return true
 }
 
+// shiftReadingMaxAge is how old a context reading may be and still arm the
+// context-pressure trigger. It is the cluster's default quiet window, ten
+// minutes; it should read api.DefaultQuietWindow once that constant is on
+// main (marvel#656).
+const shiftReadingMaxAge = 10 * time.Minute
+
 // firstSessionOverRemainder returns the first live current-generation session
 // of role whose resolved-window occupancy has crossed the headroom remainder,
 // with its token count and window. ok is false when none has (none over the
-// remainder, or none on a resolved window).
+// remainder, or none on a resolved window with a fresh reading).
 func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role, headroom int) (sessionKey string, tokens, limit int, ok bool) {
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	now := c.nowUTC()
 	for i := range live {
 		s := &live[i]
 		if s.ContextLimit <= 0 {
+			continue
+		}
+		// A reading older than the bound, or never stamped, is not the
+		// seat's occupancy now, so it cannot arm a shift.
+		if s.ContextAt.IsZero() || now.Sub(s.ContextAt) > shiftReadingMaxAge {
 			continue
 		}
 		if s.ContextTokens > s.ContextLimit-headroom {
