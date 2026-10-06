@@ -325,23 +325,64 @@ func TestSupervisorUserAgainstARealBroker(t *testing.T) {
 		t.Fatalf("the dotted supervisor user does not authenticate: %v", err)
 	}
 	defer nc.Close()
-	violated := func() bool {
+	// Flush returns once the server has answered, but the client's error
+	// callback runs on its own goroutine, so a violation can land after
+	// Flush. A check that expects NO violation can only wait a short while
+	// (a slow machine makes it pass, never fail). A check that expects one
+	// has to wait up to a deadline, or a late callback fails it.
+	violatedWithin := func(wait time.Duration) bool {
 		t.Helper()
 		_ = nc.Flush()
-		select {
-		case e := <-violations:
-			return strings.Contains(e, "Permissions Violation")
-		case <-time.After(500 * time.Millisecond):
-			return false
-		}
+		return receivesViolation(violations, wait)
 	}
-	if err := nc.Publish("global.other.supervisor.inbox", []byte("x")); err != nil || violated() {
+	noViolation := func() bool { t.Helper(); return !violatedWithin(500 * time.Millisecond) }
+	awaitViolation := func() bool { t.Helper(); return violatedWithin(5 * time.Second) }
+	if err := nc.Publish("global.other.supervisor.inbox", []byte("x")); err != nil || !noViolation() {
 		t.Errorf("publishing another cluster's supervisor inbox was refused: %v", err)
 	}
-	if _, err := nc.SubscribeSync(fmt.Sprintf("global.%s.supervisor.inbox", domain)); err != nil || violated() {
+	if _, err := nc.SubscribeSync(fmt.Sprintf("global.%s.supervisor.inbox", domain)); err != nil || !noViolation() {
 		t.Errorf("subscribing the supervisor's own inbox was refused: %v", err)
 	}
-	if _, err := nc.SubscribeSync(fmt.Sprintf("global.%s.somebody-else", domain)); err != nil || !violated() {
+	if _, err := nc.SubscribeSync(fmt.Sprintf("global.%s.somebody-else", domain)); err != nil || !awaitViolation() {
 		t.Errorf("subscribing the rest of the global domain was allowed (err %v); the grant must be narrowed", err)
+	}
+}
+
+// receivesViolation reports whether the next error the client's callback
+// delivers within wait is a permissions violation. It returns as soon as one
+// arrives, so a long wait costs nothing when the callback is prompt.
+func receivesViolation(errs <-chan string, wait time.Duration) bool {
+	select {
+	case e := <-errs:
+		return strings.Contains(e, "Permissions Violation")
+	case <-time.After(wait):
+		return false
+	}
+}
+
+// The client's error callback runs on its own goroutine, so a violation the
+// server has already sent can arrive after Flush returns. A check that
+// expects one must wait to a deadline: a violation 300ms late is seen, a
+// message that is not a violation is not one, and silence is false. This
+// needs no broker, so it also runs where nats-server is not on PATH.
+func TestReceivesViolationWaitsForALateCallback(t *testing.T) {
+	t.Parallel()
+	late := make(chan string, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		late <- "nats: Permissions Violation for Subscription to \"x\""
+	}()
+	if !receivesViolation(late, 5*time.Second) {
+		t.Error("a violation 300ms late was missed inside a 5s wait")
+	}
+
+	other := make(chan string, 1)
+	other <- "nats: slow consumer"
+	if receivesViolation(other, time.Second) {
+		t.Error("a message that is not a permissions violation was taken for one")
+	}
+
+	if receivesViolation(make(chan string), 50*time.Millisecond) {
+		t.Error("silence was reported as a violation")
 	}
 }
