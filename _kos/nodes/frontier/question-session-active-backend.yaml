@@ -1,0 +1,105 @@
+id: question-session-active-backend
+type: question
+confidence: frontier
+title: "Can marvel show each session's active inference backend, observed rather than declared?"
+tags:
+  - marvel
+  - observability
+  - backend
+  - get-sessions
+content: |
+  The operator, verbatim via director (2026-10-06): "kos question marvel
+  could we display the active backend for agent sessions? At present we
+  cannot tell which uses c-sub/o-sub (claude subscription, openai
+  subscription) bedrock, cpa (claude paltform for aws) ollama, mlx, lms (lm
+  studio), pair, etc".
+
+  WHY IT MATTERS. Every scale, move or budget decision starts from knowing
+  which quota pool a seat spends against. Today `get sessions` shows the
+  harness (RUNTIME) and the model (LLM), and neither names the backend. Two
+  claude seats with the same LLM cell can sit on a subscription and on
+  Bedrock, with different windows, limits and costs.
+
+  WHAT EXISTS (read on origin/main, not measured here):
+
+  - `internal/api/backend.go`: `ResolveBackend` names the backend the
+    constructed spawn environment selects, from Claude Code's
+    `CLAUDE_CODE_USE_*` selectors and a base-URL redirect. Its names are
+    `default`, `subscription` (an intent label only; the environment
+    resolves it to `default`), `bedrock`, `anthropic-aws`, `vertex`,
+    `foundry`, `mantle`, `gateway`, `anthropic-google-cloud`, `custom`.
+    The role's declared `Runtime.Backend` is the INTENDED value;
+    `marvel backend verify` reports a mismatch on request.
+  - `internal/api/account.go`: `AccountKey` already carries `Backend`, and
+    the accepted get-sessions design plans an opt-in ACCT key column from
+    it (`docs/design/get-sessions-output.md`, P13).
+  - Detection exists for Claude Code only. The local modes (ollama, mlx,
+    lms) are the unbuilt BT13 placeholder (aae-orc-jmaed), and `pair` is a
+    reserved service provider with no driver (`internal/service/service.go`).
+  - `question-router-and-backend-layering` ruled KNOW yes, PRESENT graded
+    and never a synthesized guess, MANAGE no; it notes a spawn record is an
+    ASSIGNMENT, not an observation. `_kos/ideas/inference-backend-registry-and-quota-estimation.md`
+    holds the detect-at-spawn and confirm-while-running table this question
+    starts from.
+
+  THE QUESTIONS.
+
+  1. VOCABULARY. Start from the operator's labels: c-sub, o-sub, bedrock,
+     cpa, ollama, mlx, lms, pair, and so on. Map each to marvel's existing
+     `Backend` names or say it needs a new one. Candidate map, unverified:
+     c-sub to `subscription`, cpa to `anthropic-aws`, bedrock to `bedrock`,
+     o-sub with no name yet, the local three and pair to BT13. Does the
+     display use the operator's short labels and keep the long names in
+     JSON and `describe`?
+
+  2. SOURCES WITHOUT A CREDENTIAL, per runtime (claude, codex, crush,
+     opencode). Marvel may read key names, environment variable names,
+     settings keys and provider ids; never a value that is authority at a
+     vendor (SOUL section 3, ADR-009). Candidates to verify, one command
+     each: claude, the selector names above plus whether the statusline
+     payload carries `rate_limits` (the vendor says it appears only for
+     subscribers); codex, the `model_provider` key and the
+     `model_providers.<id>` table in the seat's config, and whether the
+     rollout's `rate_limits.plan_type` names the plan; opencode and crush,
+     the provider id in the configured model. Which of these needs no file
+     that also holds a token? A source that does is out, whatever field it
+     is read for.
+
+  3. "ACTIVE" MEANS WHAT THE SEAT USES NOW, not what its manifest says. The
+     declared backend is intent and the spawn record is an assignment.
+     Which running signal turns either into an observation (a statusline
+     field present or absent, a provider id on a stream record), and how is
+     the grade shown (observed, assigned, declared, unknown) so a cell
+     never reads as more certain than its source?
+
+  4. A MID-SESSION SWITCH. A harness can change provider or model inside a
+     session (claude's `/model`, codex's provider config, a router that
+     picks per request). How does the cell show a change: the latest value
+     with its as-of, a mark that it changed since spawn, or the set seen?
+     Where a router decides per request, does "the backend of this session"
+     have a referent at all (the router node's unrun curl test)?
+
+  5. THE COLUMN. Name and width next to the existing LLM column. The
+     longest operator label is seven characters (`bedrock`), so a
+     `BACKEND` column fits in seven plus a grade mark. Where does it sit in
+     the width fit's priority (80, 120, 200), or does it live only in
+     `wide` and `--columns`? An unknown renders `-` or `?` per the as-of
+     cell, never a guessed name.
+
+  NOT IN THIS QUESTION: managing a backend, minting keys, and quota
+  forecasting (the registry idea).
+edges:
+  - target: question-router-and-backend-layering
+    type: derives
+    note: "that node ruled KNOW yes and PRESENT graded; this asks what the presented cell is, per runtime, and how it is graded"
+  - target: question-model-runtime-posture
+    type: supports
+    note: "naming a local backend (ollama, mlx, lms, pair) in a session row needs that node's posture on what a local runtime is to marvel"
+  - target: question-session-state-observation
+    type: supports
+    note: "same discipline: derive the cell from an observation, show its source, never synthesize a value"
+provenance:
+  created_by: agent
+  session: architect-2026-10-06-active-backend
+  created_at: "2026-10-06"
+  discovered_from: inference-backend-registry-and-quota-estimation
