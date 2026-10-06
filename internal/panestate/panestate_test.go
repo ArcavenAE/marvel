@@ -176,22 +176,42 @@ func TestLoadRefusesMoreThanOneVariableSpanPerRow(t *testing.T) {
 	}
 }
 
-// Tripwire: no pattern set ships until probe P-WD1 captures one. A set is a claim
-// that a real harness drew that screen; the fixtures here are synthetic. Shipping
-// any set under patterns/ must change this test in the same commit, alongside the
-// capture record (isolated scratch capture, harness version, pane_current_command)
-// that justifies it. The test over the shipped sets passes vacuously with none, so
-// this is what keeps an uncaptured fixture from shipping (marvel#557 review).
-func TestNoPatternSetShipsWithoutAPWD1Capture(t *testing.T) {
+// Tripwire: a pattern set ships only with a P-WD1 capture record, and this test
+// names every shipped set with its record. Shipping another set must change this
+// test in the same commit (marvel#557 review). The test over the shipped sets
+// passes vacuously with none, so TestShippedPatternSetsAreNotEmpty pins that the
+// watchdog does not go quietly off again (marvel#598).
+//
+// claude/2.1.290/logged-out, captured 2026-10-06 under probe P-WD1
+// (docs/design/harness-state-watchdog-p1.md section 7): a scratch tmux server
+// (`tmux -L wd1-scratch`), claude 2.1.290 started under `env -i` with an empty
+// scratch HOME and an empty scratch CLAUDE_CONFIG_DIR, no credentials in the
+// environment, pane width 120, pane_current_command "2.1.290". The first run
+// showed the theme step, one Enter later the login-method picker, which is the
+// sample; the first capture showed no logged-in prompt, so the isolation held.
+// No live seat's pane, config or credentials were read.
+func TestOnlyCapturedPatternSetsShip(t *testing.T) {
 	sets, err := LoadEmbedded()
 	if err != nil {
 		t.Fatalf("load embedded: %v", err)
 	}
-	if len(sets) != 0 {
-		var names []string
-		for _, p := range sets {
-			names = append(names, p.Harness+"/"+p.HarnessVersion+"/"+p.ID)
-		}
-		t.Fatalf("pattern sets are shipped (%v) with no P-WD1 capture record. Probe P-WD1 (docs/design/harness-state-watchdog-p1.md section 7) captures the screen on an isolated scratch server; add that record (harness version, pane_current_command, how it was isolated) and update this test with the set", names)
+	var names []string
+	for _, p := range sets {
+		names = append(names, p.Harness+"/"+p.HarnessVersion+"/"+p.ID)
+	}
+	if got, want := strings.Join(names, ","), "claude/2.1.290/logged-out"; got != want {
+		t.Fatalf("shipped pattern sets = %q, want %q. A set is a claim that a real harness drew that screen: add its P-WD1 capture record (harness version, pane_current_command, how it was isolated) to this test's comment and name it here", got, want)
+	}
+}
+
+// With no set embedded the daemon starts no watchdog loop and `get sessions`
+// gives no sign the fleet is unwatched (marvel#598).
+func TestShippedPatternSetsAreNotEmpty(t *testing.T) {
+	sets, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("load embedded: %v", err)
+	}
+	if len(sets) == 0 {
+		t.Fatal("LoadEmbedded returned no pattern set, so the watchdog starts no loop")
 	}
 }
