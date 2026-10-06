@@ -195,12 +195,12 @@ func TestSupervisorKeepThenAdoptAcrossDaemons(t *testing.T) {
 		t.Errorf("successor status = %+v, want adopted pid %d", st, pid)
 	}
 	s2.Stop(false)
-	if syscall.Kill(pid, 0) == nil {
-		time.Sleep(time.Second)
-	}
-	if syscall.Kill(pid, 0) == nil {
-		t.Error("adopted broker survived Stop(false)")
-	}
+	// Poll to a deadline rather than sleeping once: how long a broker takes
+	// to exit depends on the load on the machine, and a fixed second failed
+	// the test on a slow one.
+	eventually(t, "the adopted broker to exit after Stop(false)", func() bool {
+		return syscall.Kill(pid, 0) != nil
+	})
 }
 
 func TestSupervisorRefusesStrangerOnThePort(t *testing.T) {

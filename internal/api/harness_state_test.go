@@ -12,16 +12,21 @@ func TestSetHarnessStateWritesOnlyThatFieldAndClones(t *testing.T) {
 	if err := s.CreateSession(sess); err != nil {
 		t.Fatal(err)
 	}
-	hs := &HarnessState{State: HarnessStateLoggedOut, Evidence: []string{"row"}, CapturedAt: time.Now()}
+	hs := &HarnessState{State: HarnessStateLoggedOut, Evidence: []string{"row"}, Covered: []string{"2.1.290"}, CapturedAt: time.Now()}
 	s.SetHarnessState("ws/a", hs)
 	hs.Evidence[0] = "mutated"
+	hs.Covered[0] = "mutated"
 	got, _ := s.GetSession("ws/a")
 	if got.HarnessState == nil || got.HarnessState.Evidence[0] != "row" {
 		t.Fatalf("store aliases the caller's slice: %+v", got.HarnessState)
 	}
+	if got.HarnessState.Covered[0] != "2.1.290" {
+		t.Fatalf("store aliases the caller's covered versions: %+v", got.HarnessState)
+	}
 	got.HarnessState.Evidence[0] = "mutated too"
+	got.HarnessState.Covered[0] = "mutated too"
 	again, _ := s.GetSession("ws/a")
-	if again.HarnessState.Evidence[0] != "row" {
+	if again.HarnessState.Evidence[0] != "row" || again.HarnessState.Covered[0] != "2.1.290" {
 		t.Fatal("GetSession leaks the live pointer")
 	}
 	if again.State != SessionRunning || again.HealthState != HealthHealthy {
@@ -64,4 +69,28 @@ func containsKey(raw []byte, key string) bool {
 	_ = json.Unmarshal(raw, &m)
 	_, ok := m[key]
 	return ok
+}
+
+// A copy of a session's harness state shares no slice with the stored one, the
+// covered versions included, so a caller cannot edit what the watchdog wrote.
+func TestSessionCopyDoesNotShareHarnessStateSlices(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	sess := &Session{Name: "a", Workspace: "ws", Team: "t", Role: "r", State: SessionRunning}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	s.SetHarnessState(sess.Key(), &HarnessState{
+		State: HarnessStateUncovered, Harness: "claude", HarnessVersion: "2.1.291",
+		Covered: []string{"2.1.290"}, Evidence: []string{"row"},
+	})
+
+	got, _ := s.GetSession(sess.Key())
+	got.HarnessState.Covered[0] = "edited"
+	got.HarnessState.Evidence[0] = "edited"
+
+	again, _ := s.GetSession(sess.Key())
+	if again.HarnessState.Covered[0] != "2.1.290" || again.HarnessState.Evidence[0] != "row" {
+		t.Fatalf("a caller's edit reached the store: %+v", again.HarnessState)
+	}
 }

@@ -190,6 +190,7 @@ func main() {
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
 	root.AddCommand(resetHealthCmd())
+	root.AddCommand(viewCmd())
 	root.AddCommand(injectCmd())
 	root.AddCommand(captureCmd())
 	root.AddCommand(versionCmd())
@@ -966,7 +967,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns string
-	var noTrunc bool
+	var noTrunc, header bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
@@ -994,7 +995,11 @@ func getCmd() *cobra.Command {
 				}
 				return watchSessionsLoop(time.Duration(secs)*time.Second, cols)
 			}
-			return getResources(args[0], cols, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
+			headerText := ""
+			if sessions && wantHeader(header) {
+				headerText = renderHeader(collectHeader(), time.Now())
+			}
+			return getResources(args[0], cols, headerText, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
@@ -1002,6 +1007,8 @@ func getCmd() *cobra.Command {
 	f.NoOptDefVal = ""
 	cmd.Flags().StringVar(&columns, "columns", "",
 		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
+	cmd.Flags().BoolVar(&header, "header", false,
+		"print the daemon header above the sessions table even when stdout is not a terminal")
 	return cmd
 }
 
@@ -1015,7 +1022,7 @@ func (o *optionalString) String() string          { return *o.val }
 func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
-func getResources(resourceType string, cols []sessionColumn, fit fitOptions) error {
+func getResources(resourceType string, cols []sessionColumn, header string, fit fitOptions) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
 	resp, err := send(daemon.Request{
 		Method: "get",
@@ -1030,7 +1037,7 @@ func getResources(resourceType string, cols []sessionColumn, fit fitOptions) err
 
 	switch resourceType {
 	case "sessions", "session":
-		return printSessions(resp.Result, cols, fit)
+		return printSessions(resp.Result, cols, header, fit)
 	case "teams", "team":
 		return printTeams(resp.Result)
 	case "workspaces", "workspace":
@@ -2966,7 +2973,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 
 // --- Table printers (non-watch) ---
 
-func printSessions(data json.RawMessage, cols []sessionColumn, fit fitOptions) error {
+func printSessions(data json.RawMessage, cols []sessionColumn, header string, fit fitOptions) error {
 	var sessions []api.Session
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
@@ -2978,7 +2985,7 @@ func printSessions(data json.RawMessage, cols []sessionColumn, fit fitOptions) e
 	// The note and the warning are TTY chrome on the header's stream,
 	// stdout; off a terminal nothing is fitted, so neither prints into a pipe.
 	res := fitSessionTable(sessions, cols, fit)
-	fmt.Print(res.table)
+	fmt.Print(header + res.table)
 	if res.warn != "" {
 		fmt.Println(res.warn)
 	}

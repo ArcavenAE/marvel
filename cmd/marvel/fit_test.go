@@ -335,3 +335,13 @@ func TestOverflowWarningGoesToStdoutOnATTY(t *testing.T) {
 		t.Errorf("a pipe should carry no warning:\n%s", piped)
 	}
 }
+
+// The daemon header (--header) prints above the fitted table and the hidden
+// note after it, so the three read in that order.
+func TestHeaderFitAndNoteReadInOrder(t *testing.T) {
+	out := getSessionsAtWidth(t, 80, "--header")
+	hdr, tbl, note := strings.Index(out, "cluster"), strings.Index(out, "AGENT NAME"), strings.Index(out, "columns hidden at this width")
+	if hdr < 0 || tbl < 0 || note < 0 || hdr >= tbl || tbl >= note {
+		t.Errorf("want header, table, note in that order (got %d, %d, %d):\n%s", hdr, tbl, note, out)
+	}
+}
