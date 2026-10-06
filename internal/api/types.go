@@ -5,6 +5,8 @@ package api
 import (
 	"fmt"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/asof"
 )
 
 // SessionState represents the lifecycle state of a session.
@@ -451,6 +453,14 @@ type SessionContext struct {
 	// section 3).
 	SpendOut          *int
 	SpendPromptTokens *int
+	// OutRate is the session's decaying output-token rate in tokens per
+	// second, as of ObservedAt. It is a level that ages, so it carries its
+	// own as-of stamp: the value shown later is the value decayed from
+	// ObservedAt (usage.DecayedRate), and a zero ObservedAt means never
+	// sampled, which is not a rate of 0. Only the usage accountant writes
+	// it. The rendering is the RATE cell's (docs/design/get-sessions-output.md,
+	// section 4.3).
+	OutRate asof.Cell[float64]
 }
 
 // The hysteresis band a context reading must fall past before the fall counts

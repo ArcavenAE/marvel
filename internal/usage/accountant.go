@@ -700,6 +700,28 @@ func (a *Accountant) SessionOccupancy(agentID string) (Occupancy, bool) {
 	return out, true
 }
 
+// OutRateHalfLife is how fast the output-token rate forgets: a stream that
+// stops loses half its rate every OutRateHalfLife. One constant, so the
+// design owner can move it in one place.
+const OutRateHalfLife = 20 * time.Second
+
+// OutRateValidFor is how long a rate reading stays current after the sample
+// that produced it. It matches the design's default quiet window of ten
+// minutes, so a stopped stream reads as a rate decaying toward zero for ten
+// minutes and then as expired, not as a frozen last value.
+const OutRateValidFor = 10 * time.Minute
+
+// OutRate returns the session's output-token rate, in tokens per second,
+// decayed to now. The second result is false when the session has never
+// been sampled, which is not a rate of zero.
+func (a *Accountant) OutRate(agentID string, now time.Time) (float64, bool) {
+	spend, seen := a.SessionSpend(agentID)
+	if !seen || now.IsZero() {
+		return 0, false
+	}
+	return float64(spend.Out), true
+}
+
 // SessionSpend returns one session's cumulative token and cost spend.
 func (a *Accountant) SessionSpend(agentID string) (Spend, bool) {
 	if a == nil {
