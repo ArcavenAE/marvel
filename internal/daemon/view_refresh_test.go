@@ -129,3 +129,66 @@ func TestViewDeclarationsIncludeASessionBeingSpawned(t *testing.T) {
 		t.Fatalf("declared = %v, want the pending and the running session and not the crashed one", got)
 	}
 }
+
+type movingGit struct{ sha string }
+
+func (movingGit) Fetch(context.Context, string, string, string) error { return nil }
+
+func (g *movingGit) Resolve(context.Context, string, string) (string, error) { return g.sha, nil }
+
+func (movingGit) Archive(_ context.Context, _, _, dest string) error {
+	return os.WriteFile(filepath.Join(dest, "README"), []byte("tree"), 0o644)
+}
+
+// A seat in crashloop-backoff keeps its pane, so its view stays: the tick and
+// its sweep leave the tree alone, the tick does not refresh it, and teardown
+// still removes it (readonly-view.md: a tree goes only at teardown or when its
+// view leaves the manifest, never while the seat lives).
+func TestViewOfACrashLoopBackoffSeatSurvivesTheTickFrozen(t *testing.T) {
+	d := newHandlerDaemon(t)
+	dir := filepath.Join(t.TempDir(), "views")
+	git := &movingGit{sha: refreshSHA}
+	d.views = &view.Keeper{ViewsDir: dir, Git: git, Events: d.events, Declared: d.viewDeclarations}
+	m, err := api.ParseManifestBytes([]byte(viewTeamManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(d.store); err != nil {
+		t.Fatal(err)
+	}
+	sess := &api.Session{Name: "squad-reader-g1-0", Workspace: "acme", Team: "squad", Role: "reader", State: api.SessionRunning}
+	t.Cleanup(func() { _ = d.views.Teardown(sess.Key()) })
+	if err := d.store.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	d.views.Build(*sess, []api.View{{Name: "repo", Remote: "remote", Ref: "main"}})
+	cur := filepath.Join(dir, sess.Key(), "repo", "cur")
+	before, err := os.Readlink(cur)
+	if err != nil {
+		t.Fatalf("precondition: no tree built: %v", err)
+	}
+
+	if err := d.store.UpdateSession(sess.Key(), func(s *api.Session) error {
+		s.State = api.SessionCrashLoopBackOff
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	git.sha = "5555555555555555555555555555555555555555"
+	d.views.Tick()
+
+	after, err := os.Readlink(cur)
+	if err != nil {
+		t.Fatalf("the tick removed a backoff seat's view: %v", err)
+	}
+	if after != before {
+		t.Errorf("cur moved from %s to %s: a backoff seat's view is kept but not refreshed", before, after)
+	}
+
+	if err := d.views.Teardown(sess.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, sess.Key())); !os.IsNotExist(err) {
+		t.Errorf("teardown left the seat's views (err %v)", err)
+	}
+}
