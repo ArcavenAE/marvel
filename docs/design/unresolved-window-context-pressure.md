@@ -135,7 +135,7 @@ Builds:
 | T3 | headroom fraction and runtime refusal (D2) | marvel#660's repro (window 258400, headroom_tokens 400000) is refused at arm time with an event; fraction 0.40 on 258400 arms above 155040 | T1, #663 |
 | T4 | freshness by compaction (D3); replaces #663's 10-minute bound for feed seats | a live current-generation seat with a six-day-old reading and no compaction since arms; a reading from before a compaction does not; a compaction-blind seat arms only within the bound | T1, #663 |
 | T5 | stale display (D4) | a reading older than its grade's bound renders `stale`, not a percentage | T1 |
-| T6 | max-age beside context pressure, where allowed (D6) | an interactive role at replicas 1 with a context-pressure arm and no max-age arm is refused at apply; the same arm on a role at replicas 3, or on a headless role, is accepted with a `no-backstop` advisory | |
+| T6 | max-age beside context pressure, where allowed (D6), on both doors: apply and `marvel scale`, as #452 did for max-age (`internal/daemon/daemon.go:1672-1677`) | an interactive role at replicas 1 with a context-pressure arm and no max-age arm is refused at apply, and the refusal names max-age; scaling a pressure-only interactive role from 3 to 1 is refused the same way; the same arm on a role at replicas 3, or on a headless role, is accepted with a `no-backstop` advisory | |
 | T7 | `arm-late` and `compacted-unarmed` events (D7), from the same emitter as T2 | a compaction on an armed unshifted seat emits `arm-late`; on an unarmed seat, `compacted-unarmed` | T1, T2 |
 | T8 | structural test against database access (D8) | a fixture package that imports a sqlite driver, shells out to `sqlite3` or `opencode db`, or names an opencode database path literal, fails the test | |
 | T11 | refuse an opencode context-pressure arm at apply until T9 and T10 land (D9) | an opencode role with a context-pressure arm is refused at apply (today it is accepted and never fires) | |
@@ -164,9 +164,20 @@ T6, T8 and T11 have no dependencies and can ship first.
    option is an advisory everywhere. Requiring max-age everywhere is not an
    option, because it would forbid context pressure on every headless or
    multi-replica role. Recommended: require where allowed, advise elsewhere.
-   The 19 roles in the one staged manifest change all carry a max-age arm
-   and are allowed one; in the manifests on disk, every role at replicas 2
-   or more carries no shift block, so nothing in flight is refused.
+   A multi-replica role keeps no age backstop: #452 refused max-age there
+   and this design adds none.
+   The refusal is a parse refusal at apply (`internal/api/manifest.go:432`,
+   reached from `internal/daemon/daemon.go:1276`), not an advisory. Running
+   teams are unaffected, but the next re-apply of a manifest holding an
+   interactive replicas-1 pressure-only role fails, and scaling such a role
+   down to 1 is refused (T6).
+   Counts are per host. On kinu, the 19 roles in the staged manifest change
+   are interactive at replicas 1 and carry both arms; one test manifest
+   holds a replicas-1 pressure-only role, which its next re-apply would
+   refuse; no role at replicas 2 or more carries a shift block. The
+   reviewer's host has 17: 14 at replicas 1 with max-age, and 3
+   multi-replica roles with context pressure alone, which stay accepted
+   with the advisory. On both hosts nothing in flight is refused.
 3. T9's authentication rule for an opencode private home, as the security
    seat stated it: authenticate from an operator-supplied env credential, or
    a link to a file holding only credentials; copying credential rows is
