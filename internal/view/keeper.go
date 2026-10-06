@@ -94,6 +94,13 @@ func (k *Keeper) git() Git {
 	return ExecGit{}
 }
 
+func (k *Keeper) spawnTimeout() time.Duration {
+	if k.SpawnTimeout > 0 {
+		return k.SpawnTimeout
+	}
+	return DefaultSpawnTimeout
+}
+
 func (k *Keeper) timeout() time.Duration {
 	if k.FetchTimeout > 0 {
 		return k.FetchTimeout
@@ -124,11 +131,17 @@ func (k *Keeper) track(sess api.Session, v api.View) *tracked {
 }
 
 // Build builds each declared view for a session being spawned. It returns once
-// every view has been tried; one that failed leaves its cur absent, so the seat
-// starts without MARVEL_VIEW_<NAME>, and the tick tries it again.
+// every view has been tried or the spawn bound, shared by all the seat's views,
+// has run out; one that failed or was cut off leaves its cur absent, so the
+// seat starts without MARVEL_VIEW_<NAME>, and the tick builds it off the spawn
+// path with the longer bound.
 func (k *Keeper) Build(sess api.Session, views []api.View) {
+	ctx, cancel := context.WithTimeout(context.Background(), k.spawnTimeout())
+	defer cancel()
 	for _, v := range views {
-		k.refresh(k.track(sess, v), "spawn")
+		t := k.track(sess, v)
+		t.run.Lock()
+		k.refreshLocked(ctx, t, "spawn")
 	}
 }
 
@@ -204,7 +217,7 @@ func (k *Keeper) Tick() {
 		if !t.run.TryLock() {
 			continue
 		}
-		k.refreshLocked(t, "tick")
+		k.refreshLocked(context.Background(), t, "tick")
 	}
 }
 
@@ -243,14 +256,14 @@ func (k *Keeper) Teardown(sessKey string) error {
 // as an event. It returns a line describing the outcome.
 func (k *Keeper) refresh(t *tracked, why string) string {
 	t.run.Lock()
-	return k.refreshLocked(t, why)
+	return k.refreshLocked(context.Background(), t, why)
 }
 
 // refreshLocked is refresh for a caller that already holds t.run; it releases
 // it.
-func (k *Keeper) refreshLocked(t *tracked, why string) string {
+func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) string {
 	defer t.run.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), k.timeout())
+	ctx, cancel := context.WithTimeout(parent, k.timeout())
 	defer cancel()
 	res, err := t.builder.Refresh(ctx)
 
