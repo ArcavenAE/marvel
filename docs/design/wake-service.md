@@ -88,6 +88,17 @@ not add new ones.
 
 - **Q1.** After what duration does a persisting state get reported again,
   and how often after that? Is the bound one fleet value, or per cluster?
+
+  **Answered 2026-10-06.** The options as put to the operator:
+  "(a) Rule Q1 now, and #600 ships with that value."
+  "(b) Ship #600 without the repeat; the other three section 8 items still
+  land, and the repeat follows the ruling."
+  "(c) Accept 30 minutes, one fleet value, as the starting setting,
+  changeable as one constant."
+  The operator's words, relayed by director in message
+  `01M48QDPXS16M1Q43C6XF968TV`: "4 c". Option (c) means 30 minutes, one fleet
+  value, changeable as one constant; the arcaven supervisor, who wrote the
+  options, confirms it.
 - **Q2.** Are the time-in-state readings stored with the record, so they
   survive a daemon restart, or kept in memory, so a restart starts the clock
   over?
@@ -216,4 +227,4 @@ These are listed, not decided:
 - whether the wake action (section 6) is a separate issue;
 - the order of the three delivery paths (section 7).
 
-Q1 to Q10 are the operator's to answer, or to send to a party.
+Q1 is answered (section 4, Q1). Q2 to Q10 are the operator's to answer, or to send to a party.

@@ -165,7 +165,8 @@ const (
 	defaultDialTimeout    = 10 * time.Second
 	defaultLeafPoll       = 30 * time.Second
 	// defaultLeafDownRepeat is one fleet value, changeable as this constant:
-	// operator ruling 2026-10-06, Q1 option (c), design/wake-service.md.
+	// operator ruling 2026-10-06 recorded under Q1 in
+	// docs/design/wake-service.md.
 	defaultLeafDownRepeat = 30 * time.Minute
 	stopGrace             = 5 * time.Second
 )
