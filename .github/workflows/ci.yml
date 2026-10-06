@@ -28,6 +28,27 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: go.sum
 
+      - name: Install nats-server
+        # The broker-backed internal/bus tests skip when nats-server is not on
+        # PATH (newTestSupervisor), so without this step CI skips them. The
+        # version is the one mise.toml pins; internal/toolchain/pin_test.go
+        # asserts they match. The download is checked against the release's
+        # SHA-256 before it is unpacked; bump the version and the checksum
+        # together, taking the checksum from the release's SHA256SUMS.
+        env:
+          NATS_SERVER_VERSION: v2.15.0
+          NATS_SERVER_SHA256: 5d2c51caca950333aba84911df7d377f826f3a59ec36061c6539105084f65c92
+        run: |
+          set -euo pipefail
+          name="nats-server-${NATS_SERVER_VERSION}-linux-amd64"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/${name}.tar.gz" \
+            "https://github.com/nats-io/nats-server/releases/download/${NATS_SERVER_VERSION}/${name}.tar.gz"
+          echo "${NATS_SERVER_SHA256}  ${RUNNER_TEMP}/${name}.tar.gz" | sha256sum --check --strict -
+          mkdir -p "${RUNNER_TEMP}/nats-bin"
+          tar -xzf "${RUNNER_TEMP}/${name}.tar.gz" -C "${RUNNER_TEMP}/nats-bin" --strip-components=1 "${name}/nats-server"
+          echo "${RUNNER_TEMP}/nats-bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/nats-bin/nats-server" --version
+
       - name: Install gofumpt
         # Pinned here and in mise.toml; internal/toolchain/pin_test.go asserts
         # they match, and the renovate annotation below keeps both bumping.
