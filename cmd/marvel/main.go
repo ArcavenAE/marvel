@@ -190,6 +190,7 @@ func main() {
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
 	root.AddCommand(resetHealthCmd())
+	root.AddCommand(viewCmd())
 	root.AddCommand(injectCmd())
 	root.AddCommand(captureCmd())
 	root.AddCommand(versionCmd())

@@ -52,7 +52,6 @@ func viewManager(t *testing.T, git view.Git) (*Manager, *events.Ring) {
 	t.Helper()
 	ring := events.NewRing(32)
 	dir := filepath.Join(t.TempDir(), "views")
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700); _ = os.RemoveAll(dir) })
 	mgr := &Manager{
 		store:         api.NewStore(),
 		adapters:      runtime.NewRegistry(),
@@ -60,6 +59,8 @@ func viewManager(t *testing.T, git view.Git) (*Manager, *events.Ring) {
 		Events:        ring,
 	}
 	mgr.Views = &view.Keeper{ViewsDir: dir, Events: ring, Git: git}
+	// The trees are read-only; only the keeper restores write to remove them.
+	t.Cleanup(func() { _ = mgr.Views.Teardown("acme/squad-reader-g1-0") })
 	m, err := api.ParseManifestBytes([]byte(viewManifest))
 	if err != nil {
 		t.Fatalf("parse: %v", err)

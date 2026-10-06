@@ -26,6 +26,7 @@ func TestViewRefreshCommandShape(t *testing.T) {
 	if err := json.Unmarshal(viewRefreshParams([]string{"ws/seat", "repo"}), &p); err != nil || p.Session != "ws/seat" || p.Name != "repo" {
 		t.Errorf("params = %+v, %v, want session ws/seat and name repo", p, err)
 	}
+	p = struct{ Session, Name string }{}
 	if err := json.Unmarshal(viewRefreshParams([]string{"ws/seat"}), &p); err != nil || p.Name != "" {
 		t.Errorf("one-argument params = %+v, %v, want an empty name", p, err)
 	}

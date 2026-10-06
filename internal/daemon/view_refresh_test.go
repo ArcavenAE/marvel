@@ -50,7 +50,6 @@ name = "squad"
 func TestViewRefreshVerbReachesTheKeeper(t *testing.T) {
 	d := newHandlerDaemon(t)
 	dir := filepath.Join(t.TempDir(), "views")
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700); _ = os.RemoveAll(dir) })
 	d.views = &view.Keeper{ViewsDir: dir, Git: refreshGit{}, Events: d.events, Declared: d.viewDeclarations}
 	m, err := api.ParseManifestBytes([]byte(viewTeamManifest))
 	if err != nil {
@@ -60,6 +59,8 @@ func TestViewRefreshVerbReachesTheKeeper(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := &api.Session{Name: "squad-reader-g1-0", Workspace: "acme", Team: "squad", Role: "reader", State: api.SessionRunning}
+	// The trees are read-only; only the keeper restores write to remove them.
+	t.Cleanup(func() { _ = d.views.Teardown(sess.Key()) })
 	if err := d.store.CreateSession(sess); err != nil {
 		t.Fatal(err)
 	}
