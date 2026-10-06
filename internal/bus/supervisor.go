@@ -139,6 +139,14 @@ type Status struct {
 	// two hours". Empty for the other leaf states.
 	LeafSince string `json:"leaf_since,omitempty"`
 	LeafFor   string `json:"leaf_for,omitempty"`
+	// LeafObservedAt is when the last successful /leafz probe was read
+	// (RFC3339), and LeafValidUntil when that reading stops being current.
+	// They are the probe's age, which LeafSince is not: a leaf that has been
+	// up for a day and was last read a second ago, or last read ten minutes
+	// ago because the monitor stopped answering, has the same LeafSince.
+	// Set only with an up or down reading.
+	LeafObservedAt string `json:"leaf_observed_at,omitempty"`
+	LeafValidUntil string `json:"leaf_valid_until,omitempty"`
 	// Structure is the structural-health reading on a managed broker
 	// (provisioned, authorized, tls, what is missing); nil before the first
 	// reading and on an adopted or external bus, where marvel holds no
