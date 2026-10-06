@@ -328,3 +328,16 @@ Director's mapping, which this doc follows:
 4. ACTIVE%'s window is the role's `activity_timeout`, else `watchdog.window`,
    else the 10-minute `DefaultQuietWindow`, and the `(stalled)` advisory
    stays opt-in (section 4.4).
+
+### Later rulings on P2b (#618)
+
+- Refuse an unknown cluster in both the `--cluster` flag and the config's
+  `current_cluster`. A command that defines or configures a cluster may
+  name one not yet in the config. The operator's words, verbatim via
+  director: "yes, but permit the flag if it's defining/configuring a new
+  cluster".
+- A client config that does not parse, with no `--cluster` flag, falls back
+  to the default socket as before, and is not refused. The operator's
+  words, verbatim via director: "fallback to local is fine, do not refuse".
+  With `--cluster`, an unreadable config is refused, because the name
+  cannot be looked up.
