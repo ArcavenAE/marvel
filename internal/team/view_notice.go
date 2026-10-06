@@ -118,7 +118,7 @@ func (c *Controller) deliverViewNotices(t *api.Team) {
 			})
 			continue
 		}
-		if n.GraceStart.IsZero() && !n.DeliveredAt.IsZero() && now.After(n.DeliveredAt) && quiet {
+		if n.GraceStart.IsZero() && !n.DeliveredAt.IsZero() && quiet {
 			delivered := n.DeliveredCommit
 			c.updateViewNotice(teamKey, key, func(live map[string]api.ViewNotice, cur api.ViewNotice) {
 				if cur.DeliveredCommit != delivered || !cur.GraceStart.IsZero() || cur.Pending() {

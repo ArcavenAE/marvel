@@ -247,3 +247,22 @@ func TestViewNoticeIsDroppedWithItsSeat(t *testing.T) {
 		t.Errorf("the record outlived its seat: %+v", got.ViewNotices)
 	}
 }
+
+// A seat that stays busy while its view keeps moving is still told at max_defer
+// from the first undelivered move; each new move must not restart the clock.
+func TestViewNoticeDeferralIsBoundedFromTheFirstMove(t *testing.T) {
+	f, sess := noticeFixture(t, "test-vn-bounded", 5*time.Second)
+
+	for i := 0; i < 31; i++ {
+		f.moved(sess, noticeShaOne[:39]+string(rune('a'+i%6)))
+		f.clock.Advance(time.Minute)
+		f.quietSince(sess, f.clock.Now().Add(-5*time.Second))
+		f.deliver()
+		if i < 29 && len(f.notices) != 0 {
+			t.Fatalf("told after %d minutes, before max_defer", i+1)
+		}
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %d after %v of constant moves, want one at max_defer", len(f.notices), api.DefaultShiftMaxDefer)
+	}
+}
