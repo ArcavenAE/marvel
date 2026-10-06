@@ -99,7 +99,7 @@ func newKRig(t *testing.T) *kRig {
 }
 
 func (r *kRig) session(name string, views ...api.View) api.Session {
-	sess := api.Session{Name: name, Workspace: "ws", Team: "t", Role: "r"}
+	sess := api.Session{Name: name, Workspace: "ws", Team: "t", Role: "r", State: api.SessionRunning}
 	r.live = append(r.live, Declaration{Session: sess, Views: views})
 	return sess
 }
@@ -596,5 +596,119 @@ func TestKeeperReusedKeyReportsTheSameFailureAgain(t *testing.T) {
 
 	if got := len(r.kinds(events.KindViewUnavailable)); got != 2 {
 		t.Fatalf("view.unavailable events = %d across a teardown and a respawn of one key, want 2", got)
+	}
+}
+
+// A build at spawn waits for a view a tick is already refreshing only within
+// its own bound: the tick's longer fetch timeout must not stretch the spawn.
+func TestKeeperSpawnBuildDoesNotWaitOnABusyViewPastItsBound(t *testing.T) {
+	r := newKRig(t)
+	r.k.SpawnTimeout = 100 * time.Millisecond
+	r.g.sha["a"] = shaOne
+	views := []api.View{kView("alpha", "a", time.Minute)}
+	sess := r.session("seat", views...)
+	r.k.Build(sess, views)
+
+	r.g.sha["a"] = shaTwo
+	r.now = r.now.Add(time.Minute)
+	release := blockedTick(t, r, "a")
+	defer release()
+
+	done := make(chan struct{})
+	go func() {
+		r.k.Build(sess, views)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a spawn build waited on a view the tick was refreshing, past its bound")
+	}
+}
+
+// The tick tracks a seat that is still being spawned, so the sweep leaves its
+// views alone, but it does not refresh the seat until it is running: the spawn
+// build owns the view and its short bound until then.
+func TestKeeperTickDoesNotRefreshASeatThatIsStillSpawning(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	r.g.fetchErr["a"] = errors.New("network down")
+	views := []api.View{kView("alpha", "a", time.Minute)}
+	sess := r.session("seat", views...)
+	r.live[0].Session.State = api.SessionPending
+	r.k.Build(sess, views)
+	fetches := r.g.fetches["a"]
+
+	r.now = r.now.Add(time.Minute)
+	r.k.Tick()
+	if r.g.fetches["a"] != fetches {
+		t.Fatalf("the tick fetched for a pending seat (%d fetches, was %d)", r.g.fetches["a"], fetches)
+	}
+
+	r.live[0].Session.State = api.SessionRunning
+	r.g.fetchErr["a"] = nil
+	r.k.Tick()
+	if r.g.fetches["a"] != fetches+1 {
+		t.Fatalf("the tick did not refresh the seat once it was running (%d fetches)", r.g.fetches["a"])
+	}
+}
+
+// A newer seat that takes a key while an older refresh is still in flight keeps
+// its directory: the older refresh finds its seat gone but does not remove what
+// the new seat owns.
+func TestKeeperLateRefreshLeavesANewerSeatsViews(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	gate := make(chan struct{})
+	r.g.block["a"] = gate
+	views := []api.View{kView("alpha", "a", time.Minute)}
+	sess := r.session("seat", views...)
+
+	old := make(chan struct{})
+	go func() {
+		r.k.Build(sess, views)
+		close(old)
+	}()
+	select {
+	case <-r.g.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held fetch never started")
+	}
+	if err := r.k.Teardown(sess.Key()); err != nil {
+		t.Fatal(err)
+	}
+	r.g.mu.Lock()
+	delete(r.g.block, "a")
+	r.g.mu.Unlock()
+	r.k.Build(sess, views)
+	if _, ok := r.curOf(sess, "alpha"); !ok {
+		t.Fatal("precondition: the newer seat's view was not built")
+	}
+
+	close(gate)
+	<-old
+	if _, ok := r.curOf(sess, "alpha"); !ok {
+		t.Fatal("a late refresh of a gone seat removed the newer seat's views")
+	}
+}
+
+// A tick that took its list of declared seats just before a seat was created
+// does not forget that seat when it finishes: the seat's views are intact.
+func TestKeeperTickKeepsASeatCreatedAfterItsSnapshot(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	views := []api.View{kView("alpha", "a", time.Hour)}
+	fresh := api.Session{Name: "fresh", Workspace: "ws", Team: "t", Role: "r", State: api.SessionPending}
+	r.k.Declared = func() []Declaration {
+		out := append([]Declaration(nil), r.live...)
+		// The seat is created, and its views built, after this snapshot.
+		r.k.Build(fresh, views)
+		return out
+	}
+
+	r.k.Tick()
+
+	if _, ok := r.curOf(fresh, "alpha"); !ok {
+		t.Fatal("a tick forgot and swept a seat that was created after its snapshot")
 	}
 }
