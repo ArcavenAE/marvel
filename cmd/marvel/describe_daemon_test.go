@@ -196,3 +196,25 @@ func TestDescribeDaemonReportsADaemonError(t *testing.T) {
 		t.Errorf("err = %v, want the daemon's error", err)
 	}
 }
+
+// The command itself routes `describe daemon` to the record, through the
+// command's own output stream.
+func TestDescribeCmdRoutesDaemon(t *testing.T) {
+	resolveFixture(t, false)
+	socket, methods := describeFakeDaemon(t, cannedStatus())
+	t.Setenv(config.SocketEnv, socket)
+
+	cmd := describeCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"daemon"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("describe daemon: %v", err)
+	}
+	if !strings.Contains(out.String(), `"rung": "env"`) {
+		t.Errorf("describe daemon printed %q, want the record with its rung", out.String())
+	}
+	if got := methods(); len(got) != 1 || got[0] != "daemon.status" {
+		t.Errorf("methods = %v, want exactly [daemon.status]", got)
+	}
+}
