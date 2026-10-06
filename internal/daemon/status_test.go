@@ -194,3 +194,98 @@ func TestDaemonStatusIsNotACredentialPushMethod(t *testing.T) {
 		t.Fatalf("credential-push key reached daemon.status: %+v", resp)
 	}
 }
+
+// When two entries name the same socket the daemon cannot tell which one a
+// client came in through, so it reports no name rather than the first.
+func TestIdentifyClusterReportsNoNameWhenTwoEntriesShareASocket(t *testing.T) {
+	d := statusDaemon(t)
+	sock := filepath.Join(os.TempDir(), "marvel-ident-shared.sock")
+	cfg := &config.Config{
+		Clusters: []config.Cluster{
+			{Name: "first", Socket: sock},
+			{Name: "second", Socket: sock},
+		},
+		CurrentCluster: "first",
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	d.identifyCluster(sock)
+	if d.cluster != "" {
+		t.Errorf("cluster = %q, want no name for a socket two entries share", d.cluster)
+	}
+}
+
+// A socketless entry resolves to the default socket, so it collides with an
+// entry that writes that path out: no name either.
+func TestIdentifyClusterReportsNoNameForASocketlessEntryAndAnAliasAtTheDefault(t *testing.T) {
+	d := statusDaemon(t)
+	def := config.DefaultSocket()
+	cfg := &config.Config{
+		Clusters: []config.Cluster{
+			{Name: "local"},
+			{Name: "alias", Socket: def},
+		},
+		CurrentCluster: "local",
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	d.identifyCluster(def)
+	if d.cluster != "" {
+		t.Errorf("cluster = %q, want no name when %q and %q both resolve to %s", d.cluster, "local", "alias", def)
+	}
+}
+
+// One match among several entries is still reported.
+func TestIdentifyClusterStillReportsASingleMatchAmongOthers(t *testing.T) {
+	d := statusDaemon(t)
+	sock := filepath.Join(os.TempDir(), "marvel-ident-single.sock")
+	cfg := &config.Config{
+		Clusters: []config.Cluster{
+			{Name: "other", Socket: "/scratch/other.sock"},
+			{Name: "remote", Server: "mrvl://example.invalid"},
+			{Name: "mine", Socket: sock},
+		},
+		CurrentCluster: "other",
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	d.identifyCluster(sock)
+	if d.cluster != "mine" {
+		t.Errorf("cluster = %q, want mine", d.cluster)
+	}
+}
+
+// strAddr is an address that is not a *net.TCPAddr, so classifyBind has to
+// read its text.
+type strAddr string
+
+func (strAddr) Network() string  { return "test" }
+func (a strAddr) String() string { return string(a) }
+
+// classifyBind reads a non-TCP address by its text: a loopback host is
+// loopback, and anything it cannot read as a host and port, or a host that is
+// not an IP, is network, never local.
+func TestClassifyBindReadsANonTCPAddressByItsText(t *testing.T) {
+	cases := []struct {
+		addr string
+		want MRVLState
+	}{
+		{"127.0.0.1:6785", MRVLLoopback},
+		{"[::1]:6785", MRVLLoopback},
+		{"0.0.0.0:6785", MRVLNetwork},
+		{"192.0.2.10:6785", MRVLNetwork},
+		{"no-port", MRVLNetwork},
+		{"somehost:6785", MRVLNetwork},
+		{":6785", MRVLNetwork},
+	}
+	for _, tc := range cases {
+		if got := classifyBind(strAddr(tc.addr)); got != tc.want {
+			t.Errorf("classifyBind(%q) = %q, want %q", tc.addr, got, tc.want)
+		}
+	}
+}
