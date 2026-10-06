@@ -34,14 +34,18 @@ func newKGit() *kGit {
 	}
 }
 
-func (g *kGit) Fetch(_ context.Context, _, remote, _ string) error {
+func (g *kGit) Fetch(ctx context.Context, _, remote, _ string) error {
 	g.mu.Lock()
 	g.fetches[remote]++
 	err, gate := g.fetchErr[remote], g.block[remote]
 	g.mu.Unlock()
 	if gate != nil {
 		g.entered <- remote
-		<-gate
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return err
 }
@@ -403,5 +407,67 @@ func TestKeeperTickFollowsNewSeatsAndForgetsGoneOnes(t *testing.T) {
 	r.k.Tick()
 	if r.g.fetches["a"] != before {
 		t.Fatal("the tick followed a seat that is no longer declared")
+	}
+}
+
+// A hung remote at spawn is cut off at the spawn bound: Build returns, the seat
+// has no cur and so no MARVEL_VIEW_<NAME>, view.unavailable says so, and the
+// tick then builds it off the spawn path with the longer bound once the remote
+// answers.
+func TestKeeperSpawnBuildIsBoundedAndTheTickFinishesIt(t *testing.T) {
+	r := newKRig(t)
+	r.k.SpawnTimeout = 50 * time.Millisecond
+	r.g.sha["a"] = shaOne
+	gate := make(chan struct{})
+	r.g.block["a"] = gate
+	views := []api.View{kView("alpha", "a", time.Minute)}
+	sess := r.session("seat", views...)
+
+	done := make(chan struct{})
+	go func() {
+		r.k.Build(sess, views)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		close(gate)
+		t.Fatal("Build did not return at the spawn bound with a hung remote")
+	}
+	if _, ok := r.curOf(sess, "alpha"); ok {
+		t.Fatal("a cut-off build left a cur")
+	}
+	evs := r.kinds(events.KindViewUnavailable)
+	if len(evs) != 1 || !strings.Contains(evs[0].Message, "deadline") {
+		t.Fatalf("view.unavailable = %+v, want one naming the deadline", evs)
+	}
+
+	close(gate)
+	r.now = r.now.Add(time.Minute)
+	r.k.Tick()
+	if _, ok := r.curOf(sess, "alpha"); !ok {
+		t.Fatal("the tick did not build the view the spawn gave up on")
+	}
+}
+
+// The bound is for the whole of a seat's views, not each: two hung views cost
+// one bound, not two.
+func TestKeeperSpawnBoundCoversAllViewsTogether(t *testing.T) {
+	r := newKRig(t)
+	r.k.SpawnTimeout = 200 * time.Millisecond
+	r.g.sha["a"], r.g.sha["b"] = shaOne, shaTwo
+	gate := make(chan struct{})
+	t.Cleanup(func() { close(gate) })
+	r.g.block["a"], r.g.block["b"] = gate, gate
+	views := []api.View{kView("alpha", "a", time.Minute), kView("beta", "b", time.Minute)}
+	sess := r.session("seat", views...)
+
+	start := time.Now()
+	r.k.Build(sess, views)
+	if took := time.Since(start); took > 350*time.Millisecond {
+		t.Fatalf("Build took %s for two hung views, want about one bound (200ms)", took)
+	}
+	if got := len(r.kinds(events.KindViewUnavailable)); got != 2 {
+		t.Fatalf("view.unavailable events = %d, want one per view", got)
 	}
 }

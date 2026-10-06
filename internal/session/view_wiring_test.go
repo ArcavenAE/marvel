@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -17,9 +18,19 @@ import (
 const viewSHA = "3333333333333333333333333333333333333333"
 
 // viewGit is a git that always resolves to viewSHA, or fails the fetch.
-type viewGit struct{ fetchErr error }
+type viewGit struct {
+	fetchErr error
+	// hang makes the fetch wait for its context, as a hung remote does.
+	hang bool
+}
 
-func (g viewGit) Fetch(context.Context, string, string, string) error { return g.fetchErr }
+func (g viewGit) Fetch(ctx context.Context, _, _, _ string) error {
+	if g.hang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return g.fetchErr
+}
 
 func (viewGit) Resolve(context.Context, string, string) (string, error) { return viewSHA, nil }
 
@@ -126,5 +137,31 @@ func TestDroppingASessionRemovesItsViews(t *testing.T) {
 	}
 	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
 		t.Fatalf("the session's views survive its deletion: %v", err)
+	}
+}
+
+// A hung remote at spawn does not hold the launch: planLaunch returns at the
+// spawn bound with the command line made and no variable set, the same as any
+// other failed build.
+func TestPlanLaunchWithAHungRemoteReturnsAtTheSpawnBound(t *testing.T) {
+	mgr, ring := viewManager(t, viewGit{hang: true})
+	mgr.Views.SpawnTimeout = 50 * time.Millisecond
+	sess := sessionFor("reader", "claude")
+
+	done := make(chan launchPlan, 1)
+	go func() { done <- mgr.planLaunch(sess) }()
+	select {
+	case plan := <-done:
+		if plan.command == "" {
+			t.Fatal("a hung remote stopped the launch")
+		}
+		if _, set := plan.env["MARVEL_VIEW_REPO"]; set {
+			t.Errorf("MARVEL_VIEW_REPO is set to %q though the build was cut off", plan.env["MARVEL_VIEW_REPO"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("planLaunch waited on a hung remote past the spawn bound")
+	}
+	if got := len(ring.Snapshot(events.Filter{Kind: events.KindViewUnavailable}, 0)); got != 1 {
+		t.Errorf("view.unavailable events = %d, want 1", got)
 	}
 }

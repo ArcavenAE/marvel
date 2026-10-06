@@ -17,6 +17,14 @@ import (
 // hold a spawn or a tick for ever.
 const DefaultFetchTimeout = 2 * time.Minute
 
+// DefaultSpawnTimeout bounds the build at spawn. The spawn runs inside the
+// reconcile that holds the controller's lock, so the build must be short: a
+// first clone of an ordinary repository over a healthy link finishes in a few
+// seconds, and a build that is still running at 30s is slow or hung. It is cut
+// off, the seat starts without the view, and the tick finishes the build off
+// the lock with the longer bound (design section 7, first build at spawn).
+const DefaultSpawnTimeout = 30 * time.Second
+
 // TickInterval is how often the keeper looks for views that are due.
 const TickInterval = 30 * time.Second
 
@@ -44,8 +52,12 @@ type Keeper struct {
 	// Declared lists the live sessions with their role's views. The tick reads
 	// it to follow new seats and to resume after a daemon restart.
 	Declared func() []Declaration
-	// FetchTimeout bounds one refresh; zero means DefaultFetchTimeout.
+	// FetchTimeout bounds one refresh on the tick or the verb; zero means
+	// DefaultFetchTimeout.
 	FetchTimeout time.Duration
+	// SpawnTimeout bounds the whole of Build, all of a seat's views together;
+	// zero means DefaultSpawnTimeout.
+	SpawnTimeout time.Duration
 	// Now is the clock; nil means the wall clock.
 	Now func() time.Time
 
