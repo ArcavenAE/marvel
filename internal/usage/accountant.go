@@ -26,8 +26,8 @@ import (
 // Because the numerator is a level rather than an accumulator, a
 // mis-tuned value costs a wrong Compactions count and nothing else.
 const (
-	defaultHysteresisTokens   = 2048
-	defaultHysteresisFraction = 0.10
+	defaultHysteresisTokens   = api.CompactionHysteresisTokens
+	defaultHysteresisFraction = api.CompactionHysteresisFraction
 )
 
 // Coords is the marvel-side identity of an observed session, passed in by
@@ -425,7 +425,7 @@ func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult 
 
 	occ := s.Occupancy()
 	if st.requests > 0 {
-		if drop := st.tokens - occ; drop > a.hysteresis(st.tokens) {
+		if api.CompactionDroppedBy(st.tokens, occ, a.hystAbs, a.hystFrac) {
 			st.compactions++
 			a.stats.CompactionsDetected++
 		}
@@ -564,11 +564,7 @@ func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
 }
 
 func (a *Accountant) hysteresis(tokens int) int {
-	frac := int(float64(tokens) * a.hystFrac)
-	if frac > a.hystAbs {
-		return frac
-	}
-	return a.hystAbs
+	return api.CompactionBand(tokens, a.hystAbs, a.hystFrac)
 }
 
 // stateLocked returns the session's state, creating it if Bind never ran
