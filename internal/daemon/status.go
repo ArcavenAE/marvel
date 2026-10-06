@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 
 	"github.com/arcavenae/marvel/internal/bus"
@@ -46,7 +47,26 @@ type DaemonStatus struct {
 
 // classifyBind maps a bound address to its reach.
 func classifyBind(addr net.Addr) MRVLState {
-	return MRVLOff
+	if addr == nil {
+		return MRVLOff
+	}
+	var ip net.IP
+	switch a := addr.(type) {
+	case *net.TCPAddr:
+		ip = a.IP
+	default:
+		host, _, err := net.SplitHostPort(addr.String())
+		if err != nil {
+			return MRVLNetwork
+		}
+		ip = net.ParseIP(host)
+	}
+	// A bind that names no host, or one this code cannot read, is not
+	// shown as local: the safe wrong answer is network.
+	if ip == nil || ip.IsUnspecified() || !ip.IsLoopback() {
+		return MRVLNetwork
+	}
+	return MRVLLoopback
 }
 
 // identifyCluster records the name the daemon's config gives the cluster
@@ -56,15 +76,25 @@ func (d *Daemon) identifyCluster(socketPath string) {
 	if err != nil || cfg == nil {
 		return
 	}
-	cl := cfg.ClusterForSocket(socketPath)
-	_ = cl
+	if cl := cfg.ClusterForSocket(socketPath); cl != nil {
+		d.cluster = cl.Name
+	}
 }
 
 // handleDaemonStatus answers daemon.status.
 func (d *Daemon) handleDaemonStatus() Response {
-	data, err := json.Marshal(DaemonStatus{})
+	st := DaemonStatus{Home: d.home, Cluster: d.cluster, MRVL: MRVLStatus{State: MRVLOff}}
+	if srv := d.sshServer.Load(); srv != nil {
+		if addr := srv.Addr(); addr != nil {
+			st.MRVL = MRVLStatus{State: classifyBind(addr), Addr: addr.String()}
+		}
+	}
+	if b, ok := d.busStatus(); ok {
+		st.Bus = &b
+	}
+	data, err := json.Marshal(st)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return Response{Error: fmt.Sprintf("encode daemon status: %v", err)}
 	}
 	return Response{Result: data}
 }

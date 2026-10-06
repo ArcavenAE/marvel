@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
 
@@ -25,8 +26,10 @@ func keysEqual(a, b ssh.PublicKey) bool {
 type SSHServer struct {
 	config   *ssh.ServerConfig
 	listener net.Listener
-	daemon   *Daemon
-	layout   paths.Layout
+	// addr is the address the listener bound, published once Start has it.
+	addr   atomic.Pointer[net.Addr]
+	daemon *Daemon
+	layout paths.Layout
 }
 
 // newSSHServer creates an SSH server with the daemon's host key and
@@ -61,6 +64,8 @@ func (s *SSHServer) Start(addr string) error {
 		return fmt.Errorf("ssh listen %s: %w", addr, err)
 	}
 	s.listener = ln
+	bound := ln.Addr()
+	s.addr.Store(&bound)
 
 	go s.acceptLoop()
 
@@ -75,6 +80,9 @@ func (s *SSHServer) Start(addr string) error {
 
 // Addr returns the address the listener actually bound, or nil before Start.
 func (s *SSHServer) Addr() net.Addr {
+	if p := s.addr.Load(); p != nil {
+		return *p
+	}
 	return nil
 }
 

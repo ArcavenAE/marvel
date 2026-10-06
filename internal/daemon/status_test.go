@@ -44,7 +44,7 @@ func startMRVL(t *testing.T, d *Daemon, addr string) {
 	if err := d.StartMRVL(addr); err != nil {
 		t.Fatalf("StartMRVL(%q): %v", addr, err)
 	}
-	t.Cleanup(func() { d.sshServer.Stop() })
+	t.Cleanup(func() { d.sshServer.Load().Stop() })
 }
 
 // The mrvl:// listener is off when marvel was started without --mrvl.
@@ -66,7 +66,7 @@ func TestStatusReportsBoundAddrWhenMRVLStarted(t *testing.T) {
 	if st.MRVL.State != MRVLLoopback {
 		t.Errorf("state = %q, want %q", st.MRVL.State, MRVLLoopback)
 	}
-	bound := d.sshServer.Addr()
+	bound := d.sshServer.Load().Addr()
 	if bound == nil {
 		t.Fatal("the SSH server publishes no bound address")
 	}
