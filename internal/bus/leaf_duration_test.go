@@ -83,6 +83,9 @@ func TestDetachedLeafDoesNotRepeat(t *testing.T) {
 	s.mgr.leafAttached.Store(false)
 	s.observeLeaf(0, t0.Add(time.Minute))
 	before := len(leafDownEvents(ring))
+	if before != 1 {
+		t.Fatalf("the drop of a disconnected leaf was reported %d times, want once", before)
+	}
 	s.observeLeaf(0, t0.Add(3*time.Hour))
 	if after := len(leafDownEvents(ring)); after != before {
 		t.Fatalf("a detached leaf repeated bus.leaf.down: %d events, was %d", after, before)

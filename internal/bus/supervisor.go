@@ -61,8 +61,7 @@ type Supervisor struct {
 	// leafPoll is the /leafz cadence (R-56, 30s).
 	leafPoll time.Duration
 	// leafRepeatEvery is how long an enrolled leaf stays down before the
-	// event is repeated, and how often after that. A placeholder for the
-	// bound design/wake-service.md Q1 leaves to the operator.
+	// event is repeated, and how often after that (defaultLeafDownRepeat).
 	leafRepeatEvery time.Duration
 	// now is the clock the leaf record reads; tests replace it.
 	now func() time.Time
@@ -165,6 +164,8 @@ const (
 	restartBackoffMax     = 5 * time.Minute
 	defaultDialTimeout    = 10 * time.Second
 	defaultLeafPoll       = 30 * time.Second
+	// defaultLeafDownRepeat is one fleet value, changeable as this constant:
+	// operator ruling 2026-10-06, Q1 option (c), design/wake-service.md.
 	defaultLeafDownRepeat = 30 * time.Minute
 	stopGrace             = 5 * time.Second
 )
@@ -744,11 +745,14 @@ func (s *Supervisor) pollLeaf() {
 }
 
 // observeLeaf records one /leafz reading taken at now and reports it. It
-// reports when the state changes, when an enrolled leaf is found down at the
-// first poll (before this, silent until it came up), and again at every
-// leafRepeatEvery while an enrolled, attached leaf stays down. A hub with no
-// seed and a leaf the operator disconnected promised no link, so neither is
-// reported as down for lasting.
+// reports when the state changes (a drop is reported once, whatever the
+// enrollment), when an enrolled, attached leaf is found down at the first poll
+// (before this, silent until it came up), when a leaf already down becomes
+// enrolled (its seed is stored) or attached (the operator connects it) and has
+// not been reported yet, and again at every leafRepeatEvery while an enrolled,
+// attached leaf stays down. A hub with no seed and a leaf the operator
+// disconnected promised no link, so neither is repeated, and a hub with no seed
+// is never reported as down.
 func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	up := leafnodes > 0
 	promised := s.mgr.leafEnrolled() && s.mgr.LeafAttached()
