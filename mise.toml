@@ -20,8 +20,9 @@
 #
 # nats-server is a runtime dependency, not a dev tool: the daemon resolves
 # a bare `nats-server` from PATH when a cluster declares a managed bus
-# (internal/bus/supervisor.go). CI does not install it, so pin_test.go
-# does not compare it; the pin exists so every host runs the same broker
+# (internal/bus/supervisor.go). CI installs the same version, with a
+# checksum, so the broker-backed bus tests run there, and pin_test.go
+# asserts the two match; the pin exists so every host runs the same broker
 # the fleet was verified against. mise's registry has no nats-server
 # entry, hence the explicit github backend. Bump deliberately, with the
 # hub (roadmap M2, ticket aae-orc-k28s for the version story).
