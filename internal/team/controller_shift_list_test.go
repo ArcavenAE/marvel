@@ -893,6 +893,35 @@ func TestHandoffRequestCreatesParentDir(t *testing.T) {
 	}
 }
 
+// The directory exists when the notice goes out, not only after it. A seat
+// that reads the notice and writes at once must find its directory there, so
+// the notifier looks at the disk at the moment it is called.
+func TestHandoffDirectoryExistsWhenNoticeIsSent(t *testing.T) {
+	base := t.TempDir()
+	f := newListFixture(t, "test-handoff-mkdir-order", nestedHandoffRole(base))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	dir := filepath.Join(base, s.Name)
+
+	var seen []error
+	f.ctrl.Notify = func(api.Session, string) error {
+		info, err := os.Stat(dir)
+		if err == nil && !info.IsDir() {
+			err = errors.New("not a directory")
+		}
+		seen = append(seen, err)
+		return nil
+	}
+
+	f.evaluate()
+
+	if len(seen) != 1 {
+		t.Fatalf("notifier calls = %d, want 1", len(seen))
+	}
+	if seen[0] != nil {
+		t.Fatalf("handoff directory when the notice was sent: %v, want it to exist already", seen[0])
+	}
+}
+
 func TestHandoffRequestKeepsExistingParentMode(t *testing.T) {
 	base := t.TempDir()
 	f := newListFixture(t, "test-handoff-keepmode", nestedHandoffRole(base))
