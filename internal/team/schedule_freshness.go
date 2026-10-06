@@ -11,7 +11,8 @@ import (
 
 // reconcileScheduleFreshness is the freshness alarm (scheduled-runs
 // section 7). For every scheduled role it emits schedule.stale when the
-// role goes stale and again when it recovers, once per transition. The
+// role goes stale and schedule.fresh when it recovers, once per
+// transition. The
 // stale state lives in the store, so a daemon restart neither forgets a
 // stale schedule nor announces it twice. It also drops the status of any
 // role that no longer carries a schedule, so a later schedule under the
@@ -71,6 +72,7 @@ func (c *Controller) evaluateScheduleFreshness(t *api.Team, role *api.Role, key 
 		}
 		ev.Message = fmt.Sprintf("stale: no succeeded run within stale_after %s; %s", staleAfter, last)
 	} else {
+		ev.Kind = events.KindScheduleFresh
 		ev.Severity = events.SeverityInfo
 		ev.Message = fmt.Sprintf("recovered: a run succeeded at %s, within stale_after %s", st.LastSucceededAt.Format(time.RFC3339), staleAfter)
 		// With no success, only a raised stale_after can end the stale

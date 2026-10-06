@@ -219,6 +219,9 @@ type Cluster struct {
 	// or reaches (docs/design/services-list.md). Each entry carries the
 	// four common fields and a provider body decoded by the driver.
 	Services []Service `yaml:"services,omitempty"`
+	// ScheduleHistoryMax caps schedule.history on any role this cluster
+	// applies.
+	ScheduleHistoryMax int `yaml:"schedule_history_max,omitempty"`
 }
 
 // Service is one entry of a cluster's Services list. The four common

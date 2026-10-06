@@ -11,8 +11,9 @@ import (
 
 // TestScheduleStaleOncePerTransition is design section 7 on the
 // reconciler: a scheduled role with no succeeded run newer than
-// stale_after raises schedule.stale once, not once per tick, and once more
-// when a succeeded run brings it back. With no run at all, the bound runs
+// stale_after raises schedule.stale once, not once per tick, and
+// schedule.fresh once when a succeeded run brings it back (the operator's
+// ruling on #431 default 2). With no run at all, the bound runs
 // from when the reconciler first saw the schedule. The role stays held
 // throughout: the alarm fires nothing.
 func TestScheduleStaleOncePerTransition(t *testing.T) {
@@ -65,9 +66,12 @@ func TestScheduleStaleOncePerTransition(t *testing.T) {
 	}
 	ctrl.ReconcileOnce()
 	ctrl.ReconcileOnce()
-	got = stale()
-	if len(got) != 2 || got[1].Severity != events.SeverityInfo {
-		t.Fatalf("schedule.stale after a success = %+v, want a second event at info", got)
+	if got = stale(); len(got) != 1 {
+		t.Fatalf("schedule.stale after a success = %+v, want still only the one stale event", got)
+	}
+	fresh := ring.Snapshot(events.Filter{Kind: events.KindScheduleFresh, Workspace: ws}, 0)
+	if len(fresh) != 1 || fresh[0].Severity != events.SeverityInfo || fresh[0].Role != "refresh" {
+		t.Fatalf("schedule.fresh after a success = %+v, want one info event for refresh", fresh)
 	}
 	if n := len(store.ListSessionsByTeamRole(ws, "timers", "refresh")); n != 0 {
 		t.Fatalf("the alarm path spawned %d sessions for a held role", n)
@@ -130,11 +134,14 @@ func TestScheduleRecoversWhenStaleAfterIsRaised(t *testing.T) {
 	}
 	ctrl.ReconcileOnce()
 
-	got := ring.Snapshot(events.Filter{Kind: events.KindScheduleStale, Workspace: ws}, 0)
-	if len(got) != 2 || got[1].Severity != events.SeverityInfo {
-		t.Fatalf("schedule.stale = %+v, want stale then recovered", got)
+	if got := ring.Snapshot(events.Filter{Kind: events.KindScheduleStale, Workspace: ws}, 0); len(got) != 1 {
+		t.Fatalf("schedule.stale = %+v, want the one stale event", got)
 	}
-	if msg := got[1].Message; !strings.Contains(msg, "stale_after raised to 60h0m0s") || strings.Contains(msg, "0001-01-01") {
+	got := ring.Snapshot(events.Filter{Kind: events.KindScheduleFresh, Workspace: ws}, 0)
+	if len(got) != 1 || got[0].Severity != events.SeverityInfo {
+		t.Fatalf("schedule.fresh = %+v, want one recovery event at info", got)
+	}
+	if msg := got[0].Message; !strings.Contains(msg, "stale_after raised to 60h0m0s") || strings.Contains(msg, "0001-01-01") {
 		t.Fatalf("recovery message = %q, want it to name the raised stale_after and no zero time", msg)
 	}
 }

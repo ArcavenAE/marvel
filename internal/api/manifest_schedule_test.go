@@ -199,14 +199,6 @@ func TestScheduleRefusals(t *testing.T) {
 			want:     []string{"history.succeeded must be > 0"},
 		},
 		{
-			// The whole status is one stored value rewritten on every run,
-			// so "bounded" needs a ceiling as well as a floor.
-			name:     "history over the cap",
-			mode:     "headless",
-			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = 3, failed = 51 }",
-			want:     []string{"history keeps at most 50 runs of each outcome"},
-		},
-		{
 			// ADR-010 Amendment 1: the restart policy does not apply to a
 			// scheduled role, so setting it would silently do nothing.
 			name:      "restart_policy on a scheduled role",
@@ -257,6 +249,9 @@ func TestScheduleAccepts(t *testing.T) {
 		"cron = \"17 6 * * *\"\ntimezone = \"-06:00\"",
 		"cron = \"*/15 9-17 * * 1-5\"\ntimezone = \"+05:30\"",
 		"cron = \"17 6 * * *\"\ntimezone = \"America/Chicago\"\ndst_ack = true",
+		// The ceiling on history is the cluster's (ScheduleHistoryCap at
+		// apply), so parse takes any positive value.
+		"cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = 3, failed = 51 }",
 		"cron = \"0 0 1,15 * 0,7\"\ntimezone = \"Etc/UTC\"\nconcurrency = \"allow\"\non_failure = \"freeze\"\nretries = 2\nstarting_deadline = \"2h\"\nactive_deadline = \"45m\"\njitter = \"5m\"\nstale_after = \"30h\"\nhistory = { succeeded = 3, failed = 3 }\nsuspend = true",
 	} {
 		if _, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", schedule))); err != nil {

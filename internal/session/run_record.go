@@ -49,8 +49,9 @@ func (d *usageDrain) note(ev rtevents.Event) {
 	}
 }
 
-// recordScheduledRun adds a reaped session's run to its role's history
-// when the role is on a schedule, and emits run.succeeded or run.failed.
+// recordScheduledRun adds a session's run to its role's history when the
+// role is on a schedule, and emits run.succeeded, run.failed or
+// run.cancelled.
 // The event carries status only, never the result text (scheduled-runs
 // section 5). A session whose role is not scheduled records nothing.
 func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, exitStatus string, tail runTail) {
@@ -96,14 +97,20 @@ func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, e
 	}
 
 	kind, sev := events.KindRunSucceeded, events.SeverityInfo
-	if outcome == api.RunFailed {
+	switch outcome {
+	case api.RunFailed:
 		kind, sev = events.KindRunFailed, events.SeverityWarning
+	case api.RunCancelled:
+		kind = events.KindRunCancelled
 	}
 	tokens := "unmetered"
 	if rec.Tokens.Metered {
 		tokens = fmt.Sprintf("tokens prompt=%d out=%d", rec.Tokens.Prompt, rec.Tokens.Out)
 	}
 	msg := fmt.Sprintf("%s (exit %s) after %s; %s", outcome, orNone(exitStatus), rec.Duration().Round(time.Second), tokens)
+	if outcome == api.RunCancelled {
+		msg = fmt.Sprintf("cancelled by a kill after %s; %s", rec.Duration().Round(time.Second), tokens)
+	}
 	if rec.PermissionDenials > 0 {
 		msg += fmt.Sprintf("; %d permission denials", rec.PermissionDenials)
 	}

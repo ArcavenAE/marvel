@@ -119,14 +119,17 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
-	build     Build
-	startedAt time.Time
-	store     *api.Store
-	sessMgr   *session.Manager
-	teamCtrl  *team.Controller
-	driver    *tmux.Driver
-	listener  net.Listener
-	sshServer *SSHServer
+	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
+	// schedule.history; zero means the default.
+	scheduleHistoryMax int
+	build              Build
+	startedAt          time.Time
+	store              *api.Store
+	sessMgr            *session.Manager
+	teamCtrl           *team.Controller
+	driver             *tmux.Driver
+	listener           net.Listener
+	sshServer          *SSHServer
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -513,6 +516,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// daemon's broker, and no session may spawn before there is a bus to
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
+	d.loadScheduleHistoryMax(socketPath)
 	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()
 		if d.pidFile != "" {
@@ -1256,6 +1260,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		// doubled the prefix. Matches the ValidateRuntimes/ValidateBudgets
 		// pre-flight siblings below, which also surface err.Error() directly.
 		return Response{Error: err.Error()}
+	}
+	if err := api.ScheduleHistoryCap(m, d.scheduleHistoryMax); err != nil {
+		return Response{Error: "parse manifest: " + err.Error()}
 	}
 
 	if p.WorkspaceRoot != "" {
@@ -3095,7 +3102,7 @@ const busLeafCredential = "bus/leaf"
 // bespoke function.
 func (d *Daemon) attachServices(socketPath string) error {
 	cfg, err := config.Load()
-	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidBus) && !errors.Is(err, config.ErrInvalidService) {
+	if !configLoadUsable(err) {
 		log.Printf("services: client config unreadable, no managed service: %v", err)
 		return nil
 	}

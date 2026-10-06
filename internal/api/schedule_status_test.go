@@ -52,6 +52,16 @@ func TestScheduleStatusHistoryIsBounded(t *testing.T) {
 			want: "f1,s2,s3",
 		},
 		{
+			// A cancelled run shares the failed bound and never displaces
+			// a success (#431 ruling on default 6).
+			name: "cancelled runs share the failed bound",
+			h:    ScheduleHistory{Succeeded: 3, Failed: 1},
+			runs: []RunRecord{
+				run("s1", RunSucceeded, 1), run("c1", RunCancelled, 2), run("f1", RunFailed, 3),
+			},
+			want: "s1,f1",
+		},
+		{
 			name: "failures past their bound drop the oldest failure only",
 			h:    ScheduleHistory{Succeeded: 3, Failed: 1},
 			runs: []RunRecord{
@@ -228,5 +238,38 @@ func TestBoltStore_ScheduleStatusRoundTrips(t *testing.T) {
 	t.Cleanup(func() { _ = s3.CloseBolt() })
 	if _, ok := s3.GetScheduleStatus(key); ok {
 		t.Fatal("a deleted status came back after a restart")
+	}
+}
+
+// TestScheduleHistoryCap is the cluster's ceiling on schedule.history,
+// checked at apply: zero means the default of 50, and a role over the cap
+// is refused with the cap named.
+func TestScheduleHistoryCap(t *testing.T) {
+	m, err := ParseManifestBytes([]byte(scheduleManifest("headless", "",
+		"cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"\nhistory = { succeeded = 3, failed = 55 }")))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	tests := []struct {
+		cap  int
+		want string
+	}{
+		{0, "keeps at most 50 runs of each outcome"},
+		{50, "keeps at most 50 runs of each outcome"},
+		{54, "keeps at most 54 runs of each outcome"},
+		{55, ""},
+		{200, ""},
+	}
+	for _, tc := range tests {
+		err := ScheduleHistoryCap(m, tc.cap)
+		if tc.want == "" {
+			if err != nil {
+				t.Errorf("cap %d: refused: %v", tc.cap, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "schedule_history_max") {
+			t.Errorf("cap %d: error %v, want %q and the knob's name", tc.cap, err, tc.want)
+		}
 	}
 }

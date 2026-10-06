@@ -99,6 +99,9 @@ type Manager struct {
 	// is the driver's KillPane; a field so a test can make the kill fail
 	// without wedging a real tmux server.
 	killPane func(paneID string) error
+	// paneStatus is the driver's PaneStatus, a field for the same reason.
+	// Nil when there is no driver; Delete then treats the pane as live.
+	paneStatus func(paneID string) (tmux.PaneStatus, error)
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
@@ -116,6 +119,7 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	}
 	if driver != nil {
 		m.killPane = driver.KillPane
+		m.paneStatus = driver.PaneStatus
 	}
 	return m
 }
@@ -1237,20 +1241,20 @@ const instanceTeardownGrace = 3 * time.Second
 // a failure of the retirement (tmux.ErrPaneGone is swallowed), but any
 // other kill error is returned so Delete can keep the row (marvel#364).
 // The instance is released either way; a retry goes through the driver.
-func (m *Manager) retireInstance(key string) (bool, error) {
+// It also returns the run's tail, for a cancelled run's record.
+func (m *Manager) retireInstance(key string) (bool, runTail, error) {
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
-		m.forgetUsage(key, drain)
-		return false, nil
+		return false, m.forgetUsage(key, drain), nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceTeardownGrace)
 	defer cancel()
 	err := inst.Kill(ctx)
-	m.forgetUsage(key, drain)
+	tail := m.forgetUsage(key, drain)
 	if err != nil && !errors.Is(err, tmux.ErrPaneGone) {
-		return true, err
+		return true, tail, err
 	}
-	return true, nil
+	return true, tail, nil
 }
 
 // detachInstance retires the stream of a session whose pane already
@@ -1325,7 +1329,17 @@ func (m *Manager) Delete(key string) error {
 	// Prefer the instance: it kills the pane and retires the stream in
 	// one step. Sessions with no instance (adopted panes, or a row kept by
 	// an earlier failed kill) fall back to the driver.
-	had, kerr := m.retireInstance(key)
+	// Read the pane before the kill: a headless run that already ended
+	// keeps its PaneID until the next reap, and its outcome is the exit
+	// status, not a cancellation. A status that cannot be read counts as
+	// live, which is the conservative record (cancelled, no exit status).
+	ended, endedSt := false, tmux.PaneStatus{}
+	if sess.PaneID != "" && m.paneStatus != nil {
+		if st, serr := m.paneStatus(sess.PaneID); serr == nil && (!st.Exists || st.Dead) {
+			ended, endedSt = true, st
+		}
+	}
+	had, tail, kerr := m.retireInstance(key)
 	if !had && sess.PaneID != "" {
 		if err := m.killPane(sess.PaneID); err != nil && !errors.Is(err, tmux.ErrPaneGone) {
 			kerr = err
@@ -1335,6 +1349,19 @@ func (m *Manager) Delete(key string) error {
 		return m.keepAfterFailedKill(sess, kerr)
 	}
 
+	// A live run this delete ended is a cancelled run. A row whose pane
+	// was already gone was recorded when it was reaped. A pane that had
+	// already ended but was not yet reaped is classified as reap would:
+	// exit 0 on a headless run succeeded, anything else failed.
+	switch {
+	case sess.PaneID == "":
+	case ended && headlessCompleted(sess, endedSt):
+		m.recordScheduledRun(sess, api.RunSucceeded, endedSt.ExitStatus, tail)
+	case ended:
+		m.recordScheduledRun(sess, api.RunFailed, endedSt.ExitStatus, tail)
+	default:
+		m.recordScheduledRun(sess, api.RunCancelled, "", tail)
+	}
 	return m.dropSession(sess, "session deleted")
 }
 
@@ -1462,6 +1489,8 @@ func (m *Manager) ReapDead() []ReapedSession {
 			// An operator or the reconciler already asked for this row to go
 			// and the kill did not take. The pane is gone now, so finish the
 			// delete; it is not a crash and charges no backoff (marvel#364).
+			// The kill was asked for, so the run was cancelled, not ended.
+			m.recordScheduledRun(sess, api.RunCancelled, st.ExitStatus, tail)
 			if err := m.dropSession(sess, fmt.Sprintf("pane %s gone after an earlier failed kill; delete completed", lostPane)); err != nil {
 				log.Printf("warning: session %s: complete delete: %v", sess.Key(), err)
 			}
