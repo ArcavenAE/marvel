@@ -80,11 +80,11 @@ func TestUnknownClusterRefuses(t *testing.T) {
 	}
 }
 
-// Pins today's behavior, not a decision: a config whose own current_cluster
-// names nothing still warns and falls back to the local daemon. Whether it
-// should refuse too is an open question for the operator.
-func TestUnknownCurrentClusterTodayFallsBackLocal(t *testing.T) {
-	_ = unknownClusterFixture(t)
+// A config whose own current_cluster names nothing refuses too, with the
+// same error and no dial. The operator's ruling covers both places an
+// unknown cluster can come from (#618).
+func TestUnknownCurrentClusterRefuses(t *testing.T) {
+	dialed := unknownClusterFixture(t)
 	cfg := &config.Config{
 		Clusters:       []config.Cluster{{Name: "testcluster", Socket: "/scratch/cluster.sock"}},
 		CurrentCluster: "gone",
@@ -93,11 +93,49 @@ func TestUnknownCurrentClusterTodayFallsBackLocal(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	addr, _, err := resolveDaemonAddr()
-	if err != nil {
-		t.Fatalf("resolveDaemonAddr: %v, want the local fallback and no error", err)
+	_, err := send(daemon.Request{Method: "status"})
+	if err == nil {
+		t.Fatal("send succeeded with an unknown current_cluster, want a refusal")
 	}
-	if addr != config.DefaultSocket() {
-		t.Errorf("addr = %q, want the default socket %q", addr, config.DefaultSocket())
+	if !strings.Contains(err.Error(), `unknown cluster "gone"`) {
+		t.Errorf("error = %q, want it to name the unknown cluster", err)
+	}
+	if n := dialed.Load(); n != 0 {
+		t.Errorf("the local daemon was dialed %d time(s), want 0", n)
+	}
+}
+
+// The exception: a command that defines or configures a cluster may name
+// one that is not in the config yet. These commands take the name as an
+// argument and never resolve a daemon, so a --cluster that matches nothing
+// does not stop them. add-cluster defines the cluster, and use-cluster
+// repairs a current_cluster that names nothing.
+func TestConfigCommandsAcceptAnUnknownClusterFlag(t *testing.T) {
+	_ = unknownClusterFixture(t)
+	clusterName = "not-yet-defined"
+
+	run := func(args ...string) error {
+		cmd := configCmd()
+		cmd.SetArgs(args)
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		return cmd.Execute()
+	}
+	if err := run("add-cluster", "not-yet-defined", "/scratch/new.sock"); err != nil {
+		t.Fatalf("add-cluster with an unknown --cluster: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cl, err := cfg.GetCluster("not-yet-defined"); err != nil || cl == nil {
+		t.Fatalf("add-cluster did not define the cluster: %v", err)
+	}
+
+	cfg.CurrentCluster = "gone"
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("use-cluster", "testcluster"); err != nil {
+		t.Fatalf("use-cluster on a config with an unknown current_cluster: %v", err)
 	}
 }
