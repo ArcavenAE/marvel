@@ -16,13 +16,16 @@ import (
 const maxSocketPath = 103
 
 // testSocket is a socket path no other test process can be using: a short
-// directory made for this call, removed with the test. It is not under
-// t.TempDir(), whose macOS path is long enough to pass the socket limit
-// (marvel#383); the directory name carries a random part, and the file name
-// is the caller's, so two calls with one name still differ.
+// directory made for this call, removed with the test. The directory is rooted
+// at /tmp, not at TMPDIR or t.TempDir(): a scratch TMPDIR can be long enough to
+// pass the socket limit (marvel#383, and a daemon test that bound under a
+// 64-character TMPDIR failed at 65), and /tmp is the root
+// sendrequest_timeout_test.go already uses. The directory name carries a
+// random part and the file name is the caller's, so two calls with one name
+// still differ.
 func testSocket(t *testing.T, name string) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "mv")
+	dir, err := os.MkdirTemp("/tmp", "mv")
 	if err != nil {
 		t.Fatalf("make socket dir: %v", err)
 	}
