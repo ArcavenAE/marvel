@@ -322,6 +322,10 @@ type Session struct {
 	// view, filled on the copies get and describe return and never stored.
 	LimitReading     ReadingState `json:"limit_reading,omitempty" toml:"-"`
 	LimitReadingText string       `json:"limit_reading_text,omitempty" toml:"-"`
+
+	// ActiveTicks is the share-of-ticks reading behind ACTIVE%, filled on read
+	// from the controller's in-memory tick ring and never stored. See ActiveTicks.
+	ActiveTicks ActiveTicks `json:"active_ticks,omitzero" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
@@ -1079,3 +1083,24 @@ const (
 	// one of them failed its control.
 	HarnessStateControlFailed = "control-failed"
 )
+
+// ActiveTicks is what the tick ring says about a session, as `get sessions`
+// turns it into ACTIVE% (docs/design/get-sessions-output.md section 4.4). It is
+// counts and the window they were counted under, never a percentage: the CLI
+// divides when it prints. The daemon fills it on read, so a daemon restart,
+// which empties the ring, leaves it zero and the cell a dash.
+type ActiveTicks struct {
+	// Active and Total are the ticks in the last fifteen minutes that found the
+	// session not quiet, and all of them.
+	Active int `json:"active"`
+	Total  int `json:"total"`
+	// Window is the quiet window the ticks were judged under: the role's
+	// activity_timeout, else the cluster's watchdog.window, else the default.
+	Window time.Duration `json:"window"`
+	// Observable is false for a session marvel has no activity channel for.
+	Observable bool `json:"observable"`
+	// Full is true once the ring has watched for the whole fifteen minutes.
+	Full bool `json:"full"`
+	// At is the time of the newest tick counted.
+	At time.Time `json:"at"`
+}

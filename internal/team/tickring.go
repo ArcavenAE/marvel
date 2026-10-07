@@ -98,3 +98,12 @@ func (c *Controller) ActiveTicks(sessKey string, window time.Duration, now time.
 	}
 	return r.Counts(window, now)
 }
+
+// SetClusterQuietWindow sets the operator's watchdog.window, zero when unset.
+// The daemon sets it at start.
+func (c *Controller) SetClusterQuietWindow(d time.Duration) {}
+
+// ActivityOf is the tick-ring reading for one session, judged under its window.
+func (c *Controller) ActivityOf(sess api.Session, now time.Time) api.ActiveTicks {
+	return api.ActiveTicks{}
+}

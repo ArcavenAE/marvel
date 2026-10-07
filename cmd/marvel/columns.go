@@ -40,13 +40,14 @@ var sessionColumnRegistry = []sessionColumn{
 	{"tout", "TOUT", func(r sessionRow) string { return r.tout }},
 	{"rate", "RATE", func(r sessionRow) string { return r.rate }},
 	{"last-active", "LAST-ACTIVE", func(r sessionRow) string { return r.lastActive }},
+	{"active", "ACTIVE%", func(r sessionRow) string { return r.active }},
 	{"prompt", "PROMPT", func(r sessionRow) string { return r.prompt }},
 }
 
 // optInColumns are registered and selectable but not in the full default
 // table, so a pipe prints what it always printed. The width fit's wide tier
 // is where they show by default.
-var optInColumns = map[string]bool{"workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true}
+var optInColumns = map[string]bool{"workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "active": true}
 
 // columnSetWide is the one named set. A set expands in place wherever its
 // name appears, because no `-o wide` exists (`-w` is --watch). It starts
@@ -56,7 +57,7 @@ const columnSetWide = "wide"
 
 var wideSessionColumns = []string{
 	"workspace", "team", "role", "generation", "name", "state", "health",
-	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active",
+	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "active",
 }
 
 // defaultSessionColumns is today's table, in today's order.

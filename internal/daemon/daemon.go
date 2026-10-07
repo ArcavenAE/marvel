@@ -1477,6 +1477,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
+		d.stampActivity(live, time.Now().UTC())
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
@@ -1545,6 +1546,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 		if err == nil {
 			one := []api.Session{sess}
 			d.stampLimitReading(one, time.Now().UTC())
+			d.stampActivity(one, time.Now().UTC())
 			result = one[0]
 		}
 	case "team":
