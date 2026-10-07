@@ -85,8 +85,8 @@ func TestRateCellStaleRendersQuestion(t *testing.T) {
 
 // Sorting by RATE orders by the value the cell shows, not by its text:
 // 9.0 is below 40 though "9" sorts after "4", a seat with no number
-// (never sampled or expired) sorts below every number, and the name breaks
-// a tie.
+// (never sampled or expired) sorts below every number, a quiet 0 included,
+// and the name breaks a tie.
 func TestRateCellSortsByValue(t *testing.T) {
 	withRateClock(t)
 	sessions := []api.Session{
@@ -95,13 +95,14 @@ func TestRateCellSortsByValue(t *testing.T) {
 		{Name: "a-never", Workspace: "ws"},
 		rateSession("e-expired", 40, 11*time.Minute, time.Minute),
 		rateSession("c-forty", 40, 0, 0),
+		rateSession("0-quiet", 40, 11*time.Minute, 11*time.Minute), // exactly 0/s: a number, above no number
 	}
 	sortSessions(sessions, &watchSort{column: "rate"})
 	var asc []string
 	for _, s := range sessions {
 		asc = append(asc, s.Name)
 	}
-	if want := "a-never,e-expired,d-nine,b-forty,c-forty"; strings.Join(asc, ",") != want {
+	if want := "a-never,e-expired,0-quiet,d-nine,b-forty,c-forty"; strings.Join(asc, ",") != want {
 		t.Errorf("ascending = %s, want %s", strings.Join(asc, ","), want)
 	}
 	sortSessions(sessions, &watchSort{column: "rate", desc: true})
@@ -109,7 +110,7 @@ func TestRateCellSortsByValue(t *testing.T) {
 	for _, s := range sessions {
 		desc = append(desc, s.Name)
 	}
-	if want := "c-forty,b-forty,d-nine,e-expired,a-never"; strings.Join(desc, ",") != want {
+	if want := "c-forty,b-forty,d-nine,0-quiet,e-expired,a-never"; strings.Join(desc, ",") != want {
 		t.Errorf("descending = %s, want %s", strings.Join(desc, ","), want)
 	}
 }
