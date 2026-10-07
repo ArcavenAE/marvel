@@ -83,6 +83,9 @@ type kRig struct {
 	ring *events.Ring
 	now  time.Time
 	live []Declaration
+	// clockMu guards now: a background Prepare build reads the clock while the
+	// test moves it, and the race detector needs the two ordered.
+	clockMu sync.Mutex
 }
 
 func newKRig(t *testing.T) *kRig {
@@ -93,9 +96,24 @@ func newKRig(t *testing.T) *kRig {
 	r.k = &Keeper{
 		ViewsDir: dir, Events: r.ring, Git: r.g,
 		Declared: func() []Declaration { return r.live },
-		Now:      func() time.Time { return r.now },
+		Now:      r.clock,
 	}
 	return r
+}
+
+// clock is the keeper's Now: the rig's time, read under the clock lock.
+func (r *kRig) clock() time.Time {
+	r.clockMu.Lock()
+	defer r.clockMu.Unlock()
+	return r.now
+}
+
+// advance moves the rig's clock forward, ordered against any background build
+// that is reading it.
+func (r *kRig) advance(d time.Duration) {
+	r.clockMu.Lock()
+	defer r.clockMu.Unlock()
+	r.now = r.now.Add(d)
 }
 
 func (r *kRig) session(name string, views ...api.View) api.Session {
@@ -197,7 +215,7 @@ func TestKeeperRefreshFailuresKeepTheCurrentTree(t *testing.T) {
 
 			r.g.sha["a"] = shaTwo
 			tc.break_(r, sess)
-			r.now = r.now.Add(time.Minute)
+			r.advance(time.Minute)
 			r.k.Tick()
 			t.Cleanup(func() { _ = os.Chmod(filepath.Join(r.k.ViewsDir, sess.Key(), "alpha"), 0o700) })
 
@@ -234,14 +252,14 @@ func TestKeeperTickFollowsOnTheViewsInterval(t *testing.T) {
 		t.Fatalf("fetches after spawn = %d, want 1", r.g.fetches["a"])
 	}
 
-	r.now = r.now.Add(5 * time.Minute)
+	r.advance(5 * time.Minute)
 	r.k.Tick()
 	if r.g.fetches["a"] != 1 {
 		t.Fatalf("fetches at 5m = %d, want none before the 10m interval", r.g.fetches["a"])
 	}
 
 	r.g.sha["a"] = shaTwo
-	r.now = r.now.Add(5 * time.Minute)
+	r.advance(5 * time.Minute)
 	r.k.Tick()
 	if r.g.fetches["a"] != 2 {
 		t.Fatalf("fetches at 10m = %d, want 2", r.g.fetches["a"])
@@ -402,7 +420,7 @@ func TestKeeperTickFollowsNewSeatsAndForgetsGoneOnes(t *testing.T) {
 		t.Fatal("the tick did not build a declared seat's view")
 	}
 	r.live = nil
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	before := r.g.fetches["a"]
 	r.k.Tick()
 	if r.g.fetches["a"] != before {
@@ -443,7 +461,7 @@ func TestKeeperSpawnBuildIsBoundedAndTheTickFinishesIt(t *testing.T) {
 	}
 
 	close(gate)
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.k.Tick()
 	if _, ok := r.curOf(sess, "alpha"); !ok {
 		t.Fatal("the tick did not build the view the spawn gave up on")
@@ -507,7 +525,7 @@ func TestKeeperTeardownDuringATickRefreshLeavesNothingBehind(t *testing.T) {
 	r.k.Build(sess, views)
 
 	r.g.sha["a"] = shaTwo
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	release := blockedTick(t, r, "a")
 	if err := r.k.Teardown(sess.Key()); err != nil {
 		t.Fatal(err)
@@ -610,7 +628,7 @@ func TestKeeperSpawnBuildDoesNotWaitOnABusyViewPastItsBound(t *testing.T) {
 	r.k.Build(sess, views)
 
 	r.g.sha["a"] = shaTwo
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	release := blockedTick(t, r, "a")
 	defer release()
 
@@ -639,7 +657,7 @@ func TestKeeperTickDoesNotRefreshASeatThatIsStillSpawning(t *testing.T) {
 	r.k.Build(sess, views)
 	fetches := r.g.fetches["a"]
 
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.k.Tick()
 	if r.g.fetches["a"] != fetches {
 		t.Fatalf("the tick fetched for a pending seat (%d fetches, was %d)", r.g.fetches["a"], fetches)

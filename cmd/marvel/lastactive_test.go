@@ -98,12 +98,7 @@ func withLastActiveClock(t *testing.T) {
 func sessionsView(t *testing.T, sessions []api.Session, cols string, fit fitOptions) string {
 	t.Helper()
 	withLastActiveClock(t)
-	columns := columnsOrFatal(t, cols, nil)
-	return captureStdout(t, func() {
-		if err := printSessionsFrom(sessions, columns, "cluster  alpha\n\n", fit); err != nil {
-			t.Fatal(err)
-		}
-	})
+	return renderSessionsView(sessions, columnsOrFatal(t, cols, nil), "cluster  alpha\n\n", fit)
 }
 
 // LAST-ACTIVE is in the wide set and not in the default table, so a pipe

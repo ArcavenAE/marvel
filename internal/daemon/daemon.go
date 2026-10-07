@@ -437,6 +437,8 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	if layout, lerr := paths.Default(); lerr == nil {
 		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
 		d.views.OnMoved = teamCtrl.NoteViewMoved
+		d.views.Held = teamCtrl.ViewTreesHeld
+		teamCtrl.SealViewTrees = d.views.Seal
 		sessMgr.Views = d.views
 	}
 	return d, nil
@@ -455,7 +457,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	}
 	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 		emitInjectRefused(d.events, sess, why, injector)
-		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
 	}
 	// The same bare-digit refusal as an inject, with no flag to lift it: a text
 	// that starts with a menu digit is not typed into a pane the capture cannot
@@ -463,7 +465,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
 		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 			emitInjectRefused(d.events, sess, why, injector)
-			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+			return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
 		}
 	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
@@ -471,6 +473,15 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	}
 	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, injector)
 	return nil
+}
+
+// noticeNoun names what a refused notice was, for the error text the team
+// records: the max-age ask is a handoff request, anything else is a notice.
+func noticeNoun(origin string) string {
+	if origin == team.NoticeMaxAge {
+		return "handoff"
+	}
+	return "notice"
 }
 
 // Usage returns the daemon's context and token accountant. Exported for
@@ -1967,6 +1978,10 @@ type runParams struct {
 	RuntimeCommand string   `json:"runtime_command"`
 	RuntimeArgs    []string `json:"runtime_args"`
 	Script         string   `json:"script"`
+	// WorkDir is where the session runs, absolute, from marvel run --workdir or
+	// the caller's cwd. WorkDirDefault says the caller did not name it.
+	WorkDir        string `json:"workdir,omitempty"`
+	WorkDirDefault bool   `json:"workdir_default,omitempty"`
 }
 
 func (d *Daemon) handleRun(params json.RawMessage) Response {
@@ -1983,6 +1998,13 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	}
 	if p.Role == "" {
 		p.Role = "adhoc"
+	}
+
+	// Placement is checked before anything is created, so a refused run leaves no
+	// workspace or session behind.
+	workDir, warning, werr := resolveRunWorkDir(p.WorkDir, p.WorkDirDefault)
+	if werr != nil {
+		return Response{Error: werr.Error()}
 	}
 
 	// Ensure workspace exists.
@@ -2012,16 +2034,21 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		Team:      p.Team,
 		Role:      p.Role,
 		Runtime:   rt,
+		WorkDir:   workDir,
 	}
 
 	if err := d.sessMgr.Create(sess); err != nil {
 		return Response{Error: fmt.Sprintf("create session: %v", err)}
 	}
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":      "created",
 		"session_key": sess.Key(),
-	})
+	}
+	if warning != "" {
+		out["warning"] = warning
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
 }
 

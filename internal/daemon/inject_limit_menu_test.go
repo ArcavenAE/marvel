@@ -219,3 +219,21 @@ func eachLimitMenuSourceNode(t *testing.T, fn func(file string, n ast.Node)) {
 		})
 	}
 }
+
+// A refused view notice says "notice", not "handoff": the text lands in the
+// team's record of why the notice did not reach the seat, and a view notice is
+// not a handoff request. The max-age wording is unchanged.
+func TestNotifyRefusalNamesTheNoticeThatWasRefused(t *testing.T) {
+	d := newHandlerDaemon(t)
+	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
+	key := verifySeat(t, d, limitMenuSeat, "claude", "Switch to usage credits")
+
+	err := d.teamCtrl.Notify(sessionOf(t, d, key), "marvel: view repo is now abc", team.NoticeViewNotice)
+	if err == nil || !strings.Contains(err.Error(), "notice not sent to") || strings.Contains(err.Error(), "handoff") {
+		t.Errorf("view notice refusal = %v, want %q and no mention of a handoff", err, "notice not sent to")
+	}
+	err = d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff", team.NoticeMaxAge)
+	if err == nil || !strings.Contains(err.Error(), "handoff not sent to") {
+		t.Errorf("max-age refusal = %v, want %q", err, "handoff not sent to")
+	}
+}

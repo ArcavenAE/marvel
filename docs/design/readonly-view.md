@@ -176,7 +176,8 @@ A superseded tree passes through three states, and only the notice moves it.
    and exited 1, `cat ./f` printed `Permission denied` and exited 1,
    `grep -r` warned `Permission denied` and exited 2, and `find .` printed
    `Permission denied` on stderr but exited 0 (that shell's `find` is a
-   wrapper; BSD and GNU `find` are untested). `pwd` still printed the old
+   wrapper; the `find` binaries on BSD and GNU exit 1, which an integration
+   test asserts on every CI run). `pwd` still printed the old
    path and exited 0, which is why the notice names `VIEW_SHA` rather than
    `pwd`. The skeleton is directories only, so it costs almost no disk.
 3. **Removed.** At session teardown, or when the role's view is removed
@@ -187,7 +188,10 @@ A superseded tree passes through three states, and only the notice moves it.
 
 Why seal and not delete: deleting leaves a held directory that answers
 `ls`, globs, `find` and `grep -r` with silence, and only a named file read
-fails. A mode-`000` directory refuses all of them.
+fails. A mode-`000` directory makes `ls`, `cat ./f` and `find .` exit
+nonzero. A glob is the exception: a bash glob with `nullglob` set is silent
+and a zsh glob errors, so a seat that reads by glob can still see an empty
+answer, which is one more reason the notice names `VIEW_SHA` as the check.
 
 Why delivery and not refresh count: the notice can be deferred up to
 `max_defer` (30m), and at `refresh_every = 10m` a count-keyed rule would

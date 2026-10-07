@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,7 +73,11 @@ type Keeper struct {
 	// view from one commit to another, with the path of the view's cur. It is
 	// not called for a first build or an unchanged refresh. The daemon wires it
 	// to the controller, which tells the seat.
-	OnMoved func(sess api.Session, view, path, commit string)
+	OnMoved func(sess api.Session, view, path, previous, commit string)
+	// Held reports how many superseded trees of a seat's view are still
+	// readable, because the seat has not been told and had its grace yet. At
+	// MaxHeldTrees the keeper pauses that view's refresh. Nil means none held.
+	Held func(sess api.Session, view string) int
 
 	mu      sync.Mutex
 	tracked map[string]*tracked
@@ -100,6 +105,9 @@ type tracked struct {
 	down  bool
 	cause string
 	gone  bool
+	// held is set while the view's refresh is paused at MaxHeldTrees, so the
+	// event is sent once per hold.
+	held bool
 	// prepared is set when the controller asked for this view ahead of the
 	// seat's spawn (Prepare), so the spawn binds what was built and does not
 	// fetch again. prepAt is when it was first asked, the start of the spawn
@@ -390,6 +398,39 @@ func (k *Keeper) Run(ctx context.Context) {
 	}
 }
 
+// MaxHeldTrees is how many superseded trees a seat's view may hold readable
+// before its refresh pauses.
+const MaxHeldTrees = 5
+
+// Seal hollows and seals the named superseded trees of a seat's view. It never
+// touches the tree cur names.
+//
+// It takes the view's refresh slot without waiting, so a refresh that could
+// swap cur onto one of these trees cannot run beside it; a view being refreshed
+// is reported as busy and the caller tries again on its next tick.
+func (k *Keeper) Seal(sess api.Session, view string, commits []string) error {
+	if view == "" || view == "." || view == ".." || strings.ContainsAny(view, `/\`) {
+		return fmt.Errorf("seal: %q is not a view name", view)
+	}
+	k.mu.Lock()
+	t := k.tracked[sess.Key()+"/"+view]
+	k.mu.Unlock()
+	if t != nil {
+		if !t.tryAcquire() {
+			return fmt.Errorf("seal %s/%s: the view is being refreshed", sess.Key(), view)
+		}
+		defer t.release()
+	}
+	b := &Builder{Dir: filepath.Join(k.ViewsDir, sess.Key(), view)}
+	var errs []error
+	for _, c := range commits {
+		if err := b.Seal(c); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Teardown forgets a session's views and removes their directory, restoring
 // owner permissions from the top down first because the trees are read-only.
 func (k *Keeper) Teardown(sessKey string) error {
@@ -452,6 +493,11 @@ func (k *Keeper) owned(sessKey string) bool {
 // as an event, and returns a line describing it.
 func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) string {
 	defer t.release()
+	if why != "spawn" {
+		if line, held := k.holdIfFull(t); held {
+			return line
+		}
+	}
 	ctx, cancel := context.WithTimeout(parent, k.timeout())
 	defer cancel()
 	res, err := t.builder.Refresh(ctx)
@@ -484,7 +530,7 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 	t.down, t.cause = false, ""
 	k.mu.Unlock()
 	if res.Changed && res.Previous != "" && k.OnMoved != nil {
-		k.OnMoved(sess, name, filepath.Join(t.builder.Dir, "cur"), res.Commit)
+		k.OnMoved(sess, name, filepath.Join(t.builder.Dir, "cur"), res.Previous, res.Commit)
 	}
 	if !res.Changed {
 		return fmt.Sprintf("%s: unchanged at %s", name, short(res.Commit))
@@ -499,6 +545,46 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 		Message: fmt.Sprintf("view %s moved from %s to %s", name, prev, short(res.Commit)),
 	})
 	return fmt.Sprintf("%s: %s -> %s", name, prev, short(res.Commit))
+}
+
+// holdIfFull pauses a view's refresh while MaxHeldTrees superseded trees are
+// readable, because the seat has not been told yet. A seat that is never told
+// (stuck at a limit menu) otherwise accumulates a tree per changed commit, and
+// sealing early to save disk is the one thing the design rules out. The event
+// goes out once per hold.
+func (k *Keeper) holdIfFull(t *tracked) (string, bool) {
+	n := 0
+	if k.Held != nil {
+		n = k.Held(t.session, t.view.Name)
+	}
+	k.mu.Lock()
+	if n < MaxHeldTrees {
+		t.held = false
+		k.mu.Unlock()
+		return "", false
+	}
+	if t.gone {
+		k.mu.Unlock()
+		return "", false
+	}
+	every := t.view.RefreshEvery
+	if every <= 0 {
+		every = api.DefaultViewRefreshEvery
+	}
+	t.next = k.now().Add(every)
+	first := !t.held
+	t.held = true
+	sess, name := t.session, t.view.Name
+	k.mu.Unlock()
+	cur := short(t.builder.current())
+	if first {
+		events.Emit(k.Events, events.Event{
+			Kind: events.KindViewRetentionHeld, Severity: events.SeverityWarning,
+			Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role, Session: sess.Key(),
+			Message: fmt.Sprintf("view %s refresh paused: %d superseded trees are still readable because the seat has not been told; it stays on %s", name, n, cur),
+		})
+	}
+	return fmt.Sprintf("%s: refresh held at %s, %d superseded trees are still readable until the seat is told", name, cur, n), true
 }
 
 // emitFailure reports a failed refresh. A failure at spawn is
