@@ -59,9 +59,11 @@ func TestLastActiveMarksStatuslineSource(t *testing.T) {
 	if got := lastActiveCell(hb, lastActiveNow); got != "3m*" {
 		t.Errorf("heartbeat source: cell = %q, want 3m*", got)
 	}
-	tok := activeSession("b", 3*time.Minute, api.ContextSourceAccountant)
-	if got := lastActiveCell(tok, lastActiveNow); got != "3m" {
-		t.Errorf("token-stream source: cell = %q, want 3m", got)
+	for _, src := range []api.ContextSourceKind{api.ContextSourceAccountant, api.ContextSourceNone} {
+		tok := activeSession("b", 3*time.Minute, src)
+		if got := lastActiveCell(tok, lastActiveNow); got != "3m" {
+			t.Errorf("source %q: cell = %q, want 3m with no mark", src, got)
+		}
 	}
 }
 
@@ -93,12 +95,12 @@ func withLastActiveClock(t *testing.T) {
 	t.Cleanup(func() { lastActiveClock = old })
 }
 
-func sessionsView(t *testing.T, sessions []api.Session, cols string, fit fitOptions, header string) string {
+func sessionsView(t *testing.T, sessions []api.Session, cols string, fit fitOptions) string {
 	t.Helper()
 	withLastActiveClock(t)
 	columns := columnsOrFatal(t, cols, nil)
 	return captureStdout(t, func() {
-		if err := printSessionsFrom(sessions, columns, header, fit); err != nil {
+		if err := printSessionsFrom(sessions, columns, "cluster  alpha\n\n", fit); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -158,7 +160,7 @@ func TestLegendPrintsWhenAMarkIsOnScreen(t *testing.T) {
 		activeSession("a", time.Minute, api.ContextSourceHeartbeat),
 		activeSession("b", time.Minute, api.ContextSourceHeartbeat),
 	}
-	out := sessionsView(t, marked, "name,last-active", fitOptions{width: 100}, "cluster  alpha\n\n")
+	out := sessionsView(t, marked, "name,last-active", fitOptions{width: 100})
 	if strings.Count(out, legendLine) != 1 {
 		t.Errorf("a terminal with marked cells should print the legend once:\n%s", out)
 	}
@@ -169,15 +171,16 @@ func TestLegendPrintsWhenAMarkIsOnScreen(t *testing.T) {
 
 func TestLegendAbsentWithoutAMark(t *testing.T) {
 	tok := []api.Session{activeSession("a", time.Minute, api.ContextSourceAccountant)}
-	if out := sessionsView(t, tok, "name,last-active", fitOptions{width: 100}, "cluster  alpha\n\n"); strings.Contains(out, legendLine) {
+	if out := sessionsView(t, tok, "name,last-active", fitOptions{width: 100}); strings.Contains(out, legendLine) {
 		t.Errorf("no cell carries a mark, so no legend:\n%s", out)
 	}
 }
 
-// Piped output keeps the mark in the value and drops the legend.
+// Piped output keeps the mark in the value and drops the legend, even when
+// --header forces the header on.
 func TestLegendDroppedWhenPipedButMarkKept(t *testing.T) {
 	marked := []api.Session{activeSession("a", time.Minute, api.ContextSourceHeartbeat)}
-	out := sessionsView(t, marked, "name,last-active", fitOptions{}, "")
+	out := sessionsView(t, marked, "name,last-active", fitOptions{})
 	if strings.Contains(out, legendLine) {
 		t.Errorf("a pipe should print no legend:\n%s", out)
 	}
@@ -190,7 +193,7 @@ func TestLegendDroppedWhenPipedButMarkKept(t *testing.T) {
 // guard: it passes against the stub because no column exists yet.
 func TestLegendAbsentWhenTheMarkedColumnIsHidden(t *testing.T) {
 	marked := []api.Session{activeSession("a", time.Minute, api.ContextSourceHeartbeat)}
-	out := sessionsView(t, marked, "wide", fitOptions{width: 30}, "cluster  alpha\n\n")
+	out := sessionsView(t, marked, "wide", fitOptions{width: 30})
 	if strings.Contains(out, "1m*") || strings.Contains(out, legendLine) {
 		t.Errorf("the width hid LAST-ACTIVE, so neither the mark nor the legend should show:\n%s", out)
 	}

@@ -971,7 +971,14 @@ func getCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
-		Args:  cobra.ExactArgs(1),
+		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
+
+A trailing * on a LAST-ACTIVE value means a statusline or heartbeat reported
+it, which is weaker than token flow: * reported by statusline or heartbeat,
+not token flow. A value from the token stream carries no mark. On a terminal
+one legend line under the header says so when a mark is on screen; piped
+output keeps the mark and drops the legend. A - means never measured.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
 			sessions := args[0] == "sessions" || args[0] == "session"
@@ -2704,9 +2711,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name   string
-	state, health, context, cpu, rss          string
-	desk, runtime, llm, workdir, rate, prompt string
+	workspace, team, role, generation, name               string
+	state, health, context, cpu, rss                      string
+	desk, runtime, llm, workdir, rate, prompt, lastActive string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2821,10 +2828,11 @@ func newSessionRow(s api.Session) sessionRow {
 		workdir = "-"
 	}
 	return sessionRow{
-		workdir:   workdir,
-		rate:      rateCell(s, rateClock()),
-		prompt:    promptCell(s.SpendPromptTokens),
-		workspace: s.Workspace, team: s.Team, role: s.Role, generation: gen,
+		workdir:    workdir,
+		rate:       rateCell(s, rateClock()),
+		prompt:     promptCell(s.SpendPromptTokens),
+		lastActive: lastActiveCell(s, lastActiveClock()),
+		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
 	}
@@ -3010,6 +3018,11 @@ func printSessionsFrom(sessions []api.Session, cols []sessionColumn, header stri
 	// The note and the warning are TTY chrome on the header's stream,
 	// stdout; off a terminal nothing is fitted, so neither prints into a pipe.
 	res := fitSessionTable(sessions, cols, fit)
+	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
+		// The legend is part of the header, so it prints with it, on a
+		// terminal only; piped output keeps the mark and drops the legend.
+		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
+	}
 	fmt.Print(header + res.table)
 	if res.warn != "" {
 		fmt.Println(res.warn)

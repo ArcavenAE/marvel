@@ -53,6 +53,7 @@ type fitOptions struct {
 }
 
 type fitResult struct {
+	cols   []sessionColumn // the columns the table prints
 	table  string
 	hidden int    // default columns the width left out
 	warn   string // an explicit list that does not fit, or empty
@@ -143,7 +144,7 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 	if o.width <= 0 {
 		// Not a terminal: byte for byte what get sessions printed before the
 		// fit, nothing cut, whatever the columns hold.
-		return fitResult{table: renderSessionTableCols(sessions, cols)}
+		return fitResult{table: renderSessionTableCols(sessions, cols), cols: cols}
 	}
 	if o.explicit {
 		table := renderTrimmed(sessions, cols, o)
@@ -151,7 +152,7 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 		if w := tableWidth(table); w > o.width {
 			warn = fmt.Sprintf("note: the selected columns are %d wide, wider than the terminal (%d); printing them all", w, o.width)
 		}
-		return fitResult{table: table, warn: warn}
+		return fitResult{table: table, warn: warn, cols: cols}
 	}
 
 	fitted := tierColumns(o.width)
@@ -170,7 +171,7 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 			hidden++
 		}
 	}
-	return fitResult{table: table, hidden: hidden}
+	return fitResult{table: table, hidden: hidden, cols: fitted}
 }
 
 // renderTrimmed renders cols, cutting RUNTIME and WORKDIR unless --no-trunc.
