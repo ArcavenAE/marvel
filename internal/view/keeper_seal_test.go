@@ -164,3 +164,25 @@ func TestKeeperBuildsAtSpawnEvenWhenTheHoldIsFull(t *testing.T) {
 		t.Errorf("view.retention-held events = %d at spawn", n)
 	}
 }
+
+// The same through the keeper: a seal that died partway, then the ref coming
+// back to that commit, must leave cur on a complete tree.
+func TestKeeperServesACompleteTreeWhenTheRefReturnsToAPartlySealedOne(t *testing.T) {
+	r, sess := movedTwice(t)
+	tree := r.treeDir(sess, "alpha", shaOne)
+	for _, d := range []string{tree, filepath.Join(tree, "sub")} {
+		if err := os.Chmod(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(tree, "sub", "file.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	r.g.sha["a"] = shaOne
+	r.now = r.now.Add(time.Hour)
+	r.k.Tick()
+	if got := mustRead(t, filepath.Join(r.k.ViewsDir, sess.Key(), "alpha", "cur", "sub", "file.txt")); got != "tree "+shaOne {
+		t.Errorf("cur serves %q after the ref returned to a partly sealed tree", got)
+	}
+}

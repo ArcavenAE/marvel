@@ -225,3 +225,79 @@ func readUntilDone(t *testing.T, r *bufio.Reader) string {
 		lines = append(lines, line)
 	}
 }
+
+// partialSeal leaves a tree as a seal that died mid-walk leaves it: the
+// directories opened for deletion and some files gone, nothing closed yet. It
+// repeats what sealTree does first, so the test holds if that order is kept.
+func partialSeal(t *testing.T, tree string) {
+	t.Helper()
+	for _, d := range []string{tree, filepath.Join(tree, "a"), filepath.Join(tree, "a", "b")} {
+		if err := os.Chmod(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(tree, "a", "b", "low.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A seal that was interrupted must not be mistaken for a built tree: if the ref
+// returns to that commit before the seal is retried, the refresh builds the tree
+// again and cur never names one with files missing.
+func TestRefreshBackOntoAPartlySealedTreeBuildsItAgain(t *testing.T) {
+	b, g := twoTrees(t)
+	partialSeal(t, filepath.Join(b.Dir, "trees", shaOne))
+
+	g.sha = shaOne
+	if _, err := b.Refresh(context.Background()); err != nil {
+		t.Fatalf("refresh back: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(b.Dir, "cur", "a", "b", "low.txt")); got != "low" {
+		t.Errorf("cur names a tree with a file missing: %q", got)
+	}
+	info, err := os.Stat(filepath.Join(b.Dir, "cur"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o222 != 0 {
+		t.Errorf("the rebuilt tree is writable: %v", info.Mode())
+	}
+}
+
+// Retrying an interrupted seal finishes it.
+func TestSealFinishesAnInterruptedSeal(t *testing.T) {
+	b, _ := twoTrees(t)
+	partialSeal(t, filepath.Join(b.Dir, "trees", shaOne))
+	if err := b.Seal(shaOne); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	dirs, files := skeleton(t, filepath.Join(b.Dir, "trees", shaOne))
+	if len(files) != 0 {
+		t.Errorf("files left after the retried seal: %v", files)
+	}
+	for d, mode := range dirs {
+		if mode != 0 {
+			t.Errorf("directory %q has mode %o after the retried seal, want 000", d, mode)
+		}
+	}
+}
+
+// A tree name that is a symlink is not followed: the seal refuses it and the
+// directory it points at is untouched.
+func TestSealDoesNotFollowASymlinkedTree(t *testing.T) {
+	b, _ := twoTrees(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.Repeat("4", 40)
+	if err := os.Symlink(outside, filepath.Join(b.Dir, "trees", other)); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Seal(other); err == nil {
+		t.Error("sealing a symlinked tree succeeded")
+	}
+	if got := mustRead(t, filepath.Join(outside, "keep.txt")); got != "keep" {
+		t.Errorf("the directory behind the link changed: %q", got)
+	}
+}

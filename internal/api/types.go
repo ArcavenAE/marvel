@@ -806,6 +806,9 @@ type ViewNotice struct {
 	// none failed.
 	Undelivered string
 	// DeliveredCommit and DeliveredAt record the notice that reached the seat.
+	// A view that leaves DeliveredCommit and returns to it owes no new notice, so
+	// the return sets DeliveredAt to the time of the return: the seat is told
+	// about this commit, and the grace runs from the next quiet.
 	DeliveredCommit string
 	DeliveredAt     time.Time
 	// GraceStart is the first time the pane was observed quiet after

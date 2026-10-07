@@ -114,9 +114,10 @@ func (b *Builder) Refresh(ctx context.Context) (Result, error) {
 	final := filepath.Join(trees, sha)
 	built := false
 	info, err := os.Lstat(final)
-	if err == nil && treeSealed(info) {
-		// The ref came back to a commit whose tree was sealed. A sealed tree is
-		// a skeleton, so it is built again rather than pointed at.
+	if err == nil && !treeIntact(info) {
+		// The ref came back to a commit whose tree was sealed, or whose seal was
+		// interrupted. Either is a skeleton with files missing, so the tree is
+		// built again rather than pointed at.
 		if rerr := forceRemove(final); rerr != nil {
 			return Result{}, &RefreshError{Step: StepExtract, Err: rerr}
 		}
@@ -604,6 +605,16 @@ func (b *Builder) Seal(sha string) error {
 // treeSealed reports whether a tree's root is in the sealed state. The root is
 // the last directory sealTree closes, so mode 000 means the whole tree is done.
 func treeSealed(root fs.FileInfo) bool { return root.Mode().Perm() == 0 }
+
+// treeIntact reports whether a tree is as extraction left it. A built tree's
+// directories carry no write bit (makeReadOnly), and the root is the first
+// directory sealTree opens for deletion, so an owner-write bit on the root means
+// a seal started and may not have finished, and mode 000 means it did. Neither
+// is a tree to point cur at.
+func treeIntact(root fs.FileInfo) bool {
+	perm := root.Mode().Perm()
+	return perm != 0 && perm&0o200 == 0
+}
 
 // sealTree deletes every file and symlink under root, then closes each
 // directory, deepest first. Directories are opened top down first because the
