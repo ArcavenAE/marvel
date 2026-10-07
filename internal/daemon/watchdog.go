@@ -520,6 +520,17 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 // config, zero when it is unset or unreadable. The watchdog and the controller's
 // ACTIVE% reading both start from it, so they judge a seat quiet by one window.
 func configuredQuietWindow() time.Duration {
-	_ = config.Load // red stub
-	return 0
+	cfg, err := config.Load()
+	if cfg == nil {
+		if err != nil {
+			log.Printf("watchdog: client config unreadable, using the default window: %v", err)
+		}
+		return 0
+	}
+	window, werr := cfg.WatchdogWindow()
+	if werr != nil {
+		log.Printf("watchdog: %v, using the default", werr)
+		return 0
+	}
+	return window
 }
