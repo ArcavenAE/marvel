@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -480,7 +479,7 @@ func TestTokenBudgetWindowReachesTheLogRing(t *testing.T) {
 
 	// os.TempDir rather than t.TempDir: a Unix socket path has a hard length
 	// limit (about 104 bytes on darwin) and a per-test temp dir blows past it.
-	sock := filepath.Join(os.TempDir(), "marvel-test-tokenwindow.sock")
+	sock := testSocket(t, "tokenwindow")
 	if err := d.Start(sock); err != nil {
 		t.Fatalf("start daemon: %v", err)
 	}

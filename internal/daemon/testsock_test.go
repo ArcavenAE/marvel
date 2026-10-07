@@ -14,11 +14,19 @@ import (
 // marvel#383), less one for the terminator.
 const maxSocketPath = 103
 
-// testSocket is a socket path no other test process can be using. Stub:
-// the real helper is in the next commit.
+// testSocket is a socket path no other test process can be using: a short
+// directory made for this call, removed with the test. It is not under
+// t.TempDir(), whose macOS path is long enough to pass the socket limit
+// (marvel#383); the directory name carries a random part, and the file name
+// is the caller's, so two calls with one name still differ.
 func testSocket(t *testing.T, name string) string {
 	t.Helper()
-	return filepath.Join(os.TempDir(), "marvel-test-"+name+".sock")
+	dir, err := os.MkdirTemp("", "mv")
+	if err != nil {
+		t.Fatalf("make socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name+".sock")
 }
 
 // A path from testSocket is unique per call, even for the same name, and
