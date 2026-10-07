@@ -5,8 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 	"github.com/arcavenae/marvel/internal/usage"
 )
 
@@ -472,7 +471,7 @@ func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) (kept b
 				deadSince = time.Now()
 			} else if time.Since(deadSince) > 3*time.Second {
 				out, _ := exec.Command("tmux", "-V").Output()
-				if statusExpected(string(out)) {
+				if tmuxtest.StatusExpected(string(out)) {
 					t.Fatalf("%s lost a dead pane's exit status, which 3.5 and later keep", strings.TrimSpace(string(out)))
 				}
 				t.Logf("%s loses a dead pane's exit status: asserting the unknown-status contract", strings.TrimSpace(string(out)))
@@ -482,39 +481,5 @@ func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) (kept b
 			t.Fatal("pane never died")
 		}
 		time.Sleep(25 * time.Millisecond)
-	}
-}
-
-// statusExpected reports whether `tmux -V` output names a tmux that keeps a
-// dead pane's exit status (3.5 and later). An unparseable version is treated
-// as expected, so a surprise fails loudly instead of degrading quietly.
-func statusExpected(version string) bool {
-	m := regexp.MustCompile(`(\d+)\.(\d+)`).FindStringSubmatch(version)
-	if m == nil {
-		return true
-	}
-	major, _ := strconv.Atoi(m[1])
-	minor, _ := strconv.Atoi(m[2])
-	return major > 3 || (major == 3 && minor >= 5)
-}
-
-func TestStatusExpectedFollowsTheTmuxVersion(t *testing.T) {
-	for _, tc := range []struct {
-		in   string
-		want bool
-	}{
-		{"tmux 3.4", false},
-		{"tmux 3.5", true},
-		{"tmux 3.5a", true},
-		{"tmux 3.7b", true},
-		{"tmux 2.9a", false},
-		{"tmux 4.0", true},
-		{"tmux next-3.6", true},
-		{"tmux master", true},
-		{"", true},
-	} {
-		if got := statusExpected(tc.in); got != tc.want {
-			t.Errorf("statusExpected(%q) = %v, want %v", tc.in, got, tc.want)
-		}
 	}
 }
