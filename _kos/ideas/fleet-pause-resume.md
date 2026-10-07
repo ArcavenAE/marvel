@@ -42,6 +42,25 @@ Everything in this section is reasoning, not measurement.
   its tool subprocesses, and any helper daemon (codex's app-server). The
   pane's top pid is not enough.
 
+**Measured since (2026-10-07): tmux undoes a stop of its pane's process.**
+When a pane's own process stops for any signal but `SIGTTIN` or `SIGTTOU`,
+the tmux server sends `SIGCONT` to the pane's process group (`killpg`). The
+reviewer of this idea read that in tmux `server.c:511-528`, identical in 3.7b
+and 3.7c, and measured it on 3.7c. I measured the same on 3.7b, on scratch
+servers only:
+
+| sent | state after |
+|---|---|
+| `SIGSTOP` to a process the pane process spawned (not tmux's child) | stopped (`T`) |
+| `SIGSTOP` to the pane process | running again within 2 s |
+| `SIGSTOP` or `SIGTSTP` to the pane's whole process group | running again within 2 s (reviewer, 3.7c) |
+| `SIGSTOP` to the pane process with the tmux server itself stopped | stopped until the server resumes |
+
+A marvel harness is its pane's process, so a raw `SIGSTOP` cannot hold a
+seat. A tool subprocess outside the pane's process group does stay stopped,
+so a tree can end up half paused. This retires the judgement above that
+`SIGSTOP` "freezes the process"; it does, until tmux resumes it.
+
 **What resume might break.**
 - A model request in flight during the stop breaks, and the harness has to
   retry it.
@@ -76,7 +95,12 @@ Everything in this section is reasoning, not measurement.
 Run one scratch seat per harness (claude, codex, opencode, crush) on an
 isolated daemon: every `MARVEL_*` unset, its own HOME, socket and tmux
 server. `SIGSTOP` each seat's whole process tree for 1, 10 and 60 minutes,
-once mid-turn and once idle. Then `SIGCONT` and record:
+once mid-turn and once idle. Because tmux resumes a stopped pane process
+(above), the stop has to be confirmed, not assumed: record every process in
+each seat's tree with `ps -o pid,pgid,stat`, right after the stop and at each
+interval, before any `SIGCONT`. A run where the harness process is not `T`
+throughout is void, not a clean pause, and the process groups show a tree
+that is half paused. Then `SIGCONT` and record:
 
 - whether the harness resumes;
 - whether the in-flight turn completes, retries or errors;
