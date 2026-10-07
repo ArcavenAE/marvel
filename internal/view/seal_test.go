@@ -301,3 +301,52 @@ func TestSealDoesNotFollowASymlinkedTree(t *testing.T) {
 		t.Errorf("the directory behind the link changed: %q", got)
 	}
 }
+
+// A symlink inside a tree is removed like a file and never followed. The
+// extractor only lets a relative link that stays inside the tree through, but the
+// seal must not depend on that: a link to a directory elsewhere is deleted as a
+// link, and the directory behind it keeps its mode and its files.
+func TestSealRemovesASymlinkInsideATreeWithoutFollowingIt(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &fakeGit{sha: shaOne, archiveFn: func(dest string) error {
+		if err := nestedTree(dest); err != nil {
+			return err
+		}
+		if err := os.Symlink(outside, filepath.Join(dest, "out")); err != nil {
+			return err
+		}
+		return os.Symlink("a", filepath.Join(dest, "inner"))
+	}}
+	b := newBuilder(t, g)
+	if _, err := b.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	g.sha = shaTwo
+	if _, err := b.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.Seal(shaOne); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	info, err := os.Stat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 && info.Mode().Perm() != 0o755 {
+		t.Errorf("the directory behind the link has mode %o after the seal", info.Mode().Perm())
+	}
+	if got := mustRead(t, filepath.Join(outside, "keep.txt")); got != "keep" {
+		t.Errorf("a file behind the link changed: %q", got)
+	}
+	dirs, files := skeleton(t, filepath.Join(b.Dir, "trees", shaOne))
+	if len(files) != 0 {
+		t.Errorf("files and links left in the sealed tree: %v", files)
+	}
+	if _, ok := dirs["a"]; !ok {
+		t.Error("the directory the in-tree link pointed at was removed")
+	}
+}
