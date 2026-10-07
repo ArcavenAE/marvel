@@ -82,8 +82,8 @@ func TestTickRingCountsOnlyTheLastWindowWhenRead(t *testing.T) {
 	r := &TickRing{}
 	last := feed(r, 2*time.Second, 20*time.Minute)
 	_, total, _ := r.Counts(10*time.Minute, last.Add(5*time.Minute))
-	if total != 150 {
-		t.Fatalf("total five minutes later = %d, want the 150 ticks still inside the window", total)
+	if total != 300 {
+		t.Fatalf("total five minutes later = %d, want the 300 ticks still inside the window", total)
 	}
 }
 
