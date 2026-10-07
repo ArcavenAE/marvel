@@ -29,14 +29,14 @@ func TestKeeperCallsOnMovedOnlyWhenAViewMoves(t *testing.T) {
 		t.Fatalf("a first build called OnMoved: %+v", calls)
 	}
 
-	r.now = r.now.Add(time.Hour)
+	r.advance(time.Hour)
 	r.k.Tick()
 	if len(calls) != 0 {
 		t.Fatalf("an unchanged refresh called OnMoved: %+v", calls)
 	}
 
 	r.g.sha["a"] = shaTwo
-	r.now = r.now.Add(time.Hour)
+	r.advance(time.Hour)
 	r.k.Tick()
 	want := moveCall{sess.Key(), "alpha", filepath.Join(r.k.ViewsDir, sess.Key(), "alpha", "cur"), shaTwo}
 	if len(calls) != 1 || calls[0] != want {
