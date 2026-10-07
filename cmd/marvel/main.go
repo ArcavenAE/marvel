@@ -3001,6 +3001,12 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Name < sessions[j].Name
 	})
+	return printSessionsFrom(sessions, cols, header, fit)
+}
+
+// printSessionsFrom prints sorted sessions: the header, the fitted table, then
+// the warning and the hidden-columns note.
+func printSessionsFrom(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) error {
 	// The note and the warning are TTY chrome on the header's stream,
 	// stdout; off a terminal nothing is fitted, so neither prints into a pipe.
 	res := fitSessionTable(sessions, cols, fit)
