@@ -38,7 +38,7 @@ func TestDaemonLifecycle(t *testing.T) {
 		t.Fatalf("new daemon: %v", err)
 	}
 
-	sock := filepath.Join(os.TempDir(), "marvel-test.sock")
+	sock := testSocket(t, "lifecycle")
 	t.Cleanup(func() {
 		d.Stop()
 		_ = os.Remove(sock)
@@ -337,7 +337,7 @@ func startTestDaemon(t *testing.T, workspace string) (sessionKey, sock string, t
 		log.SetFlags(prevLogFlags)
 	}
 
-	sock = filepath.Join(os.TempDir(), "marvel-test-"+workspace+".sock")
+	sock = testSocket(t, workspace)
 	if err := d.Start(sock); err != nil {
 		origRestore()
 		t.Fatalf("start daemon: %v", err)
@@ -679,7 +679,7 @@ name = "squad"
 	if err != nil {
 		t.Fatalf("new daemon #1: %v", err)
 	}
-	sock1 := filepath.Join(os.TempDir(), "marvel-test-detach-1.sock")
+	sock1 := testSocket(t, "detach-1")
 	if err := d1.Start(sock1); err != nil {
 		t.Fatalf("start daemon #1: %v", err)
 	}
@@ -721,7 +721,7 @@ name = "squad"
 	if err != nil {
 		t.Fatalf("new daemon #2: %v", err)
 	}
-	sock2 := filepath.Join(os.TempDir(), "marvel-test-detach-2.sock")
+	sock2 := testSocket(t, "detach-2")
 	t.Cleanup(func() {
 		d2.Stop()
 		_ = os.Remove(sock2)
@@ -787,7 +787,7 @@ name = "squad"
 	if err != nil {
 		t.Fatalf("new daemon: %v", err)
 	}
-	sock := filepath.Join(os.TempDir(), "marvel-test-teardown.sock")
+	sock := testSocket(t, "teardown")
 	if err := d.Start(sock); err != nil {
 		t.Fatalf("start daemon: %v", err)
 	}
@@ -891,7 +891,7 @@ func TestReexecCheckpointsStateBeforeExec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new daemon: %v", err)
 	}
-	sock := filepath.Join(os.TempDir(), "marvel-test-reexec-cp.sock")
+	sock := testSocket(t, "reexec-cp")
 	if err := d.Start(sock); err != nil {
 		t.Fatalf("start daemon: %v", err)
 	}
@@ -984,7 +984,7 @@ func TestReexecLeavesPanesForSuccessorToAdopt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new daemon #1: %v", err)
 	}
-	sock1 := filepath.Join(os.TempDir(), "marvel-test-reexec-1.sock")
+	sock1 := testSocket(t, "reexec-1")
 	if err := d1.Start(sock1); err != nil {
 		t.Fatalf("start daemon #1: %v", err)
 	}
@@ -1027,7 +1027,7 @@ func TestReexecLeavesPanesForSuccessorToAdopt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new daemon #2: %v", err)
 	}
-	sock2 := filepath.Join(os.TempDir(), "marvel-test-reexec-2.sock")
+	sock2 := testSocket(t, "reexec-2")
 	t.Cleanup(func() {
 		d2.Stop()
 		_ = os.Remove(sock2)
