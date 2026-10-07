@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -29,21 +30,81 @@ func testSocket(t *testing.T, name string) string {
 	return filepath.Join(dir, name+".sock")
 }
 
-// A path from testSocket is unique per call, even for the same name, and
-// short enough for the socket path limit.
-func TestTestSocketIsUniquePerCallAndShort(t *testing.T) {
+// A path from testSocket is unique per call, even for the same name.
+func TestTestSocketIsUniquePerCall(t *testing.T) {
 	a, b := testSocket(t, "detach-1"), testSocket(t, "detach-1")
 	if a == b {
 		t.Errorf("two calls returned the same path %q", a)
 	}
 	for _, p := range []string{a, b} {
-		if len(p) > maxSocketPath {
-			t.Errorf("path is %d bytes, over the %d-byte socket limit: %q", len(p), maxSocketPath, p)
-		}
 		if !strings.HasSuffix(p, ".sock") {
 			t.Errorf("path %q should end in .sock", p)
 		}
 	}
+}
+
+// The path stays under the socket limit however long TMPDIR is, because seat
+// scratch directories are long: a daemon test that binds a socket under a
+// 64-character TMPDIR passed and failed at 65 before the directory was rooted
+// at /tmp. It is checked for the longest name any daemon test passes.
+func TestTestSocketStaysUnderTheLimitWithALongTMPDIR(t *testing.T) {
+	long := filepath.Join(t.TempDir(), strings.Repeat("d", 200))
+	if err := os.MkdirAll(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", long)
+	name := longestSocketName(t)
+	p := testSocket(t, name)
+	if len(p) > maxSocketPath {
+		t.Errorf("path for the longest name %q is %d bytes under a %d-byte TMPDIR, over the %d-byte socket limit: %q",
+			name, len(p), len(long), maxSocketPath, p)
+	}
+}
+
+// longestSocketName is the longest literal name a daemon test hands to
+// testSocket, or to startTestDaemon, which names its socket after its
+// workspace argument.
+func longestSocketName(t *testing.T) string {
+	t.Helper()
+	files, _ := filepath.Glob("*_test.go")
+	fset := token.NewFileSet()
+	longest := ""
+	for _, f := range files {
+		parsed, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", f, err)
+		}
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			id, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			idx := -1
+			switch id.Name {
+			case "testSocket":
+				idx = 1
+			case "startTestDaemon":
+				idx = 1
+			}
+			if idx < 0 || len(call.Args) <= idx {
+				return true
+			}
+			if lit, ok := call.Args[idx].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if v, err := strconv.Unquote(lit.Value); err == nil && len(v) > len(longest) {
+					longest = v
+				}
+			}
+			return true
+		})
+	}
+	if longest == "" {
+		t.Fatal("found no literal socket names")
+	}
+	return longest
 }
 
 // No daemon test binds a fixed socket name in the shared temp directory:
@@ -64,18 +125,32 @@ func TestDaemonTestsBindNoFixedSocketNames(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", f, err)
 		}
+		reported := map[token.Pos]bool{}
 		ast.Inspect(parsed, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !isSelector(call.Fun, "filepath", "Join") || len(call.Args) < 2 || !isTempDirCall(call.Args[0]) {
+			switch n.(type) {
+			case *ast.CallExpr, *ast.BinaryExpr:
+			default:
 				return true
 			}
-			for _, arg := range call.Args[1:] {
-				ast.Inspect(arg, func(m ast.Node) bool {
-					if lit, ok := m.(*ast.BasicLit); ok && lit.Kind == token.STRING && strings.Contains(lit.Value, ".sock") {
-						t.Errorf("%s: socket path joins os.TempDir() with a fixed name %s; use testSocket", fset.Position(lit.Pos()), lit.Value)
-					}
-					return true
-				})
+			var usesTempDir bool
+			var lits []*ast.BasicLit
+			ast.Inspect(n, func(m ast.Node) bool {
+				if c, ok := m.(*ast.CallExpr); ok && isTempDirCall(c) {
+					usesTempDir = true
+				}
+				if lit, ok := m.(*ast.BasicLit); ok && lit.Kind == token.STRING && strings.Contains(lit.Value, ".sock") {
+					lits = append(lits, lit)
+				}
+				return true
+			})
+			if !usesTempDir {
+				return true
+			}
+			for _, lit := range lits {
+				if !reported[lit.Pos()] {
+					reported[lit.Pos()] = true
+					t.Errorf("%s: socket path built from os.TempDir() with a fixed name %s; use testSocket", fset.Position(lit.Pos()), lit.Value)
+				}
 			}
 			return true
 		})
