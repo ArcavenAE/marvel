@@ -87,12 +87,16 @@ not say it. This design has marvel hand the harness that first turn at launch.
     asks.
   - **codex** (0.160.1): resume is the subcommand `codex resume [SESSION_ID]
     [PROMPT]`, not a flag, and `-c` is `--config key=value`, never a resume.
-    marvel appends the first message only to `codex resume <id>`, where it
-    lands in `[PROMPT]`. For `codex resume --last` (a prompt conflicts with
-    `--last`, so appending it fails the launch) and for a bare `codex resume`
-    (an appended positional would land in `SESSION_ID`), marvel passes no
-    first message and records `source = skipped-resume` under D7. It does
-    not refuse at apply: that would be a new gate, and D6's reasoning holds.
+    marvel appends the first message to `codex resume <id>`, where it lands
+    in `[PROMPT]`, and to `codex resume --last`, where codex moves a lone
+    positional into the prompt (the reviewer's read of `codex-rs/cli/src/main.rs`
+    at `rust-v0.160.1`, lines 2568-2575, pinned there by the test
+    `resume_last_accepts_prompt_positional`; `--help` does not show it, and
+    P2 confirms it on a launch). Only `--last` with two positionals conflicts,
+    and marvel appends one. For a bare `codex resume`, an appended positional
+    would land in `SESSION_ID`, so marvel passes no first message and records
+    `source = skipped-resume` under D7. It does not refuse at apply: that would
+    be a new gate, and D6's reasoning holds.
   - **opencode**: `--session` with `--prompt` is P3's question.
 - **D6. Apply says what will not happen.** Apply emits an advisory (not a
   refusal) for:
@@ -128,7 +132,7 @@ not say it. This design has marvel hand the harness that first turn at launch.
 | T4 | successor first prompt (D2, D3) | a shift successor's first message names the predecessor; with `shift.handoff` declared it names the resolved path; with a bus it ends with the inbox line; without one it does not; `successor_prompt = false` leaves only the role prompt; a first spawn gets only the role prompt | T1 |
 | T5 | apply advisories (D6) | the two advisory cases each emit one line at apply and refuse nothing | |
 | T6 | `session.first-prompt` event (D7) | each spawn emits exactly one, with the right source, and its message holds no prompt text | T1 |
-| T7 | resume composition (D5) | claude: args with `--resume <id>` and with `--continue` each launch with the resume flag and the first message both present. codex: `codex resume <id>` launches with the message as `[PROMPT]`; `codex resume --last` and a bare `codex resume` launch with no message and emit `source = skipped-resume`; a role carrying `-c key=value` is not read as resuming and gets the message as on a fresh launch | T1, T2 |
+| T7 | resume composition (D5) | claude: args with `--resume <id>` and with `--continue` each launch with the resume flag and the first message both present. codex: `codex resume <id>` and `codex resume --last` each launch with the message as the one trailing positional; a bare `codex resume` launches with no message and emits `source = skipped-resume`; a role carrying `-c key=value` is not read as resuming and gets the message as on a fresh launch | T1, T2 |
 
 T5 has no dependency and can ship first. T4 waits on T1 because the successor
 prompt rides the same channel. #541 is an edge into D8, not a ticket here.
@@ -138,7 +142,7 @@ Probes, each recording the harness version it ran against:
 | id | question |
 |---|---|
 | P1 | claude 2.1.292: does an interactive positional prompt submit at once? Does it still run once each screen that can stand in front of the composer is answered: the workspace-trust dialog, the development-channel consent dialog, the "Teach auto mode" setup prompt (Yes preselected, which took a stray Enter on 2026-10-07), and the usage-limit menu? Does it combine with `--resume <id>` and `--continue` (D5)? |
-| P2 | codex 0.160.1: the same questions for the interactive `[PROMPT]`, and for `codex resume <id> [PROMPT]` |
+| P2 | codex 0.160.1: the same questions for the interactive `[PROMPT]`, for `codex resume <id> [PROMPT]`, and for `codex resume --last <prompt>` (does the lone positional run as the next turn, as D5 reads from source?) |
 | P3 | opencode 1.18.15: does `--prompt` submit, or only fill the input box? Does it combine with `--session`? |
 | P4 | read only: how long is the longest declared `runtime.prompt` on the fleet's interactive roles? A command line has a length limit, so a very long prompt may need a file. |
 
