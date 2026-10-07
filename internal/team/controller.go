@@ -28,6 +28,11 @@ type Controller struct {
 	Events events.Emitter
 	mu     sync.Mutex
 
+	// rings holds each running session's evaluation tick ring, guarded by
+	// ringMu (not mu: the readers must not wait for a reconcile pass).
+	ringMu sync.Mutex
+	rings  map[string]*TickRing
+
 	// autoShiftsThisTick counts automatic shifts initiated during the current
 	// ReconcileOnce pass, reset at the top of each pass. It caps automatic
 	// initiations to maxAutoShiftsPerTick fleet-wide per tick so correlated
@@ -1385,10 +1390,17 @@ func (c *Controller) evaluateHealth() {
 	// regardless of the order its replicas are visited.
 	obs := make(map[string]roleObs)
 
+	// Every running session's tick goes into its activity ring, before any
+	// early return below, so the ring counts every evaluation.
+	ringed := make(map[string]bool, len(sessions))
+	defer func() { c.dropRingsExcept(ringed) }()
+
 	for _, sess := range sessions {
 		if sess.State != api.SessionRunning {
 			continue
 		}
+		c.recordTick(sess.Key(), now, sess.ContextAt)
+		ringed[sess.Key()] = true
 
 		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)
 		t, ok := teamCache[teamKey]
