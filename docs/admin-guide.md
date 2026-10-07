@@ -553,6 +553,52 @@ marvel stop --keep-bus   # detach, leave a managed broker up for the next daemon
 ```
 
 
+## Choosing the provider for an opencode seat
+
+An opencode seat sends its prompts to whichever provider and model opencode
+resolves, and marvel does not choose one. The bus message text a seat is
+sent is part of the prompt, so it goes to that provider too. The choice is
+the operator's, and it is worth making on purpose: with no `model` or
+`provider` setting in opencode's configuration and no `-m` argument, opencode
+falls back to its own default hosted model.
+
+Marvel reads and writes none of opencode's configuration. It launches
+`opencode` with the role's `runtime.args` as given (headless seats run
+`opencode run --format json <args> <prompt>`), so there are two places to set
+the choice.
+
+**Per role, in the manifest.** `-m` takes `provider/model`:
+
+```toml
+    [team.role.runtime]
+    image = "opencode"
+    command = "opencode"
+    args = ["-m", "<provider>/<model>"]
+```
+
+The placeholders show the form only. Pick the provider and model yourself;
+`opencode models [provider]` lists what the host can reach, and
+`opencode providers` manages the credentials.
+
+**Per host, in opencode's configuration.** opencode reads a global
+`opencode.json` (or `opencode.jsonc`) from its config directory;
+`opencode debug paths` prints it (typically `~/.config/opencode`). The keys
+that decide where a seat's prompts go, from opencode's published schema
+(`https://opencode.ai/config.json`):
+
+| Key | Meaning |
+|---|---|
+| `model` | The model to use, as `provider/model`. |
+| `small_model` | A smaller model for tasks such as title generation, as `provider/model`. Set it as well when the egress choice matters, because it is a second model. |
+| `provider` | Custom provider configurations and model overrides. |
+| `enabled_providers` | When set, only these providers are enabled; all others are ignored. |
+| `disabled_providers` | Providers that are loaded automatically but should not be. |
+| `share` | Session sharing: `manual`, `auto` or `disabled`. |
+
+A `-m` on the role's `args` is the per-role override of `model`.
+
+To see what a host resolves, run `opencode debug config` on it.
+
 ## Data directory
 
 All marvel daemon and client state lives in `~/.marvel/`:
