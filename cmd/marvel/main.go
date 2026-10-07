@@ -2601,9 +2601,17 @@ func toggleSort(ws *watchSort, col string, descFirst bool) {
 }
 
 func sortSessions(sessions []api.Session, ws *watchSort) {
+	now := rateClock()
 	sort.Slice(sessions, func(i, j int) bool {
 		var less bool
 		switch ws.column {
+		case "rate":
+			ki, kj := rateSortKey(sessions[i], now), rateSortKey(sessions[j], now)
+			if ki != kj {
+				less = ki < kj
+			} else {
+				less = sessions[i].Name < sessions[j].Name
+			}
 		case "context":
 			less = sessions[i].ContextPercent < sessions[j].ContextPercent
 		case "cpu":
@@ -2696,9 +2704,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name string
-	state, health, context, cpu, rss        string
-	desk, runtime, llm, workdir, prompt     string
+	workspace, team, role, generation, name   string
+	state, health, context, cpu, rss          string
+	desk, runtime, llm, workdir, rate, prompt string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2814,6 +2822,7 @@ func newSessionRow(s api.Session) sessionRow {
 	}
 	return sessionRow{
 		workdir:   workdir,
+		rate:      rateCell(s, rateClock()),
 		prompt:    promptCell(s.SpendPromptTokens),
 		workspace: s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
@@ -2840,6 +2849,7 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "    c  context        d  desk          r  runtime\n")
 		fmt.Fprintf(&buf, "    l  llm            h  health\n")
 		fmt.Fprintf(&buf, "    p  cpu            m  memory (rss)\n")
+		fmt.Fprintf(&buf, "    o  output rate\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  STATE \"failed (saturated)\" or \"failed (frozen)\" means the role will\n")
 		fmt.Fprintf(&buf, "  spawn no replacement — saturated hit max_restarts, frozen is\n")
@@ -2964,6 +2974,8 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 				toggleSort(ws, "desk", false)
 			case 'h':
 				toggleSort(ws, "health", false)
+			case 'o':
+				toggleSort(ws, "rate", true)
 			case '?':
 				ws.showHelp = !ws.showHelp
 			default:
