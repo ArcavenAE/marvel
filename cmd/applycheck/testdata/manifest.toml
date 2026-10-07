@@ -15,6 +15,9 @@ name = "plain"
 name = "placed"
 workdir = "/srv/placed"
 
+  [team.budget]
+  max_sessions = 7
+
   [[team.role]]
   name = "reviewer"
   replicas = 1

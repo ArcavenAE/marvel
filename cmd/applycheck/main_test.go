@@ -96,3 +96,18 @@ func TestApplycheckErrorsOnABadManifest(t *testing.T) {
 		}
 	}
 }
+
+// Budget is printed as the store holds it: the declared ceiling for a team
+// that has one, and the zero value for a team that does not.
+func TestApplycheckPrintsTheDeclaredBudget(t *testing.T) {
+	got := output(t, fixture, "/srv/root")
+	var placed, plain map[string]any
+	_ = json.Unmarshal(got["placed"]["Budget"], &placed)
+	_ = json.Unmarshal(got["plain"]["Budget"], &plain)
+	if placed["max_sessions"] != float64(7) {
+		t.Errorf("placed Budget = %v, want max_sessions 7", placed)
+	}
+	if len(plain) != 0 {
+		t.Errorf("plain Budget = %v, want no declared clause", plain)
+	}
+}
