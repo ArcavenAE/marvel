@@ -189,11 +189,9 @@ A superseded tree passes through three states, and only the notice moves it.
 Why seal and not delete: deleting leaves a held directory that answers
 `ls`, globs, `find` and `grep -r` with silence, and only a named file read
 fails. A mode-`000` directory makes `ls`, `cat ./f` and `find .` exit
-nonzero. It does not refuse every glob: a bash glob with `nullglob` set
-expands to nothing without an error, and a zsh glob with no match errors only
-because it matched nothing, not because the directory is sealed. A seat that
-reads by glob can still see an empty answer, which is one more reason the
-notice names `VIEW_SHA` as the check.
+nonzero. A glob is the exception: a bash glob with `nullglob` set is silent
+and a zsh glob errors, so a seat that reads by glob can still see an empty
+answer, which is one more reason the notice names `VIEW_SHA` as the check.
 
 Why delivery and not refresh count: the notice can be deferred up to
 `max_defer` (30m), and at `refresh_every = 10m` a count-keyed rule would
