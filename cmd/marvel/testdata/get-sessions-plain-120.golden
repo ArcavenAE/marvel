@@ -1,0 +1,9 @@
+cluster  alpha (rung: env, <socket>)
+mrvl://  off
+bus      none
+
+AGENT NAME  STATE    HEALTH   CTX%  LLM  RATE
+agent-a     running  healthy  -     -    -
+agent-b     running  healthy  -     -    -
+agent-c     running  healthy  -     -    -
+9 columns hidden at this width
