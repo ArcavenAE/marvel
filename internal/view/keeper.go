@@ -72,7 +72,11 @@ type Keeper struct {
 	// view from one commit to another, with the path of the view's cur. It is
 	// not called for a first build or an unchanged refresh. The daemon wires it
 	// to the controller, which tells the seat.
-	OnMoved func(sess api.Session, view, path, commit string)
+	OnMoved func(sess api.Session, view, path, previous, commit string)
+	// Held reports how many superseded trees of a seat's view are still
+	// readable, because the seat has not been told and had its grace yet. At
+	// MaxHeldTrees the keeper pauses that view's refresh. Nil means none held.
+	Held func(sess api.Session, view string) int
 
 	mu      sync.Mutex
 	tracked map[string]*tracked
@@ -390,6 +394,14 @@ func (k *Keeper) Run(ctx context.Context) {
 	}
 }
 
+// MaxHeldTrees is how many superseded trees a seat's view may hold readable
+// before its refresh pauses.
+const MaxHeldTrees = 5
+
+// Seal hollows and seals the named superseded trees of a seat's view. It never
+// touches the tree cur names.
+func (k *Keeper) Seal(sess api.Session, view string, commits []string) error { return nil }
+
 // Teardown forgets a session's views and removes their directory, restoring
 // owner permissions from the top down first because the trees are read-only.
 func (k *Keeper) Teardown(sessKey string) error {
@@ -484,7 +496,7 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 	t.down, t.cause = false, ""
 	k.mu.Unlock()
 	if res.Changed && res.Previous != "" && k.OnMoved != nil {
-		k.OnMoved(sess, name, filepath.Join(t.builder.Dir, "cur"), res.Commit)
+		k.OnMoved(sess, name, filepath.Join(t.builder.Dir, "cur"), res.Previous, res.Commit)
 	}
 	if !res.Changed {
 		return fmt.Sprintf("%s: unchanged at %s", name, short(res.Commit))

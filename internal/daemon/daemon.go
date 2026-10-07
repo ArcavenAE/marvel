@@ -437,6 +437,8 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	if layout, lerr := paths.Default(); lerr == nil {
 		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
 		d.views.OnMoved = teamCtrl.NoteViewMoved
+		d.views.Held = teamCtrl.ViewTreesHeld
+		teamCtrl.SealViewTrees = d.views.Seal
 		sessMgr.Views = d.views
 	}
 	return d, nil

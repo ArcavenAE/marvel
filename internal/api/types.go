@@ -812,6 +812,13 @@ type ViewNotice struct {
 	// DeliveredAt, which is when the re-entry grace starts. A notice delivered
 	// mid-turn waits for the next quiet. Zero until then.
 	GraceStart time.Time
+	// Superseded lists the trees swapped out and still readable, oldest first.
+	// A tree joins it when its view moves on and leaves it when it is sealed or
+	// the view returns to it (docs/design/readonly-view.md section 6).
+	Superseded []string
+	// Sealed lists the trees marvel has hollowed and sealed. They stay on disk
+	// as a directory skeleton until teardown.
+	Sealed []string
 }
 
 // Pending reports whether the notice has not been delivered yet.

@@ -180,6 +180,10 @@ func cloneTeam(t *Team) Team {
 	}
 	if len(t.ViewNotices) > 0 {
 		out.ViewNotices = maps.Clone(t.ViewNotices)
+		for k, n := range out.ViewNotices {
+			n.Superseded, n.Sealed = slices.Clone(n.Superseded), slices.Clone(n.Sealed)
+			out.ViewNotices[k] = n
+		}
 	}
 	return out
 }

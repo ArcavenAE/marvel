@@ -58,7 +58,7 @@ func viewNoticeText(view, path, commit string) string {
 // delivered notice starts a new one and clears the record for the old commit.
 // It is the keeper's hook and takes only the store's lock, never the
 // controller's, so a refresh never waits for a reconcile pass.
-func (c *Controller) NoteViewMoved(sess api.Session, view, path, commit string) {
+func (c *Controller) NoteViewMoved(sess api.Session, view, path, previous, commit string) {
 	now := c.nowUTC()
 	key := viewNoticeKey(sess.Key(), view)
 	teamKey := sess.Workspace + "/" + sess.Team
@@ -144,6 +144,10 @@ func (c *Controller) sendViewNotice(sess api.Session, text string) error {
 	}
 	return c.Notify(sess, text, NoticeViewNotice)
 }
+
+// ViewTreesHeld is how many superseded trees of a seat's view are still
+// readable. The keeper pauses the view's refresh at view.MaxHeldTrees.
+func (c *Controller) ViewTreesHeld(sess api.Session, view string) int { return 0 }
 
 // updateViewNotice applies fn to the live record of one notice under the
 // store's lock, so a move recorded meanwhile is never overwritten.

@@ -98,6 +98,11 @@ type Controller struct {
 	// event says the notice did not reach the pane.
 	Notify func(sess api.Session, text, origin string) error
 
+	// SealViewTrees hollows and seals the named superseded trees of a seat's
+	// view. Nil means nothing is sealed and the trees stay readable until
+	// teardown (docs/design/readonly-view.md section 6).
+	SealViewTrees func(sess api.Session, view string, commits []string) error
+
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
 }
