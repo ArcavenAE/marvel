@@ -283,3 +283,19 @@ func TestApplyWithNoPlacementKeepsTheTeamAnchor(t *testing.T) {
 		t.Errorf("anchor = %q after a root-less re-apply, want %q kept", got.WorkDir, root)
 	}
 }
+
+// A relative workdir with no root to resolve it against is the case an operator
+// posting through the raw API hits. The refusal says what fixes it: marvel work
+// sends the manifest's directory, and a raw post sets the root itself.
+func TestRelativeWorkdirWithNoRootNamesTheFix(t *testing.T) {
+	t.Parallel()
+	_, err := workDirManifest("", "sub", "").ValidateWorkDirs()
+	if err == nil {
+		t.Fatal("a relative workdir with no root was accepted")
+	}
+	for _, want := range []string{"relative", "workspace.root", "marvel work", "workspace_root"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", err, want)
+		}
+	}
+}
