@@ -108,19 +108,21 @@ func TestUnknownColumnRejected(t *testing.T) {
 // wide is a named set that expands in place, so it can stand alone or sit
 // beside other names.
 func TestColumnsWideIsNamedSet(t *testing.T) {
-	if got := headersOf(columnsOrFatal(t, "wide", nil)); !reflect.DeepEqual(got, todaysHeaders) {
-		t.Errorf("wide = %v, want %v", got, todaysHeaders)
+	// wide is today's columns plus the ones that were added for it: RATE.
+	wide := append(append([]string(nil), todaysHeaders...), "RATE")
+	if got := headersOf(columnsOrFatal(t, "wide", nil)); !reflect.DeepEqual(got, wide) {
+		t.Errorf("wide = %v, want %v", got, wide)
 	}
 
 	got := headersOf(columnsOrFatal(t, "llm,wide", nil))
-	want := append([]string{"LLM"}, todaysHeaders...)
+	want := append([]string{"LLM"}, wide...)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("llm,wide = %v, want %v (wide expands in place)", got, want)
 	}
 
 	// In the middle, not just at an end: the names after the set stay after it.
 	got = headersOf(columnsOrFatal(t, "state,wide,llm", nil))
-	want = append(append([]string{"STATE"}, todaysHeaders...), "LLM")
+	want = append(append([]string{"STATE"}, wide...), "LLM")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("state,wide,llm = %v, want %v", got, want)
 	}

@@ -751,8 +751,9 @@ func (a *Accountant) SessionOccupancy(agentID string) (Occupancy, bool) {
 const OutRateHalfLife = 20 * time.Second
 
 // OutRateValidFor is how long a rate reading stays current after the sample
-// that produced it. It is the default quiet window, one constant, so a stopped stream reads as a rate decaying toward zero for ten
-// minutes and then as expired, not as a frozen last value.
+// that produced it. It is the default quiet window, one constant, so a
+// stopped stream reads as a rate decaying toward zero for that long and then
+// as expired, not as a frozen last value.
 const OutRateValidFor = api.DefaultQuietWindow
 
 // OutRate returns the session's output-token rate, in tokens per second,
