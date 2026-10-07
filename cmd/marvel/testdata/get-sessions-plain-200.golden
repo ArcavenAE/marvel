@@ -2,7 +2,7 @@ cluster  alpha (rung: env, <socket>)
 mrvl://  off
 bus      none
 
-AGENT NAME  STATE    HEALTH   CTX%  LLM  RATE  TEAM   ROLE    WORKDIR                           RUNTIME  CPU%  RSS  DESK  GEN  WORKSPACE
-agent-a     running  healthy  -     -    -     squad  worker  -                                          -     -    3     0    ws
-agent-b     running  healthy  -     -    -     squad  worker  -                                          -     -    3     0    ws
-agent-c     running  healthy  -     -    -     squad  worker  /srv/wor…ong/directory/name/here  claude   -     -    4     0    ws
+AGENT NAME  STATE    HEALTH   CTX%  LLM  TOUT  RATE  TEAM   ROLE    WORKDIR                           RUNTIME  CPU%  RSS  DESK  GEN  WORKSPACE
+agent-a     running  healthy  -     -    -     -     squad  worker  -                                          -     -    3     0    ws
+agent-b     running  healthy  -     -    -     -     squad  worker  -                                          -     -    3     0    ws
+agent-c     running  healthy  -     -    -     -     squad  worker  /srv/wor…ong/directory/name/here  claude   -     -    4     0    ws
