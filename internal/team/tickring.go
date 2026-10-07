@@ -107,6 +107,14 @@ func (c *Controller) SetClusterQuietWindow(d time.Duration) {
 	c.clusterWindow = d
 }
 
+// ClusterQuietWindow is the operator's watchdog.window as the controller holds
+// it, zero when unset.
+func (c *Controller) ClusterQuietWindow() time.Duration {
+	c.ringMu.Lock()
+	defer c.ringMu.Unlock()
+	return c.clusterWindow
+}
+
 // ActivityOf is the tick-ring reading for one session, judged under its window:
 // the role's activity_timeout, else the operator's window, else the default
 // (api.QuietWindow). Observable says whether marvel has an activity channel for

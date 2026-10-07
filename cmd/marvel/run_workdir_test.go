@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemon"
 )
 
 // inProj is a cwd of /work/proj.
@@ -105,5 +109,53 @@ func TestPrintRunResultIsQuietWithoutAWarning(t *testing.T) {
 	}
 	if out.String() != "session/ws/run-1 created\n" {
 		t.Errorf("stdout = %q", out.String())
+	}
+}
+
+// runParamsSeen runs `marvel run` against a fake daemon and returns the params it
+// was sent.
+func runParamsSeen(t *testing.T, args ...string) map[string]any {
+	t.Helper()
+	resolveFixture(t, false)
+	var seen map[string]any
+	socket := fakeSocket(t, func(req daemon.Request) daemon.Response {
+		if req.Method != "run" {
+			return daemon.Response{Error: "unexpected " + req.Method}
+		}
+		_ = json.Unmarshal(req.Params, &seen)
+		return daemon.Response{Result: json.RawMessage(`{"session_key":"ws/run-1"}`)}
+	})
+	t.Setenv(config.SocketEnv, socket)
+	cmd := runCmd()
+	cmd.SetArgs(args)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("run %v: %v", args, err)
+	}
+	if seen == nil {
+		t.Fatal("the daemon never saw a run request")
+	}
+	return seen
+}
+
+// The command sends the resolved directory and says whether it was asked for,
+// which the daemon needs to refuse a named directory but only warn on a default.
+func TestRunSendsTheNamedWorkdirAsExplicit(t *testing.T) {
+	got := runParamsSeen(t, "--workdir", "/srv/other", "sleep", "1")
+	if got["workdir"] != "/srv/other" || got["workdir_default"] != false {
+		t.Errorf("params workdir=%v workdir_default=%v, want /srv/other and false", got["workdir"], got["workdir_default"])
+	}
+}
+
+func TestRunSendsTheCallersCwdAsDefault(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runParamsSeen(t, "sleep", "1")
+	if got["workdir"] != cwd || got["workdir_default"] != true {
+		t.Errorf("params workdir=%v workdir_default=%v, want %q and true", got["workdir"], got["workdir_default"], cwd)
 	}
 }
