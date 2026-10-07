@@ -208,3 +208,48 @@ func TestWatchLastKnownFrameKeepsHeaderAndFit(t *testing.T) {
 		t.Errorf("the last-known table should be fitted to 80 columns:\n%s", frame)
 	}
 }
+
+// A -w frame carries the legend when a source-marked cell is visible, and not
+// when none is: the legend lives in the shared view, so watch cannot drop it.
+// The parity fixtures carry no ContextAt, so they cannot catch its loss.
+func TestWatchFrameCarriesTheLegendWhenAMarkIsVisible(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source api.ContextSourceKind
+		want   bool
+	}{
+		{"heartbeat source is marked", api.ContextSourceHeartbeat, true},
+		{"token stream source is not", api.ContextSourceAccountant, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolveFixture(t, false)
+			s := fitSession("agent-0")
+			s.ContextSource = tc.source
+			s.ContextAt = time.Now().Add(-time.Minute)
+			socket := fakeSocket(t, func(req daemon.Request) daemon.Response {
+				switch req.Method {
+				case "get":
+					data, _ := json.Marshal([]api.Session{s})
+					return daemon.Response{Result: data}
+				case "daemon.status":
+					data, _ := json.Marshal(daemon.DaemonStatus{Cluster: "alpha", MRVL: daemon.MRVLStatus{State: daemon.MRVLOff}})
+					return daemon.Response{Result: data}
+				}
+				return daemon.Response{Error: "unexpected " + req.Method}
+			})
+			t.Setenv(config.SocketEnv, socket)
+			setWidth(t, 100)
+			cols, explicit, err := loadSessionColumnsSel("name,last-active")
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame := renderWatch(newWatchScreen(cols, explicit, false), time.Second)
+			if got := strings.Count(frame, legendLine); (got == 1) != tc.want || got > 1 {
+				t.Errorf("legend count = %d, want present=%v:\n%s", got, tc.want, frame)
+			}
+			if tc.want && !strings.Contains(frame, "m*") {
+				t.Errorf("a heartbeat-sourced cell should carry the mark:\n%s", frame)
+			}
+		})
+	}
+}
