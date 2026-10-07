@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -73,5 +74,16 @@ func TestQuietRateNeverSampledIsAbsent(t *testing.T) {
 	_, s, now := quietFixture(time.Hour)
 	if got, state := QuietRate(asof.Cell[float64]{}, s, api.DefaultQuietWindow, true, now); got != 0 || state != asof.None {
 		t.Errorf("never sampled: rate %v state %v, want 0 and none", got, state)
+	}
+}
+
+// A fresh reading is the value decayed to now, not the stored value: 40
+// tokens a second observed 30s ago, at the 20s half-life, is 40 * 2^-1.5.
+func TestQuietRateFreshValueIsDecayed(t *testing.T) {
+	const w = api.DefaultQuietWindow
+	cell, s, now := quietFixture(30 * time.Second)
+	got, state := QuietRate(cell, s, w, true, now)
+	if state != asof.Fresh || math.Abs(got-14.142) > 0.01 {
+		t.Errorf("rate %v state %v, want about 14.14 and fresh (not the stored 40)", got, state)
 	}
 }
