@@ -558,9 +558,14 @@ marvel stop --keep-bus   # detach, leave a managed broker up for the next daemon
 An opencode seat sends its prompts to whichever provider and model opencode
 resolves, and marvel does not choose one. The bus message text a seat is
 sent is part of the prompt, so it goes to that provider too. The choice is
-the operator's, and it is worth making on purpose: with no `model` or
-`provider` setting in opencode's configuration and no `-m` argument, opencode
-falls back to its own default hosted model.
+the operator's, and it is worth making on purpose, because a seat with no
+`-m` argument and no `model` setting does not get a fixed default. As read
+from opencode 1.18.15's source, opencode resolves the model in this order:
+the `model` in its configuration, then the most recent model recorded in its
+state directory (`model.json`, under the `state` path that
+`opencode debug paths` prints), then the first provider it can load. Seats
+on one host that run as the same user share that state directory, so a seat
+can inherit whatever model the operator or another seat last picked.
 
 Marvel reads and writes none of opencode's configuration. It launches
 `opencode` with the role's `runtime.args` as given (headless seats run
@@ -590,14 +595,16 @@ that decide where a seat's prompts go, from opencode's published schema
 |---|---|
 | `model` | The model to use, as `provider/model`. |
 | `small_model` | A smaller model for tasks such as title generation, as `provider/model`. Set it as well when the egress choice matters, because it is a second model. |
+| `agent.<name>.model` | A model for one agent, as `provider/model`. It overrides the top-level `model` for that agent. |
 | `provider` | Custom provider configurations and model overrides. |
 | `enabled_providers` | When set, only these providers are enabled; all others are ignored. |
 | `disabled_providers` | Providers that are loaded automatically but should not be. |
 | `share` | Session sharing: `manual`, `auto` or `disabled`. |
 
-A `-m` on the role's `args` is the per-role override of `model`.
-
-To see what a host resolves, run `opencode debug config` on it.
+A `-m` on the role's `args` sets the model for that role's seat from the
+manifest. Which of `-m` and an agent's own `model` wins is not checked here;
+`opencode debug config` and `opencode debug agent <name>` show what a host
+resolves.
 
 ## Data directory
 
