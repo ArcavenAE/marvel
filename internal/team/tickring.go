@@ -101,9 +101,36 @@ func (c *Controller) ActiveTicks(sessKey string, window time.Duration, now time.
 
 // SetClusterQuietWindow sets the operator's watchdog.window, zero when unset.
 // The daemon sets it at start.
-func (c *Controller) SetClusterQuietWindow(d time.Duration) {}
+func (c *Controller) SetClusterQuietWindow(d time.Duration) {
+	c.ringMu.Lock()
+	defer c.ringMu.Unlock()
+	c.clusterWindow = d
+}
 
-// ActivityOf is the tick-ring reading for one session, judged under its window.
+// ActivityOf is the tick-ring reading for one session, judged under its window:
+// the role's activity_timeout, else the operator's window, else the default
+// (api.QuietWindow). Observable says whether marvel has an activity channel for
+// the seat, and At is the newest tick the ring holds. A session the controller
+// has not evaluated reads no ticks and is not full.
 func (c *Controller) ActivityOf(sess api.Session, now time.Time) api.ActiveTicks {
-	return api.ActiveTicks{}
+	var role *api.Role
+	if t, err := c.store.GetTeam(sess.Workspace + "/" + sess.Team); err == nil {
+		for i := range t.Roles {
+			if t.Roles[i].Name == sess.Role {
+				role = &t.Roles[i]
+				break
+			}
+		}
+	}
+	c.ringMu.Lock()
+	defer c.ringMu.Unlock()
+	window := api.QuietWindow(role, c.clusterWindow)
+	out := api.ActiveTicks{Window: window, Observable: activityObservable(&sess, role)}
+	if r := c.rings[sess.Key()]; r != nil {
+		out.Active, out.Total, out.Full = r.Counts(window, now)
+		if n := len(r.samples); n > 0 {
+			out.At = r.samples[n-1].at
+		}
+	}
+	return out
 }

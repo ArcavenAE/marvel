@@ -32,6 +32,8 @@ type Controller struct {
 	// ringMu (not mu: the readers must not wait for a reconcile pass).
 	ringMu sync.Mutex
 	rings  map[string]*TickRing
+	// clusterWindow is the operator's watchdog.window, under ringMu.
+	clusterWindow time.Duration
 
 	// autoShiftsThisTick counts automatic shifts initiated during the current
 	// ReconcileOnce pass, reset at the top of each pass. It caps automatic

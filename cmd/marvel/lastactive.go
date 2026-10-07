@@ -19,9 +19,8 @@ const (
 	sourceLegend = sourceMark + " reported by statusline or heartbeat, not token flow"
 )
 
-// sourceMarkColumns are the columns whose cells can carry the mark. ACTIVE%
-// joins when it lands.
-var sourceMarkColumns = map[string]bool{"last-active": true}
+// sourceMarkColumns are the columns whose cells can carry the mark. ACTIVE% too.
+var sourceMarkColumns = map[string]bool{"last-active": true, "active": true}
 
 // lastActiveAsOf is the cell's reading: the time since ContextAt, observed at
 // ContextAt, from the producer that wrote it. ValidUntil stays zero on

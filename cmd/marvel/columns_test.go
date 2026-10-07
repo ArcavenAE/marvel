@@ -108,8 +108,8 @@ func TestUnknownColumnRejected(t *testing.T) {
 // wide is a named set that expands in place, so it can stand alone or sit
 // beside other names.
 func TestColumnsWideIsNamedSet(t *testing.T) {
-	// wide is today's columns plus the ones that were added for it: TOUT, RATE, PROMPT, LAST-ACTIVE.
-	wide := append(append([]string(nil), todaysHeaders...), "TOUT", "RATE", "PROMPT", "LAST-ACTIVE")
+	// wide is today's columns plus the ones that were added for it: TOUT, RATE, PROMPT, LAST-ACTIVE, ACTIVE%.
+	wide := append(append([]string(nil), todaysHeaders...), "TOUT", "RATE", "PROMPT", "LAST-ACTIVE", "ACTIVE%")
 	if got := headersOf(columnsOrFatal(t, "wide", nil)); !reflect.DeepEqual(got, wide) {
 		t.Errorf("wide = %v, want %v", got, wide)
 	}
