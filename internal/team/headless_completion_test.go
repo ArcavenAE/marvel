@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 )
 
 // The churn finding-036 measured, under the reconciler, and its absence
@@ -95,8 +96,10 @@ func TestHeadlessCompletionHoldsSlotAndIsNotRefilled(t *testing.T) {
 // contract, not a defect. The crashed state is asserted separately and does
 // not depend on the version.
 func brokenExitOK(version, got string) bool {
-	_ = version
-	return got == "3"
+	if got == "3" {
+		return true
+	}
+	return got == "" && !tmuxtest.StatusExpected(version)
 }
 
 // tmuxVersion is `tmux -V`, or "" when it cannot be read, which
