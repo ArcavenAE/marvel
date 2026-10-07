@@ -147,3 +147,20 @@ func TestKeeperFollowsTheRefBelowTheHeldTreeBound(t *testing.T) {
 		t.Errorf("view.retention-held events = %d below the bound", n)
 	}
 }
+
+// A seat's first build is never held: a stale record from an earlier seat that
+// held the same key must not keep a new seat without its view.
+func TestKeeperBuildsAtSpawnEvenWhenTheHoldIsFull(t *testing.T) {
+	r := newKRig(t)
+	r.k.Held = func(api.Session, string) int { return MaxHeldTrees + 3 }
+	r.g.sha["a"] = shaOne
+	views := []api.View{kView("alpha", "a", 10*time.Minute)}
+	sess := r.session("seat", views...)
+	r.k.Build(sess, views)
+	if cur, ok := r.curOf(sess, "alpha"); !ok || !strings.HasSuffix(cur, shaOne) {
+		t.Errorf("cur = %q, %v; the spawn build was held", cur, ok)
+	}
+	if n := len(r.kinds(events.KindViewRetentionHeld)); n != 0 {
+		t.Errorf("view.retention-held events = %d at spawn", n)
+	}
+}

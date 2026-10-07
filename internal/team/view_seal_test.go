@@ -263,3 +263,29 @@ func TestWithNoSealerTheTreesStayReadable(t *testing.T) {
 		t.Errorf("superseded = %v, want A readable", got)
 	}
 }
+
+// A view that goes away from the commit its seat was told about and comes back
+// to it owes no new notice, but the delivery record was cleared by the first
+// move. The seat was told about this commit, so the return counts as told and
+// the grace runs from the next quiet; otherwise the superseded trees would stay
+// readable until some later move, and a held view cannot move.
+func TestReturningToTheToldCommitStillSealsTheOlderTrees(t *testing.T) {
+	f := newSealFixture(t, "test-seal-return", 10*time.Minute, 0)
+	f.move(treeA, treeB)
+	f.settle() // the seat is told about B
+	f.move(treeB, treeC)
+	f.move(treeC, treeB)
+	if n := f.record(); n.Pending() {
+		t.Fatalf("returning to the told commit left a notice pending: %+v", n)
+	}
+	f.clock.Advance(30 * time.Second)
+	f.settle()
+	f.clock.Advance(30 * time.Second)
+	f.settle()
+	if len(f.notices) != 1 {
+		t.Errorf("notices = %d, want only the first", len(f.notices))
+	}
+	if n := f.record(); len(n.Superseded) != 0 || len(n.Sealed) != 2 {
+		t.Errorf("record = superseded %v sealed %v, want A and C sealed", n.Superseded, n.Sealed)
+	}
+}
