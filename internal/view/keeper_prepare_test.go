@@ -88,7 +88,7 @@ func TestPrepareDoesNotWaitForAHungRemote(t *testing.T) {
 		t.Errorf("Prepare took %s, want it to return at once", d)
 	}
 
-	r.now = r.now.Add(2 * time.Second)
+	r.advance(2 * time.Second)
 	if !r.k.Prepare(sess, views) {
 		t.Fatal("Prepare still holds the seat past the spawn bound")
 	}
@@ -137,7 +137,7 @@ func TestPreparedViewSurvivesTheTickUntilItsTTL(t *testing.T) {
 		t.Fatal("the tick removed a prepared view whose seat has not spawned yet")
 	}
 
-	r.now = r.now.Add(prepareTTL + time.Second)
+	r.advance(prepareTTL + time.Second)
 	r.k.Tick()
 	if _, err := os.Lstat(filepath.Join(r.k.ViewsDir, sess.Key())); !os.IsNotExist(err) {
 		t.Errorf("an unclaimed prepared view outlived its TTL (err %v)", err)
@@ -153,9 +153,9 @@ func TestPreparedViewIsKeptWhileTheControllerKeepsAsking(t *testing.T) {
 	sess := api.Session{Name: "seat", Workspace: "ws", Team: "t", Role: "r", State: api.SessionPending}
 	r.prepared(sess, views)
 
-	r.now = r.now.Add(prepareTTL - time.Minute)
+	r.advance(prepareTTL - time.Minute)
 	r.k.Prepare(sess, views)
-	r.now = r.now.Add(prepareTTL - time.Minute)
+	r.advance(prepareTTL - time.Minute)
 	r.k.Tick()
 	if _, ok := r.curOf(sess, "alpha"); !ok {
 		t.Fatal("a view the controller kept asking about was swept")
@@ -193,11 +193,11 @@ func TestPrepareLetsTheSeatGoAtExactlyTheSpawnBound(t *testing.T) {
 	if r.k.Prepare(sess, views) {
 		t.Fatal("ready at the first ask with the fetch hanging")
 	}
-	r.now = r.now.Add(time.Minute - time.Nanosecond)
+	r.advance(time.Minute - time.Nanosecond)
 	if r.k.Prepare(sess, views) {
 		t.Fatal("ready a nanosecond before the bound")
 	}
-	r.now = r.now.Add(time.Nanosecond)
+	r.advance(time.Nanosecond)
 	if !r.k.Prepare(sess, views) {
 		t.Fatal("still held at exactly the bound")
 	}

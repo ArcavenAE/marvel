@@ -1,0 +1,4 @@
+WORKSPACE  TEAM   ROLE    GEN  AGENT NAME  STATE    HEALTH   CTX%  CPU%  RSS  DESK  RUNTIME  LLM
+ws         squad  worker  0    agent-a     running  healthy  -     -     -    3              -
+ws         squad  worker  0    agent-b     running  healthy  -     -     -    3              -
+ws         squad  worker  0    agent-c     running  healthy  -     -     -    4     claude   -
