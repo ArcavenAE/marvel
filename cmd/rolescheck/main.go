@@ -12,9 +12,12 @@
 //
 //	{"<team>": {"Roles": [...]}}
 //
-// An error is printed to standard error with a nonzero exit status and nothing
-// on standard output. Two commits serialize role fields differently, so build
-// it from the commit the running daemon reports: a checker from another commit
+// An error is printed to standard error with exit status 1 and nothing on
+// standard output; a missing manifest argument is a usage error with exit
+// status 2. Arguments past the first are ignored.
+//
+// Two commits serialize role fields differently, so build it from the commit
+// the running daemon reports: a checker from another commit
 // reads the roles differently and a strict comparison fails closed.
 //
 // It imports internal/api, so it must be built inside this module.
@@ -22,6 +25,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,9 +33,11 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
+var errUsage = errors.New("usage: rolescheck <manifest>")
+
 func run(args []string, w io.Writer) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: rolescheck <manifest>")
+	if len(args) < 1 {
+		return errUsage
 	}
 	data, err := os.ReadFile(args[0])
 	if err != nil {
@@ -64,6 +70,9 @@ func run(args []string, w io.Writer) error {
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, errUsage) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }

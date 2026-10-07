@@ -14,7 +14,8 @@
 //	{"<team>": {"WorkDir": ..., "Roles": [...], "Budget": ...}}
 //
 // A team that declares no workdir is anchored at the root argument, which is
-// the move a workdirs upgrade checks for. Any error panics, so the exit status
+// the move a workdirs upgrade checks for. Arguments past the second are
+// ignored. Any error panics, so the exit status
 // is nonzero and nothing is printed; the caller reads that as "does not parse
 // or apply".
 //
@@ -32,7 +33,7 @@ import (
 )
 
 func run(args []string, w io.Writer) error {
-	if len(args) != 2 {
+	if len(args) < 2 {
 		return fmt.Errorf("usage: applycheck <manifest> <workspace-root>")
 	}
 	data, err := os.ReadFile(args[0])
