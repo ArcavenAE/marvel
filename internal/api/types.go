@@ -788,6 +788,35 @@ type ShiftRequest struct {
 	Escalated bool
 }
 
+// ViewNotice is the told-or-not state of one seat's view. A refresh that moves
+// the view sets Commit and replaces any notice not yet delivered, so a seat busy
+// through three refreshes is told once, about the latest. It persists with the
+// team so a restart neither forgets an undelivered notice nor starts a grace
+// early.
+type ViewNotice struct {
+	// Commit is the commit the latest notice names. The notice is pending while
+	// it differs from DeliveredCommit.
+	Commit string
+	// Path is the view's cur path the notice tells the seat to cd to again.
+	Path string
+	// PendingSince is when the oldest undelivered move happened. It bounds the
+	// deferral: the notice is sent at max_defer from here however busy the seat.
+	PendingSince time.Time
+	// Undelivered is why the last attempt did not reach the seat, empty when
+	// none failed.
+	Undelivered string
+	// DeliveredCommit and DeliveredAt record the notice that reached the seat.
+	DeliveredCommit string
+	DeliveredAt     time.Time
+	// GraceStart is the first time the pane was observed quiet after
+	// DeliveredAt, which is when the re-entry grace starts. A notice delivered
+	// mid-turn waits for the next quiet. Zero until then.
+	GraceStart time.Time
+}
+
+// Pending reports whether the notice has not been delivered yet.
+func (n ViewNotice) Pending() bool { return n.Commit != "" && n.Commit != n.DeliveredCommit }
+
 // ShiftPhase represents the current phase of a shift operation.
 type ShiftPhase string
 
@@ -842,6 +871,11 @@ type Team struct {
 	// ShiftRequests holds the pending handoff request per role name, if any.
 	// Status, not spec, persisted like Shift. See ShiftRequest.
 	ShiftRequests map[string]ShiftRequest `toml:"-"`
+	// ViewNotices holds, per "<session key>/<view name>", the notice that the
+	// view moved: pending until delivered, then the delivery time and the start
+	// of the re-entry grace. Status, not spec, persisted like ShiftRequests
+	// (docs/design/readonly-view.md section 5). See ViewNotice.
+	ViewNotices map[string]ViewNotice `toml:"-"`
 	// Admission is the standing admission condition the reconciler
 	// recomputes each tick. Status, not spec — same treatment as Shift.
 	Admission AdmissionState `toml:"-"`

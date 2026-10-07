@@ -68,6 +68,11 @@ type Keeper struct {
 	SpawnTimeout time.Duration
 	// Now is the clock; nil means the wall clock.
 	Now func() time.Time
+	// OnMoved is called, off the keeper's lock, when a refresh moves a seat's
+	// view from one commit to another, with the path of the view's cur. It is
+	// not called for a first build or an unchanged refresh. The daemon wires it
+	// to the controller, which tells the seat.
+	OnMoved func(sess api.Session, view, path, commit string)
 
 	mu      sync.Mutex
 	tracked map[string]*tracked
@@ -478,6 +483,9 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 	}
 	t.down, t.cause = false, ""
 	k.mu.Unlock()
+	if res.Changed && res.Previous != "" && k.OnMoved != nil {
+		k.OnMoved(sess, name, filepath.Join(t.builder.Dir, "cur"), res.Commit)
+	}
 	if !res.Changed {
 		return fmt.Sprintf("%s: unchanged at %s", name, short(res.Commit))
 	}

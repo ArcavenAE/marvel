@@ -6,6 +6,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 const injectManifest = `
@@ -153,7 +154,7 @@ func TestInjectThatFailsEmitsNothing(t *testing.T) {
 func TestMaxAgeAskIsRecordedAsAnInjectFromMarvel(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
-	if err := d.teamCtrl.Notify(sess, "please write your handoff"); err != nil {
+	if err := d.teamCtrl.Notify(sess, "please write your handoff", team.NoticeMaxAge); err != nil {
 		t.Fatalf("notify: %v", err)
 	}
 	got := injectedEvents(d, sess.Name)
@@ -250,5 +251,23 @@ func TestInjectDeclaredValueCannotForgeAttestedFields(t *testing.T) {
 	}
 	if !strings.Contains(msg, "transport=ssh:SHA256:real") {
 		t.Errorf("message %q lacks the daemon's own transport", msg)
+	}
+}
+
+// A view notice is typed text like the handoff ask, but it is not a handoff:
+// its record and its refusals name marvel:view-notice, so an operator reading
+// the ring is not pointed at a max-age shift that never happened.
+func TestViewNoticeIsRecordedAsAnInjectFromViewNotice(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := liveSession(t, d)
+	if err := d.teamCtrl.Notify(sess, "marvel: view repo is now abc", team.NoticeViewNotice); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	got := injectedEvents(d, sess.Name)
+	if len(got) != 1 || !strings.Contains(got[0].Message, "transport=daemon injector=marvel:view-notice") {
+		t.Fatalf("events = %+v, want one from transport=daemon injector=marvel:view-notice", got)
+	}
+	if strings.Contains(got[0].Message, "max-age") {
+		t.Errorf("message %q names max-age for a view notice", got[0].Message)
 	}
 }

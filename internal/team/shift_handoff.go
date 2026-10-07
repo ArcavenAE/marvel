@@ -98,7 +98,7 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 	delivery, undelivered := "delivered", ""
 	if c.Notify == nil {
 		undelivered = "no notifier"
-	} else if err := c.Notify(sess, text); err != nil {
+	} else if err := c.Notify(sess, text, NoticeMaxAge); err != nil {
 		undelivered = err.Error()
 	}
 	if undelivered != "" {

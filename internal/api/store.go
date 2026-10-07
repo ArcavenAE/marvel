@@ -178,6 +178,9 @@ func cloneTeam(t *Team) Team {
 	if len(t.ShiftRequests) > 0 {
 		out.ShiftRequests = maps.Clone(t.ShiftRequests)
 	}
+	if len(t.ViewNotices) > 0 {
+		out.ViewNotices = maps.Clone(t.ViewNotices)
+	}
 	return out
 }
 
