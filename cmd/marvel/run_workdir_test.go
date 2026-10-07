@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -78,5 +80,30 @@ func TestRunCommandHasAWorkdirFlag(t *testing.T) {
 	}
 	if f.DefValue != "" {
 		t.Errorf("--workdir default = %q, want empty so an unset flag is distinguishable", f.DefValue)
+	}
+}
+
+// A warning from the daemon (a default directory it could not see) reaches the
+// caller on stderr, and stdout stays the one line a script reads.
+func TestPrintRunResultSendsTheWarningToStderr(t *testing.T) {
+	var out, errOut bytes.Buffer
+	printRunResult(&out, &errOut, json.RawMessage(`{"session_key":"ws/run-1","warning":"the caller's directory /x is not on the daemon's host"}`))
+	if got := out.String(); got != "session/ws/run-1 created\n" {
+		t.Errorf("stdout = %q, want only the created line", got)
+	}
+	if got := errOut.String(); got != "warning: the caller's directory /x is not on the daemon's host\n" {
+		t.Errorf("stderr = %q, want the warning", got)
+	}
+}
+
+// With no warning nothing is written to stderr.
+func TestPrintRunResultIsQuietWithoutAWarning(t *testing.T) {
+	var out, errOut bytes.Buffer
+	printRunResult(&out, &errOut, json.RawMessage(`{"session_key":"ws/run-1"}`))
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing", errOut.String())
+	}
+	if out.String() != "session/ws/run-1 created\n" {
+		t.Errorf("stdout = %q", out.String())
 	}
 }
