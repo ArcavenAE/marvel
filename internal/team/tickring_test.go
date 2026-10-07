@@ -114,3 +114,15 @@ func TestEvaluateHealthFeedsTheTickRing(t *testing.T) {
 		t.Errorf("a session that is no longer running kept %d ticks", total)
 	}
 }
+
+// The ring is full at exactly the window and not a nanosecond before.
+func TestTickRingIsFullAtExactlyTheWindow(t *testing.T) {
+	r := &TickRing{}
+	r.Record(ringEpoch, ringEpoch)
+	if _, _, full := r.Counts(10*time.Minute, ringEpoch.Add(TickRingWindow-time.Nanosecond)); full {
+		t.Error("full a nanosecond before the window")
+	}
+	if _, _, full := r.Counts(10*time.Minute, ringEpoch.Add(TickRingWindow)); !full {
+		t.Error("not full at exactly the window")
+	}
+}
