@@ -104,3 +104,18 @@ func TestApplycheckBinaryIgnoresExtraArguments(t *testing.T) {
 		t.Errorf("exit = %d, want 0 with extra arguments (stderr %q)", code, errOut)
 	}
 }
+
+// The binary the tests build is removed when the test that asked for it ends,
+// so repeated runs do not leave an executable behind in the temp directory.
+func TestApplycheckBuiltBinaryIsRemovedWithItsTest(t *testing.T) {
+	var path string
+	t.Run("build", func(t *testing.T) {
+		path = built(t)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("binary missing while its test runs: %v", err)
+		}
+	})
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("binary %s still exists after its test ended (stat err %v)", path, err)
+	}
+}
