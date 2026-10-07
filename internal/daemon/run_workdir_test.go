@@ -111,4 +111,38 @@ func TestRunRefusesAnAbsentWorkdirBeforeCreatingASession(t *testing.T) {
 			t.Errorf("session %s exists after a refused run", sess.Key())
 		}
 	}
+	for _, ws := range d.store.ListWorkspaces() {
+		if ws.Name == "runwd2" {
+			t.Error("a refused run created its workspace")
+		}
+	}
+}
+
+// The caller's own directory, sent as a default, may be a path on another host.
+// The run still happens, places nothing, and says so.
+func TestRunDropsADefaultWorkdirItCannotSeeAndSaysSo(t *testing.T) {
+	d := newHandlerDaemon(t)
+	params, _ := json.Marshal(map[string]any{
+		"workspace": "runwd3", "runtime_command": "sleep", "runtime_args": []string{"300"},
+		"workdir": filepath.Join(t.TempDir(), "gone"), "workdir_default": true,
+	})
+	resp := d.handleRun(params)
+	if resp.Error != "" {
+		t.Fatalf("run: %s", resp.Error)
+	}
+	t.Cleanup(func() { _ = d.sessMgr.CleanupWorkspace("runwd3") })
+	var out map[string]string
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out["warning"], "not on the daemon's host") {
+		t.Errorf("warning = %q, want it to say the directory is not on the daemon's host", out["warning"])
+	}
+	sess, err := d.store.GetSession(out["session_key"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.WorkDir != "" {
+		t.Errorf("session workdir = %q, want none placed", sess.WorkDir)
+	}
 }
