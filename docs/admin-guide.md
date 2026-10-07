@@ -602,7 +602,9 @@ that decide where a seat's prompts go, from opencode's published schema
 | `share` | Session sharing: `manual`, `auto` or `disabled`. |
 
 A `-m` on the role's `args` sets the model for that role's seat from the
-manifest. Which of `-m` and an agent's own `model` wins is not checked here;
+manifest. For a headless seat, `-m` wins over an agent's own `model`: as read
+from opencode 1.18.15's source, `opencode run` sends the model on the prompt
+as `input.model`. Which one wins in the interactive TUI is not checked here;
 `opencode debug config` and `opencode debug agent <name>` show what a host
 resolves.
 
