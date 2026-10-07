@@ -68,3 +68,15 @@ func TestRunWorkdirWhenTheCwdIsUnreadable(t *testing.T) {
 		t.Errorf("an absolute --workdir with no cwd = %q, %v", dir, err)
 	}
 }
+
+// The flag exists on marvel run, with no default of its own: an unset flag is
+// the caller's cwd, decided by runWorkdir.
+func TestRunCommandHasAWorkdirFlag(t *testing.T) {
+	f := runCmd().Flags().Lookup("workdir")
+	if f == nil {
+		t.Fatal("marvel run has no --workdir flag")
+	}
+	if f.DefValue != "" {
+		t.Errorf("--workdir default = %q, want empty so an unset flag is distinguishable", f.DefValue)
+	}
+}

@@ -293,7 +293,7 @@ func TestRelativeWorkdirWithNoRootNamesTheFix(t *testing.T) {
 	if err == nil {
 		t.Fatal("a relative workdir with no root was accepted")
 	}
-	for _, want := range []string{"relative", "workspace.root", "marvel work", "workspace_root"} {
+	for _, want := range []string{"relative", "workspace.root", "marvel work", "the workspace_root parameter"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to contain %q", err, want)
 		}
