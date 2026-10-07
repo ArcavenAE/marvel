@@ -1978,6 +1978,10 @@ type runParams struct {
 	RuntimeCommand string   `json:"runtime_command"`
 	RuntimeArgs    []string `json:"runtime_args"`
 	Script         string   `json:"script"`
+	// WorkDir is where the session runs, absolute, from marvel run --workdir or
+	// the caller's cwd. WorkDirDefault says the caller did not name it.
+	WorkDir        string `json:"workdir,omitempty"`
+	WorkDirDefault bool   `json:"workdir_default,omitempty"`
 }
 
 func (d *Daemon) handleRun(params json.RawMessage) Response {
@@ -1994,6 +1998,13 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	}
 	if p.Role == "" {
 		p.Role = "adhoc"
+	}
+
+	// Placement is checked before anything is created, so a refused run leaves no
+	// workspace or session behind.
+	workDir, warning, werr := resolveRunWorkDir(p.WorkDir, p.WorkDirDefault)
+	if werr != nil {
+		return Response{Error: werr.Error()}
 	}
 
 	// Ensure workspace exists.
@@ -2023,16 +2034,21 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		Team:      p.Team,
 		Role:      p.Role,
 		Runtime:   rt,
+		WorkDir:   workDir,
 	}
 
 	if err := d.sessMgr.Create(sess); err != nil {
 		return Response{Error: fmt.Sprintf("create session: %v", err)}
 	}
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":      "created",
 		"session_key": sess.Key(),
-	})
+	}
+	if warning != "" {
+		out["warning"] = warning
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
 }
 

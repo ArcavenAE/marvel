@@ -1464,12 +1464,16 @@ func convergeCmd() *cobra.Command {
 }
 
 func runCmd() *cobra.Command {
-	var workspace, team, role, script string
+	var workspace, team, role, script, workdir string
 	cmd := &cobra.Command{
 		Use:   "run <command> [args...]",
 		Short: "Run a one-off agent session",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, isDefault, err := runWorkdir(workdir, cmd.Flags().Changed("workdir"), os.Getwd)
+			if err != nil {
+				return err
+			}
 			params, _ := json.Marshal(map[string]any{
 				"workspace":       workspace,
 				"team":            team,
@@ -1477,6 +1481,8 @@ func runCmd() *cobra.Command {
 				"runtime_command": args[0],
 				"runtime_args":    args[1:],
 				"script":          script,
+				"workdir":         dir,
+				"workdir_default": isDefault,
 			})
 			resp, err := send(daemon.Request{
 				Method: "run",
@@ -1490,11 +1496,15 @@ func runCmd() *cobra.Command {
 			}
 			var result map[string]string
 			_ = json.Unmarshal(resp.Result, &result)
+			if w := result["warning"]; w != "" {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+			}
 			fmt.Printf("session/%s created\n", result["session_key"])
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&workspace, "workspace", "default", "workspace name")
+	cmd.Flags().StringVar(&workdir, "workdir", "", "directory the session runs in; default the current directory")
 	cmd.Flags().StringVar(&team, "team", "adhoc", "team name")
 	cmd.Flags().StringVar(&role, "role", "adhoc", "role name")
 	cmd.Flags().StringVar(&script, "script", "", "Lua script path")
