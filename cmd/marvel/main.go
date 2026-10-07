@@ -2704,9 +2704,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name   string
-	state, health, context, cpu, rss          string
-	desk, runtime, llm, workdir, rate, prompt string
+	workspace, team, role, generation, name         string
+	state, health, context, cpu, rss                string
+	desk, runtime, llm, workdir, tout, rate, prompt string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2822,6 +2822,7 @@ func newSessionRow(s api.Session) sessionRow {
 	}
 	return sessionRow{
 		workdir:   workdir,
+		tout:      toutCell(s.SpendOut),
 		rate:      rateCell(s, rateClock()),
 		prompt:    promptCell(s.SpendPromptTokens),
 		workspace: s.Workspace, team: s.Team, role: s.Role, generation: gen,
