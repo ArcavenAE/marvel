@@ -106,7 +106,7 @@ func TestSealRefusesTheTreeCurNames(t *testing.T) {
 // A name that is not a full commit id is refused before it touches a path.
 func TestSealRefusesANameThatIsNotACommit(t *testing.T) {
 	b, _ := twoTrees(t)
-	for _, name := range []string{"", "..", "../mirror.git", shaOne[:12], strings.ToUpper(shaOne), "cur"} {
+	for _, name := range []string{"", "..", "../mirror.git", shaOne[:12], strings.Repeat("A", 40), "cur"} {
 		if err := b.Seal(name); err == nil {
 			t.Errorf("Seal(%q) succeeded", name)
 		}

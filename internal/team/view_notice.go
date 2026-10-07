@@ -72,6 +72,14 @@ func (c *Controller) NoteViewMoved(sess api.Session, view, path, previous, commi
 			n.DeliveredAt, n.GraceStart = time.Time{}, time.Time{}
 		}
 		n.Commit, n.Path = commit, path
+		// The tree the view left is superseded and stays readable. The tree it
+		// moved onto is current, so it is neither: a view that returns to a
+		// commit makes that tree current again.
+		n.Superseded = slices.DeleteFunc(n.Superseded, func(c string) bool { return c == commit })
+		n.Sealed = slices.DeleteFunc(n.Sealed, func(c string) bool { return c == commit })
+		if previous != "" && previous != commit && !slices.Contains(n.Superseded, previous) && !slices.Contains(n.Sealed, previous) {
+			n.Superseded = append(n.Superseded, previous)
+		}
 		live.ViewNotices[key] = n
 		return nil
 	}); err != nil {
@@ -125,7 +133,11 @@ func (c *Controller) deliverViewNotices(t *api.Team) {
 			})
 			continue
 		}
-		if n.GraceStart.IsZero() && !n.DeliveredAt.IsZero() && quiet {
+		if n.DeliveredAt.IsZero() {
+			continue
+		}
+		graceStart := n.GraceStart
+		if graceStart.IsZero() && quiet {
 			delivered := n.DeliveredCommit
 			c.updateViewNotice(teamKey, key, func(live map[string]api.ViewNotice, cur api.ViewNotice) {
 				if cur.DeliveredCommit != delivered || !cur.GraceStart.IsZero() || cur.Pending() {
@@ -134,6 +146,10 @@ func (c *Controller) deliverViewNotices(t *api.Team) {
 				cur.GraceStart = now
 				live[key] = cur
 			})
+			graceStart = now
+		}
+		if !graceStart.IsZero() && now.Sub(graceStart) >= viewGrace(t, sess, view) {
+			c.sealSuperseded(teamKey, key, sess, view, n)
 		}
 	}
 }
@@ -147,7 +163,13 @@ func (c *Controller) sendViewNotice(sess api.Session, text string) error {
 
 // ViewTreesHeld is how many superseded trees of a seat's view are still
 // readable. The keeper pauses the view's refresh at view.MaxHeldTrees.
-func (c *Controller) ViewTreesHeld(sess api.Session, view string) int { return 0 }
+func (c *Controller) ViewTreesHeld(sess api.Session, view string) int {
+	t, err := c.store.GetTeam(sess.Workspace + "/" + sess.Team)
+	if err != nil {
+		return 0
+	}
+	return len(t.ViewNotices[viewNoticeKey(sess.Key(), view)].Superseded)
+}
 
 // updateViewNotice applies fn to the live record of one notice under the
 // store's lock, so a move recorded meanwhile is never overwritten.
@@ -162,4 +184,51 @@ func (c *Controller) updateViewNotice(teamKey, key string, fn func(live map[stri
 	}); err != nil {
 		log.Printf("view notice: %s: record: %v", key, err)
 	}
+}
+
+// viewGrace is the re-entry grace the seat's role declares for a view. A view
+// the role no longer declares gets the default.
+func viewGrace(t *api.Team, sess api.Session, view string) time.Duration {
+	for _, r := range t.Roles {
+		if r.Name != sess.Role {
+			continue
+		}
+		for _, v := range r.Views {
+			if v.Name == view {
+				return v.ReenterGrace
+			}
+		}
+	}
+	return api.DefaultViewReenterGrace
+}
+
+// sealSuperseded seals the trees older than the commit the delivered notice
+// named, once its grace has ended. The tree that commit names stays readable
+// until a later notice is delivered. A seal that fails is logged and left for
+// the next tick, and never holds back a swap or a spawn.
+func (c *Controller) sealSuperseded(teamKey, key string, sess api.Session, view string, n api.ViewNotice) {
+	if c.SealViewTrees == nil || len(n.Superseded) == 0 {
+		return
+	}
+	older := n.Superseded
+	if i := slices.Index(n.Superseded, n.DeliveredCommit); i >= 0 {
+		older = n.Superseded[:i]
+	}
+	if len(older) == 0 {
+		return
+	}
+	older = slices.Clone(older)
+	if err := c.SealViewTrees(sess, view, older); err != nil {
+		log.Printf("view notice: %s: seal %d superseded trees: %v", key, len(older), err)
+		return
+	}
+	c.updateViewNotice(teamKey, key, func(live map[string]api.ViewNotice, cur api.ViewNotice) {
+		for _, commit := range older {
+			if i := slices.Index(cur.Superseded, commit); i >= 0 {
+				cur.Superseded = slices.Delete(cur.Superseded, i, i+1)
+				cur.Sealed = append(cur.Sealed, commit)
+			}
+		}
+		live[key] = cur
+	})
 }
