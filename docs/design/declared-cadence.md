@@ -2,7 +2,9 @@
 
 Status: design, voted by a 4-round party (ptdd), 2026-10-06. Proposal only:
 the rulings in section 7 are the operator's. Code references are pinned to
-marvel `409593c` and director `813c595`.
+marvel `409593c` and director `813c595`. V4's gate was tightened in review
+after the vote (a second read before Enter, and copy mode); the panel voted
+the single-read form.
 
 ## 1. Why
 
@@ -36,10 +38,18 @@ seat, and be visible when a slot is missed. That is what this design does.
 - marvel already types text into seats from the daemon: the max-age handoff
   request goes through `notifyHandoff` with a pre-flight and an inject event
   (`internal/daemon/daemon.go:444-469`). On a Claude pane that pre-flight does
-  no menu check (`internal/composer/claude.go:28`: `Preflight()` is false), so
-  typed text with Enter could answer a permission prompt. The composer reader
-  does tell an empty idle prompt from a draft or a menu
-  (`internal/composer/composer.go:20-30`).
+  no composer check (`internal/composer/claude.go:28`: `Preflight()` is
+  false); its one menu check is the usage-limit menu, and only when a menu
+  sample is configured (`preflightRefusal`, `daemon.go:2227-2228`). So typed
+  text with Enter could answer a permission prompt. The pre-flight is, in its
+  own words, "a check, not a lock" (`daemon.go:2224-2226`): the pane can change
+  between the read and the keystrokes. The composer reader does tell an empty
+  idle prompt from a draft or a menu (`internal/composer/composer.go:20-30`).
+- A pane in tmux copy mode reads as its normal screen to `capture-pane`, and
+  keys sent to it go to copy mode, not the program. Measured on tmux 3.7b with
+  a scratch server: with emacs mode-keys a typed line and Enter were swallowed
+  and the pane stayed in copy mode; with vi mode-keys Enter left copy mode and
+  the line was lost. Either way a wake would be recorded that never arrived.
 
 ## 3. Design (voted 5 of 5 on every item)
 
@@ -65,11 +75,18 @@ seat, and be visible when a slot is missed. That is what this design does.
   safe to run twice for one slot.
 - **V4. The wake.** marvel wakes an open slot's role by typing one fixed
   line, carrying no slot, no prompt and no other state, through the daemon's
-  inject path, only into panes marvel spawned, and only when the composer
-  reads `Empty`. Each wake is recorded as `injector=marvel:cadence` with a
-  `woken` record. A pane whose composer is not `Empty` is retried on later
-  ticks until `grace`; the refusal is recorded when its reason changes, with
-  a count of the retries between. The development-channel cue is not used.
+  inject path, only into panes marvel spawned, and only through a two-read
+  gate. First, the pane is not in a tmux mode (`#{pane_in_mode}` is 0) and
+  the composer reads `Empty`. marvel then types the line without Enter, reads
+  again, and sends Enter only if the pane is still not in a mode and the
+  composer holds exactly the fixed line. Otherwise it clears only the line it
+  typed and records a refusal. The second read closes the gap the pre-flight
+  leaves between a read and a keystroke; it narrows the race to the Enter
+  itself and does not remove it. Each delivered wake is recorded as
+  `injector=marvel:cadence` with a `woken` record. A refused pane is retried
+  on later ticks until `grace`; the refusal is recorded when its reason
+  changes, with a count of the retries between. The development-channel cue
+  is not used.
 - **V5. Records and alerts.** `claimed` and `swept` come from the seat;
   `woken`, `skipped`, `fresh` and `overdue` from marvel; each names the seat.
   `overdue` fires once per change of state as a `cadence.overdue` event and
@@ -100,7 +117,7 @@ seat, and be visible when a slot is missed. That is what this design does.
 | T2 | spawn tokens (V6) | a marvel-spawned seat's env carries `DIRECTOR_CLUSTER` and `DIRECTOR_ROLE` | |
 | T3 | slot clock for interactive roles (V2) | a due slot opens one record; a slot missed while the daemon was down fires once within `starting_deadline` and is `skipped` past it | T1, the schedule clock (S-3) |
 | T4 | claim lease and swept (V3, V5) | two seats claim one slot and one gets "claimed"; a holder's repeat claim returns the same slot; a claiming seat deleted, or shifted out, reopens the slot; a token of another role is refused; no `swept` by grace yields one `overdue` | T3, P2 |
-| T5 | the cadence wake (V4) | a pane showing a draft, a dim suggestion, the consent prompt or a permission prompt is not typed into and the refusal is recorded once; an `Empty` composer gets the fixed line and a `woken` record | T3, P1 |
+| T5 | the cadence wake (V4) | a pane showing a draft, a dim suggestion, the consent prompt or a permission prompt is not typed into and the refusal is recorded once; a pane in copy mode (emacs and vi mode-keys) is refused and retried; a draft that appears between the first read and Enter gets no Enter, only the typed line is cleared, and a refusal is recorded; an `Empty` composer that still holds exactly the fixed line on the second read gets Enter and a `woken` record | T3, P1 |
 | T6 | overdue alerting (V5) | one `cadence.overdue` event and one supervisor mail per change of state | T4 |
 | T7 | bridge process text (V7) | (role library; the operator ratifies) | |
 | T8 | final process text: claim, sweep, swept | (role library; the operator ratifies) | T4, T5 |
@@ -125,8 +142,11 @@ senses. Their edits are the operator's ruling 3.
 
 ## 5. Security notes
 
-- A typed line can approve a dialog, so V4's `Empty` gate is a hard
-  requirement, not a refinement, and P1 proves it before T5 ships.
+- A typed line can approve a dialog, so V4's gate is a hard requirement,
+  not a refinement, and P1 proves it before T5 ships. The gate types
+  without Enter and re-reads before Enter, because a single read is a
+  check, not a lock, and it refuses a pane in a tmux mode, because
+  `capture-pane` cannot see one.
 - The cue carries nothing the seat trusts. A forged wake can at most make a
   seat ask marvel whether a slot is due.
 - The local broker listens on loopback only, so the remaining exposure of an
