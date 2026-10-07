@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 )
@@ -34,4 +36,16 @@ func runWorkdir(flag string, changed bool, cwd func() (string, error)) (dir stri
 		return "", false, fmt.Errorf("--workdir %q is relative and the current directory cannot be read: %w", flag, err)
 	}
 	return filepath.Join(base, flag), false, nil
+}
+
+// printRunResult says what a run created: the session on out, and the daemon's
+// warning, when it sent one, on errOut so a script reading out sees only the
+// session.
+func printRunResult(out, errOut io.Writer, raw json.RawMessage) {
+	var result map[string]string
+	_ = json.Unmarshal(raw, &result)
+	if w := result["warning"]; w != "" {
+		_, _ = fmt.Fprintf(errOut, "warning: %s\n", w)
+	}
+	_, _ = fmt.Fprintf(out, "session/%s created\n", result["session_key"])
 }

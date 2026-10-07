@@ -1494,12 +1494,7 @@ func runCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			var result map[string]string
-			_ = json.Unmarshal(resp.Result, &result)
-			if w := result["warning"]; w != "" {
-				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-			}
-			fmt.Printf("session/%s created\n", result["session_key"])
+			printRunResult(cmd.OutOrStdout(), cmd.ErrOrStderr(), resp.Result)
 			return nil
 		},
 	}
