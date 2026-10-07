@@ -5,11 +5,12 @@ import (
 	"time"
 )
 
-func mustZone(t *testing.T, name string) *time.Location {
+// chicago is America/Chicago, the zone the daylight-saving tests use.
+func chicago(t *testing.T) *time.Location {
 	t.Helper()
-	loc, err := time.LoadLocation(name)
+	loc, err := time.LoadLocation("America/Chicago")
 	if err != nil {
-		t.Skipf("zone %s not available: %v", name, err)
+		t.Skipf("zone America/Chicago not available: %v", err)
 	}
 	return loc
 }
@@ -86,7 +87,7 @@ func TestNextFiringMatchesTheCron(t *testing.T) {
 // firing at that minute into one.
 func TestNextFiringSpringGap(t *testing.T) {
 	t.Parallel()
-	chi := mustZone(t, "America/Chicago")
+	chi := chicago(t)
 	eve := time.Date(2027, 3, 13, 12, 0, 0, 0, chi)
 
 	daily := SchedulePolicy{Cron: "30 2 * * *", Timezone: "America/Chicago", DSTAck: true}
@@ -107,7 +108,7 @@ func TestNextFiringSpringGap(t *testing.T) {
 // elapsed time, so it fires in both occurrences.
 func TestNextFiringFallOverlap(t *testing.T) {
 	t.Parallel()
-	chi := mustZone(t, "America/Chicago")
+	chi := chicago(t)
 	eve := time.Date(2026, 10, 31, 12, 0, 0, 0, chi)
 
 	fixed := SchedulePolicy{Cron: "30 1 * * *", Timezone: "America/Chicago", DSTAck: true}
@@ -146,7 +147,7 @@ func forwardWalk(t *testing.T, p SchedulePolicy, after, now time.Time) (time.Tim
 // and an empty span.
 func TestCatchUpMatchesTheForwardWalk(t *testing.T) {
 	t.Parallel()
-	chi := mustZone(t, "America/Chicago")
+	chi := chicago(t)
 	tests := []struct {
 		name       string
 		cron       string
@@ -186,7 +187,7 @@ func TestCatchUpMatchesTheForwardWalk(t *testing.T) {
 // minutes here; CatchUp answers from the span, not from each due time.
 func TestCatchUpOverALongOutage(t *testing.T) {
 	t.Parallel()
-	chi := mustZone(t, "America/Chicago")
+	chi := chicago(t)
 	after := time.Date(2026, 10, 1, 0, 0, 0, 0, chi)
 	now := time.Date(2027, 4, 1, 0, 0, 0, 0, chi)
 	p := SchedulePolicy{Cron: "* * * * *", Timezone: "America/Chicago", DSTAck: true}
@@ -305,7 +306,7 @@ func TestSettleRun(t *testing.T) {
 // which firing a run belonged to.
 func TestFiringIDIsTheDueTime(t *testing.T) {
 	t.Parallel()
-	chi := mustZone(t, "America/Chicago")
+	chi := chicago(t)
 	due := time.Date(2026, 10, 1, 1, 17, 0, 0, chi)
 	if got := FiringID(due); got != "20261001T061700Z" {
 		t.Fatalf("FiringID = %q, want 20261001T061700Z", got)

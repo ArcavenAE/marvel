@@ -161,7 +161,9 @@ scheduled rule replaces both:
 `attempts` and emits `run.failed`, and the run history records it. While
 `attempts <= retries` and the firing is inside `starting_deadline`, the
 reconciler spawns a retry after a backoff, through admission like any spawn.
-Once retries are used up, the firing is `settled` as failed and the
+When `starting_deadline` is unset, retries are bounded by `retries` alone, not
+in time: the one-minute grace a first start gets does not apply to them
+(operator ruling, 2026-10-07). Once retries are used up, the firing is `settled` as failed and the
 reconciler spawns nothing more for the role until the next firing. Then
 `on_failure` applies: `wait` (the default) does nothing further, and the next
 firing runs as declared; `freeze` suspends the schedule until an operator

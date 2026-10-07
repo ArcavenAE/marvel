@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math/bits"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,9 +132,71 @@ func (p SchedulePolicy) NextFiring(after time.Time) (time.Time, error) {
 // CatchUp is the recovery walk: given the due time the clock was waiting
 // for (after) and the present (now), it returns the newest due time in
 // (after, now], or after when there is none, and how many due times fell in
-// that span.
+// that span. The result is the same as stepping NextFiring forward from
+// after, but the cost is one step per calendar day, not one per due time.
+// A day with no offset change counts its firings from the cron fields
+// alone. Only the first and last days, and a day whose offset changes, are
+// expanded minute by minute. So a minutely schedule down for a year costs
+// about four expanded days, a few milliseconds, where the forward walk
+// takes minutes, and the clock runs this under the store lock.
 func (p SchedulePolicy) CatchUp(after, now time.Time) (newest time.Time, missed int, err error) {
-	return after, 0, nil
+	if !now.After(after) {
+		return after, 0, nil
+	}
+	loc, err := loadScheduleZone(p.Timezone)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	spec, err := compileCron(p.Cron)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	perDay := bits.OnesCount64(spec.hour) * bits.OnesCount64(spec.minute)
+	first, last := localDate(after.In(loc)), localDate(now.In(loc))
+	inSpan := func(at time.Time) bool { return at.After(after) && !at.After(now) }
+
+	newest = after
+	var lastDay time.Time
+	for d := first; !d.After(last); d = d.AddDate(0, 0, 1) {
+		if !spec.matchesDay(d) {
+			continue
+		}
+		if !d.Equal(first) && !d.Equal(last) && !offsetChangesOn(d, loc) {
+			missed += perDay
+			lastDay = d
+			continue
+		}
+		for _, at := range spec.firingsOn(d, loc) {
+			if inSpan(at) {
+				missed++
+				lastDay = d
+			}
+		}
+	}
+	if !lastDay.IsZero() {
+		for _, at := range spec.firingsOn(lastDay, loc) {
+			if inSpan(at) && at.After(newest) {
+				newest = at
+			}
+		}
+	}
+	return newest, missed, nil
+}
+
+// localDate is the calendar date of a local time, as UTC midnight, the form
+// firingsOn and matchesDay take.
+func localDate(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// offsetChangesOn reports whether loc's UTC offset changes during the local
+// calendar day d (given as UTC midnight). It samples the day's start, noon
+// and the next day's start, which catches every real transition.
+func offsetChangesOn(d time.Time, loc *time.Location) bool {
+	_, start := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc).Zone()
+	_, noon := time.Date(d.Year(), d.Month(), d.Day(), 12, 0, 0, 0, loc).Zone()
+	_, end := time.Date(d.Year(), d.Month(), d.Day()+1, 0, 0, 0, 0, loc).Zone()
+	return start != noon || noon != end
 }
 
 // firingsOn returns the firing instants of one local calendar day, sorted
@@ -281,7 +344,9 @@ func scheduleRetryBackoff(attempt int) time.Duration {
 //   - A failed run spends an attempt. While attempts <= retries and the
 //     firing is inside starting_deadline (when set), a retry waits a
 //     backoff. Otherwise the firing settles, and on_failure = freeze
-//     freezes the schedule.
+//     freezes the schedule. An unset starting_deadline does not bound
+//     retries in time: the one-minute grace a first start gets does not
+//     apply to them (operator ruling on default 2, 2026-10-07).
 //   - A cancelled run settles its firing: the kill was meant to stop it.
 //   - A success, or a run of an earlier firing, changes nothing.
 func (st *ScheduleStatus) SettleRun(r RunRecord, p SchedulePolicy, now time.Time) bool {

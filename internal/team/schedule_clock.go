@@ -15,12 +15,9 @@ import (
 // the schedule sets no starting_deadline. The reconciler ticks every two
 // seconds, so a minute absorbs a slow tick; anything later, such as a
 // daemon that was down, is a missed firing, which an unset
-// starting_deadline does not catch up.
+// starting_deadline does not catch up. The grace is for the first start
+// only; it does not bound retries (api.SettleRun).
 const scheduleGrace = time.Minute
-
-// maxCatchUpScan bounds the count of missed due times walked on recovery.
-// A minutely schedule down for two months stays under it.
-const maxCatchUpScan = 100_000
 
 // reconcileScheduleClock is the schedule clock (scheduled-runs section 2):
 // for each scheduled role it computes the next due time, and when one
@@ -133,16 +130,14 @@ func (c *Controller) advanceFiring(t *api.Team, role *api.Role, st *api.Schedule
 		return changed
 	}
 
-	// Due. Walk past any due times the daemon slept through; the newest
-	// is the one that may run.
-	newest, missed := st.NextDueAt, 0
-	for missed < maxCatchUpScan {
-		n, err := p.NextFiring(newest)
-		if err != nil || n.After(now) {
-			break
-		}
-		newest = n
-		missed++
+	// Due. Skip past any due times the daemon slept through; the newest
+	// is the one that may run. This runs under the store lock, so it must
+	// not cost one step per due time: CatchUp steps by day, a few
+	// milliseconds for a minutely schedule down a year.
+	newest, missed, err := p.CatchUp(st.NextDueAt, now)
+	if err != nil {
+		log.Printf("schedule %s/%s/%s: %v", t.Workspace, t.Name, role.Name, err)
+		return changed
 	}
 	fireAt := newest
 	if missed == 0 {
