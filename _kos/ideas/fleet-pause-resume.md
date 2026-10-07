@@ -56,9 +56,16 @@ servers only:
 | `SIGSTOP` or `SIGTSTP` to the pane's whole process group | running again within 2 s (reviewer, 3.7c) |
 | `SIGSTOP` to the pane process with the tmux server itself stopped | stopped until the server resumes |
 
-A marvel harness is its pane's process, so a raw `SIGSTOP` cannot hold a
-seat. A tool subprocess outside the pane's process group does stay stopped,
-so a tree can end up half paused. This retires the judgement above that
+Which row applies to a seat depends on its command. marvel hands tmux one
+shell string (`buildCommand`, `internal/runtime/adapter.go`). When the shell
+or a wrapper execs the harness, the harness is the pane process and a raw
+`SIGSTOP` cannot hold it (row 2). When the command leaves a shell in front,
+the harness is that shell's child and does stay stopped (row 1). The
+reviewer measured this on 3.7c with zsh: `FOO=1 sleep 603; echo done` left
+zsh as the pane process and `sleep` as its child. So a pause cannot assume
+either case; it has to read `pane_pid` for each seat. A tool subprocess
+outside the pane's process group stays stopped either way, so a tree can
+end up half paused. This retires the judgement above that
 `SIGSTOP` "freezes the process"; it does, until tmux resumes it.
 
 **What resume might break.**
@@ -96,8 +103,10 @@ Run one scratch seat per harness (claude, codex, opencode, crush) on an
 isolated daemon: every `MARVEL_*` unset, its own HOME, socket and tmux
 server. `SIGSTOP` each seat's whole process tree for 1, 10 and 60 minutes,
 once mid-turn and once idle. Because tmux resumes a stopped pane process
-(above), the stop has to be confirmed, not assumed: record every process in
-each seat's tree with `ps -o pid,pgid,stat`, right after the stop and at each
+(above), the stop has to be confirmed, not assumed. Record each seat's
+`pane_pid` (`tmux display -p -t <pane> '#{pane_pid}'`) and whether the
+harness is that process or its child, then record every process in each
+seat's tree with `ps -o pid,pgid,stat`, right after the stop and at each
 interval, before any `SIGCONT`. A run where the harness process is not `T`
 throughout is void, not a clean pause, and the process groups show a tree
 that is half paused. Then `SIGCONT` and record:
