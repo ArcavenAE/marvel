@@ -133,6 +133,7 @@ func TestActivePctColumnInWideNotInDefault(t *testing.T) {
 // mark and drops the legend. The width fit shows LAST-ACTIVE at any width, so
 // the mark test looks at the ACTIVE% column alone.
 func TestSourceLegendOnTTYWhenAMarkIsShown(t *testing.T) {
+	withLastActiveClock(t)
 	marked := []api.Session{ticked(360, 450, api.ContextSourceHeartbeat, time.Second)}
 	if !sourceMarkOnScreen(marked, columnsOrFatal(t, "active", nil)) {
 		t.Error("a marked ACTIVE% cell is not counted as a mark on screen")
@@ -144,6 +145,7 @@ func TestSourceLegendOnTTYWhenAMarkIsShown(t *testing.T) {
 }
 
 func TestSourceLegendAbsentWhenNoMarkOrPiped(t *testing.T) {
+	withLastActiveClock(t)
 	plain := []api.Session{ticked(360, 450, api.ContextSourceAccountant, time.Second)}
 	// A stale cell has no mark either, so the check below would pass for the
 	// wrong reason; the cell has to be fresh and printed for it to mean anything.
