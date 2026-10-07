@@ -243,6 +243,28 @@ func TestScheduleRecoveryRunsAtMostOnce(t *testing.T) {
 	})
 }
 
+// TestRecoveryOfAMinutelyScheduleIsQuick is review finding 1 on #650: the
+// recovery walk runs under the store lock, so it must not cost one
+// NextFiring per missed due time. A week down is 10,079 missed minutes,
+// about eight seconds of forward walking; the tick must take well under a
+// second and still report the exact count.
+func TestRecoveryOfAMinutelyScheduleIsQuick(t *testing.T) {
+	start := time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC)
+	minutely := func(p *api.SchedulePolicy) { p.Cron = "* * * * *" }
+	r := newClockRig(t, "test-clock-quick", start, clockRole("Etc/UTC", shRuntime("sleep 60"), minutely))
+	r.ctrl.ReconcileOnce()
+	r.clock.Advance(7 * 24 * time.Hour)
+	began := time.Now()
+	r.ctrl.ReconcileOnce()
+	if took := time.Since(began); took > time.Second {
+		t.Fatalf("the recovery tick took %v, want well under a second", took)
+	}
+	evs := r.kind(events.KindScheduleFired)
+	if len(evs) != 1 || !strings.Contains(evs[0].Message, "missed 10079") {
+		t.Fatalf("schedule.fired = %+v, want one catch-up firing that missed 10079", evs)
+	}
+}
+
 // TestFailedRunRetriesThenSettles is the firing record settling failures
 // (ADR-010 Amendment 1): a failed run spends an attempt and is retried
 // after a backoff while retries remain, then the firing settles and

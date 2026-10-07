@@ -122,6 +122,96 @@ func TestNextFiringFallOverlap(t *testing.T) {
 		"2026-11-01 01:00 CDT", "2026-11-01 01:30 CDT", "2026-11-01 01:00 CST", "2026-11-01 01:30 CST", "2026-11-01 02:00 CST")
 }
 
+// forwardWalk is the reference recovery walk: one NextFiring per due time.
+// It is the oracle CatchUp is checked against, and too slow for the clock
+// itself (scheduled-runs review on #650, finding 1).
+func forwardWalk(t *testing.T, p SchedulePolicy, after, now time.Time) (time.Time, int) {
+	t.Helper()
+	newest, n := after, 0
+	for {
+		next, err := p.NextFiring(newest)
+		if err != nil {
+			t.Fatalf("NextFiring(%v): %v", newest, err)
+		}
+		if next.After(now) {
+			return newest, n
+		}
+		newest, n = next, n+1
+	}
+}
+
+// TestCatchUpMatchesTheForwardWalk: CatchUp finds the same newest due time
+// and the same count as stepping NextFiring forward, across both
+// daylight-saving edges, either-day matching, a day boundary on each side
+// and an empty span.
+func TestCatchUpMatchesTheForwardWalk(t *testing.T) {
+	t.Parallel()
+	chi := mustZone(t, "America/Chicago")
+	tests := []struct {
+		name       string
+		cron       string
+		tz         string
+		after, now time.Time
+	}{
+		{"minutely across the spring gap", "* * * * *", "America/Chicago", time.Date(2027, 3, 13, 22, 0, 0, 0, chi), time.Date(2027, 3, 14, 5, 0, 0, 0, chi)},
+		{"minutely across the fall overlap", "* * * * *", "America/Chicago", time.Date(2026, 10, 31, 22, 0, 0, 0, chi), time.Date(2026, 11, 1, 4, 30, 0, 0, chi)},
+		{"interval in the spring gap", "*/15 * * * *", "America/Chicago", time.Date(2027, 3, 14, 1, 40, 0, 0, chi), time.Date(2027, 3, 14, 3, 20, 0, 0, chi)},
+		{"fixed times in the spring gap", "0,30 2,3 * * *", "America/Chicago", time.Date(2027, 3, 13, 1, 0, 0, 0, chi), time.Date(2027, 3, 16, 1, 0, 0, 0, chi)},
+		{"fixed time in the fall overlap", "30 1 * * *", "America/Chicago", time.Date(2026, 10, 30, 12, 0, 0, 0, chi), time.Date(2026, 11, 3, 12, 0, 0, 0, chi)},
+		{"daily over three weeks", "17 6 * * *", "Etc/UTC", time.Date(2026, 10, 1, 6, 17, 0, 0, time.UTC), time.Date(2026, 10, 22, 7, 0, 0, 0, time.UTC)},
+		{"either day", "0 0 3 * 1", "Etc/UTC", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)},
+		{"now is exactly a due time", "17 6 * * *", "Etc/UTC", time.Date(2026, 10, 1, 6, 17, 0, 0, time.UTC), time.Date(2026, 10, 3, 6, 17, 0, 0, time.UTC)},
+		{"nothing missed", "17 6 * * *", "Etc/UTC", time.Date(2026, 10, 1, 6, 17, 0, 0, time.UTC), time.Date(2026, 10, 1, 6, 20, 0, 0, time.UTC)},
+		{"fixed offset", "*/20 17 * * 5", "-06:00", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := SchedulePolicy{Cron: tc.cron, Timezone: tc.tz, DSTAck: true}
+			wantNewest, wantMissed := forwardWalk(t, p, tc.after, tc.now)
+			newest, missed, err := p.CatchUp(tc.after, tc.now)
+			if err != nil {
+				t.Fatalf("CatchUp: %v", err)
+			}
+			if !newest.Equal(wantNewest) || missed != wantMissed {
+				t.Fatalf("CatchUp = %v, %d; the forward walk gives %v, %d", newest, missed, wantNewest, wantMissed)
+			}
+		})
+	}
+}
+
+// TestCatchUpOverALongOutage: a minutely job runs on elapsed time through
+// both offset changes, so six months down misses exactly the elapsed
+// minutes, and the newest due time is now. The forward walk would take
+// minutes here; CatchUp answers from the span, not from each due time.
+func TestCatchUpOverALongOutage(t *testing.T) {
+	t.Parallel()
+	chi := mustZone(t, "America/Chicago")
+	after := time.Date(2026, 10, 1, 0, 0, 0, 0, chi)
+	now := time.Date(2027, 4, 1, 0, 0, 0, 0, chi)
+	p := SchedulePolicy{Cron: "* * * * *", Timezone: "America/Chicago", DSTAck: true}
+	newest, missed, err := p.CatchUp(after, now)
+	if err != nil {
+		t.Fatalf("CatchUp: %v", err)
+	}
+	if want := int(now.Sub(after) / time.Minute); missed != want || !newest.Equal(now) {
+		t.Fatalf("CatchUp = %v, %d; want %v, %d", newest, missed, now, want)
+	}
+}
+
+// BenchmarkCatchUp is the cost the clock pays, under the store lock, to
+// recover a minutely schedule after two months down.
+func BenchmarkCatchUp(b *testing.B) {
+	p := SchedulePolicy{Cron: "* * * * *", Timezone: "America/Chicago", DSTAck: true}
+	after := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	now := after.AddDate(0, 2, 0)
+	for b.Loop() {
+		if _, _, err := p.CatchUp(after, now); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // TestOccupiesFiringSlot is ADR-010 Amendment 1's slot rule: only a
 // session of the current firing occupies, live or succeeded; a failed,
 // crashed or earlier-firing session occupies nothing.
@@ -185,6 +275,7 @@ func TestSettleRun(t *testing.T) {
 		{"retries used up settles", func(p SchedulePolicy) SchedulePolicy { p.Retries = 1; return p }, 1, RunFailed, "f1", true, false, false, 2},
 		{"past starting_deadline settles", func(p SchedulePolicy) SchedulePolicy { p.Retries = 3; p.StartingDeadline = time.Minute; return p }, 0, RunFailed, "f1", true, false, false, 1},
 		{"freeze freezes", func(p SchedulePolicy) SchedulePolicy { p.OnFailure = ScheduleOnFailureFreeze; return p }, 0, RunFailed, "f1", true, true, false, 1},
+		{"no starting_deadline: retries are not bounded in time", func(p SchedulePolicy) SchedulePolicy { p.Retries = 1; return p }, 0, RunFailed, "f1", false, false, true, 1},
 		{"cancelled settles without an attempt", func(p SchedulePolicy) SchedulePolicy { p.Retries = 2; return p }, 0, RunCancelled, "f1", true, false, false, 0},
 		{"success changes nothing", func(p SchedulePolicy) SchedulePolicy { return p }, 0, RunSucceeded, "f1", false, false, false, 0},
 		{"an earlier firing changes nothing", func(p SchedulePolicy) SchedulePolicy { return p }, 0, RunFailed, "f0", false, false, false, 0},

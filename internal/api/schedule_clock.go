@@ -128,6 +128,14 @@ func (p SchedulePolicy) NextFiring(after time.Time) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("cron %q in %s has no firing within %d days", p.Cron, p.Timezone, maxScheduleScanDays)
 }
 
+// CatchUp is the recovery walk: given the due time the clock was waiting
+// for (after) and the present (now), it returns the newest due time in
+// (after, now], or after when there is none, and how many due times fell in
+// that span.
+func (p SchedulePolicy) CatchUp(after, now time.Time) (newest time.Time, missed int, err error) {
+	return after, 0, nil
+}
+
 // firingsOn returns the firing instants of one local calendar day, sorted
 // and coalesced. day carries only the date (as UTC midnight).
 func (c cronSpec) firingsOn(day time.Time, loc *time.Location) []time.Time {
