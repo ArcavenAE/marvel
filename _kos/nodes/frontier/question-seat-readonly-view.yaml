@@ -33,8 +33,16 @@ content: |
   The design that builds on it is `docs/design/readonly-view.md` (marvel#609),
   and roles declare views in the manifest (`Role.Views`).
 
-  OPEN: the remedy for the held-cwd case (item 3); the same measurements on
-  Linux.
+  RULED AND BUILT: the operator ruled remedy (ii) for item 3 on 2026-10-06
+  (readonly-view.md, Basis): each refresh tells a seat holding a cwd in the
+  view to re-enter it and check `VIEW_SHA` (marvel#671,
+  `internal/team/view_notice.go`), and superseded trees are sealed after
+  delivery and a grace period (marvel#681, #690).
+
+  OPEN: remedy (iii), a read-only mount whose content changes under a held
+  cwd, which the same ruling kicked off; and the probe's measurements on
+  Linux, which the design leaves to CI (readonly-view.md section 9) rather
+  than to a re-run of this probe.
 edges:
   - target: question-seat-harness-state
     type: derives
