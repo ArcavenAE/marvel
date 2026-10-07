@@ -73,6 +73,12 @@ func noticeKey(sess api.Session) string { return sess.Key() + "/repo" }
 // when its pane is next quiet.
 func TestViewNoticeIsCoalescedAndNamesTheLatestCommit(t *testing.T) {
 	f, sess := noticeFixture(t, "test-vn-coalesce", 5*time.Second)
+	var origins []string
+	record := f.ctrl.Notify
+	f.ctrl.Notify = func(sess api.Session, text, origin string) error {
+		origins = append(origins, origin)
+		return record(sess, text, origin)
+	}
 
 	for _, sha := range []string{noticeShaOne, noticeShaTwo, noticeShaThree} {
 		f.moved(sess, sha)
@@ -103,6 +109,9 @@ func TestViewNoticeIsCoalescedAndNamesTheLatestCommit(t *testing.T) {
 	if len(f.notices) != 1 {
 		t.Errorf("a delivered notice was sent again: %v", f.notices)
 	}
+	if len(origins) != 1 || origins[0] != NoticeViewNotice {
+		t.Errorf("origins = %v, want the one send named %q so the daemon labels it a view notice", origins, NoticeViewNotice)
+	}
 }
 
 // A refused notice stays pending, says why, and is tried again on the next
@@ -110,7 +119,7 @@ func TestViewNoticeIsCoalescedAndNamesTheLatestCommit(t *testing.T) {
 func TestRefusedViewNoticeStaysPendingAndIsRetried(t *testing.T) {
 	f, sess := noticeFixture(t, "test-vn-refused", 5*time.Minute)
 	refusals := 2
-	f.ctrl.Notify = func(s api.Session, text string) error {
+	f.ctrl.Notify = func(s api.Session, text, _ string) error {
 		if refusals > 0 {
 			refusals--
 			return errors.New("refused: update menu")
@@ -264,5 +273,45 @@ func TestViewNoticeDeferralIsBoundedFromTheFirstMove(t *testing.T) {
 	}
 	if len(f.notices) != 1 {
 		t.Fatalf("notices = %d after %v of constant moves, want one at max_defer", len(f.notices), api.DefaultShiftMaxDefer)
+	}
+}
+
+// The notice goes to a seat that is running and to no other: a pending seat may
+// still be on a startup or permission prompt, and a seat in crashloop backoff
+// has no live pane to type into. A due notice stays pending and unsent, with no
+// refusal recorded, until the seat runs.
+func TestDueViewNoticeIsHeldForASeatThatIsNotRunning(t *testing.T) {
+	for _, state := range []api.SessionState{api.SessionPending, api.SessionCrashLoopBackOff} {
+		t.Run(string(state), func(t *testing.T) {
+			f, sess := noticeFixture(t, "test-vn-"+string(state), 10*time.Minute)
+			f.moved(sess, noticeShaOne)
+			setState := func(s api.SessionState) {
+				if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+					live.State = s
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			setState(state)
+
+			f.deliver()
+			f.clock.Advance(api.DefaultShiftMaxDefer + time.Minute)
+			f.quietSince(sess, f.clock.Now().Add(-time.Hour))
+			got := f.deliver()
+
+			if len(f.notices) != 0 {
+				t.Fatalf("a %s seat was sent %v", state, f.notices)
+			}
+			if n := got.ViewNotices[noticeKey(sess)]; !n.Pending() || n.Undelivered != "" {
+				t.Errorf("record = %+v, want pending, unsent and not marked refused", n)
+			}
+
+			setState(api.SessionRunning)
+			f.deliver()
+			if len(f.notices) != 1 {
+				t.Errorf("notices = %d once the seat runs, want the held one", len(f.notices))
+			}
+		})
 	}
 }

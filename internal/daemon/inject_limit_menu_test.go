@@ -14,6 +14,7 @@ import (
 	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/limitmenu"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 // The menu below is SYNTHETIC and test-only, like the limitmenu package's. It is
@@ -99,7 +100,7 @@ func TestNotifyIsRefusedWhileClaudeShowsTheLimitMenu(t *testing.T) {
 	d.limitMenu.Menus = []limitmenu.Sample{limitMenuSample()}
 	key := verifySeat(t, d, limitMenuSeat, "claude", "Switch to usage credits")
 
-	err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff")
+	err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff", team.NoticeMaxAge)
 	if err == nil || !strings.Contains(err.Error(), "usage-limit menu") {
 		t.Fatalf("Notify error = %v, want a refusal that names the usage-limit menu", err)
 	}

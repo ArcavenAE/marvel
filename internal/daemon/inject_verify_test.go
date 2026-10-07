@@ -11,6 +11,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 // A seat that prints its own screen, switches the tty's echo off, and reports
@@ -230,7 +231,7 @@ func TestNotifyIsRefusedWhileCodexShowsTheUpdateMenu(t *testing.T) {
 	d := newHandlerDaemon(t)
 	key := verifySeat(t, d, codexMenuSeat, "codex", "Update now")
 
-	err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff")
+	err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff", team.NoticeMaxAge)
 	if err == nil || !strings.Contains(err.Error(), "update menu") {
 		t.Fatalf("Notify error = %v, want a refusal that names the update menu", err)
 	}
@@ -248,7 +249,7 @@ func TestNotifyToACodexSeatWithoutTheMenuIsDelivered(t *testing.T) {
 	d := newHandlerDaemon(t)
 	key := verifySeat(t, d, quietSeat, "codex", "composer ready")
 
-	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff"); err != nil {
+	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff", team.NoticeMaxAge); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	waitCaptureHas(t, d, key, "got:please write your handoff")

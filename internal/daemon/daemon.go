@@ -442,17 +442,19 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	return d, nil
 }
 
-// notifyHandoff types the max-age handoff request into a seat. The request is
-// typed text like any inject, so it passes the same pre-flight: a codex seat on
+// notifyHandoff types a marvel notice into a seat: the max-age handoff request
+// or a view notice, named by origin and recorded as injector=marvel:<origin>.
+// The text is typed text like any inject, so it passes the same pre-flight: a codex seat on
 // its update menu since spawn reads as quiet, which is the seat this stage
 // picks, and a claude seat sitting on the usage-limit menu is refused too
 // (marvel#559).
-func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
+func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
+	injector := "transport=daemon injector=marvel:" + origin
 	if sess.PaneID == "" {
 		return fmt.Errorf("session %s has no pane", sess.Key())
 	}
 	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
-		emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
+		emitInjectRefused(d.events, sess, why, injector)
 		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
 	}
 	// The same bare-digit refusal as an inject, with no flag to lift it: a text
@@ -460,14 +462,14 @@ func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
 	// place.
 	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
 		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
-			emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
+			emitInjectRefused(d.events, sess, why, injector)
 			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
 		}
 	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
 	}
-	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
+	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, injector)
 	return nil
 }
 

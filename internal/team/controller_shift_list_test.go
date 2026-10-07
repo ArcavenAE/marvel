@@ -61,7 +61,7 @@ func newListFixture(t *testing.T, ws string, role api.Role) *listFixture {
 	ctrl.now = f.clock.Now
 	f.ring = events.NewRing(0)
 	ctrl.Events = f.ring
-	ctrl.Notify = func(sess api.Session, text string) error {
+	ctrl.Notify = func(sess api.Session, text, _ string) error {
 		f.notices = append(f.notices, sess.Key()+": "+text)
 		return nil
 	}
@@ -800,7 +800,7 @@ func TestMaxAgeAsksSeatAtAnOlderGeneration(t *testing.T) {
 func TestHandoffMissingCarriesTheRefusalCause(t *testing.T) {
 	const cause = "refused: codex is showing its update menu, so nothing was typed"
 	f := newListFixture(t, "test-maxage-refused", maxAgeRole(t.TempDir()))
-	f.ctrl.Notify = func(api.Session, string) error { return errors.New(cause) }
+	f.ctrl.Notify = func(api.Session, string, string) error { return errors.New(cause) }
 	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
 
 	f.evaluate()
@@ -903,7 +903,7 @@ func TestHandoffDirectoryExistsWhenNoticeIsSent(t *testing.T) {
 	dir := filepath.Join(base, s.Name)
 
 	var seen []error
-	f.ctrl.Notify = func(api.Session, string) error {
+	f.ctrl.Notify = func(api.Session, string, string) error {
 		info, err := os.Stat(dir)
 		if err == nil && !info.IsDir() {
 			err = errors.New("not a directory")

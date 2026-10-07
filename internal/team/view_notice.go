@@ -20,6 +20,13 @@ import (
 // start of the re-entry grace are recorded on the team, so a restart neither
 // forgets an undelivered notice nor starts a grace early.
 
+// The origins a Notify caller names. The daemon records them as
+// injector=marvel:<origin>.
+const (
+	NoticeMaxAge     = "max-age"
+	NoticeViewNotice = "view-notice"
+)
+
 // shortCommit is how many characters of a commit the notice names.
 const shortCommit = 12
 
@@ -135,7 +142,7 @@ func (c *Controller) sendViewNotice(sess api.Session, text string) error {
 	if c.Notify == nil {
 		return fmt.Errorf("no notifier")
 	}
-	return c.Notify(sess, text)
+	return c.Notify(sess, text, NoticeViewNotice)
 }
 
 // updateViewNotice applies fn to the live record of one notice under the

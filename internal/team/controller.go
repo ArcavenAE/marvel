@@ -92,9 +92,11 @@ type Controller struct {
 
 	// Notify delivers a line of text to a session's pane, as `marvel inject`
 	// does. The max-age trigger uses it to ask a seat for its handoff
-	// (design D5 step 1). Nil means no delivery: the request is still
-	// recorded, and its event says the notice did not reach the pane.
-	Notify func(sess api.Session, text string) error
+	// (design D5 step 1), and the view notice uses it to say a view moved. The
+	// origin names which, so the inject record and any refusal carry the right
+	// injector. Nil means no delivery: the request is still recorded, and its
+	// event says the notice did not reach the pane.
+	Notify func(sess api.Session, text, origin string) error
 
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time

@@ -8,6 +8,7 @@ import (
 	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/limitmenu"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 // A menu digit is text that starts with "1", "2" or "3" after leading
@@ -266,7 +267,7 @@ func TestNotifyHandoffRefusesABareDigitItCannotRuleOut(t *testing.T) {
 	key := verifySeat(t, d, quietSeat, "claude", "composer ready")
 
 	for _, text := range []string{"3", "2", " 1", "3 now"} {
-		err := d.teamCtrl.Notify(sessionOf(t, d, key), text)
+		err := d.teamCtrl.Notify(sessionOf(t, d, key), text, team.NoticeMaxAge)
 		if err == nil || !strings.Contains(err.Error(), "cannot rule out") {
 			t.Fatalf("Notify(%q) error = %v, want the cannot-rule-out refusal", text, err)
 		}
@@ -279,7 +280,7 @@ func TestNotifyHandoffRefusesABareDigitItCannotRuleOut(t *testing.T) {
 		t.Errorf("%d refusals recorded, want 4", len(refused))
 	}
 
-	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff"); err != nil {
+	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "please write your handoff", team.NoticeMaxAge); err != nil {
 		t.Fatalf("a non-digit handoff was refused: %v", err)
 	}
 	waitCaptureHas(t, d, key, "got:please write your handoff")
@@ -290,14 +291,14 @@ func TestNotifyHandoffRefusesABareDigitItCannotRuleOut(t *testing.T) {
 func TestNotifyHandoffDeliversADigitWhereTheMenuIsRuledOut(t *testing.T) {
 	d := bareDigitDaemon(t)
 	key := verifySeat(t, d, idleComposerSeat(t), "claude", "auto mode unavailable")
-	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "2"); err != nil {
+	if err := d.teamCtrl.Notify(sessionOf(t, d, key), "2", team.NoticeMaxAge); err != nil {
 		t.Fatalf("Notify to an idle composer: %v", err)
 	}
 	waitCaptureHas(t, d, key, "got:2")
 
 	d2 := newHandlerDaemon(t)
 	key2 := verifySeat(t, d2, quietSeat, "claude", "composer ready")
-	if err := d2.teamCtrl.Notify(sessionOf(t, d2, key2), "3"); err != nil {
+	if err := d2.teamCtrl.Notify(sessionOf(t, d2, key2), "3", team.NoticeMaxAge); err != nil {
 		t.Fatalf("Notify with no sample held: %v", err)
 	}
 	waitCaptureHas(t, d2, key2, "got:3")
