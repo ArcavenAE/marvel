@@ -60,7 +60,9 @@ Which row applies to a seat depends on its command. marvel hands tmux one
 shell string (`buildCommand`, `internal/runtime/adapter.go`). When the shell
 or a wrapper execs the harness, the harness is the pane process and a raw
 `SIGSTOP` cannot hold it (row 2). When the command leaves a shell in front,
-the harness is that shell's child and does stay stopped (row 1). The
+the harness is that shell's child. A stop of the harness alone holds
+(row 1), but a stop that also reaches the shell, such as one sent to the
+whole tree or process group, is undone for the group (row 3). The
 reviewer measured this on 3.7c with zsh: `FOO=1 sleep 603; echo done` left
 zsh as the pane process and `sleep` as its child. So a pause cannot assume
 either case; it has to read `pane_pid` for each seat. A tool subprocess
