@@ -194,6 +194,18 @@ content: |
   by a seat on a CI run (internal/tmux/repaint_test.go:212, the assertion that
   the pane painted twice). Whether it is SIGWINCH coalescing is unmeasured.
 
+  STATE 2026-10-07 (harvest, finding-marvel-l1bh). A NEVER-USED seat is a
+  fourth state pane liveness cannot show: the pane and harness are up, and no
+  turn has ever run. Measured on one cluster: `LastHeartbeat` and `ContextAt`
+  at the zero time, CTX% and LLM reading `-`, and no transcript for the
+  session id, against a positive control (an idle used seat had both). The
+  signal holds only for statusline-fed roles; a role with no context feed
+  reads `-` used or not. Parking such a seat is `replicas = 0` in the
+  manifest: a bare `marvel scale` lasts only until the next apply, and the
+  scale itself emits no event, so the ring cannot say who parked a role or
+  why. Proposed, not built: a `team.scaled` event and a never-used marker or
+  once-per-change event.
+
 edges:
   - target: elem-agentic-resource-matrix
     type: supports

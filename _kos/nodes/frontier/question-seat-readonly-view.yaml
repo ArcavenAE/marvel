@@ -1,0 +1,46 @@
+id: question-seat-readonly-view
+type: question
+confidence: frontier
+title: "How marvel gives a seat a fixed read-only view of a repository's default branch"
+tags:
+  - marvel
+  - session
+  - workdir
+content: |
+  Seats that share one checkout move each other's HEAD with `git switch`
+  (aae-orc finding-165). A per-seat read-only view of the default branch,
+  made at spawn, would give a reading seat a tree no other seat can move.
+
+  MEASURED 2026-10-06 (finding-marvel-jj0s, one macOS host, APFS, git
+  2.55.0; no Linux run):
+
+  1. A git worktree is not a fixed view, however its files are protected.
+     HEAD and the index live in the shared `.git/worktrees/<name>/`, so
+     `checkout --detach`, `switch --detach`, `reset --soft` and `update-ref`
+     aimed at the view moved HEAD while the files stayed old, and a failed
+     checkout exited 0. Any seat can also unregister it with
+     `git worktree remove` without `--force`.
+  2. A read-only archive (`git archive` extract, directory write bit off,
+     outside any work tree, swapped by renaming a symlink) is fixed: edits
+     fail loudly, no repository is reachable from it, and 3,189 reads across
+     20 swaps saw no mixed or missing file. Create and refresh each cost
+     under 200 ms median on the orc.
+  3. One silent case remains: a reader that holds its working directory
+     inside the view keeps reading the old tree after a swap, with no
+     error, until that tree is removed. The probe's own seats hold a cwd
+     this way, so it is the common case.
+
+  The design that builds on it is `docs/design/readonly-view.md` (marvel#609),
+  and roles declare views in the manifest (`Role.Views`).
+
+  OPEN: the remedy for the held-cwd case (item 3); the same measurements on
+  Linux.
+edges:
+  - target: question-seat-harness-state
+    type: derives
+    note: "both prepare a seat's environment at spawn; this one is the tree the seat reads, that one is the harness state it starts with"
+provenance:
+  created_by: agent
+  session: architect-2026-10-07-harvest
+  created_at: "2026-10-07"
+  discovered_from: finding-marvel-jj0s

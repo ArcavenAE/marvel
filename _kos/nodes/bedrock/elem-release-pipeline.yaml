@@ -30,7 +30,15 @@ content: |
   - SHA-pinned actions
   - step-security harden-runner
 
-  Evidence: session-017 (initial), session-025 (tier-1 + linux/arm64).
+  **Tap push race (finding-070, renumbered from 039 on 2026-10-05):** two
+  release jobs from back-to-back merges raced on the tap push, and the loser
+  failed after its release was public, leaving the tap one release behind and
+  its attestation skipped. Fixed in `.github/workflows/ci.yml`: the release
+  job carries a concurrency group, and the tap push rebases onto the tap's
+  main and retries, up to five attempts.
+
+  Evidence: session-017 (initial), session-025 (tier-1 + linux/arm64),
+  finding-070 (tap push race).
 edges:
   - target: aae-orc::elem-rapid-development
     type: implements
