@@ -993,7 +993,7 @@ func getCmd() *cobra.Command {
 						return fmt.Errorf("invalid watch interval: %s", watchSec)
 					}
 				}
-				return watchSessionsLoop(time.Duration(secs)*time.Second, cols)
+				return watchSessionsLoop(time.Duration(secs)*time.Second, cols, explicit, noTrunc)
 			}
 			headerText := ""
 			if sessions && wantHeader(header) {
@@ -2591,6 +2591,7 @@ type watchSort struct {
 	columns      []sessionColumn
 	explicit     bool // the operator named the columns
 	noTrunc      bool // --no-trunc
+	showHeader   bool // print the daemon header on each frame
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -2877,20 +2878,30 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	}
 	fmt.Fprintf(&buf, "sort: %s    ?:help  q:quit\n\n", sortLabel)
 
+	// The header is read on every frame, so a daemon whose bus reading has
+	// expired or whose status changed is not shown stale; the width is read
+	// on every frame too, so a resize shows on the next tick.
+	header := ""
+	if ws.showHeader {
+		header = renderHeader(collectHeader(), time.Now())
+	}
+	fit := fitOptions{width: terminalWidth(), explicit: ws.explicit, noTrunc: ws.noTrunc}
+
 	sessions, err := fetchSessions()
 	if err != nil {
 		fmt.Fprintf(&buf, "⚠ daemon disconnected — waiting for reconnect\n\n")
+		buf.WriteString(header)
 		if len(ws.lastSessions) > 0 {
 			fmt.Fprintf(&buf, "last known state:\n")
 			sortSessions(ws.lastSessions, ws)
-			buf.WriteString(renderSessionTableCols(ws.lastSessions, ws.columns))
+			buf.WriteString(renderSessionsView(ws.lastSessions, ws.columns, "", fit))
 		}
 		return buf.String()
 	}
 
 	ws.lastSessions = sessions
 	sortSessions(sessions, ws)
-	buf.WriteString(renderSessionTableCols(sessions, ws.columns))
+	buf.WriteString(renderSessionsView(sessions, ws.columns, header, fit))
 	return buf.String()
 }
 
@@ -2900,15 +2911,16 @@ func newWatchState(cols []sessionColumn) *watchSort {
 	return &watchSort{column: "name", desc: false, columns: cols}
 }
 
-// newWatchScreen is the watch state for the live screen. Stub: the header and
-// the fit are not wired yet.
+// newWatchScreen is the watch state for the live screen: the same view plain
+// get sessions prints on a terminal, so it carries the daemon header and fits
+// the table to the width.
 func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
 	ws := newWatchState(cols)
-	ws.explicit, ws.noTrunc = explicit, noTrunc
+	ws.explicit, ws.noTrunc, ws.showHeader = explicit, noTrunc, true
 	return ws
 }
 
-func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
+func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, noTrunc bool) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("watch mode requires a terminal")
@@ -2935,7 +2947,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 		}
 	}()
 
-	ws := newWatchState(cols)
+	ws := newWatchScreen(cols, explicit, noTrunc)
 
 	render := func() {
 		output := renderWatch(ws, interval)
@@ -3011,17 +3023,27 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Name < sessions[j].Name
 	})
-	// The note and the warning are TTY chrome on the header's stream,
-	// stdout; off a terminal nothing is fitted, so neither prints into a pipe.
+	fmt.Print(renderSessionsView(sessions, cols, header, fit))
+	return nil
+}
+
+// renderSessionsView is the sessions screen both get sessions and its watch
+// mode print: the header, the table fitted to the width, then the warning and
+// the hidden-columns note. The note and the warning are TTY chrome on the
+// header's stream, stdout; off a terminal nothing is fitted, so neither
+// prints into a pipe.
+func renderSessionsView(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
 	res := fitSessionTable(sessions, cols, fit)
-	fmt.Print(header + res.table)
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString(res.table)
 	if res.warn != "" {
-		fmt.Println(res.warn)
+		b.WriteString(res.warn + "\n")
 	}
 	if res.hidden > 0 {
-		fmt.Printf("%d columns hidden at this width\n", res.hidden)
+		fmt.Fprintf(&b, "%d columns hidden at this width\n", res.hidden)
 	}
-	return nil
+	return b.String()
 }
 
 func printTeams(data json.RawMessage) error {

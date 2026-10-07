@@ -201,7 +201,7 @@ func TestWatchLastKnownFrameKeepsHeaderAndFit(t *testing.T) {
 	ws := newWatchScreen(cols, explicit, false)
 	ws.lastSessions = []api.Session{fitSession("agent-a")}
 	frame := renderWatch(ws, time.Second)
-	if !strings.Contains(frame, "last known state") || !strings.Contains(frame, "daemon") {
+	if !strings.Contains(frame, "last known state") || !strings.Contains(frame, "no status") {
 		t.Errorf("the frame should say the daemon is away and still print a header:\n%s", frame)
 	}
 	if !strings.Contains(frame, "columns hidden at this width") {
