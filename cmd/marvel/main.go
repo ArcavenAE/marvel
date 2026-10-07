@@ -2589,6 +2589,8 @@ type watchSort struct {
 	showHelp     bool
 	lastSessions []api.Session
 	columns      []sessionColumn
+	explicit     bool // the operator named the columns
+	noTrunc      bool // --no-trunc
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -2896,6 +2898,14 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 // ascending, in the selected columns.
 func newWatchState(cols []sessionColumn) *watchSort {
 	return &watchSort{column: "name", desc: false, columns: cols}
+}
+
+// newWatchScreen is the watch state for the live screen. Stub: the header and
+// the fit are not wired yet.
+func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
+	ws := newWatchState(cols)
+	ws.explicit, ws.noTrunc = explicit, noTrunc
+	return ws
 }
 
 func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
