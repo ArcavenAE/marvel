@@ -109,8 +109,6 @@ jobs:
         with:
           egress-policy: audit
           allowed-endpoints: >
-            apple-relay.cloudflare.com:443
-            apple-relay.fastly-edge.com:443
             h3.apis.apple.map.fastly.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
