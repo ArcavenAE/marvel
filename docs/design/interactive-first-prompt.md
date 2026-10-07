@@ -79,10 +79,21 @@ not say it. This design has marvel hand the harness that first turn at launch.
   `--append-system-prompt`, `isBareClaude`; codex and opencode get the
   equivalent). A wrapper owns its own command line, so marvel exports the
   composed text as `MARVEL_FIRST_PROMPT` and the wrapper may pass it on.
-- **D5. Resume keeps working.** When the role's args resume a harness session
-  (`--resume`, `--continue`, `-c`, opencode's `--session`), the first message
-  becomes the next turn of the resumed session. Claude and codex take both on
-  one command line; opencode needs P3.
+- **D5. Resume keeps working, per harness form.** The resume test is per
+  adapter, because the forms differ:
+  - **claude** (2.1.292): `-c`/`--continue` or `-r`/`--resume [id]` in the
+    args. The first message is the trailing positional, as for a fresh
+    launch, and becomes the next turn of the resumed session. Unprobed: P1
+    asks.
+  - **codex** (0.160.1): resume is the subcommand `codex resume [SESSION_ID]
+    [PROMPT]`, not a flag, and `-c` is `--config key=value`, never a resume.
+    marvel appends the first message only to `codex resume <id>`, where it
+    lands in `[PROMPT]`. For `codex resume --last` (a prompt conflicts with
+    `--last`, so appending it fails the launch) and for a bare `codex resume`
+    (an appended positional would land in `SESSION_ID`), marvel passes no
+    first message and records `source = skipped-resume` under D7. It does
+    not refuse at apply: that would be a new gate, and D6's reasoning holds.
+  - **opencode**: `--session` with `--prompt` is P3's question.
 - **D6. Apply says what will not happen.** Apply emits an advisory (not a
   refusal) for:
   - an interactive role declaring `runtime.prompt` on a runtime that cannot
@@ -95,9 +106,14 @@ not say it. This design has marvel hand the harness that first turn at launch.
   same judgement applied to the unresolved-window design (#667, ruling 2).
 - **D7. Every spawn records which first prompt it got.** An event,
   `session.first-prompt`, with `source` = `role`, `successor`,
-  `successor+role`, `wrapper-env` or `none`, and the byte length. It never
-  carries the text. A supervisor can then tell an idle seat that was never
-  prompted from one that was prompted and stalled.
+  `successor+role`, `wrapper-env`, `skipped-resume` or `none`, and the byte
+  length. It never carries the text. The event records what marvel passed on
+  the command line, not what the harness took. A message that only fills an
+  input box (P3) or does not survive a first-run dialog (P1, P2) reads as
+  passed, so on its own the event separates "marvel passed nothing" from
+  "marvel passed something"; it cannot separate a seat that was never
+  prompted from one that was prompted and stalled. P1 to P3 decide how far a
+  passed message can be read as submitted, per harness.
 - **D8. Crash repair is a successor too.** Once #541 sets
   `MARVEL_PREDECESSOR` on crash repair, D2 applies to it unchanged. This
   design does not fold #541 in.
@@ -112,7 +128,7 @@ not say it. This design has marvel hand the harness that first turn at launch.
 | T4 | successor first prompt (D2, D3) | a shift successor's first message names the predecessor; with `shift.handoff` declared it names the resolved path; with a bus it ends with the inbox line; without one it does not; `successor_prompt = false` leaves only the role prompt; a first spawn gets only the role prompt | T1 |
 | T5 | apply advisories (D6) | the two advisory cases each emit one line at apply and refuse nothing | |
 | T6 | `session.first-prompt` event (D7) | each spawn emits exactly one, with the right source, and its message holds no prompt text | T1 |
-| T7 | resume composition (D5) | a role whose args carry `--resume <id>` launches with the resume flag and the first message both present | T1 |
+| T7 | resume composition (D5) | claude: args with `--resume <id>` and with `--continue` each launch with the resume flag and the first message both present. codex: `codex resume <id>` launches with the message as `[PROMPT]`; `codex resume --last` and a bare `codex resume` launch with no message and emit `source = skipped-resume`; a role carrying `-c key=value` is not read as resuming and gets the message as on a fresh launch | T1, T2 |
 
 T5 has no dependency and can ship first. T4 waits on T1 because the successor
 prompt rides the same channel. #541 is an edge into D8, not a ticket here.
@@ -121,8 +137,8 @@ Probes, each recording the harness version it ran against:
 
 | id | question |
 |---|---|
-| P1 | claude 2.1.292: does an interactive positional prompt submit at once? Does it still run after the workspace-trust dialog, and after the development-channel consent dialog, once each is answered? |
-| P2 | codex 0.160.1: the same questions for the interactive `[PROMPT]` |
+| P1 | claude 2.1.292: does an interactive positional prompt submit at once? Does it still run once each screen that can stand in front of the composer is answered: the workspace-trust dialog, the development-channel consent dialog, the "Teach auto mode" setup prompt (Yes preselected, which took a stray Enter on 2026-10-07), and the usage-limit menu? Does it combine with `--resume <id>` and `--continue` (D5)? |
+| P2 | codex 0.160.1: the same questions for the interactive `[PROMPT]`, and for `codex resume <id> [PROMPT]` |
 | P3 | opencode 1.18.15: does `--prompt` submit, or only fill the input box? Does it combine with `--session`? |
 | P4 | read only: how long is the longest declared `runtime.prompt` on the fleet's interactive roles? A command line has a length limit, so a very long prompt may need a file. |
 
@@ -133,9 +149,10 @@ Probes, each recording the harness version it ran against:
   composed from board state, mail, or any file another seat can write.
 - The predecessor key is a session name, already validated as one path
   element before it is used in a handoff path.
-- The first message goes on argv, so it shows in `ps` for the seat's user. It
-  must never carry a secret. A role prompt that does is a manifest defect, and
-  this design adds none.
+- The first message goes on argv, so it shows in `ps` for the seat's user.
+  For a wrapper (D4) the same text is in `MARVEL_FIRST_PROMPT`, which `ps eww`
+  shows to the same user. It must never carry a secret. A role prompt that
+  does is a manifest defect, and this design adds none.
 
 ## 6. Out of scope
 
@@ -149,8 +166,9 @@ Probes, each recording the harness version it ran against:
 2. The successor prompt is on by default, with an opt-out (D2, D3), rather than
    off by default with an opt-in. Recommended: on by default, because the
    failure it fixes is silent and fleet-wide.
-3. Apply warns rather than refuses (D6). Recommended: warn now. Revisit a
-   refusal once every live manifest is clean.
+3. Apply warns rather than refuses (D6, and D5's skipped resume forms).
+   Recommended: warn now. A later refusal would be a new gate and needs its
+   own ratified decision; revisit it once every live manifest is clean.
 
 Each recommendation is valid until 2026-10-21, or a Claude Code, codex or
 opencode release that changes how a first message is taken at launch,
