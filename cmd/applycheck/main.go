@@ -16,8 +16,8 @@
 // A team that declares no workdir is anchored at the root argument, which is
 // the move a workdirs upgrade checks for. Arguments past the second are
 // ignored. Any error panics, so the exit status
-// is nonzero and nothing is printed; the caller reads that as "does not parse
-// or apply".
+// is nonzero and standard output stays empty (the panic text goes to standard
+// error); the caller reads that as "does not parse or apply".
 //
 // It imports internal/api, so it must be built inside this module, from the
 // commit whose apply behavior the comparison is meant to reflect.

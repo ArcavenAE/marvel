@@ -64,7 +64,7 @@ func TestRolescheckRolesCarryTheDeclaredRoles(t *testing.T) {
 }
 
 // With no manifest argument, or one that does not read, parse or apply, the
-// command errors and prints nothing.
+// command errors and writes nothing to its output.
 func TestRolescheckErrorsOnABadManifest(t *testing.T) {
 	bad := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(bad, []byte("[workspace\nname = "), 0o600); err != nil {
@@ -76,7 +76,7 @@ func TestRolescheckErrorsOnABadManifest(t *testing.T) {
 			t.Errorf("run %v: no error, want one", args)
 		}
 		if buf.Len() != 0 {
-			t.Errorf("run %v printed %q before failing; a failed check prints nothing", args, buf.String())
+			t.Errorf("run %v printed %q before failing; a failed check writes nothing to its output", args, buf.String())
 		}
 	}
 }
