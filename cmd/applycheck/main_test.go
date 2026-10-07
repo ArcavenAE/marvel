@@ -92,7 +92,7 @@ func TestApplycheckErrorsOnABadManifest(t *testing.T) {
 			t.Errorf("run %v: no error, want one", args)
 		}
 		if buf.Len() != 0 {
-			t.Errorf("run %v printed %q before failing; a failed check prints nothing", args, buf.String())
+			t.Errorf("run %v printed %q before failing; a failed check writes nothing to its output", args, buf.String())
 		}
 	}
 }
