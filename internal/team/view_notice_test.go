@@ -40,7 +40,7 @@ func noticeFixture(t *testing.T, ws string, lastActive time.Duration) (*listFixt
 
 func (f *listFixture) moved(sess api.Session, commit string) {
 	f.t.Helper()
-	f.ctrl.NoteViewMoved(sess, "repo", noticePath, commit)
+	f.ctrl.NoteViewMoved(sess, "repo", noticePath, "", commit)
 }
 
 func (f *listFixture) deliver() api.Team {

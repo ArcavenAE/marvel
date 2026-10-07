@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -480,6 +481,7 @@ func TestViewNoticesPersistAndAreCloned(t *testing.T) {
 	notice := ViewNotice{
 		Commit: "c2", Path: "/v/ws/s/repo/cur", PendingSince: at, Undelivered: "refused: update menu",
 		DeliveredCommit: "c1", DeliveredAt: at.Add(-time.Hour), GraceStart: at.Add(-time.Hour + time.Minute),
+		Superseded: []string{"c0", "c1"}, Sealed: []string{"c-1"},
 	}
 
 	s1 := NewStore()
@@ -509,12 +511,17 @@ func TestViewNoticesPersistAndAreCloned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := team.ViewNotices["ws/squad-worker-g1-0/repo"]; got != notice {
+	if got := team.ViewNotices["ws/squad-worker-g1-0/repo"]; got.Commit != notice.Commit || !reflect.DeepEqual(got, notice) {
 		t.Fatalf("notice after rehydrate = %+v, want %+v", got, notice)
 	}
+	team.ViewNotices["ws/squad-worker-g1-0/repo"].Superseded[0] = "mutated"
+	team.ViewNotices["ws/squad-worker-g1-0/repo"].Sealed[0] = "mutated"
 	team.ViewNotices["ws/squad-worker-g1-0/repo"] = ViewNotice{Commit: "mutated"}
 	live, _ := s2.GetTeam("ws/squad")
 	if live.ViewNotices["ws/squad-worker-g1-0/repo"].Commit != "c2" {
 		t.Fatal("a snapshot's notice map aliases the store's")
+	}
+	if got := live.ViewNotices["ws/squad-worker-g1-0/repo"]; got.Superseded[0] != "c0" || got.Sealed[0] != "c-1" {
+		t.Fatalf("a snapshot's tree lists alias the store's: %+v", got)
 	}
 }

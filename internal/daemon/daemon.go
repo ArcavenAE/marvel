@@ -437,6 +437,8 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	if layout, lerr := paths.Default(); lerr == nil {
 		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
 		d.views.OnMoved = teamCtrl.NoteViewMoved
+		d.views.Held = teamCtrl.ViewTreesHeld
+		teamCtrl.SealViewTrees = d.views.Seal
 		sessMgr.Views = d.views
 	}
 	return d, nil
@@ -455,7 +457,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	}
 	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 		emitInjectRefused(d.events, sess, why, injector)
-		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
 	}
 	// The same bare-digit refusal as an inject, with no flag to lift it: a text
 	// that starts with a menu digit is not typed into a pane the capture cannot
@@ -463,7 +465,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
 		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 			emitInjectRefused(d.events, sess, why, injector)
-			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+			return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
 		}
 	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
@@ -471,6 +473,15 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	}
 	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, injector)
 	return nil
+}
+
+// noticeNoun names what a refused notice was, for the error text the team
+// records: the max-age ask is a handoff request, anything else is a notice.
+func noticeNoun(origin string) string {
+	if origin == team.NoticeMaxAge {
+		return "handoff"
+	}
+	return "notice"
 }
 
 // Usage returns the daemon's context and token accountant. Exported for

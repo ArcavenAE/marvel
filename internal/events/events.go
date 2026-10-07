@@ -102,6 +102,10 @@ const (
 	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
 	// change of cause.
 	KindViewUnavailable Kind = "view.unavailable"
+	// KindViewRetentionHeld records a seat's view refresh paused because too
+	// many superseded trees are still readable, the seat not having been told
+	// yet. Once per change (marvel#609).
+	KindViewRetentionHeld Kind = "view.retention-held"
 	// KindWatchdogControl records one watchdog pattern's positive control at
 	// start: the pattern run against its own sample. Info on a pass, warning
 	// on a fail; never sample text (marvel#626).
@@ -378,6 +382,7 @@ var allKinds = []Kind{
 	KindViewRefreshed,
 	KindViewRefreshFailed,
 	KindViewUnavailable,
+	KindViewRetentionHeld,
 	KindWatchdogControl,
 	KindWatchdogUncovered,
 	KindDaemonEnvScrubbed,

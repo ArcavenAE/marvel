@@ -113,7 +113,17 @@ func (b *Builder) Refresh(ctx context.Context) (Result, error) {
 	trees := filepath.Join(b.Dir, treesName)
 	final := filepath.Join(trees, sha)
 	built := false
-	if _, err := os.Lstat(final); err != nil {
+	info, err := os.Lstat(final)
+	if err == nil && !treeIntact(info) {
+		// The ref came back to a commit whose tree was sealed, or whose seal was
+		// interrupted. Either is a skeleton with files missing, so the tree is
+		// built again rather than pointed at.
+		if rerr := forceRemove(final); rerr != nil {
+			return Result{}, &RefreshError{Step: StepExtract, Err: rerr}
+		}
+		err = os.ErrNotExist
+	}
+	if err != nil {
 		if err := b.extract(ctx, mirror, sha, trees, final); err != nil {
 			return Result{}, &RefreshError{Step: StepExtract, Err: err}
 		}
@@ -560,4 +570,75 @@ func cleanGitEnv() []string {
 		out = append(out, kv)
 	}
 	return append(out, "GIT_TERMINAL_PROMPT=0")
+}
+
+// Seal hollows the superseded tree trees/<sha>: every file is deleted, the
+// directories stay, and each directory is set to mode 000, deepest first. A
+// seat still holding a working directory there gets an error on every read
+// instead of an empty answer. It refuses the tree cur names and anything that
+// is not a commit id, and a tree that is already sealed or gone is not an
+// error, so a retry or a restart may repeat it.
+func (b *Builder) Seal(sha string) error {
+	if !validCommitID(sha) {
+		return fmt.Errorf("seal: %q is not a full commit id", sha)
+	}
+	if b.current() == sha {
+		return fmt.Errorf("seal: %s is the tree cur names", sha)
+	}
+	tree := filepath.Join(b.Dir, treesName, sha)
+	info, err := os.Lstat(tree)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("seal %s: %w", sha, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("seal: %s is not a directory", tree)
+	}
+	if treeSealed(info) {
+		return nil
+	}
+	return sealTree(tree)
+}
+
+// treeSealed reports whether a tree's root is in the sealed state. The root is
+// the last directory sealTree closes, so mode 000 means the whole tree is done.
+func treeSealed(root fs.FileInfo) bool { return root.Mode().Perm() == 0 }
+
+// treeIntact reports whether a tree is as extraction left it. A built tree's
+// directories carry no write bit (makeReadOnly), and the root is the first
+// directory sealTree opens for deletion, so an owner-write bit on the root means
+// a seal started and may not have finished, and mode 000 means it did. Neither
+// is a tree to point cur at.
+func treeIntact(root fs.FileInfo) bool {
+	perm := root.Mode().Perm()
+	return perm != 0 && perm&0o200 == 0
+}
+
+// sealTree deletes every file and symlink under root, then closes each
+// directory, deepest first. Directories are opened top down first because the
+// tree is read-only, and the closing order keeps a parent traversable while its
+// children are closed.
+func sealTree(root string) error {
+	var dirs []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			dirs = append(dirs, p)
+			return os.Chmod(p, 0o700)
+		}
+		return os.Remove(p)
+	})
+	if err != nil {
+		return fmt.Errorf("seal %s: %w", root, err)
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := os.Chmod(dirs[i], 0); err != nil {
+			return fmt.Errorf("seal %s: %w", root, err)
+		}
+	}
+	return nil
 }
