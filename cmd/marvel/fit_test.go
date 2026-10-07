@@ -49,8 +49,8 @@ func TestFitDropsByPriorityAt80(t *testing.T) {
 	if w := widest(got.table); w > 80 {
 		t.Errorf("table is %d wide, want at most 80:\n%s", w, got.table)
 	}
-	if got.hidden != 14 {
-		t.Errorf("hidden = %d, want 14 (everything past the first three)", got.hidden)
+	if got.hidden != 15 {
+		t.Errorf("hidden = %d, want 15 (everything past the first three)", got.hidden)
 	}
 }
 
@@ -60,8 +60,8 @@ func TestFitDropsByPriorityAt120(t *testing.T) {
 	if want := []string{"AGENT NAME", "STATE", "HEALTH", "CTX%", "LAST-ACTIVE", "LLM", "TOUT", "RATE"}; !reflect.DeepEqual(fitHeaders(got.table), want) {
 		t.Errorf("columns at 120 = %v, want %v", fitHeaders(got.table), want)
 	}
-	if got.hidden != 9 {
-		t.Errorf("hidden = %d, want 9 (team, role, workdir and today's six)", got.hidden)
+	if got.hidden != 10 {
+		t.Errorf("hidden = %d, want 10 (team, role, workdir, ACTIVE%% and today's six)", got.hidden)
 	}
 }
 
@@ -69,7 +69,7 @@ func TestFitDropsByPriorityAt120(t *testing.T) {
 func TestFitDropsByPriorityAt200(t *testing.T) {
 	got := fitSessionTable([]api.Session{fitSession("agent-0")}, defaultSessionColumns(), fitOptions{width: 200})
 	want := []string{
-		"AGENT NAME", "STATE", "HEALTH", "CTX%", "LAST-ACTIVE", "LLM", "TOUT", "RATE", "TEAM", "ROLE", "WORKDIR",
+		"AGENT NAME", "STATE", "HEALTH", "CTX%", "LAST-ACTIVE", "LLM", "TOUT", "RATE", "TEAM", "ROLE", "WORKDIR", "ACTIVE%",
 		"RUNTIME", "CPU%", "RSS", "DESK", "GEN", "WORKSPACE",
 	}
 	if !reflect.DeepEqual(fitHeaders(got.table), want) {
@@ -249,7 +249,7 @@ func getSessionsAtWidth(t *testing.T, width int, args ...string) string {
 // On a terminal, hiding columns says so on one line, with the count.
 func TestHiddenColumnsNoteOnTTY(t *testing.T) {
 	out := getSessionsAtWidth(t, 80)
-	if !strings.Contains(out, "12 columns hidden at this width") {
+	if !strings.Contains(out, "13 columns hidden at this width") {
 		t.Errorf("a narrow terminal should print the note:\n%s", out)
 	}
 	if strings.Count(out, "columns hidden") != 1 {

@@ -6,4 +6,4 @@ AGENT NAME  STATE    HEALTH   CTX%  LAST-ACTIVE
 agent-a     running  healthy  -     -
 agent-b     running  healthy  -     -
 agent-c     running  healthy  -     -
-12 columns hidden at this width
+13 columns hidden at this width

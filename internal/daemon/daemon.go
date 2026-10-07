@@ -318,6 +318,11 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Zero leaves the controller on its built-in default (10 minutes);
 	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.
 	teamCtrl.ShiftTimeout = opts.ShiftTimeout
+	if cfg, _ := config.Load(); cfg != nil {
+		if w, werr := cfg.WatchdogWindow(); werr == nil {
+			teamCtrl.SetClusterQuietWindow(w)
+		}
+	}
 	// Must follow OpenBolt: the controller reads its crash-loop state
 	// out of the same bolt file. Before this, a role frozen at
 	// MaxRestarts respawned on the first reconcile tick after restart.
@@ -1477,6 +1482,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
+		d.stampActivity(live, time.Now().UTC())
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
@@ -1545,6 +1551,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 		if err == nil {
 			one := []api.Session{sess}
 			d.stampLimitReading(one, time.Now().UTC())
+			d.stampActivity(one, time.Now().UTC())
 			result = one[0]
 		}
 	case "team":

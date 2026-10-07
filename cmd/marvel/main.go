@@ -973,7 +973,13 @@ func getCmd() *cobra.Command {
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
 		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
 
-A trailing * on a LAST-ACTIVE value means a statusline or heartbeat reported
+ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
+not quiet, under the role's activity_timeout or the cluster quiet window. It
+says "not quiet", not busy: a seat in a long tool call can read low. It is a -
+until the daemon has watched for the whole 15 minutes, and for a seat with no
+activity channel.
+
+A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
 not token flow. A value from the token stream carries no mark. On a terminal
 one legend line under the header says so when a mark is on screen; piped
@@ -2719,9 +2725,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name                     string
-	state, health, context, cpu, rss                            string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive string
+	workspace, team, role, generation, name                             string
+	state, health, context, cpu, rss                                    string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, active string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2841,6 +2847,7 @@ func newSessionRow(s api.Session) sessionRow {
 		rate:       rateCell(s, rateClock()),
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),
+		active:     activePctCell(s, lastActiveClock()),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
