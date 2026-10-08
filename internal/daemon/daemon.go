@@ -1653,7 +1653,9 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 			d.stampLimitReading(one, time.Now().UTC())
 			d.stampActivity(one, time.Now().UTC())
 			// A record with sources and no delivery predates the delivery
-			// field; say so and never guess (marvel#748). Read-time only.
+			// field; say so and never guess (marvel#748). The note is set on
+			// this copy at read time and is never stored: nothing here writes
+			// it back to the store.
 			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
 				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
 			}
