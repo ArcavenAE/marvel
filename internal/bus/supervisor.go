@@ -831,11 +831,16 @@ func (s *Supervisor) pidFileAlive() (int, bool) {
 	if err != nil || pid <= 0 {
 		return 0, false
 	}
-	if syscall.Kill(pid, 0) != nil {
+	if probePID(pid) != nil {
 		return 0, false
 	}
 	return pid, true
 }
+
+// probePID is the "is it alive" check: signal 0 sends nothing and reports
+// whether the process exists and may be signalled. A seam, so a test never
+// signals a pid it did not start.
+var probePID = func(pid int) error { return syscall.Kill(pid, 0) }
 
 func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
 	c, err := net.DialTimeout("tcp", s.mgr.bus.Listen, timeout)

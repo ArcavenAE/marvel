@@ -169,6 +169,11 @@ func main() {
 	}
 }
 
+// newDaemon builds the daemon the command goes on to start. A seam, so a test
+// of the guards in front of it can refuse to start one when a guard that should
+// have refused did not.
+var newDaemon = daemon.NewWithOptions
+
 // newRootCmd builds the command tree. Defining a flag assigns its default to
 // the variable it binds, so a second call resets the global flags: the daemon
 // reads the tree it was started under (cmd.Root()), and tests build one only
@@ -318,7 +323,7 @@ Examples:
 				return err
 			}
 
-			d, err := daemon.NewWithOptions(daemon.Options{
+			d, err := newDaemon(daemon.Options{
 				PidFile:      pidFilePath,
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,

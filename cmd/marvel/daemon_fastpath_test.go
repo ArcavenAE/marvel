@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemon"
 )
 
 // marvel#744: a second daemon is refused at once when the pidfile names a live
@@ -123,14 +124,41 @@ func runDaemonCmd(t *testing.T, pidFile string, hold bool) (time.Duration, error
 		t.Cleanup(func() { _ = holder.CloseBolt() })
 	}
 
+	// When the state file is not held, a start that no guard refused would go on
+	// to run a daemon inside the test process and wait for a signal. The
+	// constructor is replaced so such a start fails at once instead. When the
+	// file is held, the real constructor can only fail on the lock.
+	if !hold {
+		old := newDaemon
+		newDaemon = func(daemon.Options) (*daemon.Daemon, error) { return nil, errNotRefused }
+		t.Cleanup(func() { newDaemon = old })
+	}
+
 	root := newRootCmd()
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
 	root.SetArgs([]string{"daemon", "--socket", filepath.Join(sockDir, "s.sock"), "--log-file=", "--pidfile", pidFile, "--state-bolt", bolt})
-	start := time.Now()
-	err = root.Execute()
-	return time.Since(start), err
+	type outcome struct {
+		took time.Duration
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		start := time.Now()
+		err := root.Execute()
+		done <- outcome{time.Since(start), err}
+	}()
+	select {
+	case o := <-done:
+		return o.took, o.err
+	case <-time.After(30 * time.Second):
+		t.Fatal("the daemon command did not return in 30s: a guard did not refuse and a daemon may be running in this process")
+		return 0, nil
+	}
 }
+
+// errNotRefused is what the replaced constructor returns: no guard refused.
+var errNotRefused = errors.New("test: no guard refused this start, and the test will not start a daemon")
 
 // The whole command, not just the helper: with the lock held and the pidfile
 // naming a live daemon, the start is refused well under the bolt's wait.
