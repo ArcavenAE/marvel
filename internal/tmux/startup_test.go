@@ -1,11 +1,14 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -182,30 +185,133 @@ func TestAbsenceVerdictReadsTheProcessListOnce(t *testing.T) {
 	}
 }
 
-// "server exited unexpectedly" is what a tmux 3.4 client prints when the
-// server it reached is shutting down (the previous test's KillServer on the
-// same socket name). It is the server being gone, so it follows the same
-// rule as "no server running": absence with no live process, a wait with one.
-func TestServerExitedUnexpectedlyFollowsTheNoServerRule(t *testing.T) {
-	const text = "server exited unexpectedly"
-	gone := absentDriver(t, text, procLines())
-	if ok, err := gone.sessionExists("s"); err != nil || ok {
-		t.Errorf("no server alive: sessionExists = %v, %v; want false and no error", ok, err)
+// retryOnlyTexts are tmux answers seen from a tmux 3.4 client while a server
+// is starting or shutting down. While a server process is alive they are
+// retried within the bound; with none they are an outage error, and they are
+// never absence.
+var retryOnlyTexts = []string{"server exited unexpectedly", "no current target"}
+
+// textFake is a tmux that prints text until the ready file exists, then
+// answers has-session with success.
+func textFake(t *testing.T, text string, procs procList) (*startupFake, *Driver) {
+	t.Helper()
+	dir := t.TempDir()
+	f := &startupFake{t: t, dir: dir, ready: filepath.Join(dir, "ready"), log: filepath.Join(dir, "calls")}
+	body := "#!/bin/sh\necho \"$*\" >> " + f.log + "\n" +
+		"if [ -e " + f.ready + " ]; then exit 0; fi\n" +
+		"echo \"" + text + "\" >&2\nexit 1\n"
+	script := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	old := startupBound
-	startupBound = 200 * time.Millisecond
-	t.Cleanup(func() { startupBound = old })
-	alive := absentDriver(t, text, procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d"))
-	if ok, err := alive.sessionExists("s"); err == nil || ok {
-		t.Errorf("server alive: sessionExists = %v, %v; want an error after the bound", ok, err)
+	return f, &Driver{binary: script, socket: "unit", procs: procs}
+}
+
+var aliveProc = procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")
+
+func TestRetryOnlyTextWithALiveProcessThenARealAnswer(t *testing.T) {
+	for _, text := range retryOnlyTexts {
+		t.Run(text, func(t *testing.T) {
+			f, d := textFake(t, text, aliveProc)
+			f.readyAfter(100 * time.Millisecond)
+			ok, err := d.sessionExists("s")
+			if err != nil || !ok {
+				t.Errorf("sessionExists = %v, %v; want the real answer (true, nil)", ok, err)
+			}
+			if f.calls("has-session") < 2 {
+				t.Errorf("has-session ran %d times, want a retry", f.calls("has-session"))
+			}
+		})
 	}
 }
 
-// A live server that answers "no current target" is saying the session is not
-// there, like "can't find session": the server is the one answering.
-func TestNoCurrentTargetIsAnAbsentSessionNotAnOutage(t *testing.T) {
-	d := absentDriver(t, "no current target", procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d"))
-	if ok, err := d.sessionExists("s"); err != nil || ok {
-		t.Errorf("sessionExists = %v, %v; want false and no error", ok, err)
+func TestRetryOnlyTextWithNoLiveProcessIsAnErrorAndOneCall(t *testing.T) {
+	for _, text := range retryOnlyTexts {
+		t.Run(text, func(t *testing.T) {
+			f, d := textFake(t, text, procLines())
+			ok, err := d.sessionExists("s")
+			if err == nil || ok {
+				t.Errorf("sessionExists = %v, %v; want an error, never absence", ok, err)
+			}
+			if n := f.calls("has-session"); n != 1 {
+				t.Errorf("has-session ran %d times, want exactly 1", n)
+			}
+			if names, lerr := d.ListSessions(); lerr == nil {
+				t.Errorf("ListSessions = %v, nil; want an error, never an empty list", names)
+			}
+		})
+	}
+}
+
+func TestRetryOnlyTextPastTheBoundIsAnOutageWithinTheBoundPlus500ms(t *testing.T) {
+	for _, text := range retryOnlyTexts {
+		t.Run(text, func(t *testing.T) {
+			_, d := textFake(t, text, aliveProc)
+			start := time.Now()
+			ok, err := d.sessionExists("s")
+			if err == nil || ok {
+				t.Errorf("sessionExists = %v, %v; want an outage error", ok, err)
+			}
+			if took := time.Since(start); took > startupBound+500*time.Millisecond {
+				t.Errorf("took %v, want at most the bound plus 500ms", took)
+			}
+		})
+	}
+}
+
+// The full tmux stderr is logged once per retry-only hit, so a text that turns
+// out to mean something else can be read from the log.
+func TestRetryOnlyHitIsLoggedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	f, d := textFake(t, "server exited unexpectedly", aliveProc)
+	f.readyAfter(150 * time.Millisecond)
+	if _, err := d.sessionExists("s"); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(buf.String(), "server exited unexpectedly"); n != 1 {
+		t.Errorf("the hit was logged %d times, want once; log:\n%s", n, buf.String())
+	}
+}
+
+// Two NewSession calls on a socket with no server must both return nil and
+// leave exactly one session: a peer's has-session client can make an absent
+// server look alive, and the wait must resolve that, not refuse.
+func TestConcurrentNewSessionOnAnEmptySocketCreatesOneSession(t *testing.T) {
+	skipIfNoTmux(t)
+	for round := 0; round < 15; round++ {
+		dir, err := os.MkdirTemp("/tmp", "mxabs")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMUX_TMPDIR", dir)
+		t.Setenv("MARVEL_TMUX_SOCKET", "mxabs"+filepath.Base(dir))
+		d, err := NewDriver()
+		if err != nil {
+			t.Fatal(err)
+		}
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs <- d.NewSession("one")
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for e := range errs {
+			if e != nil {
+				t.Errorf("round %d: NewSession returned %v, want nil from both", round, e)
+			}
+		}
+		names, lerr := d.ListSessions()
+		if lerr != nil || len(names) != 1 || names[0] != "one" {
+			t.Errorf("round %d: sessions = %v, %v; want exactly [one]", round, names, lerr)
+		}
+		_ = d.KillServer()
+		_ = os.RemoveAll(dir)
 	}
 }
