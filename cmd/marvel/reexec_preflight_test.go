@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -318,5 +319,21 @@ func TestReadProcessArgsReadsThisProcessExactly(t *testing.T) {
 	}
 	if _, err := readProcessArgs(1 << 30); err == nil {
 		t.Error("a pid that does not exist must be an error, not an empty list")
+	}
+}
+
+// A crafted argc must not size the result: 0x7fffffff would reserve tens of
+// gigabytes before the read finds the buffer holds two arguments.
+func TestParseProcargs2DoesNotReserveWhatArgcClaims(t *testing.T) {
+	in := procargs2(0x7fffffff, "/m", 0, []string{"marvel", "daemon"})
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got, err := parseProcargs2(in)
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatalf("argc 0x7fffffff over two arguments must be refused, got %q", got)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
+		t.Fatalf("the parse allocated %d bytes for a %d byte buffer", grew, len(in))
 	}
 }
