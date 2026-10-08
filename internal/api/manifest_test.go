@@ -1533,7 +1533,6 @@ func TestCommandWordsReadable(t *testing.T) {
 		`claude --append-system-prompt="x y"`:    false,
 		"claude --model=x":                       true,
 		"claude --append-system-prompt=x":        true,
-		"FOO=1 claude --model x":                 false,
 		"claude --model x#y":                     false,
 		"claude --model=x*":                      false,
 		"claude ~/x":                             false,

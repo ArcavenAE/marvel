@@ -710,12 +710,15 @@ func (m *Manifest) ValidateRuntimes() ([]string, error) {
 }
 
 // shellTextChars are the characters that make text more than plain words to the
-// shell the launch hands a command to: an assignment, a quote, an escape, an
-// expansion, a list or pipe, a redirect, a group, a glob, a tilde, or a hash
-// that makes the rest a comment. It is the one definition of shell text: the
+// shell the launch hands a command to: a quote, an escape, an expansion, a list
+// or pipe, a redirect, a group, a glob, a tilde, or a hash that makes the rest a
+// comment. An equals sign is not among them: NAME=value is an assignment only as
+// a program name, which the pre-flight checks in the first field, and anywhere
+// else it hides nothing, because the adapter's flag reader already matches
+// --flag=value. It is the one definition of shell text: the
 // apply pre-flight reads it over a command's first field, and the claude
 // adapter over the whole command, because a flag can sit anywhere in it.
-const shellTextChars = "='\"\\$`;|&<>(){}*?[~#"
+const shellTextChars = "'\"\\$`;|&<>(){}*?[~#"
 
 // containsShellText reports whether text holds any shell-text character.
 func containsShellText(text string) bool { return strings.ContainsAny(text, shellTextChars) }
@@ -752,7 +755,7 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		return "", errors.New("empty")
 	}
 	cmd := fields[0]
-	if containsShellText(cmd) {
+	if containsShellText(cmd) || strings.ContainsRune(cmd, '=') {
 		return commandNotParsedAdvisory, nil
 	}
 	// Path, absolute or with a separator: must exist on disk.

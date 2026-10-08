@@ -199,6 +199,7 @@ func TestClaudePrepareSystemPromptOnlyForBareHarness(t *testing.T) {
 		{"launcher script", "/home/op/.marvel/manifests/cast-seat.sh", 0},
 		{"container run", "docker run --rm -it img claude", 0},
 		{"package runner", "npx claude", 0},
+		{"an env assignment before claude", "FOO=1 claude --model x", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
