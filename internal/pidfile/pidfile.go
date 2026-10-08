@@ -4,19 +4,29 @@
 package pidfile
 
 import (
-	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
-// Parse is a red stub with the behavior the readers had before they shared it:
-// it takes the first number and ignores what follows, and holds 64 bits.
+// Parse returns the pid in the text of a pidfile, and false when the text is not
+// a pid. A pid is a plain decimal number, surrounding whitespace aside, that is
+// positive and fits 32 bits: kill(2) and kern.procargs2 take 32 bits, so a
+// wider number would wrap to another process (this one, -1 for every process,
+// -5 for a process group), and text after the number means the file is not the
+// one a daemon wrote.
 func Parse(text string) (int, bool) {
-	var pid int
-	if _, err := fmt.Sscanf(strings.TrimSpace(text), "%d", &pid); err != nil || pid <= 0 {
+	digits := strings.TrimSpace(text)
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	pid, err := strconv.ParseInt(digits, 10, 32)
+	if err != nil || pid <= 0 {
 		return 0, false
 	}
-	return pid, true
+	return int(pid), true
 }
 
 // Read returns the pid the file at path holds, and zero when the path is empty,

@@ -99,11 +99,19 @@ func holderMessage(pid int, argv []string) string {
 		pid, strings.Join(argv, " "))
 }
 
+// runningMessage is what the fast path knows: the pidfile names a marvel daemon
+// that is running. It says nothing of any state file's lock, which the fast path
+// never opened, and which a daemon with its own --state-bolt does not hold.
+func runningMessage(pidFile string, pid int, argv []string) string {
+	return fmt.Sprintf("another marvel daemon is running against pidfile %s (pid %d, started as `%s`)",
+		pidFile, pid, strings.Join(argv, " "))
+}
+
 // refuseLiveDaemon is the fast path in front of the state lock (marvel#744). A
 // second daemon would otherwise wait five seconds on the lock before the
 // pidfile guard in Start could say a daemon is running. It refuses at once only
-// when the pidfile names an identified marvel daemon, with the message the lock
-// error gives. A dead pid, another user's process, a process that is not a
+// when the pidfile names an identified marvel daemon, and says what the pidfile
+// shows, not what the lock would. A dead pid, another user's process, a process that is not a
 // daemon, an argv that cannot be read and a pidfile that names nothing all
 // return nil: the lock stays the authority and decides.
 func refuseLiveDaemon(pidFile string, root *cobra.Command) error {
@@ -112,7 +120,7 @@ func refuseLiveDaemon(pidFile string, root *cobra.Command) error {
 		return nil
 	}
 	if argv, ok := identifiedHolder(pid, root); ok {
-		return errors.New(holderMessage(pid, argv))
+		return errors.New(runningMessage(pidFile, pid, argv))
 	}
 	return nil
 }
