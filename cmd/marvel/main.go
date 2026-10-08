@@ -1031,6 +1031,9 @@ func getCmd() *cobra.Command {
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
 		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
 
+AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
+the row has no creation time.
+
 ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It
 says "not quiet", not busy: a seat in a long tool call can read low. It is a -
@@ -2834,9 +2837,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name                             string
-	state, health, context, cpu, rss                                    string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, active string
+	workspace, team, role, generation, name                                  string
+	state, health, context, cpu, rss                                         string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2956,6 +2959,7 @@ func newSessionRow(s api.Session) sessionRow {
 		rate:       rateCell(s, rateClock()),
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),
+		age:        ageCell(s, lastActiveClock()),
 		active:     activePctCell(s, lastActiveClock()),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,

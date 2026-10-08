@@ -249,7 +249,7 @@ func getSessionsAtWidth(t *testing.T, width int, args ...string) string {
 // On a terminal, hiding columns says so on one line, with the count.
 func TestHiddenColumnsNoteOnTTY(t *testing.T) {
 	out := getSessionsAtWidth(t, 80)
-	if !strings.Contains(out, "13 columns hidden at this width") {
+	if !strings.Contains(out, "14 columns hidden at this width") {
 		t.Errorf("a narrow terminal should print the note:\n%s", out)
 	}
 	if strings.Count(out, "columns hidden") != 1 {
