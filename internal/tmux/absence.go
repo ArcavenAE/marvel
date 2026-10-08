@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -45,8 +46,6 @@ var connectingRE = regexp.MustCompile(`error connecting to .+ \((?:No such file 
 func classifyAbsence(text string) absence {
 	switch {
 	case strings.Contains(text, "no server running"):
-		return absenceNoServer
-	case strings.Contains(text, "server exited unexpectedly"):
 		return absenceNoServer
 	case connectingRE.MatchString(text):
 		return absenceNoSocket
@@ -153,8 +152,10 @@ func carriesSocket(fields []string, name string) bool {
 }
 
 // startupBound is how long a query waits for a server that is alive but has
-// not begun to listen. A variable so a test can shorten it.
-var startupBound = time.Second
+// not begun to listen. 590ms is max(500ms, 10 x 59ms), where 59ms is the
+// longest wait measured on tmux 3.4 on Linux (200 runs, one container). A
+// variable so a test can shorten it.
+var startupBound = 590 * time.Millisecond
 
 // tmuxRun is one tmux query: its stdout, the text tmux printed on stderr (or
 // the combined output) when it failed, and the error.
@@ -178,6 +179,14 @@ type tmuxRun func() (out []byte, text string, err error)
 func (d *Driver) whileStarting(run tmuxRun) (out []byte, text string, absent bool, err error) {
 	out, text, err = run()
 	retry, absent := d.startingVerdict(text, err)
+	logged := false
+	logHit := func() {
+		if retry && !logged && retryOnly(text) {
+			logged = true
+			log.Printf("debug: tmux retry-only answer while a server process is alive: %q", text)
+		}
+	}
+	logHit()
 	if !retry {
 		return out, text, absent, err
 	}
@@ -195,21 +204,51 @@ func (d *Driver) whileStarting(run tmuxRun) (out []byte, text string, absent boo
 			wait = 100 * time.Millisecond
 		}
 		out, text, err = run()
-		if retry, absent = d.startingVerdict(text, err); !retry {
+		retry, absent = d.startingVerdict(text, err)
+		logHit()
+		if !retry {
 			return out, text, absent, err
 		}
 	}
 }
 
-// startingVerdict reads one answer. retry is true for an absence answer while
-// a server process is alive; absent is true for an absence answer with none.
+// retryOnlyTexts are tmux answers that mean "try again while a server process
+// is alive" and never mean absence. With no live process they stay an error,
+// and after the bound they are an outage.
+//
+//   - "server exited unexpectedly": a tmux 3.4 client reached a server that
+//     was starting or shutting down and it closed the connection.
+//   - "no current target": PROVISIONAL. Measured once on tmux 3.4 under load;
+//     the mechanism is unconfirmed (it may mean a live server with zero
+//     sessions). It is not reclassified on inference.
+var retryOnlyTexts = []string{"server exited unexpectedly", "no current target"}
+
+func retryOnly(text string) bool {
+	for _, t := range retryOnlyTexts {
+		if strings.Contains(text, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// startingVerdict reads one answer. retry is true for an absence answer or a
+// retry-only answer while a server process is alive. absent is true only for
+// an absence answer with no live process; a retry-only answer is never absent.
 func (d *Driver) startingVerdict(text string, err error) (retry, absent bool) {
-	if err == nil || errors.Is(err, ErrTmuxTimeout) || classifyAbsence(text) == absenceNone {
+	if err == nil || errors.Is(err, ErrTmuxTimeout) {
+		return false, false
+	}
+	only := retryOnly(text)
+	if !only && classifyAbsence(text) == absenceNone {
 		return false, false
 	}
 	alive, perr := d.serverProcessAlive()
 	if perr != nil {
 		return false, false
+	}
+	if only {
+		return alive, false
 	}
 	return alive, !alive
 }

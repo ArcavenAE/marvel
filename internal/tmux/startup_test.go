@@ -185,12 +185,6 @@ func TestAbsenceVerdictReadsTheProcessListOnce(t *testing.T) {
 	}
 }
 
-// retryOnlyTexts are tmux answers seen from a tmux 3.4 client while a server
-// is starting or shutting down. While a server process is alive they are
-// retried within the bound; with none they are an outage error, and they are
-// never absence.
-var retryOnlyTexts = []string{"server exited unexpectedly", "no current target"}
-
 // textFake is a tmux that prints text until the ready file exists, then
 // answers has-session with success.
 func textFake(t *testing.T, text string, procs procList) (*startupFake, *Driver) {

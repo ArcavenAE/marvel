@@ -300,7 +300,7 @@ func (d *Driver) sessionExists(name string) (bool, error) {
 	if errors.Is(err, ErrTmuxTimeout) {
 		return false, err
 	}
-	if strings.Contains(text, "can't find session") || strings.Contains(text, "no current target") || absent {
+	if strings.Contains(text, "can't find session") || absent {
 		return false, nil
 	}
 	return false, fmt.Errorf("has-session %s: %s: %w", name, strings.TrimSpace(text), err)
@@ -351,7 +351,12 @@ func (d *Driver) NewSession(name string) error {
 		return nil
 	}
 	if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
-		return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
+		// A concurrent NewSession for the same name can create it between
+		// the check above and this call; the session exists, which is what
+		// the caller asked for.
+		if !strings.Contains(string(out), "duplicate session") {
+			return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
+		}
 	}
 	// Raise the session's history-limit above tmux's 2000-line default so
 	// capture-pane scrapes and the adopt-path pipe-pane see full scrollback
