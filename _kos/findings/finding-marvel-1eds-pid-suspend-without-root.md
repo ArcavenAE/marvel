@@ -107,6 +107,10 @@ Recommendation:
 
 This recommendation is valid until 2026-10-22, or until the unattended re-run, whichever comes first; the architect re-checks it then.
 
+**Ruling, 2026-10-08, relayed by director:** the operator chose option (a), whose text was: "Don't run the root half. Re-run the pid_suspend case once, 10+ hours after any taskport prompt or in a fresh login; then check _developer dependence (needs a non-_developer user or host, your word), whether notarized marvel may carry cs.debugger, and a resume ledger". It covers the no-root line and the three checks above (the unattended re-run is part of the first). It does not cover holding `pid_suspend` as the candidate mechanism, which stays this finding's recommendation, not a ruling. The operator's note, verbatim: "dont run root right now, can run later".
+
+My reading, not the operator's words: the root half runs later only on a new ruling, and the UNKNOWN in section 3 is not one.
+
 ## Appendix: the helpers
 
 `psusp.c`, built with `cc -o psusp psusp.c`. The entitled copy is re-signed with `codesign -s - -f --entitlements ent.plist`, where `ent.plist` sets `com.apple.security.cs.debugger` to true:

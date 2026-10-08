@@ -1038,6 +1038,11 @@ func getCmd() *cobra.Command {
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.
 
+ACCT (opt-in, --columns acct) is a short key for the account a session spends against and
+that account's limit reading: 87% (seven_day) while fresh, stale once the reading
+is old, a - when none was read. Sessions on one account repeat the same cell; it is
+never summed or averaged across rows.
+
 ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It
 says "not quiet", not busy: a seat in a long tool call can read low. It is a -
@@ -2841,9 +2846,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name                                        string
-	state, health, context, cpu, rss                                               string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec string
+	workspace, team, role, generation, name                                              string
+	state, health, context, cpu, rss                                                     string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2966,6 +2971,7 @@ func newSessionRow(s api.Session) sessionRow {
 		age:        ageCell(s, lastActiveClock()),
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
+		acct:       acctCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
