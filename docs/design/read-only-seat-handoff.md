@@ -28,12 +28,19 @@ reach two of the three:
 |---|---|---|---|---|
 | codex | no (`-s read-only`) | yes | director MCP, tools pre-approved | yes (`codexSeeder`, `internal/runtime/codex.go:100`) |
 | crush | no: `allowed_tools` is `grep`, `ls`, `skill`, `view` | **no** | none | none |
-| opencode | only through `edit`, which is `ask` | not read | only from a project-local config | none |
+| opencode | only through `edit`, which is `ask` | not read | director MCP through the role's environment (corrected, see below) | none |
 
 - **Does a shell verb reach crush?** No. crush has no shell tool to run it
   with, and adding one would be the broad grant this design exists to avoid.
 - **Does it reach opencode?** It is unknown, and it would need a bash
   permission that the read did not cover.
+
+A correction to that read, made by its author the same day: opencode does get
+a director MCP today. The config arrives in the role's `runtime.env`, which
+marvel copies into the pane environment without reading it
+(`internal/runtime/adapter.go:494`). On another host it comes from the user's
+global opencode config instead. So an MCP channel exists today for codex and
+opencode, and only crush has none.
 
 So the shell verb survives only as a codex-only option (section 4). The seat
 side of the design moves to the channel all three harnesses can be given: an
@@ -100,10 +107,25 @@ refuses otherwise, with an event naming the reason:
      directory, symlinks included, and `rename` replaces a directory entry
      without writing through a link.
    - **Residual, stated.** Same-uid seats are not isolated from each other by
-     marvel. A seat that can write the handoff directory can still delete or
-     replace the finished file after marvel writes it. The gate makes
-     marvel's own write land only in the directory it recorded. Isolating
-     seats from each other is a sandbox question (curtain), not this design.
+     marvel. A seat that can write the handoff directory can still:
+     - delete or replace the finished file after marvel writes it;
+     - edit it in place, which keeps its inode, so no identity check sees
+       the change;
+     - force a refusal, by planting a link or swapping the directory before
+       the request or before the write, so the handoff escalates rather than
+       shifts;
+     - rename the directory after the write, so the successor reads a
+       different file at the declared path.
+
+     The gate makes marvel's own write land only in the directory it
+     recorded, and a forced refusal shows up as a named event rather than a
+     misplaced write. Isolating seats from each other is a sandbox question
+     (curtain), not this design.
+   - **One portability note.** `EvalSymlinks` refuses a handoff directory
+     under `$TMPDIR`, `/tmp` or a test's `t.TempDir()` on macOS, where `/var`
+     and `/tmp` are links into `/private`. No live template is affected,
+     since every one is under `~/.marvel`. Tests should resolve their temp
+     root first.
 
 The text is capped at a size the handoff tail read can hold several times
 over (proposed 64 KiB; `maxHandoffTail` reads 4096 bytes for the marker,
@@ -127,10 +149,10 @@ needs approval in each harness:
   setting.
 - **crush:** needs a seeder first, the same treatment as codex, and an
   `allowed_tools` entry naming only the handoff tool. Not measured.
-- **opencode:** needs a seeder first, so the server no longer depends on a
-  project-local config that cannot follow a seat whose workdir changes.
-  Whether opencode prompts for MCP tool calls the way it does for `edit` is
-  not measured.
+- **opencode:** has an MCP channel today through the role's environment, so
+  the handoff server can be declared the same way, with no seeder. Whether
+  opencode prompts for MCP tool calls the way it does for `edit` is not
+  measured.
 
 ## 3. Answers to the three questions
 
@@ -139,15 +161,17 @@ needs approval in each harness:
    marvel seeds.
 2. **Is MCP `submit_handoff` the one channel all three share?** It is the
    only candidate that needs no new permission on any of them. For codex it
-   is the shape marvel already seeds. For crush and opencode it depends on two
-   checks that have not been run, listed in section 5. Until those pass, it is
+   is the shape marvel already seeds. opencode has an MCP channel today through
+   its role environment, and crush has none. Both depend on checks that have
+   not been run, listed in section 5. Until those pass, it is
    the recommended shared channel, not a measured one.
 3. **Which half of each design survives?**
    - From the first version: the daemon RPC, the heartbeat-token
      authentication, the rule that receipt is the signal, and the codex
      allow-rule result as a measured fallback.
    - From the per-harness read: the MCP tool as the seat side, seeding crush
-     and opencode, and marvel writing the file.
+     (opencode is reached through its role environment), and marvel writing
+     the file.
    - Dropped: the shell verb as the shared channel, the daemon-side store
      (marvel writes the declared file instead), and the pane fallback, since
      an MCP tool covers the case it was for.
@@ -233,16 +257,34 @@ days".
   `handoff.put`. marvel keeps no other copy, since the daemon-side store is
   gone (section 2). A handoff file a writable seat wrote for itself under
   D5 is the seat's own file, and marvel does not touch it.
-- **How marvel knows it wrote the file.** At write time marvel records the
-  path, the file's identity (device and inode), and the write time, beside
-  the directory identity it already records on the request (section 2).
-  The record moves into the successor's shift state with the rest of the
-  request, so a daemon restart keeps it.
-- **When and how.** A daemon sweep removes the file once it is older than the
-  retention. The removal goes through the same `os.Root` and identity checks
-  as the write. If the file at that path is no longer the one marvel wrote, it
-  is left alone and the event says so. Each removal emits `handoff.expired`,
-  naming the session, the path and the age.
+- **How marvel knows it wrote the file.** A device and inode pair is not
+  enough, because inodes are reused (ext4 reuses them readily). So at write
+  time marvel:
+  - puts a random nonce on the file's first line, `marvel-handoff-id:
+    <nonce>`, above the handoff text (the marker stays the last line);
+  - records the path, the nonce, the size, the device and inode, and the
+    birth time where the filesystem reports one, or the change time
+    otherwise.
+
+  The record sits beside the directory identity on the request (section 2),
+  and moves into the successor's shift state, so a daemon restart keeps it.
+- **When and how the sweep removes it,** once the file is older than the
+  retention, always inside the recorded directory's `os.Root`:
+  1. open the file `O_NOFOLLOW`, and read its first line and its `fstat`
+     from the open handle;
+  2. go on only if the nonce, the size and the identity all match the record;
+  3. rename the file to a private name inside the root
+     (`.marvel-expire-<nonce>`, created with no pre-existing entry), so a
+     same-uid swap between the check and the removal cannot redirect it;
+  4. confirm with `os.SameFile` that the private name is the file still held
+     open, then unlink the private name. If it is not, rename it back, leave
+     it, and say so in the event.
+
+  Each removal emits `handoff.expired`, naming the session, the path and the
+  age. Each refusal emits the same kind with the reason.
+- **Fails safe.** A device change, such as after a remount, or any mismatch
+  means the file never expires, and the event says why once. An edit in
+  place changes the size or the nonce line, so it fails safe the same way.
 - **Where it is set, and who can change it.**
   - The **admin default** is a cluster setting in marvel's cluster config,
     `handoff_retention`, with a default of `168h`. The person who runs the
@@ -273,14 +315,21 @@ operator.
     for. They must match exactly, or the request is refused.
   - **The checking principal is the daemon,** and the record it checks
     against is its own session store, not anything the caller sends.
-  - Operator callers: a socket client with no token reads any handoff, as an
-    operator reads everything else through the socket today.
-- **What this cannot enforce.** The file sits on the daemon host, readable
-  by the daemon's uid, and seats share that uid. "Team" is therefore enforced
-  on marvel's read path, not by file permissions. A seat that can read the
-  host's disk can read the file directly. This is the same residual as in
-  section 2: seat-to-seat isolation belongs to a sandbox (curtain), not to
-  marvel.
+  - **No tokenless reads.** `handoff.get` refuses a caller with no bound
+    token. A tokenless client cannot be treated as the operator, because every
+    seat is given `MARVEL_SOCKET` (`internal/runtime/adapter.go:445-454`), and
+    the socket has no peer-credential or operator check: a seat that left out
+    its token would otherwise read any team's handoff. The operator reads a
+    handoff the way the operator reads anything else on their own host, from
+    the file at its declared path.
+- **What is enforced, and what is not.** "Team" is enforced on one path
+  only: marvel's `handoff.get` verb, for callers that hold a bound token. It
+  is not enforced on direct reads. The file sits on the daemon host, readable
+  by the daemon's uid, and the seats share that uid, so a seat that can read
+  the host's disk can read any handoff file, whatever its team. Peer
+  credentials would not help, since they also report that one uid. This is
+  the same residual as in section 2: seat-to-seat isolation belongs to a
+  sandbox (curtain), not to marvel.
 
 ### 7.3 Scope: max-age rotations first (ruled)
 
@@ -290,8 +339,10 @@ The ruling: max-age rotations first. Context pressure and an operator
 ### 7.4 Seeding crush and opencode homes (recommended, not ruled)
 
 This is a new adapter responsibility, as codex's was in #308. Recommended:
-yes. The same seed fixes a seat whose MCP config is project-local and does
-not follow it when its workdir changes. This recommendation is valid until
+yes for crush, which has no MCP channel today. opencode already gets one
+through its role environment, so it needs no seeder for this design. The
+earlier argument that a seed would also fix opencode's channel after a workdir
+change is withdrawn: that rested on a claim its author has since corrected. This recommendation is valid until
 2026-10-22, or until the section 5 checks have run, whichever comes first;
 the architect re-checks it then.
 
