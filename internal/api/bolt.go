@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/asof"
 	bolt "go.etcd.io/bbolt"
 	boltErrors "go.etcd.io/bbolt/errors"
 )
@@ -36,6 +37,8 @@ import (
 // existed: the agent that sent it keeps sending, so it is may-be-stale in
 // the same way as the LastHeartbeat beside it, not orphaned. The two are
 // told apart by ContextRequests, which only the accountant writes.
+// Its spend slice (SpendOut, SpendPromptTokens, OutRate) is the one part
+// that does not survive: only the stream writes it, and the stream is gone.
 //
 // RoleHealth is the one bucket with no in-memory mirror here: its live
 // copy is team.Controller's roleHealth map, and the Store is only the
@@ -266,6 +269,14 @@ func (s *Store) rehydrate() error {
 				(sess.ContextSource == ContextSourceNone && sess.ContextRequests > 0) {
 				sess.SessionContext = SessionContext{}
 			}
+			// The spend slice never survives a load, whoever wrote the
+			// context. Nothing reads the stream of a session this daemon did
+			// not launch, so a spend kept here would be frozen for good, and
+			// a frozen figure is not a lower bound either. The occupancy of a
+			// heartbeat reading stays, because the agent refreshes it
+			// (aae-orc-88bm0).
+			sess.SpendOut, sess.SpendPromptTokens = nil, nil
+			sess.OutRate = asof.Cell[float64]{}
 			s.sessions[sess.Key()] = &sess
 			return nil
 		}); err != nil {
