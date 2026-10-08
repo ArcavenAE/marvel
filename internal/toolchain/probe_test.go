@@ -186,21 +186,70 @@ var (
 	ghCall = regexp.MustCompile(`\bgh\b[ \t]+(\S+)`)
 	// gitCall captures the subcommand, skipping the global options -C <dir>
 	// and -c <key=value>.
-	gitCall    = regexp.MustCompile(`\bgit\b(?:[ \t]+-[Cc][ \t]+\S+)*[ \t]+(\S+)`)
-	shComment  = regexp.MustCompile(`(?m)(^|[ \t])#.*$`)
+	gitCall = regexp.MustCompile(`\bgit\b(?:[ \t]+-[Cc][ \t]+\S+)*[ \t]+(\S+)`)
+	// shComment matches whole-line comments only. A # inside a quoted
+	// string follows other text on its line, and treating it as a comment
+	// would hide whatever comes after it.
+	shComment  = regexp.MustCompile(`(?m)^[ \t]*#.*$`)
 	localGitOK = map[string]bool{
 		"--version": true, "init": true, "config": true, "add": true, "diff": true,
 		"commit": true, "status": true, "log": true, "rev-parse": true, "show": true,
 	}
 )
 
+// shellViolations lists the gh and git calls in a run block that are not
+// local: gh other than --version, and git subcommands outside localGitOK.
+// Whole-line comments are skipped.
+func shellViolations(run string) []string {
+	run = shComment.ReplaceAllString(run, "")
+	var out []string
+	for _, m := range ghCall.FindAllStringSubmatch(run, -1) {
+		if m[1] != "--version" {
+			out = append(out, "runs gh "+m[1]+", want only gh --version")
+		}
+	}
+	for _, m := range gitCall.FindAllStringSubmatch(run, -1) {
+		if !localGitOK[m[1]] {
+			out = append(out, "runs git "+m[1]+", want only local subcommands")
+		}
+	}
+	return out
+}
+
+// shellViolations must catch a publishing call that follows a quoted #, which
+// is not a comment, and must let through a note that sits on a line of its
+// own and local git reads with global options.
+func TestShellViolationsReadsComments(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		run  string
+		bad  bool
+	}{
+		{"quoted hash then gh release", `echo "build #1" && gh release create x`, true},
+		{"single-quoted hash then gh release", `echo 'step #2'; gh release create x`, true},
+		{"quoted hash then git push", `echo "see #1" && git -C tap-repo push origin main`, true},
+		{"whole-line note naming gh", "# gh release create is what the real job does\nls", false},
+		{"indented note naming git push", "  # git push is not run here\nls", false},
+		{"git log with -C and -c", "git -C tap-repo -c user.name=probe log --oneline", false},
+		{"alias name is an unknown subcommand", "git config alias.p '!git push'\ngit p", true},
+		{"alias set with -c then run", "git -c alias.p='!git push' p", true},
+		{"gh version", "gh --version", false},
+		{"a step name with alias-free is fine", `echo "no alias is set"`, false},
+	} {
+		if got := len(shellViolations(tc.run)) > 0; got != tc.bad {
+			t.Errorf("%s: flagged = %v, want %v, for %q", tc.name, got, tc.bad, tc.run)
+		}
+	}
+}
+
 // The shell steps reach no remote and carry no credential: every gh the file
 // spells is gh --version, git runs only local subcommands, and no step sets a
 // token, logs in, or calls a network tool. Banning the word GITHUB_TOKEN is not
 // enough, since a step can name the token another way or publish with a
-// different command. Shell comments are ignored, so a note that names gh is
-// not a call. A git alias would rename a remote subcommand, so the word is
-// banned and an alias name shows up as an unknown subcommand.
+// different command. Whole-line comments are ignored, so a note that names gh
+// is not a call. A git alias renames a remote subcommand, and the alias name
+// shows up as an unknown subcommand.
 func TestProbeShellStepsStayLocal(t *testing.T) {
 	t.Parallel()
 	wf, raw := loadProbe(t)
@@ -215,20 +264,12 @@ func TestProbeShellStepsStayLocal(t *testing.T) {
 					}
 				}
 			}
-			run := shComment.ReplaceAllString(step.Run, "")
-			for _, m := range ghCall.FindAllStringSubmatch(run, -1) {
-				if m[1] != "--version" {
-					t.Errorf("job %s runs gh %s, want only gh --version", name, m[1])
-				}
-			}
-			for _, m := range gitCall.FindAllStringSubmatch(run, -1) {
-				if !localGitOK[m[1]] {
-					t.Errorf("job %s runs git %s, want only local subcommands %v", name, m[1], localGitOK)
-				}
+			for _, v := range shellViolations(step.Run) {
+				t.Errorf("job %s: %s", name, v)
 			}
 		}
 	}
-	for _, banned := range []string{"docker", "curl", "wget", "login", "alias", "action-gh-release", "github.token", "github.event.pull_request.head"} {
+	for _, banned := range []string{"docker", "curl", "wget", "login", "action-gh-release", "github.token", "github.event.pull_request.head"} {
 		if strings.Contains(text, banned) {
 			t.Errorf("the probe mentions %q, which reaches a remote or carries a credential", banned)
 		}
