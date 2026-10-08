@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,6 +30,24 @@ func startServer(t *testing.T, name string) {
 		t.Fatalf("start %s: %v: %s", name, err, out)
 	}
 	t.Cleanup(func() { _ = exec.Command("tmux", "-L", name, "kill-server").Run() })
+}
+
+// serverProcess reports whether a tmux server process started with -L name is
+// still in the process list. Removing a server's socket file hides it from
+// has-session while the process runs on, so a check of the socket alone cannot
+// tell a stopped server from an orphaned one.
+func serverProcess(t *testing.T, name string) bool {
+	t.Helper()
+	out, err := exec.Command("ps", "-axo", "args=").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "tmux") && strings.Contains(line, "-L "+name+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 func serverUp(name string) bool {
@@ -64,6 +83,12 @@ func TestSweepDeadStopsOnlyDeadTestServers(t *testing.T) {
 	}
 	if serverUp(dead) {
 		t.Errorf("the server of a finished test binary (%s) is still running", dead)
+	}
+	for end := time.Now().Add(5 * time.Second); serverProcess(t, dead) && time.Now().Before(end); {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if serverProcess(t, dead) {
+		t.Errorf("the server process of a finished test binary (%s) outlived the sweep", dead)
 	}
 	if !serverUp(live) {
 		t.Errorf("the server named for this live test binary (%s) was swept", live)
