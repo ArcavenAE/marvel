@@ -119,7 +119,7 @@ func TestFeatureMatrixAdapterTableMatchesTheCode(t *testing.T) {
 	}
 }
 
-var matrixCite = regexp.MustCompile("`((?:internal|cmd)/[A-Za-z0-9_./-]+\\.(?:go|md|yaml)):([0-9]+)(?:-([0-9]+))?`")
+var matrixCite = regexp.MustCompile("`((?:internal|cmd|docs|_kos)/[A-Za-z0-9_./-]+\\.(?:go|md|yaml)):([0-9]+)(?:-([0-9]+))?`")
 
 // Every file:line citation points at a file that exists and is long enough.
 func TestFeatureMatrixCitationsExist(t *testing.T) {
