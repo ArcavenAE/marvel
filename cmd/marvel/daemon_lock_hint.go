@@ -32,7 +32,7 @@ var liveSignal = func(pid int) error {
 // `marvel daemon`, read by the reader the reexec pre-flight uses. Otherwise the
 // pid is offered as a lead that may not be the holder, and nothing is claimed,
 // because a stale pidfile can name a reused pid. The cause stays in the chain.
-func lockedStateHint(err error, pidFile string, _ *cobra.Command) error {
+func lockedStateHint(err error, pidFile string, root *cobra.Command) error {
 	if err == nil || !errors.Is(err, api.ErrBoltLocked) {
 		return err
 	}
@@ -45,7 +45,7 @@ func lockedStateHint(err error, pidFile string, _ *cobra.Command) error {
 	// 0600, so another user's process, which signal 0 answers with EPERM, cannot
 	// have opened it.
 	if liveSignal(pid) == nil {
-		if argv, aerr := daemonArgs(pid); aerr == nil && isMarvelDaemon(argv) {
+		if argv, aerr := daemonArgs(pid); aerr == nil && isMarvelDaemon(root, argv) {
 			return fmt.Errorf("another marvel daemon holds the state lock (pid %d, started as `%s`); it is already running, and `marvel describe daemon` shows it: %w",
 				pid, strings.Join(argv, " "), err)
 		}
@@ -54,24 +54,23 @@ func lockedStateHint(err error, pidFile string, _ *cobra.Command) error {
 }
 
 // isMarvelDaemon reports whether argv is `marvel daemon ...`: the program is
-// named marvel and the first argument that is not a flag is daemon.
-func isMarvelDaemon(argv []string) bool {
+// named marvel and the command tree resolves the rest to the daemon command.
+// The tree knows which root flags take a value (`--cluster prod daemon`), so
+// no flag list is kept here.
+func isMarvelDaemon(root *cobra.Command, argv []string) bool {
 	if len(argv) == 0 || filepath.Base(argv[0]) != "marvel" {
 		return false
 	}
-	for _, a := range argv[1:] {
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		return a == "daemon"
-	}
-	return false
+	c, _, err := root.Find(argv[1:])
+	return err == nil && c != root && c.Name() == "daemon" && c.Parent() == root
 }
 
 // pidFromFile returns the pid the pidfile holds, and zero when the file is
 // off, missing, unreadable, or holds anything but a positive decimal number
-// (surrounding whitespace aside). A pid at or below zero is never returned:
-// kill(-5, 0) would signal a process group.
+// that fits 32 bits (surrounding whitespace aside). kill(2) and
+// kern.procargs2 take 32 bits, so a wider value would wrap to another process:
+// to this one, to -1 (every process) or to -5 (a process group). A pid at or
+// below zero is never returned.
 func pidFromFile(path string) int {
 	if path == "" {
 		return 0
@@ -80,11 +79,11 @@ func pidFromFile(path string) int {
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
+	pid64, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 32)
+	if err != nil || pid64 <= 0 {
 		return 0
 	}
-	return pid
+	return int(pid64)
 }
 
 // daemonPositionalArgs refuses a positional argument, because `marvel daemon` starts the
