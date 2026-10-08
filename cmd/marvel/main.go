@@ -289,6 +289,9 @@ Examples:
 			if err := paths.CheckSocketPath(sock); err != nil {
 				return err
 			}
+			if err := refuseLiveDaemon(pidFilePath, cmd.Root()); err != nil {
+				return err
+			}
 			// net.Listen needs run/ to exist, and it is the directory
 			// mode (0700) that protects the socket: nothing chmods the
 			// socket itself, so with umask 022 it is created 0755.

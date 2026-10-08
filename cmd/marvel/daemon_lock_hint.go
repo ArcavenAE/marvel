@@ -96,3 +96,6 @@ func daemonPositionalArgs(cmd *cobra.Command, args []string) error {
 	}
 	return err
 }
+
+// refuseLiveDaemon is a red stub; the green commit gives it a body.
+func refuseLiveDaemon(string, *cobra.Command) error { return nil }
