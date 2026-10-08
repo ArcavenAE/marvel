@@ -23,6 +23,9 @@ simulator, so it needs no model auth and costs no tokens.
   SSH key management, cluster configuration, upgrades, monitoring.
 - [SSH Keys](keys.md). Dedicated marvel keys, the `~/.marvel/` layout,
   permissions, `keys generate` / `show` / `doctor`, and auth precedence.
+- [Feature matrix](feature-matrix.md). Which features work for which harness,
+  with the evidence for each cell, and which ones need the bus, director or a
+  hub.
 - [Demo](demo.md). A four-act walkthrough of health, loss, recovery, context
   pressure and budgets, with the manifests it uses.
 - [examples/](../examples/). A manifest per scenario, each in TOML and YAML,
