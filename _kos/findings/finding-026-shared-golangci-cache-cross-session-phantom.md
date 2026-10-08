@@ -70,3 +70,14 @@ What is new against the first two instances:
 - **The hook did not run the pinned version.** It ran golangci-lint 2.12.2 (go1.26.2, the `/opt/homebrew/bin` binary first on `PATH`), while `mise.toml:30` pins 2.14.0 and `lefthook.yml:23` runs the bare `golangci-lint` name. Observed, with the cause unprobed. A shim for the pinned version also sits on `PATH` after the first.
 
 Cache-key candidates, neither probed here: (a) the key includes the absolute worktree path, so a removed worktree's entries replay under a path that no longer exists; (b) the key is not isolated per working tree, as the first instance supposes, so entries written for one checkout surface in another. A separate repro on two other versions did not confirm (a) in 6 trials, so this instance does not rest on it. If the version mismatch matters, the mise pin and the bare name are the place to look. The durable-fix candidates above stand, and this is a third vote for wiring `cache clean` into the lint preflight.
+
+## Fourth instance: an earlier sighting, with a reproduction that did not confirm the path key
+
+An earlier sighting of the same class, filed outside this repository and moved here, reported one `unparam` issue at `cmd/marvel/ctxforward.go:160:48`. On main today that is the `UnmarshalJSON` method of `resetInstant`, and the line above it reads `//nolint:unparam // json.Unmarshaler mandates the error return; never non-nil by design` (checked against main). So this has the same shape as the third instance: an issue reported on a line that carries a `nolint` for it. The sighting's own golangci-lint version is not recorded in what reached me.
+
+A reproduction, reported to me and not re-run for this section, tested whether the cache key includes the absolute worktree path. It did not confirm that in 6 trials:
+
+- **2.13.1:** the key is scoped to the path, so a second worktree misses the first one's entry and nothing replays.
+- **2.13.2:** the key does not depend on the path, but the entry stores a relative path.
+
+Those are two different mechanisms from the one the earlier instances suppose, and both ran on 2.13.x. The first three instances ran on 2.12.2, so the reproduction does not test that version directly. That is the open question: whether the replay depends on a version or on a cache layout that 2.13 changed, and a probe on 2.12.2 would answer it. This section proposes nothing further.
