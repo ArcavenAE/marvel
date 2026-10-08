@@ -86,7 +86,10 @@ checkout):
   the symlink returns EINVAL while rename(2) replaces it, about 1 in 100
   reads when swaps run back to back (measured 2026-10-06, and by the akocr
   build). Production swaps are minutes apart, so a failed lookup is rare,
-  transient, and loud. Linux will be measured by the CI job (#621).
+  transient, and loud. On both platforms the integration test
+  (`internal/view/view_integration_test.go`) holds content errors to zero,
+  bounds transient lookup failures at 0.1% of reads, and logs the count on
+  every PR; no Linux rate is recorded in this document.
 - **What this guards against is accident, not intent.** The seat runs as
   the same user, so it can still `chmod` a tree or replace `cur`. The same
   limit is stated in the probe brief and the finding.
@@ -258,13 +261,10 @@ Per the ruling, Linux is tested and does not hold the build up.
   replaced by a write to
   a read-only directory, and a held shell in a sealed tree getting a nonzero
   exit from `ls` and `cat` (the section 6 measurement).
-- **Linux coverage is CI; macOS coverage is local.** marvel's one PR test
-  job is `quality-gate` on `ubuntu-24.04` (`.github/workflows/ci.yml`), so
-  the integration test runs on Linux on every PR. No macOS PR test job
-  exists today; macOS is covered by local runs. The `macos-latest` job in
-  that file is the push-only signing job and runs no tests. A
-  `macos-latest` PR test job scoped to `internal/view` is planned (operator
-  ruling 2026-10-06) and being built. The swap is one
+- **Both platforms are CI.** `quality-gate` on `ubuntu-24.04` runs the
+  integration test on Linux on every PR, and `view-macos` on `macos-latest`
+  runs `go test ./internal/view/... -v -count=1 -race` on every PR (`.github/workflows/ci.yml`,
+  marvel#623, per the operator ruling of 2026-10-06). The swap is one
   `rename(2)` call in Go, the same on both, so neither `mv -h` nor `mv -T` is
   needed.
 - **The probe rig** (`scripts/probes/per-seat-readonly-view.sh`) is
