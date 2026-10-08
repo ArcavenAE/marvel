@@ -229,6 +229,9 @@ func TestServerExitedUnexpectedlyWithALiveProcessThenARealAnswer(t *testing.T) {
 }
 
 func TestServerExitedUnexpectedlyPastTheBoundIsAnOutageNeverAbsence(t *testing.T) {
+	old := startupBound
+	startupBound = 300 * time.Millisecond
+	t.Cleanup(func() { startupBound = old })
 	_, d := textFake(t, "server exited unexpectedly", aliveProc)
 	start := time.Now()
 	ok, err := d.sessionExists("s")
