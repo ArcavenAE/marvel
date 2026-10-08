@@ -133,3 +133,46 @@ func TestRateColumnInWideNotInDefault(t *testing.T) {
 		t.Error("the default table should not include rate")
 	}
 }
+
+// withWindow stamps the quiet window the daemon judged the seat under, as the
+// daemon does on every read (ActiveTicks.Window).
+func withWindow(s api.Session, w time.Duration) api.Session {
+	s.ActiveTicks.Window = w
+	return s
+}
+
+// RATE reads a seat quiet by the window the daemon stamped, so a role with a
+// short activity_timeout shows 0 at the point the daemon calls it quiet, not
+// ten minutes later (aae-orc-b49a7).
+func TestRateUsesAShortRoleWindow(t *testing.T) {
+	// Last sign of work 3m ago; the role's window is 2m, so the seat is quiet.
+	// Under the default 10m window the cell would still show a decaying number.
+	got := rateCells(t, withWindow(rateSession("a-short", 40, 30*time.Second, 3*time.Minute), 2*time.Minute))
+	if got["a-short"] != "0/s" {
+		t.Errorf("a seat quiet under its role's 2m window = %q, want 0/s", got["a-short"])
+	}
+}
+
+// A role with a long window keeps its number past the default ten minutes: the
+// seat is not quiet to the daemon, so the cell must not zero it.
+func TestRateUsesALongRoleWindow(t *testing.T) {
+	got := rateCells(t, withWindow(rateSession("a-long", 40, 30*time.Second, 15*time.Minute), 30*time.Minute))
+	if got["a-long"] != "14.1/s" {
+		t.Errorf("a seat not quiet under its role's 30m window = %q, want 14.1/s", got["a-long"])
+	}
+}
+
+// A session with no stamped window (a held role's synthetic row, or a daemon
+// that does not stamp one) falls back to the default window.
+func TestRateFallsBackToTheDefaultWindow(t *testing.T) {
+	got := rateCells(t,
+		withWindow(rateSession("a-unstamped-quiet", 40, 30*time.Second, 11*time.Minute), 0),
+		withWindow(rateSession("b-unstamped-live", 40, 30*time.Second, 9*time.Minute), 0),
+	)
+	if got["a-unstamped-quiet"] != "0/s" {
+		t.Errorf("quiet past the default window = %q, want 0/s", got["a-unstamped-quiet"])
+	}
+	if got["b-unstamped-live"] != "14.1/s" {
+		t.Errorf("not quiet inside the default window = %q, want 14.1/s", got["b-unstamped-live"])
+	}
+}
