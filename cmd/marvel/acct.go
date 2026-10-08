@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"path/filepath"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -22,7 +23,24 @@ func acctCell(s api.Session) string {
 	if s.LimitReading == "" {
 		return "-"
 	}
-	return acctKey(api.AccountKeyOf(s)) + " " + acctReading(s)
+	return acctKey(clientAccountKey(s)) + " " + acctReading(s)
+}
+
+// clientAccountKey is the account key with the home left as recorded. The
+// daemon folds a login's default directory into one spelling using its own
+// home; the client may run under another account (a --cluster client), so
+// folding here with the client's home would merge a default row with a row
+// that names the client's directory, a different login. Left unfolded, the
+// worst case is a split: the default row and the same login spelled out print
+// two keys. A false merge is the worse error for a column whose job is to
+// show which rows share an account.
+func clientAccountKey(s api.Session) api.AccountKey {
+	k := api.AccountKeyOf(s)
+	k.ConfigHome = ""
+	if s.AccountHome != "" {
+		k.ConfigHome = filepath.Clean(s.AccountHome)
+	}
+	return k
 }
 
 // acctKey is a short stable name for an account, so rows on one account can be
