@@ -175,8 +175,11 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	//
 	// On a command whose words cannot be read the flag may already be there, and
 	// a second is not harmless, so marvel adds none unless the manifest declares
-	// sources: those are passed last, which wins over any inline flag, and the
-	// log line says so (marvel#745).
+	// sources, which are appended. Whether claude receives that flag depends on
+	// the command (a pipe, a semicolon or a comment can leave it on another
+	// program or inside the comment, and marvel does not parse shell), so the log
+	// line says what marvel appended and nothing about what claude will do
+	// (marvel#745).
 	settingSources := ""
 	if isBareClaude(binary) {
 		switch {
@@ -184,7 +187,7 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 			// Held back, and logged with the prompt line above.
 		case !readable:
 			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
-			logLaunch("role %s: command is shell text; manifest settings_sources passed last and wins over any inline --setting-sources", ctx.Role.Name)
+			logLaunch("role %s: command is shell text; marvel appended --setting-sources %s from the manifest; whether claude receives it depends on the command", ctx.Role.Name, settingSources)
 		case !carriesFlag(args, binary, "--setting-sources"):
 			settingSources = "user,project,local"
 			if declared {
