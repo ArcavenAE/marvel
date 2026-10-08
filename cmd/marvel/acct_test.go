@@ -132,3 +132,36 @@ func TestAcctKeyDoesNotUseTheClientHome(t *testing.T) {
 		t.Errorf("the same row prints %q under one client HOME and %q under another", before, k)
 	}
 }
+
+// The key is built from the fields of the account, not from the text a view
+// prints for them: AccountKey.String spells an empty home "default-home", so a
+// home literally named that must not read as the default row.
+func TestAcctKeyKeepsTheDefaultHomeApartFromAHomeNamedLikeIt(t *testing.T) {
+	got, _ := acctCells(t,
+		acctSession("a-default", "", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctSession("b-literal", "default-home", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctSession("c-dotslash", "./default-home", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctSession("d-slash", "default-home/", api.ReadingFresh, "fresh 10% (five_hour)"),
+	)
+	def, _, _ := strings.Cut(got["a-default"], " ")
+	for _, n := range []string{"b-literal", "c-dotslash", "d-slash"} {
+		if k, _, _ := strings.Cut(got[n], " "); k == def {
+			t.Errorf("%s shares the key %q with the default-home row: a false merge", n, k)
+		}
+	}
+}
+
+// Homes that differ only in the directories above their last element are
+// different logins and keep different keys, so a key built from the base name
+// alone would merge them.
+func TestAcctKeyKeepsHomesWithOneBaseNameApart(t *testing.T) {
+	got, _ := acctCells(t,
+		acctSession("a-c", "/home/c/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctSession("b-d", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
+	)
+	k1, _, _ := strings.Cut(got["a-c"], " ")
+	k2, _, _ := strings.Cut(got["b-d"], " ")
+	if k1 == k2 {
+		t.Errorf("two homes with one base name share the key %q: a false merge", k1)
+	}
+}
