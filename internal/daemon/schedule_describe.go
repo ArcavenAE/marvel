@@ -28,15 +28,21 @@ type roleCondition struct {
 	Since   time.Time `json:"since,omitzero"`
 }
 
-// scheduleDescription is one scheduled role's block. NextDue stays null
-// until the schedule clock computes it; Held says why.
+// scheduleDescription is one scheduled role's block. NextDue is null until
+// the clock first sees the schedule (one reconcile tick after apply).
 type scheduleDescription struct {
-	Role            string           `json:"role"`
-	Cron            string           `json:"cron"`
-	Timezone        string           `json:"timezone"`
-	StaleAfter      string           `json:"stale_after"`
-	NextDue         *time.Time       `json:"next_due"`
-	Held            string           `json:"held,omitempty"`
+	Role       string     `json:"role"`
+	Cron       string     `json:"cron"`
+	Timezone   string     `json:"timezone"`
+	StaleAfter string     `json:"stale_after"`
+	NextDue    *time.Time `json:"next_due"`
+	// Firing is the current firing's id, which names its due time.
+	Firing    string `json:"firing,omitempty"`
+	Frozen    bool   `json:"frozen,omitempty"`
+	Suspended bool   `json:"suspended,omitempty"`
+	// DSTWarning is set while the zone observes daylight saving and the
+	// schedule has no dst_ack (design 2a, a tzdata change after apply).
+	DSTWarning      string           `json:"dst_warning,omitempty"`
 	Since           time.Time        `json:"since,omitzero"`
 	LastSucceededAt time.Time        `json:"last_succeeded_at,omitzero"`
 	Stale           bool             `json:"stale"`
@@ -49,9 +55,6 @@ type runDescription struct {
 	api.RunRecord
 	Duration string `json:"duration"`
 }
-
-// scheduleHeld matches the plan's HoldSchedule: no firing is ever due yet.
-const scheduleHeld = "held: the schedule does not fire yet; no firing is computed"
 
 func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 	t, err := d.store.GetTeam(key)
@@ -75,13 +78,22 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 			Cron:       role.Schedule.Cron,
 			Timezone:   role.Schedule.Timezone,
 			StaleAfter: role.Schedule.StaleAfter.String(),
-			Held:       scheduleHeld,
 			Runs:       []runDescription{},
+		}
+		if _, observes := api.ScheduleZoneFacts(role.Schedule.Timezone, time.Now().UTC(), time.Now().UTC()); observes && !role.Schedule.DSTAck {
+			s.DSTWarning = "timezone " + role.Schedule.Timezone + " observes daylight saving and the schedule has no dst_ack"
 		}
 		if st, ok := d.store.GetScheduleStatus(t.Key() + "/" + role.Name); ok {
 			s.Since = st.Since
 			s.LastSucceededAt = st.LastSucceededAt
 			s.Stale = st.Stale
+			s.Firing = st.Firing
+			s.Frozen = st.Frozen
+			s.Suspended = st.Suspended
+			if !st.NextDueAt.IsZero() {
+				next := st.NextDueAt
+				s.NextDue = &next
+			}
 			// Newest first: the run an operator asks about is the last one.
 			for i := len(st.History) - 1; i >= 0; i-- {
 				r := st.History[i]

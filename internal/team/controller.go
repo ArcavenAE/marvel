@@ -112,6 +112,9 @@ type Controller struct {
 
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
+	// jitter draws a firing's random delay up to its schedule's jitter;
+	// nil means a uniform draw. Tests set it to return zero.
+	jitter func(max time.Duration) time.Duration
 }
 
 // Snapshotter supplies the measured state one admission check evaluates.
@@ -466,8 +469,21 @@ func (c *Controller) ClearRoleHealthForRole(workspace, team, role string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := workspace + "/" + team + "/" + role
+	// reset-health also clears a schedule frozen by on_failure (design
+	// section 2). The next firing then runs as declared.
+	thawed := false
+	if st, ok := c.store.GetScheduleStatus(key); ok && st.Frozen {
+		if _, err := c.store.UpdateScheduleStatus(key, func(st *api.ScheduleStatus) bool {
+			st.Frozen = false
+			return true
+		}); err != nil {
+			log.Printf("warning: thaw schedule %s: %v", key, err)
+		} else {
+			thawed = true
+		}
+	}
 	if _, ok := c.roleHealth[key]; !ok {
-		return false
+		return thawed
 	}
 	delete(c.roleHealth, key)
 	c.forgetRoleHealth(key)
@@ -500,6 +516,9 @@ func (c *Controller) ReconcileOnce() {
 
 	teams := c.store.ListTeams()
 	c.dropStaleRefusals(teams)
+	// The clock writes firings before the roles are planned, so a firing
+	// that comes due this tick spawns this tick.
+	c.reconcileScheduleClock(teams)
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}
@@ -704,6 +723,12 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string
 		}
 	}
 	if role == nil {
+		return
+	}
+	// ADR-010 Amendment 1: a scheduled role's crash is a failed run, which
+	// the run record and the firing record settle (retries, on_failure).
+	// The restart policy never charges or freezes it.
+	if role.Schedule != nil {
 		return
 	}
 	roleKey := r.Workspace + "/" + r.Team + "/" + r.Role
@@ -1023,11 +1048,11 @@ const (
 	// under backoff, or not yet started. Spawning would hand a session a
 	// NATS_URL nothing answers on.
 	HoldBus HoldReason = "bus_unavailable"
-	// HoldSchedule means the role is on a schedule and spawns only when a
-	// firing is due. Until the schedule clock lands (S-3) no firing is ever
-	// due, so the role spawns nothing: without the hold it would run at
-	// apply as an ordinary Job, and a failed run would be refilled under a
-	// restart policy that does not apply to it (ADR-010 Amendment 1).
+	// HoldSchedule means the role is on a schedule and its firing record
+	// allows no spawn now: no firing is due yet, the firing settled, a
+	// retry is backing off, or on_failure froze the schedule. Without it a
+	// failed run would be refilled at once, under a restart policy that
+	// does not apply to a scheduled role (ADR-010 Amendment 1).
 	HoldSchedule HoldReason = "schedule"
 )
 
@@ -1063,6 +1088,9 @@ type RolePlan struct {
 	// startup report. It is plan metadata only — never emitted as an event, so
 	// it changes no reconcile behavior.
 	HoldDetail string
+	// Firing is the schedule firing a spawn is stamped with; empty for a
+	// role with no schedule.
+	Firing string
 
 	// admission is the admission bookkeeping applyRolePlan must perform — clear
 	// a stale hold, or latch and announce a refusal. Computed purely here,
@@ -1112,8 +1140,16 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	// holds its slot (ADR-010). Every other CountAlive caller in the tree
 	// is asking the liveness question and must keep using CountAlive.
 	actual := api.CountReplicaSlots(current)
+	var sched api.ScheduleStatus
+	if role.Schedule != nil {
+		// ADR-010 Amendment 1: for a scheduled role only sessions of the
+		// current firing occupy a slot.
+		sched, _ = c.store.GetScheduleStatus(t.Workspace + "/" + t.Name + "/" + role.Name)
+		actual = api.CountFiringSlots(current, sched.Firing)
+	}
 
 	plan := RolePlan{
+		Firing:     sched.Firing,
 		Workspace:  t.Workspace,
 		Team:       t.Name,
 		Role:       role.Name,
@@ -1142,11 +1178,7 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	}
 
 	switch {
-	case actual < desired && role.Schedule != nil:
-		// S-3 replaces this with the firing rule.
-		plan.Action = RoleHold
-		plan.Hold = HoldSchedule
-		plan.HoldDetail = "scheduled; the clock is S-3"
+	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:
 		// The bus gate comes first: a broker outage is not the role's fault,
@@ -1298,6 +1330,18 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		// nextIndex computes against live sessions only and `marvel get
 		// sessions` doesn't carry the ghost forward.
 		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, plan.Role)
+		// The same goes for a scheduled role's earlier firings: their
+		// finished rows are in the run history, so they go when the next
+		// firing's run starts. A live one (concurrency allow) stays.
+		if plan.Firing != "" {
+			for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, plan.Role) {
+				if s.Firing != plan.Firing && !s.State.CountsAsAlive() {
+					if err := c.sessMgr.Delete(s.Key()); err != nil {
+						log.Printf("reconcile: drop finished run %s: %v", s.Key(), err)
+					}
+				}
+			}
+		}
 		for i := 0; i < plan.Spawn; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, plan.Role, plan.Generation, c.nextIndex(t, role, plan.Generation))
 			sess := &api.Session{
@@ -1308,6 +1352,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Generation: plan.Generation,
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
+				Firing:     plan.Firing,
 			}
 			// A seat whose views are still building waits for a later tick: the
 			// build runs in the background, never under this lock.
@@ -1507,7 +1552,9 @@ func (c *Controller) evaluateHealth() {
 				Message:   fmt.Sprintf("heartbeat stale %d/%d failures", updated.FailureCount, role.HealthCheck.FailureThreshold),
 			})
 		}
-		if shouldApplyRestart {
+		// ADR-010 Amendment 1: the restart policy does not apply to a
+		// scheduled role; a stuck run ends at its deadline (S-4).
+		if shouldApplyRestart && role.Schedule == nil {
 			c.applyRestartPolicy(&updated, &t, role)
 		}
 	}
@@ -2234,7 +2281,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	// the live replacement that should take its place. See aae-orc-6kgq.
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
 	desired := role.Replicas
-	// A scheduled role spawns only through its firing (HoldSchedule), so a
+	// A scheduled role spawns only through its firing, in planRole, so a
 	// shift launches nothing for it and passes straight to draining.
 	if role.Schedule != nil {
 		desired = 0
@@ -2525,4 +2572,28 @@ func (c *Controller) IsShifting(teamKey string) bool {
 		return false
 	}
 	return t.Shift.Phase != api.ShiftNone
+}
+
+// holdForFiring reports whether a scheduled role's firing record withholds
+// a spawn, and if so writes the hold onto the plan.
+func (c *Controller) holdForFiring(st api.ScheduleStatus, plan *RolePlan) bool {
+	var detail string
+	switch {
+	case st.Frozen:
+		detail = "frozen by on_failure; marvel reset-health clears it"
+	case st.Firing == "" && st.NextDueAt.IsZero():
+		detail = "scheduled; next due not computed yet"
+	case st.Firing == "":
+		detail = "scheduled; next due " + st.NextDueAt.Format(time.RFC3339)
+	case st.Settled:
+		detail = fmt.Sprintf("firing %s settled; next due %s", st.Firing, st.NextDueAt.Format(time.RFC3339))
+	case c.nowUTC().Before(st.RetryAfter):
+		detail = fmt.Sprintf("firing %s retry after %s", st.Firing, st.RetryAfter.Format(time.RFC3339))
+	default:
+		return false
+	}
+	plan.Action = RoleHold
+	plan.Hold = HoldSchedule
+	plan.HoldDetail = detail
+	return true
 }
