@@ -641,7 +641,11 @@ func TestOpenBoltOnAHeldLockReportsErrBoltLocked(t *testing.T) {
 	defer func() { _ = holder.CloseBolt() }()
 
 	second := NewStore()
+	start := time.Now()
 	err := second.OpenBoltWithOptions(path, BoltOptions{LockTimeout: 100 * time.Millisecond})
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("the lock timeout option was ignored: the open took %v", took)
+	}
 	if err == nil {
 		t.Fatal("a second open of a locked file succeeded")
 	}

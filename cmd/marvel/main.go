@@ -259,7 +259,7 @@ func daemonCmd() *cobra.Command {
 		Short: "Start the marvel daemon",
 		// The command starts the daemon, so a positional argument it does not
 		// know is a mistake to report, not to ignore (marvel#606).
-		Args: cobra.NoArgs,
+		Args: daemonPositionalArgs,
 		Long: `Start the marvel daemon. Listens on a Unix socket for local access.
 Use --mrvl to also start the mrvl:// listener for remote access.
 
@@ -315,7 +315,7 @@ Examples:
 				Build:        thisBuild(),
 			})
 			if err != nil {
-				return err
+				return lockedStateHint(err, pidFilePath)
 			}
 
 			// Tee Go's log output into: stderr (only when interactive)

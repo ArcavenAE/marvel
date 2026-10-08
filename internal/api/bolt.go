@@ -11,6 +11,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	boltErrors "go.etcd.io/bbolt/errors"
 )
 
 // L2 (durable record) for marvel's authoritative state — bbolt-backed
@@ -108,8 +109,15 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 	if err := ensureParentDir(path); err != nil {
 		return err
 	}
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+	lockTimeout := opts.LockTimeout
+	if lockTimeout <= 0 {
+		lockTimeout = 5 * time.Second
+	}
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: lockTimeout})
 	if err != nil {
+		if errors.Is(err, boltErrors.ErrTimeout) {
+			return fmt.Errorf("open bbolt at %s: %w: %w", path, ErrBoltLocked, err)
+		}
 		return fmt.Errorf("open bbolt at %s: %w", path, err)
 	}
 

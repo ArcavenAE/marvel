@@ -134,3 +134,12 @@ func TestDaemonStatusIsPointedAtDescribeDaemon(t *testing.T) {
 		}
 	}
 }
+
+// A live process the caller may not signal (pid 1 as a normal user) still
+// counts as live: EPERM answers "it exists".
+func TestLockedStateTreatsAnUnsignalableLiveProcessAsLive(t *testing.T) {
+	err := lockedStateHint(lockedErr(), writePidfile(t, 1))
+	if !strings.Contains(err.Error(), "pid 1,") {
+		t.Errorf("pid 1 is alive and must be named:\n%v", err)
+	}
+}
