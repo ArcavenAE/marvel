@@ -45,8 +45,8 @@ func TestWatchdogReadsTheCapturedScreenAsLoggedOut(t *testing.T) {
 	}
 }
 
-// The same screen from a session reporting another version does not read
-// logged-out: a pattern is for the version it was captured on.
+// The same screen from a session reporting a version outside the pattern's
+// range does not read logged-out: a pattern is for the versions it covers.
 func TestWatchdogDoesNotApplyTheCapturedScreenToAnotherVersion(t *testing.T) {
 	r, screen := shippedRig(t)
 	p := r.seat("a", "claude", "2.1.294", 30*time.Minute, 0)

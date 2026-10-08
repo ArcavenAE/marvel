@@ -60,6 +60,10 @@ type watchdog struct {
 	// uncovered.
 	failed map[string]bool
 
+	// failedPats holds the patterns that failed their control, so a seat on any
+	// version a failed range pattern would have covered reads control-failed.
+	failedPats []panestate.Pattern
+
 	mu          sync.Mutex
 	lastCapture map[string]time.Time
 	rolled      map[string]string
@@ -90,7 +94,8 @@ func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, 
 // start, never per pass, so a failed pattern can never match a pane
 // (docs/design/watchdog-control-and-uncovered.md sections 2, 3 and 5).
 func (w *watchdog) control() {
-	results := panestate.Control(w.sets, w.sample)
+	all := w.sets
+	results := panestate.Control(all, w.sample)
 	kept := make([]panestate.Pattern, 0, len(w.sets))
 	passed := map[string]int{}
 	var order []string
@@ -131,8 +136,13 @@ func (w *watchdog) control() {
 	// A version whose patterns all failed is control-failed, not uncovered:
 	// the watchdog was meant to cover it and cannot.
 	w.failed = map[string]bool{}
-	for _, res := range results {
-		if !res.Pass && !versionCovered(kept, res.Harness, res.HarnessVersion) {
+	w.failedPats = nil
+	for i, res := range results {
+		if res.Pass {
+			continue
+		}
+		w.failedPats = append(w.failedPats, all[i])
+		if !versionCovered(kept, res.Harness, res.HarnessVersion) {
 			w.failed[res.Harness+"/"+res.HarnessVersion] = true
 		}
 	}
@@ -173,6 +183,13 @@ func (w *watchdog) coverage(harness, version string) (state string, ok bool) {
 	}
 	if w.failed[harness+"/"+version] {
 		return api.HarnessStateControlFailed, true
+	}
+	// A range pattern that failed its control leaves every version in its range
+	// unwatched, not only the version it was sampled on.
+	for _, p := range w.failedPats {
+		if p.Harness == harness && p.Covers(version) {
+			return api.HarnessStateControlFailed, true
+		}
 	}
 	if len(coveredVersions(w.sets, harness)) > 0 || w.harnessFailed(harness) {
 		return api.HarnessStateUncovered, true

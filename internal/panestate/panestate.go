@@ -129,7 +129,8 @@ type Pattern struct {
 // Covers reports whether the pattern is for the harness version v. With no
 // range it is exact. With one, v is covered when it lies inside the inclusive
 // range, compared by dotted numeric parts, so 2.1.10 is above 2.1.9. A version
-// that is not dotted numbers, or has a different number of parts than the
+// that is not dotted numbers (a part with a leading zero is refused, one
+// spelling per version), or has a different number of parts than the
 // bounds, is not covered: a range never guesses.
 func (p Pattern) Covers(v string) bool {
 	if p.HarnessVersion == "" {
@@ -165,6 +166,9 @@ func parseVersion(v string) ([]int, bool) {
 	var out []int
 	for _, part := range strings.Split(v, ".") {
 		if part == "" {
+			return nil, false
+		}
+		if len(part) > 1 && part[0] == '0' {
 			return nil, false
 		}
 		n := 0
