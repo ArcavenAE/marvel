@@ -18,12 +18,20 @@ var rateClock = time.Now
 // went quiet, expired once the reading is past its validity while the seat
 // is still reporting, and absent for a seat never sampled.
 //
-// The window is the default quiet window, because the client cannot see a
-// role's own activity_timeout or the cluster's watchdog.window. The channel
-// is always present: a rate cell exists only for a seat whose token stream
-// the accountant reads.
+// The window is the one the daemon judged the seat under: it stamps the
+// resolved quiet window (the role's activity_timeout, else the cluster's
+// watchdog.window, else the default) on every session it returns, as
+// ActiveTicks.Window: the window ACTIVE%'s tick counts were judged under. A
+// session that carries none (a held role's synthetic row) gets the default
+// window. The channel is
+// always present: a rate cell exists only for a seat whose token stream the
+// accountant reads.
 func sessionRate(s api.Session, now time.Time) (float64, asof.State) {
-	return usage.QuietRate(s.OutRate, &s, api.DefaultQuietWindow, true, now)
+	window := s.ActiveTicks.Window
+	if window <= 0 {
+		window = api.DefaultQuietWindow
+	}
+	return usage.QuietRate(s.OutRate, &s, window, true, now)
 }
 
 // rateCell renders the RATE cell: tokens a second, "?" once the reading
