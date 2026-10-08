@@ -103,7 +103,7 @@ func newTestSupervisor(t *testing.T, hub string) (*Supervisor, *Manager, *events
 		t.Fatal(err)
 	}
 	s.backoff = func(int) time.Duration { return 200 * time.Millisecond }
-	s.dialTimeout = 5 * time.Second
+	s.dialTimeout = loadedBrokerWait
 	s.leafPoll = 200 * time.Millisecond
 	// What the daemon wires: provisioning as the admin identity. Since the
 	// structural-health contract (aae-orc-vy6k7) a bare broker is not
@@ -186,7 +186,7 @@ func TestSupervisorKeepThenAdoptAcrossDaemons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2.dialTimeout = 5 * time.Second
+	s2.dialTimeout = loadedBrokerWait
 	if err := s2.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

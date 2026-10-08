@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -9,6 +10,13 @@ import (
 // on any one step: a full -race run puts the broker and its clients behind
 // every other test (marvel#493).
 const loadedBrokerWait = 30 * time.Second
+
+// TestMain widens the two RPC bounds for every test in the package, which all
+// run a real broker behind the rest of the suite.
+func TestMain(m *testing.M) {
+	provisionRPC, structureRPC = loadedBrokerWait, loadedBrokerWait
+	os.Exit(m.Run())
+}
 
 // A test that starts a real broker waits long enough for it on a loaded host.
 // The shared supervisor helper, the provisioning RPC and the structure RPC

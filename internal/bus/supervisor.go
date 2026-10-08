@@ -224,7 +224,11 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 // SetDialTimeout sets how long Start and Restart wait for the listener. It
 // exists for tests in other packages that start a real nats-server and must
 // outlast a loaded host; the daemon uses the default.
-func (s *Supervisor) SetDialTimeout(d time.Duration) {}
+func (s *Supervisor) SetDialTimeout(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dialTimeout = d
+}
 
 // Start adopts a broker a previous daemon left at the pidfile, or starts a
 // fresh one, then waits for the listener and marks the bus ready. A port
