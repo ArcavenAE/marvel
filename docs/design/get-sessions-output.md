@@ -116,7 +116,8 @@ prints one line on the header's stream: "N columns hidden at this width".
 - AGENT NAME is never truncated: the pane verbs need the printed name
   (#337).
 - RUNTIME shows its basename with `…`.
-- WORKDIR is cut in the middle and keeps its tail.
+- WORKDIR shows `~` for the client's home prefix, then is cut in the middle and
+  keeps its tail.
 - `--no-trunc` restores both.
 
 The fit counts suffixed cells. A row like `healthy (stalled)` (17
