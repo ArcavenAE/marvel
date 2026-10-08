@@ -8,12 +8,13 @@ import (
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/procargs"
 )
 
 // Seams for the reexec pre-flight and the reexec request.
 var (
 	preflightQuery buildQuery = queryDaemonBuild
-	daemonArgs                = readProcessArgs
+	daemonArgs                = procargs.Read
 	reexecSend                = func(req daemon.Request) (*daemon.Response, error) { return send(req) }
 )
 

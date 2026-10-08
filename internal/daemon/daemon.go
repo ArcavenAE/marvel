@@ -38,6 +38,7 @@ import (
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
@@ -896,20 +897,26 @@ func checkPidFileFree(path string) error {
 		}
 		return fmt.Errorf("read pidfile %s: %w", path, err)
 	}
-	var pid int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil || pid <= 0 {
-		// Corrupt pidfile — treat as stale.
+	pid, ok := pidfile.Parse(string(data))
+	if !ok {
+		// Corrupt pidfile, or one whose number is no pid: treat as stale.
 		return nil
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return nil
-	}
-	// Signal 0 is the "is it alive" check on Unix.
-	if err := proc.Signal(syscall.Signal(0)); err == nil {
+	if err := signalPID(pid); err == nil {
 		return fmt.Errorf("pidfile %s names live process %d — another daemon already running", path, pid)
 	}
 	return nil
+}
+
+// signalPID is the "is it alive" probe: signal 0 sends nothing and reports
+// whether the process exists. A seam, so a test never signals a pid it did not
+// start.
+var signalPID = func(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return proc.Signal(syscall.Signal(0))
 }
 
 func (d *Daemon) handleConn(conn net.Conn) {
