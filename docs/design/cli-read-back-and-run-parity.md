@@ -78,7 +78,7 @@ Ranked by cost against what it unblocks. Each item is one flat ticket.
   hand join the bus.
 - **What `get -o` reflects.** Recommendation: desired state as stored, labelled
   as such. A diff against the last applied file needs marvel to keep that
-  file, which it does not today.
+  file, and I found no place where it does.
 - **Whether items 1 and 2 are one ticket.** Recommendation: two, since the
   second has a repro to write first.
 
