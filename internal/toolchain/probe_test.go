@@ -235,7 +235,7 @@ func TestShellViolationsReadsComments(t *testing.T) {
 		{"alias name is an unknown subcommand", "git config alias.p '!git push'\ngit p", true},
 		{"alias set with -c then run", "git -c alias.p='!git push' p", true},
 		{"gh version", "gh --version", false},
-		{"a step name with alias-free is fine", `echo "no alias is set"`, false},
+		{"an echoed sentence containing the word alias", `echo "no alias is set"`, false},
 	} {
 		if got := len(shellViolations(tc.run)) > 0; got != tc.bad {
 			t.Errorf("%s: flagged = %v, want %v, for %q", tc.name, got, tc.bad, tc.run)
