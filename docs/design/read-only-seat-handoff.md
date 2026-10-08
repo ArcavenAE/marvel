@@ -53,7 +53,8 @@ MCP tool that marvel seeds.
 
 That one change of plan, marvel writing the file rather than storing the
 bytes in its own store, comes from the per-harness read. It keeps D5 as it is
-and takes this design out of #604's retention and storage questions.
+and takes this design out of #604's storage question. Retention comes back
+as a ruling on the file marvel writes (section 7).
 
 **The write gate.** The daemon writes a handoff only when all four hold, and
 refuses otherwise, with an event naming the reason:
@@ -218,19 +219,81 @@ that harness keeps the max-age escalation, and its role documents why.
   no seeder that can offer the tool. This is finding-067's "validate at
   apply", made checkable.
 
-## 7. Rulings needed
+## 7. Decisions
 
-Each recommendation is valid until 2026-10-22 or until the section 5 checks
-have run, whichever comes first; the architect re-checks it then.
+**Ruled by the operator on 2026-10-08** (relayed by director): retention,
+readers and scope. The seeding item below is still a recommendation.
 
-1. **Seeding crush and opencode homes.** This is a new adapter
-   responsibility, as codex's was in #308. Recommended: yes. The same seed
-   fixes a seat whose MCP config is project-local and does not follow it when
-   its workdir changes.
-2. **Readers.** Recommended: unchanged from D5, because the file is where it
-   is today.
-3. **Scope.** Recommended: max-age first. Context pressure and an operator
-   `marvel shift` can use the same tool later (#442).
+### 7.1 Retention: expire, configurable, default 7 days (ruled)
+
+The ruling, verbatim: "expire", "marvel user/admin configurable, default 7
+days".
+
+- **What expires.** Only the handoff file that marvel itself wrote for a
+  `handoff.put`. marvel keeps no other copy, since the daemon-side store is
+  gone (section 2). A handoff file a writable seat wrote for itself under
+  D5 is the seat's own file, and marvel does not touch it.
+- **How marvel knows it wrote the file.** At write time marvel records the
+  path, the file's identity (device and inode), and the write time, beside
+  the directory identity it already records on the request (section 2).
+  The record moves into the successor's shift state with the rest of the
+  request, so a daemon restart keeps it.
+- **When and how.** A daemon sweep removes the file once it is older than the
+  retention. The removal goes through the same `os.Root` and identity checks
+  as the write. If the file at that path is no longer the one marvel wrote, it
+  is left alone and the event says so. Each removal emits `handoff.expired`,
+  naming the session, the path and the age.
+- **Where it is set, and who can change it.**
+  - The **admin default** is a cluster setting in marvel's cluster config,
+    `handoff_retention`, with a default of `168h`. The person who runs the
+    daemon changes it there, and it takes effect at the next sweep.
+  - The **user override** is a role key, `shift.handoff_retention`, set by
+    whoever applies the manifest with `marvel work`.
+  - The role key wins when it is present. apply refuses a value shorter than
+    the role's `handoff_window` plus the shift timeout (proposed floor), so a
+    handoff cannot expire before its successor could read it.
+- **A conflict, stated rather than resolved here.** The succession text the
+  seats carry says "Never expire the handoff bytes". The operator's ruling
+  supersedes it for the file marvel writes. The seats' text, a wardrobe and
+  director contract and not marvel's to edit, still says otherwise until its
+  owners change it. A reader of both should take the ruling as current for
+  marvel's copy.
+
+### 7.2 Readers: the seat's team (ruled)
+
+The ruling: anyone on the seat's team, not only the successor and the
+operator.
+
+- **The read path.** `marvel handoff get [--session <key>]`, over the same
+  socket.
+  - Seat callers: the caller presents its heartbeat token, and only a bound
+    token counts (the same rule as `put`, section 2). The daemon looks up the
+    token's session record in its store, and compares that record's
+    `Workspace` and `Team` with those of the session whose handoff is asked
+    for. They must match exactly, or the request is refused.
+  - **The checking principal is the daemon,** and the record it checks
+    against is its own session store, not anything the caller sends.
+  - Operator callers: a socket client with no token reads any handoff, as an
+    operator reads everything else through the socket today.
+- **What this cannot enforce.** The file sits on the daemon host, readable
+  by the daemon's uid, and seats share that uid. "Team" is therefore enforced
+  on marvel's read path, not by file permissions. A seat that can read the
+  host's disk can read the file directly. This is the same residual as in
+  section 2: seat-to-seat isolation belongs to a sandbox (curtain), not to
+  marvel.
+
+### 7.3 Scope: max-age rotations first (ruled)
+
+The ruling: max-age rotations first. Context pressure and an operator
+`marvel shift` can use the same tool later (#442).
+
+### 7.4 Seeding crush and opencode homes (recommended, not ruled)
+
+This is a new adapter responsibility, as codex's was in #308. Recommended:
+yes. The same seed fixes a seat whose MCP config is project-local and does
+not follow it when its workdir changes. This recommendation is valid until
+2026-10-22, or until the section 5 checks have run, whichever comes first;
+the architect re-checks it then.
 
 ## 8. Not this
 
@@ -254,6 +317,12 @@ have run, whichever comes first; the architect re-checks it then.
 - **RH-C:** each harness pre-approves only the handoff tool. Where a shell
   fallback is used, it names the absolute marvel binary and only the
   `handoff put` verb.
+- **RH-D:** marvel expires only the handoff files it wrote, after the
+  configured retention (default 168h, cluster setting, role override), and
+  never a file whose identity has changed since it wrote it.
+- **RH-E:** a handoff read by a seat requires a bound token whose session's
+  workspace and team match the handoff's, checked by the daemon against its
+  own store.
 
 <details><summary>Section 4 record: the exec-policy script and the transcript of one fresh run</summary>
 
