@@ -1047,15 +1047,17 @@ var ErrReportDeferred = fmt.Errorf("report deferred: %w", ErrDaemonStarting)
 var errStoppedWhileStarting = errors.New("daemon stopped while starting")
 
 // startingMethods is the set of methods that answer while the daemon is still
-// adopting tmux state: the reads that say what the daemon is doing, and a
-// plain stop (detach), which must not wait on adoption: a remote operator has
-// no other way to end the daemon. stop with teardown stays refused, because it
-// would destroy panes adoption has not finished accounting for. Every other method is refused with
-// ErrDaemonStarting before its handler runs. That includes heartbeat and
-// account.limits (a heartbeat does more than stamp liveness: it checks the
-// session token and records orphan sightings, against a store adoption has not
-// finished reconciling), plan (its delta would be against an unreconciled
-// store), and inject and capture (they drive tmux).
+// adopting tmux state: the reads that say what the daemon is doing. A plain
+// stop (detach) also answers, through startingAllows, because it must not wait
+// on adoption and a remote operator has no other way to end the daemon; stop
+// with teardown stays refused, because it would destroy panes adoption has not
+// finished accounting for. Every other method is refused with
+// ErrDaemonStarting before its handler runs. heartbeat and account.limits get
+// ErrReportDeferred instead, which wraps ErrDaemonStarting: a heartbeat does
+// more than stamp liveness (it checks the session token and records orphan
+// sightings against a store adoption has not finished reconciling), so the
+// refusal comes before the handler. plan is refused because its delta would be
+// against an unreconciled store, and inject and capture because they drive tmux.
 var startingMethods = map[string]bool{
 	"daemon.status":   true,
 	"get":             true,
