@@ -10,6 +10,7 @@ import (
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/tmux"
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 )
 
 // A team session launches through the adapter, which quotes Args itself.
@@ -119,11 +120,19 @@ func TestScheduledRoleFiresOncePerFiring(t *testing.T) {
 		ss := r.sessions()
 		return len(ss) == 1 && exitZeroRunOK(version, ss[0])
 	})
+	wantOutcome := api.RunSucceeded
+	if r.sessions()[0].State == api.SessionCrashed {
+		t.Logf("%s lost the run's exit status: asserting the unknown-status contract", version)
+		wantOutcome = api.RunFailed
+	}
 	for i := 0; i < 3; i++ {
 		r.ctrl.ReconcileOnce()
 	}
 	if ss := r.sessions(); len(ss) != 1 {
-		t.Fatalf("a succeeded run was respawned: %v", summarize(ss))
+		t.Fatalf("a finished run was respawned: %v", summarize(ss))
+	}
+	if h := r.status().History; len(h) != 1 || h[0].Outcome != wantOutcome {
+		t.Fatalf("history = %+v, want one run recorded %s", h, wantOutcome)
 	}
 	if h := r.status().History; len(h) != 1 || h[0].Firing != "20261001T061700Z" || !h[0].DueAt.Equal(time.Date(2026, 10, 1, 6, 17, 0, 0, time.UTC)) {
 		t.Fatalf("history = %+v, want one run carrying its firing and due time", h)
@@ -138,9 +147,16 @@ func TestScheduledRoleFiresOncePerFiring(t *testing.T) {
 }
 
 // exitZeroRunOK reports whether the row of a run that exited 0 is
-// acceptable for the tmux the test runs on.
+// acceptable for the tmux the test runs on. Every tmux that keeps a dead
+// pane's status marks it succeeded. A tmux older than 3.5 can lose the
+// status, and then the reaper marks the run crashed with no status (the
+// unknown-status contract, the gate #702 shares). The run record then
+// reads failed, which is the product consequence, not a test defect.
 func exitZeroRunOK(version string, s api.Session) bool {
-	return s.State == api.SessionSucceeded
+	if s.State == api.SessionSucceeded {
+		return true
+	}
+	return s.State == api.SessionCrashed && s.ExitStatus == "" && !tmuxtest.StatusExpected(version)
 }
 
 // TestExitZeroRunFollowsTheTmuxVersion pins exitZeroRunOK: succeeded on
