@@ -289,3 +289,25 @@ func TestClaudeReadableCommandWithDeclaredSourcesLogsNothing(t *testing.T) {
 		t.Errorf("a readable command logged %q", lines)
 	}
 }
+
+// With several declared sources on shell text, the log line names all of them,
+// in the manifest's order, and not only the first (marvel#745).
+func TestClaudeSourcesLineNamesEveryDeclaredSource(t *testing.T) {
+	var lines []string
+	old := logLaunch
+	logLaunch = func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) }
+	ctx := claudeCtx("claude --x | tee out")
+	ctx.Role.SettingsSources = []string{"project", "local"}
+	result, err := (&Claude{}).Prepare(ctx)
+	logLaunch = old
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(result.Command, " --setting-sources project,local") || result.SettingSources != "project,local" {
+		t.Errorf("the flag was not appended whole: %q, sources %q", result.Command, result.SettingSources)
+	}
+	want := "role worker: command is shell text; marvel appended --setting-sources project,local from the manifest; whether claude receives it depends on the command"
+	if len(lines) != 2 || lines[1] != want {
+		t.Errorf("log lines = %q, want the second to be %q", lines, want)
+	}
+}
