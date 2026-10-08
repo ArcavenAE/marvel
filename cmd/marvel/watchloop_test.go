@@ -2,12 +2,17 @@ package main
 
 import (
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 var watchT0 = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
@@ -230,5 +235,107 @@ func TestWatchSortKeyWhenIdleDoesNotFetch(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := r.calls.Load(); got != 1 {
 		t.Errorf("fetch called %d times after a sort key with nothing in flight, want 1", got)
+	}
+}
+
+// The loop tests above use a fake fetch. This one runs the real
+// fetchWatchData with the header on against a daemon that accepts the
+// connection and never answers, so the blocked read is the header's own
+// (collectHeader runs first, before the listing is requested). The view must
+// still say the daemon is not answering and still quit on q, which is the
+// property the off-the-key-loop fetch exists for.
+func TestWatchQuitsWhileTheRealHeaderReadIsBlocked(t *testing.T) {
+	setWidth(t, 200)
+	home, err := os.MkdirTemp("", "mv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
+	oldSocket, oldCluster, oldGiven := socketPath, clusterName, clusterFlagGiven
+	socketPath, clusterName, clusterFlagGiven = "", "", false
+	t.Cleanup(func() { socketPath, clusterName, clusterFlagGiven = oldSocket, oldCluster, oldGiven })
+
+	sock := filepath.Join(home, "silent.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var accepted atomic.Int32
+	var mu sync.Mutex
+	var held []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	var fetches sync.WaitGroup
+	t.Cleanup(func() {
+		// Closing the held connections lets the blocked fetch goroutine end,
+		// and the globals restored above must not change under it.
+		_ = ln.Close()
+		mu.Lock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+		mu.Unlock()
+		fetches.Wait()
+	})
+	t.Setenv(config.SocketEnv, sock)
+
+	keys := make(chan byte, 1)
+	frames := make(chan string, 64)
+	done := make(chan struct{})
+	ws := newWatchScreen(nil, false, false)
+	cols, _, err := loadSessionColumnsSel("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.columns = cols
+	cfg := watchLoopConfig{
+		interval: time.Second,
+		deadline: 30 * time.Millisecond,
+		fetch: func() watchData {
+			defer fetches.Done()
+			return fetchWatchData(ws.showHeader)
+		},
+		now: time.Now,
+		out: func(frame string) {
+			select {
+			case frames <- frame:
+			default:
+			}
+		},
+	}
+	fetches.Add(1) // the loop starts exactly one fetch and the silent daemon keeps it open
+	go func() { watchLoop(ws, cfg, keys, make(chan time.Time)); close(done) }()
+
+	if !ws.showHeader {
+		t.Fatal("the watch screen does not ask for the header, so this test would not reach the header read")
+	}
+	timeout := time.After(2 * time.Second)
+	for stale := false; !stale; {
+		select {
+		case f := <-frames:
+			stale = strings.Contains(f, "daemon not answering, no data yet")
+		case <-timeout:
+			t.Fatal("no stale banner within 2s while the header read was blocked")
+		}
+	}
+	if accepted.Load() != 1 {
+		t.Errorf("the silent daemon accepted %d connection(s), want 1: the header read, with the listing not yet requested", accepted.Load())
+	}
+	keys <- 'q'
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("q did not quit the view while the header read was blocked")
 	}
 }
