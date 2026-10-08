@@ -69,3 +69,16 @@ func TestShiftOrderLeavesWorkersInRosterOrder(t *testing.T) {
 		t.Errorf("shiftOrder = %v, want %v", got, want)
 	}
 }
+
+// The name fallback applies only where global_role is unset. A role named
+// supervisor that declares global_role "none" opted out, as
+// config.ResolvedGlobalRole reads it, so it keeps its roster place.
+func TestShiftOrderHonorsAnExplicitNone(t *testing.T) {
+	roles := shiftRoles(nil, "w1", "supervisor", "w2")
+	roles[1].GlobalRole = api.GlobalRoleNone
+	got := shiftOrder(roles)
+	want := []string{"w1", "supervisor", "w2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("shiftOrder = %v, want %v", got, want)
+	}
+}
