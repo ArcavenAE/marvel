@@ -154,3 +154,71 @@ func TestProbeExercisesTheMainOnlyJobs(t *testing.T) {
 		}
 	}
 }
+
+// The probe uses only the actions it needs, and the checkout leaves no
+// credential in the repository config.
+func TestProbeUsesOnlyTheActionsItNeeds(t *testing.T) {
+	t.Parallel()
+	wf, _ := loadProbe(t)
+	allowed := map[string]bool{
+		"step-security/harden-runner": true,
+		"actions/checkout":            true,
+		"actions/setup-go":            true,
+	}
+	for name, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			if step.Uses == "" {
+				continue
+			}
+			action, _, _ := strings.Cut(step.Uses, "@")
+			if !allowed[action] {
+				t.Errorf("job %s uses %q, want only %v", name, action, allowed)
+			}
+			if action == "actions/checkout" && step.With["persist-credentials"] != "false" {
+				t.Errorf("job %s checkout keeps credentials: persist-credentials = %q", name, step.With["persist-credentials"])
+			}
+		}
+	}
+}
+
+var (
+	ghCall  = regexp.MustCompile(`\bgh\b[ \t]+(\S+)`)
+	gitCall = regexp.MustCompile(`\bgit\b(?:[ \t]+-C[ \t]+\S+)?[ \t]+(\S+)`)
+)
+
+// The shell steps reach no remote and carry no credential: gh only prints its
+// version, git runs only local subcommands, and no step sets a token, logs in,
+// or calls a network tool. Banning the word GITHUB_TOKEN is not enough, since
+// a step can name the token another way or publish with a different command.
+func TestProbeShellStepsStayLocal(t *testing.T) {
+	t.Parallel()
+	wf, text := loadProbe(t)
+	for name, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			for k, v := range step.Env {
+				lower := strings.ToLower(k + "=" + v)
+				for _, token := range []string{"token", "secret", "password", "credential", "github."} {
+					if strings.Contains(lower, token) {
+						t.Errorf("job %s step env %s=%q mentions %q", name, k, v, token)
+					}
+				}
+			}
+			for _, m := range ghCall.FindAllStringSubmatch(step.Run, -1) {
+				if m[1] != "--version" {
+					t.Errorf("job %s runs gh %s, want only gh --version", name, m[1])
+				}
+			}
+			localGit := map[string]bool{"--version": true, "init": true, "config": true, "add": true, "diff": true, "commit": true}
+			for _, m := range gitCall.FindAllStringSubmatch(step.Run, -1) {
+				if !localGit[m[1]] {
+					t.Errorf("job %s runs git %s, want only local subcommands %v", name, m[1], localGit)
+				}
+			}
+		}
+	}
+	for _, banned := range []string{"docker", "curl", "wget", "login", "action-gh-release", "github.token", "github.event.pull_request.head"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("the probe mentions %q, which reaches a remote or carries a credential", banned)
+		}
+	}
+}
