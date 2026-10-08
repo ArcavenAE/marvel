@@ -213,8 +213,9 @@ func TestSeederWritesOneTrustedRootAndNoUntrustedEntry(t *testing.T) {
 	if len(projects) != 1 || projects[repo]["trust_level"] != "trusted" {
 		t.Fatalf("projects = %v, want exactly %s trusted", projects, repo)
 	}
-	if len(evs) != 1 || evs[0].Kind != events.KindCodexTrust || !strings.Contains(evs[0].Message, "trusted") {
-		t.Fatalf("events = %+v, want one codex.trust naming outcome trusted", evs)
+	if len(evs) != 1 || evs[0].Kind != events.KindCodexTrust ||
+		!strings.Contains(evs[0].Message, "seeded trusted for "+repo) || strings.Contains(evs[0].Message, "untrusted") {
+		t.Fatalf("events = %+v, want one codex.trust saying trusted for %s", evs, repo)
 	}
 }
 
