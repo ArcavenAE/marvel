@@ -1518,35 +1518,63 @@ func TestValidateRuntimesCountsOnlyRefusals(t *testing.T) {
 func TestCommandWordsReadable(t *testing.T) {
 	t.Parallel()
 	for command, want := range map[string]bool{
-		"claude":                    true,
-		"claude --model x":          true,
-		"claude\t--model x":         true,
-		`claude --model "sonnet 4"`: true,
-		`claude --model 'sonnet'`:   true,
-		"claude --model=x*":         true,
-		"claude ~/x":                true,
-		"claude $HOME":              false,
-		"claude $(cat f)":           false,
-		"claude `cat f`":            false,
-		"claude ${X}":               false,
-		"claude ; true":             false,
-		"claude | tee":              false,
-		"claude &":                  false,
-		"claude < in":               false,
-		"claude > out":              false,
-		"claude (x)":                false,
-		"claude {x}":                false,
-		`claude \--flag`:            false,
-		"claude --a\n--b":           false,
-		"claude --a\r--b":           false,
-		"claude\u00a0--a":           false,
-		"claude --a\v--b":           false,
-		"claude --a\f--b":           false,
-		"claude\u2003--a":           false,
-		"claude\u0085--a":           false,
+		"claude":                                 true,
+		"claude --model x":                       true,
+		"claude\t--model x":                      true,
+		"claude --model x --verbose":             true,
+		`claude --model "sonnet 4"`:              false,
+		`claude --model 'a b'`:                   false,
+		`claude "--append-system-prompt" x`:      false,
+		`claude '--append-system-prompt' x`:      false,
+		`claude --append-sys""tem-prompt x`:      false,
+		`claude --append-sys''tem-prompt x`:      false,
+		`claude "--append-system-prompt-file" f`: false,
+		`claude "--setting-sources" local`:       false,
+		`claude --append-system-prompt="x y"`:    false,
+		"claude --model=x":                       false,
+		"claude --model x#y":                     false,
+		"claude --model=x*":                      false,
+		"claude ~/x":                             false,
+		"claude $HOME":                           false,
+		"claude $(cat f)":                        false,
+		"claude `cat f`":                         false,
+		"claude ${X}":                            false,
+		"claude ; true":                          false,
+		"claude | tee":                           false,
+		"claude &":                               false,
+		"claude < in":                            false,
+		"claude > out":                           false,
+		"claude (x)":                             false,
+		"claude {x}":                             false,
+		`claude \--flag`:                         false,
+		"claude --a\n--b":                        false,
+		"claude --a\r--b":                        false,
+		"claude\u00a0--a":                        false,
+		"claude --a\v--b":                        false,
+		"claude --a\f--b":                        false,
+		"claude\u2003--a":                        false,
+		"claude\u0085--a":                        false,
 	} {
 		if got := CommandWordsReadable(command); got != want {
 			t.Errorf("CommandWordsReadable(%q) = %v, want %v", command, got, want)
+		}
+	}
+}
+
+// One definition of shell text serves the apply pre-flight and the claude
+// adapter's reader, so the two views of one command cannot drift. They differ
+// only in the span they read: the pre-flight reads the first field, the adapter
+// the whole command, because a flag can sit anywhere.
+func TestShellTextHasOneDefinition(t *testing.T) {
+	t.Parallel()
+	for _, c := range "='\"\\$`;|&<>(){}*?[~#" {
+		command := "a" + string(c) + "b"
+		if CommandWordsReadable("claude " + command) {
+			t.Errorf("%q in the arguments left the command readable", c)
+		}
+		adv, err := runRuntimeCase(t, runtimeCase{name: string(c), command: command})
+		if err != nil || len(adv) != 1 {
+			t.Errorf("%q in the first field: advisories %q, err %v, want the shell-text advisory", c, adv, err)
 		}
 	}
 }

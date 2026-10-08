@@ -39,8 +39,6 @@ func TestClaudeKeepsAnInlineSystemPrompt(t *testing.T) {
 		{"flag in args", "claude", []string{"--append-system-prompt", "mine"}, 1, false},
 		{"file flag in args", "claude", []string{"--append-system-prompt-file", "f"}, 1, false},
 		{"unrelated inline flags still get the prompt", "claude --model sonnet", nil, 1, true},
-		{"a quoted argument is not shell text", `claude --model "sonnet 4"`, nil, 1, true},
-		{"a single-quoted argument is not shell text", `claude --model 'sonnet'`, nil, 1, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +96,14 @@ func TestClaudeAddsNoPromptToShellText(t *testing.T) {
 		"claude > out",
 		"claude (x)",
 		"claude {x}",
+		`claude --model "sonnet 4"`,
+		`claude --model 'a b'`,
+		`claude --append-system-prompt="x y"`,
+		`claude --append-system-prompt-file='f g'`,
+		"claude --model=x",
+		"claude --add-dir ~/x",
+		"claude --add-dir *.d",
+		"claude --x # --append-system-prompt y",
 		`claude \--append-system-prompt y`,
 		"claude --x\n--append-system-prompt y",
 		"claude --x",
@@ -130,7 +136,7 @@ func TestClaudeLogsNothingWhenThePromptWasNotInTheWay(t *testing.T) {
 	for _, command := range []string{
 		"claude",
 		"claude --append-system-prompt mine",
-		`claude --model "sonnet 4"`,
+
 		"npx claude",
 		"docker run --rm -it img claude",
 		"/home/op/.marvel/manifests/cast-seat.sh",
@@ -143,6 +149,38 @@ func TestClaudeLogsNothingWhenThePromptWasNotInTheWay(t *testing.T) {
 		logLaunch = old
 		if len(lines) != 0 {
 			t.Errorf("%q: unexpected log lines %q", command, lines)
+		}
+	}
+}
+
+// Quotes can hide a flag from a reader of the words: the shell strips them and
+// the harness sees the real flag, so a quoted spelling is shell text and marvel
+// adds no prompt of its own (marvel#745).
+func TestClaudeAddsNoPromptWhenAFlagIsQuoted(t *testing.T) {
+	for _, flag := range []string{"--append-system-prompt", "--append-system-prompt-file", "--setting-sources"} {
+		half := len(flag) / 2
+		for name, spelled := range map[string]string{
+			"double-quoted":    `"` + flag + `"`,
+			"single-quoted":    `'` + flag + `'`,
+			"split by quotes":  flag[:half] + `""` + flag[half:],
+			"split by singles": flag[:half] + `''` + flag[half:],
+			"escaped inside":   flag[:half] + `\` + flag[half:],
+		} {
+			var lines []string
+			old := logLaunch
+			logLaunch = func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) }
+			result := prepareClaude(t, "claude "+spelled+" x", nil)
+			logLaunch = old
+			if strings.Contains(result.Command, "You are squad-worker-g1-0") {
+				t.Errorf("%s %s: marvel's prompt was added beside a flag the shell would read: %s", flag, name, result.Command)
+			}
+			want := "role worker: command is shell text; marvel's system-prompt line not added"
+			if len(lines) != 1 || lines[0] != want {
+				t.Errorf("%s %s: log lines = %q, want exactly %q", flag, name, lines, want)
+			}
+			if !strings.Contains(result.Command, "--permission-mode plan") {
+				t.Errorf("%s %s: the rest of the launch changed: %s", flag, name, result.Command)
+			}
 		}
 	}
 }
