@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // freezeTmux starts a tmux server on the driver's socket and stops it with
@@ -83,6 +85,13 @@ func send(t *testing.T, sock, method string, params any) *Response {
 func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 	skipIfNoTmux(t)
 	d, sock, started := startFrozen(t, "test-start-frozen", 4*time.Second)
+	const key = "ws-hb/seat-g1-0"
+	if err := d.store.CreateSession(&api.Session{
+		Name: "seat-g1-0", Workspace: "ws-hb", HeartbeatToken: "good-token",
+		State: api.SessionRunning, PaneID: "%987654",
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 	t.Cleanup(func() {
 		<-started
 		d.Stop()
@@ -99,6 +108,8 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 		{"logs", nil},
 		{"orphans", nil},
 		{"bus.status", nil},
+		{"events", nil},
+		{"credential.list", nil},
 	} {
 		resp := send(t, sock, m.method, m.params)
 		if !resp.Starting {
@@ -120,7 +131,7 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 	// account.limits are refused retryably so they never count as a failure.
 	for _, method := range []string{
 		"apply", "delete", "scale", "converge", "reap", "run", "shift",
-		"reset-health", "inject", "capture", "heartbeat", "account.limits", "plan", "view.refresh",
+		"reset-health", "inject", "capture", "plan", "view.refresh",
 		"credential.put", "credential.get", "credential.reveal", "credential.delete",
 		"backend.verify", "bus.leaf.connect", "bus.leaf.disconnect", "reexec",
 	} {
@@ -128,6 +139,38 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 		if resp.Error != ErrDaemonStarting.Error() || !resp.Starting {
 			t.Errorf("%s while adopting: want the typed starting refusal, got %+v", method, resp)
 		}
+	}
+	// heartbeat and account.limits are deferred with their own retryable
+	// error. The refusal comes before the handler, so a heartbeat with the
+	// right token leaves the session alone, and one with a wrong token is not
+	// recorded as an orphan sighting.
+	before, err := d.store.GetSession(key)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	for _, hb := range []map[string]any{
+		{"session_key": key, "session_token": "good-token", "context_percent": 42.0},
+		{"session_key": key, "session_token": "wrong-token", "context_percent": 42.0},
+		{"session_key": key, "context_percent": 42.0},
+	} {
+		resp := send(t, sock, "heartbeat", hb)
+		if resp.Error != ErrReportDeferred.Error() || !resp.Starting {
+			t.Errorf("heartbeat %v while adopting: want the deferred refusal, got %+v", hb, resp)
+		}
+	}
+	if resp := send(t, sock, "account.limits", map[string]any{}); resp.Error != ErrReportDeferred.Error() {
+		t.Errorf("account.limits while adopting: want the deferred refusal, got %+v", resp)
+	}
+	after, err := d.store.GetSession(key)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if after.ContextSource != before.ContextSource || after.ContextPercent != before.ContextPercent ||
+		after.FailureCount != before.FailureCount || after.HealthState != before.HealthState {
+		t.Errorf("a deferred heartbeat changed the session: before %+v, after %+v", before, after)
+	}
+	if orphans := d.orphanRecords(); len(orphans) != 0 {
+		t.Errorf("a deferred heartbeat was recorded as an orphan sighting: %+v", orphans)
 	}
 	select {
 	case e := <-started:

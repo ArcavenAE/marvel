@@ -1034,6 +1034,14 @@ func (d *Daemon) scopeRefusal(req Request, c caller) (Response, bool) {
 // never reaches a handler, so it cannot count toward a session's health.
 var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, retry")
 
+// ErrReportDeferred is the refusal heartbeat and account.limits get while the
+// daemon is adopting. It wraps ErrDaemonStarting and is a different text, so a
+// producer can tell "try again after the start" from any verdict on its token
+// or its session. It is sent before the handler runs, so it never reaches a
+// session's health, its FailureCount or the orphan registry, and it is never
+// the token-mismatch refusal.
+var ErrReportDeferred = fmt.Errorf("report deferred: %w", ErrDaemonStarting)
+
 // errStoppedWhileStarting is what Start returns when a stop arrived during
 // adoption and shutdown has already run.
 var errStoppedWhileStarting = errors.New("daemon stopped while starting")
@@ -1077,6 +1085,9 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return resp
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
+		if req.Method == "heartbeat" || req.Method == "account.limits" {
+			return Response{Error: ErrReportDeferred.Error(), Starting: true}
+		}
 		return Response{Error: ErrDaemonStarting.Error(), Starting: true}
 	}
 	switch req.Method {
