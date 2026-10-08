@@ -1,8 +1,10 @@
 package tmux
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,11 +18,25 @@ type seqFake struct {
 	log string
 }
 
+// warmFake runs a fake tmux script once, with a generous limit, before a test
+// times its calls. The first exec of a freshly written script can stall for
+// seconds on a loaded macOS host, which a test with a 1 s exec timeout reads
+// as tmux not answering. The script exits at once for the argument "warm".
+func warmFake(t *testing.T, script string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, script, "warm").Run(); err != nil {
+		t.Fatalf("warm up %s: %v", script, err)
+	}
+}
+
 func newSeqFake(t *testing.T, has, mk string, procs procList) (*seqFake, *Driver) {
 	t.Helper()
 	dir := t.TempDir()
 	f := &seqFake{log: filepath.Join(dir, "calls")}
 	body := "#!/bin/sh\n" +
+		"case \"$*\" in warm) exit 0;; esac\n" +
 		"echo \"$*\" >> " + f.log + "\n" +
 		"case \"$*\" in\n" +
 		"*has-session*) n=$(grep -c has-session " + f.log + ")\n" + has + "\n;;\n" +
@@ -31,6 +47,7 @@ func newSeqFake(t *testing.T, has, mk string, procs procList) (*seqFake, *Driver
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	warmFake(t, script)
 	return f, &Driver{binary: script, socket: "unit", procs: procs}
 }
 

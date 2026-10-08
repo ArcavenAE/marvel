@@ -32,6 +32,7 @@ func newStartupFake(t *testing.T, sessionThere bool) (*startupFake, *Driver) {
 		has = "exit 0"
 	}
 	body := "#!/bin/sh\n" +
+		"case \"$*\" in warm) exit 0;; esac\n" +
 		"echo \"$*\" >> " + f.log + "\n" +
 		"case \"$*\" in\n" +
 		"*has-session*) if [ -e " + f.ready + " ]; then " + has + "; fi ;;\n" +
@@ -44,6 +45,7 @@ func newStartupFake(t *testing.T, sessionThere bool) (*startupFake, *Driver) {
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	warmFake(t, script)
 	d := &Driver{binary: script, socket: "unit", procs: procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")}
 	return f, d
 }
@@ -146,9 +148,10 @@ func TestATimeoutIsNeverRetried(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	script := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\necho \""+noServerText+"\" >&2\nexec sleep 5\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncase \"$*\" in warm) exit 0;; esac\necho \"$*\" >> "+log+"\necho \""+noServerText+"\" >&2\nexec sleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	warmFake(t, script)
 	d := &Driver{binary: script, socket: "unit", procs: procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")}
 	d.SetExecTimeout(2 * time.Second)
 	_, err := d.sessionExists("s")
@@ -190,13 +193,14 @@ func textFake(t *testing.T, text string, procs procList) (*startupFake, *Driver)
 	t.Helper()
 	dir := t.TempDir()
 	f := &startupFake{t: t, dir: dir, ready: filepath.Join(dir, "ready"), log: filepath.Join(dir, "calls")}
-	body := "#!/bin/sh\necho \"$*\" >> " + f.log + "\n" +
+	body := "#!/bin/sh\ncase \"$*\" in warm) exit 0;; esac\necho \"$*\" >> " + f.log + "\n" +
 		"if [ -e " + f.ready + " ]; then exit 0; fi\n" +
 		"echo \"" + text + "\" >&2\nexit 1\n"
 	script := filepath.Join(dir, "tmux")
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	warmFake(t, script)
 	return f, &Driver{binary: script, socket: "unit", procs: procs}
 }
 

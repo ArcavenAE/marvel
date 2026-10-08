@@ -296,7 +296,13 @@ func (d *Driver) HasSession(name string) bool {
 // error, so a caller that creates on absence never starts a second server
 // beside one it cannot reach.
 func (d *Driver) sessionExists(name string) (bool, error) {
-	_, text, absent, err := d.whileStarting(func() ([]byte, string, error) {
+	return d.sessionExistsUntil(name, time.Time{})
+}
+
+// sessionExistsUntil is sessionExists waiting no longer than until (the zero
+// time means startupBound).
+func (d *Driver) sessionExistsUntil(name string, until time.Time) (bool, error) {
+	_, text, absent, err := d.whileStarting(until, func() ([]byte, string, error) {
 		out, err := d.cmd("has-session", "-t", name).CombinedOutput()
 		return out, string(out), err
 	})
@@ -318,7 +324,7 @@ func (d *Driver) sessionExists(name string) (bool, error) {
 // If no tmux server is running, returns an empty slice and no error —
 // that's the same "no sessions" condition as a freshly started daemon.
 func (d *Driver) ListSessions() ([]string, error) {
-	out, _, absent, err := d.whileStarting(func() ([]byte, string, error) {
+	out, _, absent, err := d.whileStarting(time.Time{}, func() ([]byte, string, error) {
 		out, err := d.cmd("list-sessions", "-F", "#S").Output()
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -356,11 +362,12 @@ func (d *Driver) NewSession(name string) error {
 	// from the create itself. The whole body runs again, check first, so a
 	// server that has since become an outage refuses instead of getting a
 	// second create; a bare retry of new-session beside a frozen live server
-	// would start a second server. The retry is bounded by startupBound.
+	// would start a second server. Every pass shares one startupBound: the
+	// check of a later pass waits only for what is left of it.
 	deadline := time.Now().Add(startupBound)
 	wait := 10 * time.Millisecond
 	for {
-		exists, err := d.sessionExists(name)
+		exists, err := d.sessionExistsUntil(name, deadline)
 		if err != nil {
 			return fmt.Errorf("new-session %s: %w", name, err)
 		}
