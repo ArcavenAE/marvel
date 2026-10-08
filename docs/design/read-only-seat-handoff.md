@@ -1,7 +1,9 @@
 # A handoff a read-only seat can write
 
 **Status:** design for review, 2026-10-08. Nothing is built. Refs #604,
-#459, finding-067.
+#459, finding-067. Revised the same day to reconcile with a measured
+per-harness read of each harness's effective config, taken from disk by
+another agent; section 1 records what changed and why.
 
 **Why.** The operator ruled to keep the 72h max-age arm on every role. Today
 that arm can end in a shift only when the seat writes a file on the daemon
@@ -9,161 +11,190 @@ host (finding-067), and the read-only seats cannot: a codex seat at
 `-s read-only`, crush, and opencode. So every 72h arm on those roles escalates
 `team.shift-handoff-missing` and repeats it once per window, and the seat
 keeps running past the age the operator chose. A live data point, the day
-this was written: one codex reviewer seat on one host read 81% context and
-was well past 72h.
+this was written: one codex reviewer seat read 81% context and was well past
+72h.
 
-This design gives those seats a handoff path they can complete without
-widening their sandbox. It is the "give those roles a handoff path they can
-satisfy" option from the max-age discussion, but it does not take that
-option's codex form (running codex without `-s read-only`), because that
-trades away the guarantee the seat exists to keep.
+This design gives those seats a way to hand off without widening their
+sandbox or their permissions.
 
-## 1. The shape: one allowlisted verb, and marvel stores the handoff
+## 1. What the per-harness read changed
 
-A seat hands off by running one command:
+The first version of this note made the handoff a shell verb, `marvel handoff
+put`, that each harness's allowlist would let through. A read of each
+harness's effective config, taken from disk on one host, shows that cannot
+reach two of the three:
 
-```
-marvel handoff put < handoff.md      # or: marvel handoff put --text "..."
-```
+| harness | can it write a file? | shell tool | MCP today | marvel-seeded home |
+|---|---|---|---|---|
+| codex | no (`-s read-only`) | yes | director MCP, tools pre-approved | yes (`codexSeeder`, `internal/runtime/codex.go:100`) |
+| crush | no: `allowed_tools` is `grep`, `ls`, `skill`, `view` | **no** | none | none |
+| opencode | only through `edit`, which is `ask` | not read | only from a project-local config | none |
 
-- The command reads the handoff from stdin or `--text`, and sends it over
-  `MARVEL_SOCKET`, authenticated by `MARVEL_HEARTBEAT_TOKEN`. That is the
-  pair marvel already injects into a seat that can reach the daemon
-  (`internal/runtime/adapter.go:445-454`, `internal/api/heartbeat.go:13-17`),
-  and the pair `marvel codex-ctx` already uses from inside a codex seat
-  (`cmd/marvel/codexctx.go`).
-- The daemon stores the bytes in its own store, keyed by workspace, team,
-  role and generation, which answers #604's key question (the workspace is in
-  the key). The seat writes nothing on the host's disk, so #604's "missing
-  channel" is the socket.
-- The request that `put` answers is the pending max-age `ShiftRequest`. A
-  `put` from a session with no pending request is stored and reported, but it
-  does not shift anything.
-- The successor reads it with `marvel handoff get`, which takes the same
-  socket and token, and resolves to its predecessor's record
-  (`MARVEL_PREDECESSOR`, `internal/api/types.go:765`).
+- **Does a shell verb reach crush?** No. crush has no shell tool to run it
+  with, and adding one would be the broad grant this design exists to avoid.
+- **Does it reach opencode?** It is unknown, and it would need a bash
+  permission that the read did not cover.
 
-The command is the marker. A completed `put` is the atomic "handoff written"
-signal, so no last-line marker and no file are needed, and a partial write
-cannot read as finished (the #612 class does not arise). The declared-file path
-(`shift.handoff` plus `handoff_marker`, D5) stays as it is for seats that can
-write. A role may use either one, and the controller shifts on whichever it
-observes first.
+So the shell verb survives only as a codex-only option (section 4). The seat
+side of the design moves to the channel all three harnesses can be given: an
+MCP tool that marvel seeds.
 
-## 2. Each harness lets exactly that verb through, and nothing else
+## 2. The shape: one daemon call; marvel writes the file
 
-The seat keeps its sandbox. Its harness's own allowlist permits the one verb.
+**The daemon side (kept from the first version).** One daemon RPC,
+`handoff.put`, takes the handoff text from a session.
+- It is authenticated by the session's heartbeat token, the pair marvel
+  already injects with `MARVEL_SOCKET` (`internal/runtime/adapter.go:445-454`,
+  `internal/api/heartbeat.go:13-17`).
+- On receipt, **marvel itself writes the role's declared handoff file**,
+  ending with the declared marker. `handoffComplete` and the successor's read
+  path are unchanged (D5).
+- The daemon host can always write, and the seat writes nothing.
 
-**codex (measured).** A codex exec-policy rule runs a matching command
-outside the sandbox, even at `-s read-only` with approval policy `never`.
-This is the pattern the reviewer seats already use for their forge access
-(`docs/design/codex-reviewer-forge-access.md`). Measured on codex-cli
-0.160.1, with a throwaway repo and `CODEX_HOME`, disk-verified, one run per
-arm:
+That one change of plan, marvel writing the file rather than storing the
+bytes in its own store, comes from the per-harness read. It keeps D5 as it is
+and takes this design out of #604's retention and storage questions.
 
-| arm | rule | result on disk | codex said |
-|---|---|---|---|
-| no rule | none | no file | "ran" |
-| one rule | `prefix_rule(pattern=["<helper>"], decision="allow")` | file written | "ran" |
+**The signal.** The daemon's receipt of a `handoff.put` from the requested
+session, recorded after `RequestedAt`, is what lets the shift start. A seat's
+own account never counts. That rule carries over from the first version and
+is measured in section 4: the model said "ran" when nothing had been written.
 
-So a single prefix rule opens one command and nothing else. The no-rule arm
-also repeats finding-049's lesson: the model reported "ran" when nothing had
-been written. That is why the handoff signal must be the daemon receiving the
-`put`, never the seat's account of it.
+**The seat side: a `submit_handoff` MCP tool.** marvel seeds the seat's
+harness home with a pre-approved MCP server offering one tool,
+`submit_handoff(text)`. The server is marvel's own binary (`marvel mcp
+handoff`), and the tool calls `handoff.put`. A tool call is not a file write,
+so `-s read-only`, `allowed_tools`, and `edit: ask` are untouched. The tool
+needs approval in each harness:
 
-marvel already seeds each codex seat's private `CODEX_HOME`
-(`internal/runtime/codex_home.go`), so the seed adds one rules file:
+- **codex:** seeded today. The seed already pre-approves the director
+  server's tools with `default_tools_approval_mode = "approve"`
+  (`internal/runtime/codex_home.go:100-105`). The handoff server gets the same
+  setting.
+- **crush:** needs a seeder first, the same treatment as codex, and an
+  `allowed_tools` entry naming only the handoff tool. Not measured.
+- **opencode:** needs a seeder first, so the server no longer depends on a
+  project-local config that cannot follow a seat whose workdir changes.
+  Whether opencode prompts for MCP tool calls the way it does for `edit` is
+  not measured.
 
-```
-prefix_rule(pattern=["<absolute marvel binary>", "handoff", ["put", "get"]], decision="allow")
-```
+## 3. Answers to the three questions
 
-It names the absolute binary that `codexSeeder` already resolves with
-`os.Executable()`, so a `marvel` found earlier on `PATH` cannot match. It
-also allows `put` and `get` and no other verb, so the rule cannot be stretched
-to `marvel inject` or `marvel shift`.
+1. **Does `marvel handoff put` over the socket reach crush?** No, because
+   crush has no shell tool. The daemon RPC does reach it, through an MCP tool
+   marvel seeds.
+2. **Is MCP `submit_handoff` the one channel all three share?** It is the
+   only candidate that needs no new permission on any of them. For codex it
+   is the shape marvel already seeds. For crush and opencode it depends on two
+   checks that have not been run, listed in section 5. Until those pass, it is
+   the recommended shared channel, not a measured one.
+3. **Which half of each design survives?**
+   - From the first version: the daemon RPC, the heartbeat-token
+     authentication, the rule that receipt is the signal, and the codex
+     allow-rule result as a measured fallback.
+   - From the per-harness read: the MCP tool as the seat side, seeding crush
+     and opencode, and marvel writing the file.
+   - Dropped: the shell verb as the shared channel, the daemon-side store
+     (marvel writes the declared file instead), and the pane fallback, since
+     an MCP tool covers the case it was for.
 
-**crush and opencode (not measured).** Both have per-tool permission
-settings, and the design assumes each can allow one shell command by pattern
-while denying file writes. That premise has to be checked, one command per
-harness on the scratch rig, before their half is built. If either harness
-cannot allow one command without allowing all of them, it gets the pane
-fallback in section 4, or it keeps the max-age escalation and says so.
+## 4. Codex: two more carriers, measured or partly measured
 
-## 3. What changes in the shift path
+- **A shell verb through one exec-policy rule (measured).** A codex
+  exec-policy prefix rule runs one matching command outside the sandbox, even
+  at `-s read-only` with approval policy `never`. The reviewer seats already
+  use this pattern for forge access
+  (`docs/design/codex-reviewer-forge-access.md`). Measured on codex-cli
+  0.160.1, with a throwaway repo and `CODEX_HOME`, disk-verified, one run per
+  arm:
 
-- **The notice.** For a role with no writable path, the notice names the verb
-  instead of a file: `shift: max age reached; write your handoff now with:
-  marvel handoff put (stdin or --text); you have <window>`. Today's notice
-  for a declared file is unchanged (`internal/team/shift_handoff.go:83-87`).
-- **The controller.** `advanceShiftRequest` also checks the store for a `put`
-  recorded after `RequestedAt` from the requested session. When one exists,
-  the controller shifts with the same event text as for a marker, naming
-  `put` rather than a path. The escalation, `handoffMissingReason`, gains one
-  more reason: no `put` was received from the session within the window.
-- **apply.** A role with max-age and no writable path declares `handoff =
-  "marvel"` (the store). apply refuses `marvel` for an adapter that has no
-  allowlist mapping, rather than accepting an arm the seat cannot answer.
-  That is finding-067's "validate at apply", made checkable.
+  | arm | rule | result on disk | codex said |
+  |---|---|---|---|
+  | no rule | none | no file | "ran" |
+  | one rule | `prefix_rule(pattern=["<helper>"], decision="allow")` | file written | "ran" |
 
-## 4. Fallback for a harness with no allowlist: the pane
+  If the MCP tool fails for codex, the fallback is a rule naming the absolute
+  marvel binary and only its `handoff put` verb.
+- **The `Stop` hook (partly measured).** marvel's own binary already runs
+  inside codex seats as a `SessionStart`, `PostToolUse` and `Stop` hook
+  (`internal/runtime/codex_home.go:23-27`). The hook reaches the daemon from a
+  `-s read-only` seat: it is codex's only context feed (`cmd/marvel/codexctx.go`),
+  and a live codex seat at `-s read-only` reports its context through it. So
+  the open question from that read, whether the sandbox confines a hook subprocess,
+  matters only for a hook that writes. This hook would not write; it would
+  call `handoff.put`.
+  - It is not recommended as the primary carrier. To find the handoff, it
+    would have to pick the seat's handoff text out of the transcript. That
+    means marvel parsing the seat's prose, which the succession contract
+    keeps out of marvel: marvel parses the marker and nothing else. An
+    explicit tool call carries the text with no parsing.
 
-If a harness cannot let one command through, the seat prints the handoff in
-its pane between two lines, and marvel reads the pane:
+## 5. Checks before the crush and opencode halves are built
 
-- the opening line is `HANDOFF-BEGIN <nonce>`;
-- the closing line is `HANDOFF-END <nonce>`.
+Each runs once, on a scratch rig, never on a live seat:
 
-The nonce is one that marvel puts in the notice. This needs no write and no
-command.
+1. **crush:** with a seeded MCP server and `allowed_tools` naming only the
+   handoff tool, the seat calls `submit_handoff`, and the daemon records the
+   call. The disk shows the file, and the seat still cannot write anything
+   else.
+2. **opencode:** the same check, and also whether the MCP call prompts. If it
+   prompts, find the opencode setting that pre-approves one tool, or record
+   that none exists.
+3. **crush `skill`:** whether a crush skill can write. If one can, that is a
+   hole in the read-only profile, to be reported on its own, not a channel
+   to build on.
 
-It is weaker than the verb, and I would build it only if section 2's check
-fails:
-- pane text can be wrapped by the TUI and cut off by scrollback;
-- anything that echoes the notice back into the pane carries the nonce, so a
-  match must need the closing line after an opening line that the notice did
-  not contain.
+If either harness cannot call one pre-approved tool without a broader grant,
+that harness keeps the max-age escalation, and its role documents why.
 
-Recommended order: the verb first; the pane only for a harness the check
-rules out.
+## 6. What changes in the shift path
 
-## 5. Rulings needed
+- **The notice.** For a role whose seat cannot write, the notice names the
+  tool instead of a path: `shift: max age reached; call submit_handoff with
+  your handoff; you have <window>`. Today's notice for a declared file is
+  unchanged (`internal/team/shift_handoff.go:82-87`).
+- **The controller.** `advanceShiftRequest` already reads the declared file,
+  and marvel has now written it, so the shift starts on the marker as it does
+  today. The only new code is the receipt check: a marker that marvel wrote
+  for a session counts only after that session's `handoff.put`.
+- **apply.** A role with max-age and a seat that cannot write declares
+  `handoff_via = "tool"`. apply refuses that declaration for an adapter with
+  no seeder that can offer the tool. This is finding-067's "validate at
+  apply", made checkable.
 
-Each recommendation is valid until 2026-10-22 or until the crush and
-opencode checks in section 2 have run, whichever comes first; the architect
-re-checks it then.
+## 7. Rulings needed
 
-1. **Retention (#604 item 2).** The succession contract says "never expire
-   the handoff bytes". The succession-protocol idea wipes them on completion.
-   - Recommended: keep every `put` (they are small, and the contract is
-     explicit), and list them with `marvel handoff list` so a human can prune
-     them.
-   - Alternative: keep the last N generations per role.
-2. **Readers.** Recommended: the successor and the operator. Not other seats:
-   a handoff can carry the seat's open work, and a reviewer seat should not
-   read a builder's.
-3. **Scope.** Recommended: max-age first, because that is where the escalation
-   repeats. Context pressure and an operator `marvel shift` can use the same
-   `put` later; #442 already tracks that context pressure shifts without a
-   handoff.
+Each recommendation is valid until 2026-10-22 or until the section 5 checks
+have run, whichever comes first; the architect re-checks it then.
 
-## 6. Not this
+1. **Seeding crush and opencode homes.** This is a new adapter
+   responsibility, as codex's was in #308. Recommended: yes. The same seed
+   fixes a seat whose MCP config is project-local and does not follow it when
+   its workdir changes.
+2. **Readers.** Recommended: unchanged from D5, because the file is where it
+   is today.
+3. **Scope.** Recommended: max-age first. Context pressure and an operator
+   `marvel shift` can use the same tool later (#442).
 
-- No change to any seat's `-s` mode or permission profile beyond the one
-  allowed verb.
-- No director dependency. The channel is marvel's own socket, so component
-  independence holds (#604 Q4).
-- No move of daemon state between hosts (#604 item 4).
-- The `ops/supervisor` case, which is a seat whose coordination contract
-  denies writes, is the same shape if its harness allows the verb. Whether it
-  should is the open write-grant decision, not this design.
+## 8. Not this
 
-## 7. Candidate requirements (provisional)
+- No change to any seat's `-s` mode, `allowed_tools` beyond the one handoff
+  tool, or `edit` permission.
+- No director dependency. The MCP server is marvel's own, and the channel is
+  marvel's socket, so component independence holds (#604 Q4).
+- No daemon-side handoff store, and no move of daemon state between hosts.
+- The supervisor seat whose coordination contract denies writes is the same
+  shape if its harness pre-approves the tool. Whether it should is the open
+  write-grant decision, not this design.
 
-- **RH-A:** a role with max-age on a seat that cannot write declares the store
-  as its handoff, and apply refuses that declaration for a harness with no
-  allowlist mapping.
-- **RH-B:** the daemon receiving the handoff is the signal; neither a seat's
-  report nor a file it claims to have written counts.
-- **RH-C:** the allowlist entry names the absolute marvel binary and only the
-  `handoff put` and `handoff get` verbs.
+## 9. Candidate requirements (provisional)
+
+- **RH-A:** a role with max-age on a seat that cannot write declares
+  `handoff_via = "tool"`, and apply refuses that declaration for an adapter
+  that cannot seed the tool.
+- **RH-B:** the daemon's receipt of the session's `handoff.put` is the
+  signal; neither a seat's report nor a file it claims to have written
+  counts.
+- **RH-C:** each harness pre-approves only the handoff tool. Where a shell
+  fallback is used, it names the absolute marvel binary and only the
+  `handoff put` verb.
