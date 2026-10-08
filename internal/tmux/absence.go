@@ -16,13 +16,15 @@ const (
 	// absenceNone: the text does not say the server is absent. Anything
 	// unrecognised lands here, which a caller reads as an outage.
 	absenceNone absence = iota
-	// absenceNoServer: "no server running on <path>", the socket exists and
-	// nothing answers it. The server is gone.
+	// absenceNoServer: "no server running on <path>". tmux prints it for a
+	// socket nothing serves, and also for a live server whose listen backlog
+	// is full (a stopped server), so it is absence only when no server
+	// process is alive.
 	absenceNoServer
 	// absenceNoSocket: "error connecting to <path> (No such file or
 	// directory)" or "(Connection refused)". The socket is missing or dead,
 	// which is also what a live server behind an unreachable path looks like,
-	// so it counts as absence only when no server process is alive.
+	// so it too counts as absence only when no server process is alive.
 	absenceNoSocket
 )
 
@@ -56,24 +58,24 @@ func psAll(ctx context.Context) ([]byte, error) {
 }
 
 // serverAbsent reports whether tmux's stderr means there is no server to ask.
-// It is the one rule every caller that reads tmux's stderr applies.
-//
-// "no server running" is the server's own answer from a socket nothing
-// serves. A missing or refused socket is the same only when no tmux server
-// for this socket name is alive: after a host reboot the socket directory is
-// gone with the server, but a live server behind a socket that cannot be
-// reached is an outage, and reading it as absence would reap every session it
-// still runs. When the process list cannot be read the answer is "not
+// It is the one rule every caller that reads tmux's stderr applies: a server
+// answer that says "no server", or that the socket is missing or refused, is
+// absence only when no tmux server for this socket name is alive. After a host
+// reboot the socket directory is gone with the server, so the process list is
+// empty and the answer is absence. A live server behind a socket that cannot
+// be reached, or one stopped with a full listen backlog, is an outage, and
+// reading it as absence would reap every session it still runs or start a
+// second server. When the process list cannot be read the answer is "not
 // absent": the safe direction is the outage.
+//
+// "can't find pane/window/session" is not here: a live server is the one
+// answering.
 func (d *Driver) serverAbsent(text string) bool {
-	switch classifyAbsence(text) {
-	case absenceNoServer:
-		return true
-	case absenceNoSocket:
-		alive, err := d.serverProcessAlive()
-		return err == nil && !alive
+	if classifyAbsence(text) == absenceNone {
+		return false
 	}
-	return false
+	alive, err := d.serverProcessAlive()
+	return err == nil && !alive
 }
 
 // serverProcessAlive reports whether a tmux server for this driver's socket

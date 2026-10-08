@@ -284,15 +284,24 @@ func (d *Driver) HasSession(name string) bool {
 	return ok
 }
 
-// sessionExists reports whether tmux has the session. A tmux that does not
-// answer in time returns ErrTmuxTimeout and false, so a caller can refuse to
-// read the silence as "no such session".
+// sessionExists reports whether tmux has the session. Only two answers say
+// no: tmux's "can't find session", and an absent server by serverAbsent's
+// rule. A tmux that does not answer in time, or answers anything else, is an
+// error, so a caller that creates on absence never starts a second server
+// beside one it cannot reach.
 func (d *Driver) sessionExists(name string) (bool, error) {
-	err := d.cmd("has-session", "-t", name).Run()
+	out, err := d.cmd("has-session", "-t", name).CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
 	if errors.Is(err, ErrTmuxTimeout) {
 		return false, err
 	}
-	return err == nil, nil
+	text := string(out)
+	if strings.Contains(text, "can't find session") || d.serverAbsent(text) {
+		return false, nil
+	}
+	return false, fmt.Errorf("has-session %s: %s: %w", name, strings.TrimSpace(text), err)
 }
 
 // ListSessions returns the names of every tmux session on the server.
@@ -589,7 +598,7 @@ var ErrPaneGone = errors.New("pane already gone")
 // PaneStatus reads as "gone".
 func paneGoneText(text string) bool {
 	return strings.Contains(text, "can't find pane") || strings.Contains(text, "can't find window") ||
-		strings.Contains(text, "can't find session") || strings.Contains(text, "no server running")
+		strings.Contains(text, "can't find session")
 }
 
 // KillSession destroys an entire tmux session.
