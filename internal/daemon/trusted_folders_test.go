@@ -1,10 +1,11 @@
 package daemon
 
 import (
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/gittest"
 )
 
 const trustedFoldersManifest = `
@@ -40,14 +41,7 @@ func TestApplyRefusesAMissingTrustedFolder(t *testing.T) {
 // step reads it.
 func TestApplyStoresTheTrustedFolders(t *testing.T) {
 	d := newHandlerDaemon(t)
-	repo := t.TempDir()
-	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
-	real, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	real := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	if resp := applyManifest(t, d, strings.Replace(trustedFoldersManifest, "%s", real, 1)); resp.Error != "" {
 		t.Fatalf("apply: %s", resp.Error)
 	}

@@ -2,40 +2,13 @@ package api
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-)
 
-// trustRepo makes a git repository with one commit (plumbing, so no signing)
-// and returns its top-level with symlinks resolved.
-func trustRepo(t *testing.T, dir string) string {
-	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	run("init", "-q", "-b", "main")
-	run("update-ref", "refs/heads/main", run("commit-tree", run("mktree"), "-m", "fixture"))
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return real
-}
+	"github.com/arcavenae/marvel/internal/gittest"
+)
 
 const trustedHead = "[workspace]\nname = \"aae\"\n%s\n[[team]]\nname = \"squad\"\n  [[team.role]]\n  name = \"w\"\n  replicas = 1\n    [team.role.runtime]\n    command = \"claude\"\n"
 
@@ -86,7 +59,7 @@ func TestManifestTrustedFoldersAbsentEmptyAndListed(t *testing.T) {
 }
 
 func TestValidateTrustedFoldersAcceptsAMainCheckoutTopLevel(t *testing.T) {
-	repo := trustRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	m := trustManifest(t, `trusted_folders = ["`+repo+`"]`)
 	if err := m.ValidateTrustedFolders(); err != nil {
 		t.Fatalf("a main checkout top-level was refused: %v", err)
@@ -97,15 +70,12 @@ func TestValidateTrustedFoldersAcceptsAMainCheckoutTopLevel(t *testing.T) {
 }
 
 func TestValidateTrustedFoldersRefusals(t *testing.T) {
-	repo := trustRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	sub := filepath.Join(repo, "docs")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wt := filepath.Join(t.TempDir(), "wt")
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", wt, "-b", "feat").CombinedOutput(); err != nil {
-		t.Fatalf("worktree add: %v\n%s", err, out)
-	}
+	wt := gittest.Worktree(t, repo, "wt")
 	plain := t.TempDir()
 	for name, tc := range map[string]struct{ path, want string }{
 		"missing":          {filepath.Join(plain, "nope"), "does not exist"},
@@ -124,12 +94,12 @@ func TestValidateTrustedFoldersRefusals(t *testing.T) {
 func TestValidateTrustedFoldersExpandsHomeAndResolvesRelative(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	trustRepo(t, filepath.Join(home, "work", "aae-orc"))
+	gittest.Repo(t, filepath.Join(home, "work", "aae-orc"))
 	if err := trustManifest(t, `trusted_folders = ["~/work/aae-orc"]`).ValidateTrustedFolders(); err != nil {
 		t.Errorf("a ~/ path: %v", err)
 	}
 	root := t.TempDir()
-	trustRepo(t, filepath.Join(root, "i-orc"))
+	gittest.Repo(t, filepath.Join(root, "i-orc"))
 	m := trustManifest(t, `root = "`+root+`"`+"\n"+`trusted_folders = ["i-orc"]`)
 	if err := m.ValidateTrustedFolders(); err != nil {
 		t.Errorf("a relative path against the root: %v", err)
@@ -143,7 +113,7 @@ func TestValidateTrustedFoldersExpandsHomeAndResolvesRelative(t *testing.T) {
 // Apply: a present list replaces the stored one (an empty list revokes), and an
 // absent key leaves it alone.
 func TestApplyTrustedFoldersReplaceRevokeAndAbsent(t *testing.T) {
-	repo := trustRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	store := NewStore()
 	apply := func(extra string) []string {
 		t.Helper()
@@ -190,5 +160,19 @@ func TestTrustedFolderNotesWarnWhenTheListDiffers(t *testing.T) {
 	}
 	if notes := trustManifest(t, "trusted_folders = []").TrustedFolderNotes(store); len(notes) != 1 {
 		t.Errorf("a revoke: notes = %v, want one", notes)
+	}
+}
+
+// GitMainRoot answers about the folder it is given, not about a repository the
+// daemon's environment points at: a daemon started from a git hook inherits
+// GIT_DIR, and the answer must not follow it.
+func TestGitMainRootIgnoresAnInheritedGitDir(t *testing.T) {
+	other := gittest.Repo(t, filepath.Join(t.TempDir(), "other"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+	root, reason := GitMainRoot(repo)
+	if root != repo || reason != "" {
+		t.Fatalf("GitMainRoot(%s) = %q, %q, want the folder's own root", repo, root, reason)
 	}
 }

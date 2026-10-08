@@ -11,54 +11,11 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/gittest"
 )
 
-// gitRepo makes a repository with one commit under a temp dir and returns its
-// top-level with symlinks resolved. The commit is made with plumbing so the
-// fixture needs no signing and no config.
-func gitRepo(t *testing.T, dir string) string {
-	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	run("init", "-q", "-b", "main")
-	empty := run("mktree")
-	commit := run("commit-tree", empty, "-m", "fixture")
-	run("update-ref", "refs/heads/main", commit)
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return real
-}
-
-func addWorktree(t *testing.T, repo, name string) string {
-	t.Helper()
-	wt := filepath.Join(t.TempDir(), name)
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", wt, "-b", name).CombinedOutput(); err != nil {
-		t.Fatalf("git worktree add: %v\n%s", err, out)
-	}
-	real, err := filepath.EvalSymlinks(wt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return real
-}
-
 func TestCodexTrustRootAtAListedRoot(t *testing.T) {
-	repo := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	got := resolveCodexTrust(repo, []string{repo}, "", "")
 	if got.Root != repo || got.Reason != "" {
 		t.Fatalf("trust = %+v, want trusted at %s", got, repo)
@@ -67,12 +24,12 @@ func TestCodexTrustRootAtAListedRoot(t *testing.T) {
 
 // One key at the root covers every subdirectory and every worktree of it.
 func TestCodexTrustRootFromASubdirectoryAndAWorktree(t *testing.T) {
-	repo := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	sub := filepath.Join(repo, "docs", "deep")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wt := addWorktree(t, repo, "feat")
+	wt := gittest.Worktree(t, repo, "feat")
 	for name, start := range map[string]string{"subdirectory": sub, "worktree": wt} {
 		if got := resolveCodexTrust(start, []string{repo}, "", ""); got.Root != repo {
 			t.Errorf("%s: trust = %+v, want trusted at the main root %s", name, got, repo)
@@ -83,8 +40,8 @@ func TestCodexTrustRootFromASubdirectoryAndAWorktree(t *testing.T) {
 // A subrepo with its own .git resolves to its own root and does not inherit the
 // parent's trust, as in codex.
 func TestCodexTrustSubrepoDoesNotInheritItsParent(t *testing.T) {
-	parent := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
-	subrepo := gitRepo(t, filepath.Join(parent, "marvel"))
+	parent := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	subrepo := gittest.Repo(t, filepath.Join(parent, "marvel"))
 	got := resolveCodexTrust(subrepo, []string{parent}, "", "")
 	if got.Root != "" || got.Reason != "not listed" {
 		t.Fatalf("trust = %+v, want untrusted, not listed", got)
@@ -92,8 +49,8 @@ func TestCodexTrustSubrepoDoesNotInheritItsParent(t *testing.T) {
 }
 
 func TestCodexTrustUnlistedFolderStaysUntrusted(t *testing.T) {
-	other := gitRepo(t, filepath.Join(t.TempDir(), "other"))
-	listed := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	other := gittest.Repo(t, filepath.Join(t.TempDir(), "other"))
+	listed := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	got := resolveCodexTrust(other, []string{listed}, "", "")
 	if got.Root != "" || got.Reason != "not listed" {
 		t.Fatalf("trust = %+v, want untrusted, not listed", got)
@@ -102,7 +59,7 @@ func TestCodexTrustUnlistedFolderStaysUntrusted(t *testing.T) {
 
 // Every way git can fail leaves the seat untrusted, each with its own reason.
 func TestCodexTrustFailsClosed(t *testing.T) {
-	listed := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	listed := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 
 	noGit := t.TempDir()
 	if got := resolveCodexTrust(noGit, []string{listed}, "", ""); got.Root != "" || got.Reason != "no git" {
@@ -113,9 +70,10 @@ func TestCodexTrustFailsClosed(t *testing.T) {
 	}
 
 	bare := filepath.Join(t.TempDir(), "bare.git")
-	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	gittest.Run(t, bare, "init", "-q", "--bare")
 	if got := resolveCodexTrust(bare, []string{bare}, "", ""); got.Root != "" || got.Reason != "bare repo" {
 		t.Errorf("a bare repository: %+v, want untrusted, bare repo", got)
 	}
@@ -128,7 +86,7 @@ func TestCodexTrustFailsClosed(t *testing.T) {
 // A listed path that is a symlink to the root, and a start directory reached
 // through one, both match: the comparison is after EvalSymlinks.
 func TestCodexTrustMatchesThroughSymlinks(t *testing.T) {
-	repo := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(repo, alias); err != nil {
 		t.Fatal(err)
@@ -143,12 +101,12 @@ func TestCodexTrustMatchesThroughSymlinks(t *testing.T) {
 
 func TestCodexTrustExpandsHomeAndResolvesRelativeAgainstTheRoot(t *testing.T) {
 	home := t.TempDir()
-	inHome := gitRepo(t, filepath.Join(home, "work", "aae-orc"))
+	inHome := gittest.Repo(t, filepath.Join(home, "work", "aae-orc"))
 	if got := resolveCodexTrust(inHome, []string{"~/work/aae-orc"}, home, ""); got.Root != inHome {
 		t.Errorf("a ~/ path: %+v, want trusted at %s", got, inHome)
 	}
 	wsRoot := t.TempDir()
-	rel := gitRepo(t, filepath.Join(wsRoot, "i-orc"))
+	rel := gittest.Repo(t, filepath.Join(wsRoot, "i-orc"))
 	if got := resolveCodexTrust(rel, []string{"i-orc"}, "", wsRoot); got.Root != rel {
 		t.Errorf("a relative path: %+v, want trusted at %s", got, rel)
 	}
@@ -206,8 +164,8 @@ func projectsOf(t *testing.T, cfg map[string]any) map[string]map[string]any {
 // A listed root is seeded trusted with ONE entry, the root, and no untrusted
 // entry for the start directory: an exact key beats the root key in codex.
 func TestSeederWritesOneTrustedRootAndNoUntrustedEntry(t *testing.T) {
-	repo := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
-	wt := addWorktree(t, repo, "feat")
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	wt := gittest.Worktree(t, repo, "feat")
 	cfg, evs := seedFor(t, wt, []string{repo})
 	projects := projectsOf(t, cfg)
 	if len(projects) != 1 || projects[repo]["trust_level"] != "trusted" {
@@ -222,8 +180,8 @@ func TestSeederWritesOneTrustedRootAndNoUntrustedEntry(t *testing.T) {
 // A seat in a subrepo of a listed root stays untrusted, as today, and the event
 // says why.
 func TestSeederKeepsASubrepoUntrusted(t *testing.T) {
-	parent := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
-	subrepo := gitRepo(t, filepath.Join(parent, "marvel"))
+	parent := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	subrepo := gittest.Repo(t, filepath.Join(parent, "marvel"))
 	cfg, evs := seedFor(t, subrepo, []string{parent})
 	projects := projectsOf(t, cfg)
 	if len(projects) != 1 || projects[subrepo]["trust_level"] != "untrusted" {
@@ -236,7 +194,7 @@ func TestSeederKeepsASubrepoUntrusted(t *testing.T) {
 
 // A git failure fails closed to the seed marvel writes today.
 func TestSeederFailsClosedOnAGitError(t *testing.T) {
-	listed := gitRepo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	listed := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
 	noGit := t.TempDir()
 	cfg, evs := seedFor(t, noGit, []string{listed})
 	projects := projectsOf(t, cfg)
