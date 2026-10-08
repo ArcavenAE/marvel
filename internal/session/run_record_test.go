@@ -146,8 +146,8 @@ func TestReapRecordsScheduledRuns(t *testing.T) {
 	}
 
 	bad, found := store.GetScheduleStatus(ws + "/timers/broken")
-	if !found || len(bad.History) != 1 || bad.History[0].Outcome != api.RunFailed || bad.History[0].ExitStatus != "3" {
-		t.Fatalf("broken status = %+v (found %v), want one failed run with exit 3", bad, found)
+	if !found || len(bad.History) != 1 || !brokenRunOK(tmuxVersion(t), bad.History[0]) {
+		t.Fatalf("broken status = %+v (found %v), want one failed run with exit 3 (or no status on a tmux older than 3.5)", bad, found)
 	}
 	if !bad.LastSucceededAt.IsZero() {
 		t.Fatalf("a failed run set last succeeded: %v", bad.LastSucceededAt)
@@ -481,5 +481,53 @@ func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) (kept b
 			t.Fatal("pane never died")
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// brokenRunOK reports whether the run record of the role that exits 3 is
+// acceptable for the tmux the test runs on.
+func brokenRunOK(version string, r api.RunRecord) bool {
+	_ = version // the stub is strict on every tmux; the gate comes next
+	return r.Outcome == api.RunFailed && r.ExitStatus == "3"
+}
+
+// tmuxVersion is `tmux -V`, or "" when it cannot be read, which
+// tmuxtest.StatusExpected treats as a tmux that keeps the status.
+func tmuxVersion(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("tmux", "-V").Output()
+	if err != nil {
+		t.Logf("tmux -V: %v", err)
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestBrokenRunOKFollowsTheTmuxVersion pins brokenRunOK: a run that exits 3 is
+// recorded failed with exit 3 on every tmux. A tmux older than 3.5 can lose a
+// dead pane's status, and then the failed run carries no status (the
+// unknown-status contract the other two tests share); that is acceptable only
+// there, never where tmux keeps the status, and the outcome is failed either way.
+func TestBrokenRunOKFollowsTheTmuxVersion(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		outcome api.RunOutcome
+		exit    string
+		want    bool
+	}{
+		{"tmux 3.7b", api.RunFailed, "3", true},
+		{"tmux 3.4", api.RunFailed, "3", true},
+		{"tmux 3.4", api.RunFailed, "", true},
+		{"tmux 3.5", api.RunFailed, "", false},
+		{"tmux 3.7b", api.RunFailed, "", false},
+		{"", api.RunFailed, "", false},
+		{"tmux 3.4", api.RunFailed, "1", false},
+		{"tmux 3.4", api.RunSucceeded, "", false},
+		{"tmux 3.4", api.RunSucceeded, "3", false},
+	} {
+		r := api.RunRecord{Outcome: tc.outcome, ExitStatus: tc.exit}
+		if got := brokenRunOK(tc.version, r); got != tc.want {
+			t.Errorf("brokenRunOK(%q, %s exit %q) = %v, want %v", tc.version, tc.outcome, tc.exit, got, tc.want)
+		}
 	}
 }
