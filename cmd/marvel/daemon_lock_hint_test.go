@@ -69,7 +69,10 @@ func TestLockedStateNamesAnIdentifiedHolder(t *testing.T) {
 	for name, argv := range map[string][]string{
 		"bare":                  {"marvel", "daemon"},
 		"absolute path":         {"/opt/bin/marvel", "daemon", "--socket", "/s/m.sock"},
-		"flag before daemon":    {"marvel", "--cluster-flag", "daemon"},
+		"cluster flag value":    {"marvel", "--cluster", "prod", "daemon"},
+		"identity flag value":   {"marvel", "-i", "/k/id", "daemon"},
+		"socket flag value":     {"marvel", "--socket", "/s/m.sock", "daemon"},
+		"flag with equals":      {"marvel", "--cluster=prod", "daemon"},
 		"flag after daemon":     {"/usr/local/bin/marvel", "daemon", "--mrvl=:7000"},
 		"relative with a slash": {"./marvel", "daemon"},
 	} {
