@@ -3671,7 +3671,8 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 	}
 	if d.bus.Bus().HubURL == "" {
 		return Response{Error: "this daemon's config, read once at start, declares no hub (bus.hub.url), so there is no leaf to connect or disconnect; " +
-			"if the file declares one now, run `marvel daemon reexec` to re-read it, then push the leaf credential again with `marvel credential put bus/leaf --value-file <seed-file>` (a reexec drops it, marvel#339)"}
+			"if the file declares one now, run `marvel daemon reexec` to re-read it, then push the leaf credential again with `marvel credential put bus/leaf --value-file <seed-file>` (a reexec drops it, marvel#339); " +
+			"run both with the same --cluster or --socket you used to reach this daemon, since a bare marvel may resolve to a different one"}
 	}
 	changed, err := d.bus.SetLeafAttached(attached)
 	if err != nil {
