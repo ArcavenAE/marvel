@@ -41,14 +41,8 @@ func lockedStateHint(err error, pidFile string, root *cobra.Command) error {
 	if pid == 0 {
 		return fmt.Errorf("the state lock is held by another process, and the pidfile does not name one; %s: %w", pointer, err)
 	}
-	// Only a process the caller can signal can be the holder: the state file is
-	// 0600, so another user's process, which signal 0 answers with EPERM, cannot
-	// have opened it.
-	if liveSignal(pid) == nil {
-		if argv, aerr := daemonArgs(pid); aerr == nil && isMarvelDaemon(root, argv) {
-			return fmt.Errorf("another marvel daemon holds the state lock (pid %d, started as `%s`); it is already running, and `marvel describe daemon` shows it: %w",
-				pid, strings.Join(argv, " "), err)
-		}
+	if argv, ok := identifiedHolder(pid, root); ok {
+		return fmt.Errorf("%s: %w", holderMessage(pid, argv), err)
 	}
 	return fmt.Errorf("the state lock is held; the pidfile names pid %d, which may not be the holder; %s: %w", pid, pointer, err)
 }
@@ -97,5 +91,44 @@ func daemonPositionalArgs(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-// refuseLiveDaemon is a red stub; the green commit gives it a body.
-func refuseLiveDaemon(string, *cobra.Command) error { return nil }
+// identifiedHolder reports the argv of the process the pid names when it is a
+// marvel daemon this one may take as the holder: not this process (a reexec
+// keeps its pid, and in a container a restarted daemon can be pid 1 again), a
+// process the caller can signal, and one whose argv says `marvel daemon`. Only a
+// process the caller can signal can be the holder: the state file is 0600, so
+// another user's process, which signal 0 answers with EPERM, cannot have opened
+// it.
+func identifiedHolder(pid int, root *cobra.Command) ([]string, bool) {
+	if pid == os.Getpid() || liveSignal(pid) != nil {
+		return nil, false
+	}
+	argv, err := daemonArgs(pid)
+	if err != nil || !isMarvelDaemon(root, argv) {
+		return nil, false
+	}
+	return argv, true
+}
+
+// holderMessage names an identified holder and how it was started.
+func holderMessage(pid int, argv []string) string {
+	return fmt.Sprintf("another marvel daemon holds the state lock (pid %d, started as `%s`); it is already running, and `marvel describe daemon` shows it",
+		pid, strings.Join(argv, " "))
+}
+
+// refuseLiveDaemon is the fast path in front of the state lock (marvel#744). A
+// second daemon would otherwise wait five seconds on the lock before the
+// pidfile guard in Start could say a daemon is running. It refuses at once only
+// when the pidfile names an identified marvel daemon, with the message the lock
+// error gives. A dead pid, another user's process, a process that is not a
+// daemon, an argv that cannot be read and a pidfile that names nothing all
+// return nil: the lock stays the authority and decides.
+func refuseLiveDaemon(pidFile string, root *cobra.Command) error {
+	pid := pidFromFile(pidFile)
+	if pid == 0 {
+		return nil
+	}
+	if argv, ok := identifiedHolder(pid, root); ok {
+		return errors.New(holderMessage(pid, argv))
+	}
+	return nil
+}
