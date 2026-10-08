@@ -257,6 +257,9 @@ func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the marvel daemon",
+		// The command starts the daemon, so a positional argument it does not
+		// know is a mistake to report, not to ignore (marvel#606).
+		Args: cobra.NoArgs,
 		Long: `Start the marvel daemon. Listens on a Unix socket for local access.
 Use --mrvl to also start the mrvl:// listener for remote access.
 
@@ -433,8 +436,11 @@ re-binds the same socket, and adopts those panes.
 Use this after installing a new binary out of band. To fetch, install,
 and adopt in one step, use 'marvel upgrade --daemon'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
+				return err
+			}
 			req, sent := reexecRequest()
-			resp, err := send(req)
+			resp, err := reexecSend(req)
 			if err != nil {
 				return err
 			}
@@ -1899,8 +1905,11 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				return err
 			}
 			return afterUpgrade(res, reexecDaemon, func() error {
+				if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
+					return err
+				}
 				req, sent := reexecRequest()
-				resp, err := send(req)
+				resp, err := reexecSend(req)
 				if err != nil {
 					return fmt.Errorf("sending daemon re-exec: %w", err)
 				}
