@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -200,6 +201,12 @@ func TestHasSessionOnAMissingExactTargetKeepsTheNotFoundWording(t *testing.T) {
 	}
 }
 
+// sessionTargetAllow is the escape hatch for a documented false positive: a
+// function name mapped to the one-line reason the guard skips it. It is empty
+// because driver.go has none. An entry with no reason, or one that names a
+// function driver.go does not have, fails the test.
+var sessionTargetAllow = map[string]string{}
+
 // paneEntryPoints are the driver functions whose paneID parameter is a pane id
 // by contract: their callers hand them the id tmux gave out. A paneID parameter
 // anywhere else is not trusted, because a helper that takes a session name and
@@ -211,6 +218,14 @@ var paneEntryPoints = map[string]bool{
 	"CapturePaneEscapes": true, "Repaint": true, "CapturePaneRange": true,
 	"CapturePaneRangeEscapes": true, "PaneForeground": true, "paneStillAt": true,
 }
+
+// flagCluster is a short-flag cluster: -t, -dt, -dPt. gluedT is the start of a
+// value that has a t among its flags and goes on, so tmux takes what follows
+// as the t's argument.
+var (
+	flagCluster = regexp.MustCompile(`^-[A-Za-z]+$`)
+	gluedT      = regexp.MustCompile(`^-[A-Za-z]*t`)
+)
 
 // emptyImporter gives every import an empty package. The guard type-checks
 // one file, so names from other packages and files stay unresolved and their
@@ -232,12 +247,24 @@ func (emptyImporter) Import(path string) (*types.Package, error) {
 // only when it is a parameter named paneID that the function never assigns and
 // the function is one of paneEntryPoints.
 //
-// Known limits, not covered: a wrapper method around cmd, or `run := d.cmd`
-// (only calls named cmd or append are scanned); a "-dt" flag cluster, which
-// tmux reads as -t too; strings.Fields building the arguments; an args slice
-// filled by index; and exec.Command in place of d.cmd. Each needs a person to
-// read the diff, which is what review is for.
+// Known limits, not covered, each of which needs a person to read the diff:
+// method values such as `run := d.cmd` and wrapper methods around cmd (only
+// calls named cmd or append are scanned); strings.Fields assembling the
+// arguments; an args slice filled by index; and exec.Command("tmux") outside
+// the driver, which is a different invariant and would be its own guard. A
+// false positive goes in sessionTargetAllow with a one-line reason.
 func guardViolations(t *testing.T, src any) []string {
+	t.Helper()
+	v, _ := guardScan(t, src, nil)
+	return v
+}
+
+// guardStats counts the -t sites the scan checked, by what they take.
+type guardStats struct{ sites, sessionTarget, sessionScope, paneID int }
+
+// guardScan is guardViolations with an allowlist: allow maps a function name
+// to the one-line reason the guard skips it (a documented false positive).
+func guardScan(t *testing.T, src any, allow map[string]string) ([]string, guardStats) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "driver.go", src, 0)
@@ -253,6 +280,7 @@ func guardViolations(t *testing.T, src any) []string {
 	pkg, _ := conf.Check("tmux", fset, []*ast.File{f}, info)
 
 	var out []string
+	var stats guardStats
 	report := func(n ast.Node, format string, args ...any) {
 		out = append(out, fset.Position(n.Pos()).String()+": "+fmt.Sprintf(format, args...))
 	}
@@ -366,7 +394,7 @@ func guardViolations(t *testing.T, src any) []string {
 
 	for _, decl := range f.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Body == nil {
+		if !ok || fd.Body == nil || allow[fd.Name.Name] != "" {
 			continue
 		}
 		// paneIDs are the function's own parameters named paneID that nothing
@@ -440,28 +468,50 @@ func guardViolations(t *testing.T, src any) []string {
 			return true
 		})
 
+		// target checks the argument that follows a -t.
+		target := func(list []ast.Expr, i int, at ast.Expr) {
+			stats.sites++
+			if i >= len(list) {
+				report(at, "-t with no target")
+				return
+			}
+			switch arg := list[i].(type) {
+			case *ast.CallExpr:
+				id, ok := arg.Fun.(*ast.Ident)
+				switch {
+				case !ok || !pkgFunc(id):
+					report(arg, "-t takes a call that is not the package's sessionTarget or sessionScope")
+				case id.Name == "sessionTarget":
+					stats.sessionTarget++
+				default:
+					stats.sessionScope++
+				}
+			case *ast.Ident:
+				if !paneIDs[info.Uses[arg]] {
+					report(arg, "-t takes %s, which is not a pane id parameter or a sessionTarget or sessionScope call", arg.Name)
+				} else {
+					stats.paneID++
+				}
+			default:
+				report(arg, "-t takes a form the guard does not know")
+			}
+		}
 		check := func(list []ast.Expr) {
 			for i, e := range list {
-				if v, ok := full(e, 0); ok && v == "-t" {
-					if i+1 >= len(list) {
-						report(e, "-t with no target")
-						continue
-					}
-					switch arg := list[i+1].(type) {
-					case *ast.CallExpr:
-						if id, ok := arg.Fun.(*ast.Ident); !ok || !pkgFunc(id) {
-							report(arg, "-t takes a call that is not the package's sessionTarget or sessionScope")
-						}
-					case *ast.Ident:
-						if !paneIDs[info.Uses[arg]] {
-							report(arg, "-t takes %s, which is not a pane id parameter or a sessionTarget or sessionScope call", arg.Name)
-						}
+				if v, ok := full(e, 0); ok && flagCluster.MatchString(v) {
+					// -t, or a cluster such as -dt: when the t is last it takes
+					// the next argument; anywhere else the rest of the cluster
+					// is its argument, glued.
+					switch ti := strings.IndexByte(v, 't'); {
+					case ti < 0:
+					case ti == len(v)-1:
+						target(list, i+1, e)
 					default:
-						report(arg, "-t takes a form the guard does not know")
+						report(e, "%q is -t glued to what follows: tmux reads it as a target too", v)
 					}
 					continue
 				}
-				if l := lead(e, 0); strings.HasPrefix(l, "-t") {
+				if l := lead(e, 0); gluedT.MatchString(l) {
 					report(e, "-t glued to what follows (%q): tmux reads it as a target too", l)
 				}
 			}
@@ -485,7 +535,7 @@ func guardViolations(t *testing.T, src any) []string {
 			return true
 		})
 	}
-	return out
+	return out, stats
 }
 
 // Fails if driver.go passes a bare session name to -t: every -t in it must
@@ -497,11 +547,27 @@ func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := guardViolations(t, src); len(v) != 0 {
+	for fn, reason := range sessionTargetAllow {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("sessionTargetAllow[%q] has no reason", fn)
+		}
+		if !strings.Contains(string(src), "func (d *Driver) "+fn+"(") && !strings.Contains(string(src), "func "+fn+"(") {
+			t.Errorf("sessionTargetAllow names %q, which driver.go does not have", fn)
+		}
+	}
+	v, stats := guardScan(t, src, sessionTargetAllow)
+	if len(v) != 0 {
 		t.Errorf("driver.go passes something else to -t:\n%s", strings.Join(v, "\n"))
 	}
-	if !strings.Contains(string(src), `"-t", sessionTarget(`) {
-		t.Fatal("the scan found no sessionTarget use, so it checked nothing")
+	// The query, as run at this head: every -t in an argument list built by
+	// d.cmd, append or a []string literal, by what follows it.
+	t.Logf("-t sites: %d (sessionTarget %d, sessionScope %d, pane id %d)",
+		stats.sites, stats.sessionTarget, stats.sessionScope, stats.paneID)
+	if stats.sites == 0 || stats.sessionTarget == 0 || stats.sessionScope == 0 || stats.paneID == 0 {
+		t.Fatalf("the scan found %+v, so it checked nothing of one kind", stats)
+	}
+	if stats.sites != stats.sessionTarget+stats.sessionScope+stats.paneID {
+		t.Errorf("sites %+v: some -t took none of the three allowed forms", stats)
 	}
 }
 
@@ -596,6 +662,18 @@ func sessionScope(n string) string { return "=" + n + ":" }
 	// The entry points themselves stay allowed.
 	if v := guardViolations(t, prelude+"func (d *Driver) KillPane(paneID string) error { return d.cmd(\"kill-pane\", \"-t\", paneID).Run() }\n"); len(v) != 0 {
 		t.Errorf("KillPane was reported: %v", v)
+	}
+	// A documented false positive is skipped when it is listed with a reason,
+	// and only then.
+	fp := wrap(`d.cmd("kill-session", "-t", "="+name)`)
+	if v, _ := guardScan(t, fp, nil); len(v) == 0 {
+		t.Error("the hand-built exact target was not reported without an allowlist entry")
+	}
+	if v, _ := guardScan(t, fp, map[string]string{"f": "builds the exact form by hand"}); len(v) != 0 {
+		t.Errorf("an allowlisted function was reported: %v", v)
+	}
+	if v, _ := guardScan(t, fp, map[string]string{"f": ""}); len(v) == 0 {
+		t.Error("an allowlist entry with no reason was honored")
 	}
 	// The pane id shape belongs to NewPaneAt alone: the same lines in another
 	// function that has no paneID parameter are not a pane id.
