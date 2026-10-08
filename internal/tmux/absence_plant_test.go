@@ -31,6 +31,10 @@ func plantServer(t *testing.T) (d *Driver, pane, sock string, pid int) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Registered before anything after it can fail, so a Fatal never leaks the
+	// server. KillServer reaches it while the socket exists; the pid reaches
+	// it after a test removes the socket file.
+	t.Cleanup(func() { _ = d.KillServer() })
 	if err := d.NewSession("probe"); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -38,24 +42,26 @@ func plantServer(t *testing.T) (d *Driver, pane, sock string, pid int) {
 	if err != nil {
 		t.Fatalf("start a pane: %v", err)
 	}
-	out, err := d.cmd("display-message", "-p", "#{socket_path}\t#{pid}").Output()
+	// Two queries, not one tab-joined format: with no UTF-8 locale tmux
+	// prints a tab as an underscore (marvel#727).
+	sockOut, err := d.cmd("display-message", "-p", "#{socket_path}").Output()
 	if err != nil {
-		t.Fatalf("ask the server for its socket and pid: %v", err)
+		t.Fatalf("ask the server for its socket: %v", err)
 	}
-	f := strings.Split(strings.TrimSpace(string(out)), "\t")
-	if len(f) != 2 {
-		t.Fatalf("socket and pid %q", out)
+	sock = strings.TrimSpace(string(sockOut))
+	pidOut, err := d.cmd("display-message", "-p", "#{pid}").Output()
+	if err != nil {
+		t.Fatalf("ask the server for its pid: %v", err)
 	}
-	pid, err = strconv.Atoi(f[1])
+	pid, err = strconv.Atoi(strings.TrimSpace(string(pidOut)))
 	if err != nil || pid <= 1 {
-		t.Fatalf("server pid %q: %v", f[1], err)
+		t.Fatalf("server pid %q: %v", pidOut, err)
 	}
-	t.Cleanup(func() { _ = d.KillServer() }) // a server a failing test started on a fresh socket
 	t.Cleanup(func() {
 		_ = syscall.Kill(pid, syscall.SIGCONT)
 		_ = syscall.Kill(pid, syscall.SIGTERM)
 	})
-	return d, pane, f[0], pid
+	return d, pane, sock, pid
 }
 
 // serversNamed counts tmux server processes carrying this driver's -L name.
