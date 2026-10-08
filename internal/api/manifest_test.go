@@ -1392,6 +1392,24 @@ func TestValidateRuntimesCheckOnlyWhatItCanRead(t *testing.T) {
 		{name: "a backslash escape", command: `sl\eep 5`, advisory: shellTextAdvisory},
 		{name: "a closing brace on the program", command: "sleep} 5", advisory: shellTextAdvisory},
 
+		// Whitespace the shell does not split on: sh and zsh split on space and
+		// tab only, so these are one word and the launch fails with rc 127.
+		{name: "a no-break space between fields", command: "sleep\u00a05", advisory: shellTextAdvisory},
+		{name: "a carriage return between fields", command: "sleep\r5", advisory: shellTextAdvisory},
+		{name: "a vertical tab between fields", command: "sleep\v5", advisory: shellTextAdvisory},
+		{name: "a form feed between fields", command: "sleep\f5", advisory: shellTextAdvisory},
+		{name: "a next-line character between fields", command: "sleep\u00855", advisory: shellTextAdvisory},
+		{name: "an em space between fields", command: "sleep\u20035", advisory: shellTextAdvisory},
+		{name: "a no-break space inside the arguments", command: "sleep 5\u00a0", advisory: shellTextAdvisory},
+		{name: "a trailing carriage return", command: "sleep 5\r", advisory: shellTextAdvisory},
+		{name: "only a no-break space", command: "\u00a0", advisory: shellTextAdvisory},
+
+		// A leading # makes the rest a comment: the launch runs nothing.
+		{name: "a comment", command: "# sleep 5", advisory: shellTextAdvisory},
+		{name: "a comment that looks like an absolute path", command: "#/abs/prog --x", teamDir: "t", advisory: shellTextAdvisory},
+		{name: "a comment that looks like a relative path", command: "#./bin/prog", teamDir: "t", advisory: shellTextAdvisory},
+		{name: "a hash inside the program name", command: "pr#og", advisory: shellTextAdvisory},
+
 		// A newline: the shell runs the second line as its own command, which
 		// fails with rc 127. Not accepted silently.
 		{name: "newline between fields", command: "sh -c true\n--b", advisory: "several lines"},
