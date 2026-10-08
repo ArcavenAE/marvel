@@ -13,13 +13,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/workload"
 )
@@ -823,12 +823,8 @@ func leafDuration(d time.Duration) string {
 }
 
 func (s *Supervisor) pidFileAlive() (int, bool) {
-	data, err := os.ReadFile(s.pidFile)
-	if err != nil {
-		return 0, false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
+	pid := pidfile.Read(s.pidFile)
+	if pid == 0 {
 		return 0, false
 	}
 	if probePID(pid) != nil {
