@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 )
 
 // See tmux/testmain_test.go for the rationale.
@@ -14,6 +16,9 @@ func TestMain(m *testing.M) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		os.Exit(m.Run())
 	}
+	// A binary that panicked, timed out or was killed never reached
+	// killTestServer; stop the servers it left behind.
+	tmuxtest.SweepDead()
 	socket := fmt.Sprintf("marvel-test-daemon-%d", os.Getpid())
 	if err := os.Setenv("MARVEL_TMUX_SOCKET", socket); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to set MARVEL_TMUX_SOCKET: %v\n", err)
