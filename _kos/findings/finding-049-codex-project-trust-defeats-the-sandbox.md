@@ -178,9 +178,15 @@ aae-orc-g71ad (role workdir), finding-052.
 
 ## Addendum 2026-10-08: re-measured on codex-cli 0.160.1 with `codex exec`, one run per arm: the trusted-project write did not land
 
-**Result: no, in this setup.** Under the reviewer seats' arguments
-(`-s read-only`, `approval_policy="never"`), a trusted project's file did
-not change in one `codex exec` run. The
+**Result: no, in this setup.** Under `-s read-only` with
+`approval_policy="never"`, a trusted project's file did not change in one
+`codex exec` run. The approval policy was set to `never` on purpose. It
+matches the launch arguments of the two reviewer seats on the measuring host
+(`-s read-only -a never`, read with `marvel describe session`), given here as
+`-c` because `codex exec` takes no `-a`. marvel's codex adapter injects no
+approval policy (`internal/runtime/codex.go:19-23`), so a seat whose launch
+arguments set none runs codex's default policy, which this run did not
+measure. The
 model's file-editing tool tried the write, and codex rejected it with
 `patch rejected: writing is blocked by read-only sandbox; rejected by user
 approval settings`. The file's hash and `git status` were unchanged. Asked by
