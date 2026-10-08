@@ -222,6 +222,19 @@ func TestManifestWindowResolvesUnknownModel(t *testing.T) {
 	}
 }
 
+// loadedHostWait is the ceiling for a wait on a process this test spawned. The
+// wait polls, so the ceiling only matters on a host under load, where a fixed
+// 5s one expired before the sample arrived (marvel#550).
+// 15s is a ceiling that waits in both packages already use; it is a judgment,
+// not a measured sufficient value.
+const loadedHostWait = 15 * time.Second
+
+func TestLoadedHostWaitOutlastsTheMeasuredStall(t *testing.T) {
+	if loadedHostWait < 15*time.Second {
+		t.Errorf("loadedHostWait = %v, want at least 15s: 5.1s waits expired under load in marvel#550", loadedHostWait)
+	}
+}
+
 // TestCodexStreamLightsNoContextColumn pins a deliberate product change.
 //
 // `codex exec --json` turn.completed reports the session's accumulated
@@ -236,7 +249,7 @@ func TestManifestWindowResolvesUnknownModel(t *testing.T) {
 func TestCodexStreamLightsNoContextColumn(t *testing.T) {
 	store, acct, _, mgr, sess := runObservedHarness(t, "codex", codexContextFixture, 258_400)
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(loadedHostWait)
 	for time.Now().Before(deadline) {
 		if s := acct.Stats(); s.CumulativeSamples > 0 {
 			break
