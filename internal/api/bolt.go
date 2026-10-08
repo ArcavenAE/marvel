@@ -10,7 +10,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/arcavenae/marvel/internal/asof"
 	bolt "go.etcd.io/bbolt"
 	boltErrors "go.etcd.io/bbolt/errors"
 )
@@ -38,7 +37,8 @@ import (
 // the same way as the LastHeartbeat beside it, not orphaned. The two are
 // told apart by ContextRequests, which only the accountant writes.
 // Its spend slice (SpendOut, SpendPromptTokens, OutRate) is the one part
-// that does not survive: only the stream writes it, and the stream is gone.
+// that is kept for every source: the counters are cumulative, so a kept total
+// is a lower bound, and the rate cell expires on its own.
 //
 // RoleHealth is the one bucket with no in-memory mirror here: its live
 // copy is team.Controller's roleHealth map, and the Store is only the
@@ -267,16 +267,15 @@ func (s *Store) rehydrate() error {
 			// supported upgrade path crosses this boundary.
 			if sess.ContextSource == ContextSourceAccountant ||
 				(sess.ContextSource == ContextSourceNone && sess.ContextRequests > 0) {
+				// The spend slice is cumulative, so it is a lower bound and the
+				// exact total up to where the stream ended, not an occupancy
+				// that has gone stale. It crosses the clear; the rate cell
+				// carries its own validity and reads "?" once that passes
+				// (aae-orc-88bm0).
+				out, prompt, rate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
 				sess.SessionContext = SessionContext{}
+				sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = out, prompt, rate
 			}
-			// The spend slice never survives a load, whoever wrote the
-			// context. Nothing reads the stream of a session this daemon did
-			// not launch, so a spend kept here would be frozen for good, and
-			// a frozen figure is not a lower bound either. The occupancy of a
-			// heartbeat reading stays, because the agent refreshes it
-			// (aae-orc-88bm0).
-			sess.SpendOut, sess.SpendPromptTokens = nil, nil
-			sess.OutRate = asof.Cell[float64]{}
 			s.sessions[sess.Key()] = &sess
 			return nil
 		}); err != nil {

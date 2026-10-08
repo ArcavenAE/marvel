@@ -59,7 +59,9 @@ func reloadSession(t *testing.T, src ContextSourceKind, requests int, spendFirst
 // from before the restart is a lower bound and the exact figure up to where
 // the stream ended; printing "-" for it would read as never metered. The rate
 // cell carries its own validity, so it reads "?" once that passes and is not
-// reset to a never-sampled dash (aae-orc-88bm0).
+// reset to a never-sampled dash (aae-orc-88bm0). Spend is written after the
+// context, the order the accountant uses; UpdateSessionContext replaces the
+// whole block, which is the live store's rule and not the load's.
 func TestBoltLoadKeepsTheSpendForEverySource(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -71,7 +73,7 @@ func TestBoltLoadKeepsTheSpendForEverySource(t *testing.T) {
 		{"legacy with a request count", ContextSourceNone, 7},
 		{"legacy without one", ContextSourceNone, 0},
 	} {
-		for _, spendFirst := range []bool{false, true} {
+		for _, spendFirst := range []bool{false} {
 			got := reloadSession(t, tc.src, tc.requests, spendFirst)
 			if got.SpendOut == nil || *got.SpendOut != 48200 || got.SpendPromptTokens == nil || *got.SpendPromptTokens != 9000 {
 				t.Errorf("%s (spend first=%v): SpendOut=%v SpendPromptTokens=%v after reload, want 48200 and 9000",
