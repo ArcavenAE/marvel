@@ -176,14 +176,17 @@ is director's, filed there citing this addendum. Related: marvel#308,
 aae-orc-g71ad (role workdir), finding-052.
 
 
-## Addendum 2026-10-08: re-measured on codex-cli 0.160.1, the trusted-project write does not land
+## Addendum 2026-10-08: re-measured on codex-cli 0.160.1 with `codex exec`, one run per arm: the trusted-project write did not land
 
-**Result: no.** Under the variant A arguments (`-s read-only`,
-`approval_policy="never"`), a trusted project's file did not change. The
+**Result: no, in this setup.** Under the reviewer seats' arguments
+(`-s read-only`, `approval_policy="never"`), a trusted project's file did
+not change in one `codex exec` run. The
 model's file-editing tool tried the write, and codex rejected it with
 `patch rejected: writing is blocked by read-only sandbox; rejected by user
 approval settings`. The file's hash and `git status` were unchanged. Asked by
-the operator ("re-measure") in answer to option (c) above.
+the operator ("re-measure"), in answer to a seat's proposal to re-test this
+finding under the folder trust the operator ruled for marvel seats (the
+design on marvel#684, comment 6050541528).
 
 **Setup.** Each arm ran in a fresh git repo under `mktemp -d`. Each had its
 own `CODEX_HOME` holding only `check_for_update_on_startup = false`, one
@@ -209,16 +212,19 @@ reproduce the "says refused while the write lands" observation either.
 **Scope.** One fresh run per arm, on one host. It used `codex exec`, while
 live seats run the interactive TUI. The model ran at its default reasoning
 effort (the banner reads `none`). The config held no `approvals_reviewer`
-key, the second bypass recorded above, which this run did not re-test. The
-original measurement's codex version is not recorded in this finding, so I
-cannot say which release changed the behavior, only that 0.160.1 refuses in
-this setup. The guidance above to verify a role's writes on disk, never from
+key, the second bypass recorded above, which this run did not re-test. This
+run differs from the original in codex version and in having no
+`approvals_reviewer` key: the original trust runs appear to have read the
+operator's `~/.codex/config.toml`, which carried `approvals_reviewer =
+"auto_review"`. So it does not say whether a release changed the behavior or
+the original write needed that key as well as trust; the two are confounded. The guidance above to verify a role's writes on disk, never from
 its own report, still stands.
 
-**Bearing.** None on the trust ruling; the operator ruled trust for the two
-named repos before this re-measure, and this does not gate it. It narrows the
-cost that ruling was weighed against: on 0.160.1, `-s read-only` held in a
-trusted project for this tool.
+**Bearing.** None on the trust ruling; the operator ruled trust for the
+repos listed on marvel#684 (comment 6050541528) before this re-measure, and
+this does not gate it. On 0.160.1, `-s read-only` held in a trusted project
+in one `codex exec` run per arm; the TUI the seats run is untested, so this
+does not yet narrow the cost the ruling was weighed against for live seats.
 
 <details><summary>Script and the transcript of one fresh run</summary>
 
