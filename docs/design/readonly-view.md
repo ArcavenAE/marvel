@@ -258,13 +258,10 @@ Per the ruling, Linux is tested and does not hold the build up.
   replaced by a write to
   a read-only directory, and a held shell in a sealed tree getting a nonzero
   exit from `ls` and `cat` (the section 6 measurement).
-- **Linux coverage is CI; macOS coverage is local.** marvel's one PR test
-  job is `quality-gate` on `ubuntu-24.04` (`.github/workflows/ci.yml`), so
-  the integration test runs on Linux on every PR. No macOS PR test job
-  exists today; macOS is covered by local runs. The `macos-latest` job in
-  that file is the push-only signing job and runs no tests. A
-  `macos-latest` PR test job scoped to `internal/view` is planned (operator
-  ruling 2026-10-06) and being built. The swap is one
+- **Both platforms are CI.** `quality-gate` on `ubuntu-24.04` runs the
+  integration test on Linux on every PR, and `view-macos` on `macos-latest`
+  runs `go test ./internal/view/... -race` on every PR (`.github/workflows/ci.yml`,
+  marvel#623, per the operator ruling of 2026-10-06). The swap is one
   `rename(2)` call in Go, the same on both, so neither `mv -h` nor `mv -T` is
   needed.
 - **The probe rig** (`scripts/probes/per-seat-readonly-view.sh`) is
