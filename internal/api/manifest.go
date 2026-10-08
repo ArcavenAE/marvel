@@ -676,7 +676,7 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 // See ArcavenAE/marvel#9 / aae-orc-rjm — the pre-fix behavior was to
 // silently create panes whose processes exited immediately, hiding the
 // real error behind a downstream "can't find pane" warning.
-func (m *Manifest) ValidateRuntimes() error {
+func (m *Manifest) ValidateRuntimes() ([]string, error) {
 	var missing []string
 	for ti, t := range m.Teams {
 		for ri, r := range t.Roles {
@@ -692,9 +692,9 @@ func (m *Manifest) ValidateRuntimes() error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
+		return nil, fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
 	}
-	return nil
+	return nil, nil
 }
 
 // validateCommand resolves the program of a command. The command is shell

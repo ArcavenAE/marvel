@@ -1411,9 +1411,11 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
 	// binary produced no diagnostic, just a silent pane that exited
 	// immediately and entered the restart loop.
-	if err := m.ValidateRuntimes(); err != nil {
+	runtimeAdvisories, err := m.ValidateRuntimes()
+	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	workDirAdvisories = append(workDirAdvisories, runtimeAdvisories...)
 
 	// Pre-flight: refuse a declared dimension no role in the team can ever
 	// report, so a mute gate is an error rather than a silent no-op. The
