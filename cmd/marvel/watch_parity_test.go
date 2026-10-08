@@ -118,7 +118,7 @@ func TestWatchFrameMatchesPlainGetSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			plain := plainSessions(t)
-			frame := renderWatch(newWatchScreen(cols, explicit, false), time.Second)
+			frame := renderWatch(newWatchScreen(cols, explicit, false))
 			if got := watchBody(frame); got != plain {
 				t.Errorf("watch body differs from plain output at %d columns:\n--- watch ---\n%s\n--- plain ---\n%s", width, got, plain)
 			}
@@ -135,12 +135,12 @@ func TestWatchHeaderIsReadOnEveryFrame(t *testing.T) {
 	cols, explicit, _ := loadSessionColumnsSel("")
 	ws := newWatchScreen(cols, explicit, false)
 
-	first := renderWatch(ws, time.Second)
+	first := renderWatch(ws)
 	if !strings.Contains(first, "mrvl://") || !strings.Contains(first, "alpha") {
 		t.Fatalf("first frame should carry the header with the cluster name:\n%s", first)
 	}
 	cluster.Store("bravo")
-	second := renderWatch(ws, time.Second)
+	second := renderWatch(ws)
 	if !strings.Contains(second, "bravo") || strings.Contains(second, "alpha") {
 		t.Errorf("second frame should show the changed status:\n%s", second)
 	}
@@ -157,12 +157,12 @@ func TestWatchFramePicksUpAResize(t *testing.T) {
 	cols, explicit, _ := loadSessionColumnsSel("")
 	ws := newWatchScreen(cols, explicit, false)
 
-	wide := renderWatch(ws, time.Second)
+	wide := renderWatch(ws)
 	if strings.Contains(wide, "hidden") {
 		t.Fatalf("setup: nothing is hidden at 200:\n%s", wide)
 	}
 	width = 80
-	narrow := renderWatch(ws, time.Second)
+	narrow := renderWatch(ws)
 	if !strings.Contains(narrow, "13 columns hidden at this width") {
 		t.Errorf("after the resize the frame should fit 80 columns and say what it hid:\n%s", narrow)
 	}
@@ -177,15 +177,15 @@ func TestWatchFrameHonorsExplicitColumnsAndNoTrunc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame := renderWatch(newWatchScreen(cols, explicit, false), time.Second)
+	frame := renderWatch(newWatchScreen(cols, explicit, false))
 	if !strings.Contains(frame, "wider than the terminal") {
 		t.Errorf("an explicit list wider than the terminal should warn, as plain does:\n%s", frame)
 	}
 
 	setWidth(t, 120)
 	cols, explicit, _ = loadSessionColumnsSel("name,workdir")
-	trimmed := renderWatch(newWatchScreen(cols, explicit, false), time.Second)
-	full := renderWatch(newWatchScreen(cols, explicit, true), time.Second)
+	trimmed := renderWatch(newWatchScreen(cols, explicit, false))
+	full := renderWatch(newWatchScreen(cols, explicit, true))
 	if !strings.Contains(trimmed, "…") || strings.Contains(full, "…") {
 		t.Errorf("--no-trunc should leave WORKDIR uncut in the watch frame:\n--- trimmed ---\n%s\n--- full ---\n%s", trimmed, full)
 	}
@@ -200,7 +200,7 @@ func TestWatchLastKnownFrameKeepsHeaderAndFit(t *testing.T) {
 	cols, explicit, _ := loadSessionColumnsSel("")
 	ws := newWatchScreen(cols, explicit, false)
 	ws.lastSessions = []api.Session{fitSession("agent-a")}
-	frame := renderWatch(ws, time.Second)
+	frame := renderWatch(ws)
 	if !strings.Contains(frame, "last known state") || !strings.Contains(frame, "no status") {
 		t.Errorf("the frame should say the daemon is away and still print a header:\n%s", frame)
 	}
@@ -243,7 +243,7 @@ func TestWatchFrameCarriesTheLegendWhenAMarkIsVisible(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			frame := renderWatch(newWatchScreen(cols, explicit, false), time.Second)
+			frame := renderWatch(newWatchScreen(cols, explicit, false))
 			if got := strings.Count(frame, legendLine); (got == 1) != tc.want || got > 1 {
 				t.Errorf("legend count = %d, want present=%v:\n%s", got, tc.want, frame)
 			}

@@ -2675,6 +2675,50 @@ type watchSort struct {
 	explicit     bool // the operator named the columns
 	noTrunc      bool // --no-trunc
 	showHeader   bool // print the daemon header on each frame
+
+	// What the last fetch brought back; the frame is drawn from this, not
+	// from a call to the daemon.
+	header       headerInfo
+	disconnected bool      // the last fetch failed
+	asOf         time.Time // when lastSessions was read
+	late         bool      // a fetch is in flight past its deadline
+	fetched      bool      // a fetch has finished at least once
+}
+
+// watchData is what one fetch for the watch view brings back: the sessions
+// and, when the view shows it, the daemon header. Either read can block on a
+// daemon that is not answering, so both belong to the fetch and neither to the
+// key loop.
+type watchData struct {
+	sessions []api.Session
+	header   headerInfo
+	err      error
+	at       time.Time
+}
+
+// fetchWatchData reads the sessions, and the header when asked.
+func fetchWatchData(wantHeader bool) watchData {
+	var d watchData
+	if wantHeader {
+		d.header = collectHeader()
+	}
+	d.sessions, d.err = fetchSessions()
+	d.at = time.Now()
+	return d
+}
+
+// apply takes a finished fetch into the view. A failed fetch keeps the last
+// good sessions on screen.
+func (ws *watchSort) apply(d watchData) {
+	ws.late, ws.fetched = false, true
+	ws.header = d.header
+	if d.err != nil {
+		ws.disconnected = true
+		return
+	}
+	ws.disconnected = false
+	ws.lastSessions = d.sessions
+	ws.asOf = d.at
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -2924,11 +2968,21 @@ func renderSessionTable(sessions []api.Session) string {
 	return renderSessionTableCols(sessions, defaultSessionColumns())
 }
 
-func renderWatch(ws *watchSort, interval time.Duration) string {
+// renderWatch fetches once and draws the frame; the live view fetches off its
+// key loop and draws with renderWatchFrame instead.
+func renderWatch(ws *watchSort) string {
+	if !ws.showHelp {
+		ws.apply(fetchWatchData(ws.showHeader))
+	}
+	return renderWatchFrame(ws, time.Second, time.Now())
+}
+
+// renderWatchFrame draws the frame from what the last fetch brought back.
+func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) string {
 	var buf bytes.Buffer
 
 	fmt.Fprintf(&buf, "marvel get sessions    %s    (every %v)\n",
-		time.Now().Format("15:04:05"), interval)
+		now.Format("15:04:05"), interval)
 
 	if ws.showHelp {
 		fmt.Fprintf(&buf, "\n")
@@ -2964,17 +3018,29 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	}
 	fmt.Fprintf(&buf, "sort: %s    ?:help  q:quit\n\n", sortLabel)
 
-	// The header is read on every frame, so a daemon whose bus reading has
+	// The header is read with every fetch, so a daemon whose bus reading has
 	// expired or whose status changed is not shown stale; the width is read
-	// on every frame too, so a resize shows on the next tick.
+	// on every frame, so a resize shows on the next tick.
 	header := ""
 	if ws.showHeader {
-		header = renderHeader(collectHeader(), time.Now())
+		header = renderHeader(ws.header, now)
 	}
 	fit := fitOptions{width: terminalWidth(), explicit: ws.explicit, noTrunc: ws.noTrunc}
 
-	sessions, err := fetchSessions()
-	if err != nil {
+	if ws.late {
+		if ws.asOf.IsZero() {
+			fmt.Fprintf(&buf, "⚠ daemon not answering, no data yet\n\n")
+		} else {
+			fmt.Fprintf(&buf, "⚠ daemon not answering, data as of %s\n\n", ws.asOf.Format("15:04:05"))
+		}
+	}
+
+	if !ws.fetched {
+		fmt.Fprintf(&buf, "waiting for the first answer from the daemon\n")
+		return buf.String()
+	}
+
+	if ws.disconnected {
 		fmt.Fprintf(&buf, "⚠ daemon disconnected — waiting for reconnect\n\n")
 		buf.WriteString(header)
 		if len(ws.lastSessions) > 0 {
@@ -2985,9 +3051,8 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		return buf.String()
 	}
 
-	ws.lastSessions = sessions
-	sortSessions(sessions, ws)
-	buf.WriteString(renderSessionsView(sessions, ws.columns, header, fit))
+	sortSessions(ws.lastSessions, ws)
+	buf.WriteString(renderSessionsView(ws.lastSessions, ws.columns, header, fit))
 	return buf.String()
 }
 
@@ -3033,69 +3098,21 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, n
 		}
 	}()
 
-	ws := newWatchScreen(cols, explicit, noTrunc)
-
-	render := func() {
-		output := renderWatch(ws, interval)
-		// Raw mode needs \r\n instead of \n.
-		output = strings.ReplaceAll(output, "\n", "\r\n")
-		// Clear screen, cursor to top.
-		fmt.Print("\033[2J\033[H")
-		fmt.Print(output)
-	}
-
-	render()
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case key := <-keys:
-			switch key {
-			case 'q', 3: // q or Ctrl-C
-				fmt.Print("\033[2J\033[H")
-				return nil
-			case 'c':
-				toggleSort(ws, "context", true)
-			case 'p':
-				toggleSort(ws, "cpu", true)
-			case 'm':
-				toggleSort(ws, "rss", true)
-			case 'n':
-				toggleSort(ws, "name", false)
-			case 'r':
-				toggleSort(ws, "runtime", false)
-			case 'R':
-				toggleSort(ws, "role", false)
-			case 'l':
-				toggleSort(ws, "llm", false)
-			case 'g':
-				toggleSort(ws, "generation", false)
-			case 't':
-				toggleSort(ws, "team", false)
-			case 'w':
-				toggleSort(ws, "workspace", false)
-			case 's':
-				toggleSort(ws, "state", false)
-			case 'd':
-				toggleSort(ws, "desk", false)
-			case 'h':
-				toggleSort(ws, "health", false)
-			case 'o':
-				toggleSort(ws, "rate", true)
-			case '?':
-				ws.showHelp = !ws.showHelp
-			default:
-				continue
-			}
-			render()
-		case <-ticker.C:
-			if !ws.showHelp {
-				render()
-			}
-		}
-	}
+	ws := newWatchScreen(cols, explicit, noTrunc)
+	watchLoop(ws, watchLoopConfig{
+		interval: interval,
+		deadline: watchFetchDeadline,
+		fetch:    func() watchData { return fetchWatchData(ws.showHeader) },
+		now:      time.Now,
+		out: func(frame string) {
+			// Raw mode needs \r\n instead of \n.
+			fmt.Print("\033[2J\033[H" + strings.ReplaceAll(frame, "\n", "\r\n"))
+		},
+	}, keys, ticker.C)
+	return nil
 }
 
 // --- Table printers (non-watch) ---

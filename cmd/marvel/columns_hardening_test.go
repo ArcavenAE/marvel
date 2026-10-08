@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -126,7 +125,7 @@ func TestWatchRendersTheSelectedColumns(t *testing.T) {
 	})
 	t.Setenv(config.SocketEnv, live)
 	ws := newWatchState(cols)
-	frame := renderWatch(ws, time.Second)
+	frame := renderWatch(ws)
 	if got := frameHeader(frame); !reflect.DeepEqual(got, []string{"STATE", "AGENT NAME"}) {
 		t.Errorf("live frame header = %v, want only STATE and AGENT NAME:\n%s", got, frame)
 	}
@@ -134,7 +133,7 @@ func TestWatchRendersTheSelectedColumns(t *testing.T) {
 	// The daemon is gone: the last-known sessions still render in the chosen columns.
 	t.Setenv(config.SocketEnv, filepath.Join(t.TempDir(), "gone.sock"))
 	ws.lastSessions = watchFixtureSessions()
-	frame = renderWatch(ws, time.Second)
+	frame = renderWatch(ws)
 	if !strings.Contains(frame, "last known state") {
 		t.Fatalf("setup: the daemon is gone and the frame should say so:\n%s", frame)
 	}
