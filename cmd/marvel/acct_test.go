@@ -165,3 +165,39 @@ func TestAcctKeyKeepsHomesWithOneBaseNameApart(t *testing.T) {
 		t.Errorf("two homes with one base name share the key %q: a false merge", k1)
 	}
 }
+
+// Each field of the account key keeps two accounts apart on its own. Rows that
+// differ in only one of harness, backend or credential source, with the same
+// home, must print different keys: a key that ignored one would show two logins
+// as one account, the false merge the column exists to prevent.
+func TestAcctKeyDiffersWhenAnyOneFieldDiffers(t *testing.T) {
+	base := api.AccountKey{
+		Harness:          "claude",
+		Backend:          api.BackendBedrock,
+		CredentialSource: api.BackendCredentialAWSProfile,
+		ConfigHome:       "/acct/a",
+	}
+	for _, tc := range []struct {
+		field  string
+		change func(*api.AccountKey)
+	}{
+		{"harness", func(k *api.AccountKey) { k.Harness = "codex" }},
+		{"backend", func(k *api.AccountKey) { k.Backend = api.BackendVertex }},
+		{"credential source", func(k *api.AccountKey) { k.CredentialSource = api.BackendCredentialAmbient }},
+		{"config home", func(k *api.AccountKey) { k.ConfigHome = "/acct/b" }},
+	} {
+		other := base
+		tc.change(&other)
+		if acctKey(base) == acctKey(other) {
+			t.Errorf("keys do not differ when only the %s differs: %+v and %+v both print %s",
+				tc.field, base, other, acctKey(base))
+		}
+	}
+	// The case the column's own comment names: the default backend against
+	// bedrock, with no home on either side.
+	a := api.AccountKey{Harness: "claude", Backend: api.BackendDefaultName}
+	b := api.AccountKey{Harness: "claude", Backend: api.BackendBedrock}
+	if acctKey(a) == acctKey(b) {
+		t.Errorf("claude default and claude bedrock with no home print one key %s", acctKey(a))
+	}
+}
