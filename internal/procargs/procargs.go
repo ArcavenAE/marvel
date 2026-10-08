@@ -1,4 +1,11 @@
-package main
+// Package procargs reads a process's exact argument list, from the kernel and
+// not from `ps`. `ps` prints the arguments as one line, so an empty argument
+// vanishes and one with a space splits: `daemon --mrvl ""` reads as
+// `daemon --mrvl`, which this build accepts, and the daemon then dies in the
+// exec. Linux keeps the list as NUL-separated bytes in /proc/<pid>/cmdline;
+// macOS returns it from the kern.procargs2 sysctl. The reexec pre-flight and the
+// daemon's start guard both read a daemon's arguments here.
+package procargs
 
 import (
 	"bytes"
@@ -7,16 +14,9 @@ import (
 	"fmt"
 )
 
-// The pre-flight reads a daemon's arguments from the kernel, not from `ps`.
-// `ps` prints them as one line, so an empty argument vanishes and one with a
-// space splits: `daemon --mrvl ""` reads as `daemon --mrvl`, which this build
-// accepts, and the daemon then dies in the exec. Linux keeps the list as
-// NUL-separated bytes in /proc/<pid>/cmdline; macOS returns it from the
-// kern.procargs2 sysctl.
-
-// parseCmdline splits /proc/<pid>/cmdline: each argument ends in NUL, so the
+// ParseCmdline splits /proc/<pid>/cmdline: each argument ends in NUL, so the
 // last NUL closes the last argument and an empty argument is two NULs in a row.
-func parseCmdline(b []byte) ([]string, error) {
+func ParseCmdline(b []byte) ([]string, error) {
 	if len(b) == 0 || b[len(b)-1] != 0 {
 		return nil, errors.New("the process has no readable argument list")
 	}
@@ -31,10 +31,10 @@ func parseCmdline(b []byte) ([]string, error) {
 	return out, nil
 }
 
-// parseProcargs2 reads kern.procargs2: argc as a native int32, the executable
+// ParseProcargs2 reads kern.procargs2: argc as a native int32, the executable
 // path, NUL padding, then argc NUL-terminated arguments, then the environment,
 // which is not read. Macs this runs on are little endian.
-func parseProcargs2(b []byte) ([]string, error) {
+func ParseProcargs2(b []byte) ([]string, error) {
 	if len(b) < 4 {
 		return nil, errors.New("kern.procargs2 returned too few bytes")
 	}
