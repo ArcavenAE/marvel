@@ -308,6 +308,9 @@ func TestSealDoesNotFollowASymlinkedTree(t *testing.T) {
 // link, and the directory behind it keeps its mode and its files.
 func TestSealRemovesASymlinkInsideATreeWithoutFollowingIt(t *testing.T) {
 	outside := t.TempDir()
+	// A seal that followed the link would leave this directory at mode 000, and
+	// TempDir could not remove it. Registered after TempDir, so it runs first.
+	t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
 	if err := os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
