@@ -77,7 +77,32 @@ var terminalWidth = func() int {
 // never AGENT NAME: the pane verbs take the printed name (#337).
 var columnTrim = map[string]func(string) string{
 	"runtime": runtimeBasename,
-	"workdir": middleEllipsis,
+	"workdir": workdirTrim,
+}
+
+// workdirTrim shortens the home prefix to ~ and then cuts, so the cut works on
+// the shorter form. The home is the client's own ($HOME), which is the home of
+// the daemon's host only when the daemon is local; a path that is not under it
+// is left as it is (aae-orc-qe9nn).
+func workdirTrim(s string) string {
+	return middleEllipsis(tildeHome(s, os.Getenv("HOME")))
+}
+
+// tildeHome replaces a leading home directory with ~ when home is a whole path
+// element of s. An unset or root home replaces nothing, and a sibling that
+// shares the prefix (/home/user2 against /home/user) is not under it.
+func tildeHome(s, home string) string {
+	home = strings.TrimRight(home, "/")
+	if home == "" {
+		return s
+	}
+	switch {
+	case s == home:
+		return "~"
+	case strings.HasPrefix(s, home+"/"):
+		return "~" + s[len(home):]
+	}
+	return s
 }
 
 // runtimeBasename is the last path element of a runtime command, marked with
