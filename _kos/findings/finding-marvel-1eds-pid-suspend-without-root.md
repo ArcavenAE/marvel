@@ -107,6 +107,8 @@ Recommendation:
 
 This recommendation is valid until 2026-10-22, or until the unattended re-run, whichever comes first; the architect re-checks it then.
 
+**Ruling, 2026-10-08:** the operator chose this recommendation, noting "dont run root right now, can run later". So the root half stays unrun. It may run later only on a new ruling; the UNKNOWN in section 3 is not one.
+
 ## Appendix: the helpers
 
 `psusp.c`, built with `cc -o psusp psusp.c`. The entitled copy is re-signed with `codesign -s - -f --entitlements ent.plist`, where `ent.plist` sets `com.apple.security.cs.debugger` to true:
