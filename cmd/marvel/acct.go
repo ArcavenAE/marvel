@@ -44,10 +44,14 @@ func clientAccountKey(s api.Session) api.AccountKey {
 }
 
 // acctKey is a short stable name for an account, so rows on one account can be
-// seen to share it. It is a fingerprint of AccountKey.String, for people to
+// seen to share it. It is a fingerprint of the key's fields joined by NUL, not
+// of AccountKey.String: String spells an empty home "default-home", so a home
+// literally named that would hash like the default row. It is for people to
 // compare, not an identity to act on.
 func acctKey(k api.AccountKey) string {
-	sum := sha256.Sum256([]byte(k.String()))
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		k.Harness, string(k.Backend), string(k.CredentialSource), k.ConfigHome,
+	}, "\x00")))
 	return hex.EncodeToString(sum[:3])
 }
 
