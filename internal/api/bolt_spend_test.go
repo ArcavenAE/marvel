@@ -54,12 +54,13 @@ func reloadSession(t *testing.T, src ContextSourceKind, requests int, spendFirst
 	return got
 }
 
-// No session carries a spend across a restart. Nothing observes the stream of
-// an adopted session, so a spend that survived the load would never move
-// again, and a figure that cannot move is not a lower bound either
-// (aae-orc-88bm0). The spend slice is the same whichever producer wrote the
-// context and in whichever order the two writes landed.
-func TestBoltLoadDropsTheSpendForEverySource(t *testing.T) {
+// The cumulative counters and the rate cell survive a restart for every
+// source. SpendOut and SpendPromptTokens are running totals, so a total kept
+// from before the restart is a lower bound and the exact figure up to where
+// the stream ended; printing "-" for it would read as never metered. The rate
+// cell carries its own validity, so it reads "?" once that passes and is not
+// reset to a never-sampled dash (aae-orc-88bm0).
+func TestBoltLoadKeepsTheSpendForEverySource(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		src      ContextSourceKind
@@ -72,22 +73,31 @@ func TestBoltLoadDropsTheSpendForEverySource(t *testing.T) {
 	} {
 		for _, spendFirst := range []bool{false, true} {
 			got := reloadSession(t, tc.src, tc.requests, spendFirst)
-			if got.SpendOut != nil || got.SpendPromptTokens != nil {
-				t.Errorf("%s (spend first=%v): SpendOut=%v SpendPromptTokens=%v after reload, want both nil",
+			if got.SpendOut == nil || *got.SpendOut != 48200 || got.SpendPromptTokens == nil || *got.SpendPromptTokens != 9000 {
+				t.Errorf("%s (spend first=%v): SpendOut=%v SpendPromptTokens=%v after reload, want 48200 and 9000",
 					tc.name, spendFirst, got.SpendOut, got.SpendPromptTokens)
 			}
-			if !got.OutRate.ObservedAt.IsZero() || got.OutRate.Value != 0 {
-				t.Errorf("%s (spend first=%v): OutRate=%+v after reload, want the zero cell", tc.name, spendFirst, got.OutRate)
+			if got.OutRate.ObservedAt.IsZero() || got.OutRate.Value != 12.5 {
+				t.Errorf("%s (spend first=%v): OutRate=%+v after reload, want the stored cell", tc.name, spendFirst, got.OutRate)
 			}
 		}
 	}
 }
 
 // A heartbeat reading is refreshed by the agent itself, so its occupancy
-// survives the load; only the spend slice goes.
+// survives the load.
 func TestBoltLoadKeepsAHeartbeatOccupancy(t *testing.T) {
 	got := reloadSession(t, ContextSourceHeartbeat, 0, false)
 	if got.ContextSource != ContextSourceHeartbeat || got.ContextPercent != 40 {
 		t.Errorf("heartbeat reading after reload = %q %.0f%%, want heartbeat 40%%", got.ContextSource, got.ContextPercent)
+	}
+}
+
+// An accountant reading is not refreshed after a restart, so its occupancy
+// still goes while its spend stays.
+func TestBoltLoadStillClearsAnAccountantOccupancy(t *testing.T) {
+	got := reloadSession(t, ContextSourceAccountant, 7, false)
+	if got.ContextPercent != 0 || got.ContextRequests != 0 {
+		t.Errorf("accountant occupancy after reload = %.0f%% over %d requests, want it cleared", got.ContextPercent, got.ContextRequests)
 	}
 }
