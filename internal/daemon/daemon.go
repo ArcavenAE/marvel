@@ -766,6 +766,12 @@ func (d *Daemon) Reexec() error {
 	if err != nil {
 		return err
 	}
+	return d.ReexecTo(exe)
+}
+
+// ReexecTo is Reexec into the binary at exe. The caller has already resolved
+// and checked exe, so a refusal leaves the daemon serving.
+func (d *Daemon) ReexecTo(exe string) error {
 	// Detach checkpoints durable state, releases the bolt file, and stops
 	// serving without touching a pane. Its own doc names this as the first
 	// half of self-update. The broker stays up too: the successor adopts it
@@ -1147,7 +1153,7 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	case "stop":
 		return d.handleStop(req.Params)
 	case "reexec":
-		return d.handleReexec()
+		return d.handleReexec(req.Params, c)
 	case "logs":
 		return d.handleLogs(req.Params)
 	case "events":
@@ -2796,25 +2802,80 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 	return resp
 }
 
+// revisionLabel names the commit a target was built from, and says when the
+// tree it was built from had uncommitted changes.
+func revisionLabel(t reexecTarget) string {
+	if t.Revision == "" {
+		return "unrecorded"
+	}
+	if t.Modified {
+		return t.Revision + ", modified"
+	}
+	return t.Revision
+}
+
 // handleReexec tells the running daemon to replace its own process image
-// with a fresh exec of the marvel binary, adopting the live panes rather
-// than stopping the agents. The CLI (`marvel daemon reexec`, or
-// `marvel upgrade --daemon` after the binary is installed) calls this;
-// the daemon must exec itself because the CLI cannot exec the daemon's
-// process.
-func (d *Daemon) handleReexec() Response {
+// with a fresh exec of a marvel binary, adopting the live panes rather than
+// stopping the agents. The CLI (`marvel daemon reexec`, or
+// `marvel upgrade --daemon` after the binary is installed) calls this; the
+// daemon must exec itself because the CLI cannot exec the daemon's process.
+//
+// With no exec_path it execs the daemon's own path, as it always has, which is
+// right when an upgrade replaces the binary in place. With exec_path it execs
+// that file instead, after the checks in validateReexecTarget; the CLI sends
+// its own path, so an install that keeps each version in its own directory
+// adopts the new build. exec_path is refused from any caller that is not on the
+// local unix socket, admin keys included.
+func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
+	var p reexecParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
 	// Resolve the binary here so an unresolvable path is reported to the
 	// client without detaching; better to keep serving than to stop and
 	// then find nothing to exec.
-	exe, err := selfExecPath()
-	if err != nil {
-		return Response{Error: err.Error()}
+	var exe string
+	if p.ExecPath == "" {
+		self, err := selfExecPath()
+		if err != nil {
+			return Response{Error: err.Error()}
+		}
+		exe = self
+	} else {
+		if !c.local {
+			log.Printf("reexec refused: exec_path over mrvl:// by key %s", c.fingerprint)
+			return Response{Error: errNotLocal.Error()}
+		}
+		target, err := validateReexecTarget(p.ExecPath, d.build.Version)
+		if err != nil {
+			log.Printf("reexec refused: %v", err)
+			return Response{Error: err.Error()}
+		}
+		exe = target.Path
+		who := c.fingerprint
+		if who == "" {
+			who = "local socket"
+		}
+		oldPath, _ := selfExecPath()
+		msg := fmt.Sprintf("reexec into %s (%s, %s, commit %s) from %s (%s, %s), requested by %s",
+			target.Path, target.Version, target.Channel, revisionLabel(target),
+			oldPath, d.build.Version, d.build.Channel, who)
+		// The ring does not survive the exec, so the same line goes to the log.
+		log.Printf("daemon.reexec: %s", msg)
+		events.Emit(d.events, events.Event{
+			Kind:     events.KindDaemonReexec,
+			Severity: events.SeverityInfo,
+			Actor:    fmt.Sprintf("pid=%d", os.Getpid()),
+			Message:  msg,
+		})
 	}
 	// Re-exec off the request goroutine so this response reaches the
 	// client before the process image is replaced, mirroring handleStop.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		if rerr := d.Reexec(); rerr != nil {
+		if rerr := d.ReexecTo(exe); rerr != nil {
 			log.Printf("reexec failed after detach: %v; start a fresh daemon to adopt the running panes", rerr)
 			os.Exit(1)
 		}

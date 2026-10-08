@@ -17,7 +17,7 @@ func afterUpgrade(res upgrade.Result, reexecDaemon bool, reexec func() error, w 
 	}
 	if !res.Changed {
 		_, _ = fmt.Fprintln(w, "the installed binary did not change, so the daemon was not re-executed; "+
-			"to adopt the installed binary run 'marvel daemon reexec'")
+			"to adopt the binary you run from, run 'marvel daemon reexec' on the daemon's host")
 		return nil
 	}
 	if err := reexec(); err != nil {
