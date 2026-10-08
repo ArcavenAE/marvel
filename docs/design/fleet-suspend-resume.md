@@ -33,7 +33,7 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
   - Write the pid list, with start times, to bolt before the first signal.
   - After the server stops, walk again. Write any new pid to bolt, then signal it.
 - **Resume.**
-  - `SIGCONT` every recorded pid, and the server. INFERRED: the resume order is not load-bearing as long as every recorded pid gets its own `SIGCONT`. No run varied the resume order on one rig. The basis is that both orders appear in measured runs and each resumed every seat: the F sets sent seats first and the server last, and the second probe's arms sent the server first. The design sends seats first and the server last, matching the F sets.
+  - `SIGCONT` every recorded pid, and the server. INFERRED: the resume order is not load-bearing as long as every recorded pid gets its own `SIGCONT`. The basis: every measured resume sent `SIGCONT` to every recorded pid, and every seat came back. No run varied the order. The design sends seats first and the server last.
   - Skip a pid whose start time changed; that pid number now belongs to a different process.
   - Verify that no pid reads `T`.
 - **Not used.**
@@ -133,7 +133,7 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
 Each is tagged with its source class: RULED (operator, 2026-10-08) or DESIGN (this doc, open to review). A DESIGN requirement drawn from a measurement says so and names its basis in finding-marvel-1kg8; a requirement is never itself a measurement.
 
 - **SR-A (DESIGN, on a MEASURED basis):** a suspend stops the tmux server before any seat pid, and counts a pid as frozen only after reading `T` twice. The basis: a seat stop is undone unless the server is stopped first.
-- **SR-B (DESIGN, on a MEASURED basis):** `status` answers while suspended, without the controller lock and without calling tmux. The basis: every call that touched tmux blocked while it was frozen.
+- **SR-B (DESIGN, on a MEASURED basis):** `status` answers while suspended, without the controller lock and without calling tmux. The basis: the three calls measured under a frozen tmux all blocked: `get sessions` in F1 to F3, `describe daemon` on a fresh start, and shutdown on `SIGTERM`.
 - **SR-C (RULED):** nothing resumes a suspended cluster except an explicit `resume`. A long pause warns at `suspend_warn_after` and never acts.
 - **SR-D (RULED):** over `mrvl://`, suspend and resume need the `suspend` scope or `admin`.
 - **SR-E (DESIGN, on a MEASURED basis):** a daemon that starts with a `suspended` record serves without adopting and makes no tmux call until resume. The basis: an adopt under a frozen tmux blocked the whole start.
