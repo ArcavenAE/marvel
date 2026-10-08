@@ -37,6 +37,36 @@ var (
 	ldflagChannel = regexp.MustCompile(`-X\s+main\.channel=(\S+)`)
 )
 
+// checkAncestors walks every directory from the resolved file's parent up to /,
+// on the resolved path, so a symlinked component is judged where it lands. Each
+// directory must be owned by root or the daemon's user and must not be group- or
+// world-writable unless it is sticky: whoever can write a directory on the path
+// can rename the file away and put another in its place between these checks
+// and the exec, which an owner check on the file alone does not stop. A
+// group-writable install directory is refused on purpose.
+func checkAncestors(resolved string) error {
+	dir := filepath.Dir(resolved)
+	for {
+		mode, uid, err := statDir(dir)
+		if err != nil {
+			return fmt.Errorf("exec_path %q: directory %s: %w; %s", resolved, dir, err, stopStartPath)
+		}
+		if uid != 0 && uid != os.Getuid() {
+			return fmt.Errorf("exec_path %q: directory %s is owned by uid %d (mode %v), not by root or the daemon's user; %s",
+				resolved, dir, uid, mode, stopStartPath)
+		}
+		if mode.Perm()&0o022 != 0 && mode&os.ModeSticky == 0 {
+			return fmt.Errorf("exec_path %q: directory %s (owner uid %d, mode %v) is writable by its group or by others and is not sticky, so the file could be swapped before the exec; %s",
+				resolved, dir, uid, mode, stopStartPath)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return nil
+		}
+		dir = parent
+	}
+}
+
 // errNotLocal is the refusal of an exec_path over mrvl://.
 var errNotLocal = errors.New("exec_path is only accepted on the local unix socket: a path from a remote client names a file on another host")
 
@@ -46,6 +76,7 @@ type reexecTarget struct {
 	Version  string
 	Channel  string
 	Revision string
+	Modified bool
 }
 
 // statDir reads a directory's mode and owner. It is a variable so a test can
@@ -63,8 +94,11 @@ var statDir = func(path string) (mode os.FileMode, uid int, err error) {
 }
 
 // validateReexecTarget resolves path and checks it is safe to exec: a regular,
-// executable file owned by the daemon's user that no one else can write, that
-// answers `version` as a marvel, and that is not older than the running build.
+// executable file owned by the daemon's user that no one else can write, in a
+// directory chain that no one else can swap it out of, that records marvel's
+// main module and a stamped version, and is not older than the running build.
+// The build is read from the file, never run: `marvel version` dials the
+// daemon, so spawning it would be a route into the daemon's own socket.
 // Nothing here detaches or execs, so a refusal leaves the daemon serving.
 func validateReexecTarget(path, runningVersion string) (reexecTarget, error) {
 	if !filepath.IsAbs(path) {
@@ -91,6 +125,10 @@ func validateReexecTarget(path, runningVersion string) (reexecTarget, error) {
 		return reexecTarget{}, fmt.Errorf("exec_path %q is writable by its group or by others", resolved)
 	}
 
+	if err := checkAncestors(resolved); err != nil {
+		return reexecTarget{}, err
+	}
+
 	info, err := buildinfo.ReadFile(resolved)
 	if err != nil {
 		return reexecTarget{}, fmt.Errorf("exec_path %q: its build information is unreadable (%v); %s",
@@ -112,6 +150,8 @@ func validateReexecTarget(path, runningVersion string) (reexecTarget, error) {
 			}
 		case "vcs.revision":
 			t.Revision = kv.Value
+		case "vcs.modified":
+			t.Modified = kv.Value == "true"
 		}
 	}
 	if t.Version == "" {

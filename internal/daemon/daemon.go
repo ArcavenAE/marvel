@@ -4,7 +4,6 @@
 package daemon
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2708,6 +2707,18 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 	return resp
 }
 
+// revisionLabel names the commit a target was built from, and says when the
+// tree it was built from had uncommitted changes.
+func revisionLabel(t reexecTarget) string {
+	if t.Revision == "" {
+		return "unrecorded"
+	}
+	if t.Modified {
+		return t.Revision + ", modified"
+	}
+	return t.Revision
+}
+
 // handleReexec tells the running daemon to replace its own process image
 // with a fresh exec of a marvel binary, adopting the live panes rather than
 // stopping the agents. The CLI (`marvel daemon reexec`, or
@@ -2754,7 +2765,7 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
 		}
 		oldPath, _ := selfExecPath()
 		msg := fmt.Sprintf("reexec into %s (%s, %s, commit %s) from %s (%s, %s), requested by %s",
-			target.Path, target.Version, target.Channel, cmp.Or(target.Revision, "unrecorded"),
+			target.Path, target.Version, target.Channel, revisionLabel(target),
 			oldPath, d.build.Version, d.build.Channel, who)
 		// The ring does not survive the exec, so the same line goes to the log.
 		log.Printf("daemon.reexec: %s", msg)

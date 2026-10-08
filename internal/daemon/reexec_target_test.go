@@ -358,26 +358,39 @@ func TestValidateReexecTargetWalksTheAncestors(t *testing.T) {
 	})
 	t.Run("a directory owned by another non-root user is refused", func(t *testing.T) {
 		dir, bin := dirWithMarvel(t, 0o755)
+		landed, _ := filepath.EvalSymlinks(dir)
 		real := statDir
 		statDir = func(p string) (os.FileMode, int, error) {
 			mode, uid, err := real(p)
-			if p == dir {
+			if p == landed {
 				return os.ModeDir | 0o755, os.Getuid() + 4242, nil
 			}
 			return mode, uid, err
 		}
 		t.Cleanup(func() { statDir = real })
 		_, err := validateReexecTarget(bin, "0.2.0")
-		if err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "owner") {
+		if err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "owned by uid") {
 			t.Fatalf("want a refusal naming %s and its owner, got %v", dir, err)
+		}
+	})
+	t.Run("a writable directory higher up the path is refused", func(t *testing.T) {
+		outer := filepath.Join(t.TempDir(), "outer")
+		bin := fakeMarvel(t, filepath.Join(outer, "mid", "install"), marvelModule, "0.3.0")
+		if err := os.Chmod(outer, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		_, err := validateReexecTarget(bin, "0.2.0")
+		if err == nil || !strings.Contains(err.Error(), filepath.Join("outer")) || !strings.Contains(err.Error(), "writable") {
+			t.Fatalf("want a refusal naming the writable ancestor outer, got %v", err)
 		}
 	})
 	t.Run("a directory owned by root passes the owner check", func(t *testing.T) {
 		dir, bin := dirWithMarvel(t, 0o755)
+		landed, _ := filepath.EvalSymlinks(dir)
 		real := statDir
 		statDir = func(p string) (os.FileMode, int, error) {
 			mode, uid, err := real(p)
-			if p == dir {
+			if p == landed {
 				return os.ModeDir | 0o755, 0, nil
 			}
 			return mode, uid, err
