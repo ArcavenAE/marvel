@@ -112,6 +112,11 @@ type Response struct {
 	// which is authorization-shaped and belongs with aae-orc-sqh0. See
 	// docs/design/daemon-isolation.md decision 8.
 	DaemonHome string `json:"daemon_home,omitempty"`
+
+	// Starting is true on every response the daemon sends while it is still
+	// adopting tmux state, so a client reading get or describe knows the rows
+	// may be incomplete. Absent once the daemon has finished starting.
+	Starting bool `json:"starting,omitempty"`
 }
 
 // DefaultLogBufferLines is the default ring-buffer depth for the
@@ -121,6 +126,14 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	// adoptingSince is the unix-nano time the listener began serving ahead of
+	// start-time adoption, and zero once adoption has finished. While it is set,
+	// dispatchAs answers only the methods in startingAllows.
+	adoptingSince atomic.Int64
+
+	// exit replaces os.Exit after a stop request, for tests.
+	exit func(int)
+
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
@@ -554,6 +567,34 @@ func (d *Daemon) Start(socketPath string) error {
 		return err
 	}
 
+	// Serve before adopting. Adoption calls tmux, and a hung tmux used to hold
+	// the whole start behind it, so no client could even ask what was wrong
+	// (marvel#716). Until adoption finishes only the read methods answer
+	// (startingAllows); the reconcile loop below still starts after adoption,
+	// so nothing spawns against a store that has not been reconciled.
+	ctx, cancel := context.WithCancel(context.Background())
+	d.ctx, d.cancel = ctx, cancel
+	d.adoptingSince.Store(time.Now().UnixNano())
+
+	// Accept connections.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					log.Printf("accept: %v", err)
+					continue
+				}
+			}
+			go d.handleConn(conn)
+		}
+	}()
+
 	// Reconcile marvel-* tmux state against recorded intent. Panes that
 	// match the rehydrated intent are adopted; anything else is LEFT
 	// RUNNING and reported, unless the operator asked to reclaim.
@@ -604,6 +645,12 @@ func (d *Daemon) Start(socketPath string) error {
 	if n := d.sessMgr.Reproject(); n > 0 {
 		log.Printf("startup: re-projected policy for %d adopted session(s)", n)
 	}
+	d.adoptingSince.Store(0)
+	// A stop that arrived during adoption has already run shutdown; do not
+	// start loops behind it.
+	if ctx.Err() != nil {
+		return errStoppedWhileStarting
+	}
 
 	// Announced from Start, not from the constructor. cmd/marvel installs
 	// log.SetOutput (log ring plus the optional --log-file) only after
@@ -612,9 +659,6 @@ func (d *Daemon) Start(socketPath string) error {
 	// the one observability affordance for the in-memory token window, so it
 	// has to land where the docs say it lands.
 	d.logTokenBudgetWindows()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	d.ctx, d.cancel = ctx, cancel
 
 	// Start team reconciliation loop.
 	d.wg.Add(1)
@@ -645,25 +689,6 @@ func (d *Daemon) Start(socketPath string) error {
 	if d.views != nil {
 		d.startViews(ctx)
 	}
-
-	// Accept connections.
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					log.Printf("accept: %v", err)
-					continue
-				}
-			}
-			go d.handleConn(conn)
-		}
-	}()
 
 	log.Printf("marvel daemon listening on %s (%s)", socketPath, network)
 	return nil
@@ -972,6 +997,7 @@ func reportInvalidReplicas(store *api.Store, sink events.Emitter) {
 // wrong daemon is worth attributing as much as a successful one.
 func (d *Daemon) stamp(resp Response) Response {
 	resp.DaemonHome = d.home
+	resp.Starting = d.adoptingSince.Load() != 0
 	return resp
 }
 
@@ -1002,11 +1028,68 @@ func (d *Daemon) scopeRefusal(req Request, c caller) (Response, bool) {
 	return Response{}, false
 }
 
+// ErrDaemonStarting is the refusal a method gets while the daemon is still
+// adopting tmux state. It is retryable and says nothing about the request, so
+// a caller matches it on Response.Starting and the text and tries again; it
+// never reaches a handler, so it cannot count toward a session's health.
+var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, retry")
+
+// ErrReportDeferred is the refusal heartbeat and account.limits get while the
+// daemon is adopting. It wraps ErrDaemonStarting and is a different text, so a
+// producer can tell "try again after the start" from any verdict on its token
+// or its session. It is sent before the handler runs, so it never reaches a
+// session's health, its FailureCount or the orphan registry, and it is never
+// the token-mismatch refusal.
+var ErrReportDeferred = fmt.Errorf("report deferred: %w", ErrDaemonStarting)
+
+// errStoppedWhileStarting is what Start returns when a stop arrived during
+// adoption and shutdown has already run.
+var errStoppedWhileStarting = errors.New("daemon stopped while starting")
+
+// startingMethods is the set of methods that answer while the daemon is still
+// adopting tmux state: the reads that say what the daemon is doing, and a
+// plain stop (detach), which must not wait on adoption: a remote operator has
+// no other way to end the daemon. stop with teardown stays refused, because it
+// would destroy panes adoption has not finished accounting for. Every other method is refused with
+// ErrDaemonStarting before its handler runs. That includes heartbeat and
+// account.limits (a heartbeat does more than stamp liveness: it checks the
+// session token and records orphan sightings, against a store adoption has not
+// finished reconciling), plan (its delta would be against an unreconciled
+// store), and inject and capture (they drive tmux).
+var startingMethods = map[string]bool{
+	"daemon.status":   true,
+	"get":             true,
+	"describe":        true,
+	"logs":            true,
+	"events":          true,
+	"bus.status":      true,
+	"orphans":         true,
+	"credential.list": true,
+	MethodVersion:     true,
+}
+
+// startingAllows reports whether req may run while the daemon is adopting.
+func startingAllows(req Request) bool {
+	if req.Method == "stop" {
+		teardown, _, err := stopMode(req.Params)
+		// A malformed stop reaches the handler, which refuses it; it cannot
+		// tear anything down.
+		return err != nil || !teardown
+	}
+	return startingMethods[req.Method]
+}
+
 // dispatchAs enforces the caller's scope, then routes the request. A method
 // the scope does not permit is refused before any handler runs.
 func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
+	}
+	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
+		if req.Method == "heartbeat" || req.Method == "account.limits" {
+			return Response{Error: ErrReportDeferred.Error(), Starting: true}
+		}
+		return Response{Error: ErrDaemonStarting.Error(), Starting: true}
 	}
 	switch req.Method {
 	case "apply":
@@ -2674,6 +2757,16 @@ func (d *Daemon) stopReport(teardown bool, mode string) Response {
 	return Response{Result: data}
 }
 
+// exitProcess ends the process once shutdown has run. exit is nil in
+// production and set by a test, which cannot survive os.Exit.
+func (d *Daemon) exitProcess(code int) {
+	if d.exit != nil {
+		d.exit(code)
+		return
+	}
+	os.Exit(code)
+}
+
 func (d *Daemon) handleStop(params json.RawMessage) Response {
 	teardown, mode, err := stopMode(params)
 	if err != nil {
@@ -2696,7 +2789,7 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 		} else {
 			d.Detach()
 		}
-		os.Exit(0)
+		d.exitProcess(0)
 	}()
 	return resp
 }
