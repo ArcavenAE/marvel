@@ -125,3 +125,11 @@ Where the build differs from the sections above:
   included.
 - `api.RuntimeDrift` is the one comparison. A test sets each `Runtime` field to
   its zero value in turn, so a field added to `Runtime` and not compared fails.
+- A `marvel run` session reads `-` and is not counted, as section 2 and section 6
+  case 4 say, even when it names a team and role that exist. `marvel run` stores
+  the session under that role with no generation and a runtime from its own
+  flags, and a respawn never replaces it with the role's, so `behind` would
+  promise a change that does not come. The daemon tells the two apart by the
+  generation: a session spawned from a role carries its team's generation
+  (1 or more), and a run carries none. Any stored session with no
+  generation reads `-` too, which errs toward claiming nothing.

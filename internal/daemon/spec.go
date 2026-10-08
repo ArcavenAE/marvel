@@ -8,12 +8,15 @@ import (
 // session's stored runtime still equals its role's current one
 // (docs/design/drift-view.md). The answer is derived and never stored, since
 // a stored one would go stale, which is the thing this view shows. A session
-// with no role in the team spec is left empty.
+// with no role in the team spec is left empty, and so is a session that was
+// not spawned from its role: marvel run stores a session under whatever team
+// and role it names with no generation, and it never takes the role's spec at a
+// respawn, so "behind" would promise a change that does not come.
 func (d *Daemon) stampSpec(sessions []api.Session) {
 	teams := map[string]api.Team{}
 	for i := range sessions {
 		s := &sessions[i]
-		if s.Role == "" {
+		if s.Role == "" || s.Generation == 0 {
 			continue
 		}
 		key := s.Workspace + "/" + s.Team
