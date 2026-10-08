@@ -709,12 +709,19 @@ func (m *Manifest) ValidateRuntimes() ([]string, error) {
 	return advisories, nil
 }
 
-// shellMeta are the characters that make the first field of a command more
-// than a program name to the shell the launch hands it to: an assignment, a
-// quote, an escape, an expansion, a list or pipe, a redirect, a group, a glob
-// a tilde, or a hash that makes the rest a comment. A field with none of them
-// is the program as written.
-const shellMeta = "='\"\\$`;|&<>(){}*?[~#"
+// shellTextChars are the characters that make text more than plain words to the
+// shell the launch hands a command to: a quote, an escape, an expansion, a list
+// or pipe, a redirect, a group, a glob, a tilde, or a hash that makes the rest a
+// comment. An equals sign is not among them: NAME=value is an assignment only as
+// a program name, which the pre-flight checks in the first field, and anywhere
+// else it hides nothing, because the adapter's flag reader already matches
+// --flag=value. It is the one definition of shell text: the
+// apply pre-flight reads it over a command's first field, and the claude
+// adapter over the whole command, because a flag can sit anywhere in it.
+const shellTextChars = "'\"\\$`;|&<>(){}*?[~#"
+
+// containsShellText reports whether text holds any shell-text character.
+func containsShellText(text string) bool { return strings.ContainsAny(text, shellTextChars) }
 
 // validateCommand checks the program of a command. The launch passes the text
 // to a shell (the driver hands tmux `env -u ... <command>` as one shell
@@ -738,21 +745,17 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		// another command, which fails with rc 127.
 		return "runtime command spans several lines; the shell runs each line as its own command, so the pre-flight did not check its program", nil
 	}
-	// The shell splits words on space and tab only. Any other whitespace
-	// (a no-break space, a carriage return, a vertical tab, a form feed) is
-	// part of a word there, so splitting on it here would read a program the
-	// launch does not.
-	for _, r := range command {
-		if r != ' ' && r != '\t' && unicode.IsSpace(r) {
-			return commandNotParsedAdvisory, nil
-		}
+	// The shell splits words on space and tab only, so splitting on any other
+	// whitespace here would read a program the launch does not.
+	if hasUnsplitWhitespace(command) {
+		return commandNotParsedAdvisory, nil
 	}
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
 	if len(fields) == 0 {
 		return "", errors.New("empty")
 	}
 	cmd := fields[0]
-	if strings.ContainsAny(cmd, shellMeta) {
+	if containsShellText(cmd) || strings.ContainsRune(cmd, '=') {
 		return commandNotParsedAdvisory, nil
 	}
 	// Path, absolute or with a separator: must exist on disk.
@@ -774,6 +777,29 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		return "", fmt.Errorf("not on PATH: %w", err)
 	}
 	return "", nil
+}
+
+// CommandWordsReadable reports whether the words of a command, split on space
+// and tab, are the words the shell passes on: no shell-text character anywhere
+// (quotes included, since the shell strips them and a quoted flag is still the
+// flag) and no whitespace the shell does not split on. A reader that looks for a flag in a command's own arguments, as the
+// claude adapter does (marvel#745), can trust a command for which this is true
+// and must not add its own flag to one for which it is not.
+func CommandWordsReadable(command string) bool {
+	return !containsShellText(command) && !hasUnsplitWhitespace(command)
+}
+
+// hasUnsplitWhitespace reports whether command holds whitespace other than
+// space and tab. The shell splits words on those two only, so any other
+// whitespace (a no-break space, a carriage return, a newline, a vertical tab, a
+// form feed) is part of a word or ends a command, not a separator.
+func hasUnsplitWhitespace(command string) bool {
+	for _, r := range command {
+		if r != ' ' && r != '\t' && unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
 }
 
 const commandNotParsedAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"

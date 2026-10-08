@@ -1369,6 +1369,15 @@ func TestValidateRuntimesCheckOnlyWhatItCanRead(t *testing.T) {
 		{name: "missing absolute path with args", command: "/nope/not/here --flag", refuse: "not found"},
 		{name: "only whitespace", command: " \t ", refuse: "empty"},
 
+		// The pre-flight reads the first field only: shell text in the arguments
+		// does not change what the program is, so a miss still refuses and a hit
+		// still passes without an advisory.
+		{name: "a missing program with a quoted argument", command: "nosuchprog --x 'a b'", refuse: `"nosuchprog"`},
+		{name: "a missing program with an expansion in the arguments", command: "nosuchprog --x $(date)", refuse: `"nosuchprog"`},
+		{name: "a missing program with a pipe in the arguments", command: "nosuchprog --x | cat", refuse: `"nosuchprog"`},
+		{name: "a present program with a quoted argument", command: "sleep 5 'a b'"},
+		{name: "a present program with an expansion in the arguments", command: "sleep $(echo 5)"},
+
 		// Not the simple form: not refused, advised.
 		{name: "env assignment before the program", command: "FOO=1 sleep 5", advisory: shellTextAdvisory},
 		{name: "double-quoted path with a space", command: `"/tmp/dir with space/prog" --x`, teamDir: "t", advisory: shellTextAdvisory},
@@ -1509,5 +1518,91 @@ func TestValidateRuntimesCountsOnlyRefusals(t *testing.T) {
 	_, err := m.ValidateRuntimes()
 	if err == nil || !strings.Contains(err.Error(), "failed on 1 role(s)") || strings.Contains(err.Error(), "role[0=a]") {
 		t.Fatalf("want one refusal naming only role b, got %v", err)
+	}
+}
+
+// CommandWordsReadable says whether the words of a command, split on space and
+// tab, are the words the shell hands on. The claude adapter reads a command's
+// own arguments for flags and adds none to a command it cannot read (marvel#745).
+func TestCommandWordsReadable(t *testing.T) {
+	t.Parallel()
+	for command, want := range map[string]bool{
+		"claude":                                 true,
+		"claude --model x":                       true,
+		"claude\t--model x":                      true,
+		"claude --model x --verbose":             true,
+		`claude --model "sonnet 4"`:              false,
+		`claude --model 'a b'`:                   false,
+		`claude "--append-system-prompt" x`:      false,
+		`claude '--append-system-prompt' x`:      false,
+		`claude --append-sys""tem-prompt x`:      false,
+		`claude --append-sys''tem-prompt x`:      false,
+		`claude "--append-system-prompt-file" f`: false,
+		`claude "--setting-sources" local`:       false,
+		`claude --append-system-prompt="x y"`:    false,
+		"claude --model=x":                       true,
+		"claude --append-system-prompt=x":        true,
+		"claude --model x#y":                     false,
+		"claude --model=x*":                      false,
+		"claude ~/x":                             false,
+		"claude $HOME":                           false,
+		"claude $(cat f)":                        false,
+		"claude `cat f`":                         false,
+		"claude ${X}":                            false,
+		"claude ; true":                          false,
+		"claude | tee":                           false,
+		"claude &":                               false,
+		"claude < in":                            false,
+		"claude > out":                           false,
+		"claude (x)":                             false,
+		"claude {x}":                             false,
+		`claude \--flag`:                         false,
+		"claude --a\n--b":                        false,
+		"claude --a\r--b":                        false,
+		"claude\u00a0--a":                        false,
+		"claude --a\v--b":                        false,
+		"claude --a\f--b":                        false,
+		"claude\u2003--a":                        false,
+		"claude\u0085--a":                        false,
+	} {
+		if got := CommandWordsReadable(command); got != want {
+			t.Errorf("CommandWordsReadable(%q) = %v, want %v", command, got, want)
+		}
+	}
+}
+
+// One definition of shell text serves the apply pre-flight and the claude
+// adapter's reader, so the two views of one command cannot drift. They differ
+// only in the span they read: the pre-flight reads the first field, the adapter
+// the whole command, because a flag can sit anywhere.
+func TestShellTextHasOneDefinition(t *testing.T) {
+	t.Parallel()
+	for _, c := range "'\"\\$`;|&<>(){}*?[~#" {
+		command := "a" + string(c) + "b"
+		if CommandWordsReadable("claude " + command) {
+			t.Errorf("%q in the arguments left the command readable", c)
+		}
+		adv, err := runRuntimeCase(t, runtimeCase{name: string(c), command: command})
+		if err != nil || len(adv) != 1 {
+			t.Errorf("%q in the first field: advisories %q, err %v, want the shell-text advisory", c, adv, err)
+		}
+	}
+}
+
+// An equals sign is the pre-flight's alone, and only in the first field, where
+// NAME=value is an assignment and not a program. Later in a command it hides
+// nothing: the adapter's flag reader already matches --flag=value.
+func TestEqualsSignIsShellTextOnlyAsAProgramName(t *testing.T) {
+	t.Parallel()
+	if !CommandWordsReadable("claude --model=x") || !CommandWordsReadable("claude --append-system-prompt=x") {
+		t.Error("a joined flag hid nothing and must stay readable")
+	}
+	adv, err := runRuntimeCase(t, runtimeCase{name: "assignment", command: "FOO=1 sleep 5"})
+	if err != nil || len(adv) != 1 {
+		t.Errorf("FOO=1 sleep 5: advisories %q, err %v, want the shell-text advisory", adv, err)
+	}
+	adv, err = runRuntimeCase(t, runtimeCase{name: "joined flag", command: "sleep --time=5"})
+	if err != nil || len(adv) != 0 {
+		t.Errorf("sleep --time=5: advisories %q, err %v, want a plain pass", adv, err)
 	}
 }

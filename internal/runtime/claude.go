@@ -1,12 +1,17 @@
 package runtime
 
 import (
+	"log"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
+
+// logLaunch is where the adapter reports a launch decision. A seam so a test
+// reads the line without redirecting the process-wide logger.
+var logLaunch = log.Printf
 
 // Claude is the adapter for the bare Claude Code CLI. Medium integration:
 // permission mode injection via CLI flag, environment-based identity,
@@ -135,10 +140,28 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// this one-liner, because marvel's args land after its own
 	// (aae-orc-1vq6z). A wrapper owns the prompt; the identity it would
 	// carry is in the constructed env (MARVEL_SESSION and siblings).
-	if isBareClaude(binary) && !hasAnyFlag(args, "--append-system-prompt", "--append-system-prompt-file") {
-		prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
-			", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
-		args = append(args, "--append-system-prompt", prompt)
+	//
+	// The role may keep its own prompt in runtime.args or inline in its command
+	// ("claude --append-system-prompt ..."), so both are read, by the same
+	// helper that reads the setting-sources flag (marvel#745). A command whose
+	// words cannot be read (a quote, an expansion, a pipe, a second line) may carry
+	// the flag where nothing here can see it, so none is added and one line says
+	// so.
+	readable := api.CommandWordsReadable(binary)
+	declared := len(ctx.Role.SettingsSources) > 0
+	if isBareClaude(binary) {
+		switch {
+		case !readable && declared:
+			logLaunch("role %s: command is shell text; marvel's system-prompt line not added", ctx.Role.Name)
+		case !readable:
+			// Nothing is declared either, so the sources flag is held back too
+			// and one line covers both.
+			logLaunch("role %s: command is shell text; marvel's system-prompt and setting-sources flags not added", ctx.Role.Name)
+		case !carriesFlag(args, binary, "--append-system-prompt", "--append-system-prompt-file"):
+			prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
+				", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
+			args = append(args, "--append-system-prompt", prompt)
+		}
 	}
 
 	// Tell the harness which settings sources to load, so what applies is a
@@ -149,13 +172,31 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// role that declares nothing keeps today's behavior, every source, so an
 	// upgrade does not change what a seat loads from its directory; the placed
 	// defaults arrive with SB-1.
+	//
+	// On a command whose words cannot be read the flag may already be there, and
+	// a second is not harmless, so marvel adds none unless the manifest declares
+	// sources, which are appended. Whether claude receives that flag depends on
+	// the command (a pipe, a semicolon or a comment can leave it on another
+	// program or inside the comment, and marvel does not parse shell), so the log
+	// line says what marvel appended and nothing about what claude will do
+	// (marvel#745).
 	settingSources := ""
-	if isBareClaude(binary) && !hasAnyFlag(args, "--setting-sources") && !hasAnyFlag(commandArgs(binary), "--setting-sources") {
-		settingSources = "user,project,local"
-		if len(ctx.Role.SettingsSources) > 0 {
+	if isBareClaude(binary) {
+		switch {
+		case !readable && !declared:
+			// Held back, and logged with the prompt line above.
+		case !readable:
 			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+			logLaunch("role %s: command is shell text; marvel appended --setting-sources %s from the manifest; whether claude receives it depends on the command", ctx.Role.Name, settingSources)
+		case !carriesFlag(args, binary, "--setting-sources"):
+			settingSources = "user,project,local"
+			if declared {
+				settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+			}
 		}
-		args = append(args, "--setting-sources", settingSources)
+		if settingSources != "" {
+			args = append(args, "--setting-sources", settingSources)
+		}
 	}
 
 	// The request goes last, as the positional argument.
@@ -200,6 +241,12 @@ func commandArgs(command string) []string {
 		return nil
 	}
 	return fields[1:]
+}
+
+// carriesFlag reports whether a role already supplies one of flags, in
+// runtime.args or inline in the words of its command.
+func carriesFlag(args []string, command string, flags ...string) bool {
+	return hasAnyFlag(args, flags...) || hasAnyFlag(commandArgs(command), flags...)
 }
 
 // hasAnyFlag reports whether args carry any of the named flags, in either
