@@ -324,6 +324,25 @@ func TestClassifyBlankRowsAloneAreNotEvidence(t *testing.T) {
 	}
 }
 
+// A variable row is text: a partial whose only matched row is a variable row
+// is kept, so carriesText cannot count fixed rows alone.
+func TestClassifyVariableRowAloneIsEvidence(t *testing.T) {
+	var pattern Pattern
+	pattern.ID, pattern.Version, pattern.Harness, pattern.HarnessVersion = "p", 1, "claude", "1.0.0"
+	for _, text := range []string{"Header text", "Menu {{var}} row"} {
+		row, err := parseRow(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pattern.Rows = append(pattern.Rows, row)
+	}
+
+	r := Classify([]Pattern{pattern}, "claude", "1.0.0", []string{"other", "Menu x row"})
+	if r.Confidence != ConfLow || r.State != StateUnknown || len(r.Evidence) != 1 {
+		t.Fatalf("a partial matched only on a variable row was dropped or changed: %+v", r)
+	}
+}
+
 // Row.matches holds each part of the match: a fixed row is the whole line, and
 // a variable row needs its prefix, its suffix and a non-empty span between them.
 func TestRowMatchesEachPart(t *testing.T) {
