@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -292,7 +293,13 @@ func TestConcurrentNewSessionOnAnEmptySocketCreatesOneSession(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				errs <- d.NewSession("one")
+				err := d.NewSession("one")
+				errs <- err
+				if err == nil {
+					// Each caller, the loser included, sees the options on
+					// return: the winner's set-options may not have landed.
+					assertSessionOptions(t, d, "one", "caller")
+				}
 			}()
 		}
 		wg.Wait()
@@ -309,4 +316,48 @@ func TestConcurrentNewSessionOnAnEmptySocketCreatesOneSession(t *testing.T) {
 		_ = d.KillServer()
 		_ = os.RemoveAll(dir)
 	}
+}
+
+// assertSessionOptions checks what NewSession promises on return: the global
+// remain-on-exit is on and the session's history-limit is raised.
+func assertSessionOptions(t *testing.T, d *Driver, session, who string) {
+	t.Helper()
+	roe, err := d.cmd("show-options", "-gv", "remain-on-exit").Output()
+	if err != nil || strings.TrimSpace(string(roe)) != "on" {
+		t.Errorf("%s: remain-on-exit = %q, %v; want on", who, roe, err)
+	}
+	hl, err := d.cmd("show-options", "-t", session, "-v", "history-limit").Output()
+	if want := strconv.Itoa(DefaultHistoryLimit); err != nil || strings.TrimSpace(string(hl)) != want {
+		t.Errorf("%s: history-limit = %q, %v; want %s", who, hl, err, want)
+	}
+}
+
+// NewSession on a session that already exists still sets its options: the
+// creator may not have set them yet, and a pane created before remain-on-exit
+// is on loses an instant-exit status.
+func TestNewSessionOnAnExistingSessionStillSetsItsOptions(t *testing.T) {
+	skipIfNoTmux(t)
+	dir, err := os.MkdirTemp("/tmp", "mxabs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Setenv("MARVEL_TMUX_SOCKET", "mxabs"+filepath.Base(dir))
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.KillServer() })
+	// A peer's half-finished create: the session exists, no options set.
+	if out, err := d.cmd("new-session", "-d", "-s", "peer").CombinedOutput(); err != nil {
+		t.Fatalf("create: %v: %s", err, out)
+	}
+	if err := d.cmd("set-option", "-g", "remain-on-exit", "off").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.NewSession("peer"); err != nil {
+		t.Fatalf("NewSession on an existing session: %v", err)
+	}
+	assertSessionOptions(t, d, "peer", "exists path")
 }
