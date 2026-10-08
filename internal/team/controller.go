@@ -28,6 +28,13 @@ type Controller struct {
 	Events events.Emitter
 	mu     sync.Mutex
 
+	// rings holds each running session's evaluation tick ring, guarded by
+	// ringMu (not mu: the readers must not wait for a reconcile pass).
+	ringMu sync.Mutex
+	rings  map[string]*TickRing
+	// clusterWindow is the operator's watchdog.window, under ringMu.
+	clusterWindow time.Duration
+
 	// autoShiftsThisTick counts automatic shifts initiated during the current
 	// ReconcileOnce pass, reset at the top of each pass. It caps automatic
 	// initiations to maxAutoShiftsPerTick fleet-wide per tick so correlated
@@ -92,9 +99,16 @@ type Controller struct {
 
 	// Notify delivers a line of text to a session's pane, as `marvel inject`
 	// does. The max-age trigger uses it to ask a seat for its handoff
-	// (design D5 step 1). Nil means no delivery: the request is still
-	// recorded, and its event says the notice did not reach the pane.
-	Notify func(sess api.Session, text string) error
+	// (design D5 step 1), and the view notice uses it to say a view moved. The
+	// origin names which, so the inject record and any refusal carry the right
+	// injector. Nil means no delivery: the request is still recorded, and its
+	// event says the notice did not reach the pane.
+	Notify func(sess api.Session, text, origin string) error
+
+	// SealViewTrees hollows and seals the named superseded trees of a seat's
+	// view. Nil means nothing is sealed and the trees stay readable until
+	// teardown (docs/design/readonly-view.md section 6).
+	SealViewTrees func(sess api.Session, view string, commits []string) error
 
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
@@ -871,6 +885,9 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	// operator path takes (handleShift initiates, the next reconcile drives).
 	c.evaluateShiftTriggers(t)
 
+	// Tell each seat whose view moved, on the handoff timing, during a shift too.
+	c.deliverViewNotices(t)
+
 	if t.Shift.Phase != api.ShiftNone {
 		c.reconcileShift(t)
 		return
@@ -1337,6 +1354,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				WorkDir:    c.placement(t, role),
 				Firing:     plan.Firing,
 			}
+			// A seat whose views are still building waits for a later tick: the
+			// build runs in the background, never under this lock.
+			if !c.sessMgr.PrepareViews(sess, role) {
+				break
+			}
 			// A refused placement is reported, at a low rate, by the manager.
 			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
@@ -1415,10 +1437,17 @@ func (c *Controller) evaluateHealth() {
 	// regardless of the order its replicas are visited.
 	obs := make(map[string]roleObs)
 
+	// Every running session's tick goes into its activity ring, before any
+	// early return below, so the ring counts every evaluation.
+	ringed := make(map[string]bool, len(sessions))
+	defer func() { c.dropRingsExcept(ringed) }()
+
 	for _, sess := range sessions {
 		if sess.State != api.SessionRunning {
 			continue
 		}
+		c.recordTick(sess.Key(), now, sess.ContextAt)
+		ringed[sess.Key()] = true
 
 		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)
 		t, ok := teamCache[teamKey]
@@ -1578,7 +1607,9 @@ func evaluateActivity(s *api.Session, role *api.Role, now time.Time) api.Activit
 		return api.ActivityUnknown
 	}
 	if !s.ContextAt.IsZero() {
-		if now.Sub(s.ContextAt) > role.ActivityTimeout {
+		// The one quiet test, shared with the rate and ACTIVE%; the zero
+		// ContextAt path below keeps its own rules.
+		if api.Quiet(s, role.ActivityTimeout, now) {
 			return api.ActivityStalled
 		}
 		return api.ActivityActive
@@ -2086,12 +2117,20 @@ func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bo
 // firstSessionOverRemainder returns the first live current-generation session
 // of role whose resolved-window occupancy has crossed the headroom remainder,
 // with its token count and window. ok is false when none has (none over the
-// remainder, or none on a resolved window).
+// remainder, or none on a resolved window with a fresh reading). A reading
+// older than api.DefaultQuietWindow, the cluster's default quiet window, does
+// not count.
 func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role, headroom int) (sessionKey string, tokens, limit int, ok bool) {
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	now := c.nowUTC()
 	for i := range live {
 		s := &live[i]
 		if s.ContextLimit <= 0 {
+			continue
+		}
+		// A reading older than the bound, or never stamped, is not the
+		// seat's occupancy now, so it cannot arm a shift.
+		if s.ContextAt.IsZero() || now.Sub(s.ContextAt) > api.DefaultQuietWindow {
 			continue
 		}
 		if s.ContextTokens > s.ContextLimit-headroom {
@@ -2276,6 +2315,11 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				if req.Session == sess.Predecessor {
 					sess.HandoffRequestedAt = req.RequestedAt
 				}
+			}
+			// The successor's views build in the background; the shift stays in
+			// launching and tries again next tick.
+			if !c.sessMgr.PrepareViews(sess, role) {
+				return
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
 				if !errors.Is(err, session.ErrPlacementRefused) {

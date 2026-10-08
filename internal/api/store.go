@@ -123,9 +123,12 @@ func cloneSession(s *Session) Session {
 		l := *s.Limit
 		out.Limit = &l
 	}
+	out.SpendOut = copyInt(s.SpendOut)
+	out.SpendPromptTokens = copyInt(s.SpendPromptTokens)
 	if s.HarnessState != nil {
 		hs := *s.HarnessState
 		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)
+		hs.Covered = append([]string(nil), s.HarnessState.Covered...)
 		out.HarnessState = &hs
 	}
 	return out
@@ -174,6 +177,13 @@ func cloneTeam(t *Team) Team {
 	}
 	if len(t.ShiftRequests) > 0 {
 		out.ShiftRequests = maps.Clone(t.ShiftRequests)
+	}
+	if len(t.ViewNotices) > 0 {
+		out.ViewNotices = maps.Clone(t.ViewNotices)
+		for k, n := range out.ViewNotices {
+			n.Superseded, n.Sealed = slices.Clone(n.Superseded), slices.Clone(n.Sealed)
+			out.ViewNotices[k] = n
+		}
 	}
 	return out
 }
@@ -844,6 +854,32 @@ func (s *Store) UpdateSessionContext(key string, c SessionContext) {
 	sess.SessionContext = c
 }
 
+// UpdateSessionSpend records the spend-only slice of a session's context
+// reading. It writes SpendOut, SpendPromptTokens and OutRate and nothing else:
+// not the occupancy fields, not ContextSource and not ContextAt, which is the
+// activity signal the watchdog reads, so whether a running-total turn counts as
+// activity stays a separate decision. A missing session is ignored and nothing
+// is persisted, as with UpdateSessionContext.
+func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		return
+	}
+	sess.SpendOut, sess.SpendPromptTokens = copyInt(sp.Out), copyInt(sp.PromptTokens)
+	sess.OutRate = sp.OutRate
+}
+
+// copyInt returns a pointer to a copy of *p, or nil.
+func copyInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 // SetHarnessState records the watchdog's verdict on a session, nil to clear
 // it. It writes that one field and does not persist: a verdict is stale the
 // moment the daemon stops, and the watchdog re-derives it. A missing session is
@@ -861,6 +897,7 @@ func (s *Store) SetHarnessState(key string, hs *HarnessState) {
 	}
 	c := *hs
 	c.Evidence = append([]string(nil), hs.Evidence...)
+	c.Covered = append([]string(nil), hs.Covered...)
 	sess.HarnessState = &c
 }
 

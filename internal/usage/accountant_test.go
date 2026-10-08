@@ -17,11 +17,25 @@ import (
 type recordSink struct {
 	mu     sync.Mutex
 	last   map[string]api.SessionContext
+	spend  map[string]api.SessionSpend
 	writes int
 }
 
 func newRecordSink() *recordSink {
-	return &recordSink{last: make(map[string]api.SessionContext)}
+	return &recordSink{last: make(map[string]api.SessionContext), spend: make(map[string]api.SessionSpend)}
+}
+
+func (r *recordSink) UpdateSessionSpend(key string, sp api.SessionSpend) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.spend[key] = sp
+}
+
+func (r *recordSink) getSpend(key string) (api.SessionSpend, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sp, ok := r.spend[key]
+	return sp, ok
 }
 
 func (r *recordSink) UpdateSessionContext(key string, c api.SessionContext) {

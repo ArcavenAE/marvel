@@ -325,23 +325,134 @@ func TestSupervisorUserAgainstARealBroker(t *testing.T) {
 		t.Fatalf("the dotted supervisor user does not authenticate: %v", err)
 	}
 	defer nc.Close()
-	violated := func() bool {
+	// Flush returns once the server has answered, but the client's error
+	// callback runs on its own goroutine, so a violation can land after
+	// Flush. A check that expects NO violation can only wait a short while
+	// (a slow machine makes it pass, never fail). A check that expects one
+	// has to wait up to a deadline, or a late callback fails it.
+	// Each check names its own subject, so one check's late violation never
+	// stands in for another's.
+	violatedWithin := func(subject string, wait time.Duration) bool {
 		t.Helper()
 		_ = nc.Flush()
+		return receivesViolation(violations, subject, wait)
+	}
+	noViolation := func(subject string) bool { t.Helper(); return !violatedWithin(subject, 500*time.Millisecond) }
+	awaitViolation := func(subject string) bool { t.Helper(); return violatedWithin(subject, 5*time.Second) }
+	if err := nc.Publish("global.other.supervisor.inbox", []byte("x")); err != nil || !noViolation("global.other.supervisor.inbox") {
+		t.Errorf("publishing another cluster's supervisor inbox was refused: %v", err)
+	}
+	own := fmt.Sprintf("global.%s.supervisor.inbox", domain)
+	if _, err := nc.SubscribeSync(own); err != nil || !noViolation(own) {
+		t.Errorf("subscribing the supervisor's own inbox was refused: %v", err)
+	}
+	rest := fmt.Sprintf("global.%s.somebody-else", domain)
+	if _, err := nc.SubscribeSync(rest); err != nil || !awaitViolation(rest) {
+		t.Errorf("subscribing the rest of the global domain was allowed (err %v); the grant must be narrowed", err)
+	}
+	drainViolations(violations)
+}
+
+// receivesViolation reports whether, within wait, the client's callback
+// delivers a permissions violation naming subject. It returns as soon as one
+// arrives, so a long wait costs nothing when the callback is prompt. Errors
+// that are not that violation (another subject, another kind) are skipped and
+// the wait goes on, so a late violation from an earlier check cannot satisfy
+// a later one.
+func receivesViolation(errs <-chan string, subject string, wait time.Duration) bool {
+	deadline := time.After(wait)
+	for {
 		select {
-		case e := <-violations:
-			return strings.Contains(e, "Permissions Violation")
-		case <-time.After(500 * time.Millisecond):
+		case e := <-errs:
+			if strings.Contains(e, "Permissions Violation") && strings.Contains(e, `"`+subject+`"`) {
+				return true
+			}
+		case <-deadline:
 			return false
 		}
 	}
-	if err := nc.Publish("global.other.supervisor.inbox", []byte("x")); err != nil || violated() {
-		t.Errorf("publishing another cluster's supervisor inbox was refused: %v", err)
+}
+
+// drainViolations empties what the callback has delivered so far, so the
+// channel holds nothing a later check could take for its own.
+func drainViolations(errs <-chan string) {
+	for {
+		select {
+		case <-errs:
+		default:
+			return
+		}
 	}
-	if _, err := nc.SubscribeSync(fmt.Sprintf("global.%s.supervisor.inbox", domain)); err != nil || violated() {
-		t.Errorf("subscribing the supervisor's own inbox was refused: %v", err)
+}
+
+// The client's error callback runs on its own goroutine, so a violation the
+// server has already sent can arrive after Flush returns. A check that
+// expects one must wait to a deadline: a violation 300ms late is seen, a
+// message that is not a violation is not one, and silence is false. This
+// needs no broker, so it also runs where nats-server is not on PATH.
+func TestReceivesViolationWaitsForALateCallback(t *testing.T) {
+	t.Parallel()
+	late := make(chan string, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		late <- `nats: Permissions Violation for Subscription to "x"`
+	}()
+	if !receivesViolation(late, "x", 5*time.Second) {
+		t.Error("a violation 300ms late was missed inside a 5s wait")
 	}
-	if _, err := nc.SubscribeSync(fmt.Sprintf("global.%s.somebody-else", domain)); err != nil || !violated() {
-		t.Errorf("subscribing the rest of the global domain was allowed (err %v); the grant must be narrowed", err)
+
+	other := make(chan string, 1)
+	other <- "nats: slow consumer"
+	if receivesViolation(other, "x", time.Second) {
+		t.Error("a message that is not a permissions violation was taken for one")
 	}
+
+	if receivesViolation(make(chan string), "x", 50*time.Millisecond) {
+		t.Error("silence was reported as a violation")
+	}
+}
+
+// A violation for another subject is not this check's violation. An earlier
+// check's violation that lands late must not satisfy a later check's wait,
+// and must not hide the later check's own violation behind it.
+func TestReceivesViolationMatchesTheSubject(t *testing.T) {
+	t.Parallel()
+	earlier := make(chan string, 2)
+	earlier <- `nats: Permissions Violation for Publish to "global.other.supervisor.inbox"`
+	if receivesViolation(earlier, "global.ops.somebody-else", 200*time.Millisecond) {
+		t.Error("another subject's violation satisfied this subject's wait")
+	}
+
+	both := make(chan string, 2)
+	both <- `nats: Permissions Violation for Publish to "global.other.supervisor.inbox"`
+	both <- `nats: Permissions Violation for Subscription to "global.ops.somebody-else"`
+	if !receivesViolation(both, "global.ops.somebody-else", time.Second) {
+		t.Error("the right subject's violation was missed behind another's")
+	}
+
+	// The same subject in some other kind of error is not a violation.
+	kind := make(chan string, 1)
+	kind <- `nats: slow consumer on "global.ops.somebody-else"`
+	if receivesViolation(kind, "global.ops.somebody-else", 200*time.Millisecond) {
+		t.Error("a non-violation error naming the subject was taken for a violation")
+	}
+
+	// A subject that is only a prefix of the one named is a different subject.
+	prefix := make(chan string, 1)
+	prefix <- `nats: Permissions Violation for Subscription to "global.ops.somebody-else.extra"`
+	if receivesViolation(prefix, "global.ops.somebody-else", 200*time.Millisecond) {
+		t.Error("a longer subject was taken for the named one")
+	}
+}
+
+func TestDrainViolationsEmptiesTheChannel(t *testing.T) {
+	t.Parallel()
+	errs := make(chan string, 4)
+	errs <- "a"
+	errs <- "b"
+	drainViolations(errs)
+	if len(errs) != 0 {
+		t.Errorf("%d errors left after the drain", len(errs))
+	}
+	drainViolations(errs) // an empty channel must not block
 }

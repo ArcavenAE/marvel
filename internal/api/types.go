@@ -138,8 +138,13 @@ type Workspace struct {
 	// Root is the absolute filesystem root the workspace lives in, the one
 	// anchor a relative workdir resolves against (docs/design/
 	// session-working-directory.md, decision 1).
-	Root      string    `toml:"root,omitempty"`
-	CreatedAt time.Time `toml:"-"`
+	Root string `toml:"root,omitempty"`
+	// TrustedFolders are the git top-levels of the operator's own repos, as
+	// the manifest wrote them (a leading ~/ and a relative path are resolved at
+	// spawn). A codex seat whose start directory is inside one is seeded
+	// trusted; every other folder stays untrusted (marvel#684).
+	TrustedFolders []string  `toml:"trusted_folders,omitempty"`
+	CreatedAt      time.Time `toml:"-"`
 }
 
 // RuntimeMode selects how a harness is launched within its pane.
@@ -326,6 +331,10 @@ type Session struct {
 	// view, filled on the copies get and describe return and never stored.
 	LimitReading     ReadingState `json:"limit_reading,omitempty" toml:"-"`
 	LimitReadingText string       `json:"limit_reading_text,omitempty" toml:"-"`
+
+	// ActiveTicks is the share-of-ticks reading behind ACTIVE%, filled on read
+	// from the controller's in-memory tick ring and never stored. See ActiveTicks.
+	ActiveTicks ActiveTicks `json:"active_ticks,omitzero" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
@@ -792,6 +801,45 @@ type ShiftRequest struct {
 	Escalated bool
 }
 
+// ViewNotice is the told-or-not state of one seat's view. A refresh that moves
+// the view sets Commit and replaces any notice not yet delivered, so a seat busy
+// through three refreshes is told once, about the latest. It persists with the
+// team so a restart neither forgets an undelivered notice nor starts a grace
+// early.
+type ViewNotice struct {
+	// Commit is the commit the latest notice names. The notice is pending while
+	// it differs from DeliveredCommit.
+	Commit string
+	// Path is the view's cur path the notice tells the seat to cd to again.
+	Path string
+	// PendingSince is when the oldest undelivered move happened. It bounds the
+	// deferral: the notice is sent at max_defer from here however busy the seat.
+	PendingSince time.Time
+	// Undelivered is why the last attempt did not reach the seat, empty when
+	// none failed.
+	Undelivered string
+	// DeliveredCommit and DeliveredAt record the notice that reached the seat.
+	// A view that leaves DeliveredCommit and returns to it owes no new notice, so
+	// the return sets DeliveredAt to the time of the return: the seat is told
+	// about this commit, and the grace runs from the next quiet.
+	DeliveredCommit string
+	DeliveredAt     time.Time
+	// GraceStart is the first time the pane was observed quiet after
+	// DeliveredAt, which is when the re-entry grace starts. A notice delivered
+	// mid-turn waits for the next quiet. Zero until then.
+	GraceStart time.Time
+	// Superseded lists the trees swapped out and still readable, oldest first.
+	// A tree joins it when its view moves on and leaves it when it is sealed or
+	// the view returns to it (docs/design/readonly-view.md section 6).
+	Superseded []string
+	// Sealed lists the trees marvel has hollowed and sealed. They stay on disk
+	// as a directory skeleton until teardown.
+	Sealed []string
+}
+
+// Pending reports whether the notice has not been delivered yet.
+func (n ViewNotice) Pending() bool { return n.Commit != "" && n.Commit != n.DeliveredCommit }
+
 // ShiftPhase represents the current phase of a shift operation.
 type ShiftPhase string
 
@@ -846,6 +894,11 @@ type Team struct {
 	// ShiftRequests holds the pending handoff request per role name, if any.
 	// Status, not spec, persisted like Shift. See ShiftRequest.
 	ShiftRequests map[string]ShiftRequest `toml:"-"`
+	// ViewNotices holds, per "<session key>/<view name>", the notice that the
+	// view moved: pending until delivered, then the delivery time and the start
+	// of the re-entry grace. Status, not spec, persisted like ShiftRequests
+	// (docs/design/readonly-view.md section 5). See ViewNotice.
+	ViewNotices map[string]ViewNotice `toml:"-"`
 	// Admission is the standing admission condition the reconciler
 	// recomputes each tick. Status, not spec — same treatment as Shift.
 	Admission AdmissionState `toml:"-"`
@@ -995,20 +1048,68 @@ func (c *Credential) Key() string { return c.Name }
 // matched pattern's fixed rows with each variable span masked; no captured row
 // is stored anywhere (section 5).
 type HarnessState struct {
-	State          string    `json:"state"`
-	Confidence     string    `json:"confidence"`
-	Harness        string    `json:"harness"`
-	HarnessVersion string    `json:"harness_version,omitempty"`
-	PatternID      string    `json:"pattern_id"`
-	PatternVersion int       `json:"pattern_version"`
-	PatternFor     string    `json:"pattern_for,omitempty"`
-	PaneWidth      int       `json:"pane_width,omitempty"`
-	Evidence       []string  `json:"evidence,omitempty"`
-	CapturedAt     time.Time `json:"captured_at"`
+	State          string `json:"state"`
+	Confidence     string `json:"confidence"`
+	Harness        string `json:"harness"`
+	HarnessVersion string `json:"harness_version,omitempty"`
+	PatternID      string `json:"pattern_id"`
+	PatternVersion int    `json:"pattern_version"`
+	PatternFor     string `json:"pattern_for,omitempty"`
+	// Covered lists the harness versions that have at least one passing
+	// pattern. It is set on the two coverage states only.
+	Covered    []string  `json:"covered,omitempty"`
+	PaneWidth  int       `json:"pane_width,omitempty"`
+	Evidence   []string  `json:"evidence,omitempty"`
+	CapturedAt time.Time `json:"captured_at"`
 	// ContextAt is the session's ContextAt when this was seen. A later
 	// ContextAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
 }
 
-// HarnessStateLoggedOut is the one state Phase 1 sets.
+// HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"
+
+// SessionSpend is the spend-only slice of a session's context reading: the
+// cumulative output and prompt tokens and the output-token rate. The usage
+// accountant writes it for a seat whose feed carries spend and no occupancy
+// (a running-total feed such as codex's), where publishing a whole reading
+// would stamp an occupancy source and a 0% level that were never measured.
+type SessionSpend struct {
+	Out          *int
+	PromptTokens *int
+	OutRate      asof.Cell[float64]
+}
+
+// The two coverage states say the watchdog could not have matched this seat
+// (docs/design/watchdog-control-and-uncovered.md section 4). They carry no
+// confidence and no evidence, and only the version becoming covered, or the
+// session ending, clears them.
+const (
+	// HarnessStateUncovered means the harness has patterns, but none for the
+	// seat's version.
+	HarnessStateUncovered = "uncovered"
+	// HarnessStateControlFailed means the seat's version has patterns and every
+	// one of them failed its control.
+	HarnessStateControlFailed = "control-failed"
+)
+
+// ActiveTicks is what the tick ring says about a session, as `get sessions`
+// turns it into ACTIVE% (docs/design/get-sessions-output.md section 4.4). It is
+// counts and the window they were counted under, never a percentage: the CLI
+// divides when it prints. The daemon fills it on read, so a daemon restart,
+// which empties the ring, leaves it zero and the cell a dash.
+type ActiveTicks struct {
+	// Active and Total are the ticks in the last fifteen minutes that found the
+	// session not quiet, and all of them.
+	Active int `json:"active"`
+	Total  int `json:"total"`
+	// Window is the quiet window the ticks were judged under: the role's
+	// activity_timeout, else the cluster's watchdog.window, else the default.
+	Window time.Duration `json:"window"`
+	// Observable is false for a session marvel has no activity channel for.
+	Observable bool `json:"observable"`
+	// Full is true once the ring has watched for the whole fifteen minutes.
+	Full bool `json:"full"`
+	// At is the time of the newest tick counted.
+	At time.Time `json:"at"`
+}

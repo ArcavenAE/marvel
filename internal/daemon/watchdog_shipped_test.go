@@ -45,15 +45,15 @@ func TestWatchdogReadsTheCapturedScreenAsLoggedOut(t *testing.T) {
 	}
 }
 
-// The same screen from a session reporting another version does not read
-// logged-out: a pattern is for the version it was captured on.
+// The same screen from a session reporting a version outside the pattern's
+// range does not read logged-out: a pattern is for the versions it covers.
 func TestWatchdogDoesNotApplyTheCapturedScreenToAnotherVersion(t *testing.T) {
 	r, screen := shippedRig(t)
-	p := r.seat("a", "claude", "2.1.291", 30*time.Minute, 0)
+	p := r.seat("a", "claude", "2.1.294", 30*time.Minute, 0)
 	p.screen = screen
 	r.w.Once()
 	hs := r.get("a").HarnessState
 	if hs != nil && hs.State == api.HarnessStateLoggedOut {
-		t.Fatalf("2.1.291 read logged-out from a 2.1.290 sample: %+v", hs)
+		t.Fatalf("2.1.294 read logged-out from a sample whose range ends at 2.1.293: %+v", hs)
 	}
 }

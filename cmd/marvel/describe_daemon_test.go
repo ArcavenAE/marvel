@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -216,5 +217,90 @@ func TestDescribeCmdRoutesDaemon(t *testing.T) {
 	}
 	if got := methods(); len(got) != 1 || got[0] != "daemon.status" {
 		t.Errorf("methods = %v, want exactly [daemon.status]", got)
+	}
+}
+
+// describe daemon prints the client's address and rung beside the daemon's
+// own record, flattened into one object. encoding/json keeps the shallowest
+// field of a name, so a daemon status key named "address" or "rung" would not
+// win: the client's value would print and the daemon's would be dropped
+// without a word. Guard the status type, embedded structs included, against
+// ever growing one.
+func TestDaemonStatusKeysNeverShadowTheClientsFacts(t *testing.T) {
+	for _, name := range jsonKeys(reflect.TypeOf(daemon.DaemonStatus{})) {
+		if name == "address" || name == "rung" {
+			t.Errorf("DaemonStatus marshals a key %q, which describe daemon's own key would shadow and drop", name)
+		}
+	}
+}
+
+// jsonKeys is every key a struct marshals with its fields flattened the way
+// encoding/json does it: an embedded struct with no json name contributes its
+// fields as if they were the outer type's own.
+func jsonKeys(typ reflect.Type) []string {
+	var keys []string
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		// encoding/json flattens an embedded pointer to a struct the same way
+		// it flattens the struct, so look through the pointer first.
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if f.Anonymous && name == "" && ft.Kind() == reflect.Struct {
+			keys = append(keys, jsonKeys(ft)...)
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		keys = append(keys, name)
+	}
+	return keys
+}
+
+// The guard sees through an embedded struct, where a promoted field would
+// marshal as the outer type's own.
+func TestJSONKeysWalksEmbeddedStructs(t *testing.T) {
+	type inner struct {
+		Rung string `json:"rung"`
+	}
+	type viaPointer struct {
+		Address string `json:"address"`
+	}
+	type outer struct {
+		inner
+		*viaPointer
+		Plain  string
+		Tagged string `json:"tagged,omitempty"`
+		Hidden string `json:"-"`
+	}
+	got := jsonKeys(reflect.TypeOf(outer{}))
+	want := []string{"rung", "address", "Plain", "tagged"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("jsonKeys = %v, want %v", got, want)
+	}
+}
+
+// A status the client cannot decode is an error, not an empty record printed
+// with exit 0.
+func TestDescribeDaemonRefusesAStatusItCannotDecode(t *testing.T) {
+	resolveFixture(t, false)
+	socket := fakeSocket(t, func(daemon.Request) daemon.Response {
+		return daemon.Response{Result: json.RawMessage(`[1,2,3]`)}
+	})
+	t.Setenv(config.SocketEnv, socket)
+
+	var out bytes.Buffer
+	err := describeDaemon(&out)
+	if err == nil || !strings.Contains(err.Error(), "decode daemon status") {
+		t.Errorf("err = %v, want a decode error", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("printed %q before failing, want nothing", out.String())
 	}
 }

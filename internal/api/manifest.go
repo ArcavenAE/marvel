@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,6 +71,10 @@ type ManifestWorkspace struct {
 	// Root is the filesystem root the workspace lives in; marvel work fills
 	// it from the manifest's directory when absent.
 	Root string `toml:"root,omitempty" yaml:"root,omitempty"`
+	// TrustedFolders lists the operator's own repos a codex seat may trust.
+	// A pointer, so an absent key (leave the stored list alone) differs from an
+	// empty list (revoke it); omitempty on a plain slice would lose that.
+	TrustedFolders *[]string `toml:"trusted_folders,omitempty" yaml:"trusted_folders,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
@@ -429,7 +434,14 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if _, err := r.views(fmt.Sprintf("parse manifest: team[%d].role[%d]", i, j)); err != nil {
 				return nil, err
 			}
-			if _, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j)); err != nil {
+			policy, err := r.shiftPolicy(fmt.Sprintf("team[%d].role[%d]", i, j))
+			if err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			// A headroom that is not below the window the role declares
+			// would hold at any occupancy: the remainder test is
+			// tokens > window - headroom, and that bound is zero or less.
+			if err := checkHeadroomBelowWindow(fmt.Sprintf("team[%d].role[%d]", i, j), policy, r.Runtime.ContextWindow); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if err := validateSettingsSources(fmt.Sprintf("team[%d].role[%d]", i, j), r.SettingsSources); err != nil {
@@ -615,6 +627,34 @@ func (m *Manifest) ContextFeedAdvisories(canFeed ContextFeedCapableRole) []strin
 	return out
 }
 
+// ShiftHeadroomAdvisories lists every role that has a context-pressure arm but
+// declares no runtime.context_window, so its headroom_tokens cannot be checked
+// against the window at apply. It is advisory, not a refusal: the window may
+// still resolve at runtime from the model table, and a role without one is
+// skipped by the arm.
+func (m *Manifest) ShiftHeadroomAdvisories() []string {
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.ContextWindow > 0 {
+				continue
+			}
+			policy, err := r.shiftPolicy(t.Name + "/" + r.Name)
+			if err != nil || policy == nil {
+				continue
+			}
+			for _, c := range policy.Conditions() {
+				if c.On != ShiftTriggerContextPressure {
+					continue
+				}
+				out = append(out, fmt.Sprintf("team %s role %s: shift on context-pressure with headroom_tokens %d, but runtime.context_window is not declared, so the headroom is not checked against the window",
+					t.Name, r.Name, c.HeadroomTokens))
+			}
+		}
+	}
+	return out
+}
+
 // ValidateRuntimes checks that each role's runtime command (and script,
 // if set) actually resolves on the daemon's host before the manifest
 // is applied. Returns an aggregated error listing every missing binary
@@ -726,15 +766,25 @@ func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
 	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	if m.Workspace.TrustedFolders != nil {
+		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+	}
 	// Ignore already-exists for workspace (idempotent apply), but a re-applied
 	// root moves. An apply that names no root leaves a stored one alone.
 	if err := store.CreateWorkspace(ws); err != nil {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
-				live.Root = m.Workspace.Root
+				if m.Workspace.Root != "" {
+					live.Root = m.Workspace.Root
+				}
+				// A list that is present replaces the stored one, an empty
+				// list revokes it, and an absent key leaves it alone.
+				if m.Workspace.TrustedFolders != nil {
+					live.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+				}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply workspace: %w", err)

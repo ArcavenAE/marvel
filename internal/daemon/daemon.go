@@ -43,6 +43,7 @@ import (
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
+	"github.com/arcavenae/marvel/internal/view"
 )
 
 const (
@@ -120,6 +121,8 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	// views follows each seat's read-only views (marvel#609).
+	views *view.Keeper
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
 	// schedule.history; zero means the default.
 	scheduleHistoryMax int
@@ -315,6 +318,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Zero leaves the controller on its built-in default (10 minutes);
 	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.
 	teamCtrl.ShiftTimeout = opts.ShiftTimeout
+	teamCtrl.SetClusterQuietWindow(configuredQuietWindow())
 	// Must follow OpenBolt: the controller reads its crash-loop state
 	// out of the same bolt file. Before this, a role frozen at
 	// MaxRestarts respawned on the first reconcile tick after restart.
@@ -429,36 +433,56 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
 	// a draft typed into a seat, so it is recorded like any inject, from marvel.
 	teamCtrl.Notify = d.notifyHandoff
+	// Each seat's read-only views are built at spawn by the session manager
+	// and followed on a tick here (marvel#609).
+	if layout, lerr := paths.Default(); lerr == nil {
+		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
+		d.views.OnMoved = teamCtrl.NoteViewMoved
+		d.views.Held = teamCtrl.ViewTreesHeld
+		teamCtrl.SealViewTrees = d.views.Seal
+		sessMgr.Views = d.views
+	}
 	return d, nil
 }
 
-// notifyHandoff types the max-age handoff request into a seat. The request is
-// typed text like any inject, so it passes the same pre-flight: a codex seat on
+// notifyHandoff types a marvel notice into a seat: the max-age handoff request
+// or a view notice, named by origin and recorded as injector=marvel:<origin>.
+// The text is typed text like any inject, so it passes the same pre-flight: a codex seat on
 // its update menu since spawn reads as quiet, which is the seat this stage
 // picks, and a claude seat sitting on the usage-limit menu is refused too
 // (marvel#559).
-func (d *Daemon) notifyHandoff(sess api.Session, text string) error {
+func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
+	injector := "transport=daemon injector=marvel:" + origin
 	if sess.PaneID == "" {
 		return fmt.Errorf("session %s has no pane", sess.Key())
 	}
 	if why := preflightRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
-		emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
-		return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+		emitInjectRefused(d.events, sess, why, injector)
+		return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
 	}
 	// The same bare-digit refusal as an inject, with no flag to lift it: a text
 	// that starts with a menu digit is not typed into a pane the capture cannot
 	// place.
 	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
 		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
-			emitInjectRefused(d.events, sess, why, "transport=daemon injector=marvel:max-age")
-			return fmt.Errorf("handoff not sent to %s: %s", sess.Key(), why)
+			emitInjectRefused(d.events, sess, why, injector)
+			return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
 		}
 	}
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
 	}
-	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, "transport=daemon injector=marvel:max-age")
+	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, injector)
 	return nil
+}
+
+// noticeNoun names what a refused notice was, for the error text the team
+// records: the max-age ask is a handoff request, anything else is a notice.
+func noticeNoun(origin string) string {
+	if origin == team.NoticeMaxAge {
+		return "handoff"
+	}
+	return "notice"
 }
 
 // Usage returns the daemon's context and token accountant. Exported for
@@ -618,6 +642,9 @@ func (d *Daemon) Start(socketPath string) error {
 	}()
 
 	d.startWatchdog(ctx)
+	if d.views != nil {
+		d.startViews(ctx)
+	}
 
 	// Accept connections.
 	d.wg.Add(1)
@@ -1022,6 +1049,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleBusStatus()
 	case "daemon.status":
 		return d.handleDaemonStatus()
+	case "view.refresh":
+		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":
 		return d.handleBusLeafConnect()
 	case "bus.leaf.disconnect":
@@ -1281,7 +1310,11 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	if err := m.ValidateTrustedFolders(); err != nil {
+		return Response{Error: err.Error()}
+	}
 	workDirAdvisories = append(workDirAdvisories, m.LegacyPlacementNotes(d.store)...)
+	workDirAdvisories = append(workDirAdvisories, m.TrustedFolderNotes(d.store)...)
 
 	// Pre-flight: refuse to apply if any role's runtime command/script
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
@@ -1340,6 +1373,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	now := time.Now().UTC()
 	acks := m.DSTAcknowledgements(now)
 	scheduleAdvisories := m.ScheduleAdvisories(now)
+	headroomAdvisories := m.ShiftHeadroomAdvisories()
 
 	if err := m.Apply(d.store); err != nil {
 		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
@@ -1348,6 +1382,9 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range scheduleAdvisories {
+		log.Printf("apply: %s", a)
+	}
+	for _, a := range headroomAdvisories {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range acks {
@@ -1445,6 +1482,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
+		d.stampActivity(live, time.Now().UTC())
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
@@ -1513,6 +1551,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 		if err == nil {
 			one := []api.Session{sess}
 			d.stampLimitReading(one, time.Now().UTC())
+			d.stampActivity(one, time.Now().UTC())
 			result = one[0]
 		}
 	case "team":
@@ -1946,6 +1985,10 @@ type runParams struct {
 	RuntimeCommand string   `json:"runtime_command"`
 	RuntimeArgs    []string `json:"runtime_args"`
 	Script         string   `json:"script"`
+	// WorkDir is where the session runs, absolute, from marvel run --workdir or
+	// the caller's cwd. WorkDirDefault says the caller did not name it.
+	WorkDir        string `json:"workdir,omitempty"`
+	WorkDirDefault bool   `json:"workdir_default,omitempty"`
 }
 
 func (d *Daemon) handleRun(params json.RawMessage) Response {
@@ -1962,6 +2005,13 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	}
 	if p.Role == "" {
 		p.Role = "adhoc"
+	}
+
+	// Placement is checked before anything is created, so a refused run leaves no
+	// workspace or session behind.
+	workDir, warning, werr := resolveRunWorkDir(p.WorkDir, p.WorkDirDefault)
+	if werr != nil {
+		return Response{Error: werr.Error()}
 	}
 
 	// Ensure workspace exists.
@@ -1991,16 +2041,21 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		Team:      p.Team,
 		Role:      p.Role,
 		Runtime:   rt,
+		WorkDir:   workDir,
 	}
 
 	if err := d.sessMgr.Create(sess); err != nil {
 		return Response{Error: fmt.Sprintf("create session: %v", err)}
 	}
 
-	result, _ := json.Marshal(map[string]string{
+	out := map[string]string{
 		"status":      "created",
 		"session_key": sess.Key(),
-	})
+	}
+	if warning != "" {
+		out["warning"] = warning
+	}
+	result, _ := json.Marshal(out)
 	return Response{Result: result}
 }
 

@@ -86,7 +86,10 @@ checkout):
   the symlink returns EINVAL while rename(2) replaces it, about 1 in 100
   reads when swaps run back to back (measured 2026-10-06, and by the akocr
   build). Production swaps are minutes apart, so a failed lookup is rare,
-  transient, and loud. Linux will be measured by the CI job (#621).
+  transient, and loud. On both platforms the integration test
+  (`internal/view/view_integration_test.go`) holds content errors to zero,
+  bounds transient lookup failures at 0.1% of reads, and logs the count on
+  every PR; no Linux rate is recorded in this document.
 - **What this guards against is accident, not intent.** The seat runs as
   the same user, so it can still `chmod` a tree or replace `cur`. The same
   limit is stated in the probe brief and the finding.
@@ -176,7 +179,8 @@ A superseded tree passes through three states, and only the notice moves it.
    and exited 1, `cat ./f` printed `Permission denied` and exited 1,
    `grep -r` warned `Permission denied` and exited 2, and `find .` printed
    `Permission denied` on stderr but exited 0 (that shell's `find` is a
-   wrapper; BSD and GNU `find` are untested). `pwd` still printed the old
+   wrapper; the `find` binaries on BSD and GNU exit 1, which an integration
+   test asserts on every CI run). `pwd` still printed the old
    path and exited 0, which is why the notice names `VIEW_SHA` rather than
    `pwd`. The skeleton is directories only, so it costs almost no disk.
 3. **Removed.** At session teardown, or when the role's view is removed
@@ -187,7 +191,10 @@ A superseded tree passes through three states, and only the notice moves it.
 
 Why seal and not delete: deleting leaves a held directory that answers
 `ls`, globs, `find` and `grep -r` with silence, and only a named file read
-fails. A mode-`000` directory refuses all of them.
+fails. A mode-`000` directory makes `ls`, `cat ./f` and `find .` exit
+nonzero. A glob is the exception: a bash glob with `nullglob` set is silent
+and a zsh glob errors, so a seat that reads by glob can still see an empty
+answer, which is one more reason the notice names `VIEW_SHA` as the check.
 
 Why delivery and not refresh count: the notice can be deferred up to
 `max_defer` (30m), and at `refresh_every = 10m` a count-keyed rule would
@@ -211,7 +218,7 @@ seals a tree early to save disk.
 | the swap | keep the current tree; remove `trees/<new>`; emit `view.refresh-failed` |
 | sealing a tree | log it, leave it readable, retry on the next tick; a stuck seal never blocks a swap |
 | the notice | record it undelivered, keep it pending, retry each tick; superseded trees stay readable until it lands |
-| first build at spawn | the session still starts, without `MARVEL_VIEW_<NAME>`; emit `view.unavailable` once per change |
+| first build at spawn | the build runs in the background, off the controller's lock, and the spawn waits for it a tick at a time up to the spawn bound (15s); past it, or on a failure, the session still starts, without `MARVEL_VIEW_<NAME>`; emit `view.unavailable` once per change |
 | daemon restart | trees on disk persist; the pending notice, its delivery time and each superseded tree's state are stored with the team, as a pending handoff request is, so a restart neither re-seals early nor forgets an undelivered notice |
 | teardown | restore owner permissions top down, then remove `views/<session-key>/` |
 
@@ -254,13 +261,10 @@ Per the ruling, Linux is tested and does not hold the build up.
   replaced by a write to
   a read-only directory, and a held shell in a sealed tree getting a nonzero
   exit from `ls` and `cat` (the section 6 measurement).
-- **Linux coverage is CI; macOS coverage is local.** marvel's one PR test
-  job is `quality-gate` on `ubuntu-24.04` (`.github/workflows/ci.yml`), so
-  the integration test runs on Linux on every PR. No macOS PR test job
-  exists today; macOS is covered by local runs. The `macos-latest` job in
-  that file is the push-only signing job and runs no tests. A
-  `macos-latest` PR test job scoped to `internal/view` is planned (operator
-  ruling 2026-10-06) and being built. The swap is one
+- **Both platforms are CI.** `quality-gate` on `ubuntu-24.04` runs the
+  integration test on Linux on every PR, and `view-macos` on `macos-latest`
+  runs `go test ./internal/view/... -v -count=1 -race` on every PR (`.github/workflows/ci.yml`,
+  marvel#623, per the operator ruling of 2026-10-06). The swap is one
   `rename(2)` call in Go, the same on both, so neither `mv -h` nor `mv -T` is
   needed.
 - **The probe rig** (`scripts/probes/per-seat-readonly-view.sh`) is

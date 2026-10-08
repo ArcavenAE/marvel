@@ -190,6 +190,7 @@ func main() {
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
 	root.AddCommand(resetHealthCmd())
+	root.AddCommand(viewCmd())
 	root.AddCommand(injectCmd())
 	root.AddCommand(captureCmd())
 	root.AddCommand(versionCmd())
@@ -966,18 +967,33 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns string
+	var noTrunc, header bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
-		Args:  cobra.ExactArgs(1),
+		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
+
+ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
+not quiet, under the role's activity_timeout or the cluster quiet window. It
+says "not quiet", not busy: a seat in a long tool call can read low. It is a -
+until the daemon has watched for the whole 15 minutes, and for a seat with no
+activity channel.
+
+A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
+it, which is weaker than token flow: * reported by statusline or heartbeat,
+not token flow. A value from the token stream carries no mark. On a terminal
+one legend line under the header says so when a mark is on screen; piped
+output keeps the mark and drops the legend. A - means never measured.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
 			sessions := args[0] == "sessions" || args[0] == "session"
 			var cols []sessionColumn
+			var explicit bool
 			switch {
 			case sessions || watching:
 				var err error
-				if cols, err = loadSessionColumns(columns); err != nil {
+				if cols, explicit, err = loadSessionColumnsSel(columns); err != nil {
 					return err
 				}
 			case columns != "":
@@ -990,15 +1006,22 @@ func getCmd() *cobra.Command {
 						return fmt.Errorf("invalid watch interval: %s", watchSec)
 					}
 				}
-				return watchSessionsLoop(time.Duration(secs)*time.Second, cols)
+				return watchSessionsLoop(time.Duration(secs)*time.Second, cols, explicit, noTrunc)
 			}
-			return getResources(args[0], cols)
+			headerText := ""
+			if sessions && wantHeader(header) {
+				headerText = renderHeader(collectHeader(), time.Now())
+			}
+			return getResources(args[0], cols, headerText, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
+	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
 	f.NoOptDefVal = ""
 	cmd.Flags().StringVar(&columns, "columns", "",
 		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
+	cmd.Flags().BoolVar(&header, "header", false,
+		"print the daemon header above the sessions table even when stdout is not a terminal")
 	return cmd
 }
 
@@ -1012,7 +1035,7 @@ func (o *optionalString) String() string          { return *o.val }
 func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
-func getResources(resourceType string, cols []sessionColumn) error {
+func getResources(resourceType string, cols []sessionColumn, header string, fit fitOptions) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
 	resp, err := send(daemon.Request{
 		Method: "get",
@@ -1027,7 +1050,7 @@ func getResources(resourceType string, cols []sessionColumn) error {
 
 	switch resourceType {
 	case "sessions", "session":
-		return printSessions(resp.Result, cols)
+		return printSessions(resp.Result, cols, header, fit)
 	case "teams", "team":
 		return printTeams(resp.Result)
 	case "workspaces", "workspace":
@@ -1454,12 +1477,16 @@ func convergeCmd() *cobra.Command {
 }
 
 func runCmd() *cobra.Command {
-	var workspace, team, role, script string
+	var workspace, team, role, script, workdir string
 	cmd := &cobra.Command{
 		Use:   "run <command> [args...]",
 		Short: "Run a one-off agent session",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, isDefault, err := runWorkdir(workdir, cmd.Flags().Changed("workdir"), os.Getwd)
+			if err != nil {
+				return err
+			}
 			params, _ := json.Marshal(map[string]any{
 				"workspace":       workspace,
 				"team":            team,
@@ -1467,6 +1494,8 @@ func runCmd() *cobra.Command {
 				"runtime_command": args[0],
 				"runtime_args":    args[1:],
 				"script":          script,
+				"workdir":         dir,
+				"workdir_default": isDefault,
 			})
 			resp, err := send(daemon.Request{
 				Method: "run",
@@ -1478,13 +1507,12 @@ func runCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			var result map[string]string
-			_ = json.Unmarshal(resp.Result, &result)
-			fmt.Printf("session/%s created\n", result["session_key"])
+			printRunResult(cmd.OutOrStdout(), cmd.ErrOrStderr(), resp.Result)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&workspace, "workspace", "default", "workspace name")
+	cmd.Flags().StringVar(&workdir, "workdir", "", "directory the session runs in; default the current directory")
 	cmd.Flags().StringVar(&team, "team", "adhoc", "team name")
 	cmd.Flags().StringVar(&role, "role", "adhoc", "role name")
 	cmd.Flags().StringVar(&script, "script", "", "Lua script path")
@@ -2579,6 +2607,9 @@ type watchSort struct {
 	showHelp     bool
 	lastSessions []api.Session
 	columns      []sessionColumn
+	explicit     bool // the operator named the columns
+	noTrunc      bool // --no-trunc
+	showHeader   bool // print the daemon header on each frame
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -2591,9 +2622,17 @@ func toggleSort(ws *watchSort, col string, descFirst bool) {
 }
 
 func sortSessions(sessions []api.Session, ws *watchSort) {
+	now := rateClock()
 	sort.Slice(sessions, func(i, j int) bool {
 		var less bool
 		switch ws.column {
+		case "rate":
+			ki, kj := rateSortKey(sessions[i], now), rateSortKey(sessions[j], now)
+			if ki != kj {
+				less = ki < kj
+			} else {
+				less = sessions[i].Name < sessions[j].Name
+			}
 		case "context":
 			less = sessions[i].ContextPercent < sessions[j].ContextPercent
 		case "cpu":
@@ -2686,9 +2725,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name string
-	state, health, context, cpu, rss        string
-	desk, runtime, llm                      string
+	workspace, team, role, generation, name                             string
+	state, health, context, cpu, rss                                    string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, active string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2755,7 +2794,7 @@ func newSessionRow(s api.Session) sessionRow {
 		health = "unknown"
 	}
 	// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
-	// HEALTH is LIVENESS — the process is alive and its pane exists — so a
+	// HEALTH is LIVENESS (the process is alive and its pane exists), so a
 	// stalled session still reads healthy/unknown here; the "(stalled)"
 	// suffix says marvel has not observed it do work within its role's
 	// activity_timeout, which liveness cannot tell you. Running sessions
@@ -2772,7 +2811,7 @@ func newSessionRow(s api.Session) sessionRow {
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
 	// to an ordinary failure the reconciler is about to replace, so the
-	// operator cannot tell "done trying" from "coming back" — the whole
+	// operator cannot tell "done trying" from "coming back": the whole
 	// point of aae-orc-kj5bq. Same suffix idiom as HEALTH's "(stalled)",
 	// and no new column or SessionState value. The short tag is the
 	// Reason's own prefix; `describe session` carries the full text.
@@ -2798,8 +2837,18 @@ func newSessionRow(s api.Session) sessionRow {
 	if (s.State == api.SessionSucceeded || s.State == api.SessionCrashed) && s.ExitStatus != "" {
 		state += " (exit " + s.ExitStatus + ")"
 	}
+	workdir := s.WorkDir
+	if workdir == "" {
+		workdir = "-"
+	}
 	return sessionRow{
-		workspace: s.Workspace, team: s.Team, role: s.Role, generation: gen,
+		workdir:    workdir,
+		tout:       toutCell(s.SpendOut),
+		rate:       rateCell(s, rateClock()),
+		prompt:     promptCell(s.SpendPromptTokens),
+		lastActive: lastActiveCell(s, lastActiveClock()),
+		active:     activePctCell(s, lastActiveClock()),
+		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
 	}
@@ -2824,6 +2873,7 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 		fmt.Fprintf(&buf, "    c  context        d  desk          r  runtime\n")
 		fmt.Fprintf(&buf, "    l  llm            h  health\n")
 		fmt.Fprintf(&buf, "    p  cpu            m  memory (rss)\n")
+		fmt.Fprintf(&buf, "    o  output rate\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  STATE \"failed (saturated)\" or \"failed (frozen)\" means the role will\n")
 		fmt.Fprintf(&buf, "  spawn no replacement — saturated hit max_restarts, frozen is\n")
@@ -2849,24 +2899,49 @@ func renderWatch(ws *watchSort, interval time.Duration) string {
 	}
 	fmt.Fprintf(&buf, "sort: %s    ?:help  q:quit\n\n", sortLabel)
 
+	// The header is read on every frame, so a daemon whose bus reading has
+	// expired or whose status changed is not shown stale; the width is read
+	// on every frame too, so a resize shows on the next tick.
+	header := ""
+	if ws.showHeader {
+		header = renderHeader(collectHeader(), time.Now())
+	}
+	fit := fitOptions{width: terminalWidth(), explicit: ws.explicit, noTrunc: ws.noTrunc}
+
 	sessions, err := fetchSessions()
 	if err != nil {
 		fmt.Fprintf(&buf, "⚠ daemon disconnected — waiting for reconnect\n\n")
+		buf.WriteString(header)
 		if len(ws.lastSessions) > 0 {
 			fmt.Fprintf(&buf, "last known state:\n")
 			sortSessions(ws.lastSessions, ws)
-			buf.WriteString(renderSessionTableCols(ws.lastSessions, ws.columns))
+			buf.WriteString(renderSessionsView(ws.lastSessions, ws.columns, "", fit))
 		}
 		return buf.String()
 	}
 
 	ws.lastSessions = sessions
 	sortSessions(sessions, ws)
-	buf.WriteString(renderSessionTableCols(sessions, ws.columns))
+	buf.WriteString(renderSessionsView(sessions, ws.columns, header, fit))
 	return buf.String()
 }
 
-func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
+// newWatchState is the watch screen's starting state: sorted by name,
+// ascending, in the selected columns.
+func newWatchState(cols []sessionColumn) *watchSort {
+	return &watchSort{column: "name", desc: false, columns: cols}
+}
+
+// newWatchScreen is the watch state for the live screen: the same view plain
+// get sessions prints on a terminal, so it carries the daemon header and fits
+// the table to the width.
+func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
+	ws := newWatchState(cols)
+	ws.explicit, ws.noTrunc, ws.showHeader = explicit, noTrunc, true
+	return ws
+}
+
+func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, noTrunc bool) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return fmt.Errorf("watch mode requires a terminal")
@@ -2893,7 +2968,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 		}
 	}()
 
-	ws := &watchSort{column: "name", desc: false, columns: cols}
+	ws := newWatchScreen(cols, explicit, noTrunc)
 
 	render := func() {
 		output := renderWatch(ws, interval)
@@ -2942,6 +3017,8 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 				toggleSort(ws, "desk", false)
 			case 'h':
 				toggleSort(ws, "health", false)
+			case 'o':
+				toggleSort(ws, "rate", true)
 			case '?':
 				ws.showHelp = !ws.showHelp
 			default:
@@ -2958,7 +3035,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn) error {
 
 // --- Table printers (non-watch) ---
 
-func printSessions(data json.RawMessage, cols []sessionColumn) error {
+func printSessions(data json.RawMessage, cols []sessionColumn, header string, fit fitOptions) error {
 	var sessions []api.Session
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
@@ -2967,8 +3044,31 @@ func printSessions(data json.RawMessage, cols []sessionColumn) error {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].Name < sessions[j].Name
 	})
-	fmt.Print(renderSessionTableCols(sessions, cols))
+	fmt.Print(renderSessionsView(sessions, cols, header, fit))
 	return nil
+}
+
+// renderSessionsView is the sessions screen both get sessions and its watch
+// mode print: the header, the table fitted to the width, then the warning and
+// the hidden-columns note. The note and the warning are TTY chrome on the
+// header's stream, stdout; off a terminal nothing is fitted, so neither
+// prints into a pipe. When a source mark is on screen, one legend line joins
+// the header on a terminal; piped output keeps the mark and drops the legend.
+func renderSessionsView(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
+	res := fitSessionTable(sessions, cols, fit)
+	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
+		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
+	}
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString(res.table)
+	if res.warn != "" {
+		b.WriteString(res.warn + "\n")
+	}
+	if res.hidden > 0 {
+		fmt.Fprintf(&b, "%d columns hidden at this width\n", res.hidden)
+	}
+	return b.String()
 }
 
 func printTeams(data json.RawMessage) error {

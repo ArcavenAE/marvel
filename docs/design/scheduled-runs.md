@@ -383,8 +383,9 @@ before it starts.
 ## 9. Out of scope
 
 - **Cues into interactive seats.** A schedule starts a headless run; it does
-  not wake a live seat. A cue into a seat is a message, and it belongs to
-  director (7vw44 `set_timer`, or NATS scheduled messages on the bus).
+  not wake a live seat. A periodic prompt into an interactive seat is a
+  declared cadence on the role, proposed in `declared-cadence.md`, which
+  reuses this design's minute clock and slot records.
 - **Multi-host placement** (aae-orc-7mz).
 - **A `scheduler` service class** (services-catalog idea). The daemon already
   has a clock, a store and a reconciler; a separate service would add a

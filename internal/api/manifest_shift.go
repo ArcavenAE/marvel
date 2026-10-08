@@ -271,3 +271,19 @@ func positiveDuration(field, v string) (time.Duration, error) {
 func MaxAgeReplicasError(where string) error {
 	return fmt.Errorf("%s: max-age cannot apply to a role with replicas > 1; its handoff request asks one seat but the shift drains every seat of the role, which would retire seats never asked for a handoff (marvel#452, design D5); use replicas = 1, or context-pressure", where)
 }
+
+// checkHeadroomBelowWindow refuses a context-pressure arm whose
+// headroom_tokens is not below the declared context window. window 0 means
+// none was declared and nothing is checked (ShiftHeadroomAdvisories says so).
+func checkHeadroomBelowWindow(where string, p *ShiftPolicy, window int) error {
+	if p == nil || window <= 0 {
+		return nil
+	}
+	for _, c := range p.Conditions() {
+		if c.On == ShiftTriggerContextPressure && c.HeadroomTokens >= window {
+			return fmt.Errorf("%s.shift: headroom_tokens %d is not below runtime.context_window %d, so the context-pressure arm would hold at any occupancy",
+				where, c.HeadroomTokens, window)
+		}
+	}
+	return nil
+}

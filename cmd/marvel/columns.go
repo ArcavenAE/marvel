@@ -36,7 +36,18 @@ var sessionColumnRegistry = []sessionColumn{
 	{"desk", "DESK", func(r sessionRow) string { return r.desk }},
 	{"runtime", "RUNTIME", func(r sessionRow) string { return r.runtime }},
 	{"llm", "LLM", func(r sessionRow) string { return r.llm }},
+	{"workdir", "WORKDIR", func(r sessionRow) string { return r.workdir }},
+	{"tout", "TOUT", func(r sessionRow) string { return r.tout }},
+	{"rate", "RATE", func(r sessionRow) string { return r.rate }},
+	{"last-active", "LAST-ACTIVE", func(r sessionRow) string { return r.lastActive }},
+	{"active", "ACTIVE%", func(r sessionRow) string { return r.active }},
+	{"prompt", "PROMPT", func(r sessionRow) string { return r.prompt }},
 }
+
+// optInColumns are registered and selectable but not in the full default
+// table, so a pipe prints what it always printed. The width fit's wide tier
+// is where they show by default.
+var optInColumns = map[string]bool{"workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "active": true}
 
 // columnSetWide is the one named set. A set expands in place wherever its
 // name appears, because no `-o wide` exists (`-w` is --watch). It starts
@@ -46,13 +57,17 @@ const columnSetWide = "wide"
 
 var wideSessionColumns = []string{
 	"workspace", "team", "role", "generation", "name", "state", "health",
-	"context", "cpu", "rss", "desk", "runtime", "llm",
+	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "active",
 }
 
 // defaultSessionColumns is today's table, in today's order.
 func defaultSessionColumns() []sessionColumn {
-	out := make([]sessionColumn, len(sessionColumnRegistry))
-	copy(out, sessionColumnRegistry)
+	out := make([]sessionColumn, 0, len(sessionColumnRegistry))
+	for _, c := range sessionColumnRegistry {
+		if !optInColumns[c.name] {
+			out = append(out, c)
+		}
+	}
 	return out
 }
 
@@ -122,14 +137,25 @@ func selectSessionColumns(flag string, preference []string) ([]sessionColumn, er
 // unreadable config already leaves the default socket: a display
 // preference is never a reason to refuse a listing.
 func loadSessionColumns(flag string) ([]sessionColumn, error) {
+	cols, _, err := loadSessionColumnsSel(flag)
+	return cols, err
+}
+
+// loadSessionColumnsSel is loadSessionColumns that also says whether the
+// operator named the columns, by the flag or the preference. The width fit
+// cuts only a default it chose itself.
+func loadSessionColumnsSel(flag string) ([]sessionColumn, bool, error) {
 	if flag != "" {
-		return selectSessionColumns(flag, nil)
+		cols, err := selectSessionColumns(flag, nil)
+		return cols, true, err
 	}
 	cfg, _ := config.Load()
 	if cfg == nil {
-		return selectSessionColumns("", nil)
+		cols, err := selectSessionColumns("", nil)
+		return cols, false, err
 	}
-	return selectSessionColumns("", cfg.Display.SessionColumns)
+	cols, err := selectSessionColumns("", cfg.Display.SessionColumns)
+	return cols, len(cfg.Display.SessionColumns) > 0, err
 }
 
 // renderSessionTableCols renders the table with the given columns.

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,7 +138,7 @@ func TestStatusReportsDaemonIdentity(t *testing.T) {
 // listens on, not from what a client calls it.
 func TestIdentifyClusterFromTheConfigEntryForItsSocket(t *testing.T) {
 	d := statusDaemon(t)
-	sock := filepath.Join(os.TempDir(), "marvel-ident.sock")
+	sock := testSocket(t, "ident")
 	cfg := &config.Config{
 		Clusters: []config.Cluster{
 			{Name: "elsewhere", Socket: "/scratch/other.sock"},
@@ -199,7 +198,7 @@ func TestDaemonStatusIsNotACredentialPushMethod(t *testing.T) {
 // client came in through, so it reports no name rather than the first.
 func TestIdentifyClusterReportsNoNameWhenTwoEntriesShareASocket(t *testing.T) {
 	d := statusDaemon(t)
-	sock := filepath.Join(os.TempDir(), "marvel-ident-shared.sock")
+	sock := testSocket(t, "ident-shared")
 	cfg := &config.Config{
 		Clusters: []config.Cluster{
 			{Name: "first", Socket: sock},
@@ -242,7 +241,7 @@ func TestIdentifyClusterReportsNoNameForASocketlessEntryAndAnAliasAtTheDefault(t
 // One match among several entries is still reported.
 func TestIdentifyClusterStillReportsASingleMatchAmongOthers(t *testing.T) {
 	d := statusDaemon(t)
-	sock := filepath.Join(os.TempDir(), "marvel-ident-single.sock")
+	sock := testSocket(t, "ident-single")
 	cfg := &config.Config{
 		Clusters: []config.Cluster{
 			{Name: "other", Socket: "/scratch/other.sock"},

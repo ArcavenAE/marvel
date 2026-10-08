@@ -127,7 +127,7 @@ func checkWorkDir(label, root, dir string) error {
 	resolved := joinWorkDir(root, dir)
 	if !filepath.IsAbs(resolved) {
 		if root == "" {
-			return fmt.Errorf("%s %q is relative and workspace.root is not set to resolve it against", label, dir)
+			return fmt.Errorf("%s %q is relative and workspace.root is not set to resolve it against (marvel work sends the manifest's directory as workspace_root; a raw API post must set workspace.root or the workspace_root parameter)", label, dir)
 		}
 		return fmt.Errorf("%s %q is not absolute", label, dir)
 	}

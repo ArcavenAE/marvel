@@ -6,12 +6,22 @@
 # spaces on the others, so it is bounded to 2 characters (var_runes). A longer
 # span, such as a chat-quoted copy of the screen, does not match.
 #
+# Range: the same seven rows were captured, by the same procedure, on 2.1.285,
+# 2.1.287, 2.1.288, 2.1.289, 2.1.290, 2.1.291, 2.1.292 and 2.1.293, and read
+# identical apart from the cursor column (2026-10-07, marvel#703). The set
+# covers 2.1.285 to 2.1.293. 2.1.286 sits inside the range and was not
+# available to capture. A version above or below the range reads uncovered
+# until a sample for it is added.
+#
 # This set does not cover the expired-session screen: a seat whose login
 # expired mid-session may draw a different screen, which reads as unknown.
 id: logged-out
 version: 1
 harness: claude
 harness_version: 2.1.290
+version_range:
+  min: 2.1.285
+  max: 2.1.293
 sample_width: 120
 var_runes: 2
 rows:

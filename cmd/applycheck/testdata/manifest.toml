@@ -1,0 +1,26 @@
+[workspace]
+name = "wd"
+
+[[team]]
+name = "plain"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 2
+
+    [team.role.runtime]
+    command = "claude"
+
+[[team]]
+name = "placed"
+workdir = "/srv/placed"
+
+  [team.budget]
+  max_sessions = 7
+
+  [[team.role]]
+  name = "reviewer"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "claude"

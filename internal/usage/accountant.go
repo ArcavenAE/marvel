@@ -67,6 +67,9 @@ type Bind struct {
 // Sink receives computed readings. *api.Store satisfies it.
 type Sink interface {
 	UpdateSessionContext(key string, c api.SessionContext)
+	// UpdateSessionSpend records spend alone, for a feed that carries spend and
+	// no occupancy.
+	UpdateSessionSpend(key string, sp api.SessionSpend)
 }
 
 // Accountant folds adapter events into per-session context occupancy and
@@ -209,8 +212,10 @@ type teamState struct {
 
 // foldResult is what a fold decided to do after the lock is released.
 type foldResult struct {
-	write       bool
-	reading     api.SessionContext
+	write   bool
+	reading api.SessionContext
+	// spend, when set, is a spend-only update for a feed with no occupancy.
+	spend       *api.SessionSpend
 	unresolved  bool
 	learnModel  string
 	learnWindow int
@@ -300,6 +305,9 @@ func (a *Accountant) Observe(c Coords, ev rtevents.Event) {
 	if res.write && a.sink != nil {
 		a.sink.UpdateSessionContext(c.AgentID, res.reading)
 	}
+	if res.spend != nil && a.sink != nil {
+		a.sink.UpdateSessionSpend(c.AgentID, *res.spend)
+	}
 }
 
 // observeStart captures the model a harness names at session start and
@@ -382,6 +390,10 @@ func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult 
 	if s.Cumulation == CumulationSession {
 		a.stats.CumulativeSamples++
 		a.setSpendLocked(st, s)
+		// The tokens are real spend, so the session shows them; the occupancy
+		// fields and their source stay as they were, which is absent.
+		sp := st.spendReading()
+		res.spend = &sp
 		if a.warnOnceLocked("cumulative:" + s.Harness) {
 			res.warnings = append(res.warnings, fmt.Sprintf(
 				"harness %s: per-turn usage is a running session total, not a per-request level, so its tokens count toward spend and CTX%% is reported absent; occupancy needs that harness's own per-request record",
@@ -739,10 +751,10 @@ func (a *Accountant) SessionOccupancy(agentID string) (Occupancy, bool) {
 const OutRateHalfLife = 20 * time.Second
 
 // OutRateValidFor is how long a rate reading stays current after the sample
-// that produced it. It matches the design's default quiet window of ten
-// minutes, so a stopped stream reads as a rate decaying toward zero for ten
-// minutes and then as expired, not as a frozen last value.
-const OutRateValidFor = 10 * time.Minute
+// that produced it. It is the default quiet window, one constant, so a
+// stopped stream reads as a rate decaying toward zero for that long and then
+// as expired, not as a frozen last value.
+const OutRateValidFor = api.DefaultQuietWindow
 
 // OutRate returns the session's output-token rate, in tokens per second,
 // decayed to now. The second result is false when the session has never
@@ -882,9 +894,19 @@ func (st *sessionState) reading() api.SessionContext {
 	// Spend rides the same record so a reader needs no second call. It is
 	// set only once a request has been folded: a session that never spent
 	// stays absent rather than reading as zero (api.SessionContext).
+	sp := st.spendReading()
+	out.SpendOut, out.SpendPromptTokens, out.OutRate = sp.Out, sp.PromptTokens, sp.OutRate
+	return out
+}
+
+// spendReading is the spend half of a reading: cumulative output and prompt
+// tokens, once a request has been folded, and the output-token rate once it has
+// been sampled.
+func (st *sessionState) spendReading() api.SessionSpend {
+	var out api.SessionSpend
 	if st.spend.Requests > 0 {
 		spendOut, spendPrompt := st.spend.Out, st.spend.PromptTokens
-		out.SpendOut, out.SpendPromptTokens = &spendOut, &spendPrompt
+		out.Out, out.PromptTokens = &spendOut, &spendPrompt
 	}
 	if !st.rateAt.IsZero() {
 		out.OutRate = asof.Cell[float64]{
@@ -901,4 +923,24 @@ func orNone(s string) string {
 		return "(unnamed)"
 	}
 	return s
+}
+
+// QuietRate is a rate cell as a renderer shows it at now: the value, and the
+// state that says how to print it. A seat quiet by the shared predicate
+// (api.Quiet over window) with an activity channel attached reads exactly 0,
+// fresh, instead of a number still decaying toward it, and that rule is
+// checked before expiry: the expired ? is for a reading whose channel is
+// gone. Without a channel, quiet proves nothing, so the cell's own expiry
+// decides. A cell never sampled is absent, not zero.
+func QuietRate(c asof.Cell[float64], s *api.Session, window time.Duration, channel bool, now time.Time) (float64, asof.State) {
+	if c.State(now) == asof.None {
+		return 0, asof.None
+	}
+	if channel && api.Quiet(s, window, now) {
+		return 0, asof.Fresh
+	}
+	if c.State(now) == asof.Stale {
+		return 0, asof.Stale
+	}
+	return DecayedRate(c, now), asof.Fresh
 }

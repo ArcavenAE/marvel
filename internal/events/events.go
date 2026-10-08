@@ -92,6 +92,25 @@ const (
 	// logged-out within one watchdog window, so a fleet-wide expiry reads as
 	// one fact.
 	KindAccountLoggedOut Kind = "account.logged-out"
+	// KindViewRefreshed records a seat's read-only view moving to a new commit
+	// (marvel#609).
+	KindViewRefreshed Kind = "view.refreshed"
+	// KindViewRefreshFailed records a refresh that failed: the current tree
+	// stays, and the next tick tries again.
+	KindViewRefreshFailed Kind = "view.refresh-failed"
+	// KindViewUnavailable records a view that could not be built when its seat
+	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
+	// change of cause.
+	KindViewUnavailable Kind = "view.unavailable"
+	// KindViewRetentionHeld records a seat's view refresh paused because too
+	// many superseded trees are still readable, the seat not having been told
+	// yet. Once per change (marvel#609).
+	KindViewRetentionHeld Kind = "view.retention-held"
+	// KindCodexTrust records the folder trust a codex seat was seeded with, once
+	// per spawn, in a workspace that lists trusted_folders: outcome trusted or
+	// untrusted, and for untrusted the reason. Granting trust is what an
+	// operator audits (marvel#684).
+	KindCodexTrust Kind = "codex.trust"
 	// KindWatchdogControl records one watchdog pattern's positive control at
 	// start: the pattern run against its own sample. Info on a pass, warning
 	// on a fail; never sample text (marvel#626).
@@ -381,6 +400,11 @@ var allKinds = []Kind{
 	KindSessionHarnessState,
 	KindSessionHarnessStateCleared,
 	KindAccountLoggedOut,
+	KindViewRefreshed,
+	KindViewRefreshFailed,
+	KindViewUnavailable,
+	KindViewRetentionHeld,
+	KindCodexTrust,
 	KindWatchdogControl,
 	KindWatchdogUncovered,
 	KindDaemonEnvScrubbed,
