@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1045,7 +1047,7 @@ func TestValidateRuntimesOK(t *testing.T) {
 			},
 		}},
 	}
-	if err := m.ValidateRuntimes(); err != nil {
+	if _, err := m.ValidateRuntimes(); err != nil {
 		t.Fatalf("expected OK, got %v", err)
 	}
 }
@@ -1061,11 +1063,12 @@ func TestValidateRuntimesMissing(t *testing.T) {
 				{Name: "b", Replicas: 1, Runtime: ManifestRuntime{Command: "no-such-binary-marvel-9xyz"}},
 				{Name: "c", Replicas: 1, Runtime: ManifestRuntime{Command: "/nope/not/here"}},
 				// Relative path, also missing.
-				{Name: "d", Replicas: 1, Runtime: ManifestRuntime{Command: "bin/nothing-here"}},
+				// The role has a directory to resolve it against, so a miss refuses.
+				{Name: "d", Replicas: 1, WorkDir: t.TempDir(), Runtime: ManifestRuntime{Command: "bin/nothing-here"}},
 			},
 		}},
 	}
-	err := m.ValidateRuntimes()
+	_, err := m.ValidateRuntimes()
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -1097,7 +1100,7 @@ func TestValidateRuntimesScriptMissing(t *testing.T) {
 			},
 		}},
 	}
-	err := m.ValidateRuntimes()
+	_, err := m.ValidateRuntimes()
 	if err == nil {
 		t.Fatal("expected error on missing script, got nil")
 	}
@@ -1117,7 +1120,7 @@ func TestValidateRuntimesEmptyCommand(t *testing.T) {
 			},
 		}},
 	}
-	if err := m.ValidateRuntimes(); err == nil {
+	if _, err := m.ValidateRuntimes(); err == nil {
 		t.Fatal("expected error on empty command")
 	}
 }
@@ -1272,5 +1275,239 @@ func TestValidateTeamNames(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+const shellTextAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"
+
+// runtimeCase is one command checked against one placement.
+type runtimeCase struct {
+	name    string
+	command string
+	// Placement: Root is the manifest root, TeamDir and RoleDir the declared
+	// workdirs. Files are created under the named base ("team", "role",
+	// "root"), each relative to that directory; "cwd" is the package's own
+	// directory, which is the daemon's cwd under test and must hold nothing.
+	root, teamDir, roleDir string
+	// roleRel is a role workdir declared relative, which resolves against the
+	// root; its files go under "rolerel".
+	roleRel  string
+	files    map[string]string // path under the directory -> which directory ("root", "team", "role")
+	refuse   string            // non-empty: the error must contain it
+	advisory string            // non-empty: one advisory must contain it
+}
+
+// runRuntimeCase builds the manifest for tc with real directories behind every
+// placement name and returns what ValidateRuntimes says.
+func runRuntimeCase(t *testing.T, tc runtimeCase) ([]string, error) {
+	t.Helper()
+	dirs := map[string]string{}
+	mk := func(label, declared string) string {
+		if declared == "" {
+			return ""
+		}
+		d := t.TempDir()
+		dirs[label] = d
+		return d
+	}
+	root := mk("root", tc.root)
+	teamDir := mk("team", tc.teamDir)
+	roleDir := mk("role", tc.roleDir)
+	if tc.roleRel != "" {
+		roleDir = tc.roleRel
+		dirs["rolerel"] = filepath.Join(root, tc.roleRel)
+	}
+	for file, label := range tc.files {
+		base, ok := dirs[label]
+		if !ok {
+			t.Fatalf("case %q: no %s directory declared for %s", tc.name, label, file)
+		}
+		full := filepath.Join(base, file)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "rt", Root: root},
+		Teams: []ManifestTeam{{
+			Name:    "squad",
+			WorkDir: teamDir,
+			Roles: []ManifestRole{
+				{Name: "r", Replicas: 1, WorkDir: roleDir, Runtime: ManifestRuntime{Command: tc.command}},
+			},
+		}},
+	}
+	return m.ValidateRuntimes()
+}
+
+// TestValidateRuntimesCheckOnlyWhatItCanRead covers marvel#517 and the
+// architect ruling on it: a command is shell text, the pre-flight may be less
+// strict than the launch and never more. A command in the simple form has its
+// first field resolved and a miss refuses. Anything else is not parsed, is not
+// refused, and says so in an advisory.
+func TestValidateRuntimesCheckOnlyWhatItCanRead(t *testing.T) {
+	t.Parallel()
+	script := filepath.Join(t.TempDir(), "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []runtimeCase{
+		// The simple form: resolved, a miss refuses.
+		{name: "plain name", command: "sleep"},
+		{name: "plain name with args", command: "sleep 5"},
+		{name: "absolute path with args", command: "/bin/sh -c true"},
+		{name: "tab between fields", command: "sleep\t5"},
+		{name: "tab directly after the program", command: "sh\t-c true"},
+		{name: "tabs and repeated spaces between fields", command: "sh \t -c   true"},
+		{name: "leading space before the program", command: "  sh -c true"},
+		{name: "an existing absolute path, with args", command: script + " --flag value"},
+		{name: "missing name", command: "nosuchprog", refuse: `"nosuchprog"`},
+		{name: "missing name with args", command: "nosuchprog --flag value", refuse: `"nosuchprog"`},
+		{name: "missing absolute path with args", command: "/nope/not/here --flag", refuse: "not found"},
+		{name: "only whitespace", command: " \t ", refuse: "empty"},
+
+		// Not the simple form: not refused, advised.
+		{name: "env assignment before the program", command: "FOO=1 sleep 5", advisory: shellTextAdvisory},
+		{name: "double-quoted path with a space", command: `"/tmp/dir with space/prog" --x`, teamDir: "t", advisory: shellTextAdvisory},
+		{name: "single-quoted program", command: `'sleep' 5`, advisory: shellTextAdvisory},
+		{name: "a quoted program that does not exist", command: `'nosuchprog' 5`, advisory: shellTextAdvisory},
+		{name: "tilde program", command: "~/bin/prog", teamDir: "t", advisory: shellTextAdvisory},
+		{name: "command substitution", command: "$(which sleep) 5", advisory: shellTextAdvisory},
+		{name: "variable program", command: "$SHELL -c true", advisory: shellTextAdvisory},
+		{name: "backtick program", command: "`which sleep` 5", advisory: shellTextAdvisory},
+		{name: "program glued to a semicolon", command: "sleep;sleep 5", advisory: shellTextAdvisory},
+		{name: "program glued to a pipe", command: "sleep|cat", advisory: shellTextAdvisory},
+		{name: "program glued to an ampersand", command: "sleep&", advisory: shellTextAdvisory},
+		{name: "program glued to a redirect in", command: "cat<in", advisory: shellTextAdvisory},
+		{name: "program glued to a redirect out", command: "cat>out", advisory: shellTextAdvisory},
+		{name: "a subshell", command: "(sleep 5)", advisory: shellTextAdvisory},
+		{name: "a group", command: "{sleep 5;}", advisory: shellTextAdvisory},
+		{name: "a closing paren on the program", command: "sleep) 5", advisory: shellTextAdvisory},
+		{name: "a glob star", command: "/bin/s* -c true", advisory: shellTextAdvisory},
+		{name: "a glob question mark", command: "/bin/s? -c true", advisory: shellTextAdvisory},
+		{name: "a glob bracket", command: "/bin/[s]h -c true", advisory: shellTextAdvisory},
+		{name: "a backslash escape", command: `sl\eep 5`, advisory: shellTextAdvisory},
+		{name: "a closing brace on the program", command: "sleep} 5", advisory: shellTextAdvisory},
+
+		// Whitespace the shell does not split on: sh and zsh split on space and
+		// tab only, so these are one word and the launch fails with rc 127.
+		{name: "a no-break space between fields", command: "sleep\u00a05", advisory: shellTextAdvisory},
+		{name: "a carriage return between fields", command: "sleep\r5", advisory: shellTextAdvisory},
+		{name: "a vertical tab between fields", command: "sleep\v5", advisory: shellTextAdvisory},
+		{name: "a form feed between fields", command: "sleep\f5", advisory: shellTextAdvisory},
+		{name: "a next-line character between fields", command: "sleep\u00855", advisory: shellTextAdvisory},
+		{name: "an em space between fields", command: "sleep\u20035", advisory: shellTextAdvisory},
+		{name: "a no-break space inside the arguments", command: "sleep 5\u00a0", advisory: shellTextAdvisory},
+		{name: "a trailing carriage return", command: "sleep 5\r", advisory: shellTextAdvisory},
+		{name: "only a no-break space", command: "\u00a0", advisory: shellTextAdvisory},
+
+		// A leading # makes the rest a comment: the launch runs nothing.
+		{name: "a comment", command: "# sleep 5", advisory: shellTextAdvisory},
+		{name: "a comment that looks like an absolute path", command: "#/abs/prog --x", teamDir: "t", advisory: shellTextAdvisory},
+		{name: "a comment that looks like a relative path", command: "#./bin/prog", teamDir: "t", advisory: shellTextAdvisory},
+		{name: "a hash inside the program name", command: "pr#og", advisory: shellTextAdvisory},
+
+		// A newline: the shell runs the second line as its own command, which
+		// fails with rc 127. Not accepted silently.
+		{name: "newline between fields", command: "sh -c true\n--b", advisory: "several lines"},
+		{name: "newline after the program", command: "sh\n-c true", advisory: "several lines"},
+		{name: "trailing newline", command: "sh -c true\n", advisory: "several lines"},
+
+		// Relative programs resolve against the directory the launch passes to
+		// tmux -c for the role, never the daemon's cwd.
+		{
+			name: "relative, present under the team dir", command: "./bin/prog --x", teamDir: "t",
+			files: map[string]string{"bin/prog": "team"},
+		},
+		{
+			name: "relative, missing under the team dir", command: "./bin/prog --x", teamDir: "t",
+			refuse: "not found",
+		},
+		{
+			name: "relative without ./ , present under the team dir", command: "bin/prog", teamDir: "t",
+			files: map[string]string{"bin/prog": "team"},
+		},
+		{
+			name: "relative, present under the root with no workdir declared", command: "./bin/prog", root: "r",
+			files: map[string]string{"bin/prog": "root"},
+		},
+		{name: "relative, missing under the root", command: "./bin/prog", root: "r", refuse: "not found"},
+		{
+			name: "relative, the role dir wins over the team dir", command: "./bin/prog", teamDir: "t", roleDir: "r",
+			files: map[string]string{"bin/prog": "role"},
+		},
+		{
+			name: "relative, present only under the team dir when the role has its own", command: "./bin/prog",
+			teamDir: "t", roleDir: "r", files: map[string]string{"bin/prog": "team"}, refuse: "not found",
+		},
+		{
+			name: "relative, present only under the root when the role has its own dir", command: "./bin/prog",
+			root: "r", roleDir: "r", files: map[string]string{"bin/prog": "root"}, refuse: "not found",
+		},
+		{
+			name: "relative, present under the root joined with a relative role dir", command: "./bin/prog", root: "r",
+			roleRel: "sub", files: map[string]string{"bin/prog": "rolerel"},
+		},
+		{
+			name: "relative, present under the root but not its relative role dir", command: "./bin/prog", root: "r",
+			roleRel: "sub", files: map[string]string{"bin/prog": "root"}, refuse: "not found",
+		},
+		{name: "relative, with no directory for the role", command: "./bin/prog --x", advisory: shellTextAdvisory},
+		{name: "relative plain path, with no directory for the role", command: "bin/prog", advisory: shellTextAdvisory},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			adv, err := runRuntimeCase(t, tc)
+			switch {
+			case tc.refuse != "":
+				if err == nil {
+					t.Fatalf("command %q: expected a refusal containing %q, got nil (advisories %q)", tc.command, tc.refuse, adv)
+				}
+				if !strings.Contains(err.Error(), tc.refuse) {
+					t.Errorf("command %q: want %q in the refusal, got:\n%v", tc.command, tc.refuse, err)
+				}
+			case tc.advisory != "":
+				if err != nil {
+					t.Fatalf("command %q: an advisory case was refused: %v", tc.command, err)
+				}
+				if len(adv) != 1 || !strings.Contains(adv[0], tc.advisory) {
+					t.Fatalf("command %q: want one advisory containing %q, got %q", tc.command, tc.advisory, adv)
+				}
+				if !strings.Contains(adv[0], "role r:") {
+					t.Errorf("command %q: the advisory must name the role as `role r:`, got %q", tc.command, adv[0])
+				}
+			default:
+				if err != nil {
+					t.Fatalf("command %q: expected OK, got %v", tc.command, err)
+				}
+				if len(adv) != 0 {
+					t.Errorf("command %q: a simple command drew an advisory: %q", tc.command, adv)
+				}
+			}
+		})
+	}
+}
+
+// A refusal and an advisory in one manifest: the refusal still carries the
+// advisory-free count, and the advisory is not lost by it being a refusal path.
+func TestValidateRuntimesCountsOnlyRefusals(t *testing.T) {
+	t.Parallel()
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "mixed"},
+		Teams: []ManifestTeam{{
+			Name: "squad",
+			Roles: []ManifestRole{
+				{Name: "a", Replicas: 1, Runtime: ManifestRuntime{Command: "FOO=1 sleep 5"}},
+				{Name: "b", Replicas: 1, Runtime: ManifestRuntime{Command: "nosuchprog"}},
+			},
+		}},
+	}
+	_, err := m.ValidateRuntimes()
+	if err == nil || !strings.Contains(err.Error(), "failed on 1 role(s)") || strings.Contains(err.Error(), "role[0=a]") {
+		t.Fatalf("want one refusal naming only role b, got %v", err)
 	}
 }
