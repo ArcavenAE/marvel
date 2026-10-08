@@ -3670,7 +3670,8 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 		return Response{Error: "no managed bus is configured for this cluster; connect and disconnect apply to a marvel-supervised broker"}
 	}
 	if d.bus.Bus().HubURL == "" {
-		return Response{Error: "this cluster declares no hub (bus.hub.url); there is no leaf to connect or disconnect"}
+		return Response{Error: "this daemon's config, read once at start, declares no hub (bus.hub.url), so there is no leaf to connect or disconnect; " +
+			"if the file declares one now, run `marvel daemon reexec` to re-read it, then push the leaf credential again (a reexec drops it, marvel#339)"}
 	}
 	changed, err := d.bus.SetLeafAttached(attached)
 	if err != nil {
