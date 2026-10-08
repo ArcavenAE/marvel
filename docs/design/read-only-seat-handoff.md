@@ -112,7 +112,7 @@ refuses otherwise, with an event naming the reason:
      - edit it in place, which keeps its inode: the successor then reads the
        edited text, and nothing at write or read time catches it. The sweep
        does catch it (section 7.1), and leaves such a file unexpired, unless
-       the edit also restores the size and the modification time on a
+       the edit also restores the size and the modification time on a Linux
        filesystem where the record holds the birth time;
      - force a refusal, by planting a link or swapping the directory before
        the request or before the write, so the handoff escalates rather than
@@ -275,19 +275,30 @@ days".
     Stripping the line would mean a second write, which is the thing this
     design avoids;
   - records the path, the nonce, the size, the modification time, the
-    device and inode, and a time a seat cannot set: the birth time where the
-    filesystem reports one (`statx` on Linux, `st_birthtimespec` on macOS),
-    or the change time otherwise. It takes them from `fstat` on the file
-    after the rename into place, since that rename itself moves the change
-    time. In this design "the identity" means the device, the inode and that
-    time together.
+    device and inode, and one time a seat cannot set back:
+    - **Linux:** the birth time, from `statx` on the descriptor
+      (`AT_EMPTY_PATH`, `STATX_BTIME`; Go's `File.Stat` does not return it),
+      where the filesystem reports one. No call sets it. Where it is not
+      reported, the change time;
+    - **macOS, and anywhere else:** the change time, never the birth time.
+      On macOS the owner can set the birth time (`setattrlist` with
+      `ATTR_CMN_CRTIME`, unprivileged). APFS does not reuse inode numbers,
+      which on APFS defeats the steering sequence below by itself, but that
+      is a property of one filesystem, not a contract, and a handoff
+      directory can sit on another. The change time cannot be set back to a
+      past value by any filesystem call.
+
+    It reads them from the open descriptor (`statx` or `fstat`) after the
+    rename into place, since that rename itself moves the change time. In
+    this design "the identity" means the device, the inode and that time
+    together.
 
   The record sits beside the directory identity on the request (section 2),
   and moves into the successor's shift state, so a daemon restart keeps it.
 - **When and how the sweep removes it,** once the file is older than the
   retention, always inside the recorded directory's `os.Root`:
-  1. open the file `O_NOFOLLOW`, and read its first line and its `fstat`
-     from the open handle;
+  1. open the file `O_NOFOLLOW`, and read its first line, and its `statx`
+     (Linux) or `fstat` (macOS), from the open handle;
   2. go on only if the nonce, the size, the modification time and the
      identity (device, inode, and birth or change time) all match the record;
   3. rename the file to a private name inside the root,
@@ -322,15 +333,16 @@ days".
   including the birth or change time. That last field is what stops a seat
   steering the unlink: on ext4 a same-uid seat can delete marvel's file,
   create one that reuses the inode, add the nonce, pad it to size, set the
-  modification time with `utimes`, and rename it to the private name, but it
-  cannot set the birth time, and every one of those steps moves the change
-  time. Any other leftover is left, and reported once.
+  modification time with `utimes`, and rename it to the private name. On
+  Linux it cannot set the birth time; on every OS, each of those steps moves
+  the change time, which is why macOS records the change time and not the
+  settable birth time. Any other leftover is left, and reported once.
 
-  The two fallbacks differ in one case. With a birth time, a real crash
-  leftover still matches (a rename does not change it), so it is unlinked.
-  With only a change time, the step-3 rename moves the change time on most
-  Linux filesystems, so a real crash leftover never matches and stays
-  reported. That is the safe direction: a file left for a human, never a
+  The two fallbacks differ in one case. With a birth time (Linux), a real
+  crash leftover still matches (a rename does not change it), so it is
+  unlinked. With a change time (macOS, or Linux without a birth time), the
+  step-3 rename moves the change time (measured on APFS; true on most Linux
+  filesystems), so a real crash leftover never matches and stays reported. That is the safe direction: a file left for a human, never a
   file removed that marvel did not write.
 
   Each removal emits `handoff.expired`, naming the session, the path and the
@@ -340,9 +352,9 @@ days".
   edit changes the modification time even when it keeps the length, so it
   fails safe the same way. An edit that also restores the size and the
   modification time (for example with `touch -r`) still moves the change
-  time, so where the record holds the change time it fails safe too. Where
-  it holds the birth time, which such an edit keeps, that file still
-  expires. That is within the same-uid residual in section 2.
+  time, so where the record holds the change time (macOS, and Linux without
+  a birth time) it fails safe too. Where it holds the Linux birth time,
+  which such an edit keeps, that file still expires. That is within the same-uid residual in section 2.
 - **Where it is set, and who can change it.**
   - The **admin default** is a cluster setting in marvel's cluster config,
     `handoff_retention`, with a default of `168h`. The person who runs the
