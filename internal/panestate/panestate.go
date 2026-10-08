@@ -126,11 +126,74 @@ type Pattern struct {
 	Rows        []Row
 }
 
-// Covers reports whether the pattern is for the harness version v.
-func (p Pattern) Covers(v string) bool { return p.HarnessVersion != "" && p.HarnessVersion == v }
+// Covers reports whether the pattern is for the harness version v. With no
+// range it is exact. With one, v is covered when it lies inside the inclusive
+// range, compared by dotted numeric parts, so 2.1.10 is above 2.1.9. A version
+// that is not dotted numbers, or has a different number of parts than the
+// bounds, is not covered: a range never guesses.
+func (p Pattern) Covers(v string) bool {
+	if p.HarnessVersion == "" {
+		return false
+	}
+	if p.MinVersion == "" && p.MaxVersion == "" {
+		return p.HarnessVersion == v
+	}
+	got, ok := parseVersion(v)
+	lo, lok := parseVersion(p.MinVersion)
+	hi, hok := parseVersion(p.MaxVersion)
+	if !ok || !lok || !hok || len(got) != len(lo) || len(got) != len(hi) {
+		return false
+	}
+	return compareVersion(got, lo) >= 0 && compareVersion(got, hi) <= 0
+}
 
-// VersionLabel is how a surface names the versions the pattern covers.
-func (p Pattern) VersionLabel() string { return p.HarnessVersion }
+// VersionLabel is how a surface names the versions the pattern covers: the
+// version for an exact pattern, "min-max" for a range.
+func (p Pattern) VersionLabel() string {
+	if p.MinVersion == "" && p.MaxVersion == "" {
+		return p.HarnessVersion
+	}
+	return p.MinVersion + "-" + p.MaxVersion
+}
+
+// parseVersion reads dotted decimal parts, "2.1.293" as [2 1 293]. It refuses
+// an empty string, an empty part, a sign or any non-digit.
+func parseVersion(v string) ([]int, bool) {
+	if v == "" {
+		return nil, false
+	}
+	var out []int
+	for _, part := range strings.Split(v, ".") {
+		if part == "" {
+			return nil, false
+		}
+		n := 0
+		for _, c := range part {
+			if c < '0' || c > '9' {
+				return nil, false
+			}
+			n = n*10 + int(c-'0')
+			if n > 1<<30 {
+				return nil, false
+			}
+		}
+		out = append(out, n)
+	}
+	return out, true
+}
+
+// compareVersion orders two parsed versions of the same length part by part.
+func compareVersion(a, b []int) int {
+	for i := range a {
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
 
 // Result is a classification. Evidence is pattern text only.
 type Result struct {

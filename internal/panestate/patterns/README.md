@@ -3,5 +3,8 @@
 `<harness>/<harness version>/<pattern id>.yaml`, each beside the sample it was
 built from (`<pattern id>.sample.txt`). A pattern set is added only from a
 captured sample (docs/design/harness-state-watchdog-p1.md section 4). One
-ships today: `claude/2.1.290/logged-out`, captured under probe P-WD1. A harness
-version with no set reads `unknown`, and the watchdog reports nothing for it.
+ships today: `claude/2.1.290/logged-out`, captured under probe P-WD1, which
+covers claude 2.1.285 to 2.1.293 through its `version_range` (inclusive, compared
+by dotted numeric parts, and `harness_version` must lie inside it). A
+range is added only for versions that were each captured and read the same; a
+version outside it reads `unknown`, and the watchdog reports it uncovered.

@@ -14,13 +14,17 @@ import (
 var embedded embed.FS
 
 type patternFile struct {
-	ID             string   `yaml:"id"`
-	Version        int      `yaml:"version"`
-	Harness        string   `yaml:"harness"`
-	HarnessVersion string   `yaml:"harness_version"`
-	SampleWidth    int      `yaml:"sample_width"`
-	VarRunes       int      `yaml:"var_runes"`
-	Rows           []string `yaml:"rows"`
+	ID             string `yaml:"id"`
+	Version        int    `yaml:"version"`
+	Harness        string `yaml:"harness"`
+	HarnessVersion string `yaml:"harness_version"`
+	VersionRange   *struct {
+		Min string `yaml:"min"`
+		Max string `yaml:"max"`
+	} `yaml:"version_range"`
+	SampleWidth int      `yaml:"sample_width"`
+	VarRunes    int      `yaml:"var_runes"`
+	Rows        []string `yaml:"rows"`
 }
 
 // Load reads every <harness>/<harness version>/<id>.yaml under root.
@@ -48,6 +52,12 @@ func Load(fsys fs.FS, root string) ([]Pattern, error) {
 			return fmt.Errorf("pattern %s: var_runes must not be negative", p)
 		}
 		pat := Pattern{ID: f.ID, Version: f.Version, Harness: f.Harness, HarnessVersion: f.HarnessVersion, SampleWidth: f.SampleWidth}
+		if r := f.VersionRange; r != nil {
+			pat.MinVersion, pat.MaxVersion = r.Min, r.Max
+			if err := checkRange(pat); err != nil {
+				return fmt.Errorf("pattern %s: %w", p, err)
+			}
+		}
 		for _, r := range f.Rows {
 			row, err := parseRow(r)
 			if err != nil {
@@ -77,4 +87,23 @@ func LoadEmbedded() ([]Pattern, error) {
 // EmbeddedSample is Sample over the shipped sets.
 func EmbeddedSample(p Pattern) (string, error) {
 	return Sample(embedded, "patterns", p)
+}
+
+// checkRange refuses a version_range that is not a range of dotted numbers with
+// both bounds, in order, around the version the sample was captured from.
+func checkRange(p Pattern) error {
+	lo, lok := parseVersion(p.MinVersion)
+	hi, hok := parseVersion(p.MaxVersion)
+	at, aok := parseVersion(p.HarnessVersion)
+	switch {
+	case !lok || !hok:
+		return fmt.Errorf("version_range needs min and max, each dotted numbers")
+	case !aok || len(lo) != len(hi) || len(lo) != len(at):
+		return fmt.Errorf("version_range bounds and harness_version must have the same number of parts")
+	case compareVersion(lo, hi) > 0:
+		return fmt.Errorf("version_range min %s is above max %s", p.MinVersion, p.MaxVersion)
+	case compareVersion(at, lo) < 0 || compareVersion(at, hi) > 0:
+		return fmt.Errorf("harness_version %s, the sampled version, is outside version_range %s", p.HarnessVersion, p.VersionLabel())
+	}
+	return nil
 }
