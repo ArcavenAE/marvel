@@ -479,9 +479,10 @@ declares a `bus:` block and a message-bus Services entry is refused at load
 
 The daemon reads its client config once, at start, and there is no reload
 verb (marvel#514). A hub block added to a running daemon's config is not
-seen: `marvel bus leaf connect` answers that the cluster declares no hub. If
-that happens, `marvel daemon reexec` re-reads the config, and the leaf seed
-has to be pushed again afterwards, because a reexec drops it (marvel#339).
+seen: `marvel bus leaf connect` answers that the daemon's start-time config
+declares no hub, and names the fix. If that happens, `marvel daemon reexec`
+re-reads the config, and the leaf seed has to be pushed again afterwards,
+because a reexec drops it (marvel#339).
 
 The seed does not have to live on the cluster. The hub operator can push it
 from the hub's host, over the cluster's `mrvl://` listener, once that host is
