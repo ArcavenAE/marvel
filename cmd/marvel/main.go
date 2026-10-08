@@ -257,6 +257,9 @@ func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the marvel daemon",
+		// The command starts the daemon, so a positional argument it does not
+		// know is a mistake to report, not to ignore (marvel#606).
+		Args: cobra.NoArgs,
 		Long: `Start the marvel daemon. Listens on a Unix socket for local access.
 Use --mrvl to also start the mrvl:// listener for remote access.
 
