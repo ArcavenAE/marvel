@@ -550,8 +550,10 @@ func TestBrokenRunOKFollowsTheTmuxVersion(t *testing.T) {
 // refreshRunOK reports whether the run record of the role that exits 0 is
 // acceptable for the tmux the test runs on.
 func refreshRunOK(version string, r api.RunRecord) bool {
-	_ = version // the stub is strict on every tmux; the gate comes next
-	return r.Outcome == api.RunSucceeded && r.ExitStatus == "0"
+	if r.Outcome == api.RunSucceeded {
+		return r.ExitStatus == "0"
+	}
+	return r.Outcome == api.RunFailed && r.ExitStatus == "" && !tmuxtest.StatusExpected(version)
 }
 
 // TestRefreshRunOKFollowsTheTmuxVersion pins refreshRunOK: a run that exits 0
@@ -575,6 +577,7 @@ func TestRefreshRunOKFollowsTheTmuxVersion(t *testing.T) {
 		{"tmux 3.4", api.RunFailed, "1", false},
 		{"tmux 3.4", api.RunSucceeded, "", false},
 		{"tmux 3.4", api.RunSucceeded, "3", false},
+		{"tmux 3.4", api.RunCancelled, "", false},
 	} {
 		r := api.RunRecord{Outcome: tc.outcome, ExitStatus: tc.exit}
 		if got := refreshRunOK(tc.version, r); got != tc.want {
