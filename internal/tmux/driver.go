@@ -32,9 +32,23 @@ import (
 // does not mutate the user's tmux server config.
 const DefaultHistoryLimit = 100000
 
+// DefaultExecTimeout bounds one tmux invocation. A healthy tmux answers in
+// milliseconds, so the bound only ever fires when the server has stopped
+// answering.
+const DefaultExecTimeout = 10 * time.Second
+
+// ErrTmuxTimeout reports a tmux command that did not return within the
+// driver's bound and was killed. It means the answer is unknown. A caller
+// must treat it as an outage, never as an absent pane or session, and
+// match it with errors.Is.
+var ErrTmuxTimeout = errors.New("tmux did not answer in time")
+
 // Driver manages tmux sessions and panes by shelling out to the tmux binary.
 type Driver struct {
 	binary string
+
+	// execTimeout bounds each tmux invocation; zero means DefaultExecTimeout.
+	execTimeout time.Duration
 
 	// socket is the tmux server socket name. Every tmux invocation
 	// prepends -L <socket>, scoping the driver to a dedicated server.
@@ -190,6 +204,12 @@ var seatEnvPrefix = func() string {
 	b.WriteString(" ")
 	return b.String()
 }()
+
+// SetExecTimeout sets the bound on one tmux invocation. Zero restores
+// DefaultExecTimeout. Set it before the driver is shared between goroutines.
+func (d *Driver) SetExecTimeout(t time.Duration) { d.execTimeout = t }
+
+func (d *Driver) timeout() time.Duration { return d.execTimeout }
 
 // Socket returns the tmux socket name the driver is scoped to. Used by
 // test teardown to kill the right server. A driver built by NewDriver
