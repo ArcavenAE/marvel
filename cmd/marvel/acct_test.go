@@ -106,3 +106,29 @@ func TestAcctNoReadingIsADash(t *testing.T) {
 		t.Errorf("an unstamped row = %q, want -", got["b-unstamped"])
 	}
 }
+
+// The client may run on another account than the daemon (a --cluster client).
+// The daemon groups accounts by its own home, so the client must not fold the
+// default home into a spelling using its own: with the client's HOME at
+// /home/c, a default-home row and a row naming /home/c/.claude are two
+// logins as far as the client can tell, and the same row must keep one key
+// whatever HOME the client has.
+func TestAcctKeyDoesNotUseTheClientHome(t *testing.T) {
+	t.Setenv("HOME", "/home/c")
+	got, _ := acctCells(t,
+		acctSession("a-default", "", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctSession("b-clienthome", "/home/c/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctSession("c-daemonhome", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
+	)
+	key := func(n string) string { k, _, _ := strings.Cut(got[n], " "); return k }
+	if key("a-default") == key("b-clienthome") {
+		t.Errorf("a default-home row and a /home/c/.claude row share the key %q: a false merge", key("a-default"))
+	}
+
+	before := key("c-daemonhome")
+	t.Setenv("HOME", "/home/other")
+	again, _ := acctCells(t, acctSession("c-daemonhome", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"))
+	if k, _, _ := strings.Cut(again["c-daemonhome"], " "); k != before {
+		t.Errorf("the same row prints %q under one client HOME and %q under another", before, k)
+	}
+}
