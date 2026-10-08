@@ -56,7 +56,9 @@ func (st Structure) Problems() string {
 	return strings.Join(parts, "; ")
 }
 
-const structureRPC = 10 * time.Second
+// structureRPC bounds the structural read of the broker. A variable for the
+// same reason as provisionRPC.
+var structureRPC = 10 * time.Second
 
 // CheckStructure reads the broker at url as the admin identity for the
 // declared objects and the loopback monitor at monitorAddr for /varz. An

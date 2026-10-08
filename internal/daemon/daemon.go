@@ -38,6 +38,7 @@ import (
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
@@ -112,6 +113,11 @@ type Response struct {
 	// which is authorization-shaped and belongs with aae-orc-sqh0. See
 	// docs/design/daemon-isolation.md decision 8.
 	DaemonHome string `json:"daemon_home,omitempty"`
+
+	// Starting is true on every response the daemon sends while it is still
+	// adopting tmux state, so a client reading get or describe knows the rows
+	// may be incomplete. Absent once the daemon has finished starting.
+	Starting bool `json:"starting,omitempty"`
 }
 
 // DefaultLogBufferLines is the default ring-buffer depth for the
@@ -121,6 +127,14 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	// adoptingSince is the unix-nano time the listener began serving ahead of
+	// start-time adoption, and zero once adoption has finished. While it is set,
+	// dispatchAs answers only the methods in startingAllows.
+	adoptingSince atomic.Int64
+
+	// exit replaces os.Exit after a stop request, for tests.
+	exit func(int)
+
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
@@ -554,6 +568,34 @@ func (d *Daemon) Start(socketPath string) error {
 		return err
 	}
 
+	// Serve before adopting. Adoption calls tmux, and a hung tmux used to hold
+	// the whole start behind it, so no client could even ask what was wrong
+	// (marvel#716). Until adoption finishes only the read methods answer
+	// (startingAllows); the reconcile loop below still starts after adoption,
+	// so nothing spawns against a store that has not been reconciled.
+	ctx, cancel := context.WithCancel(context.Background())
+	d.ctx, d.cancel = ctx, cancel
+	d.adoptingSince.Store(time.Now().UnixNano())
+
+	// Accept connections.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					log.Printf("accept: %v", err)
+					continue
+				}
+			}
+			go d.handleConn(conn)
+		}
+	}()
+
 	// Reconcile marvel-* tmux state against recorded intent. Panes that
 	// match the rehydrated intent are adopted; anything else is LEFT
 	// RUNNING and reported, unless the operator asked to reclaim.
@@ -604,6 +646,12 @@ func (d *Daemon) Start(socketPath string) error {
 	if n := d.sessMgr.Reproject(); n > 0 {
 		log.Printf("startup: re-projected policy for %d adopted session(s)", n)
 	}
+	d.adoptingSince.Store(0)
+	// A stop that arrived during adoption has already run shutdown; do not
+	// start loops behind it.
+	if ctx.Err() != nil {
+		return errStoppedWhileStarting
+	}
 
 	// Announced from Start, not from the constructor. cmd/marvel installs
 	// log.SetOutput (log ring plus the optional --log-file) only after
@@ -612,9 +660,6 @@ func (d *Daemon) Start(socketPath string) error {
 	// the one observability affordance for the in-memory token window, so it
 	// has to land where the docs say it lands.
 	d.logTokenBudgetWindows()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	d.ctx, d.cancel = ctx, cancel
 
 	// Start team reconciliation loop.
 	d.wg.Add(1)
@@ -645,25 +690,6 @@ func (d *Daemon) Start(socketPath string) error {
 	if d.views != nil {
 		d.startViews(ctx)
 	}
-
-	// Accept connections.
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					log.Printf("accept: %v", err)
-					continue
-				}
-			}
-			go d.handleConn(conn)
-		}
-	}()
 
 	log.Printf("marvel daemon listening on %s (%s)", socketPath, network)
 	return nil
@@ -741,6 +767,12 @@ func (d *Daemon) Reexec() error {
 	if err != nil {
 		return err
 	}
+	return d.ReexecTo(exe)
+}
+
+// ReexecTo is Reexec into the binary at exe. The caller has already resolved
+// and checked exe, so a refusal leaves the daemon serving.
+func (d *Daemon) ReexecTo(exe string) error {
 	// Detach checkpoints durable state, releases the bolt file, and stops
 	// serving without touching a pane. Its own doc names this as the first
 	// half of self-update. The broker stays up too: the successor adopts it
@@ -865,20 +897,26 @@ func checkPidFileFree(path string) error {
 		}
 		return fmt.Errorf("read pidfile %s: %w", path, err)
 	}
-	var pid int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil || pid <= 0 {
-		// Corrupt pidfile — treat as stale.
+	pid, ok := pidfile.Parse(string(data))
+	if !ok {
+		// Corrupt pidfile, or one whose number is no pid: treat as stale.
 		return nil
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return nil
-	}
-	// Signal 0 is the "is it alive" check on Unix.
-	if err := proc.Signal(syscall.Signal(0)); err == nil {
+	if err := signalPID(pid); err == nil {
 		return fmt.Errorf("pidfile %s names live process %d — another daemon already running", path, pid)
 	}
 	return nil
+}
+
+// signalPID is the "is it alive" probe: signal 0 sends nothing and reports
+// whether the process exists. A seam, so a test never signals a pid it did not
+// start.
+var signalPID = func(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return proc.Signal(syscall.Signal(0))
 }
 
 func (d *Daemon) handleConn(conn net.Conn) {
@@ -972,6 +1010,7 @@ func reportInvalidReplicas(store *api.Store, sink events.Emitter) {
 // wrong daemon is worth attributing as much as a successful one.
 func (d *Daemon) stamp(resp Response) Response {
 	resp.DaemonHome = d.home
+	resp.Starting = d.adoptingSince.Load() != 0
 	return resp
 }
 
@@ -1002,11 +1041,70 @@ func (d *Daemon) scopeRefusal(req Request, c caller) (Response, bool) {
 	return Response{}, false
 }
 
+// ErrDaemonStarting is the refusal a method gets while the daemon is still
+// adopting tmux state. It is retryable and says nothing about the request, so
+// a caller matches it on Response.Starting and the text and tries again; it
+// never reaches a handler, so it cannot count toward a session's health.
+var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, retry")
+
+// ErrReportDeferred is the refusal heartbeat and account.limits get while the
+// daemon is adopting. It wraps ErrDaemonStarting and is a different text, so a
+// producer can tell "try again after the start" from any verdict on its token
+// or its session. It is sent before the handler runs, so it never reaches a
+// session's health, its FailureCount or the orphan registry, and it is never
+// the token-mismatch refusal.
+var ErrReportDeferred = fmt.Errorf("report deferred: %w", ErrDaemonStarting)
+
+// errStoppedWhileStarting is what Start returns when a stop arrived during
+// adoption and shutdown has already run.
+var errStoppedWhileStarting = errors.New("daemon stopped while starting")
+
+// startingMethods is the set of methods that answer while the daemon is still
+// adopting tmux state: the reads that say what the daemon is doing. A plain
+// stop (detach) also answers, through startingAllows, because it must not wait
+// on adoption and a remote operator has no other way to end the daemon; stop
+// with teardown stays refused, because it would destroy panes adoption has not
+// finished accounting for. Every other method is refused with
+// ErrDaemonStarting before its handler runs. heartbeat and account.limits get
+// ErrReportDeferred instead, which wraps ErrDaemonStarting: a heartbeat does
+// more than stamp liveness (it checks the session token and records orphan
+// sightings against a store adoption has not finished reconciling), so the
+// refusal comes before the handler. plan is refused because its delta would be
+// against an unreconciled store, and inject and capture because they drive tmux.
+var startingMethods = map[string]bool{
+	"daemon.status":   true,
+	"get":             true,
+	"describe":        true,
+	"logs":            true,
+	"events":          true,
+	"bus.status":      true,
+	"orphans":         true,
+	"credential.list": true,
+	MethodVersion:     true,
+}
+
+// startingAllows reports whether req may run while the daemon is adopting.
+func startingAllows(req Request) bool {
+	if req.Method == "stop" {
+		teardown, _, err := stopMode(req.Params)
+		// A malformed stop reaches the handler, which refuses it; it cannot
+		// tear anything down.
+		return err != nil || !teardown
+	}
+	return startingMethods[req.Method]
+}
+
 // dispatchAs enforces the caller's scope, then routes the request. A method
 // the scope does not permit is refused before any handler runs.
 func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
+	}
+	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
+		if req.Method == "heartbeat" || req.Method == "account.limits" {
+			return Response{Error: ErrReportDeferred.Error(), Starting: true}
+		}
+		return Response{Error: ErrDaemonStarting.Error(), Starting: true}
 	}
 	switch req.Method {
 	case "apply":
@@ -1062,7 +1160,7 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	case "stop":
 		return d.handleStop(req.Params)
 	case "reexec":
-		return d.handleReexec()
+		return d.handleReexec(req.Params, c)
 	case "logs":
 		return d.handleLogs(req.Params)
 	case "events":
@@ -1320,9 +1418,11 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
 	// binary produced no diagnostic, just a silent pane that exited
 	// immediately and entered the restart loop.
-	if err := m.ValidateRuntimes(); err != nil {
+	runtimeAdvisories, err := m.ValidateRuntimes()
+	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	workDirAdvisories = append(workDirAdvisories, runtimeAdvisories...)
 
 	// Pre-flight: refuse a declared dimension no role in the team can ever
 	// report, so a mute gate is an error rather than a silent no-op. The
@@ -1552,6 +1652,13 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 			one := []api.Session{sess}
 			d.stampLimitReading(one, time.Now().UTC())
 			d.stampActivity(one, time.Now().UTC())
+			// A record with sources and no delivery predates the delivery
+			// field; say so and never guess (marvel#748). The note is set on
+			// this copy at read time and is never stored: nothing here writes
+			// it back to the store.
+			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
+				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
+			}
 			result = one[0]
 		}
 	case "team":
@@ -2674,6 +2781,16 @@ func (d *Daemon) stopReport(teardown bool, mode string) Response {
 	return Response{Result: data}
 }
 
+// exitProcess ends the process once shutdown has run. exit is nil in
+// production and set by a test, which cannot survive os.Exit.
+func (d *Daemon) exitProcess(code int) {
+	if d.exit != nil {
+		d.exit(code)
+		return
+	}
+	os.Exit(code)
+}
+
 func (d *Daemon) handleStop(params json.RawMessage) Response {
 	teardown, mode, err := stopMode(params)
 	if err != nil {
@@ -2696,30 +2813,85 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 		} else {
 			d.Detach()
 		}
-		os.Exit(0)
+		d.exitProcess(0)
 	}()
 	return resp
 }
 
+// revisionLabel names the commit a target was built from, and says when the
+// tree it was built from had uncommitted changes.
+func revisionLabel(t reexecTarget) string {
+	if t.Revision == "" {
+		return "unrecorded"
+	}
+	if t.Modified {
+		return t.Revision + ", modified"
+	}
+	return t.Revision
+}
+
 // handleReexec tells the running daemon to replace its own process image
-// with a fresh exec of the marvel binary, adopting the live panes rather
-// than stopping the agents. The CLI (`marvel daemon reexec`, or
-// `marvel upgrade --daemon` after the binary is installed) calls this;
-// the daemon must exec itself because the CLI cannot exec the daemon's
-// process.
-func (d *Daemon) handleReexec() Response {
+// with a fresh exec of a marvel binary, adopting the live panes rather than
+// stopping the agents. The CLI (`marvel daemon reexec`, or
+// `marvel upgrade --daemon` after the binary is installed) calls this; the
+// daemon must exec itself because the CLI cannot exec the daemon's process.
+//
+// With no exec_path it execs the daemon's own path, as it always has, which is
+// right when an upgrade replaces the binary in place. With exec_path it execs
+// that file instead, after the checks in validateReexecTarget; the CLI sends
+// its own path, so an install that keeps each version in its own directory
+// adopts the new build. exec_path is refused from any caller that is not on the
+// local unix socket, admin keys included.
+func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
+	var p reexecParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		}
+	}
 	// Resolve the binary here so an unresolvable path is reported to the
 	// client without detaching; better to keep serving than to stop and
 	// then find nothing to exec.
-	exe, err := selfExecPath()
-	if err != nil {
-		return Response{Error: err.Error()}
+	var exe string
+	if p.ExecPath == "" {
+		self, err := selfExecPath()
+		if err != nil {
+			return Response{Error: err.Error()}
+		}
+		exe = self
+	} else {
+		if !c.local {
+			log.Printf("reexec refused: exec_path over mrvl:// by key %s", c.fingerprint)
+			return Response{Error: errNotLocal.Error()}
+		}
+		target, err := validateReexecTarget(p.ExecPath, d.build.Version)
+		if err != nil {
+			log.Printf("reexec refused: %v", err)
+			return Response{Error: err.Error()}
+		}
+		exe = target.Path
+		who := c.fingerprint
+		if who == "" {
+			who = "local socket"
+		}
+		oldPath, _ := selfExecPath()
+		msg := fmt.Sprintf("reexec into %s (%s, %s, commit %s) from %s (%s, %s), requested by %s",
+			target.Path, target.Version, target.Channel, revisionLabel(target),
+			oldPath, d.build.Version, d.build.Channel, who)
+		// The ring does not survive the exec, so the same line goes to the log.
+		log.Printf("daemon.reexec: %s", msg)
+		events.Emit(d.events, events.Event{
+			Kind:     events.KindDaemonReexec,
+			Severity: events.SeverityInfo,
+			Actor:    fmt.Sprintf("pid=%d", os.Getpid()),
+			Message:  msg,
+		})
 	}
 	// Re-exec off the request goroutine so this response reaches the
 	// client before the process image is replaced, mirroring handleStop.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		if rerr := d.Reexec(); rerr != nil {
+		if rerr := d.ReexecTo(exe); rerr != nil {
 			log.Printf("reexec failed after detach: %v; start a fresh daemon to adopt the running panes", rerr)
 			os.Exit(1)
 		}

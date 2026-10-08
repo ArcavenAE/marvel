@@ -13,13 +13,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/workload"
 )
@@ -219,6 +219,15 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		leafRepeatEvery: defaultLeafDownRepeat,
 		now:             time.Now,
 	}, nil
+}
+
+// SetDialTimeout sets how long Start and Restart wait for the listener. It
+// exists for tests in other packages that start a real nats-server and must
+// outlast a loaded host; the daemon uses the default.
+func (s *Supervisor) SetDialTimeout(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dialTimeout = d
 }
 
 // Start adopts a broker a previous daemon left at the pidfile, or starts a
@@ -814,19 +823,20 @@ func leafDuration(d time.Duration) string {
 }
 
 func (s *Supervisor) pidFileAlive() (int, bool) {
-	data, err := os.ReadFile(s.pidFile)
-	if err != nil {
+	pid := pidfile.Read(s.pidFile)
+	if pid == 0 {
 		return 0, false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	if syscall.Kill(pid, 0) != nil {
+	if probePID(pid) != nil {
 		return 0, false
 	}
 	return pid, true
 }
+
+// probePID is the "is it alive" check: signal 0 sends nothing and reports
+// whether the process exists and may be signalled. A seam, so a test never
+// signals a pid it did not start.
+var probePID = func(pid int) error { return syscall.Kill(pid, 0) }
 
 func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
 	c, err := net.DialTimeout("tcp", s.mgr.bus.Listen, timeout)

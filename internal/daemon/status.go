@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"slices"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
@@ -45,6 +46,9 @@ type DaemonStatus struct {
 	// Bus is the same value bus.status returns, absent when the cluster has
 	// no bus.
 	Bus *bus.Status `json:"bus,omitempty"`
+	// AdoptingSince is when the daemon began serving ahead of start-time
+	// adoption. Present only while adoption is still running.
+	AdoptingSince *time.Time `json:"adopting_since,omitempty"`
 }
 
 // classifyBind maps a bound address to its reach.
@@ -109,6 +113,10 @@ func (d *Daemon) handleDaemonStatus() Response {
 	}
 	if b, ok := d.busStatus(); ok {
 		st.Bus = &b
+	}
+	if ns := d.adoptingSince.Load(); ns != 0 {
+		since := time.Unix(0, ns).UTC()
+		st.AdoptingSince = &since
 	}
 	data, err := json.Marshal(st)
 	if err != nil {

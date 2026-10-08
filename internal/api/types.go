@@ -217,10 +217,22 @@ const ContextFeedStatusline = "statusline"
 // it exec'd. Resource readings are therefore a rollup over the pid's
 // subtree, not a read of the pid itself. See internal/procstat.
 type Session struct {
-	// SettingSources is the value passed to the harness as --setting-sources
-	// at launch, kept for describe and for a restart. Empty when marvel
-	// passed none (a wrapper owns its command line).
+	// SettingSources is the value marvel appended as --setting-sources at
+	// launch, kept for describe. Empty when marvel passed none (a wrapper owns
+	// its command line). Nothing reads it back for a restart: a new launch
+	// computes its own.
 	SettingSources string `toml:"setting_sources,omitempty"`
+	// SettingSourcesDelivery says how far marvel can vouch for that value:
+	// SettingSourcesArgv when the command was readable and the flag sits in
+	// its argument list, SettingSourcesShellText when the command is shell
+	// text and marvel only appended the flag to it (marvel#748). Empty with an
+	// empty SettingSources means nothing was passed; empty with a set one
+	// means a record written before this field existed, which is never
+	// guessed at.
+	SettingSourcesDelivery string `toml:"setting_sources_delivery,omitempty"`
+	// SettingSourcesNote is filled on read by describe for a record that has
+	// SettingSources and no delivery, and never stored.
+	SettingSourcesNote string `json:"setting_sources_note,omitempty" toml:"-"`
 	// WorkDir is the directory the session was placed in, copied from the
 	// role at spawn (marvel#255 build item 2). Empty on a session spawned
 	// before placement existed.
@@ -1113,3 +1125,12 @@ type ActiveTicks struct {
 	// At is the time of the newest tick counted.
 	At time.Time `json:"at"`
 }
+
+// The ways marvel's --setting-sources reached a launch command (marvel#748).
+const (
+	SettingSourcesArgv      = "argv"
+	SettingSourcesShellText = "shell-text"
+	// SettingSourcesNotRecorded is what describe says of a session record that
+	// carries sources and no delivery.
+	SettingSourcesNotRecorded = "delivery not recorded"
+)

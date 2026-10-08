@@ -43,15 +43,19 @@ var (
 	clusterName  string // --cluster flag
 	socketPath   string // --socket flag (fallback)
 	identityPath string // --identity flag (per-invocation override)
+
+	// clusterFlagGiven is true when --cluster was typed, even as an empty
+	// value, which clusterName alone cannot tell from the flag being absent.
+	clusterFlagGiven bool
 )
 
 // resolveDaemon returns both the address and the dial options for the
 // selected cluster. --identity overrides the cluster-level identity.
-// Precedence: --socket, then MARVEL_SOCKET, then the selected cluster's
-// Socket or Server, then the layout default (~/.marvel/run/marvel.sock).
-// config.ResolveSocket covers the last two rungs so every fall-through
-// branch below lands on the same answer; four of them used to reach a
-// hardcoded machine-global path instead. See
+// Precedence: --socket, then an explicit --cluster, then MARVEL_SOCKET,
+// then the config's current cluster's Socket or Server, then the layout
+// default (~/.marvel/run/marvel.sock). config.ResolveSocket covers the last
+// two rungs so every fall-through branch below lands on the same answer; four
+// of them used to reach a hardcoded machine-global path instead. See
 // docs/design/daemon-isolation.md decision 3.
 func resolveDaemon() (string, daemon.DialOptions, error) {
 	addr, opts, err := resolveDaemonAddr()
@@ -88,7 +92,16 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if socketPath != "" {
 		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
-	if env := os.Getenv(config.SocketEnv); env != "" {
+	// --cluster "" names no cluster, and reading it as absent would dial the
+	// daemon MARVEL_SOCKET names without a word, so it is refused (#586).
+	if clusterFlagGiven && clusterName == "" {
+		return "", daemon.DialOptions{}, rungDefault, errors.New("--cluster needs a cluster name; leave the flag off to use the default")
+	}
+	// An explicit --cluster outranks MARVEL_SOCKET: every marvel seat has the
+	// variable set, so a command aimed at another cluster would otherwise
+	// run on the seat's own daemon without a word (#586). A cluster that is
+	// only the config's current_cluster does not count as explicit.
+	if env := os.Getenv(config.SocketEnv); env != "" && clusterName == "" {
 		return env, daemon.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
@@ -124,7 +137,10 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	}
 	rung := rungCluster
 	if addr == "" {
-		addr, rung = config.ResolveSocket(), rungDefault
+		// A cluster with no address means the layout default. ResolveSocket
+		// would return MARVEL_SOCKET first, which an explicit --cluster must
+		// not end on (#586).
+		addr, rung = config.DefaultSocket(), rungDefault
 	}
 	id := identityPath
 	if id == "" {
@@ -159,22 +175,46 @@ func send(req daemon.Request) (*daemon.Response, error) {
 	return resp, nil
 }
 
-func main() {
-	// Strip shell-style comments from args so inline notes work:
-	//   ./marvel shift test/squad  # replace all workers
-	os.Args = stripComments(os.Args)
-
-	root := &cobra.Command{
-		Use:   "marvel",
-		Short: "Agent orchestration control plane",
-	}
-
+// bindRootFlags registers the flags every command shares: where the daemon
+// is (--cluster, --socket) and how to authenticate to it (--identity).
+func bindRootFlags(root *cobra.Command) {
 	root.PersistentFlags().StringVar(&clusterName, "cluster", "",
 		"named cluster from ~/.marvel/config.yaml")
 	root.PersistentFlags().StringVar(&socketPath, "socket", "",
 		"explicit daemon address (overrides --cluster)")
 	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
 		"private key file for SSH auth (overrides cluster identity)")
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		clusterFlagGiven = cmd.Flags().Changed("cluster")
+	}
+}
+
+func main() {
+	// Strip shell-style comments from args so inline notes work:
+	//   ./marvel shift test/squad  # replace all workers
+	os.Args = stripComments(os.Args)
+
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newDaemon builds the daemon the command goes on to start. A seam, so a test
+// of the guards in front of it can refuse to start one when a guard that should
+// have refused did not.
+var newDaemon = daemon.NewWithOptions
+
+// newRootCmd builds the command tree. Defining a flag assigns its default to
+// the variable it binds, so a second call resets the global flags: the daemon
+// reads the tree it was started under (cmd.Root()), and tests build one only
+// outside parallel tests.
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "marvel",
+		Short: "Agent orchestration control plane",
+	}
+
+	bindRootFlags(root)
 
 	root.AddCommand(daemonCmd())
 	root.AddCommand(workCmd())
@@ -205,9 +245,7 @@ func main() {
 	root.AddCommand(newCodexCtxCmd())
 	root.AddCommand(planCmd())
 
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return root
 }
 
 // shiftTimeoutEnv is the environment variable that seeds the daemon's
@@ -257,6 +295,9 @@ func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the marvel daemon",
+		// The command starts the daemon, so a positional argument it does not
+		// know is a mistake to report, not to ignore (marvel#606).
+		Args: daemonPositionalArgs,
 		Long: `Start the marvel daemon. Listens on a Unix socket for local access.
 Use --mrvl to also start the mrvl:// listener for remote access.
 
@@ -276,6 +317,9 @@ Examples:
 				fmt.Fprintln(os.Stderr, w)
 			}
 			if err := paths.CheckSocketPath(sock); err != nil {
+				return err
+			}
+			if err := refuseLiveDaemon(pidFilePath, cmd.Root()); err != nil {
 				return err
 			}
 			// net.Listen needs run/ to exist, and it is the directory
@@ -304,7 +348,7 @@ Examples:
 				return err
 			}
 
-			d, err := daemon.NewWithOptions(daemon.Options{
+			d, err := newDaemon(daemon.Options{
 				PidFile:      pidFilePath,
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
@@ -312,7 +356,7 @@ Examples:
 				Build:        thisBuild(),
 			})
 			if err != nil {
-				return err
+				return lockedStateHint(err, pidFilePath, cmd.Root())
 			}
 
 			// Tee Go's log output into: stderr (only when interactive)
@@ -414,24 +458,38 @@ Examples:
 func daemonReexecCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "reexec",
-		Short: "Re-exec the running daemon in place to adopt a freshly installed binary",
+		Short: "Re-exec the running daemon in place into the binary this command runs from",
 		Long: `Re-exec the running daemon in place.
 
 The daemon checkpoints its state, releases its state file, and replaces
-its own process image (same PID) with a fresh exec of the marvel binary
-at its current path. Every agent keeps running in its tmux pane; the new
-process re-opens the same state file, re-binds the same socket, and
-adopts those panes.
+its own process image (same PID) with a fresh exec of a marvel binary.
+Run on the daemon's host, this command names the binary it runs from, so
+an install that keeps each version in its own directory (mise) adopts the
+new build. Against a remote daemon (--cluster over mrvl://) no path is
+sent, and the daemon re-executes its own path. A target that is not a
+regular executable owned by the daemon's user, that is writable by others,
+that was not built from marvel with a stamped version (the daemon reads the
+build from the file and does not run it), or that is older than the
+running daemon is refused, and the daemon keeps serving. Every agent keeps
+running in its tmux pane; the new process re-opens the same state file,
+re-binds the same socket, and adopts those panes.
 
 Use this after installing a new binary out of band. To fetch, install,
 and adopt in one step, use 'marvel upgrade --daemon'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "reexec"})
+			if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+			req, sent := reexecRequest()
+			resp, err := reexecSend(req)
 			if err != nil {
 				return err
 			}
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
+			}
+			if note := reexecNote(resp, sent); note != "" {
+				fmt.Fprintln(os.Stderr, note)
 			}
 			fmt.Println("marvel daemon re-executing in place; agents keep running")
 			return nil
@@ -1888,12 +1946,19 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				return err
 			}
 			return afterUpgrade(res, reexecDaemon, func() error {
-				resp, err := send(daemon.Request{Method: "reexec"})
+				if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+				req, sent := reexecRequest()
+				resp, err := reexecSend(req)
 				if err != nil {
 					return fmt.Errorf("sending daemon re-exec: %w", err)
 				}
 				if resp.Error != "" {
 					return fmt.Errorf("%s", resp.Error)
+				}
+				if note := reexecNote(resp, sent); note != "" {
+					fmt.Fprintln(os.Stderr, note)
 				}
 				return nil
 			}, cmd.OutOrStdout())
@@ -1920,7 +1985,7 @@ Since marvel #128 each HOME gets its own tmux server, so a bare
 ` + "`tmux kill-session -t marvel-<workspace>`" + ` reaches the wrong server. Scripts
 and runbooks use this to get the name instead of recomputing it:
 
-  tmux -L "$(marvel config tmux-server)" kill-session -t marvel-demo
+  tmux -L "$(marvel config tmux-server)" kill-session -t '=marvel-demo'
 
 MARVEL_TMUX_SOCKET overrides the derived name and is reported as-is.`,
 		Args: cobra.NoArgs,

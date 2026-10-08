@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
@@ -660,13 +661,21 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 // is applied. Returns an aggregated error listing every missing binary
 // so the operator sees all problems at once — not just the first.
 //
-// Resolution rules match exec.Command semantics:
+// Only a command in the simple form is resolved (see validateCommand), by
+// exec.Command semantics on its first whitespace field:
 //   - Absolute path ("/usr/local/bin/forestage"): os.Stat must succeed.
 //   - Path with separator ("bin/simulator", "./scripts/x"): resolved
-//     relative to the daemon CWD via os.Stat.
+//     against the directory the launch starts the role's pane in, not
+//     the daemon CWD, via os.Stat.
 //   - Plain name ("sleep", "forestage"): exec.LookPath searches $PATH.
 //   - Empty command: flagged; the manifest parser already catches this
 //     but we defend here so misuse of the public API surfaces clearly.
+//   - Inline arguments ("claude --model x"): only the first whitespace
+//     field is resolved; the rest are the program's arguments.
+//
+// Shell text it does not parse (an assignment, a quote, a substitution, a
+// newline, a relative program with no directory) is not refused: the
+// advisories returned say that role's program was not checked.
 //
 // Scripts are checked as absolute/relative paths (never PATH-resolved)
 // because scripts are typically repo-relative files, not executables.
@@ -674,13 +683,18 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 // See ArcavenAE/marvel#9 / aae-orc-rjm — the pre-fix behavior was to
 // silently create panes whose processes exited immediately, hiding the
 // real error behind a downstream "can't find pane" warning.
-func (m *Manifest) ValidateRuntimes() error {
-	var missing []string
+func (m *Manifest) ValidateRuntimes() ([]string, error) {
+	var missing, advisories []string
 	for ti, t := range m.Teams {
 		for ri, r := range t.Roles {
 			ctx := fmt.Sprintf("team[%d=%s].role[%d=%s]", ti, t.Name, ri, r.Name)
-			if err := validateCommand(r.Runtime.Command); err != nil {
+			dir := ResolveWorkDir("", teamAnchor(m.Workspace.Root, t.WorkDir), joinWorkDir(m.Workspace.Root, r.WorkDir))
+			advisory, err := validateCommand(r.Runtime.Command, dir)
+			if err != nil {
 				missing = append(missing, fmt.Sprintf("  %s: command %q: %v", ctx, r.Runtime.Command, err))
+			}
+			if advisory != "" {
+				advisories = append(advisories, fmt.Sprintf("role %s: %s", r.Name, advisory))
 			}
 			if r.Runtime.Script != "" {
 				if err := validateScript(r.Runtime.Script); err != nil {
@@ -690,28 +704,105 @@ func (m *Manifest) ValidateRuntimes() error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
+		return advisories, fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
 	}
-	return nil
+	return advisories, nil
 }
 
-func validateCommand(cmd string) error {
-	if cmd == "" {
-		return errors.New("empty")
+// shellTextChars are the characters that make text more than plain words to the
+// shell the launch hands a command to: a quote, an escape, an expansion, a list
+// or pipe, a redirect, a group, a glob, a tilde, or a hash that makes the rest a
+// comment. An equals sign is not among them: NAME=value is an assignment only as
+// a program name, which the pre-flight checks in the first field, and anywhere
+// else it hides nothing, because the adapter's flag reader already matches
+// --flag=value. It is the one definition of shell text: the
+// apply pre-flight reads it over a command's first field, and the claude
+// adapter over the whole command, because a flag can sit anywhere in it.
+const shellTextChars = "'\"\\$`;|&<>(){}*?[~#"
+
+// containsShellText reports whether text holds any shell-text character.
+func containsShellText(text string) bool { return strings.ContainsAny(text, shellTextChars) }
+
+// validateCommand checks the program of a command. The launch passes the text
+// to a shell (the driver hands tmux `env -u ... <command>` as one shell
+// command), so the pre-flight may be less strict than the launch and never more
+// (marvel#517).
+//
+// A command in the simple form, whose first field (words split on space and tab,
+// as the shell does) has no shell metacharacter and which holds no other
+// whitespace, newline included, has that field resolved: an absolute
+// path by stat, a plain name on $PATH, a relative path against dir, and a miss
+// refuses. dir is where the launch starts the pane (tmux -c), resolved as the
+// controller places a session: the role's workdir, else the team's anchor, else
+// the root (ResolveWorkDir over the values Apply stores). Anything else is not
+// parsed and not refused; the advisory says its program was not checked. That
+// includes a relative program for a role that has no directory, since the pane
+// would start somewhere this process cannot name. It is not a shell parser and
+// does not grow into one.
+func validateCommand(command, dir string) (advisory string, err error) {
+	if strings.ContainsRune(command, '\n') {
+		// The shell ends the command at the newline and runs the next line as
+		// another command, which fails with rc 127.
+		return "runtime command spans several lines; the shell runs each line as its own command, so the pre-flight did not check its program", nil
 	}
-	// Path — either absolute or contains a separator — must exist on disk.
+	// The shell splits words on space and tab only, so splitting on any other
+	// whitespace here would read a program the launch does not.
+	if hasUnsplitWhitespace(command) {
+		return commandNotParsedAdvisory, nil
+	}
+	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
+	if len(fields) == 0 {
+		return "", errors.New("empty")
+	}
+	cmd := fields[0]
+	if containsShellText(cmd) || strings.ContainsRune(cmd, '=') {
+		return commandNotParsedAdvisory, nil
+	}
+	// Path, absolute or with a separator: must exist on disk.
 	if filepath.IsAbs(cmd) || strings.ContainsRune(cmd, filepath.Separator) {
-		if _, err := os.Stat(cmd); err != nil {
-			return fmt.Errorf("not found: %w", err)
+		path := cmd
+		if !filepath.IsAbs(cmd) {
+			if dir == "" {
+				return commandNotParsedAdvisory, nil
+			}
+			path = filepath.Join(dir, cmd)
 		}
-		return nil
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("not found: %w", err)
+		}
+		return "", nil
 	}
-	// Plain name — must resolve on $PATH.
+	// Plain name: must resolve on $PATH.
 	if _, err := exec.LookPath(cmd); err != nil {
-		return fmt.Errorf("not on PATH: %w", err)
+		return "", fmt.Errorf("not on PATH: %w", err)
 	}
-	return nil
+	return "", nil
 }
+
+// CommandWordsReadable reports whether the words of a command, split on space
+// and tab, are the words the shell passes on: no shell-text character anywhere
+// (quotes included, since the shell strips them and a quoted flag is still the
+// flag) and no whitespace the shell does not split on. A reader that looks for a flag in a command's own arguments, as the
+// claude adapter does (marvel#745), can trust a command for which this is true
+// and must not add its own flag to one for which it is not.
+func CommandWordsReadable(command string) bool {
+	return !containsShellText(command) && !hasUnsplitWhitespace(command)
+}
+
+// hasUnsplitWhitespace reports whether command holds whitespace other than
+// space and tab. The shell splits words on those two only, so any other
+// whitespace (a no-break space, a carriage return, a newline, a vertical tab, a
+// form feed) is part of a word or ends a command, not a separator.
+func hasUnsplitWhitespace(command string) bool {
+	for _, r := range command {
+		if r != ' ' && r != '\t' && unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
+const commandNotParsedAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"
 
 func validateScript(path string) error {
 	if _, err := os.Stat(path); err != nil {

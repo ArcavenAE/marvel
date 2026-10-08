@@ -45,11 +45,10 @@ func TestReapDeadMapsExitStatus(t *testing.T) {
 			Workspace: ws,
 			Team:      "jobs",
 			Role:      name,
-			// The direct launch path joins Args as shell text, so the
-			// quoting is the caller's: without it `sh -c exit 3` runs
-			// `exit` with $0=3 and exits 0.
+			// The direct launch path quotes each arg, so the script is
+			// passed as one arg, not as shell text.
 			Runtime: api.Runtime{
-				Name: "sh", Command: "sh", Args: []string{"-c", "'" + script + "'"},
+				Name: "sh", Command: "sh", Args: []string{"-c", script},
 				Mode: mode,
 			},
 		}

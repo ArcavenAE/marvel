@@ -367,7 +367,7 @@ Kill the workspace's whole tmux session rather than one pane. The session is
 named for the workspace, so this reaches `bulk` and nothing else:
 
 ```sh
-tmux -L "$(./bin/marvel config tmux-server)" kill-session -t marvel-bulk
+tmux -L "$(./bin/marvel config tmux-server)" kill-session -t '=marvel-bulk'
 sleep 10
 ```
 

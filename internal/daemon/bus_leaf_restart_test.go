@@ -67,6 +67,9 @@ func startTestLeafBroker(t *testing.T, d *Daemon, hub string, preEnroll bool) (*
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The broker runs behind the rest of the suite, so the default 10s listener
+	// wait can expire on a loaded host (marvel#493).
+	sup.SetDialTimeout(30 * time.Second)
 	sup.Env = func() []string {
 		seed, err := d.store.RevealCredentialValue(busLeafCredential)
 		if err != nil {

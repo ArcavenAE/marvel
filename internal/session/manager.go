@@ -494,6 +494,11 @@ func (m *Manager) UnrecordedTmuxState() ([]string, error) {
 			continue
 		}
 		panes, lerr := m.driver.ListPanes(name)
+		if errors.Is(lerr, tmux.ErrTmuxTimeout) {
+			// Leaving the session out would read as a session with nothing to
+			// lose; the preview is incomplete and says so.
+			return nil, fmt.Errorf("list panes %s: %w", name, lerr)
+		}
 		if lerr != nil {
 			continue
 		}
@@ -693,8 +698,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		// operator's own home.
 		live.HarnessHome = sess.HarnessHome
 		live.AccountHome = sess.AccountHome
-		// What the harness was told to load, kept for describe and restart.
+		// What the harness was told to load, and how it was passed, kept for describe.
 		live.SettingSources = sess.SettingSources
+		live.SettingSourcesDelivery = sess.SettingSourcesDelivery
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -901,6 +907,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// below. A fallback to the direct command passes none, and a re-plan must
 	// not carry the previous launch's value forward.
 	sess.SettingSources = ""
+	sess.SettingSourcesDelivery = ""
 	// Likewise the login this launch's private home links from: only a launch
 	// that gets a private home names one, so a re-plan that does not must not
 	// carry the previous launch's value forward.
@@ -994,6 +1001,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 
 	plan := launchPlan{command: result.Command, env: result.Env}
 	sess.SettingSources = result.SettingSources
+	sess.SettingSourcesDelivery = result.SettingSourcesDelivery
 	switch {
 	case result.Stream != nil && fifo != nil:
 		parser, perr := runtime.NewStreamParser(result.Stream.Format, runtime.StreamParserConfig{
@@ -1330,7 +1338,7 @@ func (m *Manager) directPlan(sess *api.Session) launchPlan {
 func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	cmd := sess.Runtime.Command
 	for _, arg := range sess.Runtime.Args {
-		cmd += " " + arg
+		cmd += " " + shellQuote(arg)
 	}
 	envs := map[string]string{
 		"MARVEL_SESSION": sess.Name,

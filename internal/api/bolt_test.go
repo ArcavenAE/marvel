@@ -1,10 +1,15 @@
 package api
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	boltErrors "go.etcd.io/bbolt/errors"
 )
 
 // TestBoltStore_NotOpenedIsHarmless verifies that a Store with no
@@ -623,5 +628,95 @@ func TestBoltStore_ScheduleRoundTrips(t *testing.T) {
 		s.StartingDeadline != want.StartingDeadline || s.Retries != 1 ||
 		s.History == nil || *s.History != *want.History {
 		t.Fatalf("schedule after rehydrate = %+v, want %+v", s, want)
+	}
+}
+
+// A second open of a locked state file reports ErrBoltLocked, so a caller can
+// tell "a live process holds the lock" from any other open failure (marvel#606).
+func TestOpenBoltOnAHeldLockReportsErrBoltLocked(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "state", "marvel.bolt")
+	holder := NewStore()
+	if err := holder.OpenBolt(path); err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	defer func() { _ = holder.CloseBolt() }()
+
+	second := NewStore()
+	start := time.Now()
+	err := second.OpenBoltWithOptions(path, BoltOptions{LockTimeout: 100 * time.Millisecond})
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("the lock timeout option was ignored: the open took %v", took)
+	}
+	if err == nil {
+		t.Fatal("a second open of a locked file succeeded")
+	}
+	if !errors.Is(err, ErrBoltLocked) {
+		t.Errorf("expected ErrBoltLocked, got %v", err)
+	}
+	if !errors.Is(err, boltErrors.ErrTimeout) {
+		t.Errorf("the bbolt timeout is dropped from the chain: %v", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("expected the path %q in the error, got %v", path, err)
+	}
+}
+
+// An open that fails for another reason is not a lock.
+func TestOpenBoltOtherFailuresAreNotErrBoltLocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// A directory where the file should be: bbolt cannot open it.
+	path := filepath.Join(dir, "marvel.bolt")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := NewStore().OpenBoltWithOptions(path, BoltOptions{LockTimeout: 100 * time.Millisecond})
+	if err == nil {
+		t.Fatal("opening a directory as the state file succeeded")
+	}
+	if errors.Is(err, ErrBoltLocked) {
+		t.Errorf("a non-lock failure was reported as a lock: %v", err)
+	}
+}
+
+// The setting sources and how they were delivered survive a daemon restart, and
+// a record written before the delivery existed reads back with sources and an
+// empty delivery, never a guessed one (marvel#748).
+func TestBoltStore_SettingSourcesDeliveryRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	for _, sess := range []*Session{
+		{Name: "new-0", Workspace: "ws", Team: "t", Role: "r", SettingSources: "project,local", SettingSourcesDelivery: SettingSourcesShellText},
+		{Name: "old-0", Workspace: "ws", Team: "t", Role: "r", SettingSources: "user,project,local"},
+	} {
+		if err := s1.CreateSession(sess); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession("ws/new-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SettingSources != "project,local" || got.SettingSourcesDelivery != SettingSourcesShellText {
+		t.Errorf("new record: sources %q delivery %q", got.SettingSources, got.SettingSourcesDelivery)
+	}
+	old, err := s2.GetSession("ws/old-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.SettingSources != "user,project,local" || old.SettingSourcesDelivery != "" {
+		t.Errorf("legacy record: sources %q delivery %q, want the sources and no delivery", old.SettingSources, old.SettingSourcesDelivery)
 	}
 }

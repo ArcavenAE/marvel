@@ -691,7 +691,9 @@ marvel get sessions --socket /tmp/marvel-dev.sock
 
 `--socket` takes either an `mrvl://` address or a Unix socket path. With
 neither `--socket` nor `--cluster`, marvel uses `MARVEL_SOCKET` if set and
-otherwise `~/.marvel/run/marvel.sock`.
+otherwise `~/.marvel/run/marvel.sock`. An explicit `--cluster` outranks
+`MARVEL_SOCKET`, and a name that matches no cluster is refused rather than
+sent to the daemon the variable names.
 
 That default follows `HOME`, which is how you run more than one daemon on one
 machine: give each its own `HOME` and each gets its own control socket and its
