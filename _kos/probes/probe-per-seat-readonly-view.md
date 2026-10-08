@@ -220,6 +220,11 @@ path each time. The old tree's lifetime is now stated, H6b2 measures a
 reader that holds its cwd across two refreshes, and the H3 clause names the
 trade between a writable window and stale reads.
 
+2026-10-08, after the Outcome section (2026-10-06) was written: the header's
+revision count was corrected to three and the H6c and H6d failure branches were
+split into their own bullets, in the same words (marvel#754). No hypothesis
+changed meaning, so "nothing above it is revised after data exists" holds.
+
 ## What a builder builds
 
 For the probe: the rig script above, under `scripts/probes/`, and its two
