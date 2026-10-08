@@ -43,6 +43,10 @@ var (
 	clusterName  string // --cluster flag
 	socketPath   string // --socket flag (fallback)
 	identityPath string // --identity flag (per-invocation override)
+
+	// clusterFlagGiven is true when --cluster was typed, even as an empty
+	// value, which clusterName alone cannot tell from the flag being absent.
+	clusterFlagGiven bool
 )
 
 // resolveDaemon returns both the address and the dial options for the
@@ -88,6 +92,11 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if socketPath != "" {
 		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
+	// --cluster "" names no cluster, and reading it as absent would dial the
+	// daemon MARVEL_SOCKET names without a word, so it is refused (#586).
+	if clusterFlagGiven && clusterName == "" {
+		return "", daemon.DialOptions{}, rungDefault, errors.New("--cluster needs a cluster name; leave the flag off to use the default")
+	}
 	// An explicit --cluster outranks MARVEL_SOCKET: every marvel seat has the
 	// variable set, so a command aimed at another cluster would otherwise
 	// run on the seat's own daemon without a word (#586). A cluster that is
@@ -128,7 +137,10 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	}
 	rung := rungCluster
 	if addr == "" {
-		addr, rung = config.ResolveSocket(), rungDefault
+		// A cluster with no address means the layout default. ResolveSocket
+		// would return MARVEL_SOCKET first, which an explicit --cluster must
+		// not end on (#586).
+		addr, rung = config.DefaultSocket(), rungDefault
 	}
 	id := identityPath
 	if id == "" {
@@ -172,6 +184,9 @@ func bindRootFlags(root *cobra.Command) {
 		"explicit daemon address (overrides --cluster)")
 	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
 		"private key file for SSH auth (overrides cluster identity)")
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		clusterFlagGiven = cmd.Flags().Changed("cluster")
+	}
 }
 
 func main() {

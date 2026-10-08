@@ -51,9 +51,9 @@ func envClusterFixture(t *testing.T) (env, current, other *atomic.Int32) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
-	oldSocket, oldCluster := socketPath, clusterName
-	socketPath, clusterName = "", ""
-	t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
+	oldSocket, oldCluster, oldGiven := socketPath, clusterName, clusterFlagGiven
+	socketPath, clusterName, clusterFlagGiven = "", "", false
+	t.Cleanup(func() { socketPath, clusterName, clusterFlagGiven = oldSocket, oldCluster, oldGiven })
 
 	envSock, env := countingSocket(t, home, "env.sock")
 	curSock, current := countingSocket(t, home, "cur.sock")
