@@ -73,11 +73,11 @@ Cache-key candidates, neither probed here: (a) the key includes the absolute wor
 
 ## Fourth instance: an earlier sighting, with a reproduction that did not confirm the path key
 
-An earlier sighting of the same class, filed outside this repository and moved here, reported one `unparam` issue at `cmd/marvel/ctxforward.go:160:48`. On main today that is the `UnmarshalJSON` method of `resetInstant`, and the line above it reads `//nolint:unparam // json.Unmarshaler mandates the error return; never non-nil by design` (checked against main). So this has the same shape as the third instance: an issue reported on a line that carries a `nolint` for it. The sighting's own golangci-lint version is not recorded in what reached me.
+An earlier sighting of the same class, filed outside this repository and moved here, reported one `unparam` issue at `cmd/marvel/ctxforward.go:160:48`. On main today that is the `UnmarshalJSON` method of `resetInstant`, and the line above it reads `//nolint:unparam // json.Unmarshaler mandates the error return; never non-nil by design` (checked against main). So this has the same shape as the third instance: an issue reported on a line whose directive sits on the line above it. The sighting's record says the golangci-lint version was "observed, not recorded". The binary on `PATH` was 2.12.2, and the pinned version is 2.14.0, the same split the third instance found between the hook and `mise.toml`.
 
 A reproduction, reported to me and not re-run for this section, tested whether the cache key includes the absolute worktree path. It did not confirm that in 6 trials:
 
 - **2.13.1:** the key is scoped to the path, so a second worktree misses the first one's entry and nothing replays.
 - **2.13.2:** the key does not depend on the path, but the entry stores a relative path.
 
-Those are two different mechanisms from the one the earlier instances suppose, and both ran on 2.13.x. The first three instances ran on 2.12.2, so the reproduction does not test that version directly. That is the open question: whether the replay depends on a version or on a cache layout that 2.13 changed, and a probe on 2.12.2 would answer it. This section proposes nothing further.
+Those are two different mechanisms from the one the earlier instances suppose, and both ran on 2.13.x. Of the first three instances, only the second and third record a version, 2.12.2; the first records none. Together with the binary on `PATH` in this sighting, 2.12.2 is the version the replays were seen under, and the reproduction does not test it directly. That is the open question: whether the replay depends on a version or on a cache layout that 2.13 changed. A probe on 2.12.2 would answer it. This section proposes nothing further.
