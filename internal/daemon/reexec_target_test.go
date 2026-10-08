@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -342,6 +343,43 @@ func TestValidateReexecTargetWalksTheAncestors(t *testing.T) {
 		dir, bin := dirWithMarvel(t, 0o775)
 		if _, err := validateReexecTarget(bin, "0.2.0"); err == nil || !strings.Contains(err.Error(), dir) {
 			t.Fatalf("want a refusal naming %s, got %v", dir, err)
+		}
+	})
+	t.Run("a directory writable only by others is refused", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o757)
+		if _, err := validateReexecTarget(bin, "0.2.0"); err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "writable") {
+			t.Fatalf("want a refusal naming %s and its writability, got %v", dir, err)
+		}
+	})
+	t.Run("a directory that cannot be read is refused, not trusted", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o755)
+		landed, _ := filepath.EvalSymlinks(dir)
+		real := statDir
+		statDir = func(p string) (os.FileMode, int, error) {
+			if p == filepath.Dir(landed) {
+				return 0, 0, errors.New("stat denied for the test")
+			}
+			return real(p)
+		}
+		t.Cleanup(func() { statDir = real })
+		_, err := validateReexecTarget(bin, "0.2.0")
+		if err == nil || !strings.Contains(err.Error(), filepath.Dir(landed)) || !strings.Contains(err.Error(), "stat denied") {
+			t.Fatalf("want a refusal naming the unreadable ancestor %s, got %v", filepath.Dir(landed), err)
+		}
+	})
+	t.Run("the walk reaches the root directory", func(t *testing.T) {
+		_, bin := dirWithMarvel(t, 0o755)
+		real := statDir
+		statDir = func(p string) (os.FileMode, int, error) {
+			if p == "/" {
+				return os.ModeDir | 0o777, 0, nil
+			}
+			return real(p)
+		}
+		t.Cleanup(func() { statDir = real })
+		_, err := validateReexecTarget(bin, "0.2.0")
+		if err == nil || !strings.Contains(err.Error(), "directory / ") || !strings.Contains(err.Error(), "writable") {
+			t.Fatalf("want a refusal naming / as writable, got %v", err)
 		}
 	})
 	t.Run("a sticky world-writable directory owned by the daemon's user is accepted", func(t *testing.T) {
