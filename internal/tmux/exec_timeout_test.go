@@ -111,3 +111,28 @@ func TestDefaultExecTimeoutApplies(t *testing.T) {
 		t.Fatalf("set: want 1s, got %s", got)
 	}
 }
+
+// NewSession must not take a has-session that timed out for "no such
+// session" and go on to create one. The fake hangs only on has-session and
+// records any new-session, so a NewSession that ignored the timeout would
+// run it.
+func TestNewSessionDoesNotCreateAfterHasSessionTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "new-session-ran")
+	script := filepath.Join(dir, "tmux")
+	body := "#!/bin/sh\ncase \"$3\" in\nhas-session) sleep 60 ;;\nnew-session) : > " + marker + " ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := &Driver{binary: script, socket: "unit"}
+	d.SetExecTimeout(300 * time.Millisecond)
+
+	var err error
+	within(t, func() { err = d.NewSession("s") })
+	if !errors.Is(err, ErrTmuxTimeout) {
+		t.Fatalf("want ErrTmuxTimeout, got %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("new-session ran after has-session timed out")
+	}
+}
