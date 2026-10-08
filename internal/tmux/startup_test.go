@@ -406,3 +406,12 @@ func TestListSessionsVerdictReadsTheProcessListOnce(t *testing.T) {
 		t.Errorf("the process list was read %d times, want 1", reads)
 	}
 }
+
+// The ruled startup bound is one second: about three times the longest wait
+// measured on tmux 3.4 and far under the 10 s exec timeout. Other tests
+// shorten the variable and restore it; this one pins the value they restore.
+func TestStartupBoundIsTheRuledOneSecond(t *testing.T) {
+	if startupBound != time.Second {
+		t.Errorf("startupBound = %v, want the ruled 1s", startupBound)
+	}
+}
