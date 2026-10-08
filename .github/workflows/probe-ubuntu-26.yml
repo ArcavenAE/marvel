@@ -1,0 +1,83 @@
+# One-off check that the jobs which run only on a push to main work on the
+# image the ubuntu-latest label moves to on 2026-10-19 (marvel#593). Those jobs
+# are pinned to ubuntu-24.04, so nothing else runs them on the new image until
+# someone unpins. This job builds and checks on ubuntu-26.04 and publishes
+# nothing: read-only token, no secrets, no environment.
+#
+# Start it by hand (Actions, "Probe Ubuntu 26.04", Run workflow), or it runs
+# when this file changes in a pull request.
+name: Probe Ubuntu 26.04
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/probe-ubuntu-26.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Ubuntu 26.04 probe (main-only jobs)
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Build the four alpha binaries (the Build Binaries job)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          LDFLAGS="-s -w -X main.version=0.0.0-probe -X main.channel=alpha"
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o marvel-darwin-arm64 ./cmd/marvel
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-darwin-amd64 ./cmd/marvel
+          GOOS=linux  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o marvel-linux-amd64  ./cmd/marvel
+          GOOS=linux  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o marvel-linux-arm64  ./cmd/marvel
+          ls -l marvel-*
+
+      - name: Run the tools the Create Release job uses, on local files only
+        run: |
+          set -euo pipefail
+          gh --version
+          git --version
+          sed --version | head -1
+          sha256sum --version | head -1
+          for f in marvel-*; do sha256sum "$f" | cut -d' ' -f1; done
+
+          # The formula step indents a heredoc and strips the indent with sed -i.
+          cat > marvel.rb <<FORMULA
+              class Marvel < Formula
+                version "0.0.0-probe"
+              end
+          FORMULA
+          sed -i 's/^    //' marvel.rb
+          grep -q '^class Marvel < Formula$' marvel.rb
+
+          # The tap step stages and commits in a repository, and skips the
+          # commit when nothing changed. Here the repository is local and new.
+          mkdir tap-repo
+          git -C tap-repo init -q
+          git -C tap-repo config user.name probe
+          git -C tap-repo config user.email probe@example.invalid
+          mkdir -p tap-repo/Formula
+          cp marvel.rb tap-repo/Formula/marvel.rb
+          git -C tap-repo add Formula/marvel.rb
+          if git -C tap-repo diff --cached --quiet; then
+            echo "::error::the staged formula shows no change"
+            exit 1
+          fi
+          git -C tap-repo commit -q -m "probe"
+          git -C tap-repo diff --cached --quiet

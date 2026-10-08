@@ -146,7 +146,7 @@ func TestProbeExercisesTheMainOnlyJobs(t *testing.T) {
 		"GOOS=linux  GOARCH=arm64 go build",
 		"sha256sum",
 		"sed -i",
-		"git diff --cached --quiet",
+		"diff --cached --quiet",
 		"gh --version",
 	} {
 		if !strings.Contains(text, want) {
