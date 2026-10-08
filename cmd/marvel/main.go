@@ -164,6 +164,16 @@ func main() {
 	//   ./marvel shift test/squad  # replace all workers
 	os.Args = stripComments(os.Args)
 
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the command tree. Defining a flag assigns its default to
+// the variable it binds, so a second call resets the global flags: the daemon
+// reads the tree it was started under (cmd.Root()), and tests build one only
+// outside parallel tests.
+func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "marvel",
 		Short: "Agent orchestration control plane",
@@ -205,9 +215,7 @@ func main() {
 	root.AddCommand(newCodexCtxCmd())
 	root.AddCommand(planCmd())
 
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return root
 }
 
 // shiftTimeoutEnv is the environment variable that seeds the daemon's
@@ -315,7 +323,7 @@ Examples:
 				Build:        thisBuild(),
 			})
 			if err != nil {
-				return lockedStateHint(err, pidFilePath)
+				return lockedStateHint(err, pidFilePath, cmd.Root())
 			}
 
 			// Tee Go's log output into: stderr (only when interactive)

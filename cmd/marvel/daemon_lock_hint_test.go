@@ -40,6 +40,10 @@ func writePidfile(t *testing.T, pid int) string {
 	return p
 }
 
+// hint runs lockedStateHint under a freshly built command tree, the way the
+// daemon does under its own.
+func hint(err error, pidFile string) error { return lockedStateHint(err, pidFile, newRootCmd()) }
+
 // seams swaps the liveness probe and the argv reader for one test and puts
 // them back. These tests do not run in parallel: both are package variables.
 func seams(t *testing.T, sig func(int) error, args func(int) ([]string, error)) {
@@ -71,7 +75,7 @@ func TestLockedStateNamesAnIdentifiedHolder(t *testing.T) {
 	} {
 		seams(t, alive, argvOf(argv...))
 		pid := 4242
-		err := lockedStateHint(lockedErr(), writePidfile(t, pid))
+		err := hint(lockedErr(), writePidfile(t, pid))
 		msg := err.Error()
 		for _, want := range []string{
 			"another marvel daemon holds the state lock",
@@ -100,16 +104,19 @@ func TestLockedStateHedgesWhenTheHolderIsNotIdentified(t *testing.T) {
 		"another name":                 {"marvel-alpha", "daemon"},
 		"a name ending in marvel":      {"notmarvel", "daemon"},
 		"daemon only":                  {"daemon"},
+		"a flag value named daemon":    {"marvel", "--cluster", "daemon"},
+		"the daemon logs subcommand":   {"marvel", "daemon", "logs"},
+		"the version command":          {"marvel", "version"},
 		"only flags":                   {"marvel", "--flag"},
 		"empty argv":                   {},
 	}
 	for name, argv := range notDaemon {
 		seams(t, alive, argvOf(argv...))
-		err := lockedStateHint(lockedErr(), writePidfile(t, 4242))
+		err := hint(lockedErr(), writePidfile(t, 4242))
 		assertHedged(t, name, err, "pid 4242, which may not be the holder")
 	}
 	seams(t, alive, func(int) ([]string, error) { return nil, errors.New("no argv here") })
-	assertHedged(t, "argv unreadable", lockedStateHint(lockedErr(), writePidfile(t, 4242)), "pid 4242, which may not be the holder")
+	assertHedged(t, "argv unreadable", hint(lockedErr(), writePidfile(t, 4242)), "pid 4242, which may not be the holder")
 }
 
 func assertHedged(t *testing.T, name string, err error, wantPid string) {
@@ -146,14 +153,14 @@ func TestLockedStateDoesNotNameADeadOrForeignProcess(t *testing.T) {
 	} {
 		argvCalled = false
 		seams(t, func(int) error { return sigErr }, read)
-		assertHedged(t, name, lockedStateHint(lockedErr(), writePidfile(t, 4242)), "pid 4242, which may not be the holder")
+		assertHedged(t, name, hint(lockedErr(), writePidfile(t, 4242)), "pid 4242, which may not be the holder")
 		if argvCalled {
 			t.Errorf("%s: the argv of a process that is not live was read", name)
 		}
 	}
 	// And a real one: a process that has exited.
 	seams(t, liveSignal, read)
-	assertHedged(t, "an exited process", lockedStateHint(lockedErr(), writePidfile(t, deadPid(t))), "which may not be the holder")
+	assertHedged(t, "an exited process", hint(lockedErr(), writePidfile(t, deadPid(t))), "which may not be the holder")
 }
 
 // A real unrelated live process, read through the real argv reader, is never
@@ -167,7 +174,7 @@ func TestLockedStateDoesNotNameARealUnrelatedProcess(t *testing.T) {
 	if liveSignal(c.Process.Pid) != nil {
 		t.Fatal("the probe does not see the sleep as alive")
 	}
-	err := lockedStateHint(lockedErr(), writePidfile(t, c.Process.Pid))
+	err := hint(lockedErr(), writePidfile(t, c.Process.Pid))
 	assertHedged(t, "a live sleep", err, fmt.Sprintf("pid %d, which may not be the holder", c.Process.Pid))
 }
 
@@ -194,9 +201,16 @@ func TestLockedStateReadsThePidfileStrictly(t *testing.T) {
 		"zero":             "0\n",
 		"negative":         "-5\n",
 		"minus one":        "-1\n",
+		// kill(2) and kern.procargs2 take 32 bits: these wrap to this process,
+		// to -1 (every process) and to -5 (a process group).
+		"own pid plus 2^32": fmt.Sprintf("%d\n", int64(own)+1<<32),
+		"2^32 minus one":    "4294967295\n",
+		"2^32 minus five":   "4294967291\n",
+		"2^31":              "2147483648\n",
+		"a 64-bit pid":      "9223372036854775807\n",
 	} {
 		probed = 0
-		err := lockedStateHint(lockedErr(), write(content))
+		err := hint(lockedErr(), write(content))
 		assertHedged(t, name, err, "")
 		if probed != 0 {
 			t.Errorf("%s: the probe ran %d time(s) on a pidfile that names no pid", name, probed)
@@ -209,23 +223,23 @@ func TestLockedStateReadsThePidfileStrictly(t *testing.T) {
 		"digits and a newline": fmt.Sprintf("%d\n", own),
 		"padded":               fmt.Sprintf("  %d \n", own),
 	} {
-		err := lockedStateHint(lockedErr(), write(content))
+		err := hint(lockedErr(), write(content))
 		if !strings.Contains(err.Error(), fmt.Sprintf("pid %d,", own)) {
 			t.Errorf("%s: a clean pid was not read:\n%v", name, err)
 		}
 	}
 	missing := filepath.Join(t.TempDir(), "absent.pid")
-	assertHedged(t, "missing file", lockedStateHint(lockedErr(), missing), "")
-	assertHedged(t, "pidfile off", lockedStateHint(lockedErr(), ""), "")
+	assertHedged(t, "missing file", hint(lockedErr(), missing), "")
+	assertHedged(t, "pidfile off", hint(lockedErr(), ""), "")
 }
 
 // Any other failure passes through untouched.
 func TestLockedStateLeavesOtherErrorsAlone(t *testing.T) {
 	other := errors.New("open state bolt at /s/marvel.bolt: permission denied")
-	if got := lockedStateHint(other, writePidfile(t, os.Getpid())); got != other {
+	if got := hint(other, writePidfile(t, os.Getpid())); got != other {
 		t.Errorf("a non-lock error was changed: %v", got)
 	}
-	if got := lockedStateHint(nil, ""); got != nil {
+	if got := hint(nil, ""); got != nil {
 		t.Errorf("nil became %v", got)
 	}
 }

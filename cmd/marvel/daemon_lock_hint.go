@@ -32,7 +32,7 @@ var liveSignal = func(pid int) error {
 // `marvel daemon`, read by the reader the reexec pre-flight uses. Otherwise the
 // pid is offered as a lead that may not be the holder, and nothing is claimed,
 // because a stale pidfile can name a reused pid. The cause stays in the chain.
-func lockedStateHint(err error, pidFile string) error {
+func lockedStateHint(err error, pidFile string, _ *cobra.Command) error {
 	if err == nil || !errors.Is(err, api.ErrBoltLocked) {
 		return err
 	}
