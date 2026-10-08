@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	boltErrors "go.etcd.io/bbolt/errors"
 )
 
 // TestBoltStore_NotOpenedIsHarmless verifies that a Store with no
@@ -651,6 +653,9 @@ func TestOpenBoltOnAHeldLockReportsErrBoltLocked(t *testing.T) {
 	}
 	if !errors.Is(err, ErrBoltLocked) {
 		t.Errorf("expected ErrBoltLocked, got %v", err)
+	}
+	if !errors.Is(err, boltErrors.ErrTimeout) {
+		t.Errorf("the bbolt timeout is dropped from the chain: %v", err)
 	}
 	if !strings.Contains(err.Error(), path) {
 		t.Errorf("expected the path %q in the error, got %v", path, err)

@@ -12,6 +12,16 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
+// liveSignal is the liveness probe: nil means the process exists and the caller
+// may signal it. A seam so tests do not probe processes they do not own.
+var liveSignal = func(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Signal(syscall.Signal(0))
+}
+
 // lockedStateHint explains a daemon that could not take the state file lock.
 // The lock is the one thing that stops a second daemon, so a held lock usually
 // means a daemon is already running, which reads as the opposite when the
