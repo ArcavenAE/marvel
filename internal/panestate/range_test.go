@@ -88,6 +88,34 @@ func TestLoadReadsAVersionRange(t *testing.T) {
 	}
 }
 
+// A sample on either bound of its own range is the edge case that loads: the
+// range is inclusive, so the version it was captured on may sit on min or max.
+func TestLoadAcceptsASampleOnEitherBound(t *testing.T) {
+	for name, extra := range map[string]string{
+		"sample on min":  "version_range:\n  min: \"2.1.290\"\n  max: \"2.1.293\"",
+		"sample on max":  "version_range:\n  min: \"2.1.285\"\n  max: \"2.1.290\"",
+		"sample is both": "version_range:\n  min: \"2.1.290\"\n  max: \"2.1.290\"",
+	} {
+		if _, err := loadRange(t, extra); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A part with a leading zero is refused, so 2.1.0290 is neither a bound nor a
+// covered version: one spelling per version.
+func TestLeadingZerosAreNotAVersion(t *testing.T) {
+	if rangePattern().Covers("2.1.0290") || rangePattern().Covers("02.1.290") {
+		t.Error("a part with a leading zero was covered")
+	}
+	if _, err := loadRange(t, "version_range:\n  min: \"2.1.0285\"\n  max: \"2.1.293\""); err == nil {
+		t.Error("load accepted a bound with a leading zero")
+	}
+	if !(Pattern{HarnessVersion: "2.1.0", MinVersion: "2.1.0", MaxVersion: "2.1.9"}).Covers("2.1.0") {
+		t.Error("a part that is just 0 is a valid version part")
+	}
+}
+
 // A range that cannot be read as a range, or that leaves out the version the
 // sample was captured from, is refused at load.
 func TestLoadRefusesABadVersionRange(t *testing.T) {

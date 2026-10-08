@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/panestate"
 )
 
 // A claude seat on a version inside the shipped range, here one that was never
@@ -44,6 +45,32 @@ func TestWatchdogOutsideTheShippedRangeIsUncoveredAndNamesTheRange(t *testing.T)
 		}
 		if strings.Join(hs.Covered, ",") != "2.1.285-2.1.293" {
 			t.Errorf("claude %s: covered = %v, want the range 2.1.285-2.1.293", v, hs.Covered)
+		}
+	}
+}
+
+// When the range pattern fails its control, every seat inside the range reads
+// control-failed, not only the one on the sampled version: the watchdog was
+// meant to cover them and cannot, and "uncovered" would send an operator to
+// capture samples instead of fixing the pattern. Outside the range the seat is
+// still uncovered.
+func TestWatchdogRangePatternFailingItsControlReadsControlFailedAcrossTheRange(t *testing.T) {
+	r, screen := shippedRig(t)
+	r.w.sample = func(panestate.Pattern) (string, error) { return "some other screen\n", nil }
+	r.w.control()
+	versions := []string{"2.1.285", "2.1.290", "2.1.291", "2.1.293", "2.1.284", "2.1.294"}
+	for i, v := range versions {
+		r.seat("f"+string(rune('a'+i)), "claude", v, 11*time.Minute, 0).screen = screen
+	}
+	r.w.Once()
+	for i, v := range versions {
+		hs := r.get("f" + string(rune('a'+i))).HarnessState
+		want := api.HarnessStateControlFailed
+		if v == "2.1.284" || v == "2.1.294" {
+			want = api.HarnessStateUncovered
+		}
+		if hs == nil || hs.State != want {
+			t.Errorf("claude %s: harness state = %+v, want %s", v, hs, want)
 		}
 	}
 }
