@@ -2,11 +2,13 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // absence is what tmux's stderr says about the server it was asked to reach.
@@ -43,6 +45,8 @@ var connectingRE = regexp.MustCompile(`error connecting to .+ \((?:No such file 
 func classifyAbsence(text string) absence {
 	switch {
 	case strings.Contains(text, "no server running"):
+		return absenceNoServer
+	case strings.Contains(text, "server exited unexpectedly"):
 		return absenceNoServer
 	case connectingRE.MatchString(text):
 		return absenceNoSocket
@@ -146,4 +150,66 @@ func carriesSocket(fields []string, name string) bool {
 		}
 	}
 	return name == "default" && !named
+}
+
+// startupBound is how long a query waits for a server that is alive but has
+// not begun to listen. A variable so a test can shorten it.
+var startupBound = time.Second
+
+// tmuxRun is one tmux query: its stdout, the text tmux printed on stderr (or
+// the combined output) when it failed, and the error.
+type tmuxRun func() (out []byte, text string, err error)
+
+// whileStarting runs a query and, when tmux says the server is absent while a
+// server process for this name is alive, runs it again until the server
+// answers or startupBound passes. A server process exists a moment before it
+// listens, and a bare absence answer in that moment is not an outage.
+//
+// It returns the last answer and one verdict, absent, which the caller uses
+// as it stands: the process list is read once per answer, and a caller that
+// read it again could see a server another caller started in between and turn
+// a settled absence into an outage. absent is true only for an absence answer
+// with no live server process. A timeout, any text that is not an absence
+// answer, an unreadable process list, and a server still silent after the
+// bound are all not absent.
+//
+// The waits are 10, 20, 40 and 80ms, then 100ms steps. Each attempt keeps the
+// driver's exec timeout.
+func (d *Driver) whileStarting(run tmuxRun) (out []byte, text string, absent bool, err error) {
+	out, text, err = run()
+	retry, absent := d.startingVerdict(text, err)
+	if !retry {
+		return out, text, absent, err
+	}
+	deadline := time.Now().Add(startupBound)
+	wait := 10 * time.Millisecond
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return out, text, false, err
+		}
+		time.Sleep(min(wait, remaining))
+		if wait < 80*time.Millisecond {
+			wait *= 2
+		} else {
+			wait = 100 * time.Millisecond
+		}
+		out, text, err = run()
+		if retry, absent = d.startingVerdict(text, err); !retry {
+			return out, text, absent, err
+		}
+	}
+}
+
+// startingVerdict reads one answer. retry is true for an absence answer while
+// a server process is alive; absent is true for an absence answer with none.
+func (d *Driver) startingVerdict(text string, err error) (retry, absent bool) {
+	if err == nil || errors.Is(err, ErrTmuxTimeout) || classifyAbsence(text) == absenceNone {
+		return false, false
+	}
+	alive, perr := d.serverProcessAlive()
+	if perr != nil {
+		return false, false
+	}
+	return alive, !alive
 }

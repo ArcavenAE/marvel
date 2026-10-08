@@ -133,8 +133,12 @@ func TestStoppedServerWithAFullBacklogIsAnOutageForEveryCaller(t *testing.T) {
 	if err := d.KillPane(pane); err == nil || errors.Is(err, ErrPaneGone) {
 		t.Errorf("KillPane = %v; want an outage error, not ErrPaneGone", err)
 	}
+	start := time.Now()
 	if err := d.NewSession("s"); err == nil {
 		t.Error("NewSession returned nil on a stopped server")
+	}
+	if took := time.Since(start); took > startupBound+500*time.Millisecond {
+		t.Errorf("NewSession took %v on a stopped server, want at most the startup bound plus 500ms", took)
 	}
 	if n := serversNamed(t, d); n != 1 {
 		t.Errorf("%d tmux servers carry this name, want 1", n)

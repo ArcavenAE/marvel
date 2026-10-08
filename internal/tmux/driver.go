@@ -290,15 +290,17 @@ func (d *Driver) HasSession(name string) bool {
 // error, so a caller that creates on absence never starts a second server
 // beside one it cannot reach.
 func (d *Driver) sessionExists(name string) (bool, error) {
-	out, err := d.cmd("has-session", "-t", name).CombinedOutput()
+	_, text, absent, err := d.whileStarting(func() ([]byte, string, error) {
+		out, err := d.cmd("has-session", "-t", name).CombinedOutput()
+		return out, string(out), err
+	})
 	if err == nil {
 		return true, nil
 	}
 	if errors.Is(err, ErrTmuxTimeout) {
 		return false, err
 	}
-	text := string(out)
-	if strings.Contains(text, "can't find session") || d.serverAbsent(text) {
+	if strings.Contains(text, "can't find session") || strings.Contains(text, "no current target") || absent {
 		return false, nil
 	}
 	return false, fmt.Errorf("has-session %s: %s: %w", name, strings.TrimSpace(text), err)
@@ -308,7 +310,14 @@ func (d *Driver) sessionExists(name string) (bool, error) {
 // If no tmux server is running, returns an empty slice and no error —
 // that's the same "no sessions" condition as a freshly started daemon.
 func (d *Driver) ListSessions() ([]string, error) {
-	out, err := d.cmd("list-sessions", "-F", "#S").Output()
+	out, _, absent, err := d.whileStarting(func() ([]byte, string, error) {
+		out, err := d.cmd("list-sessions", "-F", "#S").Output()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return out, string(ee.Stderr), err
+		}
+		return out, "", err
+	})
 	if err != nil {
 		// Treat "there is no live tmux server" as zero sessions, not
 		// an error. tmux reports this two different ways depending on
@@ -316,13 +325,10 @@ func (d *Driver) ListSessions() ([]string, error) {
 		//   - "no server running on <path>" (server existed, then exited)
 		//   - "error connecting to <path> (No such file or directory)"
 		//     (server never started — socket file absent)
-		// Both mean the same thing to us.
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			stderr := string(ee.Stderr)
-			if d.serverAbsent(stderr) {
-				return nil, nil
-			}
+		// Both mean the same thing to us, when no server process for the
+		// socket is alive; see serverAbsent.
+		if absent {
+			return nil, nil
 		}
 		return nil, fmt.Errorf("list-sessions: %w", err)
 	}

@@ -24,6 +24,7 @@ func TestClassifyAbsence(t *testing.T) {
 		{"stale socket after kill-server, measured", "no server running on /private/tmp/tmux-501/probe-argv-10100", absenceNoServer},
 		{"socket file missing, measured", "error connecting to /private/tmp/tmux-501/marvel-probe-nonexistent-63397 (No such file or directory)", absenceNoSocket},
 		{"connection refused, wording from the ruling, unmeasured", "error connecting to /tmp/tmux-501/x (Connection refused)", absenceNoSocket},
+		{"client reached a server that was shutting down, measured on 3.4", "server exited unexpectedly", absenceNoServer},
 		{"permission denied is never absence", "error connecting to /tmp/tmux-501/x (Permission denied)", absenceNone},
 		{"tmux cannot create its directory, measured", "couldn't create directory /private/tmp/noperm/tmux-501 (Permission denied)", absenceNone},
 		{"a bare errno without the prefix is not absence", "No such file or directory", absenceNone},
