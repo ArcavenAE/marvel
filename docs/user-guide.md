@@ -627,6 +627,27 @@ newest survive.
 **When to use:** Increasing capacity for a burst of work, scaling
 down after a sprint, adjusting team composition.
 
+### Scale is refused during a shift
+
+While a team is shifting, `marvel scale` on that team is refused for every
+role, and nothing changes:
+
+```
+team dev/squad: shift in progress, cannot scale
+```
+
+The daemon checks this before it reads the role, so a typo in `--role` shows
+the same refusal. To see whether a shift is running, read `Shift.Phase` in the
+JSON of `marvel describe team dev/squad` (`launching` or `draining`; empty means
+none), or watch the GEN column in `marvel get sessions -w`.
+
+What to do: wait for the shift to finish, then run the same `marvel scale`
+again. A shift that does not reach readiness within its timeout is aborted and
+rolled back, which also clears the refusal. The timeout is 10 minutes unless the
+daemon's `--shift-timeout` or `MARVEL_SHIFT_TIMEOUT` sets another. Scaling is
+not queued behind the shift, so a script that scales a team it also shifts has
+to retry after the shift.
+
 ## Shifts
 
 A shift is a rolling replacement of all sessions with fresh ones.
