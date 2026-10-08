@@ -47,11 +47,11 @@ var (
 
 // resolveDaemon returns both the address and the dial options for the
 // selected cluster. --identity overrides the cluster-level identity.
-// Precedence: --socket, then MARVEL_SOCKET, then the selected cluster's
-// Socket or Server, then the layout default (~/.marvel/run/marvel.sock).
-// config.ResolveSocket covers the last two rungs so every fall-through
-// branch below lands on the same answer; four of them used to reach a
-// hardcoded machine-global path instead. See
+// Precedence: --socket, then an explicit --cluster, then MARVEL_SOCKET,
+// then the config's current cluster's Socket or Server, then the layout
+// default (~/.marvel/run/marvel.sock). config.ResolveSocket covers the last
+// two rungs so every fall-through branch below lands on the same answer; four
+// of them used to reach a hardcoded machine-global path instead. See
 // docs/design/daemon-isolation.md decision 3.
 func resolveDaemon() (string, daemon.DialOptions, error) {
 	addr, opts, err := resolveDaemonAddr()
@@ -88,7 +88,11 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if socketPath != "" {
 		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
-	if env := os.Getenv(config.SocketEnv); env != "" {
+	// An explicit --cluster outranks MARVEL_SOCKET: every marvel seat has the
+	// variable set, so a command aimed at another cluster would otherwise
+	// run on the seat's own daemon without a word (#586). A cluster that is
+	// only the config's current_cluster does not count as explicit.
+	if env := os.Getenv(config.SocketEnv); env != "" && clusterName == "" {
 		return env, daemon.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
