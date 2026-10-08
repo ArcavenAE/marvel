@@ -83,14 +83,14 @@ open (Q-b).
 
 ## 6. Build order
 
-1. marvel, small and needing no tap: the `since` field, and `bus.leaf.up` at
+1. marvel (aae-orc-x2wz4), small and needing no tap: the `since` field, and `bus.leaf.up` at
    `warning` after a reported down (section 4). Tests first: an up after a
    reported down is `warning`; an up after an unreported down is `info`; a
    repeat carries the `since` of the original drop.
 2. The tap (`aae-orc-zhx6x`), which already waits on `aae-orc-31or7`,
    `aae-orc-lgthv` and `aae-orc-umw8p`. Delivery to a supervisor depends on
    it.
-3. The director-side subscriber (section 5).
+3. The director-side subscriber (section 5), aae-orc-mn10f.
 
 Step 1 can be built now, and on its own it changes nothing a reader sees on
 the ring except a field and a severity.
@@ -98,7 +98,7 @@ the ring except a field and a severity.
 ## 7. Open questions
 
 - **Q-a.** Should a cluster with no subscriber still get a direct delivery
-  (path 2 in `wake-service.md` section 7)? This note assumes no, as the
-  ruling chose the bus event.
+  (path 2 in `wake-service.md` section 7)? Open; nothing has ruled it.
+  Tracked with Q-b on the subscriber ticket, aae-orc-mn10f.
 - **Q-b.** Which director component subscribes on the local broker, and how
   it maps `<cluster>` to the right team's supervisor.
