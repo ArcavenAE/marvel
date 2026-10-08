@@ -29,11 +29,11 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
   - Any pid not in `T` means the suspend failed, and it rolls back: `SIGCONT` everything already stopped, server last, then clear the record.
 - **Pid collection.**
   - Collect while tmux still answers: the server pid, each pane pid, and each tree walked with `ps -o pid,pgid,ppid,stat,lstart` until two snapshots match.
-  - Exclude the daemon, its ancestors, the invoking CLI and the managed bus. MEASURED in S9: the broker stays unfrozen, and a resumed seat's shim reconnects on its own.
+  - Exclude the daemon, its ancestors, the invoking CLI and the managed bus. In S9 the broker was left unfrozen (setup), and MEASURED: a resumed seat's shim reconnected on its own.
   - Write the pid list, with start times, to bolt before the first signal.
   - After the server stops, walk again. Write any new pid to bolt, then signal it.
 - **Resume.**
-  - `SIGCONT` every recorded pid, and the server. MEASURED: the order is not load-bearing as long as every recorded pid gets its own `SIGCONT`. The design sends seats first and the server last, matching the measured runs.
+  - `SIGCONT` every recorded pid, and the server. INFERRED: the resume order is not load-bearing as long as every recorded pid gets its own `SIGCONT`. No run varied the resume order on one rig. The basis is that both orders appear in measured runs and each resumed every seat: the F sets sent seats first and the server last, and the second probe's arms sent the server first. The design sends seats first and the server last, matching the F sets.
   - Skip a pid whose start time changed; that pid number now belongs to a different process.
   - Verify that no pid reads `T`.
 - **Not used.**
@@ -110,7 +110,7 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
   It is a warning only, never an action.
 - **Remote authority (ruled, O4 option b):**
   - a new scope word, `suspend`, covers `suspend` and `resume` over `mrvl://` in phase 1. `admin` includes it.
-  - A key with no `marvel-scope` option is admin today (`internal/daemon/scope.go:9-19`), so the new word lets an operator issue a key that can suspend and resume and do nothing else.
+  - The ruling's reason: a key with no `marvel-scope` option is admin today (`internal/daemon/scope.go:9-19`). An admin-only rule would therefore let any such key, issued for some other purpose, freeze a cluster.
   - This is the dissent's side of the review panel's 4-1 vote, carried as ruled.
 - **Recovery.**
   - A fresh daemon resumes from the record.
@@ -130,13 +130,13 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
 
 ## 8. Candidate requirements (provisional)
 
-Each is tagged with its source class: MEASURED (finding-marvel-1kg8), RULED (operator, 2026-10-08) or DESIGN (this doc, open to review).
+Each is tagged with its source class: RULED (operator, 2026-10-08) or DESIGN (this doc, open to review). A DESIGN requirement drawn from a measurement says so and names its basis in finding-marvel-1kg8; a requirement is never itself a measurement.
 
-- **SR-A (MEASURED):** a suspend stops the tmux server before any seat pid, and counts a pid as frozen only after reading `T` twice.
-- **SR-B (MEASURED):** `status` answers while suspended, without the controller lock and without calling tmux.
+- **SR-A (DESIGN, on a MEASURED basis):** a suspend stops the tmux server before any seat pid, and counts a pid as frozen only after reading `T` twice. The basis: a seat stop is undone unless the server is stopped first.
+- **SR-B (DESIGN, on a MEASURED basis):** `status` answers while suspended, without the controller lock and without calling tmux. The basis: every call that touched tmux blocked while it was frozen.
 - **SR-C (RULED):** nothing resumes a suspended cluster except an explicit `resume`. A long pause warns at `suspend_warn_after` and never acts.
 - **SR-D (RULED):** over `mrvl://`, suspend and resume need the `suspend` scope or `admin`.
-- **SR-E (DESIGN):** a daemon that starts with a `suspended` record serves without adopting and makes no tmux call until resume.
+- **SR-E (DESIGN, on a MEASURED basis):** a daemon that starts with a `suspended` record serves without adopting and makes no tmux call until resume. The basis: an adopt under a frozen tmux blocked the whole start.
 - **SR-F (DESIGN):** at resume, every age and deadline that a pause would otherwise trip is shifted by the paused duration. `CreatedAt` is never rewritten.
 
 ## 9. Open before the build
