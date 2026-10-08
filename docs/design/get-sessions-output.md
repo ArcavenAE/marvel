@@ -146,6 +146,9 @@ TEAM stays reachable through `--columns` and `describe`.
   is an opt-in ACCT key column. It shows the account's `LimitReading` as a
   key and a reading. It is never summed, averaged or thresholded across
   rows.
+  The key is a six character fingerprint of the account key; the reading is
+  the fullest window while fresh, the word `stale` once old, and `-` when none
+  was read. Each row prints its own account's cell.
 
 ### 4.4 Activity
 
