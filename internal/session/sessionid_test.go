@@ -1,12 +1,15 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/runtime"
+	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 const sessionIDManifest = `
@@ -142,5 +145,82 @@ func TestPlanLaunchRecordsTheSettingSources(t *testing.T) {
 	mgr.planLaunch(codex)
 	if codex.SettingSources != "" {
 		t.Errorf("codex SettingSources = %q, want empty", codex.SettingSources)
+	}
+}
+
+// The delivery is recorded beside the sources, and a re-plan that passes
+// nothing does not carry the previous launch's value forward (marvel#748).
+func TestPlanLaunchRecordsTheSettingSourcesDelivery(t *testing.T) {
+	t.Parallel()
+	mgr := sessionIDManager(t)
+
+	claude := sessionFor("reviewer", "claude")
+	mgr.planLaunch(claude)
+	if claude.SettingSourcesDelivery != api.SettingSourcesArgv {
+		t.Errorf("claude delivery = %q, want %q", claude.SettingSourcesDelivery, api.SettingSourcesArgv)
+	}
+
+	codex := sessionFor("coder", "codex")
+	codex.SettingSources = "user"
+	codex.SettingSourcesDelivery = api.SettingSourcesShellText
+	mgr.planLaunch(codex)
+	if codex.SettingSources != "" || codex.SettingSourcesDelivery != "" {
+		t.Errorf("codex kept the previous launch: sources %q delivery %q", codex.SettingSources, codex.SettingSourcesDelivery)
+	}
+}
+
+// A launch that falls back to the direct command passes no sources, so the
+// record of the previous launch is cleared with its delivery (marvel#748).
+func TestDirectFallbackClearsTheSettingSourcesAndTheirDelivery(t *testing.T) {
+	t.Parallel()
+	mgr := sessionIDManager(t)
+	sess := sessionFor("reviewer", "claude")
+	sess.Team = "no-such-team"
+	sess.SettingSources = "project"
+	sess.SettingSourcesDelivery = api.SettingSourcesShellText
+	mgr.planLaunch(sess)
+	if sess.SettingSources != "" || sess.SettingSourcesDelivery != "" {
+		t.Errorf("a direct launch kept sources %q delivery %q", sess.SettingSources, sess.SettingSourcesDelivery)
+	}
+}
+
+// The live record keeps the delivery with the sources once the pane is up, so
+// describe and a daemon restart read what the launch recorded (marvel#748).
+func TestCreateStoresTheSettingSourcesDelivery(t *testing.T) {
+	skipIfNoTmux(t)
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+	mgr.ProjectionDir = t.TempDir()
+	manifest := strings.NewReplacer(`"acme"`, `"acme-delivery"`, `command = "claude"`, `command = "`+bin+`"`).Replace(sessionIDManifest)
+	m, err := api.ParseManifestBytes([]byte(manifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace("acme-delivery") })
+
+	sess := &api.Session{
+		Name: "squad-reviewer-g1-0", Workspace: "acme-delivery", Team: "squad", Role: "reviewer",
+		Runtime: api.Runtime{Name: "claude", Command: bin},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	stored, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SettingSources != "user,project,local" || stored.SettingSourcesDelivery != api.SettingSourcesArgv {
+		t.Errorf("stored sources %q delivery %q, want user,project,local and argv", stored.SettingSources, stored.SettingSourcesDelivery)
 	}
 }
