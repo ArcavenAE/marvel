@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -181,5 +183,121 @@ func TestReexecPreflightSkipsARemoteDaemon(t *testing.T) {
 	}
 	if got := strings.Join(r.trace, ","); got != "send" {
 		t.Fatalf("order = %s, want only send for a remote daemon", got)
+	}
+}
+
+// A remote daemon is not checked, and the operator is told so before the
+// request goes out.
+func TestReexecRemoteSaysItSkippedThePreflightAndStillSends(t *testing.T) {
+	r := newRig(t, "/opt/marvel/marvel", "daemon")
+	withSocket(t, "mrvl://desk")
+	cmd := daemonReexecCmd()
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	var errOut bytes.Buffer
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&errOut)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"pre-flight skipped: mrvl://desk is remote", "cannot be read from here", "will not come back", "Check them on that host first"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("the skip line should carry %q, got %q", want, errOut.String())
+		}
+	}
+	if got := strings.Join(r.trace, ","); got != "send" {
+		t.Fatalf("order = %s, want the request sent after the line", got)
+	}
+}
+
+// The argument list is read exactly: an empty argument and one holding a space
+// survive, which a flattened `ps` line loses.
+func TestParseCmdlineKeepsEmptyAndSpacedArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"plain", "marvel\x00daemon\x00--mrvl\x00", []string{"marvel", "daemon", "--mrvl"}},
+		{"an empty argument", "marvel\x00daemon\x00--mrvl\x00\x00", []string{"marvel", "daemon", "--mrvl", ""}},
+		{"an empty argument in the middle", "marvel\x00daemon\x00--state-bolt\x00\x00--reclaim\x00", []string{"marvel", "daemon", "--state-bolt", "", "--reclaim"}},
+		{"a space inside an argument", "/opt/My Tools/marvel\x00daemon\x00--socket\x00/run/my dir/m.sock\x00", []string{"/opt/My Tools/marvel", "daemon", "--socket", "/run/my dir/m.sock"}},
+	}
+	for _, c := range cases {
+		got, err := parseCmdline([]byte(c.in))
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %q (%v), want %q", c.name, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"", "\x00"} {
+		if got, err := parseCmdline([]byte(bad)); err == nil {
+			t.Errorf("%q: a process with no arguments is unreadable, got %q", bad, got)
+		}
+	}
+}
+
+// procargs2 is argc as a native int32, the executable path, NUL padding, then
+// argc NUL-terminated arguments, then the environment, which is not read.
+func procargs2(argc int32, exec string, pad int, args []string, env ...string) []byte {
+	b := binary.LittleEndian.AppendUint32(nil, uint32(argc))
+	b = append(b, exec...)
+	b = append(b, make([]byte, 1+pad)...)
+	for _, a := range args {
+		b = append(append(b, a...), 0)
+	}
+	for _, e := range env {
+		b = append(append(b, e...), 0)
+	}
+	return b
+}
+
+func TestParseProcargs2KeepsEmptyAndSpacedArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+		want []string
+	}{
+		{"plain", procargs2(2, "/opt/marvel", 3, []string{"marvel", "daemon"}, "HOME=/h"), []string{"marvel", "daemon"}},
+		{"an empty argument", procargs2(4, "/opt/marvel", 0, []string{"marvel", "daemon", "--mrvl", ""}, "HOME=/h"), []string{"marvel", "daemon", "--mrvl", ""}},
+		{"a space inside an argument", procargs2(3, "/opt/My Tools/marvel", 5, []string{"/opt/My Tools/marvel", "daemon", "--socket"}, "A=b"), []string{"/opt/My Tools/marvel", "daemon", "--socket"}},
+		{"the environment is not read", procargs2(1, "/m", 1, []string{"marvel"}, "X=1", "", "Y=2"), []string{"marvel"}},
+	}
+	for _, c := range cases {
+		got, err := parseProcargs2(c.in)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %q (%v), want %q", c.name, got, err, c.want)
+		}
+	}
+	for name, bad := range map[string][]byte{
+		"too short":              {1, 0},
+		"argc larger than given": procargs2(5, "/m", 0, []string{"marvel", "daemon"}),
+		"no arguments":           procargs2(0, "/m", 0, nil),
+		"negative argc":          procargs2(-1, "/m", 0, []string{"marvel"}),
+		"an unterminated last":   append(procargs2(2, "/m", 0, []string{"marvel"}), "daemon"...),
+	} {
+		if got, err := parseProcargs2(bad); err == nil {
+			t.Errorf("%s: want an error, got %q", name, got)
+		}
+	}
+}
+
+// `daemon --mrvl ""` flattens to `daemon --mrvl` under ps and passes. Read
+// exactly, the empty word is a stray argument and the daemon is refused.
+func TestReexecPreflightRefusesAnEmptyArgumentTheExactReadKeeps(t *testing.T) {
+	r := newRig(t)
+	daemonArgs = func(int) ([]string, error) {
+		return parseCmdline([]byte("/opt/marvel/marvel\x00daemon\x00--mrvl\x00\x00"))
+	}
+	err := runReexecCmd(t)
+	if err == nil || !strings.Contains(err.Error(), "rejects") || !strings.Contains(err.Error(), pointer) {
+		t.Fatalf("want a refusal of `daemon --mrvl \"\"` with the pointer, got %v", err)
+	}
+	if len(r.sent) != 0 {
+		t.Fatalf("a reexec was sent: %v", r.sent)
+	}
+	daemonArgs = func(int) ([]string, error) {
+		return parseCmdline([]byte("/opt/marvel/marvel\x00daemon\x00--mrvl\x00"))
+	}
+	if err := runReexecCmd(t); err != nil {
+		t.Fatalf("`daemon --mrvl` is the control and must pass: %v", err)
 	}
 }

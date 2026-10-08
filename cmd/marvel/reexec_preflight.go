@@ -41,7 +41,8 @@ func psArgs(pid int) ([]string, error) {
 // check, not a copy of them. What cannot be read is refused, never guessed. A
 // remote daemon is skipped: its pid is on another host, so no local process
 // table can answer for it.
-func preflightReexec() error {
+func preflightReexec(w io.Writer) error {
+	_ = w // the remote line comes with the green commit
 	addr, _, err := resolveDaemonAddr()
 	if err != nil || !isLocalDaemonAddr(addr) {
 		return nil

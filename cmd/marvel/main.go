@@ -436,7 +436,7 @@ re-binds the same socket, and adopts those panes.
 Use this after installing a new binary out of band. To fetch, install,
 and adopt in one step, use 'marvel upgrade --daemon'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := preflightReexec(); err != nil {
+			if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			req, sent := reexecRequest()
@@ -1905,7 +1905,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				return err
 			}
 			return afterUpgrade(res, reexecDaemon, func() error {
-				if err := preflightReexec(); err != nil {
+				if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
 					return err
 				}
 				req, sent := reexecRequest()
