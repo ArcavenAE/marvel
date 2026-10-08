@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +135,46 @@ func TestListSessionsBareErrnoIsNotAbsence(t *testing.T) {
 	d := absentDriver(t, "open: No such file or directory", procLines())
 	if names, err := d.ListSessions(); err == nil {
 		t.Errorf("ListSessions = %v, nil; want an error for a bare errno without the connecting prefix", names)
+	}
+}
+
+// A live server whose socket file was removed (a /tmp sweep, a stray rm) is
+// not an absent server: asking for its pane must be an outage, not "gone", or
+// the caller reaps every session the server still runs. Real tmux, real ps.
+func TestPaneStatusLiveServerWithItsSocketFileRemovedIsAnOutage(t *testing.T) {
+	skipIfNoTmux(t)
+	dir, err := os.MkdirTemp("/tmp", "mxabs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	name := "mxabs" + filepath.Base(dir)
+	t.Setenv("MARVEL_TMUX_SOCKET", name)
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.NewSession("probe"); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	t.Cleanup(func() { _ = d.KillServer() })
+	pane, err := d.NewPane("probe", "sleep 60", "probe", nil, false)
+	if err != nil {
+		t.Fatalf("start a pane: %v", err)
+	}
+	out, err := d.cmd("display-message", "-p", "#{socket_path}").Output()
+	if err != nil {
+		t.Fatalf("ask the server for its socket: %v", err)
+	}
+	sock := strings.TrimSpace(string(out))
+	if st, err := d.PaneStatus(pane); err != nil || !st.Exists {
+		t.Fatalf("setup: PaneStatus before the socket is removed = %+v, %v; want the pane", st, err)
+	}
+	if err := os.Remove(sock); err != nil {
+		t.Fatalf("remove the socket file: %v", err)
+	}
+	if st, err := d.PaneStatus(pane); err == nil {
+		t.Errorf("PaneStatus = %+v, nil with the server alive and its socket file gone; want an error", st)
 	}
 }

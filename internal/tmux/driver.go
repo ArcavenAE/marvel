@@ -522,7 +522,7 @@ func (d *Driver) PaneStatus(paneID string) (PaneStatus, error) {
 		// that is the "gone" answer, not a failure. Anything else (no
 		// server, bad socket) is reported so a caller does not read an
 		// outage as a fleet of vanished panes.
-		if paneGoneText(text) {
+		if paneGoneText(text) || d.serverAbsent(text) {
 			return PaneStatus{}, nil
 		}
 		return PaneStatus{}, fmt.Errorf("pane-status %s: %s: %w", paneID, text, err)
@@ -571,7 +571,7 @@ func (d *Driver) KillPane(paneID string) error {
 		if errors.Is(err, ErrTmuxTimeout) {
 			return fmt.Errorf("kill-pane %s: %w", paneID, err)
 		}
-		if paneGoneText(string(out)) {
+		if paneGoneText(string(out)) || d.serverAbsent(string(out)) {
 			return fmt.Errorf("kill-pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), ErrPaneGone)
 		}
 		return fmt.Errorf("kill-pane %s: %s: %w", paneID, string(out), err)
