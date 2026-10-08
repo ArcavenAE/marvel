@@ -2617,6 +2617,7 @@ type watchSort struct {
 	disconnected bool      // the last fetch failed
 	asOf         time.Time // when lastSessions was read
 	late         bool      // a fetch is in flight past its deadline
+	fetched      bool      // a fetch has finished at least once
 }
 
 // watchData is what one fetch for the watch view brings back: the sessions
@@ -2644,7 +2645,7 @@ func fetchWatchData(wantHeader bool) watchData {
 // apply takes a finished fetch into the view. A failed fetch keeps the last
 // good sessions on screen.
 func (ws *watchSort) apply(d watchData) {
-	ws.late = false
+	ws.late, ws.fetched = false, true
 	ws.header = d.header
 	if d.err != nil {
 		ws.disconnected = true
@@ -2960,6 +2961,19 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		header = renderHeader(ws.header, now)
 	}
 	fit := fitOptions{width: terminalWidth(), explicit: ws.explicit, noTrunc: ws.noTrunc}
+
+	if ws.late {
+		if ws.asOf.IsZero() {
+			fmt.Fprintf(&buf, "⚠ daemon not answering, no data yet\n\n")
+		} else {
+			fmt.Fprintf(&buf, "⚠ daemon not answering, data as of %s\n\n", ws.asOf.Format("15:04:05"))
+		}
+	}
+
+	if !ws.fetched {
+		fmt.Fprintf(&buf, "waiting for the first answer from the daemon\n")
+		return buf.String()
+	}
 
 	if ws.disconnected {
 		fmt.Fprintf(&buf, "⚠ daemon disconnected — waiting for reconnect\n\n")

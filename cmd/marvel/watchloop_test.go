@@ -165,6 +165,11 @@ func TestWatchClearsTheBannerWhenTheLateFetchReturns(t *testing.T) {
 	if strings.Contains(f, "not answering") {
 		t.Errorf("the banner should clear once the fetch answers:\n%s", f)
 	}
+
+	// The slot is free again: the next tick fetches.
+	r.ticks <- watchT0
+	r.results <- r.good("agent-2")
+	r.frame("the next fetch's table", contains("agent-2"))
 }
 
 // Ticks while a fetch is in flight do not start another: the view has one
@@ -210,5 +215,20 @@ func TestWatchShowsDisconnectedWhenAFetchFails(t *testing.T) {
 	f := r.frame("the disconnected banner", contains("daemon disconnected"))
 	if !strings.Contains(f, "last known state") || !strings.Contains(f, "agent-0") {
 		t.Errorf("the disconnected frame should keep the last known table:\n%s", f)
+	}
+}
+
+// With nothing in flight, a sort key still redraws from what is on hand and
+// starts no fetch: only the tick fetches.
+func TestWatchSortKeyWhenIdleDoesNotFetch(t *testing.T) {
+	r := newLoopRig(t, time.Hour)
+	r.results <- r.good("agent-0")
+	r.frame("the first table", contains("agent-0"))
+
+	r.keys <- 's'
+	r.frame("the new sort label", contains("sort: state asc"))
+	time.Sleep(50 * time.Millisecond)
+	if got := r.calls.Load(); got != 1 {
+		t.Errorf("fetch called %d times after a sort key with nothing in flight, want 1", got)
 	}
 }

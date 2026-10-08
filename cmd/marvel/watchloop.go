@@ -60,26 +60,65 @@ func handleWatchKey(ws *watchSort, key byte) (quit, redraw bool) {
 }
 
 // watchLoop draws the watch view until q or Ctrl-C.
+//
+// A fetch runs in its own goroutine and the loop never waits on it, so a
+// daemon that is not answering cannot take the keys away. At most one fetch
+// is outstanding: ticks while it is in flight start nothing, so a dead daemon
+// does not pile up connections. If a fetch is still running when its deadline
+// passes, the frame keeps the last good data under a stale banner, and the
+// banner clears when the fetch answers.
 func watchLoop(ws *watchSort, cfg watchLoopConfig, keys <-chan byte, ticks <-chan time.Time) {
-	draw := func() {
-		if !ws.showHelp {
-			ws.apply(cfg.fetch())
+	var (
+		results  = make(chan watchData, 1)
+		inflight bool
+		deadline *time.Timer
+		late     <-chan time.Time
+	)
+	start := func() {
+		if inflight {
+			return
 		}
-		cfg.out(renderWatchFrame(ws, cfg.interval, cfg.now()))
+		inflight = true
+		deadline = time.NewTimer(cfg.deadline)
+		late = deadline.C
+		go func() { results <- cfg.fetch() }()
 	}
+	stopDeadline := func() {
+		if deadline != nil {
+			deadline.Stop()
+		}
+		late = nil
+	}
+	draw := func() { cfg.out(renderWatchFrame(ws, cfg.interval, cfg.now())) }
+
+	start()
 	draw()
 	for {
 		select {
 		case key := <-keys:
 			quit, redraw := handleWatchKey(ws, key)
 			if quit {
+				stopDeadline()
 				cfg.out("\033[2J\033[H")
 				return
 			}
 			if redraw {
-				draw()
+				draw() // from what is on hand; a key never waits on the daemon
 			}
 		case <-ticks:
+			if !ws.showHelp {
+				start()
+			}
+		case d := <-results:
+			inflight = false
+			stopDeadline()
+			ws.apply(d)
+			if !ws.showHelp {
+				draw()
+			}
+		case <-late:
+			late = nil
+			ws.late = true
 			if !ws.showHelp {
 				draw()
 			}
