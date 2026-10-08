@@ -236,8 +236,19 @@ func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
-			check(x.Args)
-			seen += len(x.Args)
+			// Only the calls that build a tmux argument list: d.cmd(...) and
+			// append(args, ...). A `ps -t <tty>` is not tmux.
+			isCmd := false
+			switch fun := x.Fun.(type) {
+			case *ast.SelectorExpr:
+				isCmd = fun.Sel.Name == "cmd"
+			case *ast.Ident:
+				isCmd = fun.Name == "append"
+			}
+			if isCmd {
+				check(x.Args)
+				seen += len(x.Args)
+			}
 		case *ast.CompositeLit:
 			check(x.Elts)
 			seen += len(x.Elts)
