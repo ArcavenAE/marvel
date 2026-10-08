@@ -42,3 +42,18 @@ func TestSpecColumnIsOptInAndSelectable(t *testing.T) {
 		t.Fatalf("table lacks the SPEC column:\n%s", out)
 	}
 }
+
+// marvel work says how many sessions an apply leaves behind, and nothing when
+// none are.
+func TestBehindLine(t *testing.T) {
+	for n, want := range map[int]string{
+		0:  "",
+		-1: "",
+		1:  "1 session is behind its role and takes the new spec at its next spawn",
+		2:  "2 sessions are behind their role and take the new spec at their next spawn",
+	} {
+		if got := behindLine(n); got != want {
+			t.Errorf("behindLine(%d) = %q, want %q", n, got, want)
+		}
+	}
+}

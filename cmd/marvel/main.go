@@ -1012,12 +1012,16 @@ func workCmd() *cobra.Command {
 			var result struct {
 				Workspace  string   `json:"workspace"`
 				Advisories []string `json:"advisories"`
+				Behind     int      `json:"behind"`
 			}
 			_ = json.Unmarshal(resp.Result, &result)
 			for _, a := range result.Advisories {
 				fmt.Fprintf(os.Stderr, "warning: %s\n", a)
 			}
 			fmt.Printf("workspace/%s ready\n", result.Workspace)
+			if line := behindLine(result.Behind); line != "" {
+				fmt.Println(line)
+			}
 			return nil
 		},
 	}
@@ -2961,9 +2965,34 @@ func newSessionRow(s api.Session) sessionRow {
 		lastActive: lastActiveCell(s, lastActiveClock()),
 		age:        ageCell(s, lastActiveClock()),
 		active:     activePctCell(s, lastActiveClock()),
+		spec:       specCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
+	}
+}
+
+// specCell is the SPEC column: whether the session's runtime still equals its
+// role's, and "-" where there is no role to compare against.
+func specCell(s api.Session) string {
+	if s.Spec == "" {
+		return "-"
+	}
+	return s.Spec
+}
+
+// behindLine is the line `marvel work` prints after the ready line when an
+// apply leaves sessions on an older runtime than their role's. Under operator
+// ruling D4 a session takes the role's current spec at its next spawn, so this
+// is information and not a warning. Nothing when none are behind.
+func behindLine(n int) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n == 1:
+		return "1 session is behind its role and takes the new spec at its next spawn"
+	default:
+		return fmt.Sprintf("%d sessions are behind their role and take the new spec at their next spawn", n)
 	}
 }
 

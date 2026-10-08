@@ -104,3 +104,24 @@ raised the `Env` exposure with the operator separately.
 One PR: the comparison function beside `api.Runtime`, the derived field on the
 session list and describe responses, the `SPEC` column, the describe line, and
 the apply count. marvel-builder builds it after this design is reviewed.
+
+## 8. As built
+
+Where the build differs from the sections above:
+
+- `describe session` prints the stored session as JSON, so there is no `Spec:`
+  line. The two derived fields appear in that JSON as `spec` (`current` or
+  `behind`, absent when there is no role) and `spec_diff` (field names only,
+  in `api.Runtime` order: `name`, `command`, `args`, `script`, `mode`,
+  `prompt`, `context_window`, `context_feed`, `env`, `backend`).
+- The `SPEC` column is opt-in, like `workdir`, `tout` and `age`: a pipe keeps
+  printing what it always printed, and `marvel get sessions --columns spec`
+  shows it. It is in neither the wide set nor the width fit's priority list, so
+  no existing width tier changes. Putting it in a default tier is a separate,
+  small change.
+- `marvel work` prints the count line after `workspace/<name> ready`, singular
+  for one session. The daemon returns it as `behind` in the apply result and
+  counts every stored session of the applied teams, finished headless runs
+  included.
+- `api.RuntimeDrift` is the one comparison. A test sets each `Runtime` field to
+  its zero value in turn, so a field added to `Runtime` and not compared fails.

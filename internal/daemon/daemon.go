@@ -1537,10 +1537,18 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// Trigger immediate reconciliation.
 	d.teamCtrl.ReconcileOnce()
 
+	teamNames := make([]string, 0, len(m.Teams))
+	for _, mt := range m.Teams {
+		teamNames = append(teamNames, mt.Name)
+	}
 	result, _ := json.Marshal(map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
 		"advisories": append(append(workDirAdvisories, advisories...), scheduleAdvisories...),
+		// Sessions of the applied teams still on an older runtime than their
+		// role's. Information, not a warning: under operator ruling D4 this
+		// is the normal state right after an apply.
+		"behind": d.behindCount(m.Workspace.Name, teamNames),
 	})
 	return Response{Result: result}
 }
@@ -1583,6 +1591,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		}
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
+		d.stampSpec(live)
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
@@ -1652,6 +1661,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 			one := []api.Session{sess}
 			d.stampLimitReading(one, time.Now().UTC())
 			d.stampActivity(one, time.Now().UTC())
+			d.stampSpec(one)
 			// A record with sources and no delivery predates the delivery
 			// field; say so and never guess (marvel#748). The note is set on
 			// this copy at read time and is never stored: nothing here writes

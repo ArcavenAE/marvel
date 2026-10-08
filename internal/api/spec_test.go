@@ -90,3 +90,17 @@ func TestRuntimeDriftNeverCarriesAValue(t *testing.T) {
 		}
 	}
 }
+
+// A field added to Runtime must be compared here too: every field of a fully
+// populated runtime, set to its zero value in turn, shows up as drift.
+func TestRuntimeDriftCoversEveryRuntimeField(t *testing.T) {
+	full := fullRuntime()
+	rv := reflect.ValueOf(full)
+	for i := 0; i < rv.NumField(); i++ {
+		role := full
+		reflect.ValueOf(&role).Elem().Field(i).SetZero()
+		if len(RuntimeDrift(full, role)) == 0 {
+			t.Errorf("Runtime.%s is not compared by RuntimeDrift", rv.Type().Field(i).Name)
+		}
+	}
+}
