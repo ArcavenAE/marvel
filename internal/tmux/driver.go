@@ -94,7 +94,7 @@ type Driver struct {
 //
 //   - marvel sessions left on the shared default server by an older
 //     build become invisible rather than adopted. They keep running.
-//     Clean them up with `tmux -L default kill-session -t marvel-<name>`.
+//     Clean them up with `tmux -L default kill-session -t '=marvel-<name>'`.
 //   - MARVEL_TMUX_SOCKET=default reproduces the old shared behavior
 //     exactly, since `default` is tmux's own default server name.
 //
@@ -202,6 +202,19 @@ func (d *Driver) cmd(args ...string) *tmuxCmd {
 	return &tmuxCmd{Cmd: c, ctx: ctx, cancel: cancel, name: firstArg(args), bound: d.timeout()}
 }
 
+// sessionTarget names a session for a command whose -t is a session
+// (has-session, kill-session). tmux matches a bare name against the start of
+// other sessions' names, and against window names, so s reaches sab when s is
+// absent and a kill-session for it kills sab. The = makes the match whole
+// (marvel#737).
+func sessionTarget(name string) string { return "=" + name }
+
+// sessionScope names a session for a command whose -t is a window or pane
+// (new-window, set-option, show-options, list-panes). The = is the same exact
+// match; the colon says the name is a session, not a window, so a window that
+// is named like the session's start cannot take it.
+func sessionScope(name string) string { return "=" + name + ":" }
+
 func firstArg(args []string) string {
 	if len(args) == 0 {
 		return ""
@@ -303,7 +316,7 @@ func (d *Driver) sessionExists(name string) (bool, error) {
 // time means startupBound).
 func (d *Driver) sessionExistsUntil(name string, until time.Time) (bool, error) {
 	_, text, absent, err := d.whileStarting(until, func() ([]byte, string, error) {
-		out, err := d.cmd("has-session", "-t", name).CombinedOutput()
+		out, err := d.cmd("has-session", "-t", sessionTarget(name)).CombinedOutput()
 		return out, string(out), err
 	})
 	if err == nil {
@@ -403,7 +416,7 @@ func (d *Driver) NewSession(name string) error {
 	// always uses new-window, so every marvel-created agent pane gets it.
 	// Best-effort, matching the driver's other set-option calls: a session
 	// that missed the raise still runs, it just scrapes less scrollback.
-	_ = d.cmd("set-option", "-t", name, "history-limit", strconv.Itoa(DefaultHistoryLimit)).Run()
+	_ = d.cmd("set-option", "-t", sessionScope(name), "history-limit", strconv.Itoa(DefaultHistoryLimit)).Run()
 	d.ensureRemainOnExit()
 	return nil
 }
@@ -476,7 +489,7 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string,
 // starts the pane where the tmux server is, as NewPane always did.
 func (d *Driver) NewPaneAt(session, command, title, dir string, envs map[string]string, keepOnExit bool) (string, error) {
 	args := []string{
-		"new-window", "-t", session,
+		"new-window", "-t", sessionScope(session),
 		"-d",
 		"-P", "-F", "#{pane_id}",
 	}
@@ -658,7 +671,7 @@ func (d *Driver) KillSession(name string) error {
 	if !exists {
 		return nil
 	}
-	if out, err := d.cmd("kill-session", "-t", name).CombinedOutput(); err != nil {
+	if out, err := d.cmd("kill-session", "-t", sessionTarget(name)).CombinedOutput(); err != nil {
 		return fmt.Errorf("kill-session %s: %s: %w", name, string(out), err)
 	}
 	return nil
@@ -1072,7 +1085,7 @@ func (d *Driver) PaneForeground(paneID string) (command string, width int, err e
 // Used to verify session-scoped options marvel sets at session creation,
 // such as history-limit.
 func (d *Driver) ShowOption(session, option string) (string, error) {
-	out, err := d.cmd("show-options", "-t", session, "-v", option).CombinedOutput()
+	out, err := d.cmd("show-options", "-t", sessionScope(session), "-v", option).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("show-options %s %s: %s: %w", session, option, string(out), err)
 	}
@@ -1081,7 +1094,7 @@ func (d *Driver) ShowOption(session, option string) (string, error) {
 
 // ListPanes lists all panes across all windows in a session.
 func (d *Driver) ListPanes(session string) ([]PaneInfo, error) {
-	out, err := d.cmd("list-panes", "-t", session, "-s",
+	out, err := d.cmd("list-panes", "-t", sessionScope(session), "-s",
 		"-F", "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{"+PaneMarker+"}").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("list-panes %s: %s: %w", session, string(out), err)

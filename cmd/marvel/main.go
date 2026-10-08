@@ -1944,7 +1944,7 @@ Since marvel #128 each HOME gets its own tmux server, so a bare
 ` + "`tmux kill-session -t marvel-<workspace>`" + ` reaches the wrong server. Scripts
 and runbooks use this to get the name instead of recomputing it:
 
-  tmux -L "$(marvel config tmux-server)" kill-session -t marvel-demo
+  tmux -L "$(marvel config tmux-server)" kill-session -t '=marvel-demo'
 
 MARVEL_TMUX_SOCKET overrides the derived name and is reported as-is.`,
 		Args: cobra.NoArgs,
