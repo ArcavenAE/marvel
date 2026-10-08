@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,6 +71,10 @@ type ManifestWorkspace struct {
 	// Root is the filesystem root the workspace lives in; marvel work fills
 	// it from the manifest's directory when absent.
 	Root string `toml:"root,omitempty" yaml:"root,omitempty"`
+	// TrustedFolders lists the operator's own repos a codex seat may trust.
+	// A pointer, so an absent key (leave the stored list alone) differs from an
+	// empty list (revoke it); omitempty on a plain slice would lose that.
+	TrustedFolders *[]string `toml:"trusted_folders,omitempty" yaml:"trusted_folders,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
@@ -761,15 +766,25 @@ func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
 	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	if m.Workspace.TrustedFolders != nil {
+		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+	}
 	// Ignore already-exists for workspace (idempotent apply), but a re-applied
 	// root moves. An apply that names no root leaves a stored one alone.
 	if err := store.CreateWorkspace(ws); err != nil {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
-				live.Root = m.Workspace.Root
+				if m.Workspace.Root != "" {
+					live.Root = m.Workspace.Root
+				}
+				// A list that is present replaces the stored one, an empty
+				// list revokes it, and an absent key leaves it alone.
+				if m.Workspace.TrustedFolders != nil {
+					live.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+				}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply workspace: %w", err)

@@ -138,8 +138,13 @@ type Workspace struct {
 	// Root is the absolute filesystem root the workspace lives in, the one
 	// anchor a relative workdir resolves against (docs/design/
 	// session-working-directory.md, decision 1).
-	Root      string    `toml:"root,omitempty"`
-	CreatedAt time.Time `toml:"-"`
+	Root string `toml:"root,omitempty"`
+	// TrustedFolders are the git top-levels of the operator's own repos, as
+	// the manifest wrote them (a leading ~/ and a relative path are resolved at
+	// spawn). A codex seat whose start directory is inside one is seeded
+	// trusted; every other folder stays untrusted (marvel#684).
+	TrustedFolders []string  `toml:"trusted_folders,omitempty"`
+	CreatedAt      time.Time `toml:"-"`
 }
 
 // RuntimeMode selects how a harness is launched within its pane.

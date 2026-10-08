@@ -1314,7 +1314,11 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
+	if err := m.ValidateTrustedFolders(); err != nil {
+		return Response{Error: err.Error()}
+	}
 	workDirAdvisories = append(workDirAdvisories, m.LegacyPlacementNotes(d.store)...)
+	workDirAdvisories = append(workDirAdvisories, m.TrustedFolderNotes(d.store)...)
 
 	// Pre-flight: refuse to apply if any role's runtime command/script
 	// isn't resolvable. See ArcavenAE/marvel#9 — without this a missing
