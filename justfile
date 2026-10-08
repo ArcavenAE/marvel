@@ -226,12 +226,12 @@ clean:
       server=$(./bin/marvel config tmux-server 2>/dev/null || true)
     fi
     if [[ -n "${server}" ]]; then
-      tmux -L "${server}" kill-session -t marvel-demo 2>/dev/null || true
+      tmux -L "${server}" kill-session -t '=marvel-demo' 2>/dev/null || true
       echo "cleaned tmux session marvel-demo on server ${server}"
     else
       echo "note: ./bin/marvel not built, so the tmux server name is unknown."
       echo "      Skipped the tmux cleanup. Run 'just build' first, or:"
-      echo "      tmux -L \"\$(marvel config tmux-server)\" kill-session -t marvel-demo"
+      echo "      tmux -L \"\$(marvel config tmux-server)\" kill-session -t '=marvel-demo'"
     fi
     rm -f "${HOME}/.marvel/run/marvel.sock" "${HOME}/.marvel/run/marvel.sock.lock"
     rm -rf bin/
@@ -351,7 +351,7 @@ cli_min_width := "100"
 demo-watch: build
     #!/usr/bin/env bash
     set -euo pipefail
-    tmux kill-session -t marvel-watch 2>/dev/null || true
+    tmux kill-session -t '=marvel-watch' 2>/dev/null || true
     tmux new-session -d -s marvel-watch -x 250 -y 55
     P0=$(tmux display -p -t marvel-watch '#{pane_id}')
     P2=$(tmux split-window -t "$P0" -v -l 50% -P -F '#{pane_id}')

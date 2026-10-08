@@ -94,7 +94,7 @@ type Driver struct {
 //
 //   - marvel sessions left on the shared default server by an older
 //     build become invisible rather than adopted. They keep running.
-//     Clean them up with `tmux -L default kill-session -t marvel-<name>`.
+//     Clean them up with `tmux -L default kill-session -t '=marvel-<name>'`.
 //   - MARVEL_TMUX_SOCKET=default reproduces the old shared behavior
 //     exactly, since `default` is tmux's own default server name.
 //
