@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -196,16 +197,16 @@ func TestHasSessionOnAMissingExactTargetKeepsTheNotFoundWording(t *testing.T) {
 	}
 }
 
-// Fails if driver.go passes a bare session name to -t: every -t in it must
-// take a pane id or a name made by sessionTarget or sessionScope. This is the
-// shape of TestNoNewRouteIntoTheDaemonsOwnSocket: a scan of the source, so a
-// new call site cannot bring the bare form back unseen.
-func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
+// guardViolations lists where the tmux argument lists in src pass something
+// other than a pane id or a sessionTarget or sessionScope call to -t.
+func guardViolations(t *testing.T, src any) []string {
+	t.Helper()
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "driver.go", nil, 0)
+	f, err := parser.ParseFile(fset, "driver.go", src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var out []string
 	allowedIdents := map[string]bool{"paneID": true}
 	allowedCalls := map[string]bool{"sessionTarget": true, "sessionScope": true}
 	check := func(list []ast.Expr) {
@@ -215,29 +216,26 @@ func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
 				continue
 			}
 			if i+1 >= len(list) {
-				t.Errorf("%s: -t with no target", fset.Position(lit.Pos()))
+				out = append(out, fset.Position(lit.Pos()).String()+": -t with no target")
 				continue
 			}
 			switch arg := list[i+1].(type) {
 			case *ast.Ident:
 				if !allowedIdents[arg.Name] {
-					t.Errorf("%s: -t takes the bare %s; use sessionTarget or sessionScope for a session", fset.Position(arg.Pos()), arg.Name)
+					out = append(out, fset.Position(arg.Pos()).String()+": bare "+arg.Name)
 				}
 			case *ast.CallExpr:
 				if id, ok := arg.Fun.(*ast.Ident); !ok || !allowedCalls[id.Name] {
-					t.Errorf("%s: -t takes a call that is not sessionTarget or sessionScope", fset.Position(arg.Pos()))
+					out = append(out, fset.Position(arg.Pos()).String()+": a call that is not sessionTarget or sessionScope")
 				}
 			default:
-				t.Errorf("%s: -t takes a form this guard does not know", fset.Position(arg.Pos()))
+				out = append(out, fset.Position(arg.Pos()).String()+": a form the guard does not know")
 			}
 		}
 	}
-	seen := 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
-			// Only the calls that build a tmux argument list: d.cmd(...) and
-			// append(args, ...). A `ps -t <tty>` is not tmux.
 			isCmd := false
 			switch fun := x.Fun.(type) {
 			case *ast.SelectorExpr:
@@ -247,15 +245,74 @@ func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
 			}
 			if isCmd {
 				check(x.Args)
-				seen += len(x.Args)
 			}
 		case *ast.CompositeLit:
 			check(x.Elts)
-			seen += len(x.Elts)
 		}
 		return true
 	})
-	if seen == 0 {
-		t.Fatal("the scan saw no arguments, so it checked nothing")
+	return out
+}
+
+// Fails if driver.go passes a bare session name to -t: every -t in it must
+// take a pane id or a name made by sessionTarget or sessionScope. This is the
+// shape of TestNoNewRouteIntoTheDaemonsOwnSocket: a scan of the source, so a
+// new call site cannot bring the bare form back unseen.
+func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
+	src, err := os.ReadFile("driver.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := guardViolations(t, src); len(v) != 0 {
+		t.Errorf("driver.go passes something else to -t:\n%s", strings.Join(v, "\n"))
+	}
+	if !strings.Contains(string(src), `"-t", sessionTarget(`) {
+		t.Fatal("the scan found no sessionTarget use, so it checked nothing")
+	}
+}
+
+// The guard is the only check behind two of the six sites (the bare
+// kill-session and the bare NewSession set-option have no behavior test), so
+// it is tried on planted sources: every form that gets a bare name to -t must
+// be reported, and the forms the driver uses must not be.
+func TestTheSessionTargetGuardCatchesWhatItShould(t *testing.T) {
+	const prelude = `package tmux
+func sessionTarget(n string) string { return "=" + n }
+func sessionScope(n string) string { return "=" + n + ":" }
+`
+	wrap := func(body string) string {
+		return prelude + "func (d *Driver) f(name, paneID string) {\n" + body + "\n}\n"
+	}
+	good := map[string]string{
+		"sessionTarget":  `d.cmd("kill-session", "-t", sessionTarget(name))`,
+		"sessionScope":   `args := []string{"new-window", "-t", sessionScope(name)}; _ = args`,
+		"a pane id":      `d.cmd("capture-pane", "-t", paneID, "-p")`,
+		"append pane id": `args = append(args, ";", "send-keys", "-t", paneID)`,
+	}
+	for name, body := range good {
+		if v := guardViolations(t, wrap(body)); len(v) != 0 {
+			t.Errorf("%s was reported: %v", name, v)
+		}
+	}
+	bad := map[string]string{
+		"a plain variable":     `tgt := name; d.cmd("kill-session", "-t", tgt)`,
+		"Sprintf":              `d.cmd("kill-session", "-t", fmt.Sprintf("%s", name))`,
+		"an empty-string add":  `d.cmd("kill-session", "-t", ""+name)`,
+		"an index":             `d.cmd("kill-session", "-t", names[0])`,
+		"a split append":       `args = append(args, "kill-session"); args = append(args, "-t", name)`,
+		"a local named paneID": `{ paneID := name; d.cmd("kill-session", "-t", paneID) }`,
+		"a reassigned paneID":  `paneID = name; d.cmd("kill-session", "-t", paneID)`,
+		"a glued -t":           `d.cmd("kill-session", "-t"+name)`,
+		"a glued literal":      `d.cmd("has-session", "-ts")`,
+		"a const flag":         `const flagT = "-t"; d.cmd("kill-session", flagT, name)`,
+		"a variable flag":      `flag := "-t"; d.cmd("kill-session", flag, name)`,
+		"a split flag":         `d.cmd("kill-session", "-"+"t", name)`,
+		"a shadowed helper":    `sessionTarget := func(s string) string { return s }; d.cmd("kill-session", "-t", sessionTarget(name))`,
+		"a glued Sprintf":      `d.cmd("kill-session", fmt.Sprintf("-t%s", name))`,
+	}
+	for name, body := range bad {
+		if v := guardViolations(t, wrap(body)); len(v) == 0 {
+			t.Errorf("%s was not reported: %s", name, body)
+		}
 	}
 }
