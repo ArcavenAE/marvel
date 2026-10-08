@@ -702,6 +702,12 @@ func (m *Manifest) ValidateRuntimes() error {
 // arguments, as the claude adapter reads it (marvel#517), so only the first
 // field is looked up.
 func validateCommand(command string) error {
+	// The launch hands the text to a shell, which ends the command at a
+	// newline and runs the next line as another command, so a multi-line
+	// command is refused here and not accepted and then failed at launch.
+	if strings.ContainsRune(command, '\n') {
+		return errors.New("multi-line command; the launch runs only its first line")
+	}
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return errors.New("empty")
