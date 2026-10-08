@@ -147,10 +147,16 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// words cannot be read (a quote, an expansion, a pipe, a second line) may carry
 	// the flag where nothing here can see it, so none is added and one line says
 	// so.
+	readable := api.CommandWordsReadable(binary)
+	declared := len(ctx.Role.SettingsSources) > 0
 	if isBareClaude(binary) {
 		switch {
-		case !api.CommandWordsReadable(binary):
+		case !readable && declared:
 			logLaunch("role %s: command is shell text; marvel's system-prompt line not added", ctx.Role.Name)
+		case !readable:
+			// Nothing is declared either, so the sources flag is held back too
+			// and one line covers both.
+			logLaunch("role %s: command is shell text; marvel's system-prompt and setting-sources flags not added", ctx.Role.Name)
 		case !carriesFlag(args, binary, "--append-system-prompt", "--append-system-prompt-file"):
 			prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
 				", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
@@ -166,13 +172,28 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// role that declares nothing keeps today's behavior, every source, so an
 	// upgrade does not change what a seat loads from its directory; the placed
 	// defaults arrive with SB-1.
+	//
+	// On a command whose words cannot be read the flag may already be there, and
+	// a second is not harmless, so marvel adds none unless the manifest declares
+	// sources: those are passed last, which wins over any inline flag, and the
+	// log line says so (marvel#745).
 	settingSources := ""
-	if isBareClaude(binary) && !carriesFlag(args, binary, "--setting-sources") {
-		settingSources = "user,project,local"
-		if len(ctx.Role.SettingsSources) > 0 {
+	if isBareClaude(binary) {
+		switch {
+		case !readable && !declared:
+			// Held back, and logged with the prompt line above.
+		case !readable:
 			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+			logLaunch("role %s: command is shell text; manifest settings_sources passed last and wins over any inline --setting-sources", ctx.Role.Name)
+		case !carriesFlag(args, binary, "--setting-sources"):
+			settingSources = "user,project,local"
+			if declared {
+				settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+			}
 		}
-		args = append(args, "--setting-sources", settingSources)
+		if settingSources != "" {
+			args = append(args, "--setting-sources", settingSources)
+		}
 	}
 
 	// The request goes last, as the positional argument.
