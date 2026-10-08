@@ -207,7 +207,16 @@ func TestDeadTestServerNamesReadsLOnlyFromTheServerFlags(t *testing.T) {
 		"102 /opt/homebrew/bin/tmux -L marvel-test-abs-" + pid + " new-session -d -s p sleep 120\n" +
 		"103 tmux -S /tmp/x/sock new-session -d -s p sleep 120 # -L marvel-test-text-" + pid + "\n" +
 		"104 tmux new-session -d -s p sleep 120 -L marvel-test-late-" + pid + "\n" +
-		"105 sh -c tmux -L marvel-test-shell-" + pid + " new-session\n"
+		"105 sh -c tmux -L marvel-test-shell-" + pid + " new-session\n" +
+		// pid 1 belongs to root, so kill(1, 0) answers EPERM for anyone else;
+		// an owner the process cannot signal is alive, not dead.
+		"106 tmux -L marvel-test-eperm-1 new-session -d -s p sleep 120\n" +
+		// The name must end at the pid and match marvel-test-<package>-<pid>:
+		// a trailing suffix, a dash inside the package part and a command that
+		// is not tmux are all outside it.
+		"107 tmux -L marvel-test-pkg-" + pid + "-keep new-session -d -s p sleep 120\n" +
+		"108 tmux -L marvel-test-a-b-" + pid + " new-session -d -s p sleep 120\n" +
+		"109 notmux -L marvel-test-nt-" + pid + " new-session -d -s p sleep 120\n"
 	got := deadTestServerNames(ps)
 	want := map[string]bool{"marvel-test-real-" + pid: true, "marvel-test-abs-" + pid: true}
 	if len(got) != len(want) {
