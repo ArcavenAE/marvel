@@ -41,7 +41,7 @@ func TestApplyRefusesAMissingTrustedFolder(t *testing.T) {
 // step reads it.
 func TestApplyStoresTheTrustedFolders(t *testing.T) {
 	d := newHandlerDaemon(t)
-	real := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	real := gittest.Repo(t, filepath.Join(t.TempDir(), "repo-a"))
 	if resp := applyManifest(t, d, strings.Replace(trustedFoldersManifest, "%s", real, 1)); resp.Error != "" {
 		t.Fatalf("apply: %s", resp.Error)
 	}

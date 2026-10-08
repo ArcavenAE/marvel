@@ -31,8 +31,8 @@ func TestManifestTrustedFoldersAbsentEmptyAndListed(t *testing.T) {
 	if empty.Workspace.TrustedFolders == nil || len(*empty.Workspace.TrustedFolders) != 0 {
 		t.Errorf("empty list = %v, want a non-nil empty list", empty.Workspace.TrustedFolders)
 	}
-	listed := trustManifest(t, `trusted_folders = ["~/work/aae-orc", "i-orc"]`)
-	if listed.Workspace.TrustedFolders == nil || !reflect.DeepEqual(*listed.Workspace.TrustedFolders, []string{"~/work/aae-orc", "i-orc"}) {
+	listed := trustManifest(t, `trusted_folders = ["~/work/repo-a", "repo-b"]`)
+	if listed.Workspace.TrustedFolders == nil || !reflect.DeepEqual(*listed.Workspace.TrustedFolders, []string{"~/work/repo-a", "repo-b"}) {
 		t.Errorf("listed = %v", listed.Workspace.TrustedFolders)
 	}
 
@@ -45,7 +45,7 @@ func TestManifestTrustedFoldersAbsentEmptyAndListed(t *testing.T) {
 	}{
 		"absent": {"", nil},
 		"empty":  {"  trusted_folders: []\n", &[]string{}},
-		"listed": {"  trusted_folders:\n    - ~/work/aae-orc\n", &[]string{"~/work/aae-orc"}},
+		"listed": {"  trusted_folders:\n    - ~/work/repo-a\n", &[]string{"~/work/repo-a"}},
 	} {
 		m, err := ParseManifestBytes([]byte(yamlSrc(tc.extra)))
 		if err != nil {
@@ -59,7 +59,7 @@ func TestManifestTrustedFoldersAbsentEmptyAndListed(t *testing.T) {
 }
 
 func TestValidateTrustedFoldersAcceptsAMainCheckoutTopLevel(t *testing.T) {
-	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "repo-a"))
 	m := trustManifest(t, `trusted_folders = ["`+repo+`"]`)
 	if err := m.ValidateTrustedFolders(); err != nil {
 		t.Fatalf("a main checkout top-level was refused: %v", err)
@@ -70,7 +70,7 @@ func TestValidateTrustedFoldersAcceptsAMainCheckoutTopLevel(t *testing.T) {
 }
 
 func TestValidateTrustedFoldersRefusals(t *testing.T) {
-	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "repo-a"))
 	sub := filepath.Join(repo, "docs")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -94,17 +94,17 @@ func TestValidateTrustedFoldersRefusals(t *testing.T) {
 func TestValidateTrustedFoldersExpandsHomeAndResolvesRelative(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	gittest.Repo(t, filepath.Join(home, "work", "aae-orc"))
-	if err := trustManifest(t, `trusted_folders = ["~/work/aae-orc"]`).ValidateTrustedFolders(); err != nil {
+	gittest.Repo(t, filepath.Join(home, "work", "repo-a"))
+	if err := trustManifest(t, `trusted_folders = ["~/work/repo-a"]`).ValidateTrustedFolders(); err != nil {
 		t.Errorf("a ~/ path: %v", err)
 	}
 	root := t.TempDir()
-	gittest.Repo(t, filepath.Join(root, "i-orc"))
-	m := trustManifest(t, `root = "`+root+`"`+"\n"+`trusted_folders = ["i-orc"]`)
+	gittest.Repo(t, filepath.Join(root, "repo-b"))
+	m := trustManifest(t, `root = "`+root+`"`+"\n"+`trusted_folders = ["repo-b"]`)
 	if err := m.ValidateTrustedFolders(); err != nil {
 		t.Errorf("a relative path against the root: %v", err)
 	}
-	err := trustManifest(t, `trusted_folders = ["i-orc"]`).ValidateTrustedFolders()
+	err := trustManifest(t, `trusted_folders = ["repo-b"]`).ValidateTrustedFolders()
 	if err == nil || !strings.Contains(err.Error(), "workspace.root") {
 		t.Errorf("a relative path with no root: err = %v, want it to name workspace.root", err)
 	}
@@ -113,7 +113,7 @@ func TestValidateTrustedFoldersExpandsHomeAndResolvesRelative(t *testing.T) {
 // Apply: a present list replaces the stored one (an empty list revokes), and an
 // absent key leaves it alone.
 func TestApplyTrustedFoldersReplaceRevokeAndAbsent(t *testing.T) {
-	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "repo-a"))
 	store := NewStore()
 	apply := func(extra string) []string {
 		t.Helper()
@@ -168,7 +168,7 @@ func TestTrustedFolderNotesWarnWhenTheListDiffers(t *testing.T) {
 // GIT_DIR, and the answer must not follow it.
 func TestGitMainRootIgnoresAnInheritedGitDir(t *testing.T) {
 	other := gittest.Repo(t, filepath.Join(t.TempDir(), "other"))
-	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "aae-orc"))
+	repo := gittest.Repo(t, filepath.Join(t.TempDir(), "repo-a"))
 	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
 	t.Setenv("GIT_WORK_TREE", other)
 	root, reason := GitMainRoot(repo)
