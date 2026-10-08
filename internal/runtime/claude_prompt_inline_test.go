@@ -39,6 +39,7 @@ func TestClaudeKeepsAnInlineSystemPrompt(t *testing.T) {
 		{"flag in args", "claude", []string{"--append-system-prompt", "mine"}, 1, false},
 		{"file flag in args", "claude", []string{"--append-system-prompt-file", "f"}, 1, false},
 		{"unrelated inline flags still get the prompt", "claude --model sonnet", nil, 1, true},
+		{"an unrelated joined flag still gets the prompt", "claude --model=x", nil, 1, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,7 +101,6 @@ func TestClaudeAddsNoPromptToShellText(t *testing.T) {
 		`claude --model 'a b'`,
 		`claude --append-system-prompt="x y"`,
 		`claude --append-system-prompt-file='f g'`,
-		"claude --model=x",
 		"claude --add-dir ~/x",
 		"claude --add-dir *.d",
 		"claude --x # --append-system-prompt y",
@@ -136,6 +136,9 @@ func TestClaudeLogsNothingWhenThePromptWasNotInTheWay(t *testing.T) {
 	for _, command := range []string{
 		"claude",
 		"claude --append-system-prompt mine",
+		"claude --model=x",
+		"claude --append-system-prompt=x",
+		"FOO=1 claude --model x",
 
 		"npx claude",
 		"docker run --rm -it img claude",

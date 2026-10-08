@@ -1531,7 +1531,9 @@ func TestCommandWordsReadable(t *testing.T) {
 		`claude "--append-system-prompt-file" f`: false,
 		`claude "--setting-sources" local`:       false,
 		`claude --append-system-prompt="x y"`:    false,
-		"claude --model=x":                       false,
+		"claude --model=x":                       true,
+		"claude --append-system-prompt=x":        true,
+		"FOO=1 claude --model x":                 false,
 		"claude --model x#y":                     false,
 		"claude --model=x*":                      false,
 		"claude ~/x":                             false,
@@ -1567,7 +1569,7 @@ func TestCommandWordsReadable(t *testing.T) {
 // the whole command, because a flag can sit anywhere.
 func TestShellTextHasOneDefinition(t *testing.T) {
 	t.Parallel()
-	for _, c := range "='\"\\$`;|&<>(){}*?[~#" {
+	for _, c := range "'\"\\$`;|&<>(){}*?[~#" {
 		command := "a" + string(c) + "b"
 		if CommandWordsReadable("claude " + command) {
 			t.Errorf("%q in the arguments left the command readable", c)
@@ -1576,5 +1578,23 @@ func TestShellTextHasOneDefinition(t *testing.T) {
 		if err != nil || len(adv) != 1 {
 			t.Errorf("%q in the first field: advisories %q, err %v, want the shell-text advisory", c, adv, err)
 		}
+	}
+}
+
+// An equals sign is the pre-flight's alone, and only in the first field, where
+// NAME=value is an assignment and not a program. Later in a command it hides
+// nothing: the adapter's flag reader already matches --flag=value.
+func TestEqualsSignIsShellTextOnlyAsAProgramName(t *testing.T) {
+	t.Parallel()
+	if !CommandWordsReadable("claude --model=x") || !CommandWordsReadable("claude --append-system-prompt=x") {
+		t.Error("a joined flag hid nothing and must stay readable")
+	}
+	adv, err := runRuntimeCase(t, runtimeCase{name: "assignment", command: "FOO=1 sleep 5"})
+	if err != nil || len(adv) != 1 {
+		t.Errorf("FOO=1 sleep 5: advisories %q, err %v, want the shell-text advisory", adv, err)
+	}
+	adv, err = runRuntimeCase(t, runtimeCase{name: "joined flag", command: "sleep --time=5"})
+	if err != nil || len(adv) != 0 {
+		t.Errorf("sleep --time=5: advisories %q, err %v, want a plain pass", adv, err)
 	}
 }
