@@ -293,3 +293,65 @@ func TestLoadRefusesANegativeVarRunes(t *testing.T) {
 		t.Fatal("a negative var_runes was accepted")
 	}
 }
+
+// A pattern row of blank text matches any blank line, so a quiet screen with
+// blank rows at a pattern's blank offsets matched two rows of nothing and was
+// stored as a low partial match of that pattern, with evidence ["", ""]. Blank
+// rows are layout, not evidence: a partial needs at least one matched row that
+// carries text.
+func TestClassifyBlankRowsAloneAreNotEvidence(t *testing.T) {
+	var pattern Pattern
+	pattern.ID, pattern.Version, pattern.Harness, pattern.HarnessVersion = "p", 1, "claude", "1.0.0"
+	for _, text := range []string{"Header text", "", "Menu {{var}} row", ""} {
+		row, err := parseRow(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pattern.Rows = append(pattern.Rows, row)
+	}
+	sets := []Pattern{pattern}
+
+	// Only the two blank rows line up: nothing is matched, nothing is stored.
+	r := Classify(sets, "claude", "1.0.0", []string{"other", "", "different", ""})
+	if r.Confidence != "" || r.PatternID != "" || len(r.Evidence) != 0 {
+		t.Fatalf("blank rows alone were stored: %+v", r)
+	}
+
+	// A row with text lining up keeps the partial, blank rows and all.
+	r = Classify(sets, "claude", "1.0.0", []string{"Header text", "", "different", ""})
+	if r.Confidence != ConfLow || r.State != StateUnknown || len(r.Evidence) != 3 || r.Evidence[0] != "Header text" {
+		t.Fatalf("a partial with a text row was dropped or changed: %+v", r)
+	}
+}
+
+// Row.matches holds each part of the match: a fixed row is the whole line, and
+// a variable row needs its prefix, its suffix and a non-empty span between them.
+func TestRowMatchesEachPart(t *testing.T) {
+	fixed, err := parseRow(" abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	variable, err := parseRow("ab{{var}}yz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		row  Row
+		line string
+		want bool
+	}{
+		{"fixed, exact", fixed, " abc", true},
+		{"fixed, leading space missing", fixed, "abc", false},
+		{"fixed, text before", fixed, "x abc", false},
+		{"fixed, text after", fixed, " abcx", false},
+		{"variable, a span between", variable, "abXyz", true},
+		{"variable, prefix wrong", variable, "xbXyz", false},
+		{"variable, suffix wrong", variable, "abXyx", false},
+		{"variable, empty span", variable, "abyz", false},
+	} {
+		if got := tc.row.matches(tc.line); got != tc.want {
+			t.Errorf("%s: matches(%q) = %v, want %v", tc.name, tc.line, got, tc.want)
+		}
+	}
+}
