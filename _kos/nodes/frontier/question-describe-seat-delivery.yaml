@@ -1,0 +1,60 @@
+id: question-describe-seat-delivery
+type: question
+confidence: frontier
+title: "What should describe show about how a seat's prompt, memory and budget are delivered, and which of those are marvel keys?"
+tags:
+  - marvel
+  - describe
+  - roles
+  - party
+content: |
+  **The ask.** A standing party seat runs as a bare `claude` role whose
+  prompt file is passed in `runtime.args` as `--append-system-prompt-file
+  <path>`. The proposal asks that `marvel describe` show each seat's prompt
+  file, memory path and budget, so an operator can read how a seat is
+  delivered without opening the manifest (aae-orc-zvrau).
+
+  **What exists today** (marvel main 535d167, checked 2026-10-08):
+
+  | key T8 names | marvel key today | shown by describe today |
+  |---|---|---|
+  | prompt file | none of its own; it is an entry in `runtime.args` | yes. `describeTeam` embeds the whole team record, and `Runtime` carries no json tag, so every Args entry prints (`docs/design/describe-redaction.md`, premise table) |
+  | memory path | none. marvel never reads it; it lives in the seat's prompt file | no |
+  | budget | team level only: `budget.max_sessions`, `max_tokens`, `on_unmeasured` (`internal/api/budget.go`). No per-role budget | yes, inside the team record |
+
+  The redaction design keeps Args as a declared non-secret channel
+  ("Args and Prompt are printed by describe", same file, section on
+  contracts). So the prompt-file path stays visible after that view lands.
+
+  **So T8 needs no new key for what marvel uses.** The prompt-file path and
+  the team budget are already in describe's JSON. What is missing is a
+  readable line, which is the human summary view's job (aae-orc-iudtl).
+
+  **New keys would be needed only for:**
+  - **memory path.** Not recommended as a marvel key. marvel would carry a
+    path it never reads, which repeats the `persona` and `identity` pattern
+    (parsed, unused for claude). It belongs in the seat's prompt file, which
+    describe already names.
+  - **a per-role budget.** Not needed for the party's v1. The convene check
+    uses the team's `max_sessions`. A per-role budget is a manifest change
+    with its own admission design, not a describe change.
+  - **a dedicated prompt-file field.** That is the deferred persona-file field
+    (aae-orc-74sep). If it lands, describe shows it like any other role field,
+    and T8 would depend on it.
+
+  **Recommendation.** Rescope aae-orc-zvrau to one line: the human summary
+  (aae-orc-iudtl) names, per role, any `--append-system-prompt-file` arg's
+  path (the path only) and the team budget. Make it blocked by iudtl. Drop
+  memory path and per-role budget from T8. Valid until 2026-10-22; the
+  architect seat re-checks it then.
+edges:
+  - target: question-role-tools-field-projection
+    type: derives
+    note: "the sibling question of which per-role fields marvel should carry for an adapter; a dedicated prompt-file field (aae-orc-74sep) belongs there"
+  - target: elem-agentic-resource-matrix
+    type: derives
+    note: "budget is a resource row; the team budget is the one marvel declares today"
+provenance:
+  created_by: agent
+  session: "architect seat, standing-party follow-on T8"
+  created_at: "2026-10-08"
