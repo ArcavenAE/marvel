@@ -2,6 +2,7 @@
 package tmux
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -32,9 +33,23 @@ import (
 // does not mutate the user's tmux server config.
 const DefaultHistoryLimit = 100000
 
+// DefaultExecTimeout bounds one tmux invocation. A healthy tmux answers in
+// milliseconds, so the bound only ever fires when the server has stopped
+// answering.
+const DefaultExecTimeout = 10 * time.Second
+
+// ErrTmuxTimeout reports a tmux command that did not return within the
+// driver's bound and was killed. It means the answer is unknown. A caller
+// must treat it as an outage, never as an absent pane or session, and
+// match it with errors.Is.
+var ErrTmuxTimeout = errors.New("tmux did not answer in time")
+
 // Driver manages tmux sessions and panes by shelling out to the tmux binary.
 type Driver struct {
 	binary string
+
+	// execTimeout bounds each tmux invocation; zero means DefaultExecTimeout.
+	execTimeout time.Duration
 
 	// socket is the tmux server socket name. Every tmux invocation
 	// prepends -L <socket>, scoping the driver to a dedicated server.
@@ -161,18 +176,67 @@ func (d *Driver) lockPane(paneID string) func() {
 // takes the environment of the process that starts it and hands it to every
 // pane, so the first command to start the server decides what every seat
 // inherits (aae-orc#418).
-func (d *Driver) cmd(args ...string) *exec.Cmd {
-	var c *exec.Cmd
+func (d *Driver) cmd(args ...string) *tmuxCmd {
+	ctx, cancel := context.WithTimeout(context.Background(), d.timeout())
+	full := args
 	if d.socket != "" {
-		full := make([]string, 0, len(args)+2)
+		full = make([]string, 0, len(args)+2)
 		full = append(full, "-L", d.socket)
 		full = append(full, args...)
-		c = exec.Command(d.binary, full...)
-	} else {
-		c = exec.Command(d.binary, args...)
 	}
+	c := exec.CommandContext(ctx, d.binary, full...)
 	c.Env = api.ScrubInheritedSessionEnv(os.Environ())
-	return c
+	// A killed tmux client can leave a child holding its output pipe open;
+	// without a wait delay the read would outlive the kill.
+	c.WaitDelay = time.Second
+	return &tmuxCmd{Cmd: c, ctx: ctx, cancel: cancel, name: firstArg(args), bound: d.timeout()}
+}
+
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+// tmuxCmd is one bounded tmux invocation. It runs through Run, Output or
+// CombinedOutput like an exec.Cmd, and an invocation that outlives the
+// driver's bound is killed and fails with ErrTmuxTimeout, so a caller can
+// tell "tmux did not answer" from any answer tmux gave.
+type tmuxCmd struct {
+	*exec.Cmd
+	ctx    context.Context
+	cancel context.CancelFunc
+	name   string
+	bound  time.Duration
+}
+
+// finish releases the deadline and maps a failure that came from the
+// deadline to ErrTmuxTimeout, so a killed client's signal exit is never
+// mistaken for tmux's own answer.
+func (c *tmuxCmd) finish(err error) error {
+	defer c.cancel()
+	if err != nil && errors.Is(c.ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("tmux %s: %w (bound %s)", c.name, ErrTmuxTimeout, c.bound)
+	}
+	return err
+}
+
+// Run runs the command under the driver's bound.
+func (c *tmuxCmd) Run() error { return c.finish(c.Cmd.Run()) }
+
+// Output runs the command under the driver's bound and returns its stdout.
+func (c *tmuxCmd) Output() ([]byte, error) {
+	out, err := c.Cmd.Output()
+	return out, c.finish(err)
+}
+
+// CombinedOutput runs the command under the driver's bound and returns its
+// stdout and stderr. After a timeout the output is whatever the killed client
+// had written, so a caller checks the error before it reads the text.
+func (c *tmuxCmd) CombinedOutput() ([]byte, error) {
+	out, err := c.Cmd.CombinedOutput()
+	return out, c.finish(err)
 }
 
 // seatEnvPrefix drops the denylisted names inside the pane itself. It covers
@@ -191,15 +255,40 @@ var seatEnvPrefix = func() string {
 	return b.String()
 }()
 
+// SetExecTimeout sets the bound on one tmux invocation. Zero restores
+// DefaultExecTimeout. Set it before the driver is shared between goroutines.
+func (d *Driver) SetExecTimeout(t time.Duration) { d.execTimeout = t }
+
+func (d *Driver) timeout() time.Duration {
+	if d.execTimeout > 0 {
+		return d.execTimeout
+	}
+	return DefaultExecTimeout
+}
+
 // Socket returns the tmux socket name the driver is scoped to. Used by
 // test teardown to kill the right server. A driver built by NewDriver
 // always has one; only a hand-built Driver literal can report empty,
 // which still means the shared default server.
 func (d *Driver) Socket() string { return d.socket }
 
-// HasSession checks if a tmux session exists.
+// HasSession checks if a tmux session exists. It reports false when tmux did
+// not answer in time, which is not the same as the session being absent, so
+// code that acts on absence uses sessionExists and reads the error.
 func (d *Driver) HasSession(name string) bool {
-	return d.cmd("has-session", "-t", name).Run() == nil
+	ok, _ := d.sessionExists(name)
+	return ok
+}
+
+// sessionExists reports whether tmux has the session. A tmux that does not
+// answer in time returns ErrTmuxTimeout and false, so a caller can refuse to
+// read the silence as "no such session".
+func (d *Driver) sessionExists(name string) (bool, error) {
+	err := d.cmd("has-session", "-t", name).Run()
+	if errors.Is(err, ErrTmuxTimeout) {
+		return false, err
+	}
+	return err == nil, nil
 }
 
 // ListSessions returns the names of every tmux session on the server.
@@ -236,7 +325,11 @@ func (d *Driver) ListSessions() ([]string, error) {
 
 // NewSession creates a new tmux session in detached mode.
 func (d *Driver) NewSession(name string) error {
-	if d.HasSession(name) {
+	exists, err := d.sessionExists(name)
+	if err != nil {
+		return fmt.Errorf("new-session %s: %w", name, err)
+	}
+	if exists {
 		return nil
 	}
 	if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
@@ -418,6 +511,9 @@ func (d *Driver) PaneStatus(paneID string) (PaneStatus, error) {
 	out, err := d.cmd("list-panes", "-t", paneID,
 		"-F", "#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{"+PaneMarker+"}").CombinedOutput()
 	if err != nil {
+		if errors.Is(err, ErrTmuxTimeout) {
+			return PaneStatus{}, fmt.Errorf("pane-status %s: %w", paneID, err)
+		}
 		text := string(out)
 		// list-panes validates the target and exits 1 for an unknown id;
 		// that is the "gone" answer, not a failure. Anything else (no
@@ -469,6 +565,9 @@ func (d *Driver) PanePID(paneID string) (int, error) {
 // KillPane destroys a specific pane.
 func (d *Driver) KillPane(paneID string) error {
 	if out, err := d.cmd("kill-pane", "-t", paneID).CombinedOutput(); err != nil {
+		if errors.Is(err, ErrTmuxTimeout) {
+			return fmt.Errorf("kill-pane %s: %w", paneID, err)
+		}
 		if paneGoneText(string(out)) {
 			return fmt.Errorf("kill-pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), ErrPaneGone)
 		}
@@ -492,7 +591,11 @@ func paneGoneText(text string) bool {
 
 // KillSession destroys an entire tmux session.
 func (d *Driver) KillSession(name string) error {
-	if !d.HasSession(name) {
+	exists, err := d.sessionExists(name)
+	if err != nil {
+		return fmt.Errorf("kill-session %s: %w", name, err)
+	}
+	if !exists {
 		return nil
 	}
 	if out, err := d.cmd("kill-session", "-t", name).CombinedOutput(); err != nil {

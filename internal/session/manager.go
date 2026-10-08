@@ -494,6 +494,11 @@ func (m *Manager) UnrecordedTmuxState() ([]string, error) {
 			continue
 		}
 		panes, lerr := m.driver.ListPanes(name)
+		if errors.Is(lerr, tmux.ErrTmuxTimeout) {
+			// Leaving the session out would read as a session with nothing to
+			// lose; the preview is incomplete and says so.
+			return nil, fmt.Errorf("list panes %s: %w", name, lerr)
+		}
 		if lerr != nil {
 			continue
 		}
