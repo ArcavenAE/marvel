@@ -136,3 +136,63 @@ func TestNewSessionTimeoutIsNeverRetried(t *testing.T) {
 		t.Errorf("new-session ran %d times, want 1", m)
 	}
 }
+
+// A retry pass that finds the session a peer created still sets the options:
+// the peer's set-options may not have landed.
+func TestNewSessionRetryPassThatFindsTheSessionStillSetsItsOptions(t *testing.T) {
+	shortBound(t, 30*time.Second)
+	f, d := newSeqFake(t,
+		`if [ "$n" = 1 ]; then `+noSession+`; fi; exit 0`,
+		exitedMsg,
+		procLines())
+	if err := d.NewSession("s"); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if n := f.calls("new-session"); n != 1 {
+		t.Fatalf("new-session ran %d times, want 1: the second pass found the session", n)
+	}
+	if f.calls("history-limit") != 1 || f.calls("remain-on-exit") != 1 {
+		t.Errorf("history-limit set %d times and remain-on-exit %d times, want once each after a retry pass that found the session",
+			f.calls("history-limit"), f.calls("remain-on-exit"))
+	}
+}
+
+// A duplicate session on a retry pass is the session existing: created, with
+// the options set, not an error.
+func TestNewSessionDuplicateOnARetryPassIsCreated(t *testing.T) {
+	shortBound(t, 30*time.Second)
+	f, d := newSeqFake(t, noSession,
+		`if [ "$n" = 1 ]; then `+exitedMsg+`; fi; echo "duplicate session: s" >&2; exit 1`,
+		procLines())
+	if err := d.NewSession("s"); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if f.calls("history-limit") != 1 || f.calls("remain-on-exit") != 1 {
+		t.Errorf("history-limit set %d times and remain-on-exit %d times, want once each",
+			f.calls("history-limit"), f.calls("remain-on-exit"))
+	}
+}
+
+// The retry shares one deadline with the check: a pass that starts late
+// waits only for what is left of the bound, not a fresh one. The first create
+// fails after 1.5 s of a 3 s bound; the second pass's check then sees a live
+// server that does not answer. Total about 3 s, where a fresh wait gave 4.5 s.
+func TestNewSessionPassesShareOneBound(t *testing.T) {
+	shortBound(t, 3*time.Second)
+	f, d := newSeqFake(t,
+		`if [ "$n" = 1 ]; then `+noSession+`; fi; echo "no server running on /x" >&2; exit 1`,
+		`sleep 1.5; `+exitedMsg,
+		procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d"))
+	start := time.Now()
+	err := d.NewSession("s")
+	took := time.Since(start)
+	if err == nil {
+		t.Fatal("NewSession returned nil with a live server that does not answer")
+	}
+	if m := f.calls("new-session"); m != 1 {
+		t.Errorf("new-session ran %d times, want 1", m)
+	}
+	if took > 3900*time.Millisecond {
+		t.Errorf("NewSession took %v for a 3s bound, want about 3s: the second pass must wait only for what is left", took)
+	}
+}
