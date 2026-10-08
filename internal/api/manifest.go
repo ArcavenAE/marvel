@@ -709,12 +709,16 @@ func (m *Manifest) ValidateRuntimes() ([]string, error) {
 	return advisories, nil
 }
 
-// shellMeta are the characters that make the first field of a command more
-// than a program name to the shell the launch hands it to: an assignment, a
-// quote, an escape, an expansion, a list or pipe, a redirect, a group, a glob
-// a tilde, or a hash that makes the rest a comment. A field with none of them
-// is the program as written.
-const shellMeta = "='\"\\$`;|&<>(){}*?[~#"
+// shellTextChars are the characters that make text more than plain words to the
+// shell the launch hands a command to: an assignment, a quote, an escape, an
+// expansion, a list or pipe, a redirect, a group, a glob, a tilde, or a hash
+// that makes the rest a comment. It is the one definition of shell text: the
+// apply pre-flight reads it over a command's first field, and the claude
+// adapter over the whole command, because a flag can sit anywhere in it.
+const shellTextChars = "='\"\\$`;|&<>(){}*?[~#"
+
+// containsShellText reports whether text holds any shell-text character.
+func containsShellText(text string) bool { return strings.ContainsAny(text, shellTextChars) }
 
 // validateCommand checks the program of a command. The launch passes the text
 // to a shell (the driver hands tmux `env -u ... <command>` as one shell
@@ -748,7 +752,7 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		return "", errors.New("empty")
 	}
 	cmd := fields[0]
-	if strings.ContainsAny(cmd, shellMeta) {
+	if containsShellText(cmd) {
 		return commandNotParsedAdvisory, nil
 	}
 	// Path, absolute or with a separator: must exist on disk.
@@ -772,20 +776,14 @@ func validateCommand(command, dir string) (advisory string, err error) {
 	return "", nil
 }
 
-// shellUnreadable are the characters after which the words of a command are no
-// longer the words the shell hands on: an expansion, a command list or pipe, a
-// redirect, a group, or an escape. A quote is not one of them: it can change
-// where a word ends, but it cannot hide a flag from a reader of the words.
-const shellUnreadable = "$`;|&<>(){}\\"
-
 // CommandWordsReadable reports whether the words of a command, split on space
-// and tab, are the words the shell passes on: no expansion, list, pipe,
-// redirect, group or escape anywhere, and no whitespace the shell does not
-// split on. A reader that looks for a flag in a command's own arguments, as the
+// and tab, are the words the shell passes on: no shell-text character anywhere
+// (quotes included, since the shell strips them and a quoted flag is still the
+// flag) and no whitespace the shell does not split on. A reader that looks for a flag in a command's own arguments, as the
 // claude adapter does (marvel#745), can trust a command for which this is true
 // and must not add its own flag to one for which it is not.
 func CommandWordsReadable(command string) bool {
-	return !strings.ContainsAny(command, shellUnreadable) && !hasUnsplitWhitespace(command)
+	return !containsShellText(command) && !hasUnsplitWhitespace(command)
 }
 
 // hasUnsplitWhitespace reports whether command holds whitespace other than

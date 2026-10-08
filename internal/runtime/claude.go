@@ -144,8 +144,9 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// The role may keep its own prompt in runtime.args or inline in its command
 	// ("claude --append-system-prompt ..."), so both are read, by the same
 	// helper that reads the setting-sources flag (marvel#745). A command whose
-	// words cannot be read (an expansion, a pipe, a second line) may carry the
-	// flag where nothing here can see it, so none is added and one line says so.
+	// words cannot be read (a quote, an expansion, a pipe, a second line) may carry
+	// the flag where nothing here can see it, so none is added and one line says
+	// so.
 	if isBareClaude(binary) {
 		switch {
 		case !api.CommandWordsReadable(binary):
