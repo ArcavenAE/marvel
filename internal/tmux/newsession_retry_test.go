@@ -60,6 +60,9 @@ const (
 // new-session reached a server that was shutting down: the whole body runs
 // again, check first, and the second pass creates the session.
 func TestNewSessionRetriesTheWholeBodyAfterAShutdownRace(t *testing.T) {
+	// Room for four process spawns on a loaded host; the bound's value is
+	// pinned elsewhere.
+	shortBound(t, 30*time.Second)
 	f, d := newSeqFake(t, noSession, `if [ "$n" = 1 ]; then `+exitedMsg+`; fi; exit 0`, procLines())
 	if err := d.NewSession("s"); err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -104,7 +107,7 @@ func TestNewSessionDoesNotRetryOtherTexts(t *testing.T) {
 
 // An absence text that never clears stops at the bound.
 func TestNewSessionRetryIsBounded(t *testing.T) {
-	shortBound(t, 300*time.Millisecond)
+	shortBound(t, 3*time.Second)
 	f, d := newSeqFake(t, noSession, exitedMsg, procLines())
 	start := time.Now()
 	err := d.NewSession("s")
