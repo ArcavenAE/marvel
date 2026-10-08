@@ -667,6 +667,8 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 //   - Plain name ("sleep", "forestage"): exec.LookPath searches $PATH.
 //   - Empty command: flagged; the manifest parser already catches this
 //     but we defend here so misuse of the public API surfaces clearly.
+//   - Inline arguments ("claude --model x"): only the first whitespace
+//     field is resolved; the rest are the program's arguments.
 //
 // Scripts are checked as absolute/relative paths (never PATH-resolved)
 // because scripts are typically repo-relative files, not executables.
@@ -695,10 +697,16 @@ func (m *Manifest) ValidateRuntimes() error {
 	return nil
 }
 
-func validateCommand(cmd string) error {
-	if cmd == "" {
+// validateCommand resolves the program of a command. The command is shell
+// text whose first field is the program and whose remaining fields are its
+// arguments, as the claude adapter reads it (marvel#517), so only the first
+// field is looked up.
+func validateCommand(command string) error {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
 		return errors.New("empty")
 	}
+	cmd := fields[0]
 	// Path — either absolute or contains a separator — must exist on disk.
 	if filepath.IsAbs(cmd) || strings.ContainsRune(cmd, filepath.Separator) {
 		if _, err := os.Stat(cmd); err != nil {
