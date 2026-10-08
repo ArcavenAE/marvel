@@ -51,6 +51,10 @@ type Driver struct {
 	// execTimeout bounds each tmux invocation; zero means DefaultExecTimeout.
 	execTimeout time.Duration
 
+	// procs lists processes for the guard that tells a missing socket from a
+	// missing server; nil means `ps -axo pid,args`.
+	procs procList
+
 	// socket is the tmux server socket name. Every tmux invocation
 	// prepends -L <socket>, scoping the driver to a dedicated server.
 	// Empty means the user's shared default tmux server, which is no
@@ -307,8 +311,7 @@ func (d *Driver) ListSessions() ([]string, error) {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			stderr := string(ee.Stderr)
-			if strings.Contains(stderr, "no server running") ||
-				strings.Contains(stderr, "No such file or directory") {
+			if d.serverAbsent(stderr) {
 				return nil, nil
 			}
 		}
