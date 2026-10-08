@@ -1335,7 +1335,7 @@ func (m *Manager) directPlan(sess *api.Session) launchPlan {
 func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	cmd := sess.Runtime.Command
 	for _, arg := range sess.Runtime.Args {
-		cmd += " " + arg
+		cmd += " " + shellQuote(arg)
 	}
 	envs := map[string]string{
 		"MARVEL_SESSION": sess.Name,
