@@ -19,9 +19,9 @@ The operator asked which teams are free, busy, blocked or overloaded. `get sessi
 | The request was renamed | `docs/design/get-sessions-output.md` section 4.4 | the party renamed BUSY% to ACTIVE%, because it measures "not quiet", not "working" |
 | One as-of shape | `internal/asof/asof.go:41-63` | value, `observed_at`, `valid_until`, source; `-` never measured, `?` expired, never `0` for no sample |
 | The daemon holds no global identity | `internal/bus/declared.go:146-148`, `:212-247`; `internal/bus/render.go:175` | the daemon's own user (`marvel_admin`) is local to its broker. Only team and role users carry global grants: publish on `global.director.inbox`, `global.*.supervisor.inbox` and `$JS.global.API.>` (`:212`, given at `:220` and `:245`), and the team user also subscribes `global.<domain>.>` (`:221`). The hub is reached only through the broker's leaf remote, which logs in with the cluster's leaf nkey; the daemon has no hub connection of its own |
-| Asks are director's | director `sim/design/ask-ledger.md` sections 4 and 8, `docs/shim-reference.md:61-77` | a reader per broker writes `ASK_LEDGER` and a JSON file. The rollups are open asks, unacked asks and the oldest open age, per owner role and per asker role, keyed `<team>/<role>` or `global:<cluster>/<role>`. A `global:` key carries no team. Merging rows across brokers by `message_id` is part A2, not built; until then each broker's ledger holds its own copy of a cross-broker ask, so summing ledgers double-counts it |
+| Asks are director's | director `sim/design/ask-ledger.md` sections 4 and 8, `docs/shim-reference.md:61-77` | a reader per broker writes `ASK_LEDGER` and a JSON file. Each rollup row (`rollupRow`, director `probe/nats-phase-0/director-mcp/askledger.go:738-744`) carries `open`, `unacked`, `blocked` and `oldest_open_seconds`, per owner role and per asker role, keyed `<team>/<role>` or `global:<cluster>/<role>`. A `global:` key carries no team. Merging rows across brokers by `message_id` is part A2, not built; until then each broker's ledger holds its own copy of a cross-broker ask, so summing ledgers double-counts it |
 | The ask reader is not yet granted | director `sim/design/ask-ledger.md` section 6 | its broker principal is the operator's open decision |
-| Blocked is a ledger state | director `sim/design/ask-ledger.md` section 5 | a row is `blocked` when its owner sent a status message `blocked-on <address or ref>` |
+| Blocked is a ledger state, and counted | director `sim/design/ask-ledger.md` section 5; `askledger.go:341`, `:882-883`; `status.go:42-49`, `tools.go:92` | a row is `blocked` when its owner sent a status message `blocked-on <address or ref>`, which the shim's `report_status` tool sends; each rollup row counts its blocked rows |
 
 So the per-team arithmetic is local to the cluster that owns the team. What is cross-host is the fleet view of all teams, the asks (an ask's row can sit in the sender's broker), and stale claims (a claim names a seat, not a cluster).
 
@@ -37,9 +37,9 @@ So the per-team arithmetic is local to the cluster that owns the team. What is c
 **Asks are never counted by marvel.** Marvel reads only fields the ledger's rollups already carry, joined by the team key, and never recounts rows or bus traffic (the distsys seat's point, quoted in `get-sessions-output.md` section 6). That rule decides what the view can show:
 
 - **Which ledger.** The merged ledger, once A2 builds it. Before A2 the view reads no ledger at all, because summing per-broker ledgers double-counts cross-broker asks, and one broker's ledger alone is a partial count that would read as whole. Ask cells print `-` until then.
-- **What it shows from a rollup:** open asks, unacked asks and the oldest open age, from `rollup_by_owner` keyed `<team>/<role>`, summed over the team's roles.
+- **What it shows from a rollup:** from `rollup_by_owner` keyed `<team>/<role>`, over the team's roles: open, unacked and blocked, each summed, and the oldest open age, the maximum.
 - **`global:<cluster>/<role>` owner keys** carry no team, and several teams can hold the same global role on one cluster. They are shown on the cluster's line, never assigned to a team.
-- **Blocked and waiting on the operator** are in neither rollup today, so the view cannot show them without recounting rows. They print `-` until director's rollup carries them (D6).
+- **Waiting on the operator** is in neither rollup today: the owner rollup has director's key but no asker team, and the asker rollup has the team but not who owns the ask. The view cannot show it without recounting rows, so it prints `-` until director's rollup carries it (D6).
 
 **The view is assembled by the reader.** `marvel get teams --load` (the name is open to the column selector) reads every cluster's rows, the ledger and, optionally, bd. It renders one table, one row per team, with the cluster as a column.
 
@@ -89,11 +89,20 @@ Today, nothing would. Every team and role user that holds the global tier may pu
 
 | | option | gives | costs |
 |---|---|---|---|
-| a | narrow the team and role users to deny `$JS.global.API.$KV.<bucket>.>` (a marvel change); and on the hub, permit each cluster's leaf user to put only its own key (the operator's hub-side grant, R-95) | a cluster can write only its own key, and no seat can write any key | a marvel change to every seat user, and one hub-side rule per cluster's leaf. Within a cluster, a key is then as trustworthy as that cluster's `marvel_admin` |
+| a | narrow the team and role users to deny `$JS.global.API.$KV.<bucket>.>` (a marvel change); and on the hub, limit each cluster's leaf user so it can put only its own key (the operator's hub-side grant, R-95; how, below) | a cluster can write only its own key, and no seat can write any key | a marvel change to every seat user, and one hub-side rule per cluster's leaf. Within a cluster, a key is then as trustworthy as that cluster's `marvel_admin` |
 | b | (a)'s narrowing in marvel only, with no hub-side rule | no seat can write a key | one cluster's daemon could still write another cluster's key, because the hub sees only the leaf user |
 | c | no narrowing; reuse the existing grant | nothing to change | any seat holding the global tier could write any cluster's load, so the numbers stop being evidence |
 
-Recommended: (a). (b) is the smallest safe start if the hub-side rule waits. (c) is listed to name what the current grant allows, not as a choice.
+How each rule could be written, all INFERRED from nats-server's documented permission model (deny takes precedence over allow) and unmeasured here:
+
+- **The put subject.** A key put into the hub's domain is assumed to travel as `$JS.global.API.$KV.<bucket>.<key>`, under the `$JS.global.API.>` the seats hold today. Plan item 3 starts with a red test that measures the actual subject a domain put uses, before any rule is written against it.
+- **The seats' rule (marvel).** Add `deny: [ "$JS.global.API.$KV.<bucket>.>" ]` to each team and role user's publish permissions. marvel's `Principal` has no deny field today, and the renderer writes only `allow` (`internal/bus/render.go:204`), so item 3 adds a deny list to `Principal` and to the render.
+- **The leaf rule (hub).** The leaf user for cluster X also carries `$JS.global.API.>`, and because deny wins over allow, "allow my key, deny the rest of the bucket" cannot be one wildcard pair. Two ways it could be written:
+  1. deny every other cluster's key by name: `deny: [ "$JS.global.API.$KV.<bucket>.<cluster-a>", "$JS.global.API.$KV.<bucket>.<cluster-b>", ... ]`, which must be updated on every leaf whenever a cluster joins;
+  2. replace the leaf's `$JS.global.API.>` with an enumerated allow list of the API subjects its seats use, plus `$JS.global.API.$KV.<bucket>.<X>`, which changes what every seat on that cluster can reach and needs that list measured first.
+- **Red tests in the plan:** a seat user's put to any load key is refused; cluster X's daemon put to X's key succeeds; cluster X's put to cluster Y's key is refused; each against a scratch hub and two scratch leaves.
+
+Recommended: (a), with the leaf rule written as (1) while the fleet is a few clusters. (b) is the smallest safe start if the hub-side rule waits. (c) is listed to name what the current grant allows, not as a choice.
 
 **D3. Which clusters count as expected in "n of m"?**
 
@@ -124,17 +133,17 @@ Recommended: (a).
 
 Recommended: (a), as an optional integration that marvel never requires and that never writes bd.
 
-**D6. Where should the blocked and waiting-on-operator counts come from?**
+**D6. Where should the waiting-on-operator count come from?**
 
-Neither is in the ledger's rollups today, and marvel does not recount rows (section 2). The asks are director's, so this is a request to director, routed by the operator:
+Blocked needs no decision: the rollup already counts it (section 1), and the view reads it. Waiting on the operator is in neither rollup, and marvel does not recount rows (section 2). The asks are director's, so this is a request to director, routed by the operator:
 
 | | option | gives | costs |
 |---|---|---|---|
-| a | director's rollup gains two fields: blocked per owner key (once A3's status message exists), and open asks per asker key whose owner is director | marvel reads two more counts, as it reads the others | two fields in director's rollup; blocked waits on A3 |
+| a | director's rollup gains one field: per asker key, the open asks whose owner is director | marvel reads one more count, as it reads the others | one field in director's rollup |
 | b | marvel counts ledger rows itself | no director change | marvel recounts, against section 2, and two counts can disagree |
-| c | leave both out of the rollup view | nothing to build | the operator's "blocked" and "waiting on me" stay unanswered here |
+| c | leave it out of the rollup view | nothing to build | the operator's "waiting on me" stays unanswered here; `director-mcp asks` still lists the rows |
 
-Recommended: (a). Neither adds an ask class or a role. Until it lands, both cells print `-`.
+Recommended: (a). It adds no ask class or role. Until it lands, the cell prints `-`.
 
 These recommendations are valid until 2026-10-22, or until the operator grants the ask reader's principal or director builds A2, whichever comes first. The architect re-checks them then.
 
@@ -144,8 +153,8 @@ Flat tickets with dependency edges, each with red tests first:
 
 1. daemon: compute per-team rows on the reconcile tick (seats, ACTIVE% mean with count, `limited`, agent names). Local only; no transport.
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
-3. bus: narrow the team and role users' `$JS.global.API.>` to exclude the load bucket (D2's precondition). Depends on D2.
-4. daemon: put the record into the hub bucket over the leaf on D4's cadence. Depends on 1 and 3, on D1, and on the hub-side rule if D2 (a) is ruled.
+3. bus: first a red test that measures the subject a domain KV put uses; then a deny list on `Principal` and in the renderer, and the seats' deny on the load bucket (D2's precondition), with the seat-refused red test. Depends on D2.
+4. daemon: put the record into the hub bucket over the leaf on D4's cadence, with the own-key-accepted and other-key-refused red tests against a scratch hub and two scratch leaves. Depends on 1 and 3, on D1, and on the hub-side rule if D2 (a) is ruled.
 5. CLI: read every cluster's key, apply section 4's states and the header. Depends on 2 and 4.
 6. CLI: join the merged ledger's rollup by team key, with `global:` keys on the cluster line. Depends on 2 and on director's A2.
 7. CLI: the optional bd claim join with the all-fresh guard. Depends on 5 and on D5.
