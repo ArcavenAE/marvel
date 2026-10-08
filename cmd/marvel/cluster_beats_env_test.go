@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
 )
@@ -117,5 +119,79 @@ func TestEnvSocketAloneStillWins(t *testing.T) {
 	}
 	if n := current.Load() + other.Load(); n != 0 {
 		t.Errorf("a configured cluster was dialed %d time(s), want 0", n)
+	}
+}
+
+// An empty --cluster is refused, not read as "no flag given": typed as
+// --cluster "" (a script whose variable came up empty) it would otherwise
+// dial the daemon MARVEL_SOCKET names without a word (#586). The test drives
+// the real flag registration, so it sees what cobra reports as given.
+func TestEmptyClusterFlagRefuses(t *testing.T) {
+	env, current, other := envClusterFixture(t)
+
+	root := &cobra.Command{Use: "marvel", SilenceUsage: true, SilenceErrors: true}
+	bindRootFlags(root)
+	root.AddCommand(&cobra.Command{
+		Use: "ping",
+		RunE: func(*cobra.Command, []string) error {
+			_, err := send(daemon.Request{Method: "status"})
+			return err
+		},
+	})
+	root.SetArgs([]string{"--cluster", "", "ping"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("an empty --cluster ran, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "--cluster") {
+		t.Errorf("error = %q, want it to name the --cluster flag", err)
+	}
+	if n := env.Load() + current.Load() + other.Load(); n != 0 {
+		t.Errorf("%d dial(s) were made, want 0", n)
+	}
+}
+
+// A cluster that names no socket and no server resolves to the layout
+// default, never to MARVEL_SOCKET: an explicit --cluster must not end on the
+// env daemon through the back door (#586).
+func TestBareClusterDoesNotReachTheEnvSocket(t *testing.T) {
+	env, _, _ := envClusterFixture(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clusters = append(cfg.Clusters, config.Cluster{Name: "bare"})
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defSock := config.DefaultSocket()
+	if err := os.MkdirAll(filepath.Dir(defSock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", defSock)
+	if err != nil {
+		t.Fatalf("listen on the default socket: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	var dflt atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			dflt.Add(1)
+			_ = conn.Close()
+		}
+	}()
+	clusterName = "bare"
+
+	_, _ = send(daemon.Request{Method: "status"})
+	if n := env.Load(); n != 0 {
+		t.Errorf("MARVEL_SOCKET was dialed %d time(s), want 0", n)
+	}
+	if n := dflt.Load(); n == 0 {
+		t.Error("the layout default socket was never dialed, want it reached")
 	}
 }
