@@ -1371,10 +1371,10 @@ func TestValidateRuntimesCheckOnlyWhatItCanRead(t *testing.T) {
 
 		// Not the simple form: not refused, advised.
 		{name: "env assignment before the program", command: "FOO=1 sleep 5", advisory: shellTextAdvisory},
-		{name: "double-quoted path with a space", command: `"/tmp/dir with space/prog" --x`, advisory: shellTextAdvisory},
+		{name: "double-quoted path with a space", command: `"/tmp/dir with space/prog" --x`, teamDir: "t", advisory: shellTextAdvisory},
 		{name: "single-quoted program", command: `'sleep' 5`, advisory: shellTextAdvisory},
 		{name: "a quoted program that does not exist", command: `'nosuchprog' 5`, advisory: shellTextAdvisory},
-		{name: "tilde program", command: "~/bin/prog", advisory: shellTextAdvisory},
+		{name: "tilde program", command: "~/bin/prog", teamDir: "t", advisory: shellTextAdvisory},
 		{name: "command substitution", command: "$(which sleep) 5", advisory: shellTextAdvisory},
 		{name: "variable program", command: "$SHELL -c true", advisory: shellTextAdvisory},
 		{name: "backtick program", command: "`which sleep` 5", advisory: shellTextAdvisory},

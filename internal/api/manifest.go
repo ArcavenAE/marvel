@@ -660,15 +660,21 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 // is applied. Returns an aggregated error listing every missing binary
 // so the operator sees all problems at once — not just the first.
 //
-// Resolution rules match exec.Command semantics:
+// Only a command in the simple form is resolved (see validateCommand), by
+// exec.Command semantics on its first whitespace field:
 //   - Absolute path ("/usr/local/bin/forestage"): os.Stat must succeed.
 //   - Path with separator ("bin/simulator", "./scripts/x"): resolved
-//     relative to the daemon CWD via os.Stat.
+//     against the directory the launch starts the role's pane in, not
+//     the daemon CWD, via os.Stat.
 //   - Plain name ("sleep", "forestage"): exec.LookPath searches $PATH.
 //   - Empty command: flagged; the manifest parser already catches this
 //     but we defend here so misuse of the public API surfaces clearly.
 //   - Inline arguments ("claude --model x"): only the first whitespace
 //     field is resolved; the rest are the program's arguments.
+//
+// Shell text it does not parse (an assignment, a quote, a substitution, a
+// newline, a relative program with no directory) is not refused: the
+// advisories returned say that role's program was not checked.
 //
 // Scripts are checked as absolute/relative paths (never PATH-resolved)
 // because scripts are typically repo-relative files, not executables.
@@ -677,12 +683,17 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 // silently create panes whose processes exited immediately, hiding the
 // real error behind a downstream "can't find pane" warning.
 func (m *Manifest) ValidateRuntimes() ([]string, error) {
-	var missing []string
+	var missing, advisories []string
 	for ti, t := range m.Teams {
 		for ri, r := range t.Roles {
 			ctx := fmt.Sprintf("team[%d=%s].role[%d=%s]", ti, t.Name, ri, r.Name)
-			if err := validateCommand(r.Runtime.Command); err != nil {
+			dir := ResolveWorkDir("", teamAnchor(m.Workspace.Root, t.WorkDir), joinWorkDir(m.Workspace.Root, r.WorkDir))
+			advisory, err := validateCommand(r.Runtime.Command, dir)
+			if err != nil {
 				missing = append(missing, fmt.Sprintf("  %s: command %q: %v", ctx, r.Runtime.Command, err))
+			}
+			if advisory != "" {
+				advisories = append(advisories, fmt.Sprintf("role %s: %s", r.Name, advisory))
 			}
 			if r.Runtime.Script != "" {
 				if err := validateScript(r.Runtime.Script); err != nil {
@@ -692,40 +703,68 @@ func (m *Manifest) ValidateRuntimes() ([]string, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
+		return advisories, fmt.Errorf("runtime pre-flight failed on %d role(s):\n%s", len(missing), strings.Join(missing, "\n"))
 	}
-	return nil, nil
+	return advisories, nil
 }
 
-// validateCommand resolves the program of a command. The command is shell
-// text whose first field is the program and whose remaining fields are its
-// arguments, as the claude adapter reads it (marvel#517), so only the first
-// field is looked up.
-func validateCommand(command string) error {
-	// The launch hands the text to a shell, which ends the command at a
-	// newline and runs the next line as another command, so a multi-line
-	// command is refused here and not accepted and then failed at launch.
+// shellMeta are the characters that make the first field of a command more
+// than a program name to the shell the launch hands it to: an assignment, a
+// quote, an escape, an expansion, a list or pipe, a redirect, a group, a glob
+// or a tilde. A field with none of them is the program as written.
+const shellMeta = "='\"\\$`;|&<>(){}*?[~"
+
+// validateCommand checks the program of a command. The launch passes the text
+// to a shell (the driver hands tmux `env -u ... <command>` as one shell
+// command), so the pre-flight may be less strict than the launch and never more
+// (marvel#517).
+//
+// A command in the simple form, whose first whitespace field has no shell
+// metacharacter and which has no newline, has that field resolved: an absolute
+// path by stat, a plain name on $PATH, a relative path against dir, and a miss
+// refuses. dir is where the launch starts the pane (tmux -c), resolved as the
+// controller places a session: the role's workdir, else the team's anchor, else
+// the root (ResolveWorkDir over the values Apply stores). Anything else is not
+// parsed and not refused; the advisory says its program was not checked. That
+// includes a relative program for a role that has no directory, since the pane
+// would start somewhere this process cannot name. It is not a shell parser and
+// does not grow into one.
+func validateCommand(command, dir string) (advisory string, err error) {
 	if strings.ContainsRune(command, '\n') {
-		return errors.New("multi-line command; the launch runs only its first line")
+		// The shell ends the command at the newline and runs the next line as
+		// another command, which fails with rc 127.
+		return "runtime command spans several lines; the shell runs each line as its own command, so the pre-flight did not check its program", nil
 	}
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
-		return errors.New("empty")
+		return "", errors.New("empty")
 	}
 	cmd := fields[0]
-	// Path — either absolute or contains a separator — must exist on disk.
+	if strings.ContainsAny(cmd, shellMeta) {
+		return commandNotParsedAdvisory, nil
+	}
+	// Path, absolute or with a separator: must exist on disk.
 	if filepath.IsAbs(cmd) || strings.ContainsRune(cmd, filepath.Separator) {
-		if _, err := os.Stat(cmd); err != nil {
-			return fmt.Errorf("not found: %w", err)
+		path := cmd
+		if !filepath.IsAbs(cmd) {
+			if dir == "" {
+				return commandNotParsedAdvisory, nil
+			}
+			path = filepath.Join(dir, cmd)
 		}
-		return nil
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("not found: %w", err)
+		}
+		return "", nil
 	}
-	// Plain name — must resolve on $PATH.
+	// Plain name: must resolve on $PATH.
 	if _, err := exec.LookPath(cmd); err != nil {
-		return fmt.Errorf("not on PATH: %w", err)
+		return "", fmt.Errorf("not on PATH: %w", err)
 	}
-	return nil
+	return "", nil
 }
+
+const commandNotParsedAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"
 
 func validateScript(path string) error {
 	if _, err := os.Stat(path); err != nil {
