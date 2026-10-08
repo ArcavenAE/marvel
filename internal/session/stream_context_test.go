@@ -224,8 +224,9 @@ func TestManifestWindowResolvesUnknownModel(t *testing.T) {
 
 // loadedHostWait is the ceiling for a wait on a process this test spawned. The
 // wait polls, so the ceiling only matters on a host under load, where a fixed
-// 5s one expired before the sample arrived (marvel#550); the other waits in
-// this package already use 15s.
+// 5s one expired before the sample arrived (marvel#550).
+// 15s is a ceiling that waits in both packages already use; it is a judgment,
+// not a measured sufficient value.
 const loadedHostWait = 15 * time.Second
 
 func TestLoadedHostWaitOutlastsTheMeasuredStall(t *testing.T) {
