@@ -180,19 +180,21 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// program or inside the comment, and marvel does not parse shell), so the log
 	// line says what marvel appended and nothing about what claude will do
 	// (marvel#745).
-	settingSources := ""
+	settingSources, delivery := "", ""
 	if isBareClaude(binary) {
 		switch {
 		case !readable && !declared:
 			// Held back, and logged with the prompt line above.
 		case !readable:
 			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
+			delivery = api.SettingSourcesShellText
 			logLaunch("role %s: command is shell text; marvel appended --setting-sources %s from the manifest; whether claude receives it depends on the command", ctx.Role.Name, settingSources)
 		case !carriesFlag(args, binary, "--setting-sources"):
 			settingSources = "user,project,local"
 			if declared {
 				settingSources = strings.Join(ctx.Role.SettingsSources, ",")
 			}
+			delivery = api.SettingSourcesArgv
 		}
 		if settingSources != "" {
 			args = append(args, "--setting-sources", settingSources)
@@ -205,9 +207,10 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	}
 
 	result := &LaunchResult{
-		Command:        buildCommand(binary, args),
-		Env:            baseEnv(ctx),
-		SettingSources: settingSources,
+		Command:                buildCommand(binary, args),
+		Env:                    baseEnv(ctx),
+		SettingSources:         settingSources,
+		SettingSourcesDelivery: delivery,
 	}
 	if headless && ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)

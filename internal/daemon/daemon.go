@@ -1652,6 +1652,11 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 			one := []api.Session{sess}
 			d.stampLimitReading(one, time.Now().UTC())
 			d.stampActivity(one, time.Now().UTC())
+			// A record with sources and no delivery predates the delivery
+			// field; say so and never guess (marvel#748). Read-time only.
+			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
+				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
+			}
 			result = one[0]
 		}
 	case "team":
