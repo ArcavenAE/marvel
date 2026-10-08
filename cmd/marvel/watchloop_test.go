@@ -34,7 +34,7 @@ func newLoopRig(t *testing.T, deadline time.Duration) *loopRig {
 		ticks:   make(chan time.Time, 8),
 		results: make(chan watchData, 8),
 		frames:  make(chan string, 64),
-		done:    make(chan struct{}, 1),
+		done:    make(chan struct{}),
 	}
 	ws := newWatchState(nil)
 	cols, _, err := loadSessionColumnsSel("")
@@ -57,7 +57,7 @@ func newLoopRig(t *testing.T, deadline time.Duration) *loopRig {
 			}
 		},
 	}
-	go func() { watchLoop(ws, cfg, r.keys, r.ticks); r.done <- struct{}{} }()
+	go func() { watchLoop(ws, cfg, r.keys, r.ticks); close(r.done) }()
 	t.Cleanup(func() {
 		// Release any fetch still blocked, then ask the loop to stop.
 		for i := 0; i < 4; i++ {
