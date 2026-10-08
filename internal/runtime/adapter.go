@@ -251,6 +251,10 @@ type LaunchResult struct {
 	// SettingSources is the value the adapter passed as --setting-sources,
 	// empty when it passed none.
 	SettingSources string
+	// SettingSourcesDelivery is api.SettingSourcesArgv when the command was
+	// readable and the flag is in its arguments, api.SettingSourcesShellText
+	// when marvel appended it to shell text, and empty when none was passed.
+	SettingSourcesDelivery string
 	// Stream is set only when the adapter actually wired its harness's
 	// structured output into LaunchContext.StreamPath. Nil means the
 	// session produces no parseable stream and is observed by

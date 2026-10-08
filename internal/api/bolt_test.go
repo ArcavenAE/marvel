@@ -679,3 +679,44 @@ func TestOpenBoltOtherFailuresAreNotErrBoltLocked(t *testing.T) {
 		t.Errorf("a non-lock failure was reported as a lock: %v", err)
 	}
 }
+
+// The setting sources and how they were delivered survive a daemon restart, and
+// a record written before the delivery existed reads back with sources and an
+// empty delivery, never a guessed one (marvel#748).
+func TestBoltStore_SettingSourcesDeliveryRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	for _, sess := range []*Session{
+		{Name: "new-0", Workspace: "ws", Team: "t", Role: "r", SettingSources: "project,local", SettingSourcesDelivery: SettingSourcesShellText},
+		{Name: "old-0", Workspace: "ws", Team: "t", Role: "r", SettingSources: "user,project,local"},
+	} {
+		if err := s1.CreateSession(sess); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession("ws/new-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SettingSources != "project,local" || got.SettingSourcesDelivery != SettingSourcesShellText {
+		t.Errorf("new record: sources %q delivery %q", got.SettingSources, got.SettingSourcesDelivery)
+	}
+	old, err := s2.GetSession("ws/old-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.SettingSources != "user,project,local" || old.SettingSourcesDelivery != "" {
+		t.Errorf("legacy record: sources %q delivery %q, want the sources and no delivery", old.SettingSources, old.SettingSourcesDelivery)
+	}
+}

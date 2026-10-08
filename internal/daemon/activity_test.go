@@ -67,3 +67,53 @@ func TestDescribeNamesActivitySource(t *testing.T) {
 		}
 	}
 }
+
+// describe session names the delivery next to the sources, says so for a
+// record written before the delivery was kept, and says nothing where marvel
+// passed no sources. The note is a read-time view and is never stored
+// (marvel#748).
+func TestDescribeNamesTheSettingSourcesDelivery(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := liveSession(t, d)
+	describe := func(sources, delivery string) (string, api.Session) {
+		t.Helper()
+		if err := d.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+			live.SettingSources, live.SettingSourcesDelivery = sources, delivery
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		resp := d.handleDescribe(mustMarshal(t, map[string]string{"resource_type": "session", "name": sess.Key()}))
+		if resp.Error != "" {
+			t.Fatalf("describe: %s", resp.Error)
+		}
+		stored, err := d.store.GetSession(sess.Key())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(resp.Result), stored
+	}
+
+	out, _ := describe("project,local", api.SettingSourcesShellText)
+	for _, want := range []string{`"SettingSources":"project,local"`, `"SettingSourcesDelivery":"shell-text"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("describe lacks %s:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "delivery not recorded") {
+		t.Errorf("a recorded delivery drew the legacy note:\n%s", out)
+	}
+
+	out, stored := describe("user,project,local", "")
+	if !strings.Contains(out, `"setting_sources_note":"delivery not recorded"`) {
+		t.Errorf("a legacy record lacks the note:\n%s", out)
+	}
+	if stored.SettingSourcesNote != "" || stored.SettingSourcesDelivery != "" {
+		t.Errorf("the legacy view was stored: note %q delivery %q", stored.SettingSourcesNote, stored.SettingSourcesDelivery)
+	}
+
+	out, _ = describe("", "")
+	if strings.Contains(out, "delivery not recorded") || strings.Contains(out, "setting_sources_note") {
+		t.Errorf("a session with no sources drew a note:\n%s", out)
+	}
+}

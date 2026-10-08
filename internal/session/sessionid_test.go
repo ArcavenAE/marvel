@@ -144,3 +144,24 @@ func TestPlanLaunchRecordsTheSettingSources(t *testing.T) {
 		t.Errorf("codex SettingSources = %q, want empty", codex.SettingSources)
 	}
 }
+
+// The delivery is recorded beside the sources, and a re-plan that passes
+// nothing does not carry the previous launch's value forward (marvel#748).
+func TestPlanLaunchRecordsTheSettingSourcesDelivery(t *testing.T) {
+	t.Parallel()
+	mgr := sessionIDManager(t)
+
+	claude := sessionFor("reviewer", "claude")
+	mgr.planLaunch(claude)
+	if claude.SettingSourcesDelivery != api.SettingSourcesArgv {
+		t.Errorf("claude delivery = %q, want %q", claude.SettingSourcesDelivery, api.SettingSourcesArgv)
+	}
+
+	codex := sessionFor("coder", "codex")
+	codex.SettingSources = "user"
+	codex.SettingSourcesDelivery = api.SettingSourcesShellText
+	mgr.planLaunch(codex)
+	if codex.SettingSources != "" || codex.SettingSourcesDelivery != "" {
+		t.Errorf("codex kept the previous launch: sources %q delivery %q", codex.SettingSources, codex.SettingSourcesDelivery)
+	}
+}
