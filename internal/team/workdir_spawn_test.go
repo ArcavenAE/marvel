@@ -49,7 +49,7 @@ func realDir(t *testing.T) string {
 // wait polls, so the ceiling only matters on a host under load, where a fixed
 // 5s one expired before the pane reported its directory (marvel#550); the other
 // waits in this package already use 15s.
-const loadedHostWait = 5 * time.Second
+const loadedHostWait = 15 * time.Second
 
 func TestLoadedHostWaitOutlastsTheMeasuredStall(t *testing.T) {
 	if loadedHostWait < 15*time.Second {
