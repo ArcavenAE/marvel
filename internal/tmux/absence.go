@@ -116,23 +116,34 @@ func (d *Driver) serverProcessAlive() (bool, error) {
 var tmuxFlagsWithArg = map[string]bool{"-c": true, "-f": true, "-L": true, "-S": true, "-T": true}
 
 // carriesSocket reports whether a `pid args...` process line is a tmux with
-// -L name among its global options.
+// -L name among its global options. For the name "default", which is tmux's
+// own default server and what MARVEL_TMUX_SOCKET=default selects, a tmux with
+// neither -L nor -S also counts: a user's default server is usually started
+// as plain `tmux`. A client of that server matches too, which can only make
+// the answer "alive".
 func carriesSocket(fields []string, name string) bool {
 	if len(fields) < 2 || filepath.Base(fields[1]) != "tmux" {
 		return false
 	}
 	args := fields[2:]
+	named := false // -L or -S seen among the global options
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "-") {
-			return false // the command starts here; the options are behind us
+			break // the command starts here; the options are behind us
 		}
 		if a == "-L" {
-			return i+1 < len(args) && args[i+1] == name
+			if i+1 < len(args) && args[i+1] == name {
+				return true
+			}
+			named = true
+		}
+		if a == "-S" {
+			named = true
 		}
 		if tmuxFlagsWithArg[a] {
 			i++
 		}
 	}
-	return false
+	return name == "default" && !named
 }
