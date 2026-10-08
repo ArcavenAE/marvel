@@ -21,6 +21,7 @@ import (
 // objects are created there, as the broker's admin identity, with the exact
 // parameters of director sim/twin/README.md precondition 6. Exists is
 // success; nothing already present is altered.
+
 // provisionRPC bounds each call that provisions the broker. It is a variable
 // so the package's tests, which run a real broker behind the whole suite, can
 // widen it (marvel#493); nothing else changes it.

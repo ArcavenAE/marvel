@@ -19,8 +19,9 @@ func TestMain(m *testing.M) {
 }
 
 // A test that starts a real broker waits long enough for it on a loaded host.
-// The shared supervisor helper, the provisioning RPC and the structure RPC
-// each gave up at 5s or 10s, and each was seen to expire in the full suite.
+// The shared supervisor helper's 5s listener bound was seen to fail once in
+// nine full-suite runs. The 10s provisioning and structure RPC bounds were not
+// reproduced; they are widened by inference from the same load.
 func TestBrokerWaitsOutlastALoadedHost(t *testing.T) {
 	s, _, _ := newTestSupervisor(t, "")
 	for name, got := range map[string]time.Duration{
