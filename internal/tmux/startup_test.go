@@ -364,3 +364,43 @@ func TestNewSessionOnAnExistingSessionStillSetsItsOptions(t *testing.T) {
 	}
 	assertSessionOptions(t, d, "peer", "exists path")
 }
+
+// A process list that cannot be read is an outage for the callers that wait:
+// reading it as absence would return an empty list from ListSessions and let
+// NewSession create while the server may be unreachable.
+func TestUnreadableProcessListIsAnOutageForTheWaitingCallers(t *testing.T) {
+	f, d := newStartupFake(t, false)
+	d.procs = func(context.Context) ([]byte, error) { return nil, errors.New("ps: not permitted") }
+	if ok, err := d.sessionExists("s"); err == nil || ok {
+		t.Errorf("sessionExists = %v, %v; want an error", ok, err)
+	}
+	if names, err := d.ListSessions(); err == nil {
+		t.Errorf("ListSessions = %v, nil; want an error, not an empty list", names)
+	}
+	if err := d.NewSession("s"); err == nil {
+		t.Error("NewSession returned nil with an unreadable process list; want an error")
+	}
+	if n := f.calls("new-session"); n != 0 {
+		t.Errorf("new-session ran %d times, want 0: nothing is created while the server cannot be told from absent", n)
+	}
+}
+
+// ListSessions reads the process list once per answer, like sessionExists.
+func TestListSessionsVerdictReadsTheProcessListOnce(t *testing.T) {
+	_, d := newStartupFake(t, false)
+	reads := 0
+	d.procs = func(context.Context) ([]byte, error) {
+		reads++
+		if reads == 1 {
+			return nil, nil // no server yet
+		}
+		return []byte(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d\n"), nil // a peer started one
+	}
+	names, err := d.ListSessions()
+	if err != nil || len(names) != 0 {
+		t.Errorf("ListSessions = %v, %v; want empty and no error from the first read", names, err)
+	}
+	if reads != 1 {
+		t.Errorf("the process list was read %d times, want 1", reads)
+	}
+}
