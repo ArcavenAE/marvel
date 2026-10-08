@@ -11,6 +11,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	boltErrors "go.etcd.io/bbolt/errors"
 )
 
 // L2 (durable record) for marvel's authoritative state — bbolt-backed
@@ -108,8 +109,15 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 	if err := ensureParentDir(path); err != nil {
 		return err
 	}
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+	lockTimeout := opts.LockTimeout
+	if lockTimeout <= 0 {
+		lockTimeout = 5 * time.Second
+	}
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: lockTimeout})
 	if err != nil {
+		if errors.Is(err, boltErrors.ErrTimeout) {
+			return fmt.Errorf("open bbolt at %s: %w: %w", path, ErrBoltLocked, err)
+		}
 		return fmt.Errorf("open bbolt at %s: %w", path, err)
 	}
 
@@ -460,9 +468,16 @@ func ensureParentDir(path string) error {
 	return nil
 }
 
+// ErrBoltLocked is wrapped by an open that gave up waiting for the file lock,
+// which another process holds.
+var ErrBoltLocked = errors.New("state file lock is held by another process")
+
 // BoltOptions are the inputs the v1 to v2 migration needs that the file does
 // not hold.
 type BoltOptions struct {
+	// LockTimeout is how long an open waits for another process to release
+	// the file lock. Zero means the 5s default.
+	LockTimeout time.Duration
 	// LegacyCwd is the directory a team with no resolvable root is stamped
 	// with. Empty means the process's working directory at the time of the
 	// migration.
