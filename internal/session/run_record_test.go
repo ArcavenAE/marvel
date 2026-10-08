@@ -487,8 +487,13 @@ func waitForExitStatus(t *testing.T, driver *tmux.Driver, paneID string) (kept b
 // brokenRunOK reports whether the run record of the role that exits 3 is
 // acceptable for the tmux the test runs on.
 func brokenRunOK(version string, r api.RunRecord) bool {
-	_ = version // the stub is strict on every tmux; the gate comes next
-	return r.Outcome == api.RunFailed && r.ExitStatus == "3"
+	if r.Outcome != api.RunFailed {
+		return false
+	}
+	if r.ExitStatus == "3" {
+		return true
+	}
+	return r.ExitStatus == "" && !tmuxtest.StatusExpected(version)
 }
 
 // tmuxVersion is `tmux -V`, or "" when it cannot be read, which
