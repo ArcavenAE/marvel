@@ -776,6 +776,9 @@ func validateCommand(command, dir string) (advisory string, err error) {
 	return "", nil
 }
 
+// CommandWordsReadable is a red stub; the green commit gives it a body.
+func CommandWordsReadable(string) bool { return true }
+
 const commandNotParsedAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"
 
 func validateScript(path string) error {

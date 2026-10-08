@@ -1,12 +1,17 @@
 package runtime
 
 import (
+	"log"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
+
+// logLaunch is where the adapter reports a launch decision. A seam so a test
+// reads the line without redirecting the process-wide logger.
+var logLaunch = log.Printf
 
 // Claude is the adapter for the bare Claude Code CLI. Medium integration:
 // permission mode injection via CLI flag, environment-based identity,

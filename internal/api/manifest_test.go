@@ -1511,3 +1511,42 @@ func TestValidateRuntimesCountsOnlyRefusals(t *testing.T) {
 		t.Fatalf("want one refusal naming only role b, got %v", err)
 	}
 }
+
+// CommandWordsReadable says whether the words of a command, split on space and
+// tab, are the words the shell hands on. The claude adapter reads a command's
+// own arguments for flags and adds none to a command it cannot read (marvel#745).
+func TestCommandWordsReadable(t *testing.T) {
+	t.Parallel()
+	for command, want := range map[string]bool{
+		"claude":                    true,
+		"claude --model x":          true,
+		"claude\t--model x":         true,
+		`claude --model "sonnet 4"`: true,
+		`claude --model 'sonnet'`:   true,
+		"claude --model=x*":         true,
+		"claude ~/x":                true,
+		"claude $HOME":              false,
+		"claude $(cat f)":           false,
+		"claude `cat f`":            false,
+		"claude ${X}":               false,
+		"claude ; true":             false,
+		"claude | tee":              false,
+		"claude &":                  false,
+		"claude < in":               false,
+		"claude > out":              false,
+		"claude (x)":                false,
+		"claude {x}":                false,
+		`claude \--flag`:            false,
+		"claude --a\n--b":           false,
+		"claude --a\r--b":           false,
+		"claude\u00a0--a":           false,
+		"claude --a\v--b":           false,
+		"claude --a\f--b":           false,
+		"claude\u2003--a":           false,
+		"claude\u0085--a":           false,
+	} {
+		if got := CommandWordsReadable(command); got != want {
+			t.Errorf("CommandWordsReadable(%q) = %v, want %v", command, got, want)
+		}
+	}
+}
