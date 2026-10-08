@@ -735,15 +735,27 @@ the README). If a host ends up with both, the first `marvel` on `PATH` is the
 one that runs, which may be the stale one; check it with `command -v marvel`
 and `marvel version`, or call the pinned binary by its full path.
 
-### Under mise: stop and start, not reexec
+### Under mise: reexec from the new binary
 
-`marvel daemon reexec` re-executes the marvel binary at the running daemon's
-own path (`os.Executable`). That picks up an upgrade only when the new binary
-replaces the old one at the same path. mise installs each version in its own
-directory and leaves the old one in place, so after `mise use` a reexec
-restarts the old version (marvel#523).
+`marvel daemon reexec` run on the daemon's host names the binary it runs from,
+and the daemon execs that file. After `mise use`, run the new marvel's
+`daemon reexec` and the daemon adopts the new build, with its sessions and
+broker kept (marvel#523, marvel#592). The daemon first checks the target: a
+regular executable file owned by its own user, not writable by group or
+others, in a directory chain where every directory up to `/` is owned by root or
+that user and is not group- or world-writable unless sticky (a group-writable
+install directory is refused on purpose, since whoever can write it could swap
+the file before the exec), that records marvel's main module and a stamped version in its build
+information (read from the file, never run), and is not older than the running
+daemon. A build that cannot be proven this way is refused with the stop and
+start path below. Any failed check is refused with the reason, and the daemon keeps
+serving. Each accepted reexec logs and emits one `daemon.reexec` event naming
+the old and new path and version.
 
-Under mise, detach the old daemon and start the new one from its mise path:
+Two cases still re-execute the daemon's own path, the way reexec always has: a
+remote daemon (`--cluster` over `mrvl://`, where a path on your host means
+nothing), and a daemon older than this change, which ignores the path and says
+so. For those, detach the old daemon and start the new one from its mise path:
 
 ```sh
 mise use -g github:ArcavenAE/marvel@<tag>

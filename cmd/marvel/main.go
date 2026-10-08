@@ -417,24 +417,35 @@ Examples:
 func daemonReexecCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "reexec",
-		Short: "Re-exec the running daemon in place to adopt a freshly installed binary",
+		Short: "Re-exec the running daemon in place into the binary this command runs from",
 		Long: `Re-exec the running daemon in place.
 
 The daemon checkpoints its state, releases its state file, and replaces
-its own process image (same PID) with a fresh exec of the marvel binary
-at its current path. Every agent keeps running in its tmux pane; the new
-process re-opens the same state file, re-binds the same socket, and
-adopts those panes.
+its own process image (same PID) with a fresh exec of a marvel binary.
+Run on the daemon's host, this command names the binary it runs from, so
+an install that keeps each version in its own directory (mise) adopts the
+new build. Against a remote daemon (--cluster over mrvl://) no path is
+sent, and the daemon re-executes its own path. A target that is not a
+regular executable owned by the daemon's user, that is writable by others,
+that was not built from marvel with a stamped version (the daemon reads the
+build from the file and does not run it), or that is older than the
+running daemon is refused, and the daemon keeps serving. Every agent keeps
+running in its tmux pane; the new process re-opens the same state file,
+re-binds the same socket, and adopts those panes.
 
 Use this after installing a new binary out of band. To fetch, install,
 and adopt in one step, use 'marvel upgrade --daemon'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "reexec"})
+			req, sent := reexecRequest()
+			resp, err := send(req)
 			if err != nil {
 				return err
 			}
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
+			}
+			if note := reexecNote(resp, sent); note != "" {
+				fmt.Fprintln(os.Stderr, note)
 			}
 			fmt.Println("marvel daemon re-executing in place; agents keep running")
 			return nil
@@ -1891,12 +1902,16 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				return err
 			}
 			return afterUpgrade(res, reexecDaemon, func() error {
-				resp, err := send(daemon.Request{Method: "reexec"})
+				req, sent := reexecRequest()
+				resp, err := send(req)
 				if err != nil {
 					return fmt.Errorf("sending daemon re-exec: %w", err)
 				}
 				if resp.Error != "" {
 					return fmt.Errorf("%s", resp.Error)
+				}
+				if note := reexecNote(resp, sent); note != "" {
+					fmt.Fprintln(os.Stderr, note)
 				}
 				return nil
 			}, cmd.OutOrStdout())
