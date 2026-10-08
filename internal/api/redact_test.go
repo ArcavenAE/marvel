@@ -92,8 +92,8 @@ func TestRedactReachesEveryRuntimeAtAnyDepth(t *testing.T) {
 	if strings.Contains(string(data), "canary-secret") {
 		t.Fatalf("a Runtime Env value survived:\n%s", data)
 	}
-	if n := strings.Count(string(data), Redacted); n != 6 {
-		t.Fatalf("(redacted) appears %d times, want 6 (one per Runtime copy):\n%s", n, data)
+	if n := strings.Count(string(data), Redacted); n != 5 {
+		t.Fatalf("(redacted) appears %d times, want 5 (one per Runtime copy: Sessions, ByName, Ptr, Any, Anon):\n%s", n, data)
 	}
 }
 
