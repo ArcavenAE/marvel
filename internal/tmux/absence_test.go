@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -168,6 +170,17 @@ func TestPaneStatusLiveServerWithItsSocketFileRemovedIsAnOutage(t *testing.T) {
 		t.Fatalf("ask the server for its socket: %v", err)
 	}
 	sock := strings.TrimSpace(string(out))
+	// Removing the socket file leaves KillServer unable to reach the server,
+	// so stop it by pid. The pid is read while the socket still answers.
+	pidOut, err := d.cmd("display-message", "-p", "#{pid}").Output()
+	if err != nil {
+		t.Fatalf("ask the server for its pid: %v", err)
+	}
+	serverPid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	if err != nil || serverPid <= 1 {
+		t.Fatalf("server pid %q: %v", pidOut, err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(serverPid, syscall.SIGTERM) })
 	if st, err := d.PaneStatus(pane); err != nil || !st.Exists {
 		t.Fatalf("setup: PaneStatus before the socket is removed = %+v, %v; want the pane", st, err)
 	}
