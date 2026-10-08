@@ -122,6 +122,10 @@ const (
 	// the daemon removed from its own environment at start, names only, so
 	// nothing it execs inherits them (aae-orc#418).
 	KindDaemonEnvScrubbed Kind = "daemon.env-scrubbed"
+	// KindDaemonReexec records a reexec into a binary the client named
+	// (exec_path): the old and new path and version and who asked. The ring
+	// does not survive the exec, so the same line is logged (marvel#592).
+	KindDaemonReexec      Kind = "daemon.reexec"
 	KindHealthCheckFailed Kind = "health.failed"
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
@@ -408,6 +412,7 @@ var allKinds = []Kind{
 	KindWatchdogControl,
 	KindWatchdogUncovered,
 	KindDaemonEnvScrubbed,
+	KindDaemonReexec,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
 	KindShiftStarted,

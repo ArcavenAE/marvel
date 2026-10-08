@@ -75,7 +75,7 @@ func versionReport(w io.Writer, client daemon.Build, q buildQuery) {
 	switch {
 	case errors.Is(err, errDaemonPredates):
 		say("daemon  does not report its build (it predates this report); " +
-			"'marvel daemon reexec' adopts the installed binary")
+			adoptsText)
 	case err != nil:
 		// No daemon, or it did not answer: nothing to compare.
 	default:
@@ -105,7 +105,7 @@ func thisBuild() daemon.Build {
 // apart. A revision with no sha in the version to confirm it can be the wrong
 // repository's, so it is printed marked unconfirmed.
 func compareBuilds(client, d daemon.Build) (warning, note string) {
-	const adopt = "'marvel daemon reexec' adopts the installed binary"
+	const adopt = adoptsText
 	rev := func(b daemon.Build) string { return cmp.Or(b.Commit, b.Revision) }
 	cr, dr := rev(client), rev(d)
 	switch {
