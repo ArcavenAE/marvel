@@ -70,6 +70,10 @@ type ManifestWorkspace struct {
 	// Root is the filesystem root the workspace lives in; marvel work fills
 	// it from the manifest's directory when absent.
 	Root string `toml:"root,omitempty" yaml:"root,omitempty"`
+	// TrustedFolders lists the operator's own repos a codex seat may trust.
+	// A pointer, so an absent key (leave the stored list alone) differs from an
+	// empty list (revoke it); omitempty on a plain slice would lose that.
+	TrustedFolders *[]string `toml:"trusted_folders,omitempty" yaml:"trusted_folders,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.

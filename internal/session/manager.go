@@ -945,6 +945,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+		Events:     m.Events,
 	}
 	if m.Views != nil {
 		lctx.ViewsDir = m.Views.ViewsDir

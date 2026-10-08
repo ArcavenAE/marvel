@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // LaunchContext holds the information an adapter needs to construct the
@@ -54,6 +55,9 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// Events receives an event an adapter's seed step records, such as the
+	// folder trust a codex seat was given. Nil is safe.
+	Events events.Emitter
 	// ViewsDir is the directory the session views live under
 	// (<state>/views). Empty means no view can be present.
 	ViewsDir string
