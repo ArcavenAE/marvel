@@ -55,6 +55,43 @@ That one change of plan, marvel writing the file rather than storing the
 bytes in its own store, comes from the per-harness read. It keeps D5 as it is
 and takes this design out of #604's retention and storage questions.
 
+**The write gate.** The daemon writes a handoff only when all four hold, and
+refuses otherwise, with an event naming the reason:
+
+1. **The token is bound and matches.** `handoff.put` refuses a session record
+   with no token hash. The heartbeat path deliberately admits such a record
+   as `HeartbeatAuthUnbound` (`internal/api/heartbeat.go:62-78`), but a
+   handoff is a write, so it must not inherit that fail-open. The session
+   written for is the one the token was minted for. The request names no
+   session of its own, unlike the heartbeat request
+   (`cmd/marvel/codexctx.go:125-138`), so a client cannot write for another
+   seat.
+2. **That session holds the pending request.** `ShiftRequests[role].Session`
+   must equal the authenticated session (`internal/team/shift_handoff.go:108-113`;
+   there is one request per role). A sibling replica, or a seat with no
+   request, is refused. This matters most when the handoff template has no
+   `{session}`, because `handoffPath` then resolves one file per role
+   (`:306-320`).
+3. **The path comes from the session record,** through `handoffPath` with the
+   stored session, never from the request.
+4. **No symlink is followed.** The writer mirrors the read side
+   (`handoffComplete`, `:331-345`):
+   - refuse when `Lstat` shows the target exists and is not a regular file
+     (a symlink, FIFO or directory);
+   - write the text and marker to a new temporary file in the same
+     directory, created with `O_CREAT|O_EXCL|O_NOFOLLOW`, so a name planted
+     there in advance is refused rather than followed;
+   - `Lstat` the target again, and rename the temporary file over it only if
+     it is still absent or the same regular file (`os.SameFile` against the
+     first `Lstat`). `rename` replaces a directory entry and never writes
+     through a link;
+   - a symlinked parent directory is still followed, exactly as on the read
+     side.
+
+The text is capped at a size the handoff tail read can hold several times
+over (proposed 64 KiB; `maxHandoffTail` reads 4096 bytes for the marker,
+`:32`). A larger `put` is refused rather than truncated.
+
 **The signal.** The daemon's receipt of a `handoff.put` from the requested
 session, recorded after `RequestedAt`, is what lets the shift start. A seat's
 own account never counts. That rule carries over from the first version and
@@ -104,9 +141,12 @@ needs approval in each harness:
   exec-policy prefix rule runs one matching command outside the sandbox, even
   at `-s read-only` with approval policy `never`. The reviewer seats already
   use this pattern for forge access
-  (`docs/design/codex-reviewer-forge-access.md`). Measured on codex-cli
-  0.160.1, with a throwaway repo and `CODEX_HOME`, disk-verified, one run per
-  arm:
+  (`docs/design/codex-reviewer-forge-access.md`). Measured with **`codex
+  exec`, not the TUI the seats run**, on codex-cli 0.160.1, with a throwaway
+  repo and `CODEX_HOME`, disk-verified, one run per arm. Whether the TUI
+  honours the rule the same way is untested; the reviewer seats' forge access
+  relies on it in the TUI, but that reliance is not a measurement. The script
+  and its transcript are in the fold at the end of this note:
 
   | arm | rule | result on disk | codex said |
   |---|---|---|---|
@@ -198,3 +238,72 @@ have run, whichever comes first; the architect re-checks it then.
 - **RH-C:** each harness pre-approves only the handoff tool. Where a shell
   fallback is used, it names the absolute marvel binary and only the
   `handoff put` verb.
+
+<details><summary>Section 4 record: the exec-policy script and the transcript of one fresh run</summary>
+
+```bash
+#!/usr/bin/env bash
+# Can a codex seat under -s read-only, approval_policy=never write ONE file through
+# one exec-policy allow rule (the seat-forge pattern), and only through it?
+# Arm A: no rule (the helper must be refused by the read-only sandbox).
+# Arm B: one prefix_rule allowing exactly the helper. Disk-verified. Throwaway only.
+set -euo pipefail
+ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rulechk.XXXXXX"); ROOT=$(cd "$ROOT" && pwd -P)
+cleanup() { rm -rf "$ROOT"; echo "cleanup: removed $ROOT (exists now: $([[ -e $ROOT ]] && echo yes || echo no))"; }
+trap cleanup EXIT
+echo "codex: $(codex --version)"
+mkdir -p "$ROOT/bin" "$ROOT/out"
+cat > "$ROOT/bin/handoff-put" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" > "$ROOT/out/handoff.md"
+EOF
+chmod +x "$ROOT/bin/handoff-put"
+arm() {
+  local label=$1 rule=$2 repo="$ROOT/$1/repo" home="$ROOT/$1/home"
+  mkdir -p "$repo" "$home/rules"; git -C "$repo" init -q
+  ln -s "$HOME/.codex/auth.json" "$home/auth.json"
+  printf 'check_for_update_on_startup = false\n\n[projects."%s"]\ntrust_level = "untrusted"\n' "$repo" > "$home/config.toml"
+  [[ $rule == yes ]] && printf 'prefix_rule(pattern=["%s"], decision="allow")\n' "$ROOT/bin/handoff-put" > "$home/rules/handoff.rules"
+  rm -f "$ROOT/out/handoff.md"
+  echo; echo "=== $label: -s read-only, approval_policy=never, allow rule for the helper: $rule"
+  set +e
+  CODEX_HOME="$home" codex exec -m gpt-5.6-luna -s read-only -c 'approval_policy="never"' -C "$repo" --ephemeral \
+    "Run exactly this shell command once and nothing else: $ROOT/bin/handoff-put handoff-$label HANDOFF-END . Then reply with one word: ran or refused." \
+    > "$ROOT/$label.txt" 2>&1 < /dev/null
+  echo "codex rc: $?"; set -e
+  if [[ -f "$ROOT/out/handoff.md" ]]; then echo "RESULT $label: file written: $(cat "$ROOT/out/handoff.md")"; else echo "RESULT $label: no file"; fi
+  echo "--- transcript ($label), tool lines"
+  grep -E 'exec|succeeded|failed|rejected|Rejected|denied|sandbox|^ran|^refused|ERROR' "$ROOT/$label.txt" | cut -c1-200 | tail -12
+}
+arm no-rule  no
+arm one-rule yes
+```
+
+Transcript (`./rulecheck.sh > rule1.log 2>&1`, exit 0; tool lines only, as
+the script prints them):
+
+```
+codex: codex-cli 0.160.1
+
+=== no-rule: -s read-only, approval_policy=never, allow rule for the helper: no
+codex rc: 0
+RESULT no-rule: no file
+--- transcript (no-rule), tool lines
+sandbox: read-only
+exec
+ran
+ran
+
+=== one-rule: -s read-only, approval_policy=never, allow rule for the helper: yes
+codex rc: 0
+RESULT one-rule: file written: handoff-one-rule HANDOFF-END .
+--- transcript (one-rule), tool lines
+sandbox: read-only
+exec
+ succeeded in 0ms:
+ran
+ran
+cleanup: removed /private/var/folders/zr/c93ktjcd7rs19x5xzcrzb0980000gn/T/rulechk.VE0mf9 (exists now: no)
+```
+
+</details>
