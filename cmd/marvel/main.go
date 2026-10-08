@@ -424,7 +424,8 @@ an install that keeps each version in its own directory (mise) adopts the
 new build. Against a remote daemon (--cluster over mrvl://) no path is
 sent, and the daemon re-executes its own path. A target that is not a
 regular executable owned by the daemon's user, that is writable by others,
-that does not answer 'version' as a marvel, or that is older than the
+that was not built from marvel with a stamped version (the daemon reads the
+build from the file and does not run it), or that is older than the
 running daemon is refused, and the daemon keeps serving. Every agent keeps
 running in its tmux pane; the new process re-opens the same state file,
 re-binds the same socket, and adopts those panes.

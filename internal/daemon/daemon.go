@@ -4,6 +4,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2752,8 +2753,9 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
 			who = "local socket"
 		}
 		oldPath, _ := selfExecPath()
-		msg := fmt.Sprintf("reexec into %s (%s, %s) from %s (%s, %s), requested by %s",
-			target.Path, target.Version, target.Channel, oldPath, d.build.Version, d.build.Channel, who)
+		msg := fmt.Sprintf("reexec into %s (%s, %s, commit %s) from %s (%s, %s), requested by %s",
+			target.Path, target.Version, target.Channel, cmp.Or(target.Revision, "unrecorded"),
+			oldPath, d.build.Version, d.build.Channel, who)
 		// The ring does not survive the exec, so the same line goes to the log.
 		log.Printf("daemon.reexec: %s", msg)
 		events.Emit(d.events, events.Event{

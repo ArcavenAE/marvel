@@ -742,8 +742,10 @@ and the daemon execs that file. After `mise use`, run the new marvel's
 `daemon reexec` and the daemon adopts the new build, with its sessions and
 broker kept (marvel#523, marvel#592). The daemon first checks the target: a
 regular executable file owned by its own user, not writable by group or
-others, that answers `version` as a marvel and is not older than the running
-daemon. Any failed check is refused with the reason, and the daemon keeps
+others, that records marvel's main module and a stamped version in its build
+information (read from the file, never run), and is not older than the running
+daemon. A build that cannot be proven this way is refused with the stop and
+start path below. Any failed check is refused with the reason, and the daemon keeps
 serving. Each accepted reexec logs and emits one `daemon.reexec` event naming
 the old and new path and version.
 

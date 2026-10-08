@@ -2,24 +2,70 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/events"
 )
 
-// fakeMarvel writes an executable script that prints a marvel version line.
-func fakeMarvel(t *testing.T, dir, version string) string {
+var (
+	fakeBuildsMu sync.Mutex
+	fakeBuilds   = map[string]string{}
+)
+
+// fakeMarvel returns a real Go binary that records module as its main module
+// and, when version is not empty, version as the stamped -X main.version, the
+// way ci.yml builds a release. Builds are cached for the test run and copied
+// into dir, so a test can change the copy's mode.
+func fakeMarvel(t *testing.T, dir, module, version string) string {
 	t.Helper()
+	key := module + "|" + version
+	fakeBuildsMu.Lock()
+	cached, ok := fakeBuilds[key]
+	if !ok {
+		src := filepath.Join(os.TempDir(), fmt.Sprintf("marvel-fake-%d-%d", os.Getpid(), len(fakeBuilds)))
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			fakeBuildsMu.Unlock()
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module "+module+"\n\ngo 1.21\n"), 0o644); err != nil {
+			fakeBuildsMu.Unlock()
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nvar version, channel string\n\nfunc main() { _ = version; _ = channel }\n"), 0o644); err != nil {
+			fakeBuildsMu.Unlock()
+			t.Fatal(err)
+		}
+		args := []string{"build", "-o", filepath.Join(src, "marvel")}
+		if version != "" {
+			args = append(args, "-ldflags", "-s -w -X main.version="+version+" -X main.channel=alpha")
+		}
+		cmd := exec.Command("go", args...)
+		cmd.Dir = src
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fakeBuildsMu.Unlock()
+			t.Fatalf("build fake marvel: %v\n%s", err, out)
+		}
+		cached = filepath.Join(src, "marvel")
+		fakeBuilds[key] = cached
+	}
+	fakeBuildsMu.Unlock()
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	data, err := os.ReadFile(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := filepath.Join(dir, "marvel")
-	body := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'marvel " + version + " (alpha)'; echo 'daemon  not running'; fi\n"
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+	if err := os.WriteFile(p, data, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -55,39 +101,31 @@ func TestVersionOlder(t *testing.T) {
 
 func TestValidateReexecTargetRefusals(t *testing.T) {
 	root := t.TempDir()
-	good := fakeMarvel(t, filepath.Join(root, "new"), "0.3.0")
+	good := fakeMarvel(t, filepath.Join(root, "new"), marvelModule, "0.3.0")
 
 	noExec := filepath.Join(root, "noexec")
 	if err := os.WriteFile(noExec, []byte("#!/bin/sh\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	groupW := fakeMarvel(t, filepath.Join(root, "gw"), "0.3.0")
+	groupW := fakeMarvel(t, filepath.Join(root, "gw"), marvelModule, "0.3.0")
 	if err := os.Chmod(groupW, 0o775); err != nil {
 		t.Fatal(err)
 	}
-	worldW := fakeMarvel(t, filepath.Join(root, "ww"), "0.3.0")
+	worldW := fakeMarvel(t, filepath.Join(root, "ww"), marvelModule, "0.3.0")
 	if err := os.Chmod(worldW, 0o757); err != nil {
 		t.Fatal(err)
 	}
-	notMarvel := filepath.Join(root, "notmarvel")
-	if err := os.WriteFile(notMarvel, []byte("#!/bin/sh\necho hello\n"), 0o755); err != nil {
+	script := filepath.Join(root, "script")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho marvel 9.9.9 '(alpha)'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fails := filepath.Join(root, "fails")
-	if err := os.WriteFile(fails, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	hangs := filepath.Join(root, "hangs")
-	if err := os.WriteFile(hangs, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	older := fakeMarvel(t, filepath.Join(root, "old"), "0.1.0")
+	otherModule := fakeMarvel(t, filepath.Join(root, "other"), "example.com/other", "9.9.9")
+	unstamped := fakeMarvel(t, filepath.Join(root, "dev"), marvelModule, "")
+	older := fakeMarvel(t, filepath.Join(root, "old"), marvelModule, "0.1.0")
 	link := filepath.Join(root, "link-to-dir")
 	if err := os.Symlink(root, link); err != nil {
 		t.Fatal(err)
 	}
-	oldTimeout := reexecVersionTimeout
-	t.Cleanup(func() { reexecVersionTimeout = oldTimeout })
 
 	cases := []struct {
 		name, path, want string
@@ -99,25 +137,27 @@ func TestValidateReexecTargetRefusals(t *testing.T) {
 		{"group writable", groupW, "writable by its group or by others"},
 		{"world writable", worldW, "writable by its group or by others"},
 		{"owned by another user", "/bin/ls", "not owned by the daemon's user"},
-		{"not a marvel", notMarvel, "did not print a marvel version line"},
-		{"version fails", fails, "running `version` failed"},
-		{"version hangs", hangs, "running `version` failed"},
+		{"a script claiming to be marvel", script, "build information is unreadable"},
+		{"another module", otherModule, "was not built from " + marvelModule},
+		{"no stamped version", unstamped, "records no stamped version"},
 		{"downgrade", older, "a downgrade is refused"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			reexecVersionTimeout = 10 * time.Second
-			if c.name == "version hangs" {
-				reexecVersionTimeout = 500 * time.Millisecond
-			}
 			_, err := validateReexecTarget(c.path, "0.2.0")
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("want an error containing %q, got %v", c.want, err)
 			}
 		})
 	}
+	// A refusal that cannot prove the build names the way out.
+	for _, p := range []string{script, unstamped, otherModule} {
+		_, err := validateReexecTarget(p, "0.2.0")
+		if err == nil || !strings.Contains(err.Error(), "marvel stop --keep-bus") {
+			t.Errorf("%s: the refusal should name the stop-then-start path, got %v", p, err)
+		}
+	}
 
-	reexecVersionTimeout = 10 * time.Second
 	t.Run("a newer build passes", func(t *testing.T) {
 		got, err := validateReexecTarget(good, "0.2.0")
 		if err != nil || got.Version != "0.3.0" || got.Channel != "alpha" {
@@ -188,8 +228,8 @@ func expectNoExec(t *testing.T, calls chan string) {
 func TestReexecExecsTheNamedBinary(t *testing.T) {
 	d, calls := reexecHarness(t)
 	root := t.TempDir()
-	newBin := fakeMarvel(t, filepath.Join(root, "installs", "0.3.0"), "0.3.0")
-	_ = fakeMarvel(t, filepath.Join(root, "installs", "0.2.0"), "0.2.0")
+	newBin := fakeMarvel(t, filepath.Join(root, "installs", "0.3.0"), marvelModule, "0.3.0")
+	_ = fakeMarvel(t, filepath.Join(root, "installs", "0.2.0"), marvelModule, "0.2.0")
 	want, _ := filepath.EvalSymlinks(newBin)
 
 	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, newBin)}, localCaller())
@@ -214,7 +254,7 @@ func TestReexecExecsTheNamedBinary(t *testing.T) {
 		t.Fatalf("daemon.reexec events = %d, want 1", len(ev))
 	}
 	old, _ := selfExecPath()
-	for _, part := range []string{want, "0.3.0", "0.2.0", old, "local socket"} {
+	for _, part := range []string{want, "0.3.0", "0.2.0", old, "local socket", "commit unrecorded"} {
 		if !strings.Contains(ev[0].Message, part) {
 			t.Errorf("event %q lacks %q", ev[0].Message, part)
 		}
@@ -245,7 +285,7 @@ func TestReexecWithoutExecPathKeepsItsOwnPath(t *testing.T) {
 // before anything is checked or detached.
 func TestReexecExecPathRefusedOffTheLocalSocket(t *testing.T) {
 	d, calls := reexecHarness(t)
-	good := fakeMarvel(t, t.TempDir(), "0.3.0")
+	good := fakeMarvel(t, t.TempDir(), marvelModule, "0.3.0")
 	c := caller{scope: ScopeAdmin, fingerprint: "SHA256:admin", local: false}
 	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, good)}, c)
 	if !strings.Contains(resp.Error, "only accepted on the local unix socket") {
@@ -260,7 +300,7 @@ func TestReexecExecPathRefusedOffTheLocalSocket(t *testing.T) {
 // A refused target leaves the daemon serving: no exec, no event.
 func TestReexecRefusedTargetNeitherExecsNorEmits(t *testing.T) {
 	d, calls := reexecHarness(t)
-	older := fakeMarvel(t, t.TempDir(), "0.1.0")
+	older := fakeMarvel(t, t.TempDir(), marvelModule, "0.1.0")
 	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, older)}, localCaller())
 	if !strings.Contains(resp.Error, "a downgrade is refused") {
 		t.Fatalf("want the downgrade refusal, got %+v", resp)

@@ -1,17 +1,15 @@
 package daemon
 
 import (
-	"context"
+	"debug/buildinfo"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 // reexecParams is what `reexec` may carry. ExecPath names the binary to exec
@@ -22,21 +20,32 @@ type reexecParams struct {
 	ExecPath string `json:"exec_path,omitempty"`
 }
 
-// reexecVersionTimeout bounds the `<path> version` run that proves the target
-// is a marvel binary before the daemon detaches for it.
-var reexecVersionTimeout = 5 * time.Second
+// marvelModule is the main module a marvel binary records. A binary built from
+// anything else is refused.
+const marvelModule = "github.com/arcavenae/marvel"
 
-// versionLine is the first line `marvel version` prints.
-var versionLine = regexp.MustCompile(`^marvel (\S+) \((\S+)\)`)
+// stopStartPath is what an operator does when the target cannot be proven to
+// be a marvel build: detach the old daemon and start the new one by hand
+// (docs/admin-guide.md, "Under mise").
+const stopStartPath = "stop the daemon with 'marvel stop --keep-bus' and start the new binary yourself (docs/admin-guide.md, \"Under mise\")"
+
+// ldflagVersion and ldflagChannel pull the stamped build out of the -ldflags
+// setting the toolchain records (-X main.version=... -X main.channel=...), the
+// way ci.yml and .goreleaser.yml set them. -s -w strips symbols, not this.
+var (
+	ldflagVersion = regexp.MustCompile(`-X\s+main\.version=(\S+)`)
+	ldflagChannel = regexp.MustCompile(`-X\s+main\.channel=(\S+)`)
+)
 
 // errNotLocal is the refusal of an exec_path over mrvl://.
 var errNotLocal = errors.New("exec_path is only accepted on the local unix socket: a path from a remote client names a file on another host")
 
 // reexecTarget is a validated exec_path.
 type reexecTarget struct {
-	Path    string
-	Version string
-	Channel string
+	Path     string
+	Version  string
+	Channel  string
+	Revision string
 }
 
 // validateReexecTarget resolves path and checks it is safe to exec: a regular,
@@ -68,21 +77,33 @@ func validateReexecTarget(path, runningVersion string) (reexecTarget, error) {
 		return reexecTarget{}, fmt.Errorf("exec_path %q is writable by its group or by others", resolved)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), reexecVersionTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, resolved, "version")
-	// A killed script can leave a child holding the output pipe open.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
+	info, err := buildinfo.ReadFile(resolved)
 	if err != nil {
-		return reexecTarget{}, fmt.Errorf("exec_path %q: running `version` failed: %w", resolved, err)
+		return reexecTarget{}, fmt.Errorf("exec_path %q: its build information is unreadable (%v); %s",
+			resolved, err, stopStartPath)
 	}
-	first, _, _ := strings.Cut(string(out), "\n")
-	m := versionLine.FindStringSubmatch(first)
-	if m == nil {
-		return reexecTarget{}, fmt.Errorf("exec_path %q: `version` did not print a marvel version line", resolved)
+	if info.Main.Path != marvelModule {
+		return reexecTarget{}, fmt.Errorf("exec_path %q was not built from %s (main module %q); %s",
+			resolved, marvelModule, info.Main.Path, stopStartPath)
 	}
-	t := reexecTarget{Path: resolved, Version: m[1], Channel: m[2]}
+	t := reexecTarget{Path: resolved}
+	for _, kv := range info.Settings {
+		switch kv.Key {
+		case "-ldflags":
+			if m := ldflagVersion.FindStringSubmatch(kv.Value); m != nil {
+				t.Version = strings.Trim(m[1], `"'`)
+			}
+			if m := ldflagChannel.FindStringSubmatch(kv.Value); m != nil {
+				t.Channel = strings.Trim(m[1], `"'`)
+			}
+		case "vcs.revision":
+			t.Revision = kv.Value
+		}
+	}
+	if t.Version == "" {
+		return reexecTarget{}, fmt.Errorf("exec_path %q records no stamped version (-X main.version); %s",
+			resolved, stopStartPath)
+	}
 	if older, known := versionOlder(t.Version, runningVersion); known && older {
 		return reexecTarget{}, fmt.Errorf("exec_path %q is %s, older than the running daemon %s; a downgrade is refused",
 			resolved, t.Version, runningVersion)
