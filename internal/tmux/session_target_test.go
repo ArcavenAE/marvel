@@ -493,20 +493,40 @@ func sessionScope(n string) string { return "=" + n + ":" }
 		}
 	}
 	bad := map[string]string{
-		"a plain variable":     `tgt := name; d.cmd("kill-session", "-t", tgt)`,
-		"Sprintf":              `d.cmd("kill-session", "-t", fmt.Sprintf("%s", name))`,
-		"an empty-string add":  `d.cmd("kill-session", "-t", ""+name)`,
-		"an index":             `d.cmd("kill-session", "-t", names[0])`,
-		"a split append":       `args = append(args, "kill-session"); args = append(args, "-t", name)`,
-		"a local named paneID": `{ paneID := name; d.cmd("kill-session", "-t", paneID) }`,
-		"a reassigned paneID":  `paneID = name; d.cmd("kill-session", "-t", paneID)`,
-		"a glued -t":           `d.cmd("kill-session", "-t"+name)`,
-		"a glued literal":      `d.cmd("has-session", "-ts")`,
-		"a const flag":         `const flagT = "-t"; d.cmd("kill-session", flagT, name)`,
-		"a variable flag":      `flag := "-t"; d.cmd("kill-session", flag, name)`,
-		"a split flag":         `d.cmd("kill-session", "-"+"t", name)`,
-		"a shadowed helper":    `sessionTarget := func(s string) string { return s }; d.cmd("kill-session", "-t", sessionTarget(name))`,
-		"a glued Sprintf":      `d.cmd("kill-session", fmt.Sprintf("-t%s", name))`,
+		"a plain variable":             `tgt := name; d.cmd("kill-session", "-t", tgt)`,
+		"Sprintf":                      `d.cmd("kill-session", "-t", fmt.Sprintf("%s", name))`,
+		"an empty-string add":          `d.cmd("kill-session", "-t", ""+name)`,
+		"an index":                     `d.cmd("kill-session", "-t", names[0])`,
+		"a split append":               `args = append(args, "kill-session"); args = append(args, "-t", name)`,
+		"a local named paneID":         `{ paneID := name; d.cmd("kill-session", "-t", paneID) }`,
+		"a reassigned paneID":          `paneID = name; d.cmd("kill-session", "-t", paneID)`,
+		"a glued -t":                   `d.cmd("kill-session", "-t"+name)`,
+		"a glued literal":              `d.cmd("has-session", "-ts")`,
+		"a const flag":                 `const flagT = "-t"; d.cmd("kill-session", flagT, name)`,
+		"a variable flag":              `flag := "-t"; d.cmd("kill-session", flag, name)`,
+		"a split flag":                 `d.cmd("kill-session", "-"+"t", name)`,
+		"a shadowed helper":            `sessionTarget := func(s string) string { return s }; d.cmd("kill-session", "-t", sessionTarget(name))`,
+		"a glued Sprintf":              `d.cmd("kill-session", fmt.Sprintf("-t%s", name))`,
+		"a conversion of -t":           `d.cmd("kill-session", string("-t"), name)`,
+		"a flag built from a variable": `pre := "-"; d.cmd("kill-session", pre+"t", name)`,
+		"an allowlisted name called with a session": `d.PaneStatus(name)`,
+	}
+	// A parameter named paneID is a pane id only in the driver's own pane
+	// entry points. A helper that takes the name and passes it to -t is how a
+	// session name gets there, whatever the parameter is called.
+	aliases := map[string]string{
+		"a helper returning the args": "func sessArgs(paneID string) []string { return []string{\"-t\", paneID} }\n",
+		"a helper appending the args": "func sessAppend(args []string, paneID string) []string { return append(args, \"-t\", paneID) }\n",
+		"a method called with a name": "func (d *Driver) killT(paneID string) { d.cmd(\"kill-session\", \"-t\", paneID) }\nfunc (d *Driver) h(name string) { d.killT(name) }\n",
+	}
+	for name, src := range aliases {
+		if v := guardViolations(t, prelude+src); len(v) == 0 {
+			t.Errorf("%s was not reported", name)
+		}
+	}
+	// The entry points themselves stay allowed.
+	if v := guardViolations(t, prelude+"func (d *Driver) KillPane(paneID string) error { return d.cmd(\"kill-pane\", \"-t\", paneID).Run() }\n"); len(v) != 0 {
+		t.Errorf("KillPane was reported: %v", v)
 	}
 	// The pane id shape belongs to NewPaneAt alone: the same lines in another
 	// function that has no paneID parameter are not a pane id.
