@@ -1990,14 +1990,16 @@ func (c *Controller) placement(t *api.Team, role *api.Role) string {
 
 // shiftOrder returns role names with the supervisor-type roles last, so the
 // team keeps its coordinator while the workers turn over. A role is
-// supervisor-type when it declares global_role supervisor, or, as a fallback,
-// when it is named "supervisor". Roles of one kind keep their roster order.
+// supervisor-type when it declares global_role supervisor, or, as a fallback
+// where global_role is unset, when it is named "supervisor"; "none" opts out,
+// as config.ResolvedGlobalRole reads it. Roles of one kind keep their roster
+// order.
 func shiftOrder(roles []api.Role) []string {
 	names := make([]string, 0, len(roles))
 	last := make(map[string]bool, len(roles))
 	for _, r := range roles {
 		names = append(names, r.Name)
-		last[r.Name] = r.GlobalRole == api.GlobalRoleSupervisor || r.Name == "supervisor"
+		last[r.Name] = r.GlobalRole == api.GlobalRoleSupervisor || (r.GlobalRole == "" && r.Name == "supervisor")
 	}
 	sort.SliceStable(names, func(i, j int) bool {
 		return !last[names[i]] && last[names[j]]
