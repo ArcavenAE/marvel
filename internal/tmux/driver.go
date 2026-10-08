@@ -296,7 +296,13 @@ func (d *Driver) HasSession(name string) bool {
 // error, so a caller that creates on absence never starts a second server
 // beside one it cannot reach.
 func (d *Driver) sessionExists(name string) (bool, error) {
-	_, text, absent, err := d.whileStarting(func() ([]byte, string, error) {
+	return d.sessionExistsUntil(name, time.Time{})
+}
+
+// sessionExistsUntil is sessionExists waiting no longer than until (the zero
+// time means startupBound).
+func (d *Driver) sessionExistsUntil(name string, until time.Time) (bool, error) {
+	_, text, absent, err := d.whileStarting(until, func() ([]byte, string, error) {
 		out, err := d.cmd("has-session", "-t", name).CombinedOutput()
 		return out, string(out), err
 	})
@@ -318,7 +324,7 @@ func (d *Driver) sessionExists(name string) (bool, error) {
 // If no tmux server is running, returns an empty slice and no error —
 // that's the same "no sessions" condition as a freshly started daemon.
 func (d *Driver) ListSessions() ([]string, error) {
-	out, _, absent, err := d.whileStarting(func() ([]byte, string, error) {
+	out, _, absent, err := d.whileStarting(time.Time{}, func() ([]byte, string, error) {
 		out, err := d.cmd("list-sessions", "-F", "#S").Output()
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -351,19 +357,39 @@ func (d *Driver) ListSessions() ([]string, error) {
 
 // NewSession creates a new tmux session in detached mode.
 func (d *Driver) NewSession(name string) error {
-	exists, err := d.sessionExists(name)
-	if err != nil {
-		return fmt.Errorf("new-session %s: %w", name, err)
-	}
-	if !exists {
-		if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
-			// A concurrent NewSession for the same name can create it between
-			// the check above and this call; the session exists, which is
-			// what the caller asked for.
-			if !strings.Contains(string(out), "duplicate session") {
-				return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
-			}
+	// A tmux 3.4 client can reach a server that is shutting down (the
+	// previous owner of the socket name) and get "server exited unexpectedly"
+	// from the create itself. The whole body runs again, check first, so a
+	// server that has since become an outage refuses instead of getting a
+	// second create; a bare retry of new-session beside a frozen live server
+	// would start a second server. Every pass shares one startupBound: the
+	// check of a later pass waits only for what is left of it.
+	deadline := time.Now().Add(startupBound)
+	wait := 10 * time.Millisecond
+	for {
+		exists, err := d.sessionExistsUntil(name, deadline)
+		if err != nil {
+			return fmt.Errorf("new-session %s: %w", name, err)
 		}
+		if exists {
+			break
+		}
+		out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput()
+		if err == nil {
+			break
+		}
+		text := string(out)
+		// A concurrent NewSession for the same name can create it between
+		// the check above and this call; the session exists, which is what
+		// the caller asked for.
+		if strings.Contains(text, "duplicate session") {
+			break
+		}
+		if errors.Is(err, ErrTmuxTimeout) || classifyAbsence(text) == absenceNone || time.Until(deadline) <= 0 {
+			return fmt.Errorf("new-session %s: %s: %w", name, text, err)
+		}
+		time.Sleep(min(wait, time.Until(deadline)))
+		wait = min(wait*2, 100*time.Millisecond)
 	}
 	// The options below run on every path, the exists and duplicate ones
 	// included: the creator may not have set them yet when this call
