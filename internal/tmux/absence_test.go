@@ -113,12 +113,89 @@ func TestServerGuardAnchorsOnTheTmuxProgramAndItsSocketName(t *testing.T) {
 	}
 }
 
-// "no server running" is the server's own answer from a socket nothing
-// serves, so a process-list match for the name does not turn it into an outage.
-func TestNoServerRunningIsAbsenceWhateverTheProcessList(t *testing.T) {
-	d := absentDriver(t, "no server running on /private/tmp/tmux-501/unit", procLines(" 1234 tmux -L unit new-session -d"))
-	if st, err := d.PaneStatus("%999999"); err != nil || st.Exists {
-		t.Errorf("PaneStatus = %+v, %v; want gone", st, err)
+// "no server running" is read by the same rule as a missing socket: it is
+// absence only when no tmux server for this -L name is alive. A server stopped
+// with a full listen backlog answers it too (measured by the #726 review on
+// tmux 3.7b), and reading that as gone reaps every session the server runs.
+const noServerText = "no server running on /private/tmp/tmux-501/unit"
+
+func TestNoServerRunningIsAbsenceOnlyWhenNoServerProcessIsAlive(t *testing.T) {
+	gone := absentDriver(t, noServerText, procLines(" 1 /opt/homebrew/bin/tmux -L another new-session -d"))
+	if st, err := gone.PaneStatus("%999999"); err != nil || st.Exists {
+		t.Errorf("no server alive: PaneStatus = %+v, %v; want gone", st, err)
+	}
+	alive := absentDriver(t, noServerText, procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d"))
+	st, err := alive.PaneStatus("%999999")
+	if err == nil || errors.Is(err, ErrPaneGone) {
+		t.Errorf("server alive: PaneStatus = %+v, %v; want an outage error", st, err)
+	}
+}
+
+func TestNoServerRunningWithAServerAliveIsAnOutageForEveryCaller(t *testing.T) {
+	alive := procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")
+	d := absentDriver(t, noServerText, alive)
+	if names, err := d.ListSessions(); err == nil {
+		t.Errorf("ListSessions = %v, nil; want an error, not an empty list", names)
+	}
+	if err := d.KillPane("%1"); err == nil || errors.Is(err, ErrPaneGone) {
+		t.Errorf("KillPane = %v; want an outage error, not ErrPaneGone", err)
+	}
+	if ok, err := d.sessionExists("s"); err == nil {
+		t.Errorf("sessionExists = %v, nil; want an error", ok)
+	}
+	gone := absentDriver(t, noServerText, procLines())
+	if names, err := gone.ListSessions(); err != nil || len(names) != 0 {
+		t.Errorf("no server alive: ListSessions = %v, %v; want empty and no error", names, err)
+	}
+	if ok, err := gone.sessionExists("s"); err != nil || ok {
+		t.Errorf("no server alive: sessionExists = %v, %v; want false and no error", ok, err)
+	}
+}
+
+// create-if-absent must not create on an outage: a second server on the same
+// name runs panes marvel cannot see.
+func TestNewSessionRefusesToCreateOnAnOutage(t *testing.T) {
+	for name, text := range map[string]string{"no server running": noServerText, "socket missing": noSocketText} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "calls")
+			script := filepath.Join(dir, "tmux")
+			body := "#!/bin/sh\necho \"$*\" >> " + log + "\necho \"" + text + "\" >&2\nexit 1\n"
+			if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			d := &Driver{binary: script, socket: "unit", procs: procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")}
+			if err := d.NewSession("s"); err == nil {
+				t.Error("NewSession returned nil with a server alive and unreachable; want an error")
+			}
+			calls, _ := os.ReadFile(log)
+			if strings.Contains(string(calls), "new-session") {
+				t.Errorf("NewSession ran new-session on an outage; calls:\n%s", calls)
+			}
+		})
+	}
+}
+
+// With the server really absent, create-if-absent still creates.
+func TestNewSessionCreatesWhenNoServerIsAlive(t *testing.T) {
+	skipIfNoTmux(t)
+	dir, err := os.MkdirTemp("/tmp", "mxabs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Setenv("MARVEL_TMUX_SOCKET", "mxabs"+filepath.Base(dir))
+	d, err := NewDriver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.KillServer() })
+	if err := d.NewSession("probe"); err != nil {
+		t.Fatalf("NewSession on a fresh socket: %v", err)
+	}
+	if !d.HasSession("probe") {
+		t.Error("the session was not created")
 	}
 }
 
