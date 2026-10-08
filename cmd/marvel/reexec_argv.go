@@ -48,7 +48,9 @@ func parseProcargs2(b []byte) ([]string, error) {
 		return nil, errors.New("kern.procargs2 has no executable path")
 	}
 	rest = bytes.TrimLeft(rest[end:], "\x00")
-	out := make([]string, 0, argc)
+	// argc comes from the process being read, so it does not size the result:
+	// the buffer cannot hold more arguments than it has bytes.
+	out := make([]string, 0, min(int(argc), len(b)))
 	for range argc {
 		end := bytes.IndexByte(rest, 0)
 		if end < 0 {
