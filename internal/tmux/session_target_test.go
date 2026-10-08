@@ -200,6 +200,18 @@ func TestHasSessionOnAMissingExactTargetKeepsTheNotFoundWording(t *testing.T) {
 	}
 }
 
+// paneEntryPoints are the driver functions whose paneID parameter is a pane id
+// by contract: their callers hand them the id tmux gave out. A paneID parameter
+// anywhere else is not trusted, because a helper that takes a session name and
+// calls the parameter paneID would put it on -t. A new pane-taking function is
+// added here on purpose, in review.
+var paneEntryPoints = map[string]bool{
+	"HasPane": true, "PaneStatus": true, "PanePID": true, "KillPane": true,
+	"SendKeys": true, "CapturePane": true, "CapturePaneJoined": true,
+	"CapturePaneEscapes": true, "Repaint": true, "CapturePaneRange": true,
+	"CapturePaneRangeEscapes": true, "PaneForeground": true, "paneStillAt": true,
+}
+
 // emptyImporter gives every import an empty package. The guard type-checks
 // one file, so names from other packages and files stay unresolved and their
 // errors are ignored; what it needs, the file's own functions, parameters,
@@ -217,7 +229,14 @@ func (emptyImporter) Import(path string) (*types.Package, error) {
 // to -t, or glue anything onto -t. It reads go/types' name resolution, so a
 // constant or variable holding "-t" counts as -t, a local that shadows a helper
 // or paneID is not the helper or the pane id, and an identifier is a pane id
-// only when it is a parameter named paneID that the function never assigns.
+// only when it is a parameter named paneID that the function never assigns and
+// the function is one of paneEntryPoints.
+//
+// Known limits, not covered: a wrapper method around cmd, or `run := d.cmd`
+// (only calls named cmd or append are scanned); a "-dt" flag cluster, which
+// tmux reads as -t too; strings.Fields building the arguments; an args slice
+// filled by index; and exec.Command in place of d.cmd. Each needs a person to
+// read the diff, which is what review is for.
 func guardViolations(t *testing.T, src any) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -353,7 +372,7 @@ func guardViolations(t *testing.T, src any) []string {
 		// paneIDs are the function's own parameters named paneID that nothing
 		// in the body assigns or takes the address of.
 		paneIDs := map[types.Object]bool{}
-		if fd.Type.Params != nil {
+		if fd.Type.Params != nil && paneEntryPoints[fd.Name.Name] {
 			for _, fld := range fd.Type.Params.List {
 				for _, n := range fld.Names {
 					if o := info.Defs[n]; n.Name == "paneID" && o != nil {
@@ -396,6 +415,30 @@ func guardViolations(t *testing.T, src any) []string {
 				return true
 			})
 		}
+
+		// Whoever calls an entry point hands it a pane id: the first argument
+		// must be this function's own pane id, not a name that came from
+		// elsewhere.
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			callee := ""
+			switch fun := call.Fun.(type) {
+			case *ast.SelectorExpr:
+				callee = fun.Sel.Name
+			case *ast.Ident:
+				callee = fun.Name
+			}
+			if !paneEntryPoints[callee] {
+				return true
+			}
+			if id, ok := call.Args[0].(*ast.Ident); !ok || !paneIDs[info.Uses[id]] {
+				report(call.Args[0], "%s takes a pane id, and this argument is not one of this function's", callee)
+			}
+			return true
+		})
 
 		check := func(list []ast.Expr) {
 			for i, e := range list {
@@ -487,8 +530,12 @@ func sessionScope(n string) string { return "=" + n + ":" }
 		"d.cmd(\"select-pane\", \"-t\", paneID)\n}\n"); len(v) != 0 {
 		t.Errorf("NewPaneAt's own pane id was reported: %v", v)
 	}
+	// The good forms run inside an entry point, where paneID is a pane id.
+	wrapEntry := func(body string) string {
+		return prelude + "func (d *Driver) PaneStatus(name, paneID string) {\n" + body + "\n}\n"
+	}
 	for name, body := range good {
-		if v := guardViolations(t, wrap(body)); len(v) != 0 {
+		if v := guardViolations(t, wrapEntry(body)); len(v) != 0 {
 			t.Errorf("%s was reported: %v", name, v)
 		}
 	}
@@ -510,6 +557,28 @@ func sessionScope(n string) string { return "=" + n + ":" }
 		"a conversion of -t":           `d.cmd("kill-session", string("-t"), name)`,
 		"a flag built from a variable": `pre := "-"; d.cmd("kill-session", pre+"t", name)`,
 		"an allowlisted name called with a session": `d.PaneStatus(name)`,
+		"a flag cluster ending in t":                `d.cmd("kill-session", "-dt", name)`,
+		"a flag cluster with t first":               `d.cmd("kill-session", "-td")`,
+		"a flag cluster glued to a name":            `d.cmd("kill-session", "-dt"+name)`,
+		"a cluster in a variable":                   `cl := "-d"; d.cmd("kill-session", cl+"t", name)`,
+	}
+	// A helper that takes a session name and puts it on -t is caught under any
+	// parameter name, not just paneID.
+	for _, param := range []string{"x", "id", "target", "sess"} {
+		src := prelude + "func (d *Driver) killT(" + param + " string) { d.cmd(\"kill-session\", \"-t\", " + param + ") }\n" +
+			"func (d *Driver) h(name string) { d.killT(name) }\n"
+		if v := guardViolations(t, src); len(v) == 0 {
+			t.Errorf("a helper taking its session name as %q was not reported", param)
+		}
+		src = prelude + "func sessArgs(" + param + " string) []string { return []string{\"-t\", " + param + "} }\n"
+		if v := guardViolations(t, src); len(v) == 0 {
+			t.Errorf("an args helper taking its session name as %q was not reported", param)
+		}
+	}
+	// A cluster whose last flag is t takes the next argument as its target, so
+	// that argument is checked like -t's.
+	if v := guardViolations(t, wrap(`d.cmd("new-window", "-dt", sessionScope(name))`)); len(v) != 0 {
+		t.Errorf("-dt with a sessionScope target was reported: %v", v)
 	}
 	// A parameter named paneID is a pane id only in the driver's own pane
 	// entry points. A helper that takes the name and passes it to -t is how a
