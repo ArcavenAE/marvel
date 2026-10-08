@@ -343,3 +343,102 @@ These rulings apply only when neither `--socket` nor `MARVEL_SOCKET` is set. Eit
   words, verbatim via director: "fallback to local is fine, do not refuse".
   With `--cluster`, an unreadable config is refused, because the name
   cannot be looked up.
+
+## 10. Notes from the build
+
+Calls made while P5 to P12 were built, recorded here so the design matches
+main. Each was made by the architect inside the accepted design; none is an
+operator ruling unless it says so.
+
+### 10.1 Column names
+
+A column's long name is the key the watch view already sorts it by
+(`sortSessions`, `cmd/marvel/main.go`) where one exists, otherwise its
+header in lower case with `%` dropped. That gives
+`workspace`, `team`, `role`, `generation`, `name`, `state`, `health`,
+`context`, `cpu`, `rss`, `desk`, `runtime`, `llm`, `workdir`, `tout`,
+`rate`, `last-active`, `active` and `prompt` (`cmd/marvel/columns.go`). The
+asymmetry is deliberate: `context` and `generation` keep the sort keys the
+watch view already uses, and do not become `ctx` and `gen`. Names for
+columns not built yet follow the same rule: `age`, and `acct` for P13's
+opt-in ACCT column.
+
+### 10.2 The default table, explicitly
+
+Section 4.2's table lists only what each width adds. The full priority, as
+built (`cmd/marvel/fit.go`), most important first:
+
+| Width | Columns shown by default |
+|---|---|
+| 80 | name, state, health, context, last-active |
+| 120 | the above, then llm, tout, rate |
+| 200 | the above, then team, role, workdir, age, active, then runtime, cpu, rss, desk, generation, workspace |
+
+The six legacy columns close the 200 tier (aae-orc-fmgxd), so a wide
+terminal shows what it always showed plus the new columns, and a narrower
+one drops them first. All of them stay selectable by name and in `wide` at
+any width. `age` is in the priority list but is not a registered column
+yet, so the fit skips it until its ticket lands. Off a terminal nothing is
+fitted, and a pipe prints the pre-design table, because `workdir`, `tout`,
+`rate`, `prompt`, `last-active` and `active` are opt-in there.
+
+### 10.3 Spend on the wire
+
+P7's fields are `SpendOut` and `SpendPromptTokens`, with `OutRate` beside
+them, all in `SessionContext`. `Session` embeds `SessionContext` and its
+fields carry no json tags, so these are also the JSON keys. The `Spend`
+prefix keeps `session.Out` from reading as pane output, and it matches
+`usage.Spend`, which the accountant sums from (#639).
+
+### 10.4 What TOUT counts
+
+TOUT is the cumulative output since the daemon first observed the session.
+A session adopted from a previous daemon has no usage drain
+(`internal/session/manager.go`, "supervises them without observing them"),
+so its TOUT reads `-` rather than a partial count. The cell therefore never
+shows a count that began after the session did, and no "lower bound" mark is
+needed (aae-orc-8hkpr, closed). One edge was found while checking that: a
+heartbeat-sourced session can keep a spend reading through a reload, frozen
+rather than partial. The fix is to clear spend at load, not to mark it
+(aae-orc-88bm0).
+
+### 10.5 The quiet window at its edge
+
+`api.Quiet` is strict: a session is quiet when `ContextAt` is zero or older
+than `W`, so at exactly `W` it is not quiet yet (`internal/api/quiet.go`).
+For RATE (`usage.QuietRate`), a session whose channel is still attached
+renders a snapped `0` once it is quiet, a fresh measurement of no flow.
+`?` appears when the reading has expired while the session does not read
+quiet, and `-` when it was never sampled. The client always passes an
+attached channel, because a rate cell exists only for a seat whose stream
+the accountant reads (`cmd/marvel/rate.go`). The rate's validity reads the same
+constant as the quiet window (`OutRateValidFor = api.DefaultQuietWindow`),
+so marvel keeps one default window.
+
+### 10.6 Marks in the sessions table
+
+Each mark keeps one meaning across every column: `*` a weaker source
+(statusline or heartbeat, section 4.4), `?` expired or unknown, `-` never
+measured. `*` was kept although `get clusters` uses it for the current
+cluster, because the two commands share no table. A cell that never
+expires, such as LAST-ACTIVE's age, carries a zero `valid_until`, which
+`asof` defines as "does not expire" (`internal/asof/asof.go`).
+
+### 10.7 Open: does a codex turn count as activity?
+
+Read from code, not measured on a running seat. Codex's exec stream reports
+a running session total, not a per-request level (`internal/usage/profiles.go`),
+so its spend reaches the store through `UpdateSessionSpend`, which by design
+leaves `ContextAt` alone (`internal/api/store.go`). `ContextAt` is the only
+input to `api.Quiet`. So a codex seat that is producing tokens would read
+quiet: RATE snaps to `0`, and LAST-ACTIVE and ACTIVE% read `-`.
+
+Recommended, for review: yes, a codex turn counts. `UpdateSessionSpend`
+stamps a new `SpendAt`; `api.Quiet` reads the later of `ContextAt` and
+`SpendAt`; CTX% freshness keeps reading `ContextAt` alone, so a spend update
+never makes an old occupancy reading look current. A codex LAST-ACTIVE then
+comes from token flow and carries no `*`. The `(stalled)` advisory stays
+opt-in. First step: one test that feeds a codex sample and asserts RATE and
+LAST-ACTIVE, to confirm the reading above before anything is built.
+This recommendation is valid until 2026-10-22; the architect seat re-checks
+it then.
