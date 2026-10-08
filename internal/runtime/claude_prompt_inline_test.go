@@ -197,8 +197,9 @@ func TestClaudeAddsNoPromptWhenAFlagIsQuoted(t *testing.T) {
 }
 
 // A role that declares settings_sources keeps them even on a command marvel
-// cannot read: the manifest's value is passed last and wins over any inline
-// --setting-sources, and the log line says so (marvel#745).
+// cannot read: the flag is appended, and the log line says only that, because
+// whether claude receives it depends on the command (a pipe, a semicolon or a
+// comment can leave it on another program or inside the comment; marvel#745).
 func TestClaudeKeepsDeclaredSourcesOnShellText(t *testing.T) {
 	for _, command := range []string{`claude "--setting-sources" user`, "claude $(cat flags)", `claude '--setting-sources' user`} {
 		var lines []string
@@ -219,7 +220,7 @@ func TestClaudeKeepsDeclaredSourcesOnShellText(t *testing.T) {
 		}
 		wantLines := []string{
 			"role worker: command is shell text; marvel's system-prompt line not added",
-			"role worker: command is shell text; manifest settings_sources passed last and wins over any inline --setting-sources",
+			"role worker: command is shell text; marvel appended --setting-sources project from the manifest; whether claude receives it depends on the command",
 		}
 		if len(lines) != 2 || lines[0] != wantLines[0] || lines[1] != wantLines[1] {
 			t.Errorf("%q: log lines = %q, want %q", command, lines, wantLines)
@@ -237,5 +238,54 @@ func TestClaudeSourcesOnReadableCommandsAreUnchanged(t *testing.T) {
 	result = prepareClaude(t, "claude --setting-sources user", nil)
 	if result.SettingSources != "" || strings.Count(result.Command, "--setting-sources") != 1 {
 		t.Errorf("readable inline flag: %q, sources %q, want the role's one and none from marvel", result.Command, result.SettingSources)
+	}
+}
+
+// The measured commands where the appended flag may not reach claude: the line
+// states what marvel did and not what claude will do, and never says "wins".
+func TestClaudeSourcesLineClaimsOnlyWhatMarvelDid(t *testing.T) {
+	for _, command := range []string{"claude --x | tee out", "claude --x ; true", "claude --x # note"} {
+		var lines []string
+		old := logLaunch
+		logLaunch = func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) }
+		ctx := claudeCtx(command)
+		ctx.Role.SettingsSources = []string{"project"}
+		result, err := (&Claude{}).Prepare(ctx)
+		logLaunch = old
+		if err != nil {
+			t.Fatalf("Prepare(%q): %v", command, err)
+		}
+		if !strings.HasSuffix(result.Command, " --setting-sources project") || result.SettingSources != "project" {
+			t.Errorf("%q: the flag was not appended: %q, sources %q", command, result.Command, result.SettingSources)
+		}
+		want := "role worker: command is shell text; marvel appended --setting-sources project from the manifest; whether claude receives it depends on the command"
+		if len(lines) != 2 || lines[1] != want {
+			t.Errorf("%q: log lines = %q, want the second to be %q", command, lines, want)
+		}
+		for _, l := range lines {
+			if strings.Contains(l, "wins") {
+				t.Errorf("%q: a log line claims the flag wins: %q", command, l)
+			}
+		}
+	}
+}
+
+// A readable command with a declaration is unchanged and logs nothing.
+func TestClaudeReadableCommandWithDeclaredSourcesLogsNothing(t *testing.T) {
+	var lines []string
+	old := logLaunch
+	logLaunch = func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) }
+	ctx := claudeCtx("claude --model sonnet")
+	ctx.Role.SettingsSources = []string{"project", "local"}
+	result, err := (&Claude{}).Prepare(ctx)
+	logLaunch = old
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(result.Command, " --setting-sources project,local") || result.SettingSources != "project,local" {
+		t.Errorf("readable command: %q, sources %q, want the declaration appended", result.Command, result.SettingSources)
+	}
+	if len(lines) != 0 {
+		t.Errorf("a readable command logged %q", lines)
 	}
 }
