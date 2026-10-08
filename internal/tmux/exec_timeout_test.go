@@ -120,7 +120,7 @@ func TestNewSessionDoesNotCreateAfterHasSessionTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "new-session-ran")
 	script := filepath.Join(dir, "tmux")
-	body := "#!/bin/sh\ncase \"$3\" in\nhas-session) sleep 60 ;;\nnew-session) : > " + marker + " ;;\nesac\n"
+	body := "#!/bin/sh\ncase \"$4\" in\nhas-session) sleep 60 ;;\nnew-session) : > " + marker + " ;;\nesac\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}

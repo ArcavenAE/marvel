@@ -82,7 +82,7 @@ func TestReapDeadLeavesSessionsAloneWhenTmuxHangs(t *testing.T) {
 func fakeTmuxOnPath(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	script := "#!/bin/sh\ncase \"$3\" in\nlist-sessions) echo marvel-ws-fake ;;\nlist-panes) sleep 60 ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$4\" in\nlist-sessions) echo marvel-ws-fake ;;\nlist-panes) sleep 60 ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
