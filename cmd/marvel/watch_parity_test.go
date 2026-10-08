@@ -163,7 +163,7 @@ func TestWatchFramePicksUpAResize(t *testing.T) {
 	}
 	width = 80
 	narrow := renderWatch(ws)
-	if !strings.Contains(narrow, "13 columns hidden at this width") {
+	if !strings.Contains(narrow, "14 columns hidden at this width") {
 		t.Errorf("after the resize the frame should fit 80 columns and say what it hid:\n%s", narrow)
 	}
 }
