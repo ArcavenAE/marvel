@@ -79,7 +79,13 @@ func sweepNames(names []string) []string {
 	}
 	var swept []string
 	for _, n := range names {
-		_ = exec.Command("tmux", "-L", n, "kill-server").Run()
+		// kill-server looks for the socket under this user's directory in
+		// TMUX_TMPDIR, so a server this process cannot reach fails here. It is
+		// then neither reported nor unlinked: only a server actually stopped
+		// counts as swept.
+		if err := exec.Command("tmux", "-L", n, "kill-server").Run(); err != nil {
+			continue
+		}
 		_ = os.Remove(filepath.Join(dir, "tmux-"+strconv.Itoa(os.Getuid()), n))
 		swept = append(swept, n)
 	}
