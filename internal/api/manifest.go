@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -765,15 +766,25 @@ func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
 	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	if m.Workspace.TrustedFolders != nil {
+		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+	}
 	// Ignore already-exists for workspace (idempotent apply), but a re-applied
 	// root moves. An apply that names no root leaves a stored one alone.
 	if err := store.CreateWorkspace(ws); err != nil {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
-				live.Root = m.Workspace.Root
+				if m.Workspace.Root != "" {
+					live.Root = m.Workspace.Root
+				}
+				// A list that is present replaces the stored one, an empty
+				// list revokes it, and an absent key leaves it alone.
+				if m.Workspace.TrustedFolders != nil {
+					live.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+				}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply workspace: %w", err)

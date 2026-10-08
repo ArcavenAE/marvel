@@ -60,6 +60,10 @@ type codexSeed struct {
 	// trusted (finding-049): a trusted project lets `-s read-only` write
 	// it anyway.
 	Untrusted string
+	// TrustedRoot, when set, is the one project entry the seed writes, as
+	// trusted, in place of the untrusted start directory. Never both: an exact
+	// key on the start directory beats the root key in codex.
+	TrustedRoot string
 	// Trusted maps a hook key codex reports to the hash it reports for it.
 	Trusted map[string]string
 }
@@ -109,7 +113,11 @@ func renderCodexConfig(s codexSeed) ([]byte, error) {
 		doc["mcp_servers"] = map[string]any{codexDirectorServer: server}
 	}
 
-	if s.Untrusted != "" {
+	if s.TrustedRoot != "" {
+		doc["projects"] = map[string]any{
+			s.TrustedRoot: map[string]any{"trust_level": "trusted"},
+		}
+	} else if s.Untrusted != "" {
 		doc["projects"] = map[string]any{
 			s.Untrusted: map[string]any{"trust_level": "untrusted"},
 		}
@@ -335,18 +343,22 @@ func codexSeeder(ctx *LaunchContext, source string) func(dir string) error {
 		if err != nil {
 			return fmt.Errorf("resolve marvel binary for the codex-ctx hook: %w", err)
 		}
-		// The pane starts where the tmux session did, which is the
-		// daemon's working directory until a role can name one
-		// (aae-orc-g71ad).
-		start, err := os.Getwd()
-		if err != nil {
-			start = ""
+		// The pane starts in the session's working directory, which a role or
+		// team can name; with none it starts where the tmux session did, the
+		// daemon's directory (marvel#684).
+		start := ctx.Session.WorkDir
+		if start == "" {
+			if wd, werr := os.Getwd(); werr == nil {
+				start = wd
+			}
 		}
+		trust := codexFolderTrust(ctx, start)
 		seed := codexSeed{
 			HookCommand: buildCommand(shellQuote(exe), []string{"codex-ctx"}),
 			Director:    operatorDirector(source),
 			EnvVars:     codexForwardedEnv(ctx),
 			Untrusted:   start,
+			TrustedRoot: trust.Root,
 		}
 		bin, err := codexBinary(ctx.Role.Runtime.Command)
 		if err != nil {

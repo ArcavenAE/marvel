@@ -161,7 +161,16 @@ func TestCodexTrustExpandsHomeAndResolvesRelativeAgainstTheRoot(t *testing.T) {
 // config it wrote and the events it recorded.
 func seedFor(t *testing.T, workDir string, listed []string) (map[string]any, []events.Event) {
 	t.Helper()
-	t.Setenv("PATH", t.TempDir()) // no codex to ask: the file is still written
+	// No codex to ask, so the file is still written; git alone stays on PATH.
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(gitBin, filepath.Join(bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
 	ring := events.NewRing(16)
 	ctx := &LaunchContext{
 		Session:   &api.Session{Name: "seat", Workspace: "aae", Team: "t", Role: "r", WorkDir: workDir},
