@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
@@ -711,16 +712,18 @@ func (m *Manifest) ValidateRuntimes() ([]string, error) {
 // shellMeta are the characters that make the first field of a command more
 // than a program name to the shell the launch hands it to: an assignment, a
 // quote, an escape, an expansion, a list or pipe, a redirect, a group, a glob
-// or a tilde. A field with none of them is the program as written.
-const shellMeta = "='\"\\$`;|&<>(){}*?[~"
+// a tilde, or a hash that makes the rest a comment. A field with none of them
+// is the program as written.
+const shellMeta = "='\"\\$`;|&<>(){}*?[~#"
 
 // validateCommand checks the program of a command. The launch passes the text
 // to a shell (the driver hands tmux `env -u ... <command>` as one shell
 // command), so the pre-flight may be less strict than the launch and never more
 // (marvel#517).
 //
-// A command in the simple form, whose first whitespace field has no shell
-// metacharacter and which has no newline, has that field resolved: an absolute
+// A command in the simple form, whose first field (words split on space and tab,
+// as the shell does) has no shell metacharacter and which holds no other
+// whitespace, newline included, has that field resolved: an absolute
 // path by stat, a plain name on $PATH, a relative path against dir, and a miss
 // refuses. dir is where the launch starts the pane (tmux -c), resolved as the
 // controller places a session: the role's workdir, else the team's anchor, else
@@ -735,7 +738,16 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		// another command, which fails with rc 127.
 		return "runtime command spans several lines; the shell runs each line as its own command, so the pre-flight did not check its program", nil
 	}
-	fields := strings.Fields(command)
+	// The shell splits words on space and tab only. Any other whitespace
+	// (a no-break space, a carriage return, a vertical tab, a form feed) is
+	// part of a word there, so splitting on it here would read a program the
+	// launch does not.
+	for _, r := range command {
+		if r != ' ' && r != '\t' && unicode.IsSpace(r) {
+			return commandNotParsedAdvisory, nil
+		}
+	}
+	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
 	if len(fields) == 0 {
 		return "", errors.New("empty")
 	}
