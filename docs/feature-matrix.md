@@ -67,13 +67,13 @@ How each harness reports tokens (headless only; a seat with no token stream show
 | Harness | Reported | Granularity | Cache in the input count | Source |
 |---|---|---|---|---|
 | claude | headless: yes. Interactive: context level only | per request, summed | alongside: cache classes are added to input (additive) | `internal/runtime/claudecode/parser.go:289`, `internal/usage/profiles.go:38-45` |
-| codex | headless: yes. Interactive: context level only | a running session total, so a new report replaces the old one | inside: cached input is part of input (subsumptive) | `internal/runtime/codex/parser.go:202`, `internal/usage/profiles.go:72`, `internal/usage/accountant.go:390` |
+| codex | headless: yes. Interactive: context level only | a running total within a turn, replaced by each new report; whether it resets per turn is unsettled | inside: cached input is part of input (subsumptive) | `internal/runtime/codex/parser.go:202`, `internal/usage/profiles.go:72`, `internal/usage/accountant.go:390` |
 | opencode | headless: yes. Interactive: no | per request, summed | alongside (additive) | `internal/runtime/opencode/parser.go:209`, `internal/usage/profiles.go:87-93` |
 | forestage | no | none, it is not stream-capable | n/a | `internal/usage/doc.go:79` |
 | simulator | no | its heartbeat carries no tokens | n/a | `internal/simulator/engine.go:117-119` |
 | generic | no | none | n/a | `internal/runtime/generic.go:5-8` |
 
-Whether the codex accumulator resets at a turn boundary or runs for the whole session is unknown; the code treats both the same (`internal/usage/profiles.go:72`).
+Whether the codex total resets at a turn boundary or runs for the whole session is not settled, and the code treats both the same (`internal/usage/profiles.go:67-71`).
 
 Evidence:
 
@@ -82,7 +82,7 @@ Evidence:
 - **Tin, tokens in, cumulative.** The accountant sums per-request prompt tokens in a layout-normalized form (`internal/usage/reader.go:28-47`, `internal/usage/accountant.go:557-575`) and writes `SpendPromptTokens` to the session (`internal/api/types.go:469-480`); `nil` means never metered, not zero (`internal/api/types.go:472-474`). It needs a stream, so only headless claude, codex and opencode fill it (`internal/runtime/claudecode/parser.go:289`, `internal/runtime/codex/parser.go:202`, `internal/runtime/opencode/parser.go:209`). The codex value is a running total set by replacement (`internal/usage/accountant.go:390`). `get sessions` shows it as the opt-in PROMPT column, and a Tin column was deliberately not made (`docs/design/get-sessions-output.md:141-144`).
 - **Tin, tokens in, current context level.** `ContextTokens` is a level, set by the accountant and by heartbeats (`internal/api/heartbeat.go:112`): claude by the statusline feed (`cmd/marvel/ctxforward.go:232`), codex by the hook (`cmd/marvel/codexctx.go:91`), forestage through the shared feed (code only). Interactive seats never get cumulative prompt tokens.
 
-- **Tout, tokens out, cumulative.** `SpendOut` is the session's output tokens summed by the accountant (`internal/api/types.go:469-480`, `internal/usage/accountant.go:557-565`). It is the harness's reported output count and excludes the separately recorded reasoning tokens; `nil` means never metered. The same stream gate applies, so only headless claude, codex and opencode fill it; the `RATE` column is a decaying rate over it (`docs/design/get-sessions-output.md:139-140`). codex's reasoning tokens are a subset of its output tokens (`internal/runtime/codex/parser.go:213-215`), while the team token meter adds reasoning tokens to output (`internal/daemon/admission.go:34-38`), so a codex team's meter may count reasoning twice; this was not checked end to end. Whether claude's and opencode's reported output includes reasoning is unknown.
+- **Tout, tokens out, cumulative.** `SpendOut` is the session's output tokens summed by the accountant (`internal/api/types.go:469-480`, `internal/usage/accountant.go:557-565`). It is the harness's reported output count and excludes the separately recorded reasoning tokens; `nil` means never metered. The same stream gate applies, so only headless claude, codex and opencode fill it; the `RATE` column is a decaying rate over it (`docs/design/get-sessions-output.md:139-140`). codex's reasoning tokens are a subset of its output tokens (`internal/runtime/codex/parser.go:213-215`), while the team token meter adds reasoning tokens to output (`internal/daemon/admission.go:34-38`), so a codex team's meter may count reasoning twice; this was not checked end to end. opencode reports reasoning beside output, not inside it: across all 215 measured rows its total equals input plus output plus reasoning plus the cache classes (`internal/runtime/opencode/parser.go:195-200`, `internal/runtime/opencode/mapping.md:72-76`). Whether claude's reported output includes reasoning is unknown.
 
 ## Budgets and usage limits
 
