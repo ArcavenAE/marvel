@@ -69,6 +69,9 @@ func TestHungTmuxReturnsTypedTimeout(t *testing.T) {
 // already printed tmux's gone wording.
 func TestTimeoutIsNotPaneGone(t *testing.T) {
 	d := hungDriver(t, "can't find pane: %1")
+	// Long enough that the script has certainly printed before the kill; a
+	// shorter bound lets a loaded machine kill it first and prove nothing.
+	d.SetExecTimeout(2 * time.Second)
 	var st PaneStatus
 	var err error
 	within(t, func() { st, err = d.PaneStatus("%1") })
