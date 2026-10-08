@@ -167,3 +167,73 @@ func TestShutdownDuringAdoptionEndsTheStart(t *testing.T) {
 		t.Fatal("Start did not return after a shutdown during adoption")
 	}
 }
+
+// A plain stop is answered while adoption is blocked on tmux, and it detaches:
+// the daemon leaves through the shutdown path and the panes keep running. A
+// stop with teardown is refused, because it would destroy panes adoption has
+// not finished accounting for (marvel#716).
+func TestStopDuringBlockedAdoptionDetachesAndTeardownIsRefused(t *testing.T) {
+	skipIfNoTmux(t)
+
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	d.driver.SetExecTimeout(4 * time.Second)
+	exited := make(chan int, 1)
+	d.exit = func(code int) { exited <- code }
+
+	if err := d.driver.NewSession("marvel-stop-keep"); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	paneID, err := d.driver.NewPane("marvel-stop-keep", "sleep 300", "keep", nil, false)
+	if err != nil {
+		t.Fatalf("new pane: %v", err)
+	}
+	resume := freezeTmux(t, d)
+	sock := testSocket(t, "test-stop-detach")
+	started := make(chan error, 1)
+	go func() { started <- d.Start(sock) }()
+
+	resp := send(t, sock, "stop", map[string]any{"teardown": true})
+	if resp.Error != ErrDaemonStarting.Error() {
+		t.Fatalf("stop --teardown while adopting: want the typed starting refusal, got %+v", resp)
+	}
+	if resp = send(t, sock, "daemon.status", nil); resp.Error != "" {
+		t.Fatalf("the refused teardown stopped the daemon: %+v", resp)
+	}
+
+	resp = send(t, sock, "stop", nil)
+	if resp.Error != "" {
+		t.Fatalf("plain stop while adopting: %+v", resp)
+	}
+	select {
+	case code := <-exited:
+		if code != 0 {
+			t.Fatalf("exit code %d, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the daemon did not leave after a plain stop during adoption")
+	}
+	// Shutdown ran before the exit: it releases the socket.
+	if _, err := os.Stat(sock); err == nil {
+		t.Fatal("socket still present: the exit did not follow the shutdown path")
+	}
+	select {
+	case e := <-started:
+		if !errors.Is(e, errStoppedWhileStarting) {
+			t.Fatalf("Start: want errStoppedWhileStarting, got %v", e)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not return after the stop")
+	}
+
+	resume()
+	deadline := time.Now().Add(5 * time.Second)
+	for !d.driver.HasPane(paneID) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !d.driver.HasPane(paneID) {
+		t.Fatalf("pane %s did not survive a detaching stop", paneID)
+	}
+}

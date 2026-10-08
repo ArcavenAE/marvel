@@ -131,6 +131,9 @@ type Daemon struct {
 	// dispatchAs answers only the methods in startingAllows.
 	adoptingSince atomic.Int64
 
+	// exit replaces os.Exit after a stop request, for tests.
+	exit func(int)
+
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
@@ -1035,15 +1038,17 @@ var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, ret
 // adoption and shutdown has already run.
 var errStoppedWhileStarting = errors.New("daemon stopped while starting")
 
-// startingAllows is the set of methods that answer while the daemon is still
-// adopting tmux state: the reads that say what the daemon is doing, and stop,
-// which must not wait on adoption. Every other method is refused with
+// startingMethods is the set of methods that answer while the daemon is still
+// adopting tmux state: the reads that say what the daemon is doing, and a
+// plain stop (detach), which must not wait on adoption: a remote operator has
+// no other way to end the daemon. stop with teardown stays refused, because it
+// would destroy panes adoption has not finished accounting for. Every other method is refused with
 // ErrDaemonStarting before its handler runs. That includes heartbeat and
 // account.limits (a heartbeat does more than stamp liveness: it checks the
 // session token and records orphan sightings, against a store adoption has not
 // finished reconciling), plan (its delta would be against an unreconciled
 // store), and inject and capture (they drive tmux).
-var startingAllows = map[string]bool{
+var startingMethods = map[string]bool{
 	"daemon.status":   true,
 	"get":             true,
 	"describe":        true,
@@ -1052,7 +1057,17 @@ var startingAllows = map[string]bool{
 	"bus.status":      true,
 	"orphans":         true,
 	"credential.list": true,
-	"stop":            true,
+}
+
+// startingAllows reports whether req may run while the daemon is adopting.
+func startingAllows(req Request) bool {
+	if req.Method == "stop" {
+		teardown, _, err := stopMode(req.Params)
+		// A malformed stop reaches the handler, which refuses it; it cannot
+		// tear anything down.
+		return err != nil || !teardown
+	}
+	return startingMethods[req.Method]
 }
 
 // dispatchAs enforces the caller's scope, then routes the request. A method
@@ -1061,7 +1076,7 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
 	}
-	if d.adoptingSince.Load() != 0 && !startingAllows[req.Method] {
+	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
 		return Response{Error: ErrDaemonStarting.Error(), Starting: true}
 	}
 	switch req.Method {
@@ -2730,6 +2745,16 @@ func (d *Daemon) stopReport(teardown bool, mode string) Response {
 	return Response{Result: data}
 }
 
+// exitProcess ends the process once shutdown has run. exit is nil in
+// production and set by a test, which cannot survive os.Exit.
+func (d *Daemon) exitProcess(code int) {
+	if d.exit != nil {
+		d.exit(code)
+		return
+	}
+	os.Exit(code)
+}
+
 func (d *Daemon) handleStop(params json.RawMessage) Response {
 	teardown, mode, err := stopMode(params)
 	if err != nil {
@@ -2752,7 +2777,7 @@ func (d *Daemon) handleStop(params json.RawMessage) Response {
 		} else {
 			d.Detach()
 		}
-		os.Exit(0)
+		d.exitProcess(0)
 	}()
 	return resp
 }
