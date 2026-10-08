@@ -171,3 +171,61 @@ func TestApplyCountsSessionsLeftBehind(t *testing.T) {
 		t.Fatalf("an apply that changed the role's args reports %d behind, want 1", n)
 	}
 }
+
+// runIntoRole runs an ad-hoc session into the live session's own team and role
+// with its own runtime, and returns the run session's key.
+func runIntoRole(t *testing.T, d *Daemon, sess api.Session) string {
+	t.Helper()
+	resp := d.handleRun(mustMarshal(t, runParams{
+		Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role,
+		RuntimeCommand: "sleep", RuntimeArgs: []string{"301"},
+	}))
+	if resp.Error != "" {
+		t.Fatalf("run: %s", resp.Error)
+	}
+	var out struct {
+		SessionKey string `json:"session_key"`
+	}
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.SessionKey
+}
+
+// A marvel run session reads "-" even when it names a real team and role: it is
+// not spawned from the role and never takes the role's spec at a respawn, so
+// "behind" would promise a change that never comes (docs/design/drift-view.md
+// section 2, section 6 case 4).
+func TestRunSessionIntoARealRoleCarriesNoSpec(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := liveSession(t, d)
+	key := runIntoRole(t, d, sess)
+	got := listedSession(t, d, key)
+	if got.Spec != "" || len(got.SpecDiff) != 0 {
+		t.Fatalf("a run session carries spec %q diff %v, want none", got.Spec, got.SpecDiff)
+	}
+	// The role's own seat is unaffected.
+	if own := listedSession(t, d, sess.Key()); own.Spec != api.SpecCurrent {
+		t.Fatalf("the role's own seat reads %q, want current", own.Spec)
+	}
+}
+
+// A no-op apply counts nothing extra while a run session sits in the role.
+func TestApplyDoesNotCountARunSession(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := liveSession(t, d)
+	_ = runIntoRole(t, d, sess)
+	resp := applyManifest(t, d, injectManifest)
+	if resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	var r struct {
+		Behind int `json:"behind"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Behind != 0 {
+		t.Fatalf("a no-op apply counts %d behind with a run session in the role, want 0", r.Behind)
+	}
+}
