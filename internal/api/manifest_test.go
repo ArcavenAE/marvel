@@ -1369,6 +1369,15 @@ func TestValidateRuntimesCheckOnlyWhatItCanRead(t *testing.T) {
 		{name: "missing absolute path with args", command: "/nope/not/here --flag", refuse: "not found"},
 		{name: "only whitespace", command: " \t ", refuse: "empty"},
 
+		// The pre-flight reads the first field only: shell text in the arguments
+		// does not change what the program is, so a miss still refuses and a hit
+		// still passes without an advisory.
+		{name: "a missing program with a quoted argument", command: "nosuchprog --x 'a b'", refuse: `"nosuchprog"`},
+		{name: "a missing program with an expansion in the arguments", command: "nosuchprog --x $(date)", refuse: `"nosuchprog"`},
+		{name: "a missing program with a pipe in the arguments", command: "nosuchprog --x | cat", refuse: `"nosuchprog"`},
+		{name: "a present program with a quoted argument", command: "sleep 5 'a b'"},
+		{name: "a present program with an expansion in the arguments", command: "sleep $(echo 5)"},
+
 		// Not the simple form: not refused, advised.
 		{name: "env assignment before the program", command: "FOO=1 sleep 5", advisory: shellTextAdvisory},
 		{name: "double-quoted path with a space", command: `"/tmp/dir with space/prog" --x`, teamDir: "t", advisory: shellTextAdvisory},
