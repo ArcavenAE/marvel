@@ -51,6 +51,10 @@ type Driver struct {
 	// execTimeout bounds each tmux invocation; zero means DefaultExecTimeout.
 	execTimeout time.Duration
 
+	// procs lists processes for the guard that tells a missing socket from a
+	// missing server; nil means `ps -axo pid,args`.
+	procs procList
+
 	// socket is the tmux server socket name. Every tmux invocation
 	// prepends -L <socket>, scoping the driver to a dedicated server.
 	// Empty means the user's shared default tmux server, which is no
@@ -280,22 +284,42 @@ func (d *Driver) HasSession(name string) bool {
 	return ok
 }
 
-// sessionExists reports whether tmux has the session. A tmux that does not
-// answer in time returns ErrTmuxTimeout and false, so a caller can refuse to
-// read the silence as "no such session".
+// sessionExists reports whether tmux has the session. Only two answers say
+// no: tmux's "can't find session", and an absent server by serverAbsent's
+// rule. A tmux that does not answer in time, or answers anything else, is an
+// error, so a caller that creates on absence never starts a second server
+// beside one it cannot reach.
 func (d *Driver) sessionExists(name string) (bool, error) {
-	err := d.cmd("has-session", "-t", name).Run()
+	_, text, absent, err := d.whileStarting(func() ([]byte, string, error) {
+		out, err := d.cmd("has-session", "-t", name).CombinedOutput()
+		return out, string(out), err
+	})
+	if err == nil {
+		return true, nil
+	}
 	if errors.Is(err, ErrTmuxTimeout) {
 		return false, err
 	}
-	return err == nil, nil
+	// "no current target" is what tmux 3.4 has-session prints, from a live
+	// server, for a session that is not there. Measured under parallel load.
+	if strings.Contains(text, "can't find session") || strings.Contains(text, "no current target") || absent {
+		return false, nil
+	}
+	return false, fmt.Errorf("has-session %s: %s: %w", name, strings.TrimSpace(text), err)
 }
 
 // ListSessions returns the names of every tmux session on the server.
 // If no tmux server is running, returns an empty slice and no error —
 // that's the same "no sessions" condition as a freshly started daemon.
 func (d *Driver) ListSessions() ([]string, error) {
-	out, err := d.cmd("list-sessions", "-F", "#S").Output()
+	out, _, absent, err := d.whileStarting(func() ([]byte, string, error) {
+		out, err := d.cmd("list-sessions", "-F", "#S").Output()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return out, string(ee.Stderr), err
+		}
+		return out, "", err
+	})
 	if err != nil {
 		// Treat "there is no live tmux server" as zero sessions, not
 		// an error. tmux reports this two different ways depending on
@@ -303,14 +327,10 @@ func (d *Driver) ListSessions() ([]string, error) {
 		//   - "no server running on <path>" (server existed, then exited)
 		//   - "error connecting to <path> (No such file or directory)"
 		//     (server never started — socket file absent)
-		// Both mean the same thing to us.
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			stderr := string(ee.Stderr)
-			if strings.Contains(stderr, "no server running") ||
-				strings.Contains(stderr, "No such file or directory") {
-				return nil, nil
-			}
+		// Both mean the same thing to us, when no server process for the
+		// socket is alive; see serverAbsent.
+		if absent {
+			return nil, nil
 		}
 		return nil, fmt.Errorf("list-sessions: %w", err)
 	}
@@ -329,12 +349,20 @@ func (d *Driver) NewSession(name string) error {
 	if err != nil {
 		return fmt.Errorf("new-session %s: %w", name, err)
 	}
-	if exists {
-		return nil
+	if !exists {
+		if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
+			// A concurrent NewSession for the same name can create it between
+			// the check above and this call; the session exists, which is
+			// what the caller asked for.
+			if !strings.Contains(string(out), "duplicate session") {
+				return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
+			}
+		}
 	}
-	if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
-		return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
-	}
+	// The options below run on every path, the exists and duplicate ones
+	// included: the creator may not have set them yet when this call
+	// returns, and a pane created before remain-on-exit is on loses an
+	// instant-exit status. Both are idempotent.
 	// Raise the session's history-limit above tmux's 2000-line default so
 	// capture-pane scrapes and the adopt-path pipe-pane see full scrollback
 	// (finding-005). This is a session-scoped set-option (-t <session>,
@@ -519,7 +547,7 @@ func (d *Driver) PaneStatus(paneID string) (PaneStatus, error) {
 		// that is the "gone" answer, not a failure. Anything else (no
 		// server, bad socket) is reported so a caller does not read an
 		// outage as a fleet of vanished panes.
-		if paneGoneText(text) {
+		if paneGoneText(text) || d.serverAbsent(text) {
 			return PaneStatus{}, nil
 		}
 		return PaneStatus{}, fmt.Errorf("pane-status %s: %s: %w", paneID, text, err)
@@ -568,7 +596,7 @@ func (d *Driver) KillPane(paneID string) error {
 		if errors.Is(err, ErrTmuxTimeout) {
 			return fmt.Errorf("kill-pane %s: %w", paneID, err)
 		}
-		if paneGoneText(string(out)) {
+		if paneGoneText(string(out)) || d.serverAbsent(string(out)) {
 			return fmt.Errorf("kill-pane %s: %s: %w", paneID, strings.TrimSpace(string(out)), ErrPaneGone)
 		}
 		return fmt.Errorf("kill-pane %s: %s: %w", paneID, string(out), err)
@@ -586,7 +614,7 @@ var ErrPaneGone = errors.New("pane already gone")
 // PaneStatus reads as "gone".
 func paneGoneText(text string) bool {
 	return strings.Contains(text, "can't find pane") || strings.Contains(text, "can't find window") ||
-		strings.Contains(text, "can't find session") || strings.Contains(text, "no server running")
+		strings.Contains(text, "can't find session")
 }
 
 // KillSession destroys an entire tmux session.
