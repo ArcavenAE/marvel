@@ -1065,6 +1065,7 @@ var startingMethods = map[string]bool{
 	"bus.status":      true,
 	"orphans":         true,
 	"credential.list": true,
+	MethodVersion:     true,
 }
 
 // startingAllows reports whether req may run while the daemon is adopting.

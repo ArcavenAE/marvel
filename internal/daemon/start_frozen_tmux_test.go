@@ -110,6 +110,7 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 		{"bus.status", nil},
 		{"events", nil},
 		{"credential.list", nil},
+		{MethodVersion, nil},
 	} {
 		resp := send(t, sock, m.method, m.params)
 		if !resp.Starting {
