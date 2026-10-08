@@ -241,8 +241,10 @@ func TestServerExitedUnexpectedlyPastTheBoundIsAnOutageNeverAbsence(t *testing.T
 	if names, lerr := d.ListSessions(); lerr == nil {
 		t.Errorf("ListSessions = %v, nil; want an error, not an empty list", names)
 	}
-	if took := time.Since(start); took > 2*(startupBound+500*time.Millisecond) {
-		t.Errorf("two calls took %v, want each within the bound plus 500ms", took)
+	// A sanity ceiling, not the timing pin (the real-tmux plant holds that):
+	// each attempt spawns a process, which is slow on a loaded host.
+	if took := time.Since(start); took > 2*startupBound+5*time.Second {
+		t.Errorf("two calls took %v, want the wait bounded", took)
 	}
 }
 
