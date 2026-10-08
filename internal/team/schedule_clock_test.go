@@ -114,9 +114,10 @@ func TestScheduledRoleFiresOncePerFiring(t *testing.T) {
 		t.Fatalf("schedule.fired events = %d, want 1", n)
 	}
 
-	r.settle(t, "the run succeeds", func() bool {
+	version := tmuxVersion(t)
+	r.settle(t, "the run finishes", func() bool {
 		ss := r.sessions()
-		return len(ss) == 1 && ss[0].State == api.SessionSucceeded
+		return len(ss) == 1 && exitZeroRunOK(version, ss[0])
 	})
 	for i := 0; i < 3; i++ {
 		r.ctrl.ReconcileOnce()
@@ -133,6 +134,40 @@ func TestScheduledRoleFiresOncePerFiring(t *testing.T) {
 	ss = r.sessions()
 	if len(ss) != 1 || ss[0].Firing != "20261002T061700Z" {
 		t.Fatalf("next firing: sessions %v, want only the new firing's run", summarize(ss))
+	}
+}
+
+// exitZeroRunOK reports whether the row of a run that exited 0 is
+// acceptable for the tmux the test runs on.
+func exitZeroRunOK(version string, s api.Session) bool {
+	return s.State == api.SessionSucceeded
+}
+
+// TestExitZeroRunFollowsTheTmuxVersion pins exitZeroRunOK: succeeded on
+// every tmux, and on a tmux older than 3.5, which can lose a dead pane's
+// status, a crashed row with no status is the unknown-status contract.
+// A crashed row is never acceptable where tmux keeps the status, and a
+// crashed row that has a status is never acceptable at all.
+func TestExitZeroRunFollowsTheTmuxVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		version string
+		state   api.SessionState
+		exit    string
+		want    bool
+	}{
+		{"tmux 3.7c", api.SessionSucceeded, "0", true},
+		{"tmux 3.4", api.SessionSucceeded, "0", true},
+		{"tmux 3.4", api.SessionCrashed, "", true},
+		{"tmux 3.7c", api.SessionCrashed, "", false},
+		{"tmux 3.4", api.SessionCrashed, "1", false},
+		{"", api.SessionCrashed, "", false},
+	}
+	for _, tc := range tests {
+		s := api.Session{State: tc.state, ExitStatus: tc.exit}
+		if got := exitZeroRunOK(tc.version, s); got != tc.want {
+			t.Errorf("exitZeroRunOK(%q, %s exit %q) = %v, want %v", tc.version, tc.state, tc.exit, got, tc.want)
+		}
 	}
 }
 
