@@ -58,8 +58,8 @@ func TestNewDriverDerivesASocketWhenTheEnvIsUnset(t *testing.T) {
 	}
 	// The derived name has to reach the -L argument, not just the field.
 	args := d.cmd("list-sessions").Args
-	if len(args) < 3 || args[1] != "-L" || args[2] != derived {
-		t.Errorf("tmux args %v do not carry -L %s", args, derived)
+	if len(args) < 4 || args[1] != "-u" || args[2] != "-L" || args[3] != derived {
+		t.Errorf("tmux args %v do not carry -u -L %s", args, derived)
 	}
 }
 

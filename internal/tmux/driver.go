@@ -182,12 +182,18 @@ func (d *Driver) lockPane(paneID string) func() {
 // inherits (aae-orc#418).
 func (d *Driver) cmd(args ...string) *tmuxCmd {
 	ctx, cancel := context.WithTimeout(context.Background(), d.timeout())
-	full := args
+	// -u first, on every exec: without it a client that has no UTF-8 locale
+	// (a daemon under launchd, cron or ssh, where TMUX is also unset) prints
+	// each tab in a -F format as an underscore, and every parse that splits
+	// on a tab reads a live pane as gone (marvel#727). The flag does not touch
+	// the environment, so no locale reaches the panes the way setting LC_ALL
+	// would, and capture-pane text is unchanged.
+	full := make([]string, 0, len(args)+3)
+	full = append(full, "-u")
 	if d.socket != "" {
-		full = make([]string, 0, len(args)+2)
 		full = append(full, "-L", d.socket)
-		full = append(full, args...)
 	}
+	full = append(full, args...)
 	c := exec.CommandContext(ctx, d.binary, full...)
 	c.Env = api.ScrubInheritedSessionEnv(os.Environ())
 	// A killed tmux client can leave a child holding its output pipe open;

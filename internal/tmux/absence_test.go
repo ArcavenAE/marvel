@@ -287,6 +287,11 @@ func TestDefaultSocketNameAnchorsOnAPlainTmuxServer(t *testing.T) {
 		{"-S names its own socket", "default", " 13 /opt/homebrew/bin/tmux -S /tmp/x.sock new-session -d", false},
 		{"not tmux", "default", " 14 /usr/bin/vim new-session", false},
 		{"plain tmux is not another name's server", "unit", " 15 /opt/homebrew/bin/tmux new-session -d", false},
+		{"-u client with -L name", "unit", " 16 /opt/homebrew/bin/tmux -u -L unit new-session -d", true},
+		{"-u client on the default name", "default", " 17 /opt/homebrew/bin/tmux -u new-session -d", true},
+		{"-u -L default", "default", " 18 /opt/homebrew/bin/tmux -u -L default new-session -d", true},
+		{"-u is not another name's server", "unit", " 19 /opt/homebrew/bin/tmux -u new-session -d", false},
+		{"-u with another -L name", "default", " 20 /opt/homebrew/bin/tmux -u -L marvel-1 new-session -d", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := carriesSocket(strings.Fields(tc.line), tc.socket); got != tc.want {
