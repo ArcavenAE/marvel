@@ -74,19 +74,35 @@ refuses otherwise, with an event naming the reason:
    (`:306-320`).
 3. **The path comes from the session record,** through `handoffPath` with the
    stored session, never from the request.
-4. **No symlink is followed.** The writer mirrors the read side
-   (`handoffComplete`, `:331-345`):
-   - refuse when `Lstat` shows the target exists and is not a regular file
-     (a symlink, FIFO or directory);
-   - write the text and marker to a new temporary file in the same
-     directory, created with `O_CREAT|O_EXCL|O_NOFOLLOW`, so a name planted
-     there in advance is refused rather than followed;
-   - `Lstat` the target again, and rename the temporary file over it only if
-     it is still absent or the same regular file (`os.SameFile` against the
-     first `Lstat`). `rename` replaces a directory entry and never writes
-     through a link;
-   - a symlinked parent directory is still followed, exactly as on the read
-     side.
+4. **No symlink is followed, in the file or its directory.** A seat shares
+   the daemon's uid, and `{session}` is predictable, so any unsandboxed seat
+   on the same uid could plant a link where the daemon will write on a
+   read-only seat's behalf. The request-time `MkdirAll` (`:89-95`) leaves an
+   existing entry alone, a symlink to a directory included, so the check must
+   be on the directory, not only the file:
+   - **At request time,** after `MkdirAll`, `Lstat` the handoff directory and
+     refuse a symlink or a non-directory. Also refuse when
+     `filepath.EvalSymlinks(dir)` differs from the cleaned `dir`, so no
+     ancestor is a link either. Then record the directory's identity (device
+     and inode) on the `ShiftRequest`. A refusal is a named `DirError`, which
+     the notice and the missing reason already carry.
+   - **At write time,** open the directory with `os.OpenRoot`, the pattern
+     `internal/view/view.go:182-187` already uses. `Stat` the opened root and
+     refuse unless it is the same directory recorded at request time
+     (`os.SameFile` on the identity). This check is on the opened handle, so
+     a swap of the directory or an ancestor after the request is caught, and
+     a swap after the check cannot redirect the write.
+   - **Inside the root,** create a temporary file with
+     `O_CREAT|O_EXCL|O_NOFOLLOW`, write the text and marker, `Lstat` the
+     target and refuse anything but absent or a regular file, then
+     `root.Rename` the temporary file over it. `os.Root` refuses to leave its
+     directory, symlinks included, and `rename` replaces a directory entry
+     without writing through a link.
+   - **Residual, stated.** Same-uid seats are not isolated from each other by
+     marvel. A seat that can write the handoff directory can still delete or
+     replace the finished file after marvel writes it. The gate makes
+     marvel's own write land only in the directory it recorded. Isolating
+     seats from each other is a sandbox question (curtain), not this design.
 
 The text is capped at a size the handoff tail read can hold several times
 over (proposed 64 KiB; `maxHandoffTail` reads 4096 bytes for the marker,
@@ -303,7 +319,7 @@ exec
  succeeded in 0ms:
 ran
 ran
-cleanup: removed /private/var/folders/zr/c93ktjcd7rs19x5xzcrzb0980000gn/T/rulechk.VE0mf9 (exists now: no)
+cleanup: removed $TMPDIR/rulechk.VE0mf9 (exists now: no)
 ```
 
 </details>
