@@ -268,3 +268,41 @@ func TestPaneStatusLiveServerWithItsSocketFileRemovedIsAnOutage(t *testing.T) {
 		t.Errorf("PaneStatus = %+v, nil with the server alive and its socket file gone; want an error", st)
 	}
 }
+
+// MARVEL_TMUX_SOCKET=default reproduces the old shared server, which a user
+// usually started as plain `tmux`, with no -L in its argv. That process must
+// anchor the guard for the name "default", along with an explicit
+// `-L default`; for any other name a plain tmux is somebody else's server.
+func TestDefaultSocketNameAnchorsOnAPlainTmuxServer(t *testing.T) {
+	for _, tc := range []struct {
+		name, socket, line string
+		want               bool
+	}{
+		{"plain tmux", "default", " 10 /opt/homebrew/bin/tmux new-session -d -s work", true},
+		{"plain tmux with -f", "default", " 10 /opt/homebrew/bin/tmux -f /x/tmux.conf new-session -d", true},
+		{"explicit -L default", "default", " 11 /opt/homebrew/bin/tmux -L default new-session -d", true},
+		{"another -L name", "default", " 12 /opt/homebrew/bin/tmux -L marvel-1 new-session -d", false},
+		{"-S names its own socket", "default", " 13 /opt/homebrew/bin/tmux -S /tmp/x.sock new-session -d", false},
+		{"not tmux", "default", " 14 /usr/bin/vim new-session", false},
+		{"plain tmux is not another name's server", "unit", " 15 /opt/homebrew/bin/tmux new-session -d", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := carriesSocket(strings.Fields(tc.line), tc.socket); got != tc.want {
+				t.Errorf("carriesSocket(%q, %q) = %v, want %v", tc.line, tc.socket, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultSocketWithAPlainTmuxServerAliveIsAnOutage(t *testing.T) {
+	d := absentDriver(t, noServerText, procLines(" 10 /opt/homebrew/bin/tmux new-session -d -s work"))
+	d.socket = "default"
+	if st, err := d.PaneStatus("%1"); err == nil || errors.Is(err, ErrPaneGone) {
+		t.Errorf("PaneStatus = %+v, %v; want an outage error with a plain tmux server alive", st, err)
+	}
+	gone := absentDriver(t, noServerText, procLines())
+	gone.socket = "default"
+	if st, err := gone.PaneStatus("%1"); err != nil || st.Exists {
+		t.Errorf("no server alive: PaneStatus = %+v, %v; want gone", st, err)
+	}
+}
