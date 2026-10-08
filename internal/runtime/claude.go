@@ -140,10 +140,21 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// this one-liner, because marvel's args land after its own
 	// (aae-orc-1vq6z). A wrapper owns the prompt; the identity it would
 	// carry is in the constructed env (MARVEL_SESSION and siblings).
-	if isBareClaude(binary) && !hasAnyFlag(args, "--append-system-prompt", "--append-system-prompt-file") {
-		prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
-			", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
-		args = append(args, "--append-system-prompt", prompt)
+	//
+	// The role may keep its own prompt in runtime.args or inline in its command
+	// ("claude --append-system-prompt ..."), so both are read, by the same
+	// helper that reads the setting-sources flag (marvel#745). A command whose
+	// words cannot be read (an expansion, a pipe, a second line) may carry the
+	// flag where nothing here can see it, so none is added and one line says so.
+	if isBareClaude(binary) {
+		switch {
+		case !api.CommandWordsReadable(binary):
+			logLaunch("role %s: command is shell text; marvel's system-prompt line not added", ctx.Role.Name)
+		case !carriesFlag(args, binary, "--append-system-prompt", "--append-system-prompt-file"):
+			prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
+				", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
+			args = append(args, "--append-system-prompt", prompt)
+		}
 	}
 
 	// Tell the harness which settings sources to load, so what applies is a
@@ -155,7 +166,7 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// upgrade does not change what a seat loads from its directory; the placed
 	// defaults arrive with SB-1.
 	settingSources := ""
-	if isBareClaude(binary) && !hasAnyFlag(args, "--setting-sources") && !hasAnyFlag(commandArgs(binary), "--setting-sources") {
+	if isBareClaude(binary) && !carriesFlag(args, binary, "--setting-sources") {
 		settingSources = "user,project,local"
 		if len(ctx.Role.SettingsSources) > 0 {
 			settingSources = strings.Join(ctx.Role.SettingsSources, ",")
@@ -205,6 +216,12 @@ func commandArgs(command string) []string {
 		return nil
 	}
 	return fields[1:]
+}
+
+// carriesFlag reports whether a role already supplies one of flags, in
+// runtime.args or inline in the words of its command.
+func carriesFlag(args []string, command string, flags ...string) bool {
+	return hasAnyFlag(args, flags...) || hasAnyFlag(commandArgs(command), flags...)
 }
 
 // hasAnyFlag reports whether args carry any of the named flags, in either

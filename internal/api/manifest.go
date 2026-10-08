@@ -738,14 +738,10 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		// another command, which fails with rc 127.
 		return "runtime command spans several lines; the shell runs each line as its own command, so the pre-flight did not check its program", nil
 	}
-	// The shell splits words on space and tab only. Any other whitespace
-	// (a no-break space, a carriage return, a vertical tab, a form feed) is
-	// part of a word there, so splitting on it here would read a program the
-	// launch does not.
-	for _, r := range command {
-		if r != ' ' && r != '\t' && unicode.IsSpace(r) {
-			return commandNotParsedAdvisory, nil
-		}
+	// The shell splits words on space and tab only, so splitting on any other
+	// whitespace here would read a program the launch does not.
+	if hasUnsplitWhitespace(command) {
+		return commandNotParsedAdvisory, nil
 	}
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
 	if len(fields) == 0 {
@@ -776,8 +772,34 @@ func validateCommand(command, dir string) (advisory string, err error) {
 	return "", nil
 }
 
-// CommandWordsReadable is a red stub; the green commit gives it a body.
-func CommandWordsReadable(string) bool { return true }
+// shellUnreadable are the characters after which the words of a command are no
+// longer the words the shell hands on: an expansion, a command list or pipe, a
+// redirect, a group, or an escape. A quote is not one of them: it can change
+// where a word ends, but it cannot hide a flag from a reader of the words.
+const shellUnreadable = "$`;|&<>(){}\\"
+
+// CommandWordsReadable reports whether the words of a command, split on space
+// and tab, are the words the shell passes on: no expansion, list, pipe,
+// redirect, group or escape anywhere, and no whitespace the shell does not
+// split on. A reader that looks for a flag in a command's own arguments, as the
+// claude adapter does (marvel#745), can trust a command for which this is true
+// and must not add its own flag to one for which it is not.
+func CommandWordsReadable(command string) bool {
+	return !strings.ContainsAny(command, shellUnreadable) && !hasUnsplitWhitespace(command)
+}
+
+// hasUnsplitWhitespace reports whether command holds whitespace other than
+// space and tab. The shell splits words on those two only, so any other
+// whitespace (a no-break space, a carriage return, a newline, a vertical tab, a
+// form feed) is part of a word or ends a command, not a separator.
+func hasUnsplitWhitespace(command string) bool {
+	for _, r := range command {
+		if r != ' ' && r != '\t' && unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
 
 const commandNotParsedAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"
 

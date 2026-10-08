@@ -109,7 +109,7 @@ func TestClaudeAddsNoPromptToShellText(t *testing.T) {
 		logLaunch = func(format string, v ...any) { lines = append(lines, fmt.Sprintf(format, v...)) }
 		result := prepareClaude(t, command, nil)
 		logLaunch = old
-		if strings.Contains(result.Command, "--append-system-prompt") {
+		if strings.Contains(result.Command, "You are squad-worker-g1-0") {
 			t.Errorf("%q: a prompt was injected into shell text: %s", command, result.Command)
 		}
 		want := "role worker: command is shell text; marvel's system-prompt line not added"
