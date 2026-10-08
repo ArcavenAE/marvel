@@ -10,9 +10,11 @@ bears on the orc question `question-slotefs-agent-filesystem-mediation`.
 
 Everything under "Pre-registration" was written before any rig exists. The
 outcome is appended in a dated section; nothing above it is revised after
-data exists. One revision was made before any run, after review 5428265052
-on marvel#597: H5 added, H3 states its writable window, and H4 times a
-local clone (see "Revision before the run").
+data exists. Three revisions were made before any run, after reviews
+5428265052, 5428374958 and 5428565167 on marvel#597 (see "Revision before
+the run"): the first added H5, stated H3's writable window and made H4 time a
+local clone; the second gave the archive fallback H6 and its criteria; the
+third added H6b2 for a reader that holds its cwd.
 
 ## Why
 
@@ -190,8 +192,9 @@ result is macOS only. Transcript kept:
   where content changes under a held cwd. The architect recommends (ii),
   and the operator decides, from the finding. That recommendation is valid
   until the finding is written or 2026-10-27, whichever comes first; the
-  architect re-checks it then. H6c fails: the location rule is wrong; name what the view
-  reached. H6d fails: the view is made on demand, not at spawn.
+  architect re-checks it then.
+- H6c fails: the location rule is wrong; name what the view reached.
+- H6d fails: the view is made on demand, not at spawn.
 - H3's writable window is recorded, not judged. It does not fail the
   worktree view. An in-place refresh changes the tree under a held cwd, so
   it has a window but no stale reads. A swap refresh closes the window but
