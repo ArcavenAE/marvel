@@ -139,7 +139,7 @@ func TestProvisionAfterAdoptRecoversPasswords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2.dialTimeout = 5 * time.Second
+	s2.dialTimeout = loadedBrokerWait
 	m2.Reloader = s2
 	t.Cleanup(func() { s2.Stop(false) })
 	provisioned := false

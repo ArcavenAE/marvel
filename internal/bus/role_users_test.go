@@ -300,7 +300,7 @@ func TestSupervisorUserAgainstARealBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.backoff = func(int) time.Duration { return 200 * time.Millisecond }
-	s.dialTimeout = 5 * time.Second
+	s.dialTimeout = loadedBrokerWait
 	s.AfterReady = func() error {
 		a := m.Admin()
 		_, err := Provision(context.Background(), m.URL(), a.Name, a.Password)
