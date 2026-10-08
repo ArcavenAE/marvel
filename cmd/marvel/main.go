@@ -163,6 +163,17 @@ func send(req daemon.Request) (*daemon.Response, error) {
 	return resp, nil
 }
 
+// bindRootFlags registers the flags every command shares: where the daemon
+// is (--cluster, --socket) and how to authenticate to it (--identity).
+func bindRootFlags(root *cobra.Command) {
+	root.PersistentFlags().StringVar(&clusterName, "cluster", "",
+		"named cluster from ~/.marvel/config.yaml")
+	root.PersistentFlags().StringVar(&socketPath, "socket", "",
+		"explicit daemon address (overrides --cluster)")
+	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
+		"private key file for SSH auth (overrides cluster identity)")
+}
+
 func main() {
 	// Strip shell-style comments from args so inline notes work:
 	//   ./marvel shift test/squad  # replace all workers
@@ -173,12 +184,7 @@ func main() {
 		Short: "Agent orchestration control plane",
 	}
 
-	root.PersistentFlags().StringVar(&clusterName, "cluster", "",
-		"named cluster from ~/.marvel/config.yaml")
-	root.PersistentFlags().StringVar(&socketPath, "socket", "",
-		"explicit daemon address (overrides --cluster)")
-	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
-		"private key file for SSH auth (overrides cluster identity)")
+	bindRootFlags(root)
 
 	root.AddCommand(daemonCmd())
 	root.AddCommand(workCmd())
