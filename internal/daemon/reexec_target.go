@@ -48,6 +48,20 @@ type reexecTarget struct {
 	Revision string
 }
 
+// statDir reads a directory's mode and owner. It is a variable so a test can
+// stand in an owner this process cannot create.
+var statDir = func(path string) (mode os.FileMode, uid int, err error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, fmt.Errorf("no owner recorded for %s", path)
+	}
+	return fi.Mode(), int(st.Uid), nil
+}
+
 // validateReexecTarget resolves path and checks it is safe to exec: a regular,
 // executable file owned by the daemon's user that no one else can write, that
 // answers `version` as a marvel, and that is not older than the running build.

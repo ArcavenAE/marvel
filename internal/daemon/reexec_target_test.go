@@ -310,3 +310,121 @@ func TestReexecRefusedTargetNeitherExecsNorEmits(t *testing.T) {
 		t.Fatalf("a refused reexec emitted %d daemon.reexec events", n)
 	}
 }
+
+// dirWithMarvel makes a directory at the given mode (set with chmod, so the
+// umask does not change it) holding a valid marvel build.
+func dirWithMarvel(t *testing.T, mode os.FileMode) (dir, bin string) {
+	t.Helper()
+	dir = filepath.Join(t.TempDir(), "install")
+	bin = fakeMarvel(t, dir, marvelModule, "0.3.0")
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
+	}
+	return dir, bin
+}
+
+// A binary is only as safe as every directory above it: whoever can write a
+// directory on the path can swap the file between the checks and the exec.
+func TestValidateReexecTargetWalksTheAncestors(t *testing.T) {
+	t.Run("a non-sticky world-writable directory is refused and named", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o777)
+		_, err := validateReexecTarget(bin, "0.2.0")
+		if err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "writable") {
+			t.Fatalf("want a refusal naming %s and its writability, got %v", dir, err)
+		}
+		for _, want := range []string{"owner", "mode", "marvel stop --keep-bus"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal should carry %q, got %v", want, err)
+			}
+		}
+	})
+	t.Run("a group-writable directory is refused", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o775)
+		if _, err := validateReexecTarget(bin, "0.2.0"); err == nil || !strings.Contains(err.Error(), dir) {
+			t.Fatalf("want a refusal naming %s, got %v", dir, err)
+		}
+	})
+	t.Run("a sticky world-writable directory owned by the daemon's user is accepted", func(t *testing.T) {
+		_, bin := dirWithMarvel(t, os.ModeSticky|0o777)
+		if _, err := validateReexecTarget(bin, "0.2.0"); err != nil {
+			t.Fatalf("a sticky directory owned by the daemon's user is not a swap risk: %v", err)
+		}
+	})
+	t.Run("a plain 0755 path is accepted", func(t *testing.T) {
+		_, bin := dirWithMarvel(t, 0o755)
+		if _, err := validateReexecTarget(bin, "0.2.0"); err != nil {
+			t.Fatalf("0755 under the daemon's user: %v", err)
+		}
+	})
+	t.Run("a directory owned by another non-root user is refused", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o755)
+		real := statDir
+		statDir = func(p string) (os.FileMode, int, error) {
+			mode, uid, err := real(p)
+			if p == dir {
+				return os.ModeDir | 0o755, os.Getuid() + 4242, nil
+			}
+			return mode, uid, err
+		}
+		t.Cleanup(func() { statDir = real })
+		_, err := validateReexecTarget(bin, "0.2.0")
+		if err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "owner") {
+			t.Fatalf("want a refusal naming %s and its owner, got %v", dir, err)
+		}
+	})
+	t.Run("a directory owned by root passes the owner check", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o755)
+		real := statDir
+		statDir = func(p string) (os.FileMode, int, error) {
+			mode, uid, err := real(p)
+			if p == dir {
+				return os.ModeDir | 0o755, 0, nil
+			}
+			return mode, uid, err
+		}
+		t.Cleanup(func() { statDir = real })
+		if _, err := validateReexecTarget(bin, "0.2.0"); err != nil {
+			t.Fatalf("a root-owned directory is trusted: %v", err)
+		}
+	})
+	t.Run("a symlinked component is judged where it lands", func(t *testing.T) {
+		dir, bin := dirWithMarvel(t, 0o777)
+		link := filepath.Join(t.TempDir(), "via-link")
+		if err := os.Symlink(dir, link); err != nil {
+			t.Fatal(err)
+		}
+		real, _ := filepath.EvalSymlinks(dir)
+		if _, err := validateReexecTarget(filepath.Join(link, filepath.Base(bin)), "0.2.0"); err == nil || !strings.Contains(err.Error(), real) {
+			t.Fatalf("want a refusal naming the landing directory %s, got %v", real, err)
+		}
+	})
+}
+
+// The handler refuses before it detaches or emits anything, so a target in a
+// directory another user can write never reaches the exec seam.
+func TestReexecRefusesATargetInAWritableDirectoryBeforeTheExec(t *testing.T) {
+	d, calls := reexecHarness(t)
+	dir, bin := dirWithMarvel(t, 0o777)
+	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, bin)}, localCaller())
+	if !strings.Contains(resp.Error, dir) {
+		t.Fatalf("want a refusal naming %s, got %+v", dir, resp)
+	}
+	expectNoExec(t, calls)
+	if n := len(d.events.Snapshot(events.Filter{Kind: events.KindDaemonReexec}, 0)); n != 0 {
+		t.Fatalf("a refused reexec emitted %d daemon.reexec events", n)
+	}
+}
+
+// The local-only refusal runs before validation: with an invalid target over
+// mrvl:// the answer is errNotLocal, not a complaint about the file.
+func TestReexecLocalOnlyRefusalComesBeforeValidation(t *testing.T) {
+	d, calls := reexecHarness(t)
+	c := caller{scope: ScopeAdmin, fingerprint: "SHA256:admin", local: false}
+	for _, path := range []string{"relative/marvel", "/nonexistent/marvel", "/bin/ls"} {
+		resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, path)}, c)
+		if resp.Error != errNotLocal.Error() {
+			t.Errorf("%s over mrvl://: want errNotLocal, got %q", path, resp.Error)
+		}
+	}
+	expectNoExec(t, calls)
+}
