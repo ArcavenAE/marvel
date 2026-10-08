@@ -45,9 +45,21 @@ func realDir(t *testing.T) string {
 	return d
 }
 
+// loadedHostWait is the ceiling for a wait on a pane this test spawned. The
+// wait polls, so the ceiling only matters on a host under load, where a fixed
+// 5s one expired before the pane reported its directory (marvel#550); the other
+// waits in this package already use 15s.
+const loadedHostWait = 5 * time.Second
+
+func TestLoadedHostWaitOutlastsTheMeasuredStall(t *testing.T) {
+	if loadedHostWait < 15*time.Second {
+		t.Errorf("loadedHostWait = %v, want at least 15s: 5.1s waits expired under load in marvel#550", loadedHostWait)
+	}
+}
+
 func waitCwd(t *testing.T, out, session string) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(loadedHostWait)
 	for {
 		b, err := os.ReadFile(filepath.Join(out, session))
 		if err == nil && len(b) > 0 {
