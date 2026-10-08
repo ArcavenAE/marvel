@@ -1,11 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
-	"os/exec"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -14,21 +13,9 @@ import (
 // Seams for the reexec pre-flight and the reexec request.
 var (
 	preflightQuery buildQuery = queryDaemonBuild
-	daemonArgs                = psArgs
+	daemonArgs                = readProcessArgs
 	reexecSend                = func(req daemon.Request) (*daemon.Response, error) { return send(req) }
 )
-
-// psArgs reads a process's argument list from the process table. `ps -o
-// args= -p <pid>` is the same on macOS and Linux. The list comes back as one
-// line, so an argument that holds a space is split; the pre-flight only reads
-// the words after `daemon`, which are flags and a mistyped subcommand.
-func psArgs(pid int) ([]string, error) {
-	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return nil, err
-	}
-	return strings.Fields(string(out)), nil
-}
 
 // preflightReexec refuses, before the reexec request goes out, a daemon whose
 // own arguments this build's `marvel daemon` would reject. A reexec executes
@@ -42,9 +29,14 @@ func psArgs(pid int) ([]string, error) {
 // remote daemon is skipped: its pid is on another host, so no local process
 // table can answer for it.
 func preflightReexec(w io.Writer) error {
-	_ = w // the remote line comes with the green commit
 	addr, _, err := resolveDaemonAddr()
-	if err != nil || !isLocalDaemonAddr(addr) {
+	if err != nil {
+		return nil
+	}
+	if !isLocalDaemonAddr(addr) {
+		_, _ = fmt.Fprintf(w, "pre-flight skipped: %s is remote, so its startup arguments cannot be read from here; "+
+			"if it was started with arguments this build's `marvel daemon` rejects, it will not come back. "+
+			"Check them on that host first.\n", cmp.Or(clusterName, addr))
 		return nil
 	}
 	info, err := boundedQuery(versionQueryTimeout, preflightQuery)

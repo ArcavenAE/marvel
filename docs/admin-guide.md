@@ -757,11 +757,14 @@ new binary with the old daemon's argument list, so a daemon that was started
 with a word the new `marvel daemon` rejects (a mistyped subcommand before
 marvel#606 was ignored and started a daemon anyway) would die in the exec while
 the command reported success. `daemon reexec` and `upgrade --daemon` read the
-daemon's pid from `marvel version`, read its arguments with `ps`, and run them
-through the real `marvel daemon` flag parse and argument check. A daemon this
+daemon's pid from `marvel version`, read its exact arguments from the kernel
+(`/proc/<pid>/cmdline` on Linux, the `kern.procargs2` sysctl on macOS, since `ps`
+flattens an empty argument away), and run them through the real `marvel daemon`
+flag parse and argument check. A daemon this
 build would reject, or one whose pid or arguments cannot be read, is refused
 with the stop and start path above, and the daemon keeps serving. A remote
-daemon is not checked, because its pid is on another host.
+daemon is not checked, because its pid is on another host; the client says so
+before it sends, and the arguments of that daemon are worth checking by hand.
 
 Two cases still re-execute the daemon's own path, the way reexec always has: a
 remote daemon (`--cluster` over `mrvl://`, where a path on your host means

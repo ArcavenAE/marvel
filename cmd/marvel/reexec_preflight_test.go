@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -228,7 +229,7 @@ func TestParseCmdlineKeepsEmptyAndSpacedArguments(t *testing.T) {
 			t.Errorf("%s: got %q (%v), want %q", c.name, got, err, c.want)
 		}
 	}
-	for _, bad := range []string{"", "\x00"} {
+	for _, bad := range []string{"", "\x00", "marvel\x00daemon"} {
 		if got, err := parseCmdline([]byte(bad)); err == nil {
 			t.Errorf("%q: a process with no arguments is unreadable, got %q", bad, got)
 		}
@@ -299,5 +300,23 @@ func TestReexecPreflightRefusesAnEmptyArgumentTheExactReadKeeps(t *testing.T) {
 	}
 	if err := runReexecCmd(t); err != nil {
 		t.Fatalf("`daemon --mrvl` is the control and must pass: %v", err)
+	}
+}
+
+// The live reader returns what the process was started with, from the kernel.
+func TestReadProcessArgsReadsThisProcessExactly(t *testing.T) {
+	got, err := readProcessArgs(os.Getpid())
+	if err != nil {
+		t.Fatalf("read own arguments: %v", err)
+	}
+	if !slices.Equal(got, os.Args) {
+		t.Fatalf("read %q, started with %q", got, os.Args)
+	}
+	// The pre-flight's own source is this reader, not a flattened line.
+	if wired, err := daemonArgs(os.Getpid()); err != nil || !slices.Equal(wired, os.Args) {
+		t.Fatalf("the pre-flight reads %q (%v), want this process's %q", wired, err, os.Args)
+	}
+	if _, err := readProcessArgs(1 << 30); err == nil {
+		t.Error("a pid that does not exist must be an error, not an empty list")
 	}
 }
