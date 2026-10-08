@@ -1031,6 +1031,9 @@ func getCmd() *cobra.Command {
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
 		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
 
+AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
+the row has no creation time.
+
 ACCT (opt-in, --columns acct) is a short key for the account a session spends against and
 that account's limit reading: 87% (seven_day) while fresh, stale once the reading
 is old, a - when none was read. Sessions on one account repeat the same cell; it is
@@ -2839,9 +2842,9 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	workspace, team, role, generation, name                                   string
-	state, health, context, cpu, rss                                          string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, active, acct string
+	workspace, team, role, generation, name                                        string
+	state, health, context, cpu, rss                                               string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, acct string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -2961,6 +2964,7 @@ func newSessionRow(s api.Session) sessionRow {
 		rate:       rateCell(s, rateClock()),
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),
+		age:        ageCell(s, lastActiveClock()),
 		active:     activePctCell(s, lastActiveClock()),
 		acct:       acctCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
