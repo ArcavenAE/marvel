@@ -89,7 +89,7 @@ Today, nothing would. Every team and role user that holds the global tier may pu
 
 | | option | gives | costs |
 |---|---|---|---|
-| a | narrow the team and role users to deny `$JS.global.API.$KV.<bucket>.>` (a marvel change); and on the hub, limit each cluster's leaf user so it can put only its own key (the operator's hub-side grant, R-95; how, below) | a cluster can write only its own key, and no seat can write any key | a marvel change to every seat user, and one hub-side rule per cluster's leaf. Within a cluster, a key is then as trustworthy as that cluster's `marvel_admin` |
+| a | narrow the team and role users to deny `$JS.global.API.$KV.<bucket>.>` (a marvel change); and on the hub, limit each cluster's leaf user so it can put only its own key (the operator's hub-side grant, R-95; how, below) | if the rules below hold as written, a cluster can write only its own key, and no seat can write any key | a marvel change to every seat user, and one hub-side rule per cluster's leaf. Within a cluster, a key is then as trustworthy as that cluster's `marvel_admin` |
 | b | (a)'s narrowing in marvel only, with no hub-side rule | no seat can write a key | one cluster's daemon could still write another cluster's key, because the hub sees only the leaf user |
 | c | no narrowing; reuse the existing grant | nothing to change | any seat holding the global tier could write any cluster's load, so the numbers stop being evidence |
 
@@ -99,7 +99,7 @@ How each rule could be written, all INFERRED from nats-server's documented permi
 - **The seats' rule (marvel).** Add `deny: [ "$JS.global.API.$KV.<bucket>.>" ]` to each team and role user's publish permissions. marvel's `Principal` has no deny field today, and the renderer writes only `allow` (`internal/bus/render.go:204`), so item 3 adds a deny list to `Principal` and to the render.
 - **The leaf rule (hub).** The leaf user for cluster X also carries `$JS.global.API.>`, and because deny wins over allow, "allow my key, deny the rest of the bucket" cannot be one wildcard pair. Two ways it could be written:
   1. deny every other cluster's key by name: `deny: [ "$JS.global.API.$KV.<bucket>.<cluster-a>", "$JS.global.API.$KV.<bucket>.<cluster-b>", ... ]`, which must be updated on every leaf whenever a cluster joins;
-  2. replace the leaf's `$JS.global.API.>` with an enumerated allow list of the API subjects its seats use, plus `$JS.global.API.$KV.<bucket>.<X>`, which changes what every seat on that cluster can reach and needs that list measured first.
+  2. replace the leaf's `$JS.global.API.>` with an enumerated allow list of the API subjects its seats use, plus `$JS.global.API.$KV.<bucket>.<X>`, which changes what every seat on that cluster can reach and needs that list measured first. The list must keep director's put to the hub's `GLOBAL_PRESENCE` bucket, or presence breaks for every seat on that leaf.
 - **Red tests in the plan:** a seat user's put to any load key is refused; cluster X's daemon put to X's key succeeds; cluster X's put to cluster Y's key is refused; each against a scratch hub and two scratch leaves.
 
 Recommended: (a), with the leaf rule written as (1) while the fleet is a few clusters. (b) is the smallest safe start if the hub-side rule waits. (c) is listed to name what the current grant allows, not as a choice.
@@ -153,7 +153,7 @@ Flat tickets with dependency edges, each with red tests first:
 
 1. daemon: compute per-team rows on the reconcile tick (seats, ACTIVE% mean with count, `limited`, agent names). Local only; no transport.
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
-3. bus: first a red test that measures the subject a domain KV put uses; then a deny list on `Principal` and in the renderer, and the seats' deny on the load bucket (D2's precondition), with the seat-refused red test. Depends on D2.
+3. bus: first a red test, on a scratch hub and never the live one, that measures the subject a domain KV put uses; then a deny list on `Principal` and in the renderer, and the seats' deny on the load bucket (D2's precondition), with the seat-refused red test. Depends on D2.
 4. daemon: put the record into the hub bucket over the leaf on D4's cadence, with the own-key-accepted and other-key-refused red tests against a scratch hub and two scratch leaves. Depends on 1 and 3, on D1, and on the hub-side rule if D2 (a) is ruled.
 5. CLI: read every cluster's key, apply section 4's states and the header. Depends on 2 and 4.
 6. CLI: join the merged ledger's rollup by team key, with `global:` keys on the cluster line. Depends on 2 and on director's A2.
