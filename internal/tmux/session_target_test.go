@@ -1,9 +1,12 @@
 package tmux
 
 import (
+	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"slices"
 	"strconv"
@@ -197,8 +200,24 @@ func TestHasSessionOnAMissingExactTargetKeepsTheNotFoundWording(t *testing.T) {
 	}
 }
 
+// emptyImporter gives every import an empty package. The guard type-checks
+// one file, so names from other packages and files stay unresolved and their
+// errors are ignored; what it needs, the file's own functions, parameters,
+// locals and constants, resolve.
+type emptyImporter struct{}
+
+func (emptyImporter) Import(path string) (*types.Package, error) {
+	pkg := types.NewPackage(path, path[strings.LastIndex(path, "/")+1:])
+	pkg.MarkComplete()
+	return pkg, nil
+}
+
 // guardViolations lists where the tmux argument lists in src pass something
-// other than a pane id or a sessionTarget or sessionScope call to -t.
+// other than a pane id or a call to the package's sessionTarget or sessionScope
+// to -t, or glue anything onto -t. It reads go/types' name resolution, so a
+// constant or variable holding "-t" counts as -t, a local that shadows a helper
+// or paneID is not the helper or the pane id, and an identifier is a pane id
+// only when it is a parameter named paneID that the function never assigns.
 func guardViolations(t *testing.T, src any) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -206,51 +225,223 @@ func guardViolations(t *testing.T, src any) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []string
-	allowedIdents := map[string]bool{"paneID": true}
-	allowedCalls := map[string]bool{"sessionTarget": true, "sessionScope": true}
-	check := func(list []ast.Expr) {
-		for i, e := range list {
-			lit, ok := e.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING || lit.Value != `"-t"` {
-				continue
-			}
-			if i+1 >= len(list) {
-				out = append(out, fset.Position(lit.Pos()).String()+": -t with no target")
-				continue
-			}
-			switch arg := list[i+1].(type) {
-			case *ast.Ident:
-				if !allowedIdents[arg.Name] {
-					out = append(out, fset.Position(arg.Pos()).String()+": bare "+arg.Name)
-				}
-			case *ast.CallExpr:
-				if id, ok := arg.Fun.(*ast.Ident); !ok || !allowedCalls[id.Name] {
-					out = append(out, fset.Position(arg.Pos()).String()+": a call that is not sessionTarget or sessionScope")
-				}
-			default:
-				out = append(out, fset.Position(arg.Pos()).String()+": a form the guard does not know")
-			}
-		}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
 	}
+	conf := types.Config{Importer: emptyImporter{}, Error: func(error) {}}
+	pkg, _ := conf.Check("tmux", fset, []*ast.File{f}, info)
+
+	var out []string
+	report := func(n ast.Node, format string, args ...any) {
+		out = append(out, fset.Position(n.Pos()).String()+": "+fmt.Sprintf(format, args...))
+	}
+
+	// inits maps a variable to the expression it was first given.
+	inits := map[types.Object]ast.Expr{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
-		case *ast.CallExpr:
-			isCmd := false
-			switch fun := x.Fun.(type) {
-			case *ast.SelectorExpr:
-				isCmd = fun.Sel.Name == "cmd"
-			case *ast.Ident:
-				isCmd = fun.Name == "append"
+		case *ast.AssignStmt:
+			if x.Tok == token.DEFINE && len(x.Lhs) == len(x.Rhs) {
+				for i, l := range x.Lhs {
+					if id, ok := l.(*ast.Ident); ok && info.Defs[id] != nil {
+						inits[info.Defs[id]] = x.Rhs[i]
+					}
+				}
 			}
-			if isCmd {
-				check(x.Args)
+		case *ast.ValueSpec:
+			for i, id := range x.Names {
+				if i < len(x.Values) && info.Defs[id] != nil {
+					inits[info.Defs[id]] = x.Values[i]
+				}
 			}
-		case *ast.CompositeLit:
-			check(x.Elts)
 		}
 		return true
 	})
+
+	// full is the whole string value of e when every part of it is known.
+	var full func(e ast.Expr, depth int) (string, bool)
+	full = func(e ast.Expr, depth int) (string, bool) {
+		if tv, ok := info.Types[e]; ok && tv.Value != nil && tv.Value.Kind() == constant.String {
+			return constant.StringVal(tv.Value), true
+		}
+		switch x := e.(type) {
+		case *ast.BasicLit:
+			if x.Kind == token.STRING {
+				v, err := strconv.Unquote(x.Value)
+				return v, err == nil
+			}
+		case *ast.Ident:
+			if init, ok := inits[info.Uses[x]]; ok && depth < 8 {
+				return full(init, depth+1)
+			}
+		case *ast.BinaryExpr:
+			if x.Op == token.ADD {
+				l, lok := full(x.X, depth)
+				r, rok := full(x.Y, depth)
+				return l + r, lok && rok
+			}
+		case *ast.ParenExpr:
+			return full(x.X, depth)
+		}
+		return "", false
+	}
+	// lead is the start of e's string value, as far as it is known.
+	var lead func(e ast.Expr, depth int) string
+	lead = func(e ast.Expr, depth int) string {
+		if v, ok := full(e, 0); ok {
+			return v
+		}
+		if depth > 8 {
+			return ""
+		}
+		switch x := e.(type) {
+		case *ast.Ident:
+			if init, ok := inits[info.Uses[x]]; ok {
+				return lead(init, depth+1)
+			}
+		case *ast.BinaryExpr:
+			if x.Op == token.ADD {
+				return lead(x.X, depth+1)
+			}
+		case *ast.CallExpr:
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Sprintf" && len(x.Args) > 0 {
+				return lead(x.Args[0], depth+1)
+			}
+		}
+		return ""
+	}
+	// isTrimmedOut matches strings.TrimSpace(string(out)).
+	isTrimmedOut := func(e ast.Expr) bool {
+		call, ok := e.(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return false
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "TrimSpace" {
+			return false
+		}
+		if pk, ok := sel.X.(*ast.Ident); !ok || pk.Name != "strings" {
+			return false
+		}
+		conv, ok := call.Args[0].(*ast.CallExpr)
+		if !ok || len(conv.Args) != 1 {
+			return false
+		}
+		if fn, ok := conv.Fun.(*ast.Ident); !ok || fn.Name != "string" {
+			return false
+		}
+		o, ok := conv.Args[0].(*ast.Ident)
+		return ok && o.Name == "out"
+	}
+	// pkgFunc is true for a call to this package's own sessionTarget or
+	// sessionScope, not to a local of the same name.
+	pkgFunc := func(id *ast.Ident) bool {
+		if id.Name != "sessionTarget" && id.Name != "sessionScope" {
+			return false
+		}
+		fn, ok := info.Uses[id].(*types.Func)
+		return ok && pkg != nil && fn.Pkg() == pkg && fn.Parent() == pkg.Scope()
+	}
+
+	for _, decl := range f.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Body == nil {
+			continue
+		}
+		// paneIDs are the function's own parameters named paneID that nothing
+		// in the body assigns or takes the address of.
+		paneIDs := map[types.Object]bool{}
+		if fd.Type.Params != nil {
+			for _, fld := range fd.Type.Params.List {
+				for _, n := range fld.Names {
+					if o := info.Defs[n]; n.Name == "paneID" && o != nil {
+						paneIDs[o] = true
+					}
+				}
+			}
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.AssignStmt:
+				// Any assignment, `=` or `:=` (which go/types reads as a plain
+				// assignment when the name is already in scope), stops the
+				// parameter being a pane id.
+				for _, l := range x.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						delete(paneIDs, info.ObjectOf(id))
+					}
+				}
+			case *ast.UnaryExpr:
+				if id, ok := x.X.(*ast.Ident); ok && x.Op == token.AND {
+					delete(paneIDs, info.ObjectOf(id))
+				}
+			}
+			return true
+		})
+		// NewPaneAt is the one function that makes a pane id: it reads it from
+		// the -P output of new-window, `paneID := strings.TrimSpace(string(out))`.
+		if fd.Name.Name == "NewPaneAt" {
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				as, ok := n.(*ast.AssignStmt)
+				if !ok || as.Tok != token.DEFINE || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+					return true
+				}
+				id, ok := as.Lhs[0].(*ast.Ident)
+				if !ok || id.Name != "paneID" || info.Defs[id] == nil || !isTrimmedOut(as.Rhs[0]) {
+					return true
+				}
+				paneIDs[info.Defs[id]] = true
+				return true
+			})
+		}
+
+		check := func(list []ast.Expr) {
+			for i, e := range list {
+				if v, ok := full(e, 0); ok && v == "-t" {
+					if i+1 >= len(list) {
+						report(e, "-t with no target")
+						continue
+					}
+					switch arg := list[i+1].(type) {
+					case *ast.CallExpr:
+						if id, ok := arg.Fun.(*ast.Ident); !ok || !pkgFunc(id) {
+							report(arg, "-t takes a call that is not the package's sessionTarget or sessionScope")
+						}
+					case *ast.Ident:
+						if !paneIDs[info.Uses[arg]] {
+							report(arg, "-t takes %s, which is not a pane id parameter or a sessionTarget or sessionScope call", arg.Name)
+						}
+					default:
+						report(arg, "-t takes a form the guard does not know")
+					}
+					continue
+				}
+				if l := lead(e, 0); strings.HasPrefix(l, "-t") {
+					report(e, "-t glued to what follows (%q): tmux reads it as a target too", l)
+				}
+			}
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CallExpr:
+				isArgs := false
+				switch fun := x.Fun.(type) {
+				case *ast.SelectorExpr:
+					isArgs = fun.Sel.Name == "cmd"
+				case *ast.Ident:
+					isArgs = fun.Name == "append"
+				}
+				if isArgs {
+					check(x.Args)
+				}
+			case *ast.CompositeLit:
+				check(x.Elts)
+			}
+			return true
+		})
+	}
 	return out
 }
 
@@ -289,6 +480,13 @@ func sessionScope(n string) string { return "=" + n + ":" }
 		"a pane id":      `d.cmd("capture-pane", "-t", paneID, "-p")`,
 		"append pane id": `args = append(args, ";", "send-keys", "-t", paneID)`,
 	}
+	// The one function that makes a pane id may name it from new-window's output.
+	if v := guardViolations(t, prelude+"func (d *Driver) NewPaneAt(session string) {\n"+
+		"out, _ := d.cmd(\"new-window\", \"-t\", sessionScope(session), \"-P\").Output()\n"+
+		"paneID := strings.TrimSpace(string(out))\n"+
+		"d.cmd(\"select-pane\", \"-t\", paneID)\n}\n"); len(v) != 0 {
+		t.Errorf("NewPaneAt's own pane id was reported: %v", v)
+	}
 	for name, body := range good {
 		if v := guardViolations(t, wrap(body)); len(v) != 0 {
 			t.Errorf("%s was reported: %v", name, v)
@@ -309,6 +507,13 @@ func sessionScope(n string) string { return "=" + n + ":" }
 		"a split flag":         `d.cmd("kill-session", "-"+"t", name)`,
 		"a shadowed helper":    `sessionTarget := func(s string) string { return s }; d.cmd("kill-session", "-t", sessionTarget(name))`,
 		"a glued Sprintf":      `d.cmd("kill-session", fmt.Sprintf("-t%s", name))`,
+	}
+	// The pane id shape belongs to NewPaneAt alone: the same lines in another
+	// function that has no paneID parameter are not a pane id.
+	if v := guardViolations(t, prelude+"func (d *Driver) g(name string) {\n"+
+		"out := []byte(name)\npaneID := strings.TrimSpace(string(out))\n"+
+		"d.cmd(\"kill-session\", \"-t\", paneID)\n}\n"); len(v) == 0 {
+		t.Error("the pane id shape was accepted outside NewPaneAt")
 	}
 	for name, body := range bad {
 		if v := guardViolations(t, wrap(body)); len(v) == 0 {
