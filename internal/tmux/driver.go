@@ -349,17 +349,20 @@ func (d *Driver) NewSession(name string) error {
 	if err != nil {
 		return fmt.Errorf("new-session %s: %w", name, err)
 	}
-	if exists {
-		return nil
-	}
-	if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
-		// A concurrent NewSession for the same name can create it between
-		// the check above and this call; the session exists, which is what
-		// the caller asked for.
-		if !strings.Contains(string(out), "duplicate session") {
-			return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
+	if !exists {
+		if out, err := d.cmd("new-session", "-d", "-s", name).CombinedOutput(); err != nil {
+			// A concurrent NewSession for the same name can create it between
+			// the check above and this call; the session exists, which is
+			// what the caller asked for.
+			if !strings.Contains(string(out), "duplicate session") {
+				return fmt.Errorf("new-session %s: %s: %w", name, string(out), err)
+			}
 		}
 	}
+	// The options below run on every path, the exists and duplicate ones
+	// included: the creator may not have set them yet when this call
+	// returns, and a pane created before remain-on-exit is on loses an
+	// instant-exit status. Both are idempotent.
 	// Raise the session's history-limit above tmux's 2000-line default so
 	// capture-pane scrapes and the adopt-path pipe-pane see full scrollback
 	// (finding-005). This is a session-scoped set-option (-t <session>,

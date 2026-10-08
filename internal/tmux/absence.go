@@ -157,10 +157,10 @@ func carriesSocket(fields []string, name string) bool {
 }
 
 // startupBound is how long a query waits for a server that is alive but has
-// not begun to listen. 590ms is max(500ms, 10 x 59ms), where 59ms is the
-// longest wait measured on tmux 3.4 on Linux (200 runs, one container). A
-// variable so a test can shorten it.
-var startupBound = 590 * time.Millisecond
+// not begun to listen. One second is about three times the longest wait seen
+// (325 ms, Linux tmux 3.4, four containers in parallel) and far under the 10 s
+// exec timeout. A variable so a test can shorten it.
+var startupBound = time.Second
 
 // tmuxRun is one tmux query: its stdout, the text tmux printed on stderr (or
 // the combined output) when it failed, and the error.
