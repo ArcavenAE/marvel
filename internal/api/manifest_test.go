@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1270,6 +1272,57 @@ func TestValidateTeamNames(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateRuntimesChecksOnlyTheProgram covers marvel#517: a command is
+// shell text whose first field is the program, as the claude adapter reads it,
+// so the pre-flight resolves that field and not the whole string.
+func TestValidateRuntimesChecksOnlyTheProgram(t *testing.T) {
+	t.Parallel()
+	script := filepath.Join(t.TempDir(), "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, command string
+		wantErr       string
+	}{
+		{"plain name with args", "sh -c true", ""},
+		{"absolute path with args", "/bin/sh -c true", ""},
+		{"tab and repeated spaces between fields", "sh \t -c   true", ""},
+		{"leading space before the program", "  sh -c true", ""},
+		{"a path that exists, with args", script + " --flag value", ""},
+		{"missing name with args", "no-such-binary-marvel-9xyz --flag value", `"no-such-binary-marvel-9xyz"`},
+		{"missing absolute path with args", "/nope/not/here --flag", "not found"},
+		{"missing relative path with args", "bin/nothing-here --flag", "not found"},
+		{"only whitespace", " \t ", "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := &Manifest{
+				Workspace: ManifestWorkspace{Name: "inline"},
+				Teams: []ManifestTeam{{
+					Name: "squad",
+					Roles: []ManifestRole{
+						{Name: "a", Replicas: 1, Runtime: ManifestRuntime{Command: tc.command}},
+					},
+				}},
+			}
+			err := m.ValidateRuntimes()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("command %q: expected OK, got %v", tc.command, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("command %q: expected an error, got nil", tc.command)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("command %q: expected error to contain %q, got:\n%v", tc.command, tc.wantErr, err)
 			}
 		})
 	}
