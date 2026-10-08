@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/pidfile"
 )
 
 // liveSignal is the liveness probe: nil means the process exists and the caller
@@ -59,26 +59,10 @@ func isMarvelDaemon(root *cobra.Command, argv []string) bool {
 	return err == nil && c != root && c.Name() == "daemon" && c.Parent() == root
 }
 
-// pidFromFile returns the pid the pidfile holds, and zero when the file is
-// off, missing, unreadable, or holds anything but a positive decimal number
-// that fits 32 bits (surrounding whitespace aside). kill(2) and
-// kern.procargs2 take 32 bits, so a wider value would wrap to another process:
-// to this one, to -1 (every process) or to -5 (a process group). A pid at or
-// below zero is never returned.
-func pidFromFile(path string) int {
-	if path == "" {
-		return 0
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	pid64, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 32)
-	if err != nil || pid64 <= 0 {
-		return 0
-	}
-	return int(pid64)
-}
+// pidFromFile returns the pid the pidfile holds, and zero when the file is off,
+// missing, unreadable, or holds no valid pid. The one parser is shared with the
+// daemon's own start guard (internal/pidfile).
+func pidFromFile(path string) int { return pidfile.Read(path) }
 
 // daemonPositionalArgs refuses a positional argument, because `marvel daemon` starts the
 // daemon. `status` is the one people reach for, so it is pointed at the read
