@@ -112,7 +112,8 @@ refuses otherwise, with an event naming the reason:
      - edit it in place, which keeps its inode: the successor then reads the
        edited text, and nothing at write or read time catches it. The sweep
        does catch it (section 7.1), and leaves such a file unexpired, unless
-       the edit also restores the size and the modification time;
+       the edit also restores the size and the modification time on a
+       filesystem where the record holds the birth time;
      - force a refusal, by planting a link or swapping the directory before
        the request or before the write, so the handoff escalates rather than
        shifts;
@@ -265,13 +266,21 @@ days".
   - puts a random nonce on the file's first line, `marvel-handoff-id:
     <nonce>`, above the handoff text (the marker stays the last line). The
     line is **not stripped**, so the successor reads it with the rest of the
-    file. It is inert by format: one line, a fixed key and an opaque value,
-    which says nothing about the work. The notice and the successor's first
-    acts treat the file as starting after that line. Stripping it would mean
-    a second write, which is the thing this design avoids;
+    file. Its inertness rests on format alone: one line, a fixed key and an
+    opaque value, with no imperative and no addressee. Whether a model reads
+    it as inert is unmeasured. The notice goes to the outgoing seat, and the
+    successor's first acts are succession text marvel does not own, so
+    neither can carry this; the ask to the owners of that text is to say that
+    the first line of a marvel-written handoff carries no instruction.
+    Stripping the line would mean a second write, which is the thing this
+    design avoids;
   - records the path, the nonce, the size, the modification time, the
-    device and inode, and the birth time where the filesystem reports one,
-    or the change time otherwise.
+    device and inode, and a time a seat cannot set: the birth time where the
+    filesystem reports one (`statx` on Linux, `st_birthtimespec` on macOS),
+    or the change time otherwise. It takes them from `fstat` on the file
+    after the rename into place, since that rename itself moves the change
+    time. In this design "the identity" means the device, the inode and that
+    time together.
 
   The record sits beside the directory identity on the request (section 2),
   and moves into the successor's shift state, so a daemon restart keeps it.
@@ -280,7 +289,7 @@ days".
   1. open the file `O_NOFOLLOW`, and read its first line and its `fstat`
      from the open handle;
   2. go on only if the nonce, the size, the modification time and the
-     identity all match the record;
+     identity (device, inode, and birth or change time) all match the record;
   3. rename the file to a private name inside the root,
      `.marvel-expire-<nonce>`, with a no-replace rename, so a same-uid swap
      between the check and the removal cannot redirect it and nothing
@@ -288,8 +297,11 @@ days".
      - Linux: `renameat2` with `RENAME_NOREPLACE` (kernel 3.15 and later, on
        filesystems that support it);
      - macOS: `renameatx_np` with `RENAME_EXCL`;
-     - both on the root's directory descriptor. `os.Root.Rename` does not
-       take these flags, so this one call goes through `golang.org/x/sys/unix`.
+     - both on the root's directory descriptor, taken from
+       `root.Open(".")` and its `Fd()`. `os.Root.Rename` does not take these
+       flags, so this one call goes through `golang.org/x/sys/unix`
+       (`unix.Renameat2` with `unix.RENAME_NOREPLACE`, `unix.RenameatxNp`
+       with `unix.RENAME_EXCL`).
        Where the flag is refused (an old kernel or an unsupported
        filesystem), the sweep does not expire the file and says so;
   4. confirm with `os.SameFile` that the file at the private name is the file
@@ -306,17 +318,31 @@ days".
   every sweep, and the daemon at start, lists `.marvel-expire-*` in each
   recorded directory. It unlinks a leftover only when the nonce in its name
   matches a record that is past its retention, and the file itself still
-  matches that record's nonce, size, modification time and identity. Any
-  other leftover is left, and reported once.
+  matches that record's nonce, size, modification time and identity,
+  including the birth or change time. That last field is what stops a seat
+  steering the unlink: on ext4 a same-uid seat can delete marvel's file,
+  create one that reuses the inode, add the nonce, pad it to size, set the
+  modification time with `utimes`, and rename it to the private name, but it
+  cannot set the birth time, and every one of those steps moves the change
+  time. Any other leftover is left, and reported once.
+
+  The two fallbacks differ in one case. With a birth time, a real crash
+  leftover still matches (a rename does not change it), so it is unlinked.
+  With only a change time, the step-3 rename moves the change time on most
+  Linux filesystems, so a real crash leftover never matches and stays
+  reported. That is the safe direction: a file left for a human, never a
+  file removed that marvel did not write.
 
   Each removal emits `handoff.expired`, naming the session, the path and the
   age. Each refusal emits the same kind with the reason.
 - **Fails safe.** A device change, such as after a remount, or any mismatch
   means the file never expires, and the event says why once. An in-place
   edit changes the modification time even when it keeps the length, so it
-  fails safe the same way. The one exception is an edit that also restores
-  the size and the modification time (for example with `touch -r`); that
-  file still expires. That is within the same-uid residual in section 2.
+  fails safe the same way. An edit that also restores the size and the
+  modification time (for example with `touch -r`) still moves the change
+  time, so where the record holds the change time it fails safe too. Where
+  it holds the birth time, which such an edit keeps, that file still
+  expires. That is within the same-uid residual in section 2.
 - **Where it is set, and who can change it.**
   - The **admin default** is a cluster setting in marvel's cluster config,
     `handoff_retention`, with a default of `168h`. The person who runs the
