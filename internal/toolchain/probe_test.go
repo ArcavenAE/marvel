@@ -89,7 +89,8 @@ func TestProbeStartsOnlyByHandOrOnItsOwnChange(t *testing.T) {
 // no secrets, no environment, and none of the commands that publish.
 func TestProbePublishesNothing(t *testing.T) {
 	t.Parallel()
-	wf, text := loadProbe(t)
+	wf, raw := loadProbe(t)
+	text := shComment.ReplaceAllString(raw, "")
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("top-level permissions = %v, want only contents: read", wf.Permissions)
 	}
@@ -182,17 +183,28 @@ func TestProbeUsesOnlyTheActionsItNeeds(t *testing.T) {
 }
 
 var (
-	ghCall  = regexp.MustCompile(`\bgh\b[ \t]+(\S+)`)
-	gitCall = regexp.MustCompile(`\bgit\b(?:[ \t]+-C[ \t]+\S+)?[ \t]+(\S+)`)
+	ghCall = regexp.MustCompile(`\bgh\b[ \t]+(\S+)`)
+	// gitCall captures the subcommand, skipping the global options -C <dir>
+	// and -c <key=value>.
+	gitCall    = regexp.MustCompile(`\bgit\b(?:[ \t]+-[Cc][ \t]+\S+)*[ \t]+(\S+)`)
+	shComment  = regexp.MustCompile(`(?m)(^|[ \t])#.*$`)
+	localGitOK = map[string]bool{
+		"--version": true, "init": true, "config": true, "add": true, "diff": true,
+		"commit": true, "status": true, "log": true, "rev-parse": true, "show": true,
+	}
 )
 
-// The shell steps reach no remote and carry no credential: gh only prints its
-// version, git runs only local subcommands, and no step sets a token, logs in,
-// or calls a network tool. Banning the word GITHUB_TOKEN is not enough, since
-// a step can name the token another way or publish with a different command.
+// The shell steps reach no remote and carry no credential: every gh the file
+// spells is gh --version, git runs only local subcommands, and no step sets a
+// token, logs in, or calls a network tool. Banning the word GITHUB_TOKEN is not
+// enough, since a step can name the token another way or publish with a
+// different command. Shell comments are ignored, so a note that names gh is
+// not a call. A git alias would rename a remote subcommand, so the word is
+// banned and an alias name shows up as an unknown subcommand.
 func TestProbeShellStepsStayLocal(t *testing.T) {
 	t.Parallel()
-	wf, text := loadProbe(t)
+	wf, raw := loadProbe(t)
+	text := shComment.ReplaceAllString(raw, "")
 	for name, job := range wf.Jobs {
 		for _, step := range job.Steps {
 			for k, v := range step.Env {
@@ -203,20 +215,20 @@ func TestProbeShellStepsStayLocal(t *testing.T) {
 					}
 				}
 			}
-			for _, m := range ghCall.FindAllStringSubmatch(step.Run, -1) {
+			run := shComment.ReplaceAllString(step.Run, "")
+			for _, m := range ghCall.FindAllStringSubmatch(run, -1) {
 				if m[1] != "--version" {
 					t.Errorf("job %s runs gh %s, want only gh --version", name, m[1])
 				}
 			}
-			localGit := map[string]bool{"--version": true, "init": true, "config": true, "add": true, "diff": true, "commit": true}
-			for _, m := range gitCall.FindAllStringSubmatch(step.Run, -1) {
-				if !localGit[m[1]] {
-					t.Errorf("job %s runs git %s, want only local subcommands %v", name, m[1], localGit)
+			for _, m := range gitCall.FindAllStringSubmatch(run, -1) {
+				if !localGitOK[m[1]] {
+					t.Errorf("job %s runs git %s, want only local subcommands %v", name, m[1], localGitOK)
 				}
 			}
 		}
 	}
-	for _, banned := range []string{"docker", "curl", "wget", "login", "action-gh-release", "github.token", "github.event.pull_request.head"} {
+	for _, banned := range []string{"docker", "curl", "wget", "login", "alias", "action-gh-release", "github.token", "github.event.pull_request.head"} {
 		if strings.Contains(text, banned) {
 			t.Errorf("the probe mentions %q, which reaches a remote or carries a credential", banned)
 		}
