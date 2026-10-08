@@ -25,7 +25,7 @@ func TestLeafToggleWithoutAHubExplainsTheStartTimeConfig(t *testing.T) {
 			"bus.hub.url",
 			"start",
 			"marvel daemon reexec",
-			"credential put bus/leaf",
+			"credential put bus/leaf --value-file",
 			"marvel#339",
 		} {
 			if !strings.Contains(resp.Error, want) {
