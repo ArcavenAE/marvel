@@ -25,7 +25,7 @@ INFERRED, step by step:
 2. Only hub fields may change (`hub.url`, `hub.urls`, `hub.ca_file`). Any other bus change, such as the listen address, the mode or the store directory, is refused with "needs a reexec".
 3. The hub fields are swapped into the manager's spec under the manager's lock.
 4. The broker files are re-rendered. The global-role users appear or disappear with the hub, because they are rendered only when a hub URL is set (CODE `manager.go:397`; `internal/bus/declared.go:213`).
-5. The broker picks up the change. A SIGHUP is enough when the broker already holds the leaf seed in its environment. A broker that booted with no hub needs a restart, because nats-server reads that seed once, at start; `leafSeedNeedsRestart` (CODE `daemon.go:3644`) already makes that choice for the seed path. A restart drops every local connection for a moment. Whether seats then reconnect on their own is UNMEASURED: no run has restarted a broker under live seats, and finding-marvel-1kg8's 5 s reconnect was measured after a seat freeze with the broker left running.
+5. The broker picks up the change. A SIGHUP is enough when the broker already holds the leaf seed in its environment. A broker that booted with no hub needs a restart, because nats-server reads that seed once, at start; `leafSeedNeedsRestart` (CODE `daemon.go:3644`) already makes that choice for the seed path. A restart drops every local connection for a moment. Whether seats then reconnect on their own is UNMEASURED: no run has measured reconnection after a broker restart under live seats, and finding-marvel-1kg8's 5 s reconnect was measured after a seat freeze with the broker left running.
 6. An event names the old hub and the new one.
 
 ## Size
