@@ -37,6 +37,7 @@ func TestPidFileAliveNeverProbesAPidItCannotName(t *testing.T) {
 		"wraps to -5":        "4294967291\n",
 		"trailing text":      "12abc\n",
 		"negative":           "-5\n",
+		"minus one":          "-1\n",
 		"zero":               "0\n",
 		"two numbers":        "4242 99\n",
 		"empty":              "",
