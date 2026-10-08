@@ -117,9 +117,20 @@ type Pattern struct {
 	Version        int
 	Harness        string
 	HarnessVersion string
-	SampleWidth    int
-	Rows           []Row
+	// MinVersion and MaxVersion, when set, are the inclusive range of harness
+	// versions the pattern covers. HarnessVersion stays the version the sample
+	// was captured from, inside the range. Both empty means exact.
+	MinVersion  string
+	MaxVersion  string
+	SampleWidth int
+	Rows        []Row
 }
+
+// Covers reports whether the pattern is for the harness version v.
+func (p Pattern) Covers(v string) bool { return p.HarnessVersion != "" && p.HarnessVersion == v }
+
+// VersionLabel is how a surface names the versions the pattern covers.
+func (p Pattern) VersionLabel() string { return p.HarnessVersion }
 
 // Result is a classification. Evidence is pattern text only.
 type Result struct {
@@ -173,7 +184,7 @@ func Classify(sets []Pattern, harness, sessVersion string, rows []string) Result
 		for _, m := range matched {
 			res.Evidence = append(res.Evidence, m.Render())
 		}
-		if full && p.HarnessVersion != "" && p.HarnessVersion == sessVersion {
+		if full && p.Covers(sessVersion) {
 			res.State, res.Confidence = StateLoggedOut, ConfHigh
 			return res
 		}

@@ -141,7 +141,7 @@ func (w *watchdog) control() {
 // versionCovered reports whether sets holds a pattern for the harness version.
 func versionCovered(sets []panestate.Pattern, harness, version string) bool {
 	for _, p := range sets {
-		if p.Harness == harness && p.HarnessVersion == version {
+		if p.Harness == harness && p.Covers(version) {
 			return true
 		}
 	}
@@ -154,9 +154,9 @@ func coveredVersions(sets []panestate.Pattern, harness string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, p := range sets {
-		if p.Harness == harness && !seen[p.HarnessVersion] {
-			seen[p.HarnessVersion] = true
-			out = append(out, p.HarnessVersion)
+		if p.Harness == harness && !seen[p.VersionLabel()] {
+			seen[p.VersionLabel()] = true
+			out = append(out, p.VersionLabel())
 		}
 	}
 	sort.Strings(out)
