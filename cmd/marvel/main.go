@@ -43,15 +43,19 @@ var (
 	clusterName  string // --cluster flag
 	socketPath   string // --socket flag (fallback)
 	identityPath string // --identity flag (per-invocation override)
+
+	// clusterFlagGiven is true when --cluster was typed, even as an empty
+	// value, which clusterName alone cannot tell from the flag being absent.
+	clusterFlagGiven bool
 )
 
 // resolveDaemon returns both the address and the dial options for the
 // selected cluster. --identity overrides the cluster-level identity.
-// Precedence: --socket, then MARVEL_SOCKET, then the selected cluster's
-// Socket or Server, then the layout default (~/.marvel/run/marvel.sock).
-// config.ResolveSocket covers the last two rungs so every fall-through
-// branch below lands on the same answer; four of them used to reach a
-// hardcoded machine-global path instead. See
+// Precedence: --socket, then an explicit --cluster, then MARVEL_SOCKET,
+// then the config's current cluster's Socket or Server, then the layout
+// default (~/.marvel/run/marvel.sock). config.ResolveSocket covers the last
+// two rungs so every fall-through branch below lands on the same answer; four
+// of them used to reach a hardcoded machine-global path instead. See
 // docs/design/daemon-isolation.md decision 3.
 func resolveDaemon() (string, daemon.DialOptions, error) {
 	addr, opts, err := resolveDaemonAddr()
@@ -88,7 +92,16 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if socketPath != "" {
 		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
-	if env := os.Getenv(config.SocketEnv); env != "" {
+	// --cluster "" names no cluster, and reading it as absent would dial the
+	// daemon MARVEL_SOCKET names without a word, so it is refused (#586).
+	if clusterFlagGiven && clusterName == "" {
+		return "", daemon.DialOptions{}, rungDefault, errors.New("--cluster needs a cluster name; leave the flag off to use the default")
+	}
+	// An explicit --cluster outranks MARVEL_SOCKET: every marvel seat has the
+	// variable set, so a command aimed at another cluster would otherwise
+	// run on the seat's own daemon without a word (#586). A cluster that is
+	// only the config's current_cluster does not count as explicit.
+	if env := os.Getenv(config.SocketEnv); env != "" && clusterName == "" {
 		return env, daemon.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
@@ -124,7 +137,10 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	}
 	rung := rungCluster
 	if addr == "" {
-		addr, rung = config.ResolveSocket(), rungDefault
+		// A cluster with no address means the layout default. ResolveSocket
+		// would return MARVEL_SOCKET first, which an explicit --cluster must
+		// not end on (#586).
+		addr, rung = config.DefaultSocket(), rungDefault
 	}
 	id := identityPath
 	if id == "" {
@@ -159,6 +175,20 @@ func send(req daemon.Request) (*daemon.Response, error) {
 	return resp, nil
 }
 
+// bindRootFlags registers the flags every command shares: where the daemon
+// is (--cluster, --socket) and how to authenticate to it (--identity).
+func bindRootFlags(root *cobra.Command) {
+	root.PersistentFlags().StringVar(&clusterName, "cluster", "",
+		"named cluster from ~/.marvel/config.yaml")
+	root.PersistentFlags().StringVar(&socketPath, "socket", "",
+		"explicit daemon address (overrides --cluster)")
+	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
+		"private key file for SSH auth (overrides cluster identity)")
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		clusterFlagGiven = cmd.Flags().Changed("cluster")
+	}
+}
+
 func main() {
 	// Strip shell-style comments from args so inline notes work:
 	//   ./marvel shift test/squad  # replace all workers
@@ -184,12 +214,7 @@ func newRootCmd() *cobra.Command {
 		Short: "Agent orchestration control plane",
 	}
 
-	root.PersistentFlags().StringVar(&clusterName, "cluster", "",
-		"named cluster from ~/.marvel/config.yaml")
-	root.PersistentFlags().StringVar(&socketPath, "socket", "",
-		"explicit daemon address (overrides --cluster)")
-	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
-		"private key file for SSH auth (overrides cluster identity)")
+	bindRootFlags(root)
 
 	root.AddCommand(daemonCmd())
 	root.AddCommand(workCmd())
