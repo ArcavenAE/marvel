@@ -180,14 +180,19 @@ type tmuxRun func() (out []byte, text string, err error)
 // bound are all not absent.
 //
 // The waits are 10, 20, 40 and 80ms, then 100ms steps. Each attempt keeps the
-// driver's exec timeout.
-func (d *Driver) whileStarting(run tmuxRun) (out []byte, text string, absent bool, err error) {
+// driver's exec timeout. until is the deadline to wait to; the zero time means
+// startupBound from the first absence answer. A caller that makes several
+// passes hands every pass the same deadline, so the passes share one bound.
+func (d *Driver) whileStarting(until time.Time, run tmuxRun) (out []byte, text string, absent bool, err error) {
 	out, text, err = run()
 	retry, absent := d.startingVerdict(text, err)
 	if !retry {
 		return out, text, absent, err
 	}
-	deadline := time.Now().Add(startupBound)
+	deadline := until
+	if deadline.IsZero() {
+		deadline = time.Now().Add(startupBound)
+	}
 	wait := 10 * time.Millisecond
 	for {
 		remaining := time.Until(deadline)
