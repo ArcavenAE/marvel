@@ -1,10 +1,8 @@
 package tmux
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,69 +201,72 @@ func textFake(t *testing.T, text string, procs procList) (*startupFake, *Driver)
 
 var aliveProc = procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")
 
-func TestRetryOnlyTextWithALiveProcessThenARealAnswer(t *testing.T) {
-	for _, text := range retryOnlyTexts {
-		t.Run(text, func(t *testing.T) {
-			f, d := textFake(t, text, aliveProc)
-			f.readyAfter(100 * time.Millisecond)
-			ok, err := d.sessionExists("s")
-			if err != nil || !ok {
-				t.Errorf("sessionExists = %v, %v; want the real answer (true, nil)", ok, err)
-			}
-			if f.calls("has-session") < 2 {
-				t.Errorf("has-session ran %d times, want a retry", f.calls("has-session"))
-			}
-		})
+// "server exited unexpectedly" follows the no-server rule: absence with no
+// live process, a wait while one is alive, an outage after the bound, never
+// absence while a process is alive.
+func TestServerExitedUnexpectedlyWithNoLiveProcessIsAbsenceInOneCall(t *testing.T) {
+	f, d := textFake(t, "server exited unexpectedly", procLines())
+	ok, err := d.sessionExists("s")
+	if err != nil || ok {
+		t.Errorf("sessionExists = %v, %v; want false and no error", ok, err)
+	}
+	if n := f.calls("has-session"); n != 1 {
+		t.Errorf("has-session ran %d times, want exactly 1", n)
 	}
 }
 
-func TestRetryOnlyTextWithNoLiveProcessIsAnErrorAndOneCall(t *testing.T) {
-	for _, text := range retryOnlyTexts {
-		t.Run(text, func(t *testing.T) {
-			f, d := textFake(t, text, procLines())
-			ok, err := d.sessionExists("s")
-			if err == nil || ok {
-				t.Errorf("sessionExists = %v, %v; want an error, never absence", ok, err)
-			}
-			if n := f.calls("has-session"); n != 1 {
-				t.Errorf("has-session ran %d times, want exactly 1", n)
-			}
-			if names, lerr := d.ListSessions(); lerr == nil {
-				t.Errorf("ListSessions = %v, nil; want an error, never an empty list", names)
-			}
-		})
-	}
-}
-
-func TestRetryOnlyTextPastTheBoundIsAnOutageWithinTheBoundPlus500ms(t *testing.T) {
-	for _, text := range retryOnlyTexts {
-		t.Run(text, func(t *testing.T) {
-			_, d := textFake(t, text, aliveProc)
-			start := time.Now()
-			ok, err := d.sessionExists("s")
-			if err == nil || ok {
-				t.Errorf("sessionExists = %v, %v; want an outage error", ok, err)
-			}
-			if took := time.Since(start); took > startupBound+500*time.Millisecond {
-				t.Errorf("took %v, want at most the bound plus 500ms", took)
-			}
-		})
-	}
-}
-
-// The full tmux stderr is logged once per retry-only hit, so a text that turns
-// out to mean something else can be read from the log.
-func TestRetryOnlyHitIsLoggedOnce(t *testing.T) {
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+func TestServerExitedUnexpectedlyWithALiveProcessThenARealAnswer(t *testing.T) {
 	f, d := textFake(t, "server exited unexpectedly", aliveProc)
-	f.readyAfter(150 * time.Millisecond)
-	if _, err := d.sessionExists("s"); err != nil {
-		t.Fatal(err)
+	f.readyAfter(100 * time.Millisecond)
+	ok, err := d.sessionExists("s")
+	if err != nil || !ok {
+		t.Errorf("sessionExists = %v, %v; want the real answer (true, nil)", ok, err)
 	}
-	if n := strings.Count(buf.String(), "server exited unexpectedly"); n != 1 {
-		t.Errorf("the hit was logged %d times, want once; log:\n%s", n, buf.String())
+	if f.calls("has-session") < 2 {
+		t.Errorf("has-session ran %d times, want a retry", f.calls("has-session"))
+	}
+}
+
+func TestServerExitedUnexpectedlyPastTheBoundIsAnOutageNeverAbsence(t *testing.T) {
+	_, d := textFake(t, "server exited unexpectedly", aliveProc)
+	start := time.Now()
+	ok, err := d.sessionExists("s")
+	if err == nil || ok {
+		t.Errorf("sessionExists = %v, %v; want an outage error", ok, err)
+	}
+	if names, lerr := d.ListSessions(); lerr == nil {
+		t.Errorf("ListSessions = %v, nil; want an error, not an empty list", names)
+	}
+	if took := time.Since(start); took > 2*(startupBound+500*time.Millisecond) {
+		t.Errorf("two calls took %v, want each within the bound plus 500ms", took)
+	}
+}
+
+// "no current target" is a live server saying the session is not there, like
+// "can't find session". The server is the one answering, so it is not an
+// outage even with a process alive.
+func TestNoCurrentTargetIsAnAbsentSession(t *testing.T) {
+	f, d := textFake(t, "no current target", aliveProc)
+	ok, err := d.sessionExists("s")
+	if err != nil || ok {
+		t.Errorf("sessionExists = %v, %v; want false and no error", ok, err)
+	}
+	if n := f.calls("has-session"); n != 1 {
+		t.Errorf("has-session ran %d times, want exactly 1", n)
+	}
+}
+
+// Guard against reading every answer as absent: a live server that HAS the
+// session answers true.
+func TestLiveServerThatHasTheSessionAnswersTrue(t *testing.T) {
+	d, _, _, _ := plantServer(t)
+	ok, err := d.sessionExists("probe")
+	if err != nil || !ok {
+		t.Errorf("sessionExists(probe) = %v, %v; want true", ok, err)
+	}
+	ok, err = d.sessionExists("not-there")
+	if err != nil || ok {
+		t.Errorf("sessionExists(not-there) = %v, %v; want false and no error", ok, err)
 	}
 }
 

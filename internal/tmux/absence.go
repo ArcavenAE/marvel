@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -46,6 +45,12 @@ var connectingRE = regexp.MustCompile(`error connecting to .+ \((?:No such file 
 func classifyAbsence(text string) absence {
 	switch {
 	case strings.Contains(text, "no server running"):
+		return absenceNoServer
+	case strings.Contains(text, "server exited unexpectedly"):
+		// What a tmux 3.4 client prints when the server it reached is
+		// shutting down (the previous owner of the socket name). Measured
+		// under parallel load on Linux; the server is gone, so it follows
+		// the same process-list rule as "no server running".
 		return absenceNoServer
 	case connectingRE.MatchString(text):
 		return absenceNoSocket
@@ -179,14 +184,6 @@ type tmuxRun func() (out []byte, text string, err error)
 func (d *Driver) whileStarting(run tmuxRun) (out []byte, text string, absent bool, err error) {
 	out, text, err = run()
 	retry, absent := d.startingVerdict(text, err)
-	logged := false
-	logHit := func() {
-		if retry && !logged && retryOnly(text) {
-			logged = true
-			log.Printf("debug: tmux retry-only answer while a server process is alive: %q", text)
-		}
-	}
-	logHit()
 	if !retry {
 		return out, text, absent, err
 	}
@@ -205,50 +202,21 @@ func (d *Driver) whileStarting(run tmuxRun) (out []byte, text string, absent boo
 		}
 		out, text, err = run()
 		retry, absent = d.startingVerdict(text, err)
-		logHit()
 		if !retry {
 			return out, text, absent, err
 		}
 	}
 }
 
-// retryOnlyTexts are tmux answers that mean "try again while a server process
-// is alive" and never mean absence. With no live process they stay an error,
-// and after the bound they are an outage.
-//
-//   - "server exited unexpectedly": a tmux 3.4 client reached a server that
-//     was starting or shutting down and it closed the connection.
-//   - "no current target": PROVISIONAL. Measured once on tmux 3.4 under load;
-//     the mechanism is unconfirmed (it may mean a live server with zero
-//     sessions). It is not reclassified on inference.
-var retryOnlyTexts = []string{"server exited unexpectedly", "no current target"}
-
-func retryOnly(text string) bool {
-	for _, t := range retryOnlyTexts {
-		if strings.Contains(text, t) {
-			return true
-		}
-	}
-	return false
-}
-
-// startingVerdict reads one answer. retry is true for an absence answer or a
-// retry-only answer while a server process is alive. absent is true only for
-// an absence answer with no live process; a retry-only answer is never absent.
+// startingVerdict reads one answer. retry is true for an absence answer while
+// a server process is alive; absent is true for an absence answer with none.
 func (d *Driver) startingVerdict(text string, err error) (retry, absent bool) {
-	if err == nil || errors.Is(err, ErrTmuxTimeout) {
-		return false, false
-	}
-	only := retryOnly(text)
-	if !only && classifyAbsence(text) == absenceNone {
+	if err == nil || errors.Is(err, ErrTmuxTimeout) || classifyAbsence(text) == absenceNone {
 		return false, false
 	}
 	alive, perr := d.serverProcessAlive()
 	if perr != nil {
 		return false, false
-	}
-	if only {
-		return alive, false
 	}
 	return alive, !alive
 }

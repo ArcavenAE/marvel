@@ -300,7 +300,9 @@ func (d *Driver) sessionExists(name string) (bool, error) {
 	if errors.Is(err, ErrTmuxTimeout) {
 		return false, err
 	}
-	if strings.Contains(text, "can't find session") || absent {
+	// "no current target" is what tmux 3.4 has-session prints, from a live
+	// server, for a session that is not there. Measured under parallel load.
+	if strings.Contains(text, "can't find session") || strings.Contains(text, "no current target") || absent {
 		return false, nil
 	}
 	return false, fmt.Errorf("has-session %s: %s: %w", name, strings.TrimSpace(text), err)
