@@ -2904,11 +2904,11 @@ func renderSessionTable(sessions []api.Session) string {
 
 // renderWatch fetches once and draws the frame; the live view fetches off its
 // key loop and draws with renderWatchFrame instead.
-func renderWatch(ws *watchSort, interval time.Duration) string {
+func renderWatch(ws *watchSort) string {
 	if !ws.showHelp {
 		ws.apply(fetchWatchData(ws.showHeader))
 	}
-	return renderWatchFrame(ws, interval, time.Now())
+	return renderWatchFrame(ws, time.Second, time.Now())
 }
 
 // renderWatchFrame draws the frame from what the last fetch brought back.
@@ -3019,69 +3019,21 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, n
 		}
 	}()
 
-	ws := newWatchScreen(cols, explicit, noTrunc)
-
-	render := func() {
-		output := renderWatch(ws, interval)
-		// Raw mode needs \r\n instead of \n.
-		output = strings.ReplaceAll(output, "\n", "\r\n")
-		// Clear screen, cursor to top.
-		fmt.Print("\033[2J\033[H")
-		fmt.Print(output)
-	}
-
-	render()
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case key := <-keys:
-			switch key {
-			case 'q', 3: // q or Ctrl-C
-				fmt.Print("\033[2J\033[H")
-				return nil
-			case 'c':
-				toggleSort(ws, "context", true)
-			case 'p':
-				toggleSort(ws, "cpu", true)
-			case 'm':
-				toggleSort(ws, "rss", true)
-			case 'n':
-				toggleSort(ws, "name", false)
-			case 'r':
-				toggleSort(ws, "runtime", false)
-			case 'R':
-				toggleSort(ws, "role", false)
-			case 'l':
-				toggleSort(ws, "llm", false)
-			case 'g':
-				toggleSort(ws, "generation", false)
-			case 't':
-				toggleSort(ws, "team", false)
-			case 'w':
-				toggleSort(ws, "workspace", false)
-			case 's':
-				toggleSort(ws, "state", false)
-			case 'd':
-				toggleSort(ws, "desk", false)
-			case 'h':
-				toggleSort(ws, "health", false)
-			case 'o':
-				toggleSort(ws, "rate", true)
-			case '?':
-				ws.showHelp = !ws.showHelp
-			default:
-				continue
-			}
-			render()
-		case <-ticker.C:
-			if !ws.showHelp {
-				render()
-			}
-		}
-	}
+	ws := newWatchScreen(cols, explicit, noTrunc)
+	watchLoop(ws, watchLoopConfig{
+		interval: interval,
+		deadline: watchFetchDeadline,
+		fetch:    func() watchData { return fetchWatchData(ws.showHeader) },
+		now:      time.Now,
+		out: func(frame string) {
+			// Raw mode needs \r\n instead of \n.
+			fmt.Print("\033[2J\033[H" + strings.ReplaceAll(frame, "\n", "\r\n"))
+		},
+	}, keys, ticker.C)
+	return nil
 }
 
 // --- Table printers (non-watch) ---
