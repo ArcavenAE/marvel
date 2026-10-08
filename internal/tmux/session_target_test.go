@@ -538,6 +538,40 @@ func guardScan(t *testing.T, src any, allow map[string]string) ([]string, guardS
 	return out, stats
 }
 
+// allowlistProblems says what is wrong with an allowlist: an entry with no
+// reason, or one that names a function src does not have.
+func allowlistProblems(src string, allow map[string]string) []string {
+	var out []string
+	for fn, reason := range allow {
+		if strings.TrimSpace(reason) == "" {
+			out = append(out, fmt.Sprintf("sessionTargetAllow[%q] has no reason", fn))
+		}
+		if !strings.Contains(src, "func (d *Driver) "+fn+"(") && !strings.Contains(src, "func "+fn+"(") {
+			out = append(out, fmt.Sprintf("sessionTargetAllow names %q, which driver.go does not have", fn))
+		}
+	}
+	return out
+}
+
+// The allowlist checks run over the real, empty list in the test below, so
+// they are tried here on a fixture: each fault is reported, and a good entry
+// is not.
+func TestAllowlistChecksReportWhatTheyShould(t *testing.T) {
+	const src = "package tmux\nfunc (d *Driver) Real() {}\nfunc plain() {}\n"
+	if got := allowlistProblems(src, map[string]string{"Real": "hand-built exact form", "plain": "a free function"}); len(got) != 0 {
+		t.Errorf("good entries were reported: %v", got)
+	}
+	if got := allowlistProblems(src, map[string]string{"Real": ""}); len(got) != 1 || !strings.Contains(got[0], "no reason") {
+		t.Errorf("an entry with no reason: %v", got)
+	}
+	if got := allowlistProblems(src, map[string]string{"Real": "  "}); len(got) != 1 {
+		t.Errorf("an entry with a blank reason: %v", got)
+	}
+	if got := allowlistProblems(src, map[string]string{"Gone": "was renamed"}); len(got) != 1 || !strings.Contains(got[0], "does not have") {
+		t.Errorf("an entry naming a missing function: %v", got)
+	}
+}
+
 // Fails if driver.go passes a bare session name to -t: every -t in it must
 // take a pane id or a name made by sessionTarget or sessionScope. This is the
 // shape of TestNoNewRouteIntoTheDaemonsOwnSocket: a scan of the source, so a
@@ -547,13 +581,8 @@ func TestDriverNeverPassesABareSessionNameToDashT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for fn, reason := range sessionTargetAllow {
-		if strings.TrimSpace(reason) == "" {
-			t.Errorf("sessionTargetAllow[%q] has no reason", fn)
-		}
-		if !strings.Contains(string(src), "func (d *Driver) "+fn+"(") && !strings.Contains(string(src), "func "+fn+"(") {
-			t.Errorf("sessionTargetAllow names %q, which driver.go does not have", fn)
-		}
+	for _, problem := range allowlistProblems(string(src), sessionTargetAllow) {
+		t.Error(problem)
 	}
 	v, stats := guardScan(t, src, sessionTargetAllow)
 	if len(v) != 0 {
