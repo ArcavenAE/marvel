@@ -7,11 +7,11 @@ Design: `docs/design/fleet-suspend-resume.md`
 
 ## Why this matters
 
-finding-marvel-1kg8 left one way to freeze a single seat without freezing tmux: a Mach suspend, which tmux cannot undo. It stopped at the task port, and named root as an untested route. The operator asked for research before any root run. This finding is that research.
+finding-marvel-1kg8 left one way to freeze a single seat without freezing tmux: a Mach suspend, which a SIGCONT from tmux should not undo. It stopped at the task port, and named root as an untested route. The operator asked for research before any root run. This finding is that research.
 
-- **A root run is not needed to suspend a hardened harness.** An unprivileged helper, ad-hoc signed with `com.apple.security.cs.debugger`, suspended claude, codex and crush (hardened runtime) and opencode, through the `pid_suspend` syscall. `task_for_pid` stays blocked for the hardened three.
-- **SIGCONT does not undo `pid_suspend`, and neither can tmux.** That is the per-seat freeze `SIGSTOP` cannot give.
-- **Open: whether it works unattended.** These runs may have relied on a cached taskport grant (section 5). Until that is measured, nothing here is a mechanism to build on.
+- **While a taskport grant was in effect, a root run was not needed to suspend a hardened harness.** An unprivileged helper, ad-hoc signed with `com.apple.security.cs.debugger`, suspended claude, codex and crush (hardened runtime) and opencode, through the `pid_suspend` syscall. These runs may have relied on a grant cached earlier in the login session (section 5), so this is not yet shown unattended. `task_for_pid` stays blocked for the hardened three.
+- **`kill -CONT` did not undo `pid_suspend`, and a running tmux server did not undo it on its own pane process** across 5 s, a resize and a key press (r3f). That is the per-seat freeze `SIGSTOP` cannot give. Whether any other tmux path undoes it is not measured.
+- **Open: whether it works unattended.** Until the grant question is measured, nothing here is a mechanism to build on.
 
 Tags:
 - **MEASURED:** run as an ordinary user with SIP on, against binaries built in a scratch directory, or throwaway harness instances in a scratch tmux server with a scratch HOME and no sign-in. No root, no host setting changed, no live seat.
@@ -37,7 +37,9 @@ Four scratch targets: one counter program writing an incrementing number to a fi
 - **MEASURED:** a hardened target without `get-task-allow` refuses even the entitled helper. claude, codex and crush ship that way (`flags=0x10000(runtime)`). That matches finding-marvel-1kg8's rc 5 against them.
 - **MEASURED:** a successful `task_suspend` from a helper that then exits does not hold. A holder that kept its port for 4 s stalled the counter (11 to 11 over 2 s). After the holder exited without calling `task_resume`, the counter ran again (26 to 35). So a `task_suspend` design would need a resident process per frozen seat.
 
-## 2. pid_suspend (runs r1r3-20261008T204510Z, r3b-20261008T204705Z, r3d-20261008T204842Z, r3e-20261008T205511Z)
+## 2. pid_suspend (runs r1r3-20261008T204510Z, r3b-20261008T204705Z, r3d-20261008T204842Z, r3e-20261008T205511Z, r3f-20261008T211428Z)
+
+Every result in this section was taken while a taskport grant may have been in effect (section 5).
 
 `pid_suspend(pid)` and `pid_resume(pid)` are syscalls 433 and 434, exported from `libsystem_kernel`, and take no task port.
 
@@ -49,16 +51,17 @@ Four scratch targets: one counter program writing an incrementing number to a fi
   - crush and opencode showed a typed marker only after resume;
   - CPU time stayed flat while suspended, and every process stayed alive.
 - **MEASURED, properties:**
-  - it holds after the calling helper exits;
-  - `SIGCONT` does not undo it: the counter stayed stopped after `kill -CONT`;
-  - it does not nest. A second `pid_suspend` gets EPERM, one `pid_resume` resumes, and a second `pid_resume` gets EPERM;
-  - `ps -o stat` reads `SN`, not `T`, while suspended. So the "read `T` twice" check from finding-marvel-1kg8 cannot see it;
-  - it covers one process. Children (MCP servers, shells) need their own call.
+  - it holds after the calling helper exits: each helper call is its own process, and the counter stayed stopped between the suspend call and the resume call (r1r3);
+  - `kill -CONT` does not undo it: the counter stayed stopped after it, for all four scratch signings (r1r3);
+  - a running tmux server did not undo it on the pane's own process: the counter held at 10 for 5 s, through a window resize and a key, and ran again after `pid_resume` (r3f, part b);
+  - it does not nest. A second `pid_suspend` gets EPERM, one `pid_resume` resumes, and a second `pid_resume` gets EPERM (r3e);
+  - `ps -o stat` reads `SN`, not `T`, while suspended (r3e). So the "read `T` twice" check from finding-marvel-1kg8 cannot see it;
+  - it covers one process: with the parent suspended, the parent's counter held at 10 while its child's ran from 11 to 29 in 2 s (r3f, part a). Children (MCP servers, shells) need their own call.
 
 ## 3. What the source says about root (CODE, xnu f6217f89, `bsd/kern/kern_proc.c`)
 
 - `task_for_pid_posix_check`: "If we're running as root, the check passes" (line 5617).
-- `task_for_pid`: `mac_proc_check_get_task(kauth_cred_get(), &pident, TASK_FLAVOR_CONTROL)` runs for every caller, root included (5772). The taskgated upcall is skipped only for root ("If we aren't root and target's task access port is set...", 5779).
+- `task_for_pid`: `mac_proc_check_get_task(kauth_cred_get(), &pident, TASK_FLAVOR_CONTROL)` runs for every caller, root included (5772). The taskgated upcall runs only for a caller that is not root, on a target other than itself, whose task access port is set ("If we aren't root and target's task access port is set...", 5779). Root skips it.
 - `pid_suspend`:
   - it passes on `task_for_pid_posix_check` or `PROCESS_RESUME_SUSPEND_ENTITLEMENT` (6210);
   - then `mac_proc_check_suspend_resume(targetproc, MAC_PROC_CHECK_SUSPEND)` runs for every caller (6216);
@@ -70,7 +73,7 @@ Four scratch targets: one counter program writing an incrementing number to a fi
 
 - **MEASURED there:** no seat failed under `SIGSTOP` with the tmux server stopped first (8 of 8 in F1, F2 and F3, with the bus and MCP working on the next call in S9).
 - **MEASURED there:** what `SIGSTOP` cannot do is freeze one seat while tmux runs, because tmux undoes it within a second. The server freeze is also what blocks the daemon.
-- **INFERRED:** `pid_suspend` closes that gap, because nothing tmux sends undoes it.
+- **MEASURED here, under the grant caveat:** `pid_suspend` closes that gap for the stimuli tried: `kill -CONT` (r1r3) and a running tmux server with a resize and a key (r3f). **INFERRED:** no other tmux path undoes it; not measured.
 
 ## 5. Open: a cached grant, and the group
 
@@ -126,3 +129,5 @@ int main(int argc, char **argv) {
 ```
 
 Targets: the counter above, signed with `codesign -s - -f`, with `-o runtime` added for the hardened variants, and `--entitlements` carrying `com.apple.security.get-task-allow` for the get-task-allow variants. The `task_for_pid` helper is finding-marvel-1kg8's `msusp`.
+
+This is the code that ran. Two weaknesses a reuse should fix: any verb other than `suspend` resumes, and `atoi` accepts `12abc`. `strtol` with an end-pointer check and an explicit `resume` verb fix both.
