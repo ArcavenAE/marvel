@@ -347,6 +347,12 @@ type Session struct {
 	// ActiveTicks is the share-of-ticks reading behind ACTIVE%, filled on read
 	// from the controller's in-memory tick ring and never stored. See ActiveTicks.
 	ActiveTicks ActiveTicks `json:"active_ticks,omitzero" toml:"-"`
+	// Spec says whether the stored Runtime still equals the role's current
+	// one (SpecCurrent or SpecBehind), and SpecDiff names the fields that
+	// differ. Both are filled on read by the daemon and never stored. Empty
+	// Spec means no role to compare against (docs/design/drift-view.md).
+	Spec     string   `json:"spec,omitempty" toml:"-"`
+	SpecDiff []string `json:"spec_diff,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
