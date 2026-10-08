@@ -21,8 +21,9 @@ var rateClock = time.Now
 // The window is the one the daemon judged the seat under: it stamps the
 // resolved quiet window (the role's activity_timeout, else the cluster's
 // watchdog.window, else the default) on every session it returns, as
-// ActiveTicks.Window, and ACTIVE% reads it from there. A session that carries
-// none (a held role's synthetic row) gets the default window. The channel is
+// ActiveTicks.Window: the window ACTIVE%'s tick counts were judged under. A
+// session that carries none (a held role's synthetic row) gets the default
+// window. The channel is
 // always present: a rate cell exists only for a seat whose token stream the
 // accountant reads.
 func sessionRate(s api.Session, now time.Time) (float64, asof.State) {

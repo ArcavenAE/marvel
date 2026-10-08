@@ -168,11 +168,18 @@ func TestRateFallsBackToTheDefaultWindow(t *testing.T) {
 	got := rateCells(t,
 		withWindow(rateSession("a-unstamped-quiet", 40, 30*time.Second, 11*time.Minute), 0),
 		withWindow(rateSession("b-unstamped-live", 40, 30*time.Second, 9*time.Minute), 0),
+		withWindow(rateSession("c-negative-quiet", 40, 30*time.Second, 11*time.Minute), -time.Minute),
+		withWindow(rateSession("d-negative-live", 40, 30*time.Second, 9*time.Minute), -time.Minute),
 	)
 	if got["a-unstamped-quiet"] != "0/s" {
 		t.Errorf("quiet past the default window = %q, want 0/s", got["a-unstamped-quiet"])
 	}
 	if got["b-unstamped-live"] != "14.1/s" {
 		t.Errorf("not quiet inside the default window = %q, want 14.1/s", got["b-unstamped-live"])
+	}
+	// A non-positive window is not a window (api.QuietWindow), so a negative
+	// one reads as the default too.
+	if got["c-negative-quiet"] != "0/s" || got["d-negative-live"] != "14.1/s" {
+		t.Errorf("a negative window: quiet = %q, live = %q, want 0/s and 14.1/s", got["c-negative-quiet"], got["d-negative-live"])
 	}
 }
