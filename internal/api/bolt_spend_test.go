@@ -8,6 +8,14 @@ import (
 	"github.com/arcavenae/marvel/internal/asof"
 )
 
+// spendRate is the rate cell the tests store: a fixed stamp, so a load that
+// refreshed it would be seen.
+var spendRate = asof.Cell[float64]{
+	Value:      12.5,
+	ObservedAt: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC),
+	ValidUntil: time.Date(2026, 10, 8, 12, 10, 0, 0, time.UTC),
+}
+
 // reloadSession writes a session's context and spend in the given order,
 // persists it, closes the store and opens it again, as a daemon restart does,
 // and returns the session as the new store holds it.
@@ -26,7 +34,7 @@ func reloadSession(t *testing.T, src ContextSourceKind, requests int, spendFirst
 	out, prompt := 48200, 9000
 	spend := SessionSpend{
 		Out: &out, PromptTokens: &prompt,
-		OutRate: asof.Cell[float64]{Value: 12.5, ObservedAt: time.Now().UTC(), ValidUntil: time.Now().UTC().Add(10 * time.Minute)},
+		OutRate: spendRate,
 	}
 	context := SessionContext{ContextSource: src, ContextPercent: 40, ContextRequests: requests}
 	if spendFirst {
@@ -79,8 +87,8 @@ func TestBoltLoadKeepsTheSpendForEverySource(t *testing.T) {
 				t.Errorf("%s (spend first=%v): SpendOut=%v SpendPromptTokens=%v after reload, want 48200 and 9000",
 					tc.name, spendFirst, got.SpendOut, got.SpendPromptTokens)
 			}
-			if got.OutRate.ObservedAt.IsZero() || got.OutRate.Value != 12.5 {
-				t.Errorf("%s (spend first=%v): OutRate=%+v after reload, want the stored cell", tc.name, spendFirst, got.OutRate)
+			if got.OutRate.Value != 12.5 || !got.OutRate.ObservedAt.Equal(spendRate.ObservedAt) || !got.OutRate.ValidUntil.Equal(spendRate.ValidUntil) {
+				t.Errorf("%s (spend first=%v): OutRate=%+v after reload, want the stored cell with its original stamps", tc.name, spendFirst, got.OutRate)
 			}
 		}
 	}
@@ -102,4 +110,52 @@ func TestBoltLoadStillClearsAnAccountantOccupancy(t *testing.T) {
 	if got.ContextPercent != 0 || got.ContextRequests != 0 {
 		t.Errorf("accountant occupancy after reload = %.0f%% over %d requests, want it cleared", got.ContextPercent, got.ContextRequests)
 	}
+}
+
+// A heartbeat is a complete reading of its own shape and replaces the context
+// block, so it must hand the spend slice forward: the accountant's totals are
+// not the heartbeat's to drop. The heartbeat also persists, so the carried
+// spend is what a reload finds.
+func TestHeartbeatKeepsTheSpendAndItSurvivesAReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	sess := &Session{Name: "agent-0", Workspace: "ws", Team: "team", Role: "worker", State: SessionRunning, PaneID: "%1"}
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	key := sess.Key()
+	out, prompt := 48200, 9000
+	s1.UpdateSessionContext(key, SessionContext{ContextSource: ContextSourceAccountant, ContextPercent: 40, ContextRequests: 7})
+	s1.UpdateSessionSpend(key, SessionSpend{Out: &out, PromptTokens: &prompt, OutRate: spendRate})
+	if _, err := s1.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: key, ContextPercent: 41}); err != nil {
+		t.Fatalf("UpdateSessionHeartbeat: %v", err)
+	}
+	check := func(where string, got Session) {
+		t.Helper()
+		if got.SpendOut == nil || *got.SpendOut != out || got.SpendPromptTokens == nil || *got.SpendPromptTokens != prompt || got.OutRate.Value != 12.5 {
+			t.Errorf("%s: SpendOut=%v SpendPromptTokens=%v OutRate=%+v after a heartbeat, want 48200, 9000 and the stored rate",
+				where, got.SpendOut, got.SpendPromptTokens, got.OutRate)
+		}
+	}
+	live, err := s1.GetSession(key)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	check("live", live)
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	again, err := s2.GetSession(key)
+	if err != nil {
+		t.Fatalf("GetSession #2: %v", err)
+	}
+	check("after reload", again)
 }
