@@ -229,6 +229,16 @@ func (p Pattern) match(rows []string) (matched []Row, full bool) {
 	return matched, len(matched) == n
 }
 
+// carriesText reports whether any matched row renders as text.
+func carriesText(matched []Row) bool {
+	for _, m := range matched {
+		if m.Render() != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Classify matches the screen against the harness's pattern sets. sessVersion
 // is the harness version the pane reports. A full match from a set of the same
 // version is high and the only one that sets a state; a full match from another
@@ -241,7 +251,9 @@ func Classify(sets []Pattern, harness, sessVersion string, rows []string) Result
 			continue
 		}
 		matched, full := p.match(rows)
-		if len(matched) == 0 {
+		if !carriesText(matched) {
+			// A blank pattern row matches any blank line, so blank rows alone
+			// are layout and not evidence that this pattern is on screen.
 			continue
 		}
 		res := Result{
