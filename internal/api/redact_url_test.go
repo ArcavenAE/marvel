@@ -131,6 +131,26 @@ func TestRedactURLUserinfoCoversAPasswordHoldingACharacterAnAuthorityCannotHold(
 	}
 }
 
+// The syntax cannot tell u:p@h"x@y from u:p@x"y@h, so on a redaction path a
+// secret never prints for the sake of a readable host: the userinfo ends at the
+// last @ before the authority ends, and a terminator character counts as an end
+// only after that @ (review 5466634279).
+func TestRedactURLUserinfoNeverPrintsASecretNearARawTerminator(t *testing.T) {
+	for _, in := range []string{
+		"redis://u:p@x^CNRYtail@h/0",
+		"redis://u:a@b^c@d|CNRYe@h/0",
+		"redis://u:p@ss{CNRYw}@h/0",
+		"redis://u:p@<CNRYx>@h/0",
+		"redis://CNRYu@s:CNRY^pw@h/0",
+		"redis://us@x:CNRYpw|@h/0",
+	} {
+		got := redactURLUserinfo(in)
+		if got != "redis://(redacted)@h/0" {
+			t.Errorf("redactURLUserinfo(%q) = %q, want redis://(redacted)@h/0", in, got)
+		}
+	}
+}
+
 // Two readability costs, pinned so the cost list in describe-redaction.md item 5
 // stays true. Neither leaks: both print more as (redacted) than a reader wants.
 func TestRedactURLUserinfoReadabilityCosts(t *testing.T) {
@@ -167,16 +187,5 @@ func TestRedactURLUserinfoKnownLimits(t *testing.T) {
 		if got := redactURLUserinfo(in); got != in {
 			t.Errorf("%s: %q changed to %q; if this is now redacted, update the cost list in describe-redaction.md item 5", name, in, got)
 		}
-	}
-}
-
-// A password that holds an @ and, after it, a raw ^ or similar prints its tail:
-// the authority ends at that character, so the rest of the password reads as the
-// host. Pinned so the cost list in describe-redaction.md item 5 stays true.
-func TestRedactURLUserinfoPasswordWithAtThenTerminatorPrintsItsTail(t *testing.T) {
-	in := "redis://u:p@x^CNRYtail@h/0"
-	want := "redis://(redacted)@x^CNRYtail@h/0"
-	if got := redactURLUserinfo(in); got != want {
-		t.Errorf("redactURLUserinfo(%q) = %q, want %q", in, got, want)
 	}
 }
