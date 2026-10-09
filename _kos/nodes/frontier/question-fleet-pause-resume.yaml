@@ -47,9 +47,9 @@ content: |
 
   RULING (operator, 2026-10-08, relayed by director): the committed record
   is finding-marvel-1eds section 6 (marvel#774), which quotes the text of
-  option (a), the option chosen: do not run the root half. The relay also
-  carried "can run later", which has no committed record. The root route
-  stays unrun, not ruled out. The unattended re-run, the
+  option (a), the option chosen: do not run the root half. The same section
+  records the operator's note: "dont run root right now, can run later". The
+  root route stays unrun, not ruled out. The unattended re-run, the
   `_developer` question, whether a notarized marvel may carry
   `cs.debugger`, and a resume ledger are the checks before any build.
 
