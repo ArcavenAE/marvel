@@ -296,9 +296,20 @@ func TestGetOutputYAMLIsNotJSON(t *testing.T) {
 }
 
 // A refused -o never reaches the daemon: checkGetOutput runs before the first
-// fetch, so a bad request costs no connection and a stopped daemon is not
-// reported in place of the real mistake.
+// fetch (and the --watch refusal in getCmd's RunE runs before getWithOutput is
+// called), so a bad request costs no connection and a stopped daemon is not
+// reported in place of the real mistake. The valid request first proves the
+// counter moves, so a zero below means no request and not a dead counter.
 func TestGetOutputRefusalsSendNoRequest(t *testing.T) {
+	t.Run("positive control", func(t *testing.T) {
+		requests := cannedDaemon(t, map[string]any{"team": []api.Team{outputTeam()}, "session": outputSessions()})
+		if _, err := runGet(t, "team", "-o", "json"); err != nil {
+			t.Fatalf("get team -o json: %v", err)
+		}
+		if n := requests.Load(); n < 1 {
+			t.Errorf("a valid get team -o json sent %d request(s), want at least 1: the counter does not move", n)
+		}
+	})
 	for name, args := range map[string][]string{
 		"other resource": {"sessions", "-o", "json"},
 		"bad format":     {"team", "-o", "xml"},
