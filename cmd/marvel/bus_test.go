@@ -87,3 +87,20 @@ func TestPrintBusStatusLeafDuration(t *testing.T) {
 		t.Errorf("leaf line without a duration:\n%s", got)
 	}
 }
+
+func TestPrintBusStatusPidfileLine(t *testing.T) {
+	var b strings.Builder
+	printBusStatus(&b, bus.Status{
+		Managed: true, Ready: false, Leaf: "n/a", URL: "nats://127.0.0.1:4222", Listen: "127.0.0.1:4222", Domain: "kinu",
+		PID: 7, Pidfile: "stale", ConfPath: "/x",
+	})
+	got := b.String()
+	if !strings.Contains(got, "pid:      7\npidfile:  stale\nrestarts: 0\n") {
+		t.Errorf("the pidfile line should follow the pid line:\n%s", got)
+	}
+	b.Reset()
+	printBusStatus(&b, bus.Status{Managed: true, Leaf: "n/a", PID: 7, ConfPath: "/x"})
+	if strings.Contains(b.String(), "pidfile:") {
+		t.Errorf("a status with no pidfile reading printed one:\n%s", b.String())
+	}
+}

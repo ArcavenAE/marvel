@@ -2661,7 +2661,13 @@ func printBusStatus(w io.Writer, st bus.Status) {
 	if st.Adopted {
 		_, _ = fmt.Fprint(w, " (adopted)")
 	}
-	_, _ = fmt.Fprintf(w, "\nrestarts: %d\n", st.Restarts)
+	_, _ = fmt.Fprintln(w)
+	if st.Pidfile != "" {
+		// What the bus pidfile proved at the last start: proven, stale, legacy
+		// or none (docs/design/bus-pidfile-identity.md section 6).
+		_, _ = fmt.Fprintf(w, "pidfile:  %s\n", st.Pidfile)
+	}
+	_, _ = fmt.Fprintf(w, "restarts: %d\n", st.Restarts)
 	if st.BackoffUntil != "" {
 		_, _ = fmt.Fprintf(w, "backoff:  until %s\n", st.BackoffUntil)
 	}
