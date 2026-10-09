@@ -589,14 +589,15 @@ architect seat that chaired the panel.
 | id | ruling | operator note, verbatim |
 |---|---|---|
 | V1, V2, V4, V6, V7, V8, V10 | accepted as the panel recommended | |
-| V3 | **(b)** a separate informational field | "marvel should not be the storage for secrets, that does not mean it can't handle, distribute, or coordinate them." |
-| V5 | **(a)** allowed as is | "it's allowed" |
+| V3 | **(b)** a separate informational field | "point of clarification: marvel should not be the storage for secrets, that does not mean it can't handle, distribute, or coordinate them." |
+| V5 | "it's allowed" (no letter given; the recorder maps it to (a), issuance allowed as is) | "it's allowed" |
 | V9 | **(c)** split: the token (brokering) passes; the stored grant (custody) is open | "marvel isn't the vault. it's a service orchestrator, it will probably manage a vault, be able to access the vault, provide identifies and help agents access the vault" |
-| V11 | **(b)** unproven: neither adopt nor signal; report "port held, child unproven" | the operator also asked for a follow-on party on reliable handling of the legacy pidfile |
+| V11 | **(b)** unproven: neither adopt nor signal; report "port held, child unproven" | "we need improved handling for this, route 3ptdd with casting call to figure out how to handle this more reliably" (it ran as the held-port 3ptdd, closed 2026-10-09) |
 
-The panel itself was not released. Its further rounds run under the
-operator's round rule: four rounds; if converging, two more; if diverging,
-stop and ask; one decision card per question.
+svc-party-release: **rework**. The operator's note, verbatim: "four rounds,
+if converging two more, if diverging, stop and ask, one card per question".
+The recorder reads this as the panel not being released, pending
+director's confirmation.
 
 Recorded and not voted here:
 - aae-orc-oo62t: may the supervisor tests be edited? This is 4m2m's own
