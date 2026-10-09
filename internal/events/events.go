@@ -343,6 +343,17 @@ const (
 	// (global_roles on the bus entry). The role holds no global tier until it
 	// is admitted again or the declaration is removed. Once per change.
 	KindBusGlobalRoleUnadmitted Kind = "bus.global-role-unadmitted"
+	// KindBusPidfileStale reports a bus pidfile whose process could not be
+	// proven to be the broker marvel started: the pid is gone, or its start
+	// time, executable or arguments differ from what was recorded. The files
+	// are removed and nothing is signalled (docs/design/bus-pidfile-identity.md
+	// section 6). Once per start.
+	KindBusPidfileStale Kind = "bus.pidfile-stale"
+	// KindBusPidfileUnproven reports a port held by a broker whose pidfile
+	// does not prove it ours: a mismatch with the listener answering, or a
+	// pidfile with no identity record under the legacy rule. The bus stays
+	// down and the event names the pid, the port and the remedy.
+	KindBusPidfileUnproven Kind = "bus.pidfile-unproven"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -466,6 +477,8 @@ var allKinds = []Kind{
 	KindBusLeafDown,
 	KindBusLeafUnenrolled,
 	KindBusGlobalRoleUnadmitted,
+	KindBusPidfileStale,
+	KindBusPidfileUnproven,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,

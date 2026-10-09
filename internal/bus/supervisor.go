@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/childproof"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
@@ -65,12 +66,27 @@ type Supervisor struct {
 	leafRepeatEvery time.Duration
 	// now is the clock the leaf record reads; tests replace it.
 	now func() time.Time
+	// prober proves a broker's identity and is the only way a signal reaches
+	// one (docs/design/bus-pidfile-identity.md section 4.5). Production holds
+	// childproof.New(); a test builds one with NewForTest.
+	prober *childproof.Prober
+	// legacy decides a pidfile with no identity record (V11). It starts as
+	// legacyPidfile and a test sets each value.
+	legacy legacyMode
+	// grace is how long terminate waits between TERM and KILL; tests shorten it.
+	grace time.Duration
+	// onSpawn, when set, sees the pid of every broker this supervisor starts,
+	// before anything is signalled. It is the registration point a test
+	// kill seam reads, so a test signals only brokers it started.
+	onSpawn func(pid int)
 
 	mu          sync.Mutex
 	parent      context.Context
 	cmd         *exec.Cmd
 	pid         int
-	version     string // what `nats-server --version` on the resolved binary reports
+	child       childproof.Child // the proven broker; zero when none runs
+	pidState    string           // proven, stale, legacy or none, for bus status
+	version     string           // what `nats-server --version` on the resolved binary reports
 	adopted     bool
 	ready       bool
 	stopping    bool
@@ -123,6 +139,9 @@ type Status struct {
 	// whose PATH disagrees with the mise pin is visible here rather than
 	// discovered at an upgrade.
 	Version string `json:"version,omitempty"`
+	// Pidfile is what the bus pidfile proved at the last start: proven, stale
+	// (removed, nothing signalled), legacy (no identity record) or none.
+	Pidfile string `json:"pidfile,omitempty"`
 	// Seat is "<workspace>/<team>" when a director seat is declared; the
 	// user is always director and its password sits at SeatPassFile.
 	Seat         string `json:"seat,omitempty"`
@@ -218,8 +237,42 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		leafPoll:        defaultLeafPoll,
 		leafRepeatEvery: defaultLeafDownRepeat,
 		now:             time.Now,
+		prober:          childproof.New(),
+		legacy:          legacyPidfile,
+		grace:           stopGrace,
+		pidState:        pidStateNone,
 	}, nil
 }
+
+// legacyMode is how a pidfile with no identity record is treated (V11).
+type legacyMode int
+
+const (
+	// legacyUnruled is the placeholder until the operator rules V11 (the open
+	// split in docs/design/services-shape-requirements.md section 6). It is
+	// neither option: it signals nothing and adopts nothing, and a port held
+	// under such a pidfile refuses with a message naming the ruling. A draft
+	// carrying it cannot ship by accident, and TestLegacyPidfileIsRuled fails
+	// under MARVEL_REQUIRE_V11=1 until the constant is set.
+	legacyUnruled legacyMode = iota
+	// legacyAdoptOnExecMatch (V11 option a) adopts a broker whose executable is
+	// nats-server and whose arguments carry this daemon's conf.
+	legacyAdoptOnExecMatch
+	// legacyRefuseUnproven (V11 option b) neither adopts nor signals it.
+	legacyRefuseUnproven
+)
+
+// legacyPidfile is set in code by the ruling, never by config: an operator
+// cannot widen what marvel signals.
+const legacyPidfile = legacyUnruled
+
+// The values of the pidfile line in `bus status`.
+const (
+	pidStateNone   = "none"
+	pidStateProven = "proven"
+	pidStateStale  = "stale"
+	pidStateLegacy = "legacy"
+)
 
 // SetDialTimeout sets how long Start and Restart wait for the listener. It
 // exists for tests in other packages that start a real nats-server and must
@@ -498,7 +551,7 @@ func (s *Supervisor) Restart(reason string) error {
 		<-done
 	}
 	if pid != 0 {
-		s.terminate(pid)
+		s.terminatePid(pid)
 		log.Printf("bus: nats-server pid %d stopped to restart (%s)", pid, reason)
 	}
 
@@ -513,8 +566,8 @@ func (s *Supervisor) Restart(reason string) error {
 	return s.becomeReady(ctx, "restarted ("+reason+")")
 }
 
-// terminate ends a broker process group with a bounded grace period.
-func (s *Supervisor) terminate(pid int) {
+// terminatePid ends a broker process group with a bounded grace period.
+func (s *Supervisor) terminatePid(pid int) {
 	_ = syscall.Kill(-pid, syscall.SIGTERM)
 	deadline := time.Now().Add(stopGrace)
 	for time.Now().Before(deadline) && syscall.Kill(pid, 0) == nil {
@@ -587,7 +640,7 @@ func (s *Supervisor) Stop(keep bool) {
 	}
 	// Our own child was already reaped by cmd.Wait inside watch; an adopted
 	// process is not ours to wait on, so both are given the grace by polling.
-	s.terminate(pid)
+	s.terminatePid(pid)
 	_ = os.Remove(s.pidFile)
 	s.emit(events.KindBusStopped, events.SeverityInfo, fmt.Sprintf("nats-server pid %d stopped with the daemon", pid))
 }
@@ -866,4 +919,24 @@ func (s *Supervisor) emit(kind events.Kind, sev events.Severity, msg string) {
 	if s.ring != nil {
 		events.Emit(s.ring, events.Event{Kind: kind, Severity: sev, Message: msg})
 	}
+}
+
+// pidVerdict is what a pidfile proved at start.
+type pidVerdict struct {
+	pid    int
+	kind   string // none, proven, stale or legacy
+	reason string // for stale: dead, start, exe, argv, sidecar-pid or sidecar
+	child  childproof.Child
+}
+
+// classifyPidfile reads the pidfile and its identity record and decides what
+// the pidfile proves (docs/design/bus-pidfile-identity.md section 4.2).
+func (s *Supervisor) classifyPidfile() pidVerdict {
+	return pidVerdict{kind: "unbuilt"}
+}
+
+// terminate ends a proven broker: TERM, a grace period, then KILL, each only
+// while the process is still the one that was proven.
+func (s *Supervisor) terminate(c childproof.Child) {
+	_, _, _ = s.grace, c.Pid(), s.child
 }

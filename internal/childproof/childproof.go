@@ -40,6 +40,10 @@ func (e *MismatchError) Error() string {
 	return fmt.Sprintf("childproof: pid %d is not the recorded process (%s)", e.Pid, e.Reason)
 }
 
+// ReadIdentity is the production reader, for a test that wraps it: a Prober
+// built by NewForTest reads real children and fakes only the pids it names.
+func ReadIdentity(pid int) (Identity, error) { return readIdentity(pid) }
+
 // Identity is what the kernel says about a process now.
 type Identity struct {
 	// Start is platform-tagged and compared as a string: darwin:<sec>.<usec>
