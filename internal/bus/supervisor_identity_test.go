@@ -205,9 +205,17 @@ func TestStartLeavesARealUnrelatedProcessAlone(t *testing.T) {
 	s, _, ring := newTestSupervisor(t, "")
 	pt := tableOf(s)
 	victim := startSleepChild(t)
-	live, err := childproof.ReadIdentityForTest(victim.Process.Pid)
-	if err != nil {
-		t.Fatal(err)
+	// A fresh child can be unreadable for a moment on linux (cmdline is empty
+	// until exec settles), so wait for it as Spawned does.
+	var live childproof.Identity
+	var err error
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if live, err = childproof.ReadIdentityForTest(victim.Process.Pid); err == nil {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal(err)
+		}
 	}
 	recorded := live
 	recorded.Start = live.Start + "9"

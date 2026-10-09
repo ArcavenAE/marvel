@@ -482,9 +482,21 @@ func TestSpawnedRefusesAProcessThatIsNotOurChild(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = syscall.Kill(gpid, syscall.SIGKILL) })
 
-	// The grandchild is live and readable, and its parent is the shell.
-	if live, err := ReadIdentityForTest(gpid); err != nil || live.Ppid != sh.Process.Pid {
-		t.Fatalf("the grandchild reads as %+v, %v; want parent %d", live, err, sh.Process.Pid)
+	// The shell prints the pid right after the fork, before sleep has exec'd, and
+	// on linux /proc/<pid>/cmdline is empty until then (measured: about half of
+	// 300 runs in a container read nothing). Wait until it can be read, then
+	// check that its parent is the shell.
+	var live Identity
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if live, err = ReadIdentityForTest(gpid); err == nil {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the grandchild stayed unreadable: %v", err)
+		}
+	}
+	if live.Ppid != sh.Process.Pid {
+		t.Fatalf("the grandchild reads as %+v; want parent %d", live, sh.Process.Pid)
 	}
 	found, err := os.FindProcess(gpid)
 	if err != nil {
