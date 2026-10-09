@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -170,8 +171,9 @@ func TestGetOutputWorkspaceCountsTeamsAndSessions(t *testing.T) {
 	}
 }
 
-// cannedDaemon answers the get method with a fixed body per resource type.
-func cannedDaemon(t *testing.T, bodies map[string]any) {
+// cannedDaemon answers the get method with a fixed body per resource type and
+// counts every request it receives.
+func cannedDaemon(t *testing.T, bodies map[string]any) *atomic.Int32 {
 	t.Helper()
 	home, err := os.MkdirTemp("", "mg")
 	if err != nil {
@@ -189,6 +191,7 @@ func cannedDaemon(t *testing.T, bodies map[string]any) {
 	}
 	var wg sync.WaitGroup
 	t.Cleanup(func() { _ = ln.Close(); wg.Wait() })
+	var requests atomic.Int32
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -197,6 +200,7 @@ func cannedDaemon(t *testing.T, bodies map[string]any) {
 			if err != nil {
 				return
 			}
+			requests.Add(1)
 			var req daemon.Request
 			resp := daemon.Response{}
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
@@ -213,6 +217,7 @@ func cannedDaemon(t *testing.T, bodies map[string]any) {
 		}
 	}()
 	t.Setenv(config.SocketEnv, sock)
+	return &requests
 }
 
 func runGet(t *testing.T, args ...string) (string, error) {
@@ -287,5 +292,27 @@ func TestGetOutputYAMLIsNotJSON(t *testing.T) {
 		if !strings.Contains("\n"+out, want) {
 			t.Errorf("yaml output lacks the line %q:\n%s", strings.TrimSpace(want), out)
 		}
+	}
+}
+
+// A refused -o never reaches the daemon: checkGetOutput runs before the first
+// fetch, so a bad request costs no connection and a stopped daemon is not
+// reported in place of the real mistake.
+func TestGetOutputRefusalsSendNoRequest(t *testing.T) {
+	for name, args := range map[string][]string{
+		"other resource": {"sessions", "-o", "json"},
+		"bad format":     {"team", "-o", "xml"},
+		"empty format":   {"team", "-o", ""},
+		"with watch":     {"team", "-o", "json", "--watch=2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requests := cannedDaemon(t, map[string]any{"team": []api.Team{outputTeam()}, "session": outputSessions()})
+			if _, err := runGet(t, args...); err == nil {
+				t.Fatalf("get %v succeeded, want a refusal", args)
+			}
+			if n := requests.Load(); n != 0 {
+				t.Errorf("get %v sent %d request(s) to the daemon before refusing, want 0", args, n)
+			}
+		})
 	}
 }
