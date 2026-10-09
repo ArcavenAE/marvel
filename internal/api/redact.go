@@ -295,8 +295,9 @@ const authorityEnd = "/?# \t\r\n"
 // from u:p@x"y@h, so those raw characters do not end the authority: a secret
 // never prints for the sake of a readable host, and a later @ in the same
 // value hides the host too. A password with an unencoded /, ? or # is not
-// covered, since those end the authority. The cost list and the deviation from
-// the ruling are in docs/design/describe-redaction.md, item 5.
+// covered, since those end the authority. The cost list and where the host
+// gives way to the secret (ruled by the operator) are in
+// docs/design/describe-redaction.md, item 5.
 func redactURLUserinfo(s string) string {
 	var out strings.Builder
 	last, i := 0, 0

@@ -197,10 +197,11 @@ The socket scope issue in section 8 is filed separately, not as a child here.
    only the text before the last `@` is redacted and `redis://u:p@h}` keeps
    `h}`.
 
-   **Where "host stays readable" gives way.** Ruled (a) on 2026-10-09 ("the
-   secret always wins"): where URL userinfo and a secret pattern conflict, the
-   secret's redaction wins. The syntax cannot tell `u:p@h"x@y` from
-   `u:p@x"y@h`, so a readable host never outranks a secret that must not print.
+   **Where "host stays readable" gives way.** Ruled (a) by the operator, relayed
+   by director on 2026-10-09: the secret always wins, so the host stays readable
+   except where keeping it readable would let part of a secret print. The syntax
+   cannot tell `u:p@h"x@y` from `u:p@x"y@h`, so there a readable host never
+   outranks a secret that must not print.
    The host is hidden, with everything between the
    userinfo's start and the last `@`, in these shapes, each pinned by a test:
    - a URL followed, before the next `/`, `?`, `#` or white space, by any text
