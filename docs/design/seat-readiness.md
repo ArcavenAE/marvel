@@ -51,8 +51,7 @@ unchanged `asof.Cell`.
 | `proven` | a check passed at `observed_at`, from the vantage in `Source`; it says nothing about the next minute |
 | `fail` | a check ran and failed; `Source` carries a code |
 | `unproven` | the duty has no harmless proof, or no check has run yet |
-| `-` | never checked |
-| `?` | was checked, has expired |
+| `-`, `?` | as the register defines them (`docs/design/seat-register.md:50`) |
 
 `Source` carries a vantage word and a stage from the register's fixed
 vocabulary: `seat:reach:<code>`, `seat:auth:<code>`, `host:...`, `peer:...`. A
@@ -96,7 +95,7 @@ A check proves a duty. It never reads or prints a credential.
 | a write (`gh.post`, `gh.comment`, `jira.write`) | none harmless; proving a post means posting. The last successful write and its time, from the event the seat already produces | `proven` with that time, else `unproven`. A seat's own report never makes a write `proven` |
 | `ack` | the director ledger's last ack from the seat; a denial seen by the watcher | observed only; never a test send |
 | `first-turn` | turn evidence by the `ready_by` deadline (section 5) | observed only; `unsupported` where a harness gives no turn evidence |
-| a held dialog | one plain capture, matched to a version-ranged pattern | `dialog:<class>` or `blocker:unmatched`, class only, no pane text |
+| a held dialog | one plain capture, matched to a version-ranged pattern | the watcher's `blocker_class` value (`docs/design/marvel-watcher.md:95`), `dialog` with the matched pattern class as its reason code, or `unknown` with `no-dialog-pattern`; see the note below |
 
 Rules for every check:
 
@@ -114,6 +113,22 @@ Rules for every check:
 - No static read of permission files: they hold the operator's settings, and a
   classifier denial is in no file.
 
+**Structural codes.** Only these `fail` codes are structural, and only they
+can exclude a seat (section 6 rule 1): `seat:auth:auth-rejected` and
+`seat:auth:forbidden` (the far side refused the credential), a `denial` the
+watcher saw for a tool the duty needs, and a matched `dialog`. Every
+`seat:reach` code (`dns`, `connect`, `tls`) and `rate-limited` is transient:
+after its one retry it still prints `fail` with its code, and it routes as ask
+first, never excluded. A reach that keeps failing is reported to the
+supervisor, who may withdraw the duty.
+
+**Dialog text.** The register shows the watcher's `blocker_class` and the
+pattern class as a code, and no pane text, because pane and dialog text are on
+the register's Never list (`docs/design/seat-register.md:83`). The watcher's
+own record keeps truncated, masked text for `dialog` and `denial`
+(`docs/design/marvel-watcher.md:98`) for whoever reads that record; this
+design adds no text retention to either.
+
 ## 5. Spawn and timing
 
 - **Default-deny.** At spawn the daemon writes every declared duty as
@@ -130,9 +145,12 @@ Rules for every check:
 
 ## 6. Routing
 
-The router applies a rule to the cells. marvel never disables a seat.
+This extends the register's routing rule (`docs/design/seat-register.md`
+section 6, `:87-89`), whose rule 2 (`-` or `?` means ask first) and rule 3 (a
+host vantage proves the host) apply unchanged to duty cells. The router
+applies the rule to the cells; marvel never disables a seat.
 
-1. A fresh structural `fail`, or a withdrawal: excluded from the free list,
+1. A fresh structural `fail` (section 4), or a withdrawal: excluded from the free list,
    with the reason shown. A supervisor may override by naming the seat. This
    is the one place a cell removes a seat from a list.
 2. A fresh `proven`: eligible for that duty.
@@ -141,7 +159,8 @@ The router applies a rule to the cells. marvel never disables a seat.
 
 Counts, rates and time thresholds never exclude; they stay diagnostic
 (ADR-007). A seat may withdraw itself; it may never restore or qualify itself
-by assertion. Nothing acts on silence or a clock.
+by assertion. Nothing excludes or withdraws on silence or a clock; the
+`ready_by` deadline and the visit past it only report.
 
 ## 7. Plan (filed as flat tickets after the rulings)
 
@@ -171,12 +190,10 @@ on silence.
    restore on observed evidence; writes need evidence plus a supervisor
    confirm. (b) Every restore from a seat-run pass needs a supervisor confirm;
    observed evidence restores alone. The design party split 3-3.
-   **Recommendation: (b) to start**, since a seat never raises itself; relax to
-   (a) once a false-pass rate is measured.
-2. **Self-withdraw before per-seat identity.** (a) Withdraw-only on the
-   existing per-session token. (b) Wait for the control-plane identity. Split
-   3-3. **Recommendation: (b)**, since default-deny and daemon-observed
-   failures already keep an unready seat off the free list.
+   **Recommendation: (b) to start**, since a seat never raises itself. Once a
+   false-pass rate is measured, the architect re-presents (a) for a ruling.
+2. **Self-withdraw before per-seat identity.** Self-withdraw waits for
+   per-seat identity; the option is with the operator.
 3. **Exclusion on a fresh structural `fail`** (section 6 rule 1). (a) Exclude
    with a named override. (b) Ask first only. 4-2 for (a).
    **Recommendation: (a).**
