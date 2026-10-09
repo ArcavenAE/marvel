@@ -26,6 +26,10 @@ func TestSecretKeyRedactsEachPattern(t *testing.T) {
 		"BASICAUTH", "HTTPAUTH", "PROXYAUTH", "GITHUBAUTH", "basicAuth", "proxyAuth", "ghAuth",
 		"AUTHKEY", "AUTHHEADER", "authHeader", "AUTH2", "TOKENVALUE", "tokenValue", "TOKEN2",
 		"APITOKEN2", "GITHUB_TOKEN2", "githubTokenV2", "HTTPAuth", "PASS", "PW",
+		// A password word followed by an environment or a number is still a
+		// password; only a first word followed by others is not.
+		"DB_PASS_PROD", "DB_PASS_1", "SMTP_PASS_2", "DB_PW_PROD", "MYSQL_PWD_PROD", "MYSQL_PWD_1",
+		"SMTPPass", "ACCESSTOKENS",
 	} {
 		if !SecretKey(key) {
 			t.Errorf("SecretKey(%q) = false, want true", key)
@@ -42,6 +46,10 @@ func TestSecretKeyLeavesOrdinaryKeysVisible(t *testing.T) {
 		"PASSENGER_COUNT", "PWD", "EMPOWER_MODE", "DB_HOST", "DATABASE_NAME",
 		// A password word that is not the last word of the name.
 		"PW_DEBUG", "PASS_THROUGH", "TOKENIZER_PATH", "authorName", "AUTHORITY_URL", "OAUTH2_REDIRECT",
+		// OAuth names split by case into O, Auth and must still read as oauth.
+		"OAuthRedirectURI", "OAuthClientID", "GoogleOAuthClientID",
+		// Camel-case names that only contain key, pat or auth as part of a word.
+		"hotKey", "sortKey", "cacheKey", "primaryKey", "patCount", "AUTHENTICATION_ENABLED",
 	} {
 		if SecretKey(key) {
 			t.Errorf("SecretKey(%q) = true, want false", key)
