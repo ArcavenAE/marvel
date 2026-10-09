@@ -1,6 +1,6 @@
 # The per-team load rollup across clusters
 
-Proposal, 2026-10-08. Partly ruled the same day (section 6): D2, D3, D5 and D6 are ruled; D1 waits on a simulation; D4 is not ruled.
+Proposal, 2026-10-08. Ruled in part (section 6): D2, D3, D5 and D6 on 2026-10-08, D4 and the D3 amendment question on 2026-10-09. D1 is not ruled.
 
 - Author: the architect seat, team arcaven.
 - Issue: #601. Builds on `docs/design/get-sessions-output.md`, which judged this rollup a separate design (its section 6).
@@ -121,6 +121,8 @@ Recommended: (c).
 
 **Ruling, relayed by director on 2026-10-08:** (c).
 
+**Amendment question, ruled 2026-10-09 (relayed by director):** the D1 simulation proposed counting pinned clusters as expected too, which would amend (c). The operator ruled (b): "No, D3 (c) stands as ruled". The expected set stays (a) plus every cluster live in `GLOBAL_PRESENCE`.
+
 **D4. How often should a cluster publish, and how long is a record good for?**
 
 | | option | gives | costs |
@@ -131,7 +133,7 @@ Recommended: (c).
 
 Recommended: (a).
 
-**Status, relayed by director on 2026-10-08:** not ruled. The recommendation and its expiry stand.
+**Ruling, relayed by director on 2026-10-09:** (a), "Every 60 s, valid 180 s, max age 1 h". Section 3's cadence line already says this, and it is now ruled, not proposed.
 
 **D5. Should the view read bd for stale claims?**
 
@@ -158,7 +160,7 @@ Recommended: (a). It adds no ask class or role. Until it lands, the cell prints 
 
 **Ruling, relayed by director on 2026-10-08:** (a).
 
-The D1 recommendation is valid until 2026-10-22, or until the D1 simulation reports its result, whichever comes first. The D4 recommendation is valid until 2026-10-22, or until the operator grants the ask reader's principal or director builds A2, whichever comes first. The architect re-checks both then.
+The D1 recommendation is valid until 2026-10-22, or until the D1 simulation reports its result, whichever comes first; the architect re-checks it then. D1 is not ruled, and nothing in section 7 is built on any D1 option until it is.
 
 ## 7. The plan, once ruled
 
@@ -166,7 +168,7 @@ Flat tickets with dependency edges, each with red tests first:
 
 1. daemon: compute per-team rows on the reconcile tick (seats, ACTIVE% mean with count, `limited`, agent names). Local only; no transport.
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
-3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1, and on the D1 and D4 rulings.
+3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1, and on the D1 ruling. D4 is ruled (a): put every 60 s, `valid_until` at `observed_at` + 180 s, bucket max age 1 h.
 4. CLI: read every cluster's key, apply section 4's states, the header and the unauthenticated-keys line, with the expected set from D3 (c). Depends on 2 and 3.
 5. CLI: join the merged ledger's rollup by team key (open, unacked, blocked, oldest open), with `global:` keys on the cluster line. Depends on 2 and on director's A2.
 6. CLI: the waiting-on-operator cell, read from director's new rollup field (D6 (a)). Depends on 5 and 8.
