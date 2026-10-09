@@ -13,23 +13,24 @@ content: |
   as-of grammar (fresh at or before valid_until). Open, unacked, blocked and
   oldest-open counts come from the merged ask ledger only.
 
-  RULED (operator, 2026-10-08, recorded in marvel#783):
+  RULED (operator, 2026-10-08; recorded in the design's section 6 by
+  marvel#783):
   - D2 (c): the keys are unauthenticated, and the header says so.
   - D3 (c), D5 (a), D6 (a), as written in the design's decisions section.
 
   NOT RULED: D1 (who may write a cluster's key) and D4.
 
-  D1 MEASURED (scratch hub rig, 2026-10-08, never the live hub):
-  - A KV put travels as a publish to `$JS.global.API.$KV.<bucket>.<key>`, so
-    write permission is a subject permission on that prefix.
-  - A KV entry names no writer. A reader cannot tell which cluster wrote a
-    key from the entry itself.
-  - A simulation of the D1 options recommended signed records (d), with
-    conditions: freshness by server arrival time, a pin command that does
-    not dial, pinned clusters counted as expected (amends D3 (c)), and replay
-    inside the validity window either needs reader state or is stated as
-    bounded. That recommendation is with the operator and is valid until
-    2026-10-22; the architect re-checks it then.
+  D1, RELAYED, NO COMMITTED RECORD: a simulation of the D1 options ran on a
+  scratch hub rig on 2026-10-08 (never the live hub). Its record is held
+  locally and no finding stands behind it yet. It reported:
+  - a KV put observed as a publish to `$JS.global.API.$KV.<bucket>.<key>`.
+    The design still calls that subject assumed (`team-load-rollup.md`, the
+    put-subject line in the D1 section); a finding would need to carry the
+    measurement before the design relies on it;
+  - a KV entry that names no writer;
+  - a recommendation of signed records (option d, not in the design), with
+    conditions, sent to the operator and valid until 2026-10-22; the
+    architect re-checks it then.
 
   PLAN (design section 7): items 1, 2, 5, 6 and 8 are filed as bd tickets
   aae-orc-6hcad, aae-orc-4m99a, aae-orc-2l2yh, aae-orc-fmhyt and

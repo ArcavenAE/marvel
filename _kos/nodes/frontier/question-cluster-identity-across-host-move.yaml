@@ -12,12 +12,17 @@ content: |
   worked on 2026-10-08; its outcome record is held locally and pointed to
   from the ticket's notes.
 
-  PARTY RESULT (2026-10-08): K1 to K8 carried 7-0. Checks during the party:
-  the ask ledger's global_ids is not persisted (director
+  RECORD: the party result and the operator's choices below are recorded in
+  the notes of bd aae-orc-me2yg (relayed by director on 2026-10-08). The
+  party's own record is not committed. Nothing here is quoted from the
+  operator directly.
+
+  PARTY RESULT (2026-10-08, per those notes): K1 to K8 carried 7-0. Checks
+  during the party: the ask ledger's global_ids is not persisted (director
   `askreader.go:309-330`), and the 30-minute figure in the alert sketch is
   the leaf-down repeat interval, not a lost bound.
 
-  RULED (operator, 2026-10-08, Decision Desk, relayed by director):
+  CHOSEN (operator, 2026-10-08, per those notes):
   - O1: auto-bind on the first matching dial.
   - O2: a one-step confirm when the same key moves address.
   - O3: list known clusters once global_ids persists; until then, point at
@@ -25,15 +30,17 @@ content: |
   - O4: one shared dedupe key for the hub alert and bus.leaf.down (the party
     voted 5-2 the other way; dissent kept in the record).
   - O5: revoke a key through `@revoked` now.
-  - O6, verbatim: "make it a marvel admin preference, default to 30 minutes".
+  - O6: no option was chosen; the notes record the operator's instruction
+    as "make it a marvel admin preference, default to 30 minutes".
   - O7: yes.
 
   FILED: aae-orc-zggui (trust keyed by key fingerprint), aae-orc-f5c74
   (atomic config save), aae-orc-pmxxq (director persists global_ids). The
   rest of the outcome list is unfiled; the ticket notes carry it.
 
-  REJECTED by the party 7-0, candidates for graveyard by the supervisor: a
-  presence-bucket tombstone, and a hub-side cluster registry.
+  REJECTED by the party (relayed by director on 2026-10-08, no committed
+  record): a presence-bucket tombstone, and a hub-side cluster registry.
+  Candidates for graveyard, judged by the supervisor.
 
   OPEN: the O6 preference's shape in marvel config; whether identity is the
   key alone or the key plus a name; how a moved cluster's old address is

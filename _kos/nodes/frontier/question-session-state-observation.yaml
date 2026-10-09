@@ -210,8 +210,9 @@ content: |
   HARVEST 2026-10-09 (finding-056): an account usage limit and an operator
   order paused the fleet for overlapping spans (10h28m and 27h50m). The
   harness detected the limit's reset and resumed, but nothing in marvel saw
-  either pause, and the order had no end a machine could read. A seat's state
-  needs a "paused by limit" reading distinct from idle. See also
+  either pause, and the order had no end a machine could read. The finding's
+  JUDGMENT (none built) is a `limited` seat condition beside `running`, set
+  from the limit reading or the harness refusal. See also
   question-fleet-pause-resume for a deliberate pause.
 
 edges:

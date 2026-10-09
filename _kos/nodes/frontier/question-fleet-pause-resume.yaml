@@ -24,8 +24,8 @@ content: |
   2. While tmux is frozen, today's daemon answers no call, not even status,
      start or shutdown. Standalone defects marvel#715, #716, #717.
 
-  MEASURED (finding-marvel-1eds, marvel#767; its sections 1 to 5 are the
-  task_suspend research items R1 to R5):
+  MEASURED (finding-marvel-1eds, marvel#767). The task_suspend research
+  items R1 to R5 map to its sections as follows:
 
   - R1 (section 1): task_for_pid on a hardened-runtime target fails without
     get-task-allow, even from a helper carrying `cs.debugger`.
@@ -45,16 +45,18 @@ content: |
   - R5 (section 5): OPEN. The runs may have ridden a cached task port grant
     (about 10 h, group `_developer`), so it is not shown to work unattended.
 
-  RULING (operator, 2026-10-08, Decision Desk, relayed by director): "dont
-  run root right now, can run later". finding-marvel-1eds section 6
-  (marvel#774) records the option the operator chose, option (a), verbatim.
-  The root route stays unrun, not ruled out. The unattended re-run, the
+  RULING (operator, 2026-10-08, relayed by director): the committed record
+  is finding-marvel-1eds section 6 (marvel#774), which quotes the text of
+  option (a), the option chosen: do not run the root half. The relay also
+  carried "can run later", which has no committed record. The root route
+  stays unrun, not ruled out. The unattended re-run, the
   `_developer` question, whether a notarized marvel may carry
   `cs.debugger`, and a resume ledger are the checks before any build.
 
-  RULING (operator, 2026-10-07, relayed by director): pause method "3 both,
-  2 first", which commissioned the server-plus-trees freeze runs ahead of the
-  Mach, wrapper-pane and Linux cgroup arms.
+  RULING (operator, 2026-10-07, relayed by director, no committed record):
+  the pause method ruling that commissioned the server-plus-trees freeze
+  runs (finding-marvel-1kg8 F1 to F3) ahead of the Mach, wrapper-pane and
+  Linux cgroup arms.
 
   OPEN:
   - Does pid_suspend work with no cached grant (a run more than 10 h after
@@ -63,8 +65,10 @@ content: |
   - Linux: the cgroup freezer arm has no measurement yet.
 
   RETIRED ID: finding-marvel-wsmw was minted on 2026-10-07 for the first
-  pause probe and never written. Its content is in finding-marvel-1kg8.
-  Nothing should cite wsmw.
+  pause probe and never written; no file by that id exists in
+  `_kos/findings/`. This harvest (2026-10-09, at the supervisor's request)
+  retires it, and this node is its only committed record. Its measurements
+  are in finding-marvel-1kg8. Nothing should cite wsmw.
 
   GRAVEYARD CANDIDATES, judged by the supervisor, not moved here: pause by
   kill signal to a pane process; a tmux-frozen pause as a per-seat method;
