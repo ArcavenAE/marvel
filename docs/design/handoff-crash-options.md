@@ -44,7 +44,7 @@ The options are layers that compose, not rivals.
 | layer | id | option | mechanism in one line |
 |---|---|---|---|
 | format | O6 | tick lines | A one-line JSONL record (seat, generation, request, ordinal, kind, hash of the previous line) that any writer appends; the successor folds it as `dws` folds the ledger |
-| writers | O1 | daemon witness log | The daemon appends checksummed records of claims and observations, and seals the log at `ReapDead` (`internal/session/manager.go:1586-1609`) |
+| writers | O1 | daemon witness log | The daemon appends checksummed records of claims and observations, and seals the log at `ReapDead` (`internal/session/manager.go:1586-1609`). For an interactive seat the seal can record only that the pane is gone, not how the process ended (section 7) |
 | writers | O2 | structure tailer | A versioned, read-only adapter reads the harness's own store (Claude JSONL, codex rollout, opencode or crush SQLite) for structure only, never prose |
 | writers | O3 | seat journal by hook or MCP | A per-turn hook, a Pre/PostToolUse pair, or an MCP `log` call appends one line; no file write by the model |
 | writers | O5 | outbox shadow | The bus reader logs each send and its ack. Mostly built: director's `auditMirror` publishes every send to `agent.audit` |
@@ -65,16 +65,16 @@ Dropped by vote (8 of 9), with the reasons:
 Scores are as each option's developer gave them; the daemon cost is the
 marvel seat's.
 
-| option | S1 | S2 | S3 | S4 | S5 | S6 | S7 | marvel must add |
-|---|---|---|---|---|---|---|---|---|
-| O6 tick lines | + | + | + | 0 | 0 | + | + | nothing alone |
-| O1 witness log | + | + | 0 | + (crush 0) | 0 | 0 | - | one token-bound append verb, and a seal at `ReapDead` |
-| O2 structure tailer | + | 0 | + | + | 0 | - | 0 | an adapter per harness, and a store-locator field |
-| O3 seat journal | + | + | 0 | + | 0 | 0 | 0 | the same append verb, and a `log` tool |
-| O5 outbox shadow | + | 0 | + | + | 0 | - | + | nothing |
-| O4 render | + | 0 | 0 | + | 0 | + | 0 | nothing; director K4, K9 and K15 (director#274) |
-| O8 resume | + | - | - | 0 | - | 0 | + | pass `--resume`; keep `HarnessSessionID` |
-| O10 read-back | 0 | + | - | + | 0 | 0 | + | a bus publisher (marvel publishes nothing today) |
+| option | S1 | S2 | S3 | S4 | S5 | S6 | S7 | marvel must add | fails when |
+|---|---|---|---|---|---|---|---|---|---|
+| O6 tick lines | + | + | + | 0 | 0 | + | + | nothing alone | nothing writes the lines (it is a format, not a writer); a lost suffix after power loss is silent without fsync |
+| O1 witness log | + | + | 0 | + (crush 0) | 0 | 0 | - | one token-bound append verb, and a seal at `ReapDead` | the daemon dies with the seat (records arrive late or not at all); marvel is absent; an interactive seat's seal carries no exit status |
+| O2 structure tailer | + | 0 | + | + | 0 | - | 0 | an adapter per harness, and a store-locator field | the harness changes its store format; the store is mid-write (a live crush store is unchecked); the store holds little of the R-204 set |
+| O3 seat journal | + | + | 0 | + | 0 | 0 | 0 | the same append verb, and a `log` tool | a kill lands mid-turn (that turn is lost); the bus is down (MCP variant); the hook cannot write under the seat's sandbox (codex at `-s read-only` is unchecked) |
+| O5 outbox shadow | + | 0 | + | + | 0 | - | + | nothing | work is not done through bus sends; an ack is read as handled (the inbox acks on receipt, `director-mcp/bus.go:221`, `:1004`) |
+| O4 render | + | 0 | 0 | + | 0 | + | 0 | nothing; director K4, K9 and K15 (director#274) | the records it folds do not exist yet; at a planned max-age rotation of a read-only seat, unless a dossier may stand for the marker (ruling 12) |
+| O8 resume | + | - | - | 0 | - | 0 | + | pass `--resume`; keep `HarnessSessionID` | the harness session id is unknown (marvel keeps one for a fresh Claude launch only); the transcript carries a secret; the restored permission mode is not the one the role declares |
+| O10 read-back | 0 | + | - | + | 0 | 0 | + | a bus publisher (marvel publishes nothing today) | there is no peer to check the restatement; the daemon may not publish on the bus (ruling 8) |
 
 No option scores + on S1, S4 and S6 together. The options that survive a
 kill without the seat carry little of the R-204 set; the ones that carry it
@@ -151,7 +151,8 @@ test, and it does not detect private-repo text. The option says so.
 Every recommendation is valid until 2026-10-23; the architect role
 re-checks it then. Nothing executes on silence.
 
-**Open split.** Should the panel name a starting combination?
+**Open split.** Should the panel name a starting combination? The panel
+recommends nothing here; it split 5 to 3 to 1:
 - 5 of 9 say P now, then Q's shared append verb, because P is mostly built
   and only Q unblocks read-only seats. One of the five holds this only while
   the verb stays optional beside direct hook appends.
@@ -159,7 +160,16 @@ re-checks it then. Nothing executes on silence.
   and no kill test was run.
 - 1 of 9 says Q first, with P's render as the fallback.
 
-**Rulings the options need:**
+The architect's recommendation, with that dissent recorded: the 5-of-9
+position, P now and then Q's shared append verb. P reuses records that
+exist, and Q is the only bundle that passed the read-only rotation
+scenario. The three-seat objection stands: no kill test was run, so this
+order rests on desk reasoning.
+
+**Rulings the options need.** The panel accepted this list 9 to 0 and
+recommends nothing on any single ruling; each is the operator's to answer.
+Round 4 named twelve; the two on O7 and O9 fell with those options, and
+the final round added the last two.
 1. May marvel read each harness's private store, read-only and local, with
    optional adapters that fail closed? (O2)
 2. Is a 30-day harness transcript an accepted second copy, given the 7-day
@@ -181,8 +191,10 @@ re-checks it then. Nothing executes on silence.
     read-only seat?
 
 **Found on the way, outside the options:**
-- director's `auditMirror` keeps full send bodies for 30 days
-  (`director-mcp/bus.go:889-893`), against the 7-day handoff ruling.
+- director's `auditMirror` publishes every send's full body to
+  `agent.audit` (`director-mcp/bus.go:889-893`), and the `AGENT_AUDIT`
+  stream keeps it for 30 days (`--max-age 720h`, director `README.md:224`),
+  against the 7-day handoff ruling.
 - marvel drains the predecessor as soon as the successor runs, and a health
   restart drops the successor's lineage. `Predecessor` is set only on the
   shift spawn (`internal/team/controller.go:2315`); the health path deletes
@@ -201,10 +213,16 @@ Checked at the pins or on one host:
 - marvel mints and keeps `HarnessSessionID` for a fresh Claude launch only
   (`internal/runtime/claude.go:86-93`, `internal/api/types.go:314`), and no
   store-path field exists for any harness;
-- below tmux 3.5, death by signal and lost status read the same
-  (`internal/api/types.go:273-276`);
+- below tmux 3.5, death by signal and lost status read the same, for a
+  headless seat (`internal/api/types.go:273-276`);
 - the daemon reaps at start (`internal/daemon/daemon.go:624`);
-- `remain-on-exit` is on (`internal/tmux/driver.go:424-442`);
+- `remain-on-exit` is the global default (`internal/tmux/driver.go:424-442`),
+  but `NewPane` turns it off for every interactive role (`:518-523`), so an
+  interactive seat's pane vanishes on exit and its `ExitStatus` is empty
+  (`internal/api/types.go:277-278`). A SIGKILLed interactive seat therefore
+  leaves no exit status: marvel learns only that the pane is gone. Every
+  option's S1 score for interactive seats assumes no cause of death is
+  recorded;
 - the director MCP shim exits on a bus connect failure
   (`director-mcp/main.go:147-151`);
 - the inbox ack floor is keyed to the agent id, so a successor never reads
