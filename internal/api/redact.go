@@ -2,6 +2,7 @@ package api
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -14,15 +15,24 @@ const Redacted = "(redacted)"
 // and is the whole definition: a credential stored under a key that matches
 // nothing here prints (docs/design/describe-redaction.md section 10, ruling 1).
 var secretKeySubstrings = []string{
-	"secret", "token", "password", "passwd", "passphrase", "credential",
+	"secret", "password", "passwd", "passphrase", "credential",
 	"apikey", "api_key", "api-key", "accesskey", "access_key",
-	"privatekey", "private_key", "auth", "bearer", "cookie",
+	"privatekey", "private_key", "sshkey", "signingkey", "encryptionkey",
+	"bearer", "cookie", "webhook", "dsn",
+	"database_url", "db_url", "redis_url", "mongodb_uri", "mongodb_url", "mongo_uri", "mongo_url",
 }
 
 // secretKeyWords are whole words of a key, split on _ - . and :, that mark it
-// as secret-looking. They are words and not substrings so KEYBOARD, MONKEY and
-// PATH stay visible.
-var secretKeyWords = []string{"key", "pat"}
+// as secret-looking. They are words and not substrings so KEYBOARD, MONKEY,
+// PATH, AUTHOR_NAME, BYPASS_CACHE and TOKENIZERS_PARALLELISM stay visible.
+var secretKeyWords = []string{
+	"key", "pat", "pass", "pw", "token", "tokens", "auth", "authorization",
+}
+
+// secretKeyMultiWordOnly are words that mark a key as secret-looking only when
+// the key has another word beside them: MYSQL_PWD is a password, and PWD alone
+// is the shell's working directory.
+var secretKeyMultiWordOnly = []string{"pwd"}
 
 // SecretKey reports whether an Env key looks like it names a secret.
 func SecretKey(name string) bool {
@@ -32,13 +42,19 @@ func SecretKey(name string) bool {
 			return true
 		}
 	}
-	for _, w := range strings.FieldsFunc(lower, func(r rune) bool {
+	// A run-together camel-case name such as GitHubToken ends in the word.
+	if strings.HasSuffix(lower, "token") {
+		return true
+	}
+	words := strings.FieldsFunc(lower, func(r rune) bool {
 		return r == '_' || r == '-' || r == '.' || r == ':'
-	}) {
-		for _, sw := range secretKeyWords {
-			if w == sw {
-				return true
-			}
+	})
+	for _, w := range words {
+		if slices.Contains(secretKeyWords, w) {
+			return true
+		}
+		if len(words) > 1 && slices.Contains(secretKeyMultiWordOnly, w) {
+			return true
 		}
 	}
 	return false

@@ -51,14 +51,43 @@ func isResponse(t types.Type) bool {
 	if t == nil {
 		return false
 	}
+	t = types.Unalias(t)
 	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
+		t = types.Unalias(p.Elem())
 	}
 	n, ok := t.(*types.Named)
 	if !ok || n.Obj().Pkg() == nil {
 		return false
 	}
 	return n.Obj().Name() == "Response" && n.Obj().Pkg().Path() == daemonPath
+}
+
+// resultOfResponse reports whether sel names Response.Result, directly or
+// promoted through any chain of embedded structs and pointers. The selection's
+// index path says which struct holds the field, so a Result field on some other
+// type is not matched.
+func resultOfResponse(info *types.Info, sel *ast.SelectorExpr) bool {
+	if sel.Sel.Name != "Result" {
+		return false
+	}
+	s, ok := info.Selections[sel]
+	if !ok || s.Kind() != types.FieldVal {
+		return false
+	}
+	t := s.Recv()
+	path := s.Index()
+	for _, idx := range path[:len(path)-1] {
+		t = types.Unalias(t)
+		if p, ok := t.(*types.Pointer); ok {
+			t = types.Unalias(p.Elem())
+		}
+		st, ok := t.Underlying().(*types.Struct)
+		if !ok {
+			return false
+		}
+		t = st.Field(idx).Type()
+	}
+	return isResponse(t)
 }
 
 // responseWrites type-checks files as package pkgPath and returns one line for
@@ -112,12 +141,23 @@ func responseWrites(fset *token.FileSet, pkgPath string, files []*ast.File, imp 
 					}
 				case *ast.AssignStmt:
 					for _, lhs := range v.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Result" && isResponse(info.TypeOf(sel.X)) {
+						if sel, ok := lhs.(*ast.SelectorExpr); ok && resultOfResponse(info, sel) {
 							flag(sel.Pos(), "assignment to Response.Result")
 						}
 					}
+				case *ast.CallExpr:
+					// A conversion to Response from another type, a defined type
+					// or an anonymous struct, builds a Response with a Result
+					// without naming the field against Response.
+					tv, ok := info.Types[v.Fun]
+					if !ok || !tv.IsType() || !isResponse(tv.Type) || len(v.Args) != 1 {
+						return true
+					}
+					if !isResponse(info.TypeOf(v.Args[0])) {
+						flag(v.Pos(), "conversion to Response from another type")
+					}
 				case *ast.UnaryExpr:
-					if sel, ok := v.X.(*ast.SelectorExpr); ok && v.Op == token.AND && sel.Sel.Name == "Result" && isResponse(info.TypeOf(sel.X)) {
+					if sel, ok := v.X.(*ast.SelectorExpr); ok && v.Op == token.AND && resultOfResponse(info, sel) {
 						flag(sel.Pos(), "address of Response.Result taken")
 					}
 				}
