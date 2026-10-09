@@ -23,10 +23,24 @@ var secretKeySubstrings = []string{
 	"database_url", "db_url", "redis_url", "mongodb_uri", "mongodb_url", "mongo_uri", "mongo_url",
 }
 
-// secretKeyWords are whole words that mark a key as secret-looking. They are
+// secretKeyWords are whole words that mark a key as secret-looking (authorization
+// is covered by authWord, which matches any word that starts with auth). They are
 // taken from the key split on _ - . and : only, so a camel-case hotKey or
 // patCount is not a key or a pat, and KEYBOARD, MONKEY and PATH stay visible.
-var secretKeyWords = []string{"key", "pat", "authorization"}
+var secretKeyWords = []string{"key", "pat"}
+
+// secretKeyLastWords mark a key when they are the last word of the finer split
+// (see keyWords), so a camel-case clientKey, githubPat and stripeKey redact
+// while patCount does not.
+var secretKeyLastWords = []string{"key", "pat"}
+
+// notAuthWords are whole words that begin with auth and are not credentials.
+// They are exact words so a run-together name such as AUTHENTICATIONKEY still
+// redacts.
+var notAuthWords = []string{
+	"oauth", "author", "authors", "authored", "authoring", "authority", "authorities", "authorship",
+	"authentic", "authenticate", "authenticated", "authentication",
+}
 
 // secretPasswordWords mark a key as secret-looking when they are any word but
 // the first of a longer name: DB_PASS, DB_PASS_PROD, SMTP_PW_2 and MYSQL_PWD
@@ -57,6 +71,9 @@ func SecretKey(name string) bool {
 		if tokenWord(w) || authWord(w) {
 			return true
 		}
+		if i == len(words)-1 && slices.Contains(secretKeyLastWords, w) {
+			return true
+		}
 		if slices.Contains(secretPasswordWords, w) && (i > 0 || (len(words) == 1 && w != "pwd")) {
 			return true
 		}
@@ -74,9 +91,9 @@ func tokenWord(w string) bool {
 }
 
 // authWord matches a word that is, ends in, or starts with auth (BASICAUTH,
-// AUTHHEADER), but not oauth, author, authority or authentication.
+// AUTHHEADER), but not the words in notAuthWords.
 func authWord(w string) bool {
-	if w == "oauth" || strings.HasPrefix(w, "author") || strings.HasPrefix(w, "authentic") {
+	if slices.Contains(notAuthWords, w) {
 		return false
 	}
 	return strings.HasSuffix(w, "auth") || strings.HasPrefix(w, "auth")
