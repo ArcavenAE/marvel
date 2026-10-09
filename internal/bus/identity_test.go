@@ -18,6 +18,7 @@ func sampleIdentity() childproof.Identity {
 		Exe:   "/opt/homebrew/Cellar/nats-server/2.14.6/bin/nats-server",
 		Argv:  []string{"/opt/homebrew/bin/nats-server", "-c", "/state/nats/nats-server.conf"},
 		Pgid:  41237,
+		Ppid:  4242,
 	}
 }
 
@@ -42,8 +43,8 @@ func TestIdentityRecordRoundTripsAndIsPrivate(t *testing.T) {
 	if got.Start != id.Start || got.Exe != id.Exe || !slices.Equal(got.Argv, id.Argv) {
 		t.Errorf("identity() = %+v, want %+v", got, id)
 	}
-	if got.Pgid != 0 {
-		t.Errorf("the process group is read live and never recorded; got %d", got.Pgid)
+	if got.Pgid != 0 || got.Ppid != 0 {
+		t.Errorf("the process group and the parent are read live and never recorded; got %d and %d", got.Pgid, got.Ppid)
 	}
 	info, err := os.Stat(path)
 	if err != nil {

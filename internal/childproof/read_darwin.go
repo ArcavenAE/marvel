@@ -33,5 +33,6 @@ func readIdentity(pid int) (Identity, error) {
 		Exe:   exe,
 		Argv:  argv,
 		Pgid:  int(ki.Eproc.Pgid),
+		Ppid:  int(ki.Eproc.Ppid),
 	}, nil
 }

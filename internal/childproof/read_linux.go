@@ -12,15 +12,15 @@ import (
 
 // readIdentity reads what the kernel says about pid now. Any error, including
 // "no such process", is returned; the caller treats an error as unproven.
-// /proc/<pid>/stat gives the start time (field 22) and the process group
-// (field 5); boot_id names the boot, so ticks from two boots never compare
+// /proc/<pid>/stat gives the start time (field 22), the process group
+// (field 5) and the parent (field 4); boot_id names the boot, so ticks from two boots never compare
 // equal; /proc/<pid>/exe is the executable.
 func readIdentity(pid int) (Identity, error) {
 	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return Identity{}, err
 	}
-	pgrp, ticks, err := parseStat(stat)
+	ppid, pgrp, ticks, err := parseStat(stat)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -41,5 +41,6 @@ func readIdentity(pid int) (Identity, error) {
 		Exe:   strings.TrimSuffix(exe, " (deleted)"),
 		Argv:  argv,
 		Pgid:  pgrp,
+		Ppid:  ppid,
 	}, nil
 }

@@ -14,6 +14,7 @@ package childproof
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -109,7 +110,8 @@ func (p *Prober) wired() bool { return p != nil && p.read != nil && p.kill != ni
 // on linux /proc/<pid>/cmdline is empty for a moment after exec. It is the one
 // constructor without a record, and it takes the *exec.Cmd, not a pid, so a pid
 // read from a file cannot reach it; cmd must have been started and not yet
-// waited for, which is what makes its pid ours.
+// waited for, and the kernel must name this process as its parent: the handle
+// alone cannot be trusted, since a caller can build one for any pid.
 func (p *Prober) Spawned(cmd *exec.Cmd) (Child, error) {
 	if !p.wired() {
 		return Child{}, errNoSeams
@@ -121,10 +123,16 @@ func (p *Prober) Spawned(cmd *exec.Cmd) (Child, error) {
 	if pid <= 1 {
 		return Child{}, fmt.Errorf("childproof: pid %d names no single process", pid)
 	}
+	self := os.Getpid()
 	deadline := time.Now().Add(identifyWindow)
 	for {
 		id, err := p.read(pid)
 		if err == nil {
+			// exec.Cmd.Process and os.Process.Pid are exported, so a handle
+			// proves nothing about the pid in it; the kernel's parent does.
+			if id.Ppid != self {
+				return Child{}, fmt.Errorf("childproof: pid %d is not a child of this process (its parent is %d)", pid, id.Ppid)
+			}
 			return Child{pid: pid, id: id, by: p}, nil
 		}
 		if !time.Now().Before(deadline) {
@@ -264,25 +272,28 @@ func reasonOf(live, want Identity) string {
 	}
 }
 
-// parseStat reads /proc/<pid>/stat: field 5 (the process group) and field 22
+// parseStat reads /proc/<pid>/stat: field 4 (the parent), field 5 (the process group) and field 22
 // (the start time in clock ticks since boot). The command name is field 2 and
 // may hold spaces and parentheses, so fields are counted from the last ')'.
-func parseStat(b []byte) (pgrp int, startTicks uint64, err error) {
+func parseStat(b []byte) (ppid, pgrp int, startTicks uint64, err error) {
 	s := string(b)
 	i := strings.LastIndexByte(s, ')')
 	if i < 0 {
-		return 0, 0, errors.New("childproof: stat has no command field")
+		return 0, 0, 0, errors.New("childproof: stat has no command field")
 	}
 	f := strings.Fields(s[i+1:])
 	// f[0] is field 3 (state); field n is f[n-3].
 	if len(f) < 20 {
-		return 0, 0, fmt.Errorf("childproof: stat has %d fields after the command, want 20 or more", len(f))
+		return 0, 0, 0, fmt.Errorf("childproof: stat has %d fields after the command, want 20 or more", len(f))
+	}
+	if _, err := fmt.Sscanf(f[1], "%d", &ppid); err != nil {
+		return 0, 0, 0, fmt.Errorf("childproof: stat parent %q: %w", f[1], err)
 	}
 	if _, err := fmt.Sscanf(f[2], "%d", &pgrp); err != nil {
-		return 0, 0, fmt.Errorf("childproof: stat process group %q: %w", f[2], err)
+		return 0, 0, 0, fmt.Errorf("childproof: stat process group %q: %w", f[2], err)
 	}
 	if _, err := fmt.Sscanf(f[19], "%d", &startTicks); err != nil {
-		return 0, 0, fmt.Errorf("childproof: stat start time %q: %w", f[19], err)
+		return 0, 0, 0, fmt.Errorf("childproof: stat start time %q: %w", f[19], err)
 	}
-	return pgrp, startTicks, nil
+	return ppid, pgrp, startTicks, nil
 }
