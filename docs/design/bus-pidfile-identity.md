@@ -175,11 +175,15 @@ func New() *Prober
 // NewForTest returns a Prober with the given seams. It returns an error
 // unless testing.Testing() reports a test binary (Go 1.21 and later; the
 // module is on 1.26), or when either seam is nil, so a test cannot get the
-// real kill by leaving one unset.
+// real kill by leaving one unset. testing.Testing() is also true for
+// non-test code linked into a test binary, so a source test (section 7,
+// item 9) fails on any reference to NewForTest outside a _test.go file.
 func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal) error) (*Prober, error)
 
 // Prove reads pid's live identity and returns a Child when it equals want
-// (section 4.1, rules 2 to 5).
+// (section 4.1, rules 2 to 5). Like AdoptLegacy and Signal, it returns an
+// error for a nil Prober or a nil seam rather than panicking, so a wiring
+// mistake leaves the daemon up with the bus unproven.
 func (p *Prober) Prove(pid int, want Identity) (Child, error)
 
 // AdoptLegacy is the one constructor without a recorded identity: V11 (a)
@@ -251,7 +255,17 @@ The operator weighs this in V11 alongside the cost of (b).
 
 ## 7. Test plan (red first)
 
-Every test signals only processes the test started, or none. The tests build their `Prober` with `NewForTest` and a `kill` that fails the test on any pid outside the children the test registered, so a test that misses the swap, or a mutant that drops a guard, fails instead of signalling. No fixture uses a literal pid such as 4242, which can name a live process; every fixture pid is a child the test started.
+Every test signals only processes the test started, or none. Two kinds of test meet that in different ways.
+
+**Unit tests in `internal/bus`** build their `Prober` with `NewForTest` and a `kill` that fails the test on any pid outside the children the test registered. No fixture uses a literal pid such as 4242, which can name a live process; every fixture pid is a child the test started. A test that misses the swap, or a mutant that drops a guard, fails instead of signalling.
+
+**Tests in the tree that run a real broker and stop it** need real signals to reach that broker. They are:
+- `internal/bus/supervisor_test.go`: `TestSupervisorStartsReloadsAndStopsWithDaemon` (`:122`) and `TestSupervisorKeepThenAdoptAcrossDaemons` (`:171`);
+- `internal/bus/provision_test.go:138` and `internal/bus/role_users_test.go:298`, which build a second supervisor over a running broker;
+- `internal/daemon/bus_leaf_restart_test.go:66`;
+- the daemon tests that reach `daemon.go:3381` (`bus_test.go`, `bus_status_test.go`, `status_test.go`) and `cmd/marvel/bus_test.go`, which starts a daemon with a bus.
+
+For the `internal/bus` tests among them, the supervisor gets an unexported spawn hook that a test sets. The hook registers `cmd.Process.Pid` as soon as the broker starts, and the test's `kill` forwards to `syscall.Kill` for registered pids only, failing on any other. The daemon and `cmd/marvel` tests cannot reach an unexported hook, so they run the production path: `daemon.go:3381` builds its supervisor with `New()`. Their real signals reach only the broker their own supervisor spawned and proved, which is the property this design adds.
 
 1. **Seams.** the `Prober`'s `read` replaces `probePID` as the identity seam, and its `kill` is the signal seam behind `Signal` (section 4.5); the test version records calls. `childproof`'s own tests cover `Signal` refusing pid 0 and pid 1 for every signal, a zero `Child`, a `Child` from another `Prober`, and a nil seam; `NewForTest` refusing a nil seam; and `AdoptLegacy` refusing a wrong executable or a missing `-c conf`. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
 2. **Reused pid, not listening** (the #794 case). The fake `read` returns a start time different from the sidecar's; the listener is closed. Assert no `kill` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
@@ -264,9 +278,10 @@ Every test signals only processes the test started, or none. The tests build the
    Table-driven over both constants, so whichever is ruled, the other stays tested until it is deleted.
 7. **Write order.** The sidecar exists and parses before the pidfile does. A sidecar whose pid differs from the pidfile's reads as stale with reason `sidecar-pid`.
 8. **Platforms.** `readIdentity` on the test's own child returns a start time that is stable across two reads and different for a second child. This runs on darwin locally and on ubuntu in CI; the linux reads are unmeasured until that test runs there.
+9. **Source check.** A test in `internal/childproof` parses every non-test `.go` file in the module and fails on any reference to `NewForTest` outside a `_test.go` file, other than its own declaration.
 
 ## 8. Plan
 
-One flat ticket for the builder, with red tests 2 to 8 before green. The builder ships whichever V11 value is ruled.
+One flat ticket for the builder, with red tests 2 to 9 before green. The builder ships whichever V11 value is ruled.
 
 My recommendation is (a), against the (b) plurality, for the reasons in section 5: (b) costs a manual stop on every cluster, and the cost of a wrong adopt under (a) falls on a process already serving this daemon's port from this daemon's store. This recommendation is valid until 2026-10-23 or until V11 is ruled, whichever comes first; the architect re-checks it then.
