@@ -19,7 +19,12 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
+
+// identifyWindow bounds how long Identify retries a failed read. A variable so
+// a test can shorten it.
+var identifyWindow = time.Second
 
 // errNoSeams is what a Prober without both seams answers. A wiring mistake
 // leaves the daemon up with the child unproven, never panicking.

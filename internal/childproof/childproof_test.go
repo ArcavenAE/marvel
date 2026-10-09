@@ -366,3 +366,58 @@ func TestReadIdentityOfARealChild(t *testing.T) {
 	}
 	t.Error("readIdentity still succeeds for a reaped child")
 }
+
+// A child that has just been started can be read before the kernel has filled
+// in its argument list: on linux, /proc/<pid>/cmdline is empty for a moment
+// after exec, although the parent already sees the exec as done (measured in
+// a linux container, where the first read of a fresh child failed). Identify is
+// for exactly that caller, so it retries inside a bounded window.
+func TestIdentifyRetriesWhileAFreshChildIsStillBeingReadable(t *testing.T) {
+	old := identifyWindow
+	identifyWindow = 2 * time.Second
+	t.Cleanup(func() { identifyWindow = old })
+	id := broker("darwin:100.5")
+	calls := 0
+	read := func(int) (Identity, error) {
+		calls++
+		if calls < 3 {
+			return Identity{}, errors.New("the process has no readable argument list")
+		}
+		return id, nil
+	}
+	p, err := NewForTest(read, func(int, syscall.Signal) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Identify(41)
+	if err != nil || got.Start != id.Start || calls != 3 {
+		t.Fatalf("Identify = %+v, %v after %d reads; want the identity on the third", got, err, calls)
+	}
+}
+
+func TestIdentifyGivesUpAndProveDoesNotRetry(t *testing.T) {
+	old := identifyWindow
+	identifyWindow = 30 * time.Millisecond
+	t.Cleanup(func() { identifyWindow = old })
+	calls := 0
+	read := func(int) (Identity, error) { calls++; return Identity{}, syscall.ESRCH }
+	p, err := NewForTest(read, func(int, syscall.Signal) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := p.Identify(41); err == nil {
+		t.Error("Identify succeeded for a process that never reads")
+	}
+	if calls < 2 || time.Since(start) > 2*time.Second {
+		t.Errorf("Identify made %d reads in %s; want a few inside the window", calls, time.Since(start))
+	}
+	// Prove and Signal read a long-running process: one failed read is an answer.
+	calls = 0
+	if _, err := p.Prove(41, broker("a")); err == nil || calls != 1 {
+		t.Errorf("Prove: err = %v after %d reads, want a refusal after exactly one", err, calls)
+	}
+	if err := p.Signal(Child{pid: 41, id: broker("a"), by: p}, syscall.SIGHUP, false); err == nil || calls != 2 {
+		t.Errorf("Signal: err = %v, reads so far %d, want a refusal after one more read", err, calls)
+	}
+}
