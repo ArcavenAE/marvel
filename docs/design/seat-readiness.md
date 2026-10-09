@@ -85,6 +85,9 @@ role cannot invent a check.
 | envoy | `gh.read`, `gh.post` |
 | a seat that works in Jira | `jira.read`, `jira.write` |
 
+`first-turn` and `ack` belong to every job's duty set, so a `fail` on either
+counts for any job the router places.
+
 ## 4. Checks
 
 A check proves a duty. It never reads or prints a credential.
@@ -95,7 +98,7 @@ A check proves a duty. It never reads or prints a credential.
 | a write (`gh.post`, `gh.comment`, `jira.write`) | none harmless; proving a post means posting. The last successful write and its time, from the event the seat already produces | `proven` with that time, else `unproven`. A seat's own report never makes a write `proven` |
 | `ack` | the director ledger's last ack from the seat; a denial seen by the watcher | observed only; never a test send |
 | `first-turn` | turn evidence by the `ready_by` deadline (section 5) | observed only; `unsupported` where a harness gives no turn evidence |
-| a held dialog | one plain capture, matched to a version-ranged pattern | the watcher's `blocker_class` value (`docs/design/marvel-watcher.md:95`), `dialog` with the matched pattern class as its reason code, or `unknown` with `no-dialog-pattern`; see the note below |
+| a held dialog | one plain capture, matched to a version-ranged pattern | a match writes `fail` to `first-turn` with `Source` `pane:dialog:<class>`, and the watcher's record carries `blocker_class` `dialog` (`docs/design/marvel-watcher.md:95`). No match writes no duty value; the watcher's record carries `unknown` with `no-dialog-pattern`. See the note below |
 
 Rules for every check:
 
@@ -116,7 +119,9 @@ Rules for every check:
 **Structural codes.** Only these `fail` codes are structural, and only they
 can exclude a seat (section 6 rule 1): `seat:auth:auth-rejected` and
 `seat:auth:forbidden` (the far side refused the credential), a `denial` the
-watcher saw for a tool the duty needs, and a matched `dialog`. Every
+watcher saw for a tool the duty needs, and a matched dialog
+(`pane:dialog:<class>` on `first-turn`). `pane` is a reading of the seat's own
+pane, so the register's host-vantage rule does not discount it. Every
 `seat:reach` code (`dns`, `connect`, `tls`) and `rate-limited` is transient:
 after its one retry it still prints `fail` with its code, and it routes as ask
 first, never excluded. A reach that keeps failing is reported to the
@@ -140,7 +145,10 @@ design adds no text retention to either.
   withdraws, because it is a time threshold.
 - **The visit.** Past `ready_by`, one plain capture (the watchdog's
   `CapturePaneJoined`, `internal/daemon/watchdog.go:528`, not the resizing
-  composer read), classified, never pressing a key.
+  composer read), classified, never pressing a key. The deadline only
+  schedules the capture. What the capture finds is evidence: a matched dialog
+  is a structural `fail` and excludes (section 6 rule 1); no match changes no
+  duty value.
 - **Cadence.** Per check, set by its cost as `valid_until`. No global interval.
 
 ## 6. Routing
@@ -154,13 +162,15 @@ applies the rule to the cells; marvel never disables a seat.
    with the reason shown. A supervisor may override by naming the seat. This
    is the one place a cell removes a seat from a list.
 2. A fresh `proven`: eligible for that duty.
-3. `unproven`, `-` or `?`: ask first; never excluded and never assumed.
+3. `unproven`, `-`, `?`, or a transient `fail` (section 4): ask first; never
+   excluded and never assumed.
 4. A seat not eligible for a duty is not borrowed from another scope.
 
 Counts, rates and time thresholds never exclude; they stay diagnostic
 (ADR-007). A seat may withdraw itself; it may never restore or qualify itself
-by assertion. Nothing excludes or withdraws on silence or a clock; the
-`ready_by` deadline and the visit past it only report.
+by assertion. Nothing excludes or withdraws on silence or a clock: the
+`ready_by` deadline schedules a report and a capture, and only the evidence
+the capture finds can exclude.
 
 ## 7. Plan (filed as flat tickets after the rulings)
 
