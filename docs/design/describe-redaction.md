@@ -193,8 +193,9 @@ The socket scope issue in section 8 is filed separately, not as a child here.
    `#`, or at white space, or at the start of a second URL. The userinfo is
    everything before the last `@` of that authority, so a password holding `@`,
    `:`, `,`, `;` or a raw `"`, `<`, `>`, `\`, `^`, a backtick, `{`, `|` or `}`
-   is covered, wherever the `@` sits in it. Those raw characters end the
-   authority only after the last `@`, so `redis://u:p@h}` keeps `h`.
+   is covered, wherever the `@` sits in it. Those raw characters end nothing, so
+   only the text before the last `@` is redacted and `redis://u:p@h}` keeps
+   `h}`.
 
    **Deviation from the ruling's "host stays readable".** The syntax cannot tell
    `u:p@h"x@y` from `u:p@x"y@h`, and a secret never printing outranks a readable

@@ -102,10 +102,10 @@ func TestReviewerTableURLRowsNeverPrintTheirPassword(t *testing.T) {
 	}
 }
 
-// RFC 3986 never allows these characters in an authority, so each one ends it:
-// a value that carries a URL inside JSON, markup or a template keeps its host
-// and the text after it.
-func TestRedactURLUserinfoEndsAtCharactersAnAuthorityCannotHold(t *testing.T) {
+// RFC 3986 never allows these characters in an authority, but they end nothing
+// here: only the text before the last @ is redacted, so what follows the last @
+// is left as it was stored, whichever of these characters it holds.
+func TestRedactURLUserinfoLeavesTheTextAfterTheLastAtAlone(t *testing.T) {
 	for _, c := range []string{`"`, "<", ">", `\`, "^", "`", "{", "|", "}"} {
 		in := "redis://u:p@h" + c + "rest"
 		want := "redis://(redacted)@h" + c + "rest"
@@ -120,8 +120,8 @@ func TestRedactURLUserinfoEndsAtCharactersAnAuthorityCannotHold(t *testing.T) {
 }
 
 // RFC 3986 wants these characters percent-encoded, but generated passwords carry
-// them raw. They end the authority only after an @ has been seen, so a password
-// holding one is redacted whole (review 5466478390, item 1).
+// them raw. They end nothing, so a password holding one is redacted whole
+// (review 5466478390, item 1).
 func TestRedactURLUserinfoCoversAPasswordHoldingACharacterAnAuthorityCannotHold(t *testing.T) {
 	for _, c := range []string{`"`, "<", ">", `\`, "^", "`", "{", "|", "}"} {
 		in := "redis://u:CNRY" + c + "pw@h/0"
@@ -134,8 +134,8 @@ func TestRedactURLUserinfoCoversAPasswordHoldingACharacterAnAuthorityCannotHold(
 
 // The syntax cannot tell u:p@h"x@y from u:p@x"y@h, so on a redaction path a
 // secret never prints for the sake of a readable host: the userinfo ends at the
-// last @ before the authority ends, and a terminator character counts as an end
-// only after that @ (review 5466634279).
+// last @ before the authority ends, and a raw terminator character does not end
+// the authority at all (review 5466634279).
 func TestRedactURLUserinfoNeverPrintsASecretNearARawTerminator(t *testing.T) {
 	for _, in := range []string{
 		"redis://u:p@x^CNRYtail@h/0",
