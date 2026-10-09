@@ -383,93 +383,47 @@ func TestTerminateProvesBeforeEverySignal(t *testing.T) {
 	}
 }
 
-// A pidfile with no identity record is the first start after the upgrade
-// (V11). Whatever the ruling, listener-answers rows differ and the others do
-// not; the table runs every mode so the one not ruled stays tested until it is
-// deleted (design section 7, item 6).
-func TestLegacyPidfile(t *testing.T) {
-	type outcome struct {
-		err          string // substring of Start's error; empty means Start succeeds
-		adopted      bool
-		sidecar      bool
-		pidfileLeft  bool
-		unprovenEvts int
-		pidfileState string
-	}
-	matching := func(s *Supervisor) childproof.Identity { return brokerIdentity(s, "darwin:100.000000") }
-	notBroker := func(s *Supervisor) childproof.Identity {
-		id := brokerIdentity(s, "darwin:100.000000")
-		id.Exe, id.Argv = "/bin/sleep", []string{"sleep", "-c", s.mgr.ConfPath()}
-		return id
-	}
-	for name, tc := range map[string]struct {
-		mode  legacyMode
-		live  func(s *Supervisor) childproof.Identity
-		want  outcome
-		hupAt bool // exactly one SIGHUP to the pid alone
-	}{
-		"a: a nats-server running this conf is adopted": {
-			legacyAdoptOnExecMatch, matching,
-			outcome{adopted: true, sidecar: true, pidfileLeft: true, pidfileState: "proven"},
-			true,
-		},
-		"a: another executable is not adopted": {
-			legacyAdoptOnExecMatch, notBroker,
-			outcome{err: "stranger", pidfileState: "stale"},
-			false,
-		},
-		"b: nothing is adopted or signalled": {
-			legacyRefuseUnproven, matching,
-			outcome{err: "unproven", pidfileLeft: true, unprovenEvts: 1, pidfileState: "legacy"},
-			false,
-		},
-		"unruled: nothing is adopted or signalled, and the error names the ruling": {
-			legacyUnruled, matching,
-			outcome{err: "V11", pidfileLeft: true, unprovenEvts: 1, pidfileState: "legacy"},
-			false,
+// A pidfile with no identity record is the first start after the upgrade. The
+// operator ruled V11 (b): the child is unproven, so with the port held the
+// supervisor reports "port held, child unproven" and acts on nothing. A broker
+// that looks like this daemon's own is treated the same as any other process,
+// since only a recorded identity proves a child.
+func TestLegacyPidfileIsUnprovenAndNothingIsDone(t *testing.T) {
+	for name, live := range map[string]func(s *Supervisor) childproof.Identity{
+		"a nats-server running this conf": func(s *Supervisor) childproof.Identity { return brokerIdentity(s, "darwin:100.000000") },
+		"another executable": func(s *Supervisor) childproof.Identity {
+			id := brokerIdentity(s, "darwin:100.000000")
+			id.Exe, id.Argv = "/bin/sleep", []string{"sleep", "-c", s.mgr.ConfPath()}
+			return id
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, _, ring := newTestSupervisor(t, "")
 			quiet(s)
-			s.legacy = tc.mode
 			pt := tableOf(s)
 			pid := reapedPid(t)
-			pt.plant(pid, tc.live(s))
+			pt.plant(pid, live(s))
 			writePidfile(t, s, pid)
 			standInListener(t, s)
 			err := s.Start(context.Background())
-			if tc.want.err == "" && err != nil {
-				t.Fatalf("Start: %v", err)
+			if err == nil || !strings.Contains(err.Error(), "port held, child unproven") || strings.Contains(err.Error(), "V11") {
+				t.Fatalf("Start = %v, want an error that says \"port held, child unproven\" and does not name a ruling", err)
 			}
-			if tc.want.err != "" && (err == nil || !strings.Contains(err.Error(), tc.want.err)) {
-				t.Fatalf("Start = %v, want an error containing %q", err, tc.want.err)
-			}
-			wantSigs := []sentSignal(nil)
-			if tc.hupAt {
-				wantSigs = []sentSignal{{pid, syscall.SIGHUP}}
-			}
-			if got := pt.signals(); !slices.Equal(got, wantSigs) {
-				t.Errorf("signals = %v, want %v", got, wantSigs)
+			if got := pt.signals(); len(got) != 0 {
+				t.Errorf("signals = %v, want none", got)
 			}
 			st := s.Status()
-			if st.Adopted != tc.want.adopted || st.Pidfile != tc.want.pidfileState {
-				t.Errorf("status = %+v, want adopted=%v pidfile=%s", st, tc.want.adopted, tc.want.pidfileState)
+			if st.Adopted || st.Ready || st.Pidfile != "legacy" {
+				t.Errorf("status = %+v, want not adopted, not ready, pidfile legacy", st)
 			}
-			if got := fileExists(sidecarPath(s.pidFile)); got != tc.want.sidecar {
-				t.Errorf("identity record present = %v, want %v", got, tc.want.sidecar)
+			if fileExists(sidecarPath(s.pidFile)) {
+				t.Error("an identity record was written for an unproven child")
 			}
-			if got := fileExists(s.pidFile); got != tc.want.pidfileLeft {
-				t.Errorf("pidfile present = %v, want %v", got, tc.want.pidfileLeft)
+			if !fileExists(s.pidFile) {
+				t.Error("the pidfile was removed while the port is held")
 			}
-			if n := len(eventsOfKind(ring, events.KindBusPidfileUnproven)); n != tc.want.unprovenEvts {
-				t.Errorf("bus.pidfile-unproven emitted %d times, want %d", n, tc.want.unprovenEvts)
-			}
-			if tc.want.sidecar {
-				rec, err := readIdentityFile(sidecarPath(s.pidFile))
-				if err != nil || rec.PID != pid || rec.Start != "darwin:100.000000" {
-					t.Errorf("the record written at adoption = %+v, %v", rec, err)
-				}
+			if n := len(eventsOfKind(ring, events.KindBusPidfileUnproven)); n != 1 {
+				t.Errorf("bus.pidfile-unproven emitted %d times, want 1", n)
 			}
 		})
 	}
