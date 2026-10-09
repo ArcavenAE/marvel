@@ -35,10 +35,11 @@ content: |
   locally and no finding stands behind it yet. It reported:
   - a KV put observed as a publish to `$JS.global.API.$KV.<bucket>.<key>`.
     The design still calls that subject assumed (`team-load-rollup.md`, the
-    put-subject line in the D1 section); a finding would need to carry the
+    put-subject line under D2); a finding would need to carry the
     measurement before the design relies on it;
   - a KV entry that names no writer;
-  - a recommendation of signed records (option d, not in the design), with
+  - a recommendation of signed records, option (d), now a row in the design's
+    D1 table, with
     conditions. Its condition that pinned clusters count as expected was
     declined by the 2026-10-09 D3 ruling; the re-checked recommendation in
     the design drops it.

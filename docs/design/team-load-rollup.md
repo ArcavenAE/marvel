@@ -85,7 +85,7 @@ Each has options, a recommendation and an expiry. Nothing here is built before t
 
 Recommended at first: (a), as #601 asks. (b) is a valid interim for the operator's own laptop, with no grant needed.
 
-**Status, 2026-10-09:** not ruled. The operator asked for a simulation of (a), (b) and (c) by two bmad agents first, hosted by another architect seat. That simulation reported on 2026-10-08 and voted for (d), which this table did not have before; its record is not committed. The architect's recommendation is now (d), as revised below. Director is confirming the ruling with the operator.
+**Status, 2026-10-09:** not ruled. The operator asked for a simulation of (a), (b) and (c) by two bmad agents first, hosted by another architect seat. That simulation reported on 2026-10-08 and voted for (d), which this table did not have before; its record is not committed. The architect's recommendation is now (d), as revised below. Director has put D1 to the operator.
 
 **D2. What stops a seat or a cluster from writing another cluster's load?**
 
