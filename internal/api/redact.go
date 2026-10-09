@@ -16,7 +16,7 @@ const Redacted = "(redacted)"
 // and is the whole definition: a credential stored under a key that matches
 // nothing here prints (docs/design/describe-redaction.md section 10, ruling 1).
 var secretKeySubstrings = []string{
-	"secret", "password", "passwd", "passphrase", "credential",
+	"secret", "password", "passwd", "passphrase", "passcode", "credential",
 	"apikey", "api_key", "api-key", "accesskey", "access_key",
 	"privatekey", "private_key", "sshkey", "signingkey", "encryptionkey",
 	"bearer", "cookie", "webhook", "dsn",
@@ -27,7 +27,7 @@ var secretKeySubstrings = []string{
 // is covered by authWord, which matches any word that starts with auth). They are
 // taken from the key split on _ - . and : only, so a camel-case hotKey or
 // patCount is not a key or a pat, and KEYBOARD, MONKEY and PATH stay visible.
-var secretKeyWords = []string{"key", "pat"}
+var secretKeyWords = []string{"key", "pat", "sk", "jwt"}
 
 // secretKeyLastWords mark a key when they are the last word of the finer split
 // (see keyWords), so a camel-case clientKey, githubPat and stripeKey redact
@@ -75,6 +75,10 @@ func SecretKey(name string) bool {
 			return true
 		}
 		if slices.Contains(secretPasswordWords, w) && (i > 0 || (len(words) == 1 && w != "pwd")) {
+			return true
+		}
+		// PW_HASH, PASS_HASH: a first password word that names a password hash.
+		if slices.Contains(secretPasswordWords, w) && i+1 < len(words) && words[i+1] == "hash" {
 			return true
 		}
 	}
