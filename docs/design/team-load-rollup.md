@@ -1,6 +1,6 @@
 # The per-team load rollup across clusters
 
-Proposal, 2026-10-08. Not ratified.
+Proposal, 2026-10-08. Partly ruled the same day (section 6): D2, D3, D5 and D6 are ruled; D1 waits on a simulation; D4 is not ruled.
 
 - Author: the architect seat, team arcaven.
 - Issue: #601. Builds on `docs/design/get-sessions-output.md`, which judged this rollup a separate design (its section 6).
@@ -49,7 +49,7 @@ Only each cluster's summary crosses. No pane content, no per-tick samples and no
 
 - **The record:** one value per cluster, holding the cluster name, marvel version, `observed_at`, `valid_until`, and the per-team rows from section 2.
 - **Where it lands:** a key-value bucket on the hub, with one key per cluster (decision D1). A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
-- **How it gets there:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 4 settles it. Who may write which key is then decided by grants, D2.
+- **How it gets there:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
 - **Cadence:** every 60 s, with `valid_until` at `observed_at` + 180 s (decision D4). ACTIVE% is a 15-minute share, so one minute of lag moves it little. A record is stale once a third publish is late: two missed, and the third later than 180 s. Clock skew between the publishing host and the reader moves that edge by the skew.
 - **Size:** about 100 bytes per team plus the agent names. Well under one message for any fleet today.
 
@@ -63,6 +63,7 @@ The three-state grammar applies per cluster, and every team row inherits its clu
 - **The header** says how many answered: `clusters: 2 of 3 fresh, 1 stale`. Who is in the expected set is decision D3.
 - **Ledger cells** carry their own as-of: the merged ledger's pass time. With no merged ledger (before A2, or with no reader), they print `-`. While a broker's reader is down, they print `?`. The ledger lists reader downtime under its gaps, and the view repeats that line.
 - **A stale claim is only claimed when every cluster is fresh.** A claim is stale when no fresh cluster lists the seat it names. If any cluster in the set is stale or never seen, the claim count prints `?` with the reason, because the missing seat may be on the cluster that did not answer. This guard exists because one claim held by a seat that no longer exists is the specimen #601 names.
+- **Every load key is unauthenticated.** Under the D2 ruling, any seat holding the global tier can write any cluster's key, so a key's cluster name is the writer's claim, not a proof. When the view reads hub keys, its header says so on every render: `load keys are unauthenticated: any global-tier seat can write them`. It never prints a key as verified.
 - **No hub at all:** the view falls back to the local cluster, with the header `clusters: local only (no hub)`. Marvel without the global tier, or without director, still prints the local rows (component independence).
 
 ## 5. Every number is diagnostic
@@ -77,11 +78,13 @@ Each has options, a recommendation and an expiry. Nothing here is built before t
 
 | | option | gives | costs |
 |---|---|---|---|
-| a | a hub key-value bucket, one key per cluster, put by each daemon over its leaf | any seat with hub read sees the fleet; a late reader sees every cluster at once | the grant work in D2, before the numbers can be trusted |
+| a | a hub key-value bucket, one key per cluster, put by each daemon over its leaf | any seat with hub read sees the fleet; a late reader sees every cluster at once | under the D2 ruling (c) there is no grant work, so every key stays unauthenticated: any seat holding the global tier can write any cluster's key (section 4) |
 | b | the reader fans out over `mrvl://` to each configured cluster | no global tier change; works today | only a reader holding every cluster's key sees the fleet, so supervisors on other hosts do not |
 | c | director computes and serves the rollup | one place joins asks and seats | director learns marvel's session model, which crosses the boundary the ledger design kept |
 
 Recommended: (a), as #601 asks. (b) is a valid interim for the operator's own laptop, with no grant needed.
+
+**Status, relayed by director on 2026-10-08:** not ruled. The operator asked for a simulation of (a), (b) and (c) by two bmad agents first, hosted by another architect seat. D1 is pending that simulation.
 
 **D2. What stops a seat or a cluster from writing another cluster's load?**
 
@@ -95,14 +98,16 @@ Today, nothing would. Every team and role user that holds the global tier may pu
 
 How each rule could be written, all INFERRED from nats-server's documented permission model (deny takes precedence over allow) and unmeasured here:
 
-- **The put subject.** A key put into the hub's domain is assumed to travel as `$JS.global.API.$KV.<bucket>.<key>`, under the `$JS.global.API.>` the seats hold today. Plan item 3 starts with a red test that measures the actual subject a domain put uses, before any rule is written against it.
-- **The seats' rule (marvel).** Add `deny: [ "$JS.global.API.$KV.<bucket>.>" ]` to each team and role user's publish permissions. marvel's `Principal` has no deny field today, and the renderer writes only `allow` (`internal/bus/render.go:204`), so item 3 adds a deny list to `Principal` and to the render.
+- **The put subject.** A key put into the hub's domain is assumed to travel as `$JS.global.API.$KV.<bucket>.<key>`, under the `$JS.global.API.>` the seats hold today. The narrowing item, dropped by the D2 ruling, would have started with a red test measuring the actual subject a domain put uses, before any rule was written against it.
+- **The seats' rule (marvel).** Add `deny: [ "$JS.global.API.$KV.<bucket>.>" ]` to each team and role user's publish permissions. marvel's `Principal` has no deny field today, and the renderer writes only `allow` (`internal/bus/render.go:204`), so the dropped narrowing item would have added a deny list to `Principal` and to the render.
 - **The leaf rule (hub).** The leaf user for cluster X also carries `$JS.global.API.>`, and because deny wins over allow, "allow my key, deny the rest of the bucket" cannot be one wildcard pair. Two ways it could be written:
   1. deny every other cluster's key by name: `deny: [ "$JS.global.API.$KV.<bucket>.<cluster-a>", "$JS.global.API.$KV.<bucket>.<cluster-b>", ... ]`, which must be updated on every leaf whenever a cluster joins;
   2. replace the leaf's `$JS.global.API.>` with an enumerated allow list of the API subjects its seats use, plus `$JS.global.API.$KV.<bucket>.<X>`, which changes what every seat on that cluster can reach and needs that list measured first. The list must keep director's put to the hub's `GLOBAL_PRESENCE` bucket, or presence breaks for every seat on that leaf.
-- **Red tests in the plan:** a seat user's put to any load key is refused; cluster X's daemon put to X's key succeeds; cluster X's put to cluster Y's key is refused; each against a scratch hub and two scratch leaves.
+- **Red tests these rules would have needed:** a seat user's put to any load key is refused; cluster X's daemon put to X's key succeeds; cluster X's put to cluster Y's key is refused; each against a scratch hub and two scratch leaves. Under the ruling, only the own-key-accepted test stays, on plan item 3; the two refusal tests were dropped with the narrowing item.
 
 Recommended: (a), with the leaf rule written as (1) while the fleet is a few clusters. (b) is the smallest safe start if the hub-side rule waits. (c) is listed to name what the current grant allows, not as a choice.
+
+**Ruling, relayed by director on 2026-10-08:** (c), no change to write access. This is against the recommendation of (a). Its consequence is carried into section 4: the view says its fleet numbers come from unauthenticated keys. The narrowing plan item and the refusal red tests are dropped from section 7. The rule-writing notes above apply only to (a) and (b) and stay as the record.
 
 **D3. Which clusters count as expected in "n of m"?**
 
@@ -114,6 +119,8 @@ Recommended: (a), with the leaf rule written as (1) while the fleet is a few clu
 
 Recommended: (c).
 
+**Ruling, relayed by director on 2026-10-08:** (c).
+
 **D4. How often should a cluster publish, and how long is a record good for?**
 
 | | option | gives | costs |
@@ -124,6 +131,8 @@ Recommended: (c).
 
 Recommended: (a).
 
+**Status, relayed by director on 2026-10-08:** not ruled. The recommendation and its expiry stand.
+
 **D5. Should the view read bd for stale claims?**
 
 | | option | gives | costs |
@@ -132,6 +141,8 @@ Recommended: (a).
 | b | leave stale claims to the bd side (`aq stale`) and keep marvel bd-free | no new coupling | the operator reads two views |
 
 Recommended: (a), as an optional integration that marvel never requires and that never writes bd.
+
+**Ruling, relayed by director on 2026-10-08:** (a).
 
 **D6. Where should the waiting-on-operator count come from?**
 
@@ -145,7 +156,9 @@ Blocked needs no decision: the rollup already counts it (section 1), and the vie
 
 Recommended: (a). It adds no ask class or role. Until it lands, the cell prints `-`.
 
-These recommendations are valid until 2026-10-22, or until the operator grants the ask reader's principal or director builds A2, whichever comes first. The architect re-checks them then.
+**Ruling, relayed by director on 2026-10-08:** (a).
+
+The D1 recommendation is valid until 2026-10-22, or until the D1 simulation reports its result, whichever comes first. The D4 recommendation is valid until 2026-10-22, or until the operator grants the ask reader's principal or director builds A2, whichever comes first. The architect re-checks both then.
 
 ## 7. The plan, once ruled
 
@@ -153,8 +166,9 @@ Flat tickets with dependency edges, each with red tests first:
 
 1. daemon: compute per-team rows on the reconcile tick (seats, ACTIVE% mean with count, `limited`, agent names). Local only; no transport.
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
-3. bus: first a red test, on a scratch hub and never the live one, that measures the subject a domain KV put uses; then a deny list on `Principal` and in the renderer, and the seats' deny on the load bucket (D2's precondition), with the seat-refused red test. Depends on D2.
-4. daemon: put the record into the hub bucket over the leaf on D4's cadence, with the own-key-accepted and other-key-refused red tests against a scratch hub and two scratch leaves. Depends on 1 and 3, on D1, and on the hub-side rule if D2 (a) is ruled.
-5. CLI: read every cluster's key, apply section 4's states and the header. Depends on 2 and 4.
-6. CLI: join the merged ledger's rollup by team key, with `global:` keys on the cluster line. Depends on 2 and on director's A2.
-7. CLI: the optional bd claim join with the all-fresh guard. Depends on 5 and on D5.
+3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1, and on the D1 and D4 rulings.
+4. CLI: read every cluster's key, apply section 4's states, the header and the unauthenticated-keys line, with the expected set from D3 (c). Depends on 2 and 3.
+5. CLI: join the merged ledger's rollup by team key (open, unacked, blocked, oldest open), with `global:` keys on the cluster line. Depends on 2 and on director's A2.
+6. CLI: the waiting-on-operator cell, read from director's new rollup field (D6 (a)). Depends on 5 and 8.
+7. CLI: the optional bd claim join with the all-fresh guard (D5 (a)). Depends on 4.
+8. director: the rollup field for D6 (a), open asks per asker key whose owner is director. A director change; no marvel dependency.
