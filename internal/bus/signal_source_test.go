@@ -80,6 +80,10 @@ func TestRawSignalCheckSeesEachWayToSignal(t *testing.T) {
 		"a Process.Kill on a handle":  {"package p\nfunc f(c *C) { _ = c.Process.Kill() }\n", 0},
 		"syscall.SIGHUP is no signal": {"package p\nimport \"syscall\"\nvar x = syscall.SIGHUP\n", 0},
 		"a method named Kill":         {"package p\nfunc f(p *P) { p.Kill() }\n", 0},
+		"FindProcess then Signal":     {"package p\nimport \"os\"\nfunc f(pid int) { p, _ := os.FindProcess(pid); _ = p.Signal(nil) }\n", 1},
+		"FindProcess chained":         {"package p\nimport \"os\"\nfunc f(pid int) { _ = (func() *os.Process { p, _ := os.FindProcess(pid); return p })().Signal(nil) }\n", 1},
+		"syscall under another name":  {"package p\nimport sc \"syscall\"\nfunc f() { _ = sc.Kill(1, 0) }\n", 1},
+		"syscall.Kill as a value":     {"package p\nimport \"syscall\"\nvar k = syscall.Kill\n", 1},
 	} {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "x.go", tc.src, parser.SkipObjectResolution)
