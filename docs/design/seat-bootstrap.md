@@ -350,7 +350,7 @@ manifest.
 |---|---|---|
 | claude, interactive | folder trust per path; onboarding flags; per-path MCP; the login | manages trust for the seat's directory (writes the one key when it is absent, under Claude Code's lock), delivers settings and MCP as per-session files, checks the login in the mode the role sets, and never moves or touches the login (section 5a) |
 | claude, headless | none shown (`-p` skips the dialog) | placement and settings sources only |
-| codex | trust per path in `config.toml`; the update menu; hook trust; approvals under `-a` | existing seed (#308, #359), keyed on `Session.WorkDir` since #711 (`codex_home.go:349`). Whether a seeded `untrusted` level still shows the folder-access dialog on 0.160.1 is open; no trust write changes until it is measured (section 5b, K7) |
+| codex | trust per path in `config.toml`; the update menu; hook trust; approvals under `-a` | existing seed (#308, #359), keyed on `Session.WorkDir` since #711 (`codex_home.go:349`). Whether a seeded `untrusted` level still shows the folder-access dialog on 0.160.1 is open; no trust write changes until it is measured (section 5b, K7); the trust levers in section 5b's codex row are held until K7 reports |
 | opencode | permission gates (`external_directory`, then `edit`, `bash`, `doom_loop`), set to `ask` by the operator's global config on some hosts | env `OPENCODE_CONFIG_CONTENT`, verified after composing (section 5b) |
 | gemini-cli, goose, pi | see section 5b | no adapter yet; the rows in 5b are what an adapter must set |
 | generic, forestage | none known | placement only; recorded as `none` |
@@ -691,7 +691,7 @@ type Bootstrapper interface {
     Bootstrap(ctx *LaunchContext, dir string) (BootstrapResult, error)
 }
 
-type Outcome string // "done" | "degraded" | "refused"
+type Outcome string // "done" | "degraded" | "refused" | "none"
 
 type BootstrapResult struct {
     Outcome Outcome
@@ -721,7 +721,7 @@ type Posture struct {
 ```
 
 - **Where:** in `launch`, after `prepareSessionHome` and before
-  `adapter.Prepare` (`internal/session/manager.go:808`, `:990`). `Prepare`
+  `adapter.Prepare` (the calls at `internal/session/manager.go:986` and `:995`). `Prepare`
   composes the result's env and args, so it stays the one place a command
   line is built. A refusal has its own path: a `Prepare` error today falls
   back to `directPlan` and launches (`manager.go:996-999`).
@@ -783,7 +783,7 @@ Each row names a harness version. A version with no row returns degraded
   launch generation).
 - No new `HealthState` value. The restart path keys on `HealthState`
   (values `unknown`, `healthy`, `unhealthy`, `types.go:66-68`), and the
-  controller rewrites `healthy` every tick for a role without a heartbeat
+  controller rewrites `healthy` every tick for a role with a non-heartbeat
   check (`internal/team/controller.go:1483-1487`).
 - What must read it: a shift's readiness check and the supervisors'
   sweeps. Today a parked successor passes `allReady` for a role with no
@@ -796,8 +796,26 @@ Each row names a harness version. A version with no row returns degraded
   stay disabled", "1. Open restricted", "2. Quit"); opencode ("Permission
   required", "Access external directory", version UNCHECKED). The `edit`
   gate and the rest need captures.
-- It never sends a key, answers, restarts or kills (`internal/daemon/watchdog.go:36-38`).
+- It never sends a key, answers, restarts or kills (the doc comment at `internal/daemon/watchdog.go:36-38`; the type begins at `:39`).
   A restart reuses the private home and returns to the same dialog.
+
+### Work items, proposed (r10)
+
+The party's work items are listed here so the doc stands alone. None is
+filed until the operator rules on 13 and 14; each lands as its own ticket
+with the edges shown.
+
+| id | work | depends on |
+|---|---|---|
+| K7 | probe on codex 0.160.1: does `trusted` make files writable under `-s read-only` (marvel finding-049), and does an `untrusted` level still show the folder-access dialog | none |
+| K1 | the `Bootstrapper` interface, a null implementation for every adapter, codex's seed moved behind it, a refusal path separate from the `Prepare` fallback, adopt recorded as "outcome unknown" | K7, so the trust step moves once |
+| K2 | the bootstrap result on the Session record, with launch time and marvel version, in `describe` and `get` | K1 |
+| K3 | the parked HarnessState, with patterns for codex 0.160.1 trust and opencode `external_directory` and `edit` (from captures), and a `get sessions` display for a park | none |
+| K4 | the shift-ready check and sweeps read HarnessState | K3, ruling 14 |
+| K5 | opencode's bootstrap: the env lever plus the verify, with a test where the verify reads a different value | K1 |
+| K6 | the `unattended` role field and the permissive-default refusal | K1 |
+| K8 | refusal re-evaluation by cause: a timeout clears after two passes, the backoff end persisted, a later timeout never takes down a running seat | K1 |
+| K9 | design rows for gemini-cli, goose and pi against the contract, before their adapters | K1 |
 
 ### Found on the way
 
@@ -805,7 +823,7 @@ The parked codex seat of 2026-10-09 ran on a daemon built at 5a972a4
 (started 2026-10-07), whose seed keyed the daemon's own directory
 (`os.Getwd()`), not the seat's WorkDir. main seeds `Session.WorkDir` since
 #711, merged 32 minutes after that seat was created. #684, which names the
-defect, is still open.
+defect, closed as completed at 2026-10-09T18:20:41Z.
 
 ## 6. Refuse, and say why
 
@@ -1093,14 +1111,30 @@ change first.
     Default offered: (a), switching to (c) whenever Claude Code offers it.
     Why (a) over (d): (a) never blocks a seat's start and reads no screen
     text, and (d) does both.
-13. **Refuse or warn when a bootstrap cannot seed (r10, new).** Default
-    offered: the section 5b outcome rules. Refuse only when the role is
-    `unattended`, or when a permissive-default harness has no declared
-    posture; degrade otherwise. The latch applies when the manifest is the
-    cause; an external cause is re-evaluated (section 6). Voted 6 of 6 on
-    the rules, 4 of 6 on the latch split.
-14. **A parked shift successor (r10, new).** Default offered: the
-    readiness check treats a parked successor as not ready, so the
-    predecessor keeps working, as ruling 9 already does for a failed login
-    check. It changes shift behaviour, so it comes to the operator before a
-    builder takes it. Voted 6 of 6.
+13. **Refuse or warn when a bootstrap cannot seed (r10, new).**
+    - (a) The section 5b outcome rules: refuse only when the role is
+      `unattended`, or when a permissive-default harness has no declared
+      posture; degrade otherwise. The latch applies when the manifest is
+      the cause; an external cause is re-evaluated (section 6).
+    - (b) The same rules, but every refusal latches whatever its cause,
+      as section 6 does today.
+    - (c) The same rules, with no latch: every refusal is re-evaluated.
+
+    Recommended: (a). Voted 6 of 6 on the rules; on the latch, 4 for (a),
+    1 for (b) (the marvel seat) and 1 for (c) (the refusal seat). This recommendation is valid until
+    2026-10-16; the architect re-checks it then. Nothing executes on
+    silence or on that date.
+14. **A parked shift successor (r10, new).** It changes shift
+    behaviour, so it comes to the operator before a builder takes it.
+    - (a) The readiness check treats a parked successor as not ready, so
+      the predecessor keeps working, as ruling 9 already does for a failed
+      login check.
+    - (b) Readiness ignores the parked state; supervisors' sweeps report a
+      parked successor and a person decides.
+    - (c) Defer: no readiness change until K3 has run on real seats and
+      shown how often a park is a false match.
+
+    Recommended: (a). Voted 6 of 6; (b) and (c) are offered here for the
+    operator and were not argued in the party. This recommendation is valid until
+    2026-10-16; the architect re-checks it then. Nothing executes on
+    silence or on that date.
