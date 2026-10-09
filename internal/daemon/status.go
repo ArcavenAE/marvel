@@ -1,8 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"slices"
@@ -118,9 +116,5 @@ func (d *Daemon) handleDaemonStatus() Response {
 		since := time.Unix(0, ns).UTC()
 		st.AdoptingSince = &since
 	}
-	data, err := json.Marshal(st)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode daemon status: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(st)
 }

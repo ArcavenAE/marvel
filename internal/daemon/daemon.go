@@ -1201,11 +1201,7 @@ func (d *Daemon) handleLogs(params json.RawMessage) Response {
 		p.N = d.logs.Cap()
 	}
 	lines := d.logs.Tail(p.N)
-	data, err := json.Marshal(logsResult{Lines: lines})
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal logs: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(logsResult{Lines: lines})
 }
 
 // Events params — filtered tail of the daemon's structured event ring.
@@ -1253,11 +1249,7 @@ func (d *Daemon) handleEvents(params json.RawMessage) Response {
 		}
 	}
 	snap := d.events.Snapshot(p.filter(), p.N)
-	data, err := json.Marshal(EventsBatch{Events: snap})
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal events: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(EventsBatch{Events: snap})
 }
 
 // MethodEventsWatch is the streaming sibling of the events method. The
@@ -1306,12 +1298,7 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 	defer w.Close()
 
 	send := func(b EventsBatch) bool {
-		data, err := json.Marshal(b)
-		if err != nil {
-			_ = enc.Encode(d.stamp(Response{Error: fmt.Sprintf("marshal events: %v", err)}))
-			return false
-		}
-		return enc.Encode(d.stamp(Response{Result: data})) == nil
+		return enc.Encode(d.stamp(respond(b))) == nil
 	}
 
 	backlog := d.events.Snapshot(f, p.N)
@@ -1541,7 +1528,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	for _, mt := range m.Teams {
 		teamNames = append(teamNames, mt.Name)
 	}
-	result, _ := json.Marshal(map[string]any{
+	return respond(map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
 		"advisories": append(append(workDirAdvisories, advisories...), scheduleAdvisories...),
@@ -1550,7 +1537,6 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		// is the normal state right after an apply.
 		"behind": d.behindCount(m.Workspace.Name, teamNames),
 	})
-	return Response{Result: result}
 }
 
 // Get params
@@ -1609,11 +1595,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}
 
-	data, err := json.Marshal(result)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal result: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(result)
 }
 
 // planResult carries the convergence preview returned by the plan RPC: the
@@ -1632,11 +1614,7 @@ type planResult struct {
 // cluster state. Teams mid-shift are omitted by PlanConvergence; see its doc
 // comment for the two fidelity limits a consumer must account for.
 func (d *Daemon) handlePlan() Response {
-	data, err := json.Marshal(planResult{Plans: d.teamCtrl.PlanConvergence()})
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal plan: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(planResult{Plans: d.teamCtrl.PlanConvergence()})
 }
 
 // Describe params
@@ -1689,8 +1667,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
-	data, _ := json.Marshal(result)
-	return Response{Result: data}
+	return respond(result)
 }
 
 // Delete params
@@ -1756,8 +1733,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 		return Response{Error: err.Error()}
 	}
 
-	result, _ := json.Marshal(map[string]string{"status": "deleted"})
-	return Response{Result: result}
+	return respond(map[string]string{"status": "deleted"})
 }
 
 // Scale params
@@ -1859,13 +1835,12 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 
 	d.teamCtrl.ReconcileOnce()
 
-	result, _ := json.Marshal(map[string]any{
+	return respond(map[string]any{
 		"status":   "scaled",
 		"team":     p.TeamKey,
 		"role":     p.Role,
 		"replicas": p.Replicas,
 	})
-	return Response{Result: result}
 }
 
 // convergeParams selects which team(s) to move and which way. An empty TeamKey
@@ -1940,8 +1915,7 @@ func (d *Daemon) handleConverge(params json.RawMessage) Response {
 		})
 	}
 
-	out, _ := json.Marshal(res)
-	return Response{Result: out}
+	return respond(res)
 }
 
 // logConvergencePosture writes a one-line-per-team start summary of which teams
@@ -2017,8 +1991,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 			"admitted unbound: session record carries no token, restart it to bind its heartbeat")
 	}
 
-	result, _ := json.Marshal(map[string]string{"status": "ok"})
-	return Response{Result: result}
+	return respond(map[string]string{"status": "ok"})
 }
 
 // emitHeartbeatAuth records an authentication outcome on the ring and in
@@ -2172,8 +2145,7 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	if warning != "" {
 		out["warning"] = warning
 	}
-	result, _ := json.Marshal(out)
-	return Response{Result: result}
+	return respond(out)
 }
 
 // Shift params
@@ -2195,11 +2167,10 @@ func (d *Daemon) handleShift(params json.RawMessage) Response {
 	// Trigger immediate reconciliation to start the shift.
 	d.teamCtrl.ReconcileOnce()
 
-	result, _ := json.Marshal(map[string]string{
+	return respond(map[string]string{
 		"status": "shift_initiated",
 		"team":   p.TeamKey,
 	})
-	return Response{Result: result}
 }
 
 // Reset-health params — clear one role's crash-loop state (RestartCount +
@@ -2244,13 +2215,12 @@ func (d *Daemon) handleResetHealth(params json.RawMessage) Response {
 	// rather than waiting for the next tick.
 	d.teamCtrl.ReconcileOnce()
 
-	result, _ := json.Marshal(map[string]any{
+	return respond(map[string]any{
 		"status":  "health_reset",
 		"cleared": cleared,
 		"team":    p.TeamKey,
 		"role":    p.Role,
 	})
-	return Response{Result: result}
 }
 
 // Inject params — send keystrokes to a session's pane (executive privilege).
@@ -2353,8 +2323,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	if p.Verify {
 		d.verifyInject(sess, reader, p, out)
 	}
-	result, _ := json.Marshal(out)
-	return Response{Result: result}
+	return respond(out)
 }
 
 // isDismissKey reports whether an inject is a lone Escape.
@@ -2631,8 +2600,7 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 			out["composer_error"] = cerr.Error()
 		}
 	}
-	result, _ := json.Marshal(out)
-	return Response{Result: result}
+	return respond(out)
 }
 
 // Stop params
@@ -2698,11 +2666,7 @@ func (d *Daemon) orphanRecords() []OrphanRecord {
 // the key. Read-only: marvel reports orphans and never kills them
 // (aae-orc-m4of; the never-destroy rule from PRs #123, #132 stands).
 func (d *Daemon) handleOrphans() Response {
-	data, err := json.Marshal(orphansResult{Orphans: d.orphanRecords()})
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal orphans: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(orphansResult{Orphans: d.orphanRecords()})
 }
 
 func (d *Daemon) handleReap(params json.RawMessage) Response {
@@ -2727,25 +2691,23 @@ func (d *Daemon) handleReap(params json.RawMessage) Response {
 	orphans := d.orphanRecords()
 
 	if !p.Confirm {
-		result, _ := json.Marshal(map[string]any{
+		return respond(map[string]any{
 			"reaped":     false,
 			"candidates": found,
 			"orphans":    orphans,
 		})
-		return Response{Result: result}
 	}
 
 	_, killed, err := d.sessMgr.AdoptOrKill()
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
-	result, _ := json.Marshal(map[string]any{
+	return respond(map[string]any{
 		"reaped":     true,
 		"killed":     killed,
 		"candidates": found,
 		"orphans":    orphans,
 	})
-	return Response{Result: result}
 }
 
 // StopResult is what a stop request reports back before the daemon exits.
@@ -2784,11 +2746,7 @@ func (d *Daemon) stopReport(teardown bool, mode string) Response {
 		}
 		res.Unowned = found
 	}
-	data, err := json.Marshal(res)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal stop result: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(res)
 }
 
 // exitProcess ends the process once shutdown has run. exit is nil in
@@ -2906,8 +2864,7 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
 			os.Exit(1)
 		}
 	}()
-	result, _ := json.Marshal(map[string]string{"status": "reexec", "binary": exe})
-	return Response{Result: result}
+	return respond(map[string]string{"status": "reexec", "binary": exe})
 }
 
 // DialOptions controls how the client connects to a marvel daemon.
@@ -3513,11 +3470,7 @@ func (d *Daemon) handleBusStatus() Response {
 	if !ok {
 		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
 	}
-	data, err := json.Marshal(st)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(st)
 }
 
 // backendVerifyParams names one session to verify, or every session when
@@ -3548,11 +3501,7 @@ func (d *Daemon) handleBackendVerify(params json.RawMessage) Response {
 	if p.Session != "" && len(out) == 0 {
 		return Response{Error: fmt.Sprintf("no session %s", p.Session)}
 	}
-	data, err := json.Marshal(out)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode backend verification: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(out)
 }
 
 // regenerateBus re-renders the managed broker's files from the applied
@@ -3697,11 +3646,7 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 		events.Emit(d.events, events.Event{Kind: events.KindBusReloaded, Severity: events.SeverityInfo, Message: msg})
 		log.Printf("%s: %s", events.KindBusReloaded, msg)
 	}
-	data, err := json.Marshal(d.busSup.Status())
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode bus status: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(d.busSup.Status())
 }
 
 // injectOrigin says who sent an inject: the transport the daemon itself saw,

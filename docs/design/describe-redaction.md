@@ -36,14 +36,17 @@ methods than get and describe: `plan` returns whole sessions in each role's
 `Delete` list (`handlePlan`, `internal/daemon/daemon.go:1318`; `RolePlan.Delete
 []api.Session`, `internal/team/controller.go:993`), and a later method could do
 the same. So the redaction is not attached to verbs. Every successful response
-passes through one function at the dispatch boundary (`dispatchAs`,
-`daemon.go:863`) before it is written, and that function redacts every
-`api.Runtime` it finds, at any depth, whichever method built the response.
-The simplest form: handlers return values rather than pre-marshalled bytes,
-and the boundary marshals a redacted copy. A handler that still returns bytes
-is converted, not exempted.
+body is built by one function, `respond` (`internal/daemon/redact.go`), which
+every handler returns through and which `events.watch` encodes, and it
+redacts every `api.Runtime` it finds, at any depth, whichever method built the
+value (`api.Redact`). Handlers hand it values rather than pre-marshalled
+bytes. A handler that still marshalled its own bytes would bypass it, so a
+source test (`response_source_test.go`) fails if anything else, in any
+non-test package of the module, sets `Response.Result`: a keyed or positional
+literal, an assignment, or the address taken. The test matches on the
+`Response` type, and a planted write of each form proves it catches them.
 
-The same boundary serves every transport. Nothing after it can reconstruct a
+The same function serves every transport. Nothing after it can reconstruct a
 value.
 
 ## 3. Which fields, and what shows in their place
@@ -165,13 +168,19 @@ work` output. Keys and reference strings may. This is already true on main
 
 The socket scope issue in section 8 is filed separately, not as a child here.
 
-## 10. Rulings needed
+## 10. Rulings
 
-1. **Redact every Env value by default.** Default offered: yes, with no
-   per-key opt-out; a value an operator wants visible can go in Args.
-2. **Args and Prompt stay visible, as a documented contract.** Default
-   offered: yes, with the RD-4 warning.
+1. **Which Env values print as `(redacted)`.** Ruled (c), relayed by director
+   on 2026-10-08: redact only Env keys that look like secrets. This replaces
+   the default offered (every Env value, no per-key opt-out), and it changes
+   the Env row of section 3: a value prints as `(redacted)` when its key
+   matches the pattern list in `internal/api/redact.go` (`SecretKey`, matched
+   case-insensitively), and every other value prints as declared. The cost: a
+   credential stored under a key that matches no pattern prints.
+2. **Args and Prompt stay visible, as a documented contract.** Ruled (a),
+   relayed by director on 2026-10-08, with the RD-4 warning.
 3. **Keychain and vault references in `env_from`.** Default offered: not in
    this design; `file:` and `env:` only, pending an ADR-009 reading per source.
+   Not ruled.
 4. **No reveal verb until the socket can tell a seat from the operator.**
-   Default offered: yes.
+   Default offered: yes. Not ruled.
