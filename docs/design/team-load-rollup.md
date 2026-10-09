@@ -1,6 +1,6 @@
 # The per-team load rollup across clusters
 
-Proposal, 2026-10-08. Ruled in part (section 6): D2, D3, D5 and D6 on 2026-10-08, D4 and the D3 amendment question on 2026-10-09. D1 is not ruled.
+Proposal, 2026-10-08. Ruled in part (section 6): D2, D3, D5 and D6 on 2026-10-08, D4 and the D3 amendment question on 2026-10-09. D1 is not ruled; the transport in sections 3 and 7 is the recommended one, conditional on it.
 
 - Author: the architect seat, team arcaven.
 - Issue: #601. Builds on `docs/design/get-sessions-output.md`, which judged this rollup a separate design (its section 6).
@@ -48,9 +48,9 @@ So the per-team arithmetic is local to the cluster that owns the team. What is c
 Only each cluster's summary crosses. No pane content, no per-tick samples and no ask text.
 
 - **The record:** one value per cluster, holding the cluster name, marvel version, `observed_at`, `valid_until`, and the per-team rows from section 2.
-- **Where it lands:** a key-value bucket on the hub, with one key per cluster (decision D1). A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
-- **How it gets there:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
-- **Cadence:** every 60 s, with `valid_until` at `observed_at` + 180 s (decision D4). ACTIVE% is a 15-minute share, so one minute of lag moves it little. A record is stale once a third publish is late: two missed, and the third later than 180 s. Clock skew between the publishing host and the reader moves that edge by the skew.
+- **Where it lands, if D1 is ruled (a) or (d):** a key-value bucket on the hub, with one key per cluster. D1 is not ruled; this line and the next describe the recommended transport, not a ruled one. A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
+- **How it gets there, under the same condition:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
+- **Cadence:** every 60 s, with `valid_until` at `observed_at` + 180 s, and a bucket max age of 1 h (decision D4, ruled (a)). ACTIVE% is a 15-minute share, so one minute of lag moves it little. A record is stale once a third publish is late: two missed, and the third later than 180 s. Clock skew between the publishing host and the reader moves that edge by the skew.
 - **Size:** about 100 bytes per team plus the agent names. Well under one message for any fleet today.
 
 ## 4. Staleness and UNKNOWN
@@ -81,10 +81,11 @@ Each has options, a recommendation and an expiry. Nothing here is built before t
 | a | a hub key-value bucket, one key per cluster, put by each daemon over its leaf | any seat with hub read sees the fleet; a late reader sees every cluster at once | under the D2 ruling (c) there is no grant work, so every key stays unauthenticated: any seat holding the global tier can write any cluster's key (section 4) |
 | b | the reader fans out over `mrvl://` to each configured cluster | no global tier change; works today | only a reader holding every cluster's key sees the fleet, so supervisors on other hosts do not |
 | c | director computes and serves the rollup | one place joins asks and seats | director learns marvel's session model, which crosses the boundary the ledger design kept |
+| d | (a)'s bucket and route, with each record signed by its cluster's own key and verified by the reader against pinned public keys | the numbers are evidence again although D2 (c) left the keys writable by any global seat | a signing key per cluster (issuance under ADR-009: marvel mints it and only marvel readers rely on it), a pin step, and sign and verify code |
 
-Recommended: (a), as #601 asks. (b) is a valid interim for the operator's own laptop, with no grant needed.
+Recommended at first: (a), as #601 asks. (b) is a valid interim for the operator's own laptop, with no grant needed.
 
-**Status, relayed by director on 2026-10-08:** not ruled. The operator asked for a simulation of (a), (b) and (c) by two bmad agents first, hosted by another architect seat. D1 is pending that simulation.
+**Status, 2026-10-09:** not ruled. The operator asked for a simulation of (a), (b) and (c) by two bmad agents first, hosted by another architect seat. That simulation reported on 2026-10-08 and voted for (d), which this table did not have before; its record is not committed. The architect's recommendation is now (d), as revised below. Director is confirming the ruling with the operator.
 
 **D2. What stops a seat or a cluster from writing another cluster's load?**
 
@@ -113,7 +114,7 @@ Recommended: (a), with the leaf rule written as (1) while the fleet is a few clu
 
 | | option | gives | costs |
 |---|---|---|---|
-| a | every cluster that ever wrote a key, kept until the bucket's max age (1 h proposed) | no new list | a cluster that never published is invisible |
+| a | every cluster that ever wrote a key, kept until the bucket's max age (1 h, ruled under D4) | no new list | a cluster that never published is invisible |
 | b | the clusters in the reader's own `~/.marvel/config.yaml` | the reader's own view | differs per reader |
 | c | (a) plus every cluster live in the hub's `GLOBAL_PRESENCE` | catches a cluster whose supervisors are up but whose daemon is not publishing | reads one more hub bucket |
 
@@ -133,7 +134,7 @@ Recommended: (c).
 
 Recommended: (a).
 
-**Ruling, relayed by director on 2026-10-09:** (a), "Every 60 s, valid 180 s, max age 1 h". Section 3's cadence line already says this, and it is now ruled, not proposed.
+**Ruling, relayed by director on 2026-10-09:** (a), "Every 60 s, valid 180 s, max age 1 h". Section 3's cadence line carries all three values.
 
 **D5. Should the view read bd for stale claims?**
 
@@ -160,7 +161,13 @@ Recommended: (a). It adds no ask class or role. Until it lands, the cell prints 
 
 **Ruling, relayed by director on 2026-10-08:** (a).
 
-The D1 recommendation is valid until 2026-10-22, or until the D1 simulation reports its result, whichever comes first; the architect re-checks it then. D1 is not ruled, and nothing in section 7 is built on any D1 option until it is.
+**D1, re-checked 2026-10-09.** The first recommendation, (a), passed its sell-by when the simulation reported. Re-checked against the rulings since: D2 (c) left every key writable by any global seat, so under (a) the fleet numbers are a claim, not evidence; D4 (a) fixes a record's validity at 180 s; and the D3 ruling declined counting pinned clusters as expected. Revised recommendation: (d), with three conditions:
+
+1. freshness is judged by the hub's arrival time for the entry, not by the signed `observed_at` alone, so a held-back record cannot read fresh;
+2. pinning a cluster's public key is a local command that does not dial the cluster;
+3. a valid signed record can be replayed until its `valid_until`, at most 180 s; the view states that bound and keeps no reader state to prevent it. A key with no pin or a bad signature prints as unverified, and the cluster still counts as expected under D3 (c).
+
+This recommendation is valid until 2026-10-23, or until D1 is ruled, whichever comes first; the architect re-checks it then. D1 is not ruled, and section 7's transport items are conditional on it.
 
 ## 7. The plan, once ruled
 
@@ -168,6 +175,8 @@ Flat tickets with dependency edges, each with red tests first:
 
 1. daemon: compute per-team rows on the reconcile tick (seats, ACTIVE% mean with count, `limited`, agent names). Local only; no transport.
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
+Items 3 and 4 are written for D1 (a) or (d), the hub bucket. They are not filed until D1 is ruled; if D1 is ruled (b) or (c), they are rewritten for that transport, and item 7 follows whichever item 4 results. Under (d), item 3 also signs the record and item 4 verifies it.
+
 3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1, and on the D1 ruling. D4 is ruled (a): put every 60 s, `valid_until` at `observed_at` + 180 s, bucket max age 1 h.
 4. CLI: read every cluster's key, apply section 4's states, the header and the unauthenticated-keys line, with the expected set from D3 (c). Depends on 2 and 3.
 5. CLI: join the merged ledger's rollup by team key (open, unacked, blocked, oldest open), with `global:` keys on the cluster line. Depends on 2 and on director's A2.
