@@ -237,38 +237,6 @@ func TestSignalRefusesWhatItMustNeverSend(t *testing.T) {
 	}
 }
 
-func TestAdoptLegacyNeedsANatsServerRunningThisConf(t *testing.T) {
-	const conf = "/run/nats.conf"
-	for name, tc := range map[string]struct {
-		live Identity
-		ok   bool
-	}{
-		"nats-server with -c conf":     {live: broker("a"), ok: true},
-		"another exe":                  {live: Identity{Start: "a", Exe: "/bin/sleep", Argv: []string{"sleep", "-c", conf}}},
-		"nats-server, another conf":    {live: Identity{Start: "a", Exe: "/x/nats-server", Argv: []string{"nats-server", "-c", "/other.conf"}}},
-		"nats-server, no -c":           {live: Identity{Start: "a", Exe: "/x/nats-server", Argv: []string{"nats-server", conf}}},
-		"-c is the last argument":      {live: Identity{Start: "a", Exe: "/x/nats-server", Argv: []string{"nats-server", "-c"}}},
-		"exe name only ends with it":   {live: Identity{Start: "a", Exe: "/x/not-nats-server", Argv: []string{"x", "-c", conf}}},
-		"the conf is only a substring": {live: Identity{Start: "a", Exe: "/x/nats-server", Argv: []string{"nats-server", "-c", conf + ".bak"}}},
-	} {
-		k := newKernel(map[int]Identity{41: tc.live})
-		c, err := prober(t, k).AdoptLegacy(41, conf)
-		if tc.ok != (err == nil) {
-			t.Errorf("%s: AdoptLegacy error = %v, want ok=%v", name, err, tc.ok)
-			continue
-		}
-		if tc.ok && (c.Pid() != 41 || c.Identity().Start != "a") {
-			t.Errorf("%s: Child = %+v", name, c)
-		}
-		if got := k.signals(); len(got) != 0 {
-			t.Errorf("%s: adopting signalled %v", name, got)
-		}
-	}
-	if _, err := prober(t, newKernel(nil)).AdoptLegacy(1, conf); err == nil {
-		t.Error("AdoptLegacy accepted pid 1")
-	}
-}
-
 func TestSameFollowsTheIdentity(t *testing.T) {
 	id := broker("a")
 	k := newKernel(map[int]Identity{41: id})

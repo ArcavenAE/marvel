@@ -356,7 +356,7 @@ const (
 	KindBusPidfileUnproven Kind = "bus.pidfile-unproven"
 	// KindBusIdentityUnrecorded reports a broker that started but whose identity
 	// record could not be written. It runs, and the next start reads its
-	// pidfile as a legacy one (V11), so it is not adopted by proof.
+	// pidfile as a legacy one, which is unproven and is not adopted.
 	KindBusIdentityUnrecorded Kind = "bus.identity-unrecorded"
 )
 

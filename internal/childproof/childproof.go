@@ -6,7 +6,7 @@
 // section 4.5, requirement MS-9).
 //
 // The types keep their fields unexported so that code outside this package can
-// build a Child only through Prove and AdoptLegacy, and a Prober only through
+// build a Child only through Prove and Spawned, and a Prober only through
 // New and NewForTest. The platform readers sit in build-tagged files beside
 // this one.
 package childproof
@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -63,7 +62,7 @@ type Identity struct {
 }
 
 // Child is a process whose identity was read and matched. Its fields are
-// unexported, so only Prove and AdoptLegacy build one. It records the Prober
+// unexported, so only Prove and Spawned build one. It records the Prober
 // that built it. The zero value has pid 0 and no Prober, and Signal refuses it.
 type Child struct {
 	pid int
@@ -179,40 +178,6 @@ func (p *Prober) Prove(pid int, want Identity) (Child, error) {
 		return Child{}, &MismatchError{Pid: pid, Reason: "argv"}
 	}
 	return Child{pid: pid, id: live, by: p}, nil
-}
-
-// AdoptLegacy is the one constructor without a recorded identity: V11 option
-// (a) only. It returns a Child when the live executable's base name is
-// nats-server and its arguments carry -c followed by conf. It is deleted if
-// V11 is ruled (b).
-func (p *Prober) AdoptLegacy(pid int, conf string) (Child, error) {
-	if !p.wired() {
-		return Child{}, errNoSeams
-	}
-	if pid <= 1 {
-		return Child{}, fmt.Errorf("childproof: pid %d names no single process", pid)
-	}
-	live, err := p.read(pid)
-	if err != nil {
-		return Child{}, &MismatchError{Pid: pid, Reason: "dead"}
-	}
-	if live.Start == "" || filepath.Base(live.Exe) != "nats-server" {
-		return Child{}, &MismatchError{Pid: pid, Reason: "exe"}
-	}
-	if !carriesConf(live.Argv, conf) {
-		return Child{}, &MismatchError{Pid: pid, Reason: "argv"}
-	}
-	return Child{pid: pid, id: live, by: p}, nil
-}
-
-// carriesConf reports whether argv holds -c immediately followed by conf.
-func carriesConf(argv []string, conf string) bool {
-	for i := 0; i+1 < len(argv); i++ {
-		if argv[i] == "-c" && argv[i+1] == conf {
-			return true
-		}
-	}
-	return false
 }
 
 // Same reports whether c's process is still the one that was proven: the same

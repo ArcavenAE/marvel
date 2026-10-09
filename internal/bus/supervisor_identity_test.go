@@ -429,49 +429,30 @@ func TestLegacyPidfileIsUnprovenAndNothingIsDone(t *testing.T) {
 	}
 }
 
-// With the listener silent a legacy pidfile is just a stale file under every
-// mode: the pidfile goes, nothing is signalled, a fresh broker starts.
+// With the listener silent a legacy pidfile is just a stale file: the pidfile
+// goes, nothing is signalled, a fresh broker starts.
 func TestLegacyPidfileWithNoListenerStartsFresh(t *testing.T) {
-	for name, mode := range map[string]legacyMode{
-		"a": legacyAdoptOnExecMatch, "b": legacyRefuseUnproven, "unruled": legacyUnruled,
-	} {
-		t.Run(name, func(t *testing.T) {
-			s, _, _ := newTestSupervisor(t, "")
-			s.legacy = mode
-			pt := tableOf(s)
-			pid := reapedPid(t)
-			pt.plant(pid, brokerIdentity(s, "darwin:100.000000"))
-			writePidfile(t, s, pid)
-			// The stale file is gone before the fresh broker starts, not merely
-			// overwritten by it: a failed spawn must not leave it behind.
-			inner := s.onSpawn
-			var leftAtSpawn bool
-			s.onSpawn = func(p int) { leftAtSpawn = fileExists(s.pidFile); inner(p) }
-			if err := s.Start(context.Background()); err != nil {
-				t.Fatalf("Start: %v", err)
-			}
-			if leftAtSpawn {
-				t.Error("the legacy pidfile was still in place when the fresh broker started")
-			}
-			if got := pt.signalsTo(pid); len(got) != 0 {
-				t.Errorf("the legacy pid was signalled: %v", got)
-			}
-			if st := s.Status(); !st.Ready || st.PID == pid || st.Pidfile != "proven" {
-				t.Errorf("status = %+v, want a fresh proven broker", st)
-			}
-		})
+	s, _, _ := newTestSupervisor(t, "")
+	pt := tableOf(s)
+	pid := reapedPid(t)
+	pt.plant(pid, brokerIdentity(s, "darwin:100.000000"))
+	writePidfile(t, s, pid)
+	// The stale file is gone before the fresh broker starts, not merely
+	// overwritten by it: a failed spawn must not leave it behind.
+	inner := s.onSpawn
+	var leftAtSpawn bool
+	s.onSpawn = func(p int) { leftAtSpawn = fileExists(s.pidFile); inner(p) }
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-}
-
-// The ruling is not made, so a build that reaches ready must not still carry
-// the placeholder. Skipped unless asked, because the draft carries it on
-// purpose: MARVEL_REQUIRE_V11=1 go test ./internal/bus -run TestLegacyPidfileIsRuled.
-func TestLegacyPidfileIsRuled(t *testing.T) {
-	if os.Getenv("MARVEL_REQUIRE_V11") == "" {
-		t.Skip("V11 is not ruled; set MARVEL_REQUIRE_V11=1 to require the constant")
+	if leftAtSpawn {
+		t.Error("the legacy pidfile was still in place when the fresh broker started")
 	}
-	if legacyPidfile == legacyUnruled {
-		t.Fatal("legacyPidfile is still legacyUnruled: set it to the ruled value (services-shape-requirements.md section 6, V11)")
+	if got := pt.signalsTo(pid); len(got) != 0 {
+		t.Errorf("the legacy pid was signalled: %v", got)
+	}
+	if st := s.Status(); !st.Ready || st.PID == pid || st.Pidfile != "proven" {
+		t.Errorf("status = %+v, want a fresh proven broker", st)
 	}
 }
 
@@ -603,7 +584,7 @@ func TestAdoptedWatchReadsAReusedPidAsAnExit(t *testing.T) {
 
 // A broker that starts but whose identity record cannot be written still runs;
 // the failure is an event, not only a log line, because the next start will
-// read its pidfile as legacy and the V11 ruling then decides its fate.
+// read its pidfile as legacy, which refuses while the port is held (V11 (b)).
 func TestStartReportsAnIdentityRecordItCouldNotWrite(t *testing.T) {
 	s, _, ring := newTestSupervisor(t, "")
 	// A non-empty directory where the record goes makes the rename fail.

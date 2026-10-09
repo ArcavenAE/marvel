@@ -5,7 +5,7 @@ Proposal, 2026-10-09. Issue: #794. Code read at marvel `9c1541e` (`9c1541ea858af
 - Author: the architect seat, team arcaven.
 - Builder: red tests first, then green, after this design merges.
 - Requirement: MS-9 in `docs/design/services-shape-requirements.md` ("The pidfile proves the child"). Section 4.5 is how this design meets its seam clause.
-- V11 is not ruled. Section 5 designs both options behind one switch; everything else here holds under either.
+- V11 was ruled (b) by the operator on 2026-10-09: a pidfile with no identity record is unproven, so with the port held the bus reports "port held, child unproven" and nothing is adopted or signalled. Section 5 keeps both options as the record of what was weighed; the build carries (b) only, and better handling of this case is left to a separate design.
 
 ## 0. Why
 
@@ -186,10 +186,8 @@ func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal)
 // mistake leaves the daemon up with the bus unproven.
 func (p *Prober) Prove(pid int, want Identity) (Child, error)
 
-// AdoptLegacy is the one constructor without a recorded identity: V11 (a)
-// only. It returns a Child when the live executable's base name is
-// nats-server and argv carries -c and conf. Deleted if V11 is ruled (b).
-func (p *Prober) AdoptLegacy(pid int, conf string) (Child, error)
+// AdoptLegacy, the unproven adoption of V11 (a), was deleted when V11 was
+// ruled (b).
 
 // Signal refuses a nil Prober, a nil seam, a Child built by another Prober,
 // and pid <= 1, for every signal. It then re-reads the identity, refuses on
@@ -213,7 +211,7 @@ Every site in section 2 calls `Signal`. Because `Signal` re-reads the identity i
 
 ## 5. V11: a pidfile from a binary that wrote no sidecar
 
-This is the first daemon start after the upgrade that adds the sidecar. The running broker was spawned by the old binary, so its pidfile holds a bare pid and nothing proves it. It is the common case for every cluster, once. V11 is an open split in `docs/design/services-shape-requirements.md` section 6: plurality (b), 5 to 4, one abstention, and the operator has not ruled it. MS-9 asks that the legacy handling ship in the same PR as the proof. The build carries both options behind one switch:
+This is the first daemon start after the upgrade that adds the sidecar. The running broker was spawned by the old binary, so its pidfile holds a bare pid and nothing proves it. It is the common case for every cluster, once. V11 was an open split in `docs/design/services-shape-requirements.md` section 6 (plurality (b), 5 to 4, one abstention), and the operator ruled (b) on 2026-10-09. MS-9 asks that the legacy handling ship in the same PR as the proof, so this PR carries (b) only, and `AdoptLegacy` and the switch below were deleted. The text from here to the end of this section is the design as weighed, kept for the record. The first build carried both options behind one switch:
 
 ```go
 // legacyPidfile decides a pidfile with no identity sidecar (V11). Set in code
@@ -302,7 +300,7 @@ A future test that starts a real broker goes through `newTestSupervisor`, which 
 
 One flat ticket for the builder, with red tests 2 to 9 before green. The builder ships whichever V11 value is ruled.
 
-My recommendation is (a), against the (b) plurality, for the reasons in section 5: (b) costs a manual stop on every cluster, and the cost of a wrong adopt under (a) falls on a process already serving this daemon's port from this daemon's store. This recommendation is valid until 2026-10-23 or until V11 is ruled, whichever comes first; the architect re-checks it then.
+My recommendation was (a), against the (b) plurality, for the reasons in section 5. The operator ruled (b) on 2026-10-09, so the recommendation is withdrawn.
 
 ## 9. As built
 
@@ -313,5 +311,5 @@ What the build added or settled beyond the sections above. None of it changes a 
 - If the identity of a newly started broker cannot be read, the spawn fails and the child is stopped: a broker marvel could never prove is one it could never stop. If only the sidecar write fails, the spawn goes ahead, `bus.identity-unrecorded` says so, and the next start reads the pidfile as legacy.
 - A sidecar that exists but does not parse, or has another schema, is `stale` with reason `sidecar`, one more reason than section 6 lists.
 - The "wedged" path no longer sleeps a second between TERM and KILL by hand: it is `terminate`, which polls identity until the grace ends.
-- **V11 is not ruled.** `legacyPidfile` is `legacyUnruled`, a third value that is neither option: with a legacy pidfile and the listener answering it adopts nothing, signals nothing, emits `bus.pidfile-unproven` and refuses with a message naming the ruling. With the listener silent every value removes the pidfile and spawns. `TestLegacyPidfile` runs both options and the placeholder, and `TestLegacyPidfileIsRuled` fails under `MARVEL_REQUIRE_V11=1` until the constant is set; it is skipped otherwise so the draft can run its own suite. No workflow sets that variable, so it is a check to run by hand before the PR goes ready; adding it to the release workflow is a CI change and is not part of this PR.
+- **V11 is ruled (b).** `AdoptLegacy`, the `legacy` switch and the unruled placeholder are deleted. With a legacy pidfile and the listener answering, `Start` emits `bus.pidfile-unproven` and refuses with "port held, child unproven", adopts nothing, signals nothing and writes no record, whatever the process looks like (`TestLegacyPidfileIsUnprovenAndNothingIsDone`). With the listener silent it removes the pidfile and spawns, as every value did. `MARVEL_REQUIRE_V11` and the test that read it are gone, since nothing is left to require. The first start or reexec onto this build leaves the bus down on a cluster whose broker was started by the old binary, until the operator stops that broker by hand: one manual step per cluster, which is the cost (b) names. Better handling is left to a separate design.
 - `TestBusSignalsOnlyThroughTheProber` type-checks the non-test files of `internal/bus` and fails on any use of `syscall.Kill`, `unix.Kill`, `(*os.Process).Signal` or `(*os.Process).Kill`, whatever the import is called and however the process was found, since the process table in the tests cannot see a raw kill. `TestEverySupervisorATestBuildsIsAttachedToAProcessTable` fails on a test that builds a `Supervisor` with `NewSupervisor` and never attaches a table, so `newTestSupervisor` plus `attach` is the single registration point; `TestNewSupervisorNamesMissingBinary`, which never starts a broker, is the one exception.

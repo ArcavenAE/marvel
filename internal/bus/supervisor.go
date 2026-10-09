@@ -71,9 +71,6 @@ type Supervisor struct {
 	// one (docs/design/bus-pidfile-identity.md section 4.5). Production holds
 	// childproof.New(); a test builds one with NewForTest.
 	prober *childproof.Prober
-	// legacy decides a pidfile with no identity record (V11). It starts as
-	// legacyPidfile and a test sets each value.
-	legacy legacyMode
 	// grace is how long terminate waits between TERM and KILL; tests shorten it.
 	grace time.Duration
 	// adoptPoll is how often the watcher re-reads an adopted broker's identity;
@@ -242,35 +239,10 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		leafRepeatEvery: defaultLeafDownRepeat,
 		now:             time.Now,
 		prober:          childproof.New(),
-		legacy:          legacyPidfile,
 		grace:           stopGrace,
 		pidState:        pidStateNone,
 	}, nil
 }
-
-// legacyMode is how a pidfile with no identity record is treated (V11).
-type legacyMode int
-
-const (
-	// legacyUnruled is the placeholder until the operator rules V11 (the open
-	// split in docs/design/services-shape-requirements.md section 6). It is
-	// neither option: it signals nothing and adopts nothing, and a port held
-	// under such a pidfile refuses with a message naming the ruling, so a build
-	// carrying it is safe to run. No workflow sets MARVEL_REQUIRE_V11, so
-	// nothing stops it reaching a release by itself: before the PR goes ready,
-	// someone runs TestLegacyPidfileIsRuled with MARVEL_REQUIRE_V11=1, which
-	// fails until the constant is set.
-	legacyUnruled legacyMode = iota
-	// legacyAdoptOnExecMatch (V11 option a) adopts a broker whose executable is
-	// nats-server and whose arguments carry this daemon's conf.
-	legacyAdoptOnExecMatch
-	// legacyRefuseUnproven (V11 option b) neither adopts nor signals it.
-	legacyRefuseUnproven
-)
-
-// legacyPidfile is set in code by the ruling, never by config: an operator
-// cannot widen what marvel signals.
-const legacyPidfile = legacyUnruled
 
 // The values of the pidfile line in `bus status`.
 const (
@@ -326,7 +298,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 			return s.refuseUnproven(v.pid, "the pidfile does not prove it is ours")
 		}
 	case pidStateLegacy:
-		if done, err := s.startLegacy(ctx, v); done {
+		if done, err := s.startLegacy(v); done {
 			return err
 		}
 	}
@@ -350,8 +322,8 @@ func strangerRefusal(listen string) string {
 // 4.2). Caller holds s.mu.
 func (s *Supervisor) refuseUnproven(pid int, why string) error {
 	remedy := "stop it by hand, or set bus.managed: false and bus.url to adopt it explicitly"
-	s.emit(events.KindBusPidfileUnproven, events.SeverityWarning, fmt.Sprintf("%s is held by a child (pid %d) that is unproven: %s; the bus stays down and nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy))
-	return fmt.Errorf("bus: %s is answering and its child (pid %d) is unproven: %s; nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy)
+	s.emit(events.KindBusPidfileUnproven, events.SeverityWarning, fmt.Sprintf("port held, child unproven: %s is held by pid %d, %s; the bus stays down and nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy))
+	return fmt.Errorf("bus: port held, child unproven: %s is answering and pid %d is not proven to be this daemon's broker (%s); nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy)
 }
 
 // removeIdentityFiles removes the pidfile and its identity record.
@@ -361,41 +333,19 @@ func (s *Supervisor) removeIdentityFiles() {
 }
 
 // startLegacy handles a pidfile with no identity record: the first start after
-// the upgrade that writes one (V11). With the listener silent it is a stale
-// file under every ruling. With the listener answering, the ruling decides.
-// done is true when Start is over. Caller holds s.mu.
-func (s *Supervisor) startLegacy(ctx context.Context, v pidVerdict) (done bool, err error) {
+// the upgrade that writes one. With the listener silent it is a stale file.
+// With the listener answering, the child is unproven and nothing is done about
+// it: V11 was ruled (b) by the operator, so a process that looks like this
+// daemon's broker is no more proven than any other, and the start refuses with
+// "port held, child unproven". Better handling of this case is left to a
+// separate design. done is true when Start is over. Caller holds s.mu.
+func (s *Supervisor) startLegacy(v pidVerdict) (done bool, err error) {
 	if !s.listenerAnswers(time.Second) {
 		log.Printf("bus: pidfile names pid %d with no identity record and nothing is listening on %s; removing it", v.pid, s.mgr.bus.Listen)
 		_ = os.Remove(s.pidFile)
 		return false, nil
 	}
-	switch s.legacy {
-	case legacyAdoptOnExecMatch:
-		c, aerr := s.prober.AdoptLegacy(v.pid, s.mgr.ConfPath())
-		if aerr != nil {
-			_ = os.Remove(s.pidFile)
-			s.pidState = pidStateStale
-			log.Printf("bus: pidfile with no identity record names pid %d, which is not a nats-server running %s: %v", v.pid, s.mgr.ConfPath(), aerr)
-			return true, errors.New(strangerRefusal(s.mgr.bus.Listen))
-		}
-		s.pid, s.adopted, s.child = v.pid, true, c
-		log.Printf("bus: adopted legacy nats-server pid %d on %s (executable and conf match, no start time recorded)", v.pid, s.mgr.bus.Listen)
-		if err := s.prober.Signal(c, syscall.SIGHUP, false); err != nil {
-			log.Printf("bus: reload adopted nats-server pid %d: %v", v.pid, err)
-		}
-		if err := os.MkdirAll(filepath.Dir(s.pidFile), 0o700); err == nil {
-			if err := writeIdentity(sidecarPath(s.pidFile), v.pid, c.Identity(), s.now()); err != nil {
-				log.Printf("bus: record the identity of adopted pid %d: %v", v.pid, err)
-			}
-		}
-		s.pidState = pidStateProven
-		return true, s.becomeReady(ctx, "adopted")
-	case legacyRefuseUnproven:
-		return true, s.refuseUnproven(v.pid, "its pidfile has no identity record (V11, refuse)")
-	default:
-		return true, s.refuseUnproven(v.pid, "its pidfile has no identity record and the legacy rule (V11) is not ruled")
-	}
+	return true, s.refuseUnproven(v.pid, "its pidfile has no identity record")
 }
 
 // classifyPidfile reads the pidfile and its identity record and decides what
