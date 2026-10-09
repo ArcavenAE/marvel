@@ -205,7 +205,7 @@ func TestStartLeavesARealUnrelatedProcessAlone(t *testing.T) {
 	s, _, ring := newTestSupervisor(t, "")
 	pt := tableOf(s)
 	victim := startSleepChild(t)
-	live, err := childproof.ReadIdentity(victim.Process.Pid)
+	live, err := childproof.ReadIdentityForTest(victim.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestStartLeavesARealUnrelatedProcessAlone(t *testing.T) {
 	if err := syscall.Kill(victim.Process.Pid, 0); err != nil {
 		t.Errorf("the unrelated process is gone: %v", err)
 	}
-	if after, err := childproof.ReadIdentity(victim.Process.Pid); err != nil || after.Start != live.Start {
+	if after, err := childproof.ReadIdentityForTest(victim.Process.Pid); err != nil || after.Start != live.Start {
 		t.Errorf("the unrelated process now reads %+v, %v; want it unchanged", after, err)
 	}
 	if n := len(eventsOfKind(ring, events.KindBusPidfileStale)); n != 1 {

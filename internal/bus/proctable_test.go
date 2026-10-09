@@ -106,7 +106,7 @@ func (p *procTable) read(pid int) (childproof.Identity, error) {
 	if fake {
 		return id, nil
 	}
-	return childproof.ReadIdentity(pid)
+	return childproof.ReadIdentityForTest(pid)
 }
 
 func (p *procTable) kill(pid int, sig syscall.Signal) error {

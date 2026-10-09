@@ -354,6 +354,10 @@ const (
 	// pidfile with no identity record under the legacy rule. The bus stays
 	// down and the event names the pid, the port and the remedy.
 	KindBusPidfileUnproven Kind = "bus.pidfile-unproven"
+	// KindBusIdentityUnrecorded reports a broker that started but whose identity
+	// record could not be written. It runs, and the next start reads its
+	// pidfile as a legacy one (V11), so it is not adopted by proof.
+	KindBusIdentityUnrecorded Kind = "bus.identity-unrecorded"
 )
 
 // Agent-stream kinds. These are the runtime adapter vocabulary
@@ -479,6 +483,7 @@ var allKinds = []Kind{
 	KindBusGlobalRoleUnadmitted,
 	KindBusPidfileStale,
 	KindBusPidfileUnproven,
+	KindBusIdentityUnrecorded,
 	KindAgentSessionStarted,
 	KindAgentSessionEnded,
 	KindAgentTurnStarted,

@@ -474,8 +474,9 @@ func (s *Supervisor) spawnLocked() error {
 	// The identity record is written before the pidfile that names it, from
 	// what the kernel says about the child now (design section 3.1). Without
 	// an identity the child is stopped: a broker marvel cannot prove later is
-	// one it could never stop.
-	var spawned childproof.Identity
+	// one it could never stop. The child is proven from the handle that
+	// started it, never from a pid.
+	var spawned childproof.Child
 	child, err := workload.Start(workload.ProcessSpec{
 		Name:      "bus",
 		Binary:    s.binary,
@@ -490,36 +491,28 @@ func (s *Supervisor) spawnLocked() error {
 		},
 		LogPath: s.logPath,
 		PidFile: s.pidFile,
-		BeforePidFile: func(pid int) error {
+		BeforePidFile: func(cmd *exec.Cmd) error {
 			if s.onSpawn != nil {
-				s.onSpawn(pid)
+				s.onSpawn(cmd.Process.Pid)
 			}
-			id, err := s.prober.Identify(pid)
+			c, err := s.prober.Spawned(cmd)
 			if err != nil {
-				return fmt.Errorf("read the identity of the new broker (pid %d): %w", pid, err)
+				return fmt.Errorf("read the identity of the new broker (pid %d): %w", cmd.Process.Pid, err)
 			}
-			spawned = id
+			spawned = c
 			err = os.MkdirAll(filepath.Dir(s.pidFile), 0o700)
 			if err == nil {
-				err = writeIdentity(sidecarPath(s.pidFile), pid, id, s.now())
+				err = writeIdentity(sidecarPath(s.pidFile), c.Pid(), c.Identity(), s.now())
 			}
 			if err != nil {
 				_ = os.Remove(sidecarPath(s.pidFile))
-				log.Printf("bus: record the identity of nats-server pid %d: %v", pid, err)
+				log.Printf("bus: record the identity of nats-server pid %d: %v", c.Pid(), err)
 			}
 			return nil
 		},
 	})
 	if err != nil {
 		return err
-	}
-	proven, err := s.prober.Prove(child.Pid, spawned)
-	if err != nil {
-		// The child is ours and not yet reaped, so its pid cannot have been
-		// reused: stop it through the handle.
-		_ = child.Cmd.Process.Kill()
-		_ = child.Cmd.Wait()
-		return fmt.Errorf("bus: the new broker (pid %d) does not match the identity read at start: %w", child.Pid, err)
 	}
 	// Record whether this process can resolve a leaf remote's seed on a later
 	// reload. A broker spawned with the seed already present picks up a
@@ -533,7 +526,7 @@ func (s *Supervisor) spawnLocked() error {
 	} else {
 		s.leafSeedFP = ""
 	}
-	s.cmd, s.pid, s.adopted, s.child, s.pidState = child.Cmd, child.Pid, false, proven, pidStateProven
+	s.cmd, s.pid, s.adopted, s.child, s.pidState = child.Cmd, child.Pid, false, spawned, pidStateProven
 	log.Printf("bus: started nats-server %s pid %d (%s -c %s), log %s", s.version, s.pid, s.binary, conf, s.logPath)
 	return nil
 }

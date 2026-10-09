@@ -43,10 +43,10 @@ type ProcessSpec struct {
 	// LogPath receives the child's stdout and stderr, appended, mode 0600.
 	LogPath string
 	// BeforePidFile runs after the child starts and before the pidfile is
-	// written, with the child's pid. A driver records the child's identity
+	// written, with the started command. A driver records the child's identity
 	// here, so an identity record never trails the pidfile that names it. An
 	// error stops the child and fails Start. Nil does nothing.
-	BeforePidFile func(pid int) error
+	BeforePidFile func(cmd *exec.Cmd) error
 	// PidFile, when set, records the child pid for adoption by a
 	// successor daemon. Written 0644 on a best-effort basis.
 	PidFile string
@@ -92,7 +92,7 @@ func Start(spec ProcessSpec) (*Child, error) {
 	_ = logf.Close() // the child holds its own descriptor
 	pid := cmd.Process.Pid
 	if spec.BeforePidFile != nil {
-		if err := spec.BeforePidFile(pid); err != nil {
+		if err := spec.BeforePidFile(cmd); err != nil {
 			// The child is ours and not yet reaped, so its pid cannot have been
 			// reused: stopping it through the handle is safe.
 			_ = cmd.Process.Kill()

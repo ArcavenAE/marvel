@@ -46,24 +46,6 @@ func (e *MismatchError) Error() string {
 	return fmt.Sprintf("childproof: pid %d is not the recorded process (%s)", e.Pid, e.Reason)
 }
 
-// ReadIdentity is the production reader, for a test that wraps it: a Prober
-// built by NewForTest reads real children and fakes only the pids it names.
-func ReadIdentity(pid int) (Identity, error) { return readIdentity(pid) }
-
-// Spawned returns the Child for a process this caller just started through cmd:
-// its identity is read for up to identifyWindow while the process settles. It
-// is the only constructor without a record, and it takes the *exec.Cmd, not a
-// pid, so a pid read from a file cannot reach it; cmd must have been started
-// and not yet waited for.
-func (p *Prober) Spawned(cmd *exec.Cmd) (Child, error) { return Child{}, errUnbuilt }
-
-// ReadIdentityForTest is the production reader for a test that wraps it and
-// fakes only the pids it plants. It refuses outside a test binary, and a
-// source test fails on any reference to it outside a _test.go file.
-func ReadIdentityForTest(pid int) (Identity, error) { return Identity{}, errUnbuilt }
-
-var errUnbuilt = errors.New("childproof: not built")
-
 // Identity is what the kernel says about a process now.
 type Identity struct {
 	// Start is platform-tagged and compared as a string: darwin:<sec>.<usec>
@@ -120,26 +102,44 @@ func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal)
 
 func (p *Prober) wired() bool { return p != nil && p.read != nil && p.kill != nil }
 
-// Identify reads pid's identity, for a caller that has just started pid itself
-// and holds its process handle; it retries for identifyWindow while the child
-// settles. It proves nothing about a pid read from a file.
-func (p *Prober) Identify(pid int) (Identity, error) {
+// Spawned returns the Child for a process this caller just started through
+// cmd. Its identity is read for up to identifyWindow while the process settles:
+// on linux /proc/<pid>/cmdline is empty for a moment after exec. It is the one
+// constructor without a record, and it takes the *exec.Cmd, not a pid, so a pid
+// read from a file cannot reach it; cmd must have been started and not yet
+// waited for, which is what makes its pid ours.
+func (p *Prober) Spawned(cmd *exec.Cmd) (Child, error) {
 	if !p.wired() {
-		return Identity{}, errNoSeams
+		return Child{}, errNoSeams
 	}
+	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
+		return Child{}, errors.New("childproof: Spawned needs a command that is started and not yet waited for")
+	}
+	pid := cmd.Process.Pid
 	if pid <= 1 {
-		return Identity{}, fmt.Errorf("childproof: pid %d names no single process", pid)
+		return Child{}, fmt.Errorf("childproof: pid %d names no single process", pid)
 	}
-	// A child started a moment ago can be unreadable for a moment: on linux
-	// /proc/<pid>/cmdline is empty until exec has finished filling it in.
 	deadline := time.Now().Add(identifyWindow)
 	for {
 		id, err := p.read(pid)
-		if err == nil || !time.Now().Before(deadline) {
-			return id, err
+		if err == nil {
+			return Child{pid: pid, id: id, by: p}, nil
+		}
+		if !time.Now().Before(deadline) {
+			return Child{}, err
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// ReadIdentityForTest is the production reader for a test that wraps it and
+// fakes only the pids it plants. It refuses outside a test binary, and a
+// source test fails on any reference to it outside a _test.go file.
+func ReadIdentityForTest(pid int) (Identity, error) {
+	if !testing.Testing() {
+		return Identity{}, errors.New("childproof: ReadIdentityForTest outside a test binary")
+	}
+	return readIdentity(pid)
 }
 
 // Prove reads pid's live identity and returns a Child when it equals want:

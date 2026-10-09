@@ -3,6 +3,7 @@ package workload
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,7 +37,8 @@ func TestBeforePidFileRunsAfterTheChildStartsAndBeforeThePidfile(t *testing.T) {
 	spec, pf := sleepSpec(t)
 	var sawPid int
 	var pidfileThen bool
-	spec.BeforePidFile = func(pid int) error {
+	spec.BeforePidFile = func(cmd *exec.Cmd) error {
+		pid := cmd.Process.Pid
 		sawPid = pid
 		_, err := os.Stat(pf)
 		pidfileThen = err == nil
@@ -65,8 +67,8 @@ func TestBeforePidFileRunsAfterTheChildStartsAndBeforeThePidfile(t *testing.T) {
 func TestBeforePidFileErrorStopsTheChildAndWritesNoPidfile(t *testing.T) {
 	spec, pf := sleepSpec(t)
 	var hookPid int
-	spec.BeforePidFile = func(pid int) error {
-		hookPid = pid
+	spec.BeforePidFile = func(cmd *exec.Cmd) error {
+		hookPid = cmd.Process.Pid
 		return errors.New("cannot read the child's identity")
 	}
 	c, err := Start(spec)
