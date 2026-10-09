@@ -2,6 +2,8 @@ package childproof
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -58,7 +60,7 @@ func (k *fakeKernel) signals() []sent {
 }
 
 func broker(start string) Identity {
-	return Identity{Start: start, Exe: "/opt/bin/nats-server", Argv: []string{"/opt/bin/nats-server", "-c", "/run/nats.conf"}, Pgid: 500}
+	return Identity{Start: start, Exe: "/opt/bin/nats-server", Argv: []string{"/opt/bin/nats-server", "-c", "/run/nats.conf"}, Pgid: 500, Ppid: os.Getpid()}
 }
 
 func prober(t *testing.T, k *fakeKernel) *Prober {
@@ -490,5 +492,88 @@ func TestSpawnedRefusesWhatIsNotAFreshlyStartedChild(t *testing.T) {
 	}
 	if got := k.signals(); len(got) != 0 {
 		t.Errorf("Spawned signalled %v", got)
+	}
+}
+
+// Spawned proves a process this caller started, so the kernel must name this
+// process as its parent. exec.Cmd.Process and os.Process.Pid are exported, so
+// a handle for any live pid is easy to build; only the parent check refuses it.
+func TestSpawnedRefusesAProcessThatIsNotOurChild(t *testing.T) {
+	sh := exec.Command("sh", "-c", "sleep 30 & echo $!; wait")
+	out, err := sh.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sh.Start(); err != nil {
+		t.Skipf("no sh: %v", err)
+	}
+	t.Cleanup(func() { _ = sh.Process.Kill(); _ = sh.Wait() })
+	var gpid int
+	if _, err := fmt.Fscan(out, &gpid); err != nil || gpid <= 1 {
+		t.Fatalf("grandchild pid: %d, %v", gpid, err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(gpid, syscall.SIGKILL) })
+
+	// The grandchild is live and readable, and its parent is the shell.
+	if live, err := ReadIdentityForTest(gpid); err != nil || live.Ppid != sh.Process.Pid {
+		t.Fatalf("the grandchild reads as %+v, %v; want parent %d", live, err, sh.Process.Pid)
+	}
+	found, err := os.FindProcess(gpid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, cmd := range map[string]*exec.Cmd{
+		"a struct literal": {Process: &os.Process{Pid: gpid}},
+		"FindProcess":      {Process: found},
+	} {
+		if c, err := New().Spawned(cmd); err == nil {
+			t.Errorf("Spawned proved a process that is not our child, by %s: %+v", name, c)
+		}
+	}
+}
+
+func TestSpawnedAsksTheKernelForTheParent(t *testing.T) {
+	cmd := startedCmd(t)
+	for name, tc := range map[string]struct {
+		ppid int
+		ok   bool
+	}{
+		"our own child":  {os.Getpid(), true},
+		"someone else's": {os.Getpid() + 1, false},
+		"an unknown (0)": {0, false},
+		"init's":         {1, false},
+	} {
+		id := broker("darwin:100.5")
+		id.Ppid = tc.ppid
+		killed := 0
+		p, err := NewForTest(func(int) (Identity, error) { return id, nil }, func(int, syscall.Signal) error { killed++; return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := p.Spawned(cmd)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: Spawned = %+v, %v; want ok=%v", name, c, err, tc.ok)
+		}
+		if killed != 0 {
+			t.Errorf("%s: Spawned signalled", name)
+		}
+	}
+}
+
+// A pid at or below 1 names no single process: kill(0) is the caller's group
+// and kill(-1) is everything. Spawned refuses it before it reads.
+func TestSpawnedRefusesAPidThatNamesNoSingleProcess(t *testing.T) {
+	reads := 0
+	p, err := NewForTest(func(int) (Identity, error) { reads++; return broker("a"), nil }, func(int, syscall.Signal) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pid := range []int{1, 0, -1, -1234} {
+		if c, err := p.Spawned(&exec.Cmd{Process: &os.Process{Pid: pid}}); err == nil {
+			t.Errorf("Spawned proved pid %d: %+v", pid, c)
+		}
+	}
+	if reads != 0 {
+		t.Errorf("Spawned read %d identities for a pid that names no process", reads)
 	}
 }

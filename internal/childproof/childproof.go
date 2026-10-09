@@ -57,6 +57,8 @@ type Identity struct {
 	Argv []string
 	// Pgid is the process group, read live and never recorded.
 	Pgid int
+	// Ppid is the parent, read live and never recorded.
+	Ppid int
 }
 
 // Child is a process whose identity was read and matched. Its fields are
