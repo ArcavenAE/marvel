@@ -486,6 +486,11 @@ content: |
   config-file redirection silent-wrong. That residue is smaller than today's
   and is not zero, and anyone reading a graded value must know which of the
   three cases they are in.
+
+  HARVEST 2026-10-09 (finding-058): a claude role's model is selected today by
+  `runtime.args` (`--model`), passed through verbatim by the adapter, and
+  marvel records the model the harness declares at init. The model that served
+  a response was not observed.
 edges:
   - target: question-interactive-context-pressure
     type: derives

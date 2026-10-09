@@ -190,6 +190,12 @@ content: |
   Keychain under the real HOME, so a seat under an overridden HOME reports
   "Not logged in" while marvel shows it running. HOME is not a free
   isolation knob for a daemon that spawns authenticated harnesses.
+
+  HARVEST 2026-10-09 (finding-059): applying one team's manifest reaches past
+  that team. `handleApply` re-projects policy over every live session and
+  reloads the shared broker, and deleting a team reloads it again. A probe
+  brief scopes its blast radius by the daemon's team set, not by the team it
+  names.
 edges:
   - target: elem-data-directory-permissions
     type: derives

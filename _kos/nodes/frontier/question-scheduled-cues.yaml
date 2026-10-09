@@ -32,6 +32,33 @@ content: |
   An alarm alone would have surfaced the 19-hour gap. It is the smaller
   first piece, and it fits marvel's diagnostic-not-gate posture: an event,
   never a block.
+
+  HARVEST 2026-10-09.
+
+  finding-060 (scheduled runs S-2, marvel#431): the control and management
+  plane is not a redaction boundary. Describe shows a run's result text to the
+  operator (operator ruling); what is never forwarded off the control plane is
+  the result text. Named defaults put a design gap where someone can rule on
+  it.
+
+  BUILT, marvel#650 (S-3, merged 9e47465a): the schedule clock. Its named
+  defaults, with rulings from the operator on 2026-10-07 relayed by director:
+  1. the clock runs on the reconcile tick (2 s), so a firing can start up to
+     one tick late (answered from the code);
+  2. an unset `starting_deadline` is a one-minute grace for the first start
+     only; retries are bounded by `retries` alone (ruled);
+  3. a firing is skipped while the team's posture is hold, and the money
+     guard is never bypassed (ruled A);
+  4. wildcard spring-gap firings coalesce at the first instant after the gap
+     (accepted for now);
+  5. to 8. a cancelled run settles its firing; retry backoff 30 s doubling to
+     5 m; a new firing deletes the earlier firing's finished session rows;
+     suspend catches nothing up (adopted).
+
+  KNOWN LIMIT (marvel#650): on tmux before 3.5 a dead pane's exit status can be
+  lost, so an exit-0 scheduled run can be recorded failed and spend a retry,
+  or freeze the schedule under `on_failure = freeze`. Not fixed; tests follow
+  the tmux version gate. See elem-tmux-session-substrate.
 edges:
   - target: question-agent-communication-broker
     type: derives

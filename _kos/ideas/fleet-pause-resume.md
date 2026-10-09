@@ -2,6 +2,8 @@
 
 **Status: idea. Pre-hypothesis. Nothing here is designed or measured.**
 
+**Became:** frontier node `question-fleet-pause-resume` (2026-10-09), with measurements in finding-marvel-1kg8 and finding-marvel-1eds and a design in `docs/design/fleet-suspend-resume.md`.
+
 Captured: 2026-10-07
 Source: operator, relayed by director.
 

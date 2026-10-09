@@ -47,6 +47,18 @@ content: |
   path (the path only) and the team budget. Make it blocked by iudtl. Drop
   memory path and per-role budget from T8. Valid until 2026-10-22; the
   architect seat re-checks it then.
+
+  HARVEST 2026-10-09, redaction rulings (relayed by director on
+  2026-10-08), recorded in `docs/design/describe-redaction.md` section 10 on
+  marvel#784 (open; not yet on main):
+  - ruling 1, (c): redact only Env keys that look like secrets. A value
+    prints as `(redacted)` when its key matches the pattern list
+    (`SecretKey`, case-insensitive); every other value prints as declared.
+    The cost: a credential under a key that matches no pattern prints.
+  - ruling 2, (a): Args and Prompt stay visible, as a documented contract,
+    with the RD-4 warning (an apply-time warning for secret-looking Args).
+  finding-060 is the earlier ruling that the control plane is not a redaction
+  boundary for run output.
 edges:
   - target: question-role-tools-field-projection
     type: derives

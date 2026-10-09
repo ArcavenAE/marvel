@@ -20,6 +20,10 @@ content: |
   - Known dedup bug from Go's log-timestamp prefix (`aae-orc-407l`)
 
   Evidence: session-025. `aae-orc-388` closed.
+
+  HARVEST 2026-10-09 (finding-057): the ring folds repeated identical lines
+  into "last message repeated N times", so a repeated inject's later arrivals
+  carry no timestamp. A folded line is not a failed doorbell.
 edges:
   - target: elem-mrvl-protocol-ssh
     type: implements

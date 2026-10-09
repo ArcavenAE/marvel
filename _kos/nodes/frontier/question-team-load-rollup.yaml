@@ -1,0 +1,50 @@
+id: question-team-load-rollup
+type: question
+confidence: frontier
+title: "How does each cluster publish its teams' load so one reader can see the whole fleet, and who may write it?"
+tags:
+  - marvel
+  - bus
+  - observability
+content: |
+  Design: `docs/design/team-load-rollup.md` (marvel#775, rulings in
+  marvel#783). Each daemon computes its own teams' rows; a per-cluster
+  summary goes to one hub KV key per cluster over the leaf. Rows follow the
+  as-of grammar (fresh at or before valid_until). Open, unacked, blocked and
+  oldest-open counts come from the merged ask ledger only.
+
+  RULED (operator, 2026-10-08; recorded in the design's section 6 by
+  marvel#783):
+  - D2 (c): the keys are unauthenticated, and the header says so.
+  - D3 (c), D5 (a), D6 (a), as written in the design's decisions section.
+
+  NOT RULED: D1 (who may write a cluster's key) and D4.
+
+  D1, RELAYED, NO COMMITTED RECORD: a simulation of the D1 options ran on a
+  scratch hub rig on 2026-10-08 (never the live hub). Its record is held
+  locally and no finding stands behind it yet. It reported:
+  - a KV put observed as a publish to `$JS.global.API.$KV.<bucket>.<key>`.
+    The design still calls that subject assumed (`team-load-rollup.md`, the
+    put-subject line in the D1 section); a finding would need to carry the
+    measurement before the design relies on it;
+  - a KV entry that names no writer;
+  - a recommendation of signed records (option d, not in the design), with
+    conditions, sent to the operator and valid until 2026-10-22; the
+    architect re-checks it then.
+
+  PLAN (design section 7): items 1, 2, 5, 6 and 8 are filed as bd tickets
+  aae-orc-6hcad, aae-orc-4m99a, aae-orc-2l2yh, aae-orc-fmhyt and
+  aae-orc-xga6w with dependency edges. Items 3, 4 and 7 wait on D1 and D4.
+
+  OPEN: D1, D4, and whether the D3 amendment is accepted.
+edges:
+  - target: question-multi-host
+    type: derives
+    note: "the rollup is the first cross-cluster read; it rides the hub leaf"
+  - target: question-agent-communication-broker
+    type: derives
+    note: "the summary key lives on the broker; its write permission is a subject permission"
+provenance:
+  created_by: agent
+  session: architect-2026-10-09-harvest
+  created_at: "2026-10-09"
