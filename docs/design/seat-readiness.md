@@ -54,8 +54,10 @@ unchanged `asof.Cell`.
 | `-`, `?` | as the register defines them (`docs/design/seat-register.md:50`) |
 
 `Source` carries a vantage word and a stage from the register's fixed
-vocabulary: `seat:reach:<code>`, `seat:auth:<code>`, `host:...`, `peer:...`. A
-`seat` value was run in the seat and reported by it, and says so. A pass from
+vocabulary: `seat:reach:<code>`, `seat:auth:<code>`, `pane:...`, `host:...`,
+`peer:...`. A `seat` value was run in the seat and reported by it, and says so.
+A `pane` value is the daemon's reading of the seat's own screen, as
+`pane.alive` and the watcher's `blocker_class` are. A pass from
 another vantage never stands in for the seat's: the reviewer case above passed
 from its supervisor's seat and failed in its own.
 
@@ -97,8 +99,8 @@ A check proves a duty. It never reads or prints a credential.
 | a read (`gh.read`, `jira.read`) | A: an unauthenticated TLS reach to the API host. B: one harmless authenticated read of the caller's own record or rate limit (`GET /rate_limit`; Jira `GET /rest/api/3/myself`), through the seat's own tool | A fails: reach `fail`, read `unproven`. A passes, B rejected: read `fail` |
 | a write (`gh.post`, `gh.comment`, `jira.write`) | none harmless; proving a post means posting. The last successful write and its time, from the event the seat already produces | `proven` with that time, else `unproven`. A seat's own report never makes a write `proven` |
 | `ack` | the director ledger's last ack from the seat; a denial seen by the watcher | observed only; never a test send |
-| `first-turn` | turn evidence by the `ready_by` deadline (section 5) | observed only; `unsupported` where a harness gives no turn evidence |
-| a held dialog | one plain capture, matched to a version-ranged pattern | a match writes `fail` to `first-turn` with `Source` `pane:dialog:<class>`, and the watcher's record carries `blocker_class` `dialog` (`docs/design/marvel-watcher.md:95`). No match writes no duty value; the watcher's record carries `unknown` with `no-dialog-pattern`. See the note below |
+| `first-turn` | turn evidence by the `ready_by` deadline (section 5) | observed only; `-` with the reason code `unsupported` where a harness gives no turn evidence (`docs/design/seat-register.md:50`), which routes as ask first |
+| a held dialog | one plain capture, matched to a version-ranged pattern | a match writes `fail` to `first-turn` with `Source` `pane:dialog:<class>`, and the watcher's record carries `blocker_class` `dialog` (`docs/design/marvel-watcher.md:95`). No match writes no duty value; the watcher's record carries `unknown` with `no-dialog-pattern`. A dialog caught after `first-turn` was `proven` overwrites it with `fail`, by design: the newest observation wins, and the next observed turn restores it. See the note below |
 
 Rules for every check:
 
