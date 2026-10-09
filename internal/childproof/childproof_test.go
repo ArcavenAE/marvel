@@ -315,7 +315,8 @@ func TestReadIdentityOfARealChild(t *testing.T) {
 		return cmd
 	}
 	a, b := start(), start()
-	first, err := readIdentity(a.Process.Pid)
+	// A fresh child can be unreadable for a moment (see the Identify test).
+	first, err := New().Identify(a.Process.Pid)
 	if err != nil {
 		t.Fatalf("readIdentity(own child): %v", err)
 	}
@@ -335,7 +336,7 @@ func TestReadIdentityOfARealChild(t *testing.T) {
 	if first.Pgid != a.Process.Pid {
 		t.Errorf("pgid = %d, want %d (Setpgid child leads its own group)", first.Pgid, a.Process.Pid)
 	}
-	other, err := readIdentity(b.Process.Pid)
+	other, err := New().Identify(b.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}

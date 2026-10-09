@@ -105,9 +105,9 @@ func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal)
 
 func (p *Prober) wired() bool { return p != nil && p.read != nil && p.kill != nil }
 
-// Identify reads pid's identity now, for a caller that has just started pid
-// itself and holds its process handle. It proves nothing about a pid read
-// from a file.
+// Identify reads pid's identity, for a caller that has just started pid itself
+// and holds its process handle; it retries for identifyWindow while the child
+// settles. It proves nothing about a pid read from a file.
 func (p *Prober) Identify(pid int) (Identity, error) {
 	if !p.wired() {
 		return Identity{}, errNoSeams
@@ -115,7 +115,16 @@ func (p *Prober) Identify(pid int) (Identity, error) {
 	if pid <= 1 {
 		return Identity{}, fmt.Errorf("childproof: pid %d names no single process", pid)
 	}
-	return p.read(pid)
+	// A child started a moment ago can be unreadable for a moment: on linux
+	// /proc/<pid>/cmdline is empty until exec has finished filling it in.
+	deadline := time.Now().Add(identifyWindow)
+	for {
+		id, err := p.read(pid)
+		if err == nil || !time.Now().Before(deadline) {
+			return id, err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // Prove reads pid's live identity and returns a Child when it equals want:
