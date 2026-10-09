@@ -40,12 +40,14 @@ redesign.
 - **One identity per (team, role).** Seat names are
   `<team>-<role>-g<gen>-<idx>` (`internal/team/controller.go:1346`,
   `:2304`); the generation is a per-team counter (`internal/api/types.go:910`)
-  and the index is max plus one, never reused (`controller.go:2533-2546`).
+  and the index is one more than the highest index among the store's
+  current rows for that role and generation (`controller.go:2533-2546`), so
+  a deleted top index can come back.
   An identity per generation or instance would need an identity-provider
   admin call on every shift. Per (team, role) matches the existing
   credential seam (`internal/session/manager.go:965`) and the per-role bus
   users (`internal/bus/declared.go:239-249`), and finding-068 ruling (ii),
-  "the identity is the slot". The slot, generation and instance go in each
+  "the identity is the slot, not the session". The slot, generation and instance go in each
   token's downstream session name and its `jti`, not in the identity.
 - **Seats get a helper pointer, never a value.** A `Credentials` interface
   on `session.Manager` beside `BusEnv` (`manager.go:44-47`, `:962-968`,
@@ -65,8 +67,11 @@ redesign.
 ## What this does not settle
 
 - Who provisions the non-exportable signing key, and whether a key marvel
-  generates would be custody-adjacent. finding-068 ruling (i) holds: nothing
-  is built on a marvel-held signing key until the operator rules.
+  generates would be custody-adjacent. finding-068 ruling (i) reads: "a
+  marvel signing key trusted by the bd server is custody-adjacent until
+  ruled otherwise, and nothing is built on it in the meantime". The broker's
+  `private_key_jwt` key is analogous, trusted by an identity provider rather
+  than the bd server, so (i) does not cover it; it needs its own ruling.
 - Whether replicas of one role need separate principals. Per-slot
   identities wait on a stable slot identity (marvel#363).
 - Which downstream services accept the token by federation, and with which
