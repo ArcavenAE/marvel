@@ -91,6 +91,15 @@ func Start(spec ProcessSpec) (*Child, error) {
 	}
 	_ = logf.Close() // the child holds its own descriptor
 	pid := cmd.Process.Pid
+	if spec.BeforePidFile != nil {
+		if err := spec.BeforePidFile(pid); err != nil {
+			// The child is ours and not yet reaped, so its pid cannot have been
+			// reused: stopping it through the handle is safe.
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("%s: %w", spec.Name, err)
+		}
+	}
 	if spec.PidFile != "" {
 		if err := os.MkdirAll(filepath.Dir(spec.PidFile), 0o700); err == nil {
 			if werr := os.WriteFile(spec.PidFile, []byte(strconv.Itoa(pid)+"\n"), 0o644); werr != nil {
