@@ -1306,7 +1306,7 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 	defer w.Close()
 
 	send := func(b EventsBatch) bool {
-		data, err := json.Marshal(b)
+		data, err := marshalRedacted(b)
 		if err != nil {
 			_ = enc.Encode(d.stamp(Response{Error: fmt.Sprintf("marshal events: %v", err)}))
 			return false

@@ -32,7 +32,7 @@ name = "squad"
     [team.role.runtime]
     command = "sleep"
     args = ["300"]
-    env = { K = "` + canary + `" }
+    env = { SERVICE_TOKEN = "` + canary + `", REGION = "us-east-1" }
 `
 
 // rawResponse is what any socket caller receives for method, as bytes.
@@ -46,7 +46,8 @@ func rawResponse(t *testing.T, d *Daemon, method string, params any) string {
 	return string(resp.Result) + resp.Error
 }
 
-// The raw bytes of get, describe and plan carry the key and never the value.
+// The raw bytes of get, describe and plan carry a secret-looking key and never
+// its value.
 // plan is the case a verb-by-verb fix misses: a scale-down to 0 puts the whole
 // session, runtime included, in RolePlan.Delete.
 func TestReadMethodsNeverPrintAnEnvValue(t *testing.T) {
@@ -87,8 +88,13 @@ func TestReadMethodsNeverPrintAnEnvValue(t *testing.T) {
 	// The key is still shown, with the placeholder, so an operator can see what
 	// is set. describe session is the one view that carries the whole runtime.
 	got := rawResponse(t, d, "describe", map[string]string{"resource_type": "session", "name": sess.Key()})
-	if !strings.Contains(got, `"K"`) || !strings.Contains(got, "(redacted)") {
-		t.Errorf("describe session shows no key with (redacted):\n%s", got)
+	if !strings.Contains(got, `"SERVICE_TOKEN":"(redacted)"`) {
+		t.Errorf("describe session shows no secret-looking key with (redacted):\n%s", got)
+	}
+	// Ruling redaction-q1-env (c): only secret-looking keys are redacted, so an
+	// ordinary key's value is visible. This pins (c) and not (a).
+	if !strings.Contains(got, `"REGION":"us-east-1"`) {
+		t.Errorf("describe session hides an ordinary key's value:\n%s", got)
 	}
 
 	// The durable record keeps the value: redaction is a view, not a rewrite.
@@ -96,8 +102,8 @@ func TestReadMethodsNeverPrintAnEnvValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Runtime.Env["K"] != canary {
-		t.Errorf("the stored Env value changed: %q", stored.Runtime.Env["K"])
+	if stored.Runtime.Env["SERVICE_TOKEN"] != canary {
+		t.Errorf("the stored Env value changed: %q", stored.Runtime.Env["SERVICE_TOKEN"])
 	}
 }
 
@@ -234,5 +240,33 @@ func TestEveryDispatchMethodIsClassifiedForRedaction(t *testing.T) {
 		if !inTable[m] {
 			t.Errorf("redactionClass names %q, which is not in the dispatch table", m)
 		}
+	}
+}
+
+// marshalRedacted is the one marshal every response body goes through: a
+// Session, a team, or an anonymous map holding either comes out with its
+// secret-looking Env values redacted, and the input is untouched.
+func TestMarshalRedactedRedactsWhateverItIsGiven(t *testing.T) {
+	sess := api.Session{Name: "s", Runtime: api.Runtime{Command: "sleep", Env: map[string]string{
+		"SERVICE_TOKEN": canary, "REGION": "us-east-1",
+	}}}
+	for name, v := range map[string]any{
+		"session":       sess,
+		"session slice": []api.Session{sess},
+		"anonymous map": map[string]any{"plans": []any{map[string]any{"delete": []api.Session{sess}}}},
+	} {
+		data, err := marshalRedacted(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), canary) {
+			t.Errorf("%s: the Env value survived:\n%s", name, data)
+		}
+		if !strings.Contains(string(data), "us-east-1") {
+			t.Errorf("%s: an ordinary key's value was hidden:\n%s", name, data)
+		}
+	}
+	if sess.Runtime.Env["SERVICE_TOKEN"] != canary {
+		t.Error("marshalRedacted changed its input")
 	}
 }
