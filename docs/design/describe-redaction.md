@@ -184,3 +184,46 @@ The socket scope issue in section 8 is filed separately, not as a child here.
    Not ruled.
 4. **No reveal verb until the socket can tell a seat from the operator.**
    Default offered: yes. Not ruled.
+5. **Passwords inside URL-shaped values.** Ruled (a), relayed by director on
+   2026-10-09: redact only the userinfo part of URL-shaped values, whatever the
+   key, and leave scheme, host, port, path and query readable. This adds a
+   value check to ruling 1's key rule: `redis://user:password@host/0` prints as
+   `redis://(redacted)@host/0` under any key that does not already redact the
+   whole value. A URL is found by its `://`. Its authority ends at `/`, `?` or
+   `#`, or at white space, or at the start of a second URL. The userinfo is
+   everything before the last `@` of that authority, so a password holding `@`,
+   `:`, `,`, `;` or a raw `"`, `<`, `>`, `\`, `^`, a backtick, `{`, `|` or `}`
+   is covered, wherever the `@` sits in it. Those raw characters end nothing, so
+   only the text before the last `@` is redacted and `redis://u:p@h}` keeps
+   `h}`.
+
+   **Where "host stays readable" gives way.** Ruled (a) by the operator, relayed
+   by director on 2026-10-09: "the secret always wins", so the host stays readable
+   except where keeping it readable could let part of a secret print. The syntax
+   cannot tell `u:p@h"x@y` from `u:p@x"y@h`, so there a readable host never
+   outranks a secret that must not print.
+   The host is hidden, with everything between the
+   userinfo's start and the last `@`, in these shapes, each pinned by a test:
+   - a URL followed, before the next `/`, `?`, `#` or white space, by any text
+     holding an `@`: `{"u":"redis://u:p@h","m":"a@b.com"}` prints
+     `{"u":"redis://(redacted)@b.com"}`, losing the host and every field up to
+     that last `@`;
+   - the same for a URL that has no userinfo at all (`{"u":"redis://h","m":"a@b.com"}`);
+   - a single-quoted value, `{'a':'redis://u:p@h','b':'x@y.com'}`, which prints
+     `{'a':'redis://(redacted)@y.com'}`, since `'` is legal in userinfo and ends
+     nothing.
+   Shapes with no later `@` keep their host, as in `{"u":"redis://u:p@h","n":1}`.
+
+   The cost, a password that still prints in full:
+   - one with an unencoded `/`, `?` or `#` (RFC 3986 requires them
+     percent-encoded; a base64 password usually holds a `/`);
+   - one with white space inside it, a space or a tab;
+   - one in the query string, such as `postgres://db/app?user=u&password=p`,
+     since the ruling keeps the query readable;
+   - one in a value with no scheme, such as `u:pw@host:5432/db` or
+     `//u:pw@host/x`;
+   - one in `https://host;user=u;password=p`, and in a connection string that is
+     not a URL (`Server=h;Password=p`).
+
+   And one over-redaction: a userinfo with no password, such as a token used as
+   the username, or `git@` in `ssh://git@host`, also prints as `(redacted)`.
