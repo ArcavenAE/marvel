@@ -34,7 +34,7 @@ rule that reads them. It adds no new transport and no new report path.
 | 4 | The watcher visits only seats with old unread mail and a known turn source | `docs/design/marvel-watcher.md:38`, `:123`. A seat held since spawn with an empty queue is never visited |
 | 5 | The register bars `ok`, `free` and `ready` in any cell | `docs/design/seat-register.md`, plan row R1 |
 | 6 | A zero `ValidUntil` means a cell does not expire | `internal/asof/asof.go:37-40` |
-| 7 | codex hooks leave no turn stamp | `docs/design/marvel-watcher.md:24`; codex first turn is `unsupported` |
+| 7 | codex hooks leave no turn stamp | `docs/design/marvel-watcher.md:24`; codex first turn reads `-` with the code `unsupported` |
 | 8 | A bus message does not say which seat of a team sent it | every seat of a team shares one broker user with publish on `agent.<ws>.<team>.>` (`internal/bus/declared.go:207`) |
 | 9 | marvel has no readiness check | `HealthCheckType` has two values, `heartbeat` and `process-alive`; `Readycheck` is model-only (`CLAUDE.md`, Resource Model). Health is liveness, not productivity |
 | 10 | A read-only codex sandbox blocks gh with `error connecting to api.github.com` | `docs/design/codex-reviewer-forge-access.md`, check P1. The reviewer-codex case may be this, not a bad token; the two-call check in section 4 separates them |
