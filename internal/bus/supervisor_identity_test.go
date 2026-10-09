@@ -646,3 +646,28 @@ func TestAdoptedWatchReadsAReusedPidAsAnExit(t *testing.T) {
 		t.Errorf("the watcher signalled the pid that changed hands: %v", got)
 	}
 }
+
+// A broker that starts but whose identity record cannot be written still runs;
+// the failure is an event, not only a log line, because the next start will
+// read its pidfile as legacy and the V11 ruling then decides its fate.
+func TestStartReportsAnIdentityRecordItCouldNotWrite(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	// A non-empty directory where the record goes makes the rename fail.
+	if err := os.MkdirAll(filepath.Join(sidecarPath(s.pidFile), "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	st := s.Status()
+	if !st.Ready || st.PID == 0 {
+		t.Fatalf("status = %+v, want a running broker", st)
+	}
+	got := eventsOfKind(ring, events.KindBusIdentityUnrecorded)
+	if len(got) != 1 || !strings.Contains(got[0].Message, strconv.Itoa(st.PID)) || !strings.Contains(got[0].Message, "legacy") {
+		t.Errorf("bus.identity-unrecorded = %+v, want one naming pid %d and the legacy reading", got, st.PID)
+	}
+	if len(got) == 1 && got[0].Severity != events.SeverityWarning {
+		t.Errorf("severity = %v, want warning", got[0].Severity)
+	}
+}
