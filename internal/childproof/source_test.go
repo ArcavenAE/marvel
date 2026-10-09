@@ -30,18 +30,24 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// newForTestRefs returns the position of every identifier named NewForTest in
-// a parsed non-test file, except the declaration of the function itself.
+// testOnlyNames are the exported names that exist for tests: one builds a
+// Prober from the caller's seams, the other reads real processes for a test
+// that fakes only the pids it plants.
+var testOnlyNames = map[string]bool{"NewForTest": true, "ReadIdentityForTest": true}
+
+// newForTestRefs returns the position of every identifier named in
+// testOnlyNames in a parsed non-test file, except the declaration of the
+// function itself.
 func newForTestRefs(fset *token.FileSet, f *ast.File) []token.Position {
 	var out []token.Position
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncDecl:
-			if n.Name.Name == "NewForTest" && n.Recv == nil {
+			if testOnlyNames[n.Name.Name] && n.Recv == nil {
 				// The declaration is allowed; its body is still read.
 				if n.Body != nil {
 					ast.Inspect(n.Body, func(m ast.Node) bool {
-						if id, ok := m.(*ast.Ident); ok && id.Name == "NewForTest" {
+						if id, ok := m.(*ast.Ident); ok && testOnlyNames[id.Name] {
 							out = append(out, fset.Position(id.Pos()))
 						}
 						return true
@@ -50,7 +56,7 @@ func newForTestRefs(fset *token.FileSet, f *ast.File) []token.Position {
 				return false
 			}
 		case *ast.Ident:
-			if n.Name == "NewForTest" {
+			if testOnlyNames[n.Name] {
 				out = append(out, fset.Position(n.Pos()))
 			}
 		}
@@ -110,12 +116,15 @@ func TestNewForTestCheckSeesEachWayToReachIt(t *testing.T) {
 		src  string
 		hits int
 	}{
-		"the declaration alone":  {"package p\nfunc NewForTest() {}\n", 0},
-		"a call":                 {"package p\nfunc f() { childproof.NewForTest(nil, nil) }\n", 1},
-		"a method value":         {"package p\nvar g = childproof.NewForTest\n", 1},
-		"an alias":               {"package p\nimport cp \"x/childproof\"\nvar g = cp.NewForTest\n", 1},
-		"inside the declaration": {"package p\nfunc NewForTest() { NewForTest() }\n", 1},
-		"a method of that name":  {"package p\ntype T struct{}\nfunc (T) NewForTest() {}\n", 1},
+		"the declaration alone":    {"package p\nfunc NewForTest() {}\n", 0},
+		"a call":                   {"package p\nfunc f() { childproof.NewForTest(nil, nil) }\n", 1},
+		"a method value":           {"package p\nvar g = childproof.NewForTest\n", 1},
+		"an alias":                 {"package p\nimport cp \"x/childproof\"\nvar g = cp.NewForTest\n", 1},
+		"inside the declaration":   {"package p\nfunc NewForTest() { NewForTest() }\n", 1},
+		"a method of that name":    {"package p\ntype T struct{}\nfunc (T) NewForTest() {}\n", 1},
+		"the reader, called":       {"package p\nfunc f() { childproof.ReadIdentityForTest(1) }\n", 1},
+		"the reader, passed on":    {"package p\nvar r = childproof.ReadIdentityForTest\n", 1},
+		"the reader's declaration": {"package p\nfunc ReadIdentityForTest(int) {}\n", 0},
 	} {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "x.go", tc.src, parser.SkipObjectResolution)

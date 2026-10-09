@@ -315,8 +315,12 @@ func TestReadIdentityOfARealChild(t *testing.T) {
 		return cmd
 	}
 	a, b := start(), start()
-	// A fresh child can be unreadable for a moment (see the Identify test).
-	first, err := New().Identify(a.Process.Pid)
+	// A fresh child can be unreadable for a moment (see the Spawned test).
+	ca, err := New().Spawned(a)
+	if err != nil {
+		t.Fatalf("Spawned(own child): %v", err)
+	}
+	first := ca.Identity()
 	if err != nil {
 		t.Fatalf("readIdentity(own child): %v", err)
 	}
@@ -336,10 +340,11 @@ func TestReadIdentityOfARealChild(t *testing.T) {
 	if first.Pgid != a.Process.Pid {
 		t.Errorf("pgid = %d, want %d (Setpgid child leads its own group)", first.Pgid, a.Process.Pid)
 	}
-	other, err := New().Identify(b.Process.Pid)
+	cb, err := New().Spawned(b)
 	if err != nil {
 		t.Fatal(err)
 	}
+	other := cb.Identity()
 	if other.Start == first.Start && a.Process.Pid != b.Process.Pid {
 		// Two children can start within one tick on linux; the pid in the
 		// comparison keeps this from being a false alarm there.
@@ -368,38 +373,60 @@ func TestReadIdentityOfARealChild(t *testing.T) {
 	t.Error("readIdentity still succeeds for a reaped child")
 }
 
+// startedCmd starts a real child the test owns and reaps.
+func startedCmd(t *testing.T) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("sleep", "30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Skipf("no sleep: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return cmd
+}
+
 // A child that has just been started can be read before the kernel has filled
 // in its argument list: on linux, /proc/<pid>/cmdline is empty for a moment
 // after exec, although the parent already sees the exec as done (measured in
-// a linux container, where the first read of a fresh child failed). Identify is
+// a linux container, where the first read of a fresh child failed). Spawned is
 // for exactly that caller, so it retries inside a bounded window.
-func TestIdentifyRetriesWhileAFreshChildIsStillBeingReadable(t *testing.T) {
+func TestSpawnedRetriesWhileAFreshChildIsStillBeingReadable(t *testing.T) {
 	old := identifyWindow
 	identifyWindow = 2 * time.Second
 	t.Cleanup(func() { identifyWindow = old })
+	cmd := startedCmd(t)
 	id := broker("darwin:100.5")
 	calls := 0
-	read := func(int) (Identity, error) {
+	read := func(pid int) (Identity, error) {
 		calls++
+		if pid != cmd.Process.Pid {
+			t.Errorf("read pid %d, the child is %d", pid, cmd.Process.Pid)
+		}
 		if calls < 3 {
 			return Identity{}, errors.New("the process has no readable argument list")
 		}
 		return id, nil
 	}
-	p, err := NewForTest(read, func(int, syscall.Signal) error { return nil })
+	killed := 0
+	p, err := NewForTest(read, func(int, syscall.Signal) error { killed++; return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := p.Identify(41)
-	if err != nil || got.Start != id.Start || calls != 3 {
-		t.Fatalf("Identify = %+v, %v after %d reads; want the identity on the third", got, err, calls)
+	c, err := p.Spawned(cmd)
+	if err != nil || c.Pid() != cmd.Process.Pid || c.Identity().Start != id.Start || calls != 3 {
+		t.Fatalf("Spawned = %+v, %v after %d reads; want the child on the third", c, err, calls)
+	}
+	// The Child it returns is signalled like any other.
+	if err := p.Signal(c, syscall.SIGHUP, false); err != nil || killed != 1 {
+		t.Errorf("Signal on a spawned child: %v, %d kills", err, killed)
 	}
 }
 
-func TestIdentifyGivesUpAndProveDoesNotRetry(t *testing.T) {
+func TestSpawnedGivesUpAndProveDoesNotRetry(t *testing.T) {
 	old := identifyWindow
 	identifyWindow = 30 * time.Millisecond
 	t.Cleanup(func() { identifyWindow = old })
+	cmd := startedCmd(t)
 	calls := 0
 	read := func(int) (Identity, error) { calls++; return Identity{}, syscall.ESRCH }
 	p, err := NewForTest(read, func(int, syscall.Signal) error { return nil })
@@ -407,11 +434,11 @@ func TestIdentifyGivesUpAndProveDoesNotRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if _, err := p.Identify(41); err == nil {
-		t.Error("Identify succeeded for a process that never reads")
+	if _, err := p.Spawned(cmd); err == nil {
+		t.Error("Spawned succeeded for a process that never reads")
 	}
 	if calls < 2 || time.Since(start) > 2*time.Second {
-		t.Errorf("Identify made %d reads in %s; want a few inside the window", calls, time.Since(start))
+		t.Errorf("Spawned made %d reads in %s; want a few inside the window", calls, time.Since(start))
 	}
 	// Prove and Signal read a long-running process: one failed read is an answer.
 	calls = 0
@@ -420,5 +447,32 @@ func TestIdentifyGivesUpAndProveDoesNotRetry(t *testing.T) {
 	}
 	if err := p.Signal(Child{pid: 41, id: broker("a"), by: p}, syscall.SIGHUP, false); err == nil || calls != 2 {
 		t.Errorf("Signal: err = %v, reads so far %d, want a refusal after one more read", err, calls)
+	}
+}
+
+// Spawned takes the handle of a process the caller started and has not waited
+// for, so it cannot be pointed at a pid read from a file.
+func TestSpawnedRefusesWhatIsNotAFreshlyStartedChild(t *testing.T) {
+	k := newKernel(map[int]Identity{})
+	p := prober(t, k)
+	if _, err := p.Spawned(nil); err == nil {
+		t.Error("Spawned accepted a nil command")
+	}
+	if _, err := p.Spawned(exec.Command("sleep", "1")); err == nil {
+		t.Error("Spawned accepted a command that was never started")
+	}
+	waited := exec.Command("sleep", "0")
+	if err := waited.Run(); err != nil {
+		t.Skipf("no sleep: %v", err)
+	}
+	if _, err := p.Spawned(waited); err == nil {
+		t.Error("Spawned accepted a command that was already waited for")
+	}
+	var nilProber *Prober
+	if _, err := nilProber.Spawned(startedCmd(t)); err == nil {
+		t.Error("a nil Prober proved a child")
+	}
+	if got := k.signals(); len(got) != 0 {
+		t.Errorf("Spawned signalled %v", got)
 	}
 }

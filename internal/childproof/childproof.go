@@ -14,6 +14,7 @@ package childproof
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -48,6 +49,20 @@ func (e *MismatchError) Error() string {
 // ReadIdentity is the production reader, for a test that wraps it: a Prober
 // built by NewForTest reads real children and fakes only the pids it names.
 func ReadIdentity(pid int) (Identity, error) { return readIdentity(pid) }
+
+// Spawned returns the Child for a process this caller just started through cmd:
+// its identity is read for up to identifyWindow while the process settles. It
+// is the only constructor without a record, and it takes the *exec.Cmd, not a
+// pid, so a pid read from a file cannot reach it; cmd must have been started
+// and not yet waited for.
+func (p *Prober) Spawned(cmd *exec.Cmd) (Child, error) { return Child{}, errUnbuilt }
+
+// ReadIdentityForTest is the production reader for a test that wraps it and
+// fakes only the pids it plants. It refuses outside a test binary, and a
+// source test fails on any reference to it outside a _test.go file.
+func ReadIdentityForTest(pid int) (Identity, error) { return Identity{}, errUnbuilt }
+
+var errUnbuilt = errors.New("childproof: not built")
 
 // Identity is what the kernel says about a process now.
 type Identity struct {
