@@ -131,6 +131,23 @@ func TestRedactURLUserinfoCoversAPasswordHoldingACharacterAnAuthorityCannotHold(
 	}
 }
 
+// Two readability costs, pinned so the cost list in describe-redaction.md item 5
+// stays true. Neither leaks: both print more as (redacted) than a reader wants.
+func TestRedactURLUserinfoReadabilityCosts(t *testing.T) {
+	for name, c := range map[string]struct{ in, want string }{
+		"single quotes in JSON-like text lose the host and the next field": {
+			`{'a':'redis://u:p@h','b':'x@y.com'}`, `{'a':'redis://(redacted)@y.com'}`,
+		},
+		"a URL with no userinfo, then an e-mail address, in JSON": {
+			`{"u":"redis://h","m":"a@b.com"}`, `{"u":"redis://(redacted)@b.com"}`,
+		},
+	} {
+		if got := redactURLUserinfo(c.in); got != c.want {
+			t.Errorf("%s: redactURLUserinfo(%q) = %q, want %q", name, c.in, got, c.want)
+		}
+	}
+}
+
 // Shapes the ruling does not reach print as they were stored. Pinning them keeps
 // the cost list in docs/design/describe-redaction.md honest: a change that makes
 // one of these redact is a change to the ruling's reach and should be a choice.
@@ -150,5 +167,16 @@ func TestRedactURLUserinfoKnownLimits(t *testing.T) {
 		if got := redactURLUserinfo(in); got != in {
 			t.Errorf("%s: %q changed to %q; if this is now redacted, update the cost list in describe-redaction.md item 5", name, in, got)
 		}
+	}
+}
+
+// A password that holds an @ and, after it, a raw ^ or similar prints its tail:
+// the authority ends at that character, so the rest of the password reads as the
+// host. Pinned so the cost list in describe-redaction.md item 5 stays true.
+func TestRedactURLUserinfoPasswordWithAtThenTerminatorPrintsItsTail(t *testing.T) {
+	in := "redis://u:p@x^CNRYtail@h/0"
+	want := "redis://(redacted)@x^CNRYtail@h/0"
+	if got := redactURLUserinfo(in); got != want {
+		t.Errorf("redactURLUserinfo(%q) = %q, want %q", in, got, want)
 	}
 }

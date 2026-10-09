@@ -191,9 +191,11 @@ The socket scope issue in section 8 is filed separately, not as a child here.
    `redis://(redacted)@host/0` under any key that does not already redact the
    whole value. A URL is found by its `://`. Its authority ends at `/`, `?` or
    `#`, at white space, or at a character an authority can never hold (`"`,
-   `<`, `>`, `\`, `^`, a backtick, `{`, `|`, `}`), so a URL inside JSON keeps its
-   host and the fields after it; the userinfo is everything before the last
-   `@` of that authority, so a password holding `@`, `:`, `,` or `;` is covered.
+   `<`, `>`, `\`, `^`, a backtick, `{`, `|`, `}`) once an `@` has come before
+   it, so a URL with userinfo inside JSON keeps its host and the fields after
+   it, and a password that holds one of those characters raw is still covered.
+   The userinfo is everything before the last `@` of that authority, so a
+   password holding `@`, `:`, `,` or `;` is covered.
 
    The cost, a password that still prints in full:
    - one with an unencoded `/`, `?` or `#` (RFC 3986 requires them
@@ -205,6 +207,14 @@ The socket scope issue in section 8 is filed separately, not as a child here.
      `//u:pw@host/x`;
    - one in `https://host;user=u;password=p`, and in a connection string that is
      not a URL (`Server=h;Password=p`).
+   - the tail of one that holds an `@` and, after it, one of the raw characters
+     above (`redis://u:p@x^tail@h/0` prints `redis://(redacted)@x^tail@h/0`).
+
+   Two readability costs, neither a leak: a single-quoted value such as
+   `{'a':'redis://u:p@h','b':'x@y.com'}` loses its host and the field after it
+   (a single quote is legal in userinfo, so it cannot end the authority), and
+   so does a URL with no userinfo that is followed by an e-mail address in the
+   same JSON value (`{"u":"redis://h","m":"a@b.com"}`).
 
    And one over-redaction: a userinfo with no password, such as a token used as
    the username, or `git@` in `ssh://git@host`, also prints as `(redacted)`.
