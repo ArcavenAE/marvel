@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // Redacted is what the wire shows in place of a secret-looking Env value.
@@ -22,17 +23,17 @@ var secretKeySubstrings = []string{
 	"database_url", "db_url", "redis_url", "mongodb_uri", "mongodb_url", "mongo_uri", "mongo_url",
 }
 
-// secretKeyWords are whole words of a key, split on _ - . and :, that mark it
-// as secret-looking. They are words and not substrings so KEYBOARD, MONKEY,
-// PATH, AUTHOR_NAME, BYPASS_CACHE and TOKENIZERS_PARALLELISM stay visible.
-var secretKeyWords = []string{
-	"key", "pat", "pass", "pw", "token", "tokens", "auth", "authorization",
-}
+// secretKeyWords are whole words of a key that mark it as secret-looking. A key
+// is split into words on _ - . and :, on a lower-to-upper case change, on the
+// end of an upper-case run before a capitalised word (HTTPAuth is HTTP, Auth),
+// and between letters and digits (TOKEN2 is TOKEN, 2). They are words and not
+// substrings so KEYBOARD, MONKEY and PATH stay visible.
+var secretKeyWords = []string{"key", "pat", "authorization"}
 
-// secretKeyMultiWordOnly are words that mark a key as secret-looking only when
-// the key has another word beside them: MYSQL_PWD is a password, and PWD alone
-// is the shell's working directory.
-var secretKeyMultiWordOnly = []string{"pwd"}
+// secretKeyLastWords mark a key only as its last (or only) word: DB_PASS and
+// SMTP_PW are passwords, and PASS_THROUGH and PW_DEBUG are not. pwd needs a
+// second word as well, because PWD alone is the shell's working directory.
+var secretKeyLastWords = []string{"pass", "pw"}
 
 // SecretKey reports whether an Env key looks like it names a secret.
 func SecretKey(name string) bool {
@@ -42,22 +43,69 @@ func SecretKey(name string) bool {
 			return true
 		}
 	}
-	// A run-together camel-case name such as GitHubToken ends in the word.
-	if strings.HasSuffix(lower, "token") {
-		return true
-	}
-	words := strings.FieldsFunc(lower, func(r rune) bool {
-		return r == '_' || r == '-' || r == '.' || r == ':'
-	})
-	for _, w := range words {
-		if slices.Contains(secretKeyWords, w) {
-			return true
-		}
-		if len(words) > 1 && slices.Contains(secretKeyMultiWordOnly, w) {
+	words := keyWords(name)
+	for i, w := range words {
+		last := i == len(words)-1
+		switch {
+		case slices.Contains(secretKeyWords, w),
+			last && slices.Contains(secretKeyLastWords, w),
+			last && len(words) > 1 && w == "pwd",
+			tokenWord(w), authWord(w):
 			return true
 		}
 	}
 	return false
+}
+
+// tokenWord matches a word that is, ends in, or starts with token (APITOKEN,
+// TOKENVALUE), but not tokenizer or tokenize, which name a text tool.
+func tokenWord(w string) bool {
+	if strings.HasPrefix(w, "tokeniz") {
+		return false
+	}
+	return strings.HasSuffix(w, "token") || strings.HasSuffix(w, "tokens") || strings.HasPrefix(w, "token")
+}
+
+// authWord matches a word that is, ends in, or starts with auth (BASICAUTH,
+// AUTHHEADER), but not oauth, author or authority.
+func authWord(w string) bool {
+	if w == "oauth" || strings.HasPrefix(w, "author") {
+		return false
+	}
+	return strings.HasSuffix(w, "auth") || strings.HasPrefix(w, "auth")
+}
+
+// keyWords splits a key into lower-case words (see secretKeyWords).
+func keyWords(name string) []string {
+	runes := []rune(name)
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	for i, r := range runes {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ':':
+			flush()
+			continue
+		case len(cur) > 0:
+			prev := cur[len(cur)-1]
+			switch {
+			case unicode.IsLower(prev) && unicode.IsUpper(r):
+				flush()
+			case unicode.IsUpper(prev) && unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1]):
+				flush()
+			case unicode.IsDigit(prev) != unicode.IsDigit(r):
+				flush()
+			}
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	return words
 }
 
 // Redact returns a copy of v in which every Runtime, at any depth, shows
