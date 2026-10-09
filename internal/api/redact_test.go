@@ -30,6 +30,14 @@ func TestSecretKeyRedactsEachPattern(t *testing.T) {
 		// password; only a first word followed by others is not.
 		"DB_PASS_PROD", "DB_PASS_1", "SMTP_PASS_2", "DB_PW_PROD", "MYSQL_PWD_PROD", "MYSQL_PWD_1",
 		"SMTPPass", "ACCESSTOKENS",
+		// Camel-case and run-together secrets a third review found hidden when
+		// key, pat and authorization were matched on the separator split only.
+		"clientKey", "githubPat", "ghPat", "authorizationHeader", "stripeKey", "masterKey", "licenseKey",
+		"jwtKey", "hmacKey", "deployKey", "appKey", "npmPat", "gitlabPat", "proxyAuthorization",
+		"ProxyAuthorization", "AuthenticationKey", "AUTHENTICATIONKEY", "OAuthClientKey", "tokenizerKey",
+		// A key word is a secret wherever the name was cut; a cache or sort key
+		// redacts too, which is the safe side (HOT_KEY already did).
+		"hotKey", "sortKey", "cacheKey", "primaryKey",
 	} {
 		if !SecretKey(key) {
 			t.Errorf("SecretKey(%q) = false, want true", key)
@@ -48,8 +56,8 @@ func TestSecretKeyLeavesOrdinaryKeysVisible(t *testing.T) {
 		"PW_DEBUG", "PASS_THROUGH", "TOKENIZER_PATH", "authorName", "AUTHORITY_URL", "OAUTH2_REDIRECT",
 		// OAuth names split by case into O, Auth and must still read as oauth.
 		"OAuthRedirectURI", "OAuthClientID", "GoogleOAuthClientID",
-		// Camel-case names that only contain key, pat or auth as part of a word.
-		"hotKey", "sortKey", "cacheKey", "primaryKey", "patCount", "AUTHENTICATION_ENABLED",
+		// Names that only contain pat or authentication as a first or whole word.
+		"patCount", "AUTHENTICATION_ENABLED",
 	} {
 		if SecretKey(key) {
 			t.Errorf("SecretKey(%q) = true, want false", key)
