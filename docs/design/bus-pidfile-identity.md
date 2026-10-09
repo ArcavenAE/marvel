@@ -5,7 +5,7 @@ Proposal, 2026-10-09. Issue: #794. Code read at marvel `9c1541e` (`9c1541ea858af
 - Author: the architect seat, team arcaven.
 - Builder: red tests first, then green, after this design merges.
 - Requirement: MS-9 in `docs/design/services-shape-requirements.md` ("The pidfile proves the child"). Section 4.5 is how this design meets its seam clause.
-- V11 is not ruled. Section 5 designs both options behind one switch; everything else here holds under either.
+- V11 was ruled (b) by the operator, relayed by director on 2026-10-09: "(b) treat as unproven, report \"port held, child unproven\"". A pidfile with no identity record is unproven, so with the port held the bus reports that and nothing is adopted or signalled. The operator added: "we need improved handling for this, route 3ptdd with casting call to figure out how to handle this more reliably". That design ran on 2026-10-09 and goes up separately; this build carries (b) only. Section 5 keeps both options as the record of what was weighed.
 
 ## 0. Why
 
@@ -186,10 +186,8 @@ func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal)
 // mistake leaves the daemon up with the bus unproven.
 func (p *Prober) Prove(pid int, want Identity) (Child, error)
 
-// AdoptLegacy is the one constructor without a recorded identity: V11 (a)
-// only. It returns a Child when the live executable's base name is
-// nats-server and argv carries -c and conf. Deleted if V11 is ruled (b).
-func (p *Prober) AdoptLegacy(pid int, conf string) (Child, error)
+// AdoptLegacy, the unproven adoption of V11 (a), was deleted when V11 was
+// ruled (b).
 
 // Signal refuses a nil Prober, a nil seam, a Child built by another Prober,
 // and pid <= 1, for every signal. It then re-reads the identity, refuses on
@@ -213,7 +211,7 @@ Every site in section 2 calls `Signal`. Because `Signal` re-reads the identity i
 
 ## 5. V11: a pidfile from a binary that wrote no sidecar
 
-This is the first daemon start after the upgrade that adds the sidecar. The running broker was spawned by the old binary, so its pidfile holds a bare pid and nothing proves it. It is the common case for every cluster, once. V11 is an open split in `docs/design/services-shape-requirements.md` section 6: plurality (b), 5 to 4, one abstention, and the operator has not ruled it. MS-9 asks that the legacy handling ship in the same PR as the proof. The build carries both options behind one switch:
+This is the first daemon start after the upgrade that adds the sidecar. The running broker was spawned by the old binary, so its pidfile holds a bare pid and nothing proves it. It is the common case for every cluster, once. V11 was an open split in `docs/design/services-shape-requirements.md` section 6 (plurality (b), 5 to 4, one abstention), and the operator ruled (b) on 2026-10-09. MS-9 asks that the legacy handling ship in the same PR as the proof, so this PR carries (b) only, and `AdoptLegacy` and the switch below were deleted. The text from here to the end of this section is the design as weighed, kept for the record. The first build carried both options behind one switch:
 
 ```go
 // legacyPidfile decides a pidfile with no identity sidecar (V11). Set in code
@@ -270,7 +268,8 @@ Each line is in exactly one class:
 | class | lines | count | what the build does |
 |---|---|---|---|
 | The `newTestSupervisor` helper (comment, signature, its `NewSupervisor`) | `internal/bus/supervisor_test.go:80`, `:83`, `:101` | 3 | the single registration point: it builds the supervisor with a `NewForTest` `Prober` and sets the spawn hook |
-| Helper callers that `Start` a real broker | `supervisor_test.go:123`, `:172`, `:207`, `:224`, `:236`, `:264`, `:305`, `:365`; `provision_test.go:24`, `:107`; `provision_transport_test.go:60`; `supervisor_env_test.go:74`; `health_test.go:42`, `:127` | 14 | covered by the helper; no change at the call site |
+| Helper callers that `Start` a real broker | `supervisor_test.go:123`, `:172`, `:236`, `:264`, `:305`, `:365`; `provision_test.go:24`, `:107`; `provision_transport_test.go:60`; `supervisor_env_test.go:74`; `health_test.go:42`, `:127` | 12 | covered by the helper; no change at the call site |
+| Helper callers that `Start` and refuse before any broker is spawned | `supervisor_test.go:207` (a stranger answers on the port) and `:224` (a leaf conf with no seed source) | 2 | refusal tests: `Start` returns the error before `spawnLocked`, so no broker starts and nothing is signalled; covered by the helper |
 | Helper callers that never call `Start` | `test_bounds_test.go:26`, `:41`; `leaf_duration_test.go:21`, `:43`, `:118`; `leaf_observed_test.go:63` | 6 | no broker, no signal |
 | Direct `NewSupervisor` | `role_users_test.go:298`; `supervisor_test.go:185`; `provision_test.go:138`; `internal/daemon/bus_leaf_restart_test.go:66`; `supervisor_test.go:287` (a test name) and `:294` (missing binary, no `Start`) | 6 | the first three are in `internal/bus` and attach the same test `Prober` as the helper, sharing the test's registry, so the second supervisor at `:185` and `:138` can signal the broker the first one spawned. `bus_leaf_restart_test.go:66` is the only real broker outside `internal/bus`; it cannot reach the unexported hook, so it builds with `New()`, whose real signals reach only the broker its own supervisor spawned and proved. The last two start nothing |
 | Test probes with signal 0 on the test's own broker | `supervisor_test.go:150`, `:157`, `:160`, `:178`, `:202`, `:258`, `:357` | 7 | observation only; unchanged |
@@ -278,7 +277,11 @@ Each line is in exactly one class:
 | No broker process: `NewAdopted` and `attachTestBus` | `render_test.go:434`; `internal/daemon/status_test.go:173`; `bus_status_test.go:22`; `bus_test.go:16`, `:18`, `:44`, `:91`; `leaf_no_hub_test.go:17` | 8 | `NewAdopted` records a URL and `attachTestBus` builds only a `Manager`; neither spawns or signals |
 | Own-child signals in other packages, never the broker | `cmd/marvel/daemon_lock_hint_test.go:176`; `daemon_fastpath_test.go:101`, `:186`; `internal/daemon/shutdown_frozen_tmux_test.go:69`, `:72`, `:88`; `start_frozen_tmux_test.go:33`, `:36`; `internal/view/seal_test.go:183`; `internal/tmux/absence_plant_test.go:61`, `:62`, `:105`; `absence_test.go:262`; `internal/workload/process_test.go:102`; `internal/session/tmux_timeout_test.go:52`, `:56` | 16 | each targets a child or a tmux server the test started; out of scope |
 
-The total is 3 + 14 + 6 + 6 + 7 + 5 + 8 + 16 = 65. The registration mechanism: the spawn hook registers `cmd.Process.Pid` in the test's registry as soon as the broker starts, and the test's `kill` forwards to `syscall.Kill` for registered pids only and fails the test on any other. No test in `internal/daemon` or `cmd/marvel` reaches `daemon.go:3381`. The grep cannot see the `attachServices` tests in `internal/daemon/bus_test.go` (`:135`, `:157`, `:185`, `:196`); each configures an adopted bus, so `attachBus` returns at `daemon.go:3368-3372` before the managed supervisor is built.
+The total is 3 + 12 + 2 + 6 + 6 + 7 + 5 + 8 + 16 = 65. The registration mechanism: the spawn hook registers `cmd.Process.Pid` in the test's registry as soon as the broker starts, and the test's `kill` forwards to `syscall.Kill` for registered pids only and fails the test on any other. No test in `internal/daemon` or `cmd/marvel` reaches `daemon.go:3381`. The grep cannot see the `attachServices` tests in `internal/daemon/bus_test.go`. Three of them (`:135`, `:157`, `:185`) configure an adopted bus, so `attachBus` returns at `daemon.go:3368-3372` before the managed supervisor is built; the fourth (`:196`) configures a refused litellm entry, so nothing is attached at all.
+
+Three tests run `nats-server -t -c <conf>` (`declared_test.go:230`, `render_test.go:419` and `:425`). That is a config check: no listener opens and no signal is sent, so they are outside the 65 lines and need nothing.
+
+A future test that starts a real broker goes through `newTestSupervisor`, which gives it the registered process table. A test that builds a `Supervisor` any other way attaches the same table (`attach`) or signals nothing.
 
 1. **Seams.** the `Prober`'s `read` replaces `probePID` as the identity seam, and its `kill` is the signal seam behind `Signal` (section 4.5); the test version records calls. `childproof`'s own tests cover `Signal` refusing pid 0 and pid 1 for every signal, a zero `Child`, a `Child` from another `Prober`, and a nil seam; `NewForTest` refusing a nil seam; and `AdoptLegacy` refusing a wrong executable or a missing `-c conf`. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
 2. **Reused pid, not listening** (the #794 case). The fake `read` returns a start time different from the sidecar's; the listener is closed. Assert no `kill` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
@@ -297,4 +300,16 @@ The total is 3 + 14 + 6 + 6 + 7 + 5 + 8 + 16 = 65. The registration mechanism: t
 
 One flat ticket for the builder, with red tests 2 to 9 before green. The builder ships whichever V11 value is ruled.
 
-My recommendation is (a), against the (b) plurality, for the reasons in section 5: (b) costs a manual stop on every cluster, and the cost of a wrong adopt under (a) falls on a process already serving this daemon's port from this daemon's store. This recommendation is valid until 2026-10-23 or until V11 is ruled, whichever comes first; the architect re-checks it then.
+My recommendation was (a), against the (b) plurality, for the reasons in section 5. The operator ruled (b) on 2026-10-09, so the recommendation is withdrawn.
+
+## 9. As built
+
+What the build added or settled beyond the sections above. None of it changes a rule in them.
+
+- `internal/childproof` gained `Spawned` (the one constructor without a record: it takes the `*exec.Cmd` of a process the caller just started and has not waited for, never a pid, requires the kernel to name this process as the parent (`Identity.Ppid`, read live from `Eproc.Ppid` on darwin and stat field 4 on linux, never recorded), because `exec.Cmd.Process` and `os.Process.Pid` are exported and a hand-built handle would otherwise prove any live pid; its call sites are confined to `internal/bus/supervisor.go` by a source test; and it retries its read for up to a second while the child settles), `Same` (is this still the proven process; the identity-read form of "is it alive"), `ReadIdentityForTest` (the production reader for a test that wraps it and fakes only the pids it plants; it refuses outside a test binary and shares `NewForTest`'s source confinement), `Child.Pid`, and a `MismatchError` whose reason is `dead`, `start`, `exe` or `argv`. The platform readers sit in `read_darwin.go`, `read_linux.go` and `read_other.go` beside `childproof.go`, since a build tag needs its own file. `procargs` gained `ExecPath` for the darwin executable.
+- `workload.ProcessSpec` gained `BeforePidFile`, called with the started `*exec.Cmd` after the child starts and before the pidfile is written. An error from it stops the child and fails `Start`. The supervisor's hook proves the child with `Spawned`, writes the sidecar, and registers the pid with a test's spawn hook.
+- If the identity of a newly started broker cannot be read, the spawn fails and the child is stopped: a broker marvel could never prove is one it could never stop. If only the sidecar write fails, the spawn goes ahead, `bus.identity-unrecorded` says so, and the next start reads the pidfile as legacy.
+- A sidecar that exists but does not parse, or has another schema, is `stale` with reason `sidecar`, one more reason than section 6 lists.
+- The "wedged" path no longer sleeps a second between TERM and KILL by hand: it is `terminate`, which polls identity until the grace ends.
+- **V11 is ruled (b).** The ruling, relayed by director on 2026-10-09: "(b) treat as unproven, report \"port held, child unproven\"". `AdoptLegacy`, the `legacy` switch and the unruled placeholder are deleted. With a legacy pidfile and the listener answering, `Start` emits `bus.pidfile-unproven` and refuses with "port held, child unproven", adopts nothing, signals nothing and writes no record, whatever the process looks like (`TestLegacyPidfileIsUnprovenAndNothingIsDone`). With the listener silent it removes the pidfile and spawns, as every value did. `MARVEL_REQUIRE_V11` and the test that read it are gone, since nothing is left to require. The first start or reexec onto this build leaves the bus down on a cluster whose broker was started by the old binary, until the operator stops that broker by hand: one manual step per cluster, which is the cost (b) names. Better handling is the operator's note quoted in the header, and its design goes up separately.
+- `TestBusSignalsOnlyThroughTheProber` type-checks the non-test files of `internal/bus` and fails on any use of `syscall.Kill`, `unix.Kill`, `(*os.Process).Signal` or `(*os.Process).Kill`, whatever the import is called and however the process was found, since the process table in the tests cannot see a raw kill. `TestEverySupervisorATestBuildsIsAttachedToAProcessTable` fails on a test that builds a `Supervisor` with `NewSupervisor` and never attaches a table, so `newTestSupervisor` plus `attach` is the single registration point; `TestNewSupervisorNamesMissingBinary`, which never starts a broker, is the one exception.

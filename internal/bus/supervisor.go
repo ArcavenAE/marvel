@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/childproof"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
@@ -65,12 +67,27 @@ type Supervisor struct {
 	leafRepeatEvery time.Duration
 	// now is the clock the leaf record reads; tests replace it.
 	now func() time.Time
+	// prober proves a broker's identity and is the only way a signal reaches
+	// one (docs/design/bus-pidfile-identity.md section 4.5). Production holds
+	// childproof.New(); a test builds one with NewForTest.
+	prober *childproof.Prober
+	// grace is how long terminate waits between TERM and KILL; tests shorten it.
+	grace time.Duration
+	// adoptPoll is how often the watcher re-reads an adopted broker's identity;
+	// tests shorten it.
+	adoptPoll time.Duration
+	// onSpawn, when set, sees the pid of every broker this supervisor starts,
+	// before anything is signalled. It is the registration point a test
+	// kill seam reads, so a test signals only brokers it started.
+	onSpawn func(pid int)
 
 	mu          sync.Mutex
 	parent      context.Context
 	cmd         *exec.Cmd
 	pid         int
-	version     string // what `nats-server --version` on the resolved binary reports
+	child       childproof.Child // the proven broker; zero when none runs
+	pidState    string           // proven, stale, legacy or none, for bus status
+	version     string           // what `nats-server --version` on the resolved binary reports
 	adopted     bool
 	ready       bool
 	stopping    bool
@@ -123,6 +140,9 @@ type Status struct {
 	// whose PATH disagrees with the mise pin is visible here rather than
 	// discovered at an upgrade.
 	Version string `json:"version,omitempty"`
+	// Pidfile is what the bus pidfile proved at the last start: proven, stale
+	// (removed, nothing signalled), legacy (no identity record) or none.
+	Pidfile string `json:"pidfile,omitempty"`
 	// Seat is "<workspace>/<team>" when a director seat is declared; the
 	// user is always director and its password sits at SeatPassFile.
 	Seat         string `json:"seat,omitempty"`
@@ -218,8 +238,19 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		leafPoll:        defaultLeafPoll,
 		leafRepeatEvery: defaultLeafDownRepeat,
 		now:             time.Now,
+		prober:          childproof.New(),
+		grace:           stopGrace,
+		pidState:        pidStateNone,
 	}, nil
 }
+
+// The values of the pidfile line in `bus status`.
+const (
+	pidStateNone   = "none"
+	pidStateProven = "proven"
+	pidStateStale  = "stale"
+	pidStateLegacy = "legacy"
+)
 
 // SetDialTimeout sets how long Start and Restart wait for the listener. It
 // exists for tests in other packages that start a real nats-server and must
@@ -240,32 +271,111 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.parent = ctx
 	ctx, s.cancel = context.WithCancel(ctx)
 
-	if pid, alive := s.pidFileAlive(); alive {
+	v := s.classifyPidfile()
+	s.pidState = v.kind
+	switch v.kind {
+	case pidStateProven:
 		if s.listenerAnswers(time.Second) {
-			s.pid, s.adopted = pid, true
-			log.Printf("bus: adopted running nats-server pid %d on %s", pid, s.mgr.bus.Listen)
+			s.pid, s.adopted, s.child = v.pid, true, v.child
+			log.Printf("bus: adopted running nats-server pid %d on %s", v.pid, s.mgr.bus.Listen)
 			// The broker still holds the passwords the previous daemon minted;
 			// this daemon has just rendered fresh ones. Reload before anything
 			// connects, so the admin identity and the next session's credential
 			// are the ones the broker knows. Connected clients are kept.
-			if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
-				log.Printf("bus: reload adopted nats-server pid %d: %v", pid, err)
+			if err := s.prober.Signal(v.child, syscall.SIGHUP, false); err != nil {
+				log.Printf("bus: reload adopted nats-server pid %d: %v", v.pid, err)
 			}
 			return s.becomeReady(ctx, "adopted")
 		}
-		// Recorded pid is alive but not listening: it is ours and wedged.
-		log.Printf("bus: pidfile names live pid %d that is not listening on %s; stopping it", pid, s.mgr.bus.Listen)
-		_ = syscall.Kill(-pid, syscall.SIGTERM)
-		time.Sleep(time.Second)
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		// Proven and not listening: it is ours and wedged.
+		log.Printf("bus: pidfile names our nats-server pid %d, which is not listening on %s; stopping it", v.pid, s.mgr.bus.Listen)
+		s.terminate(v.child)
+		s.removeIdentityFiles()
+	case pidStateStale:
+		s.removeIdentityFiles()
+		s.emit(events.KindBusPidfileStale, events.SeverityWarning, fmt.Sprintf("pidfile names pid %d, which is not the broker marvel recorded (reason %s); the pidfile and identity record are removed and nothing was signalled", v.pid, v.reason))
+		if s.listenerAnswers(500 * time.Millisecond) {
+			return s.refuseUnproven(v.pid, "the pidfile does not prove it is ours")
+		}
+	case pidStateLegacy:
+		if done, err := s.startLegacy(v); done {
+			return err
+		}
 	}
 	if s.listenerAnswers(500 * time.Millisecond) {
-		return fmt.Errorf("bus: %s is already answering and no marvel pidfile claims it; refusing to adopt a stranger (stop it, or set bus.managed: false and bus.url to adopt it explicitly)", s.mgr.bus.Listen)
+		return errors.New(strangerRefusal(s.mgr.bus.Listen))
 	}
 	if err := s.spawnLocked(); err != nil {
 		return err
 	}
 	return s.becomeReady(ctx, "started")
+}
+
+// strangerRefusal is the refusal for a port answered by a process no pidfile
+// of ours claims.
+func strangerRefusal(listen string) string {
+	return fmt.Sprintf("bus: %s is already answering and no marvel pidfile claims it; refusing to adopt a stranger (stop it, or set bus.managed: false and bus.url to adopt it explicitly)", listen)
+}
+
+// refuseUnproven reports a port held by a child the pidfile does not prove
+// ours, once, and leaves the bus down with nothing signalled (design section
+// 4.2). Caller holds s.mu.
+func (s *Supervisor) refuseUnproven(pid int, why string) error {
+	remedy := "stop it by hand, or set bus.managed: false and bus.url to adopt it explicitly"
+	s.emit(events.KindBusPidfileUnproven, events.SeverityWarning, fmt.Sprintf("port held, child unproven: %s is held by pid %d, %s; the bus stays down and nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy))
+	return fmt.Errorf("bus: port held, child unproven: %s is answering and pid %d is not proven to be this daemon's broker (%s); nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy)
+}
+
+// removeIdentityFiles removes the pidfile and its identity record.
+func (s *Supervisor) removeIdentityFiles() {
+	_ = os.Remove(s.pidFile)
+	_ = os.Remove(sidecarPath(s.pidFile))
+}
+
+// startLegacy handles a pidfile with no identity record: the first start after
+// the upgrade that writes one. With the listener silent it is a stale file.
+// With the listener answering, the child is unproven and nothing is done about
+// it: V11 was ruled (b) by the operator, so a process that looks like this
+// daemon's broker is no more proven than any other, and the start refuses with
+// "port held, child unproven". Better handling of this case is left to a
+// separate design. done is true when Start is over. Caller holds s.mu.
+func (s *Supervisor) startLegacy(v pidVerdict) (done bool, err error) {
+	if !s.listenerAnswers(time.Second) {
+		log.Printf("bus: pidfile names pid %d with no identity record and nothing is listening on %s; removing it", v.pid, s.mgr.bus.Listen)
+		_ = os.Remove(s.pidFile)
+		return false, nil
+	}
+	return true, s.refuseUnproven(v.pid, "its pidfile has no identity record")
+}
+
+// classifyPidfile reads the pidfile and its identity record and decides what
+// the pidfile proves (docs/design/bus-pidfile-identity.md section 4.2). It
+// reads a process's identity only after a record names it, and it signals
+// nothing.
+func (s *Supervisor) classifyPidfile() pidVerdict {
+	pid := pidfile.Read(s.pidFile)
+	if pid == 0 {
+		return pidVerdict{kind: pidStateNone}
+	}
+	rec, err := readIdentityFile(sidecarPath(s.pidFile))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return pidVerdict{pid: pid, kind: pidStateLegacy}
+	case err != nil:
+		return pidVerdict{pid: pid, kind: pidStateStale, reason: "sidecar"}
+	case rec.PID != pid:
+		return pidVerdict{pid: pid, kind: pidStateStale, reason: "sidecar-pid"}
+	}
+	c, err := s.prober.Prove(pid, rec.identity())
+	if err != nil {
+		reason := "unproven"
+		var mm *childproof.MismatchError
+		if errors.As(err, &mm) {
+			reason = mm.Reason
+		}
+		return pidVerdict{pid: pid, kind: pidStateStale, reason: reason}
+	}
+	return pidVerdict{pid: pid, kind: pidStateProven, child: c}
 }
 
 // becomeReady waits for the listener, runs AfterReady, marks ready, and
@@ -295,7 +405,7 @@ func (s *Supervisor) becomeReady(ctx context.Context, how string) error {
 	// rather than letting it read s.cmd later: a Stop that lands first would
 	// have zeroed the handle and the child would never be reaped.
 	s.watchDone = make(chan struct{})
-	go s.watch(ctx, s.watchDone, s.cmd, s.pid)
+	go s.watch(ctx, s.watchDone, s.cmd, s.child)
 	return nil
 }
 
@@ -313,6 +423,12 @@ func (s *Supervisor) spawnLocked() error {
 	if err != nil {
 		return fmt.Errorf("bus: %w", err)
 	}
+	// The identity record is written before the pidfile that names it, from
+	// what the kernel says about the child now (design section 3.1). Without
+	// an identity the child is stopped: a broker marvel cannot prove later is
+	// one it could never stop. The child is proven from the handle that
+	// started it, never from a pid.
+	var spawned childproof.Child
 	child, err := workload.Start(workload.ProcessSpec{
 		Name:      "bus",
 		Binary:    s.binary,
@@ -327,6 +443,25 @@ func (s *Supervisor) spawnLocked() error {
 		},
 		LogPath: s.logPath,
 		PidFile: s.pidFile,
+		BeforePidFile: func(cmd *exec.Cmd) error {
+			if s.onSpawn != nil {
+				s.onSpawn(cmd.Process.Pid)
+			}
+			c, err := s.prober.Spawned(cmd)
+			if err != nil {
+				return fmt.Errorf("read the identity of the new broker (pid %d): %w", cmd.Process.Pid, err)
+			}
+			spawned = c
+			err = os.MkdirAll(filepath.Dir(s.pidFile), 0o700)
+			if err == nil {
+				err = writeIdentity(sidecarPath(s.pidFile), c.Pid(), c.Identity(), s.now())
+			}
+			if err != nil {
+				_ = os.Remove(sidecarPath(s.pidFile))
+				s.emit(events.KindBusIdentityUnrecorded, events.SeverityWarning, fmt.Sprintf("nats-server pid %d started, but its identity record could not be written (%v); the next start reads its pidfile as legacy", c.Pid(), err))
+			}
+			return nil
+		},
 	})
 	if err != nil {
 		return err
@@ -343,7 +478,7 @@ func (s *Supervisor) spawnLocked() error {
 	} else {
 		s.leafSeedFP = ""
 	}
-	s.cmd, s.pid, s.adopted = child.Cmd, child.Pid, false
+	s.cmd, s.pid, s.adopted, s.child, s.pidState = child.Cmd, child.Pid, false, spawned, pidStateProven
 	log.Printf("bus: started nats-server %s pid %d (%s -c %s), log %s", s.version, s.pid, s.binary, conf, s.logPath)
 	return nil
 }
@@ -397,7 +532,7 @@ func SeedFingerprint(seed []byte) string {
 // bus.crashed and a restart under backoff; the hub leaf link is polled
 // on the 30s cadence and reported on transition. Sessions are never
 // restarted for either: their shims reconnect.
-func (s *Supervisor) watch(ctx context.Context, done chan struct{}, cmd *exec.Cmd, pid int) {
+func (s *Supervisor) watch(ctx context.Context, done chan struct{}, cmd *exec.Cmd, c childproof.Child) {
 	defer close(done)
 	exit := make(chan error, 1)
 	go func() {
@@ -405,8 +540,12 @@ func (s *Supervisor) watch(ctx context.Context, done chan struct{}, cmd *exec.Cm
 			exit <- cmd.Wait()
 			return
 		}
-		// Adopted: not our child, so poll the pid.
-		t := time.NewTicker(2 * time.Second)
+		// Adopted: not our child, so poll its identity.
+		every := s.adoptPoll
+		if every <= 0 {
+			every = 2 * time.Second
+		}
+		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
 			select {
@@ -414,7 +553,9 @@ func (s *Supervisor) watch(ctx context.Context, done chan struct{}, cmd *exec.Cm
 				exit <- ctx.Err()
 				return
 			case <-t.C:
-				if syscall.Kill(pid, 0) != nil {
+				// Same is an identity read: a pid handed to another process
+				// reads as the broker having exited.
+				if !s.prober.Same(c) {
 					exit <- errors.New("adopted nats-server exited")
 					return
 				}
@@ -491,14 +632,14 @@ func (s *Supervisor) Restart(reason string) error {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	pid, done := s.pid, s.watchDone
-	s.ready, s.pid, s.cmd, s.watchDone = false, 0, nil, nil
+	pid, child, done := s.pid, s.child, s.watchDone
+	s.ready, s.pid, s.cmd, s.child, s.watchDone = false, 0, nil, childproof.Child{}, nil
 	s.mu.Unlock()
 	if done != nil {
 		<-done
 	}
 	if pid != 0 {
-		s.terminate(pid)
+		s.terminate(child)
 		log.Printf("bus: nats-server pid %d stopped to restart (%s)", pid, reason)
 	}
 
@@ -513,15 +654,29 @@ func (s *Supervisor) Restart(reason string) error {
 	return s.becomeReady(ctx, "restarted ("+reason+")")
 }
 
-// terminate ends a broker process group with a bounded grace period.
-func (s *Supervisor) terminate(pid int) {
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
-	deadline := time.Now().Add(stopGrace)
-	for time.Now().Before(deadline) && syscall.Kill(pid, 0) == nil {
-		time.Sleep(100 * time.Millisecond)
+// terminate ends a proven broker: TERM to its group, a grace period polled
+// by identity so a pid handed to another process counts as exited, then KILL.
+// Every signal re-proves the child first (Prober.Signal), so a change at any
+// point stops the rest. A broker that is gone or no longer the one proven is
+// left alone.
+func (s *Supervisor) terminate(c childproof.Child) {
+	if err := s.prober.Signal(c, syscall.SIGTERM, true); err != nil {
+		log.Printf("bus: not stopping nats-server pid %d: %v", c.Pid(), err)
+		return
 	}
-	if syscall.Kill(pid, 0) == nil {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	grace := s.grace
+	if grace <= 0 {
+		grace = stopGrace
+	}
+	step := min(100*time.Millisecond, grace/4)
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) && s.prober.Same(c) {
+		time.Sleep(step)
+	}
+	if s.prober.Same(c) {
+		if err := s.prober.Signal(c, syscall.SIGKILL, true); err != nil {
+			log.Printf("bus: not killing nats-server pid %d: %v", c.Pid(), err)
+		}
 	}
 }
 
@@ -531,13 +686,13 @@ func (s *Supervisor) terminate(pid int) {
 // and nothing lost: the next start reads the rewritten files.
 func (s *Supervisor) Reload() error {
 	s.mu.Lock()
-	pid, ready := s.pid, s.ready
+	pid, child, ready := s.pid, s.child, s.ready
 	s.mu.Unlock()
 	if pid == 0 || !ready {
 		log.Printf("bus: conf rewritten while no broker is running; the next start reads it")
 		return nil
 	}
-	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+	if err := s.prober.Signal(child, syscall.SIGHUP, false); err != nil {
 		return fmt.Errorf("bus: SIGHUP pid %d: %w", pid, err)
 	}
 	s.emit(events.KindBusReloaded, events.SeverityInfo, fmt.Sprintf("nats-server pid %d reloaded authorization", pid))
@@ -571,9 +726,9 @@ func (s *Supervisor) Stop(keep bool) {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	pid, done := s.pid, s.watchDone
+	pid, child, done := s.pid, s.child, s.watchDone
 	s.ready = false
-	s.pid, s.cmd, s.watchDone = 0, nil, nil // a second Stop is a no-op
+	s.pid, s.cmd, s.child, s.watchDone = 0, nil, childproof.Child{}, nil // a second Stop is a no-op
 	s.mu.Unlock()
 	if done != nil {
 		<-done
@@ -587,8 +742,8 @@ func (s *Supervisor) Stop(keep bool) {
 	}
 	// Our own child was already reaped by cmd.Wait inside watch; an adopted
 	// process is not ours to wait on, so both are given the grace by polling.
-	s.terminate(pid)
-	_ = os.Remove(s.pidFile)
+	s.terminate(child)
+	s.removeIdentityFiles()
 	s.emit(events.KindBusStopped, events.SeverityInfo, fmt.Sprintf("nats-server pid %d stopped with the daemon", pid))
 }
 
@@ -631,7 +786,7 @@ func (s *Supervisor) checkStructureLocked(ctx context.Context) {
 	if read == nil {
 		read = s.readStructure
 	}
-	pid := s.pid
+	child := s.child
 	s.mu.Unlock()
 	st, err := read(ctx)
 	if err == nil && !st.Provisioned() && s.AfterReady != nil {
@@ -648,13 +803,13 @@ func (s *Supervisor) checkStructureLocked(ctx context.Context) {
 		log.Printf("bus: structural check: no reading (%v); keeping the last one", err)
 		return
 	}
-	if !st.Authorized && !s.authReloaded && pid != 0 {
+	if !st.Authorized && !s.authReloaded && child.Pid() != 0 {
 		// One reload per authorized miss; then hold. Never a restart.
 		s.authReloaded = true
-		if kerr := syscall.Kill(pid, syscall.SIGHUP); kerr != nil {
-			log.Printf("bus: SIGHUP pid %d after an authorization miss: %v", pid, kerr)
+		if kerr := s.prober.Signal(child, syscall.SIGHUP, false); kerr != nil {
+			log.Printf("bus: SIGHUP pid %d after an authorization miss: %v", child.Pid(), kerr)
 		} else {
-			log.Printf("bus: authorization not loaded on pid %d; sent one SIGHUP, re-checking on the next tick", pid)
+			log.Printf("bus: authorization not loaded on pid %d; sent one SIGHUP, re-checking on the next tick", child.Pid())
 		}
 	}
 	if st.Authorized {
@@ -710,6 +865,7 @@ func (s *Supervisor) Status() Status {
 		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
 		Version:  s.version,
 		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.readyLocked(), Restarts: s.restarts,
+		Pidfile: s.pidState,
 	}
 	if s.structureKnown {
 		st.Structure = &StructureStatus{
@@ -822,22 +978,6 @@ func leafDuration(d time.Duration) string {
 	return strings.TrimSuffix(d.Round(time.Minute).String(), "0s")
 }
 
-func (s *Supervisor) pidFileAlive() (int, bool) {
-	pid := pidfile.Read(s.pidFile)
-	if pid == 0 {
-		return 0, false
-	}
-	if probePID(pid) != nil {
-		return 0, false
-	}
-	return pid, true
-}
-
-// probePID is the "is it alive" check: signal 0 sends nothing and reports
-// whether the process exists and may be signalled. A seam, so a test never
-// signals a pid it did not start.
-var probePID = func(pid int) error { return syscall.Kill(pid, 0) }
-
 func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
 	c, err := net.DialTimeout("tcp", s.mgr.bus.Listen, timeout)
 	if err != nil {
@@ -866,4 +1006,12 @@ func (s *Supervisor) emit(kind events.Kind, sev events.Severity, msg string) {
 	if s.ring != nil {
 		events.Emit(s.ring, events.Event{Kind: kind, Severity: sev, Message: msg})
 	}
+}
+
+// pidVerdict is what a pidfile proved at start.
+type pidVerdict struct {
+	pid    int
+	kind   string // none, proven, stale or legacy
+	reason string // for stale: dead, start, exe, argv, sidecar-pid or sidecar
+	child  childproof.Child
 }

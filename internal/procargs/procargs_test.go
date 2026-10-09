@@ -108,3 +108,20 @@ func TestParseProcargs2DoesNotReserveWhatArgcClaims(t *testing.T) {
 		t.Fatalf("the parse allocated %d bytes for a %d byte buffer", grew, len(in))
 	}
 }
+
+func TestParseProcargs2ExecPath(t *testing.T) {
+	b := append([]byte{2, 0, 0, 0}, []byte("/opt/bin/nats-server\x00\x00\x00nats-server\x00-c\x00")...)
+	got, err := ParseProcargs2ExecPath(b)
+	if err != nil || got != "/opt/bin/nats-server" {
+		t.Errorf("ParseProcargs2ExecPath = %q, %v; want /opt/bin/nats-server", got, err)
+	}
+	for name, in := range map[string][]byte{
+		"too short":  {1, 0},
+		"no path":    {1, 0, 0, 0},
+		"empty path": {1, 0, 0, 0, 0, 'a', 0},
+	} {
+		if got, err := ParseProcargs2ExecPath(in); err == nil {
+			t.Errorf("%s: accepted, returned %q", name, got)
+		}
+	}
+}

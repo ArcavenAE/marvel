@@ -115,6 +115,7 @@ func newTestSupervisor(t *testing.T, hub string) (*Supervisor, *Manager, *events
 		return err
 	}
 	m.Reloader = s
+	attach(t, s, newProcTable(t))
 	t.Cleanup(func() { s.Stop(false) })
 	return s, m, ring
 }
@@ -187,6 +188,7 @@ func TestSupervisorKeepThenAdoptAcrossDaemons(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2.dialTimeout = loadedBrokerWait
+	attach(t, s2, tableOf(s1)) // the second supervisor signals the broker the first spawned
 	if err := s2.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

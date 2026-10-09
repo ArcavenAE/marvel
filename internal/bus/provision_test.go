@@ -140,6 +140,7 @@ func TestProvisionAfterAdoptRecoversPasswords(t *testing.T) {
 		t.Fatal(err)
 	}
 	s2.dialTimeout = loadedBrokerWait
+	attach(t, s2, tableOf(s1)) // s2 adopts the broker s1 spawned, so it signals through s1's table
 	m2.Reloader = s2
 	t.Cleanup(func() { s2.Stop(false) })
 	provisioned := false
