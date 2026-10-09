@@ -68,6 +68,12 @@ content: |
   See `question-daemon-isolation-boundary` and
   `docs/design/daemon-isolation.md` decision 4; work item
   `aae-orc-kvcs`.
+
+  HARVEST 2026-10-09, a recurring tmux 3.4 shape: a dead pane's exit status is
+  lost, not late. It surfaced three times as flaky tests (marvel#424, #470,
+  #628) and was handled in tests by following the tmux version (marvel#629,
+  #702, `tmuxtest.StatusExpected`). It also limits the product: marvel#650
+  records that before tmux 3.5 an exit-0 headless run can be recorded failed.
 edges:
   - target: aae-orc::elem-tmux-cmc
     type: derives

@@ -39,6 +39,15 @@ content: |
 
   Evidence: session-017 (initial), session-025 (tier-1 + linux/arm64),
   finding-070 (tap push race).
+
+  HARVEST 2026-10-09, two gate-suite faults that read as code failures:
+  - finding-026: the machine-global golangci-lint cache reports phantom
+    findings from another session's checkout of the same module. `golangci-lint
+    cache clean` clears it; it is cache maintenance, never a gate bypass.
+  - finding-047: the bus and daemon race suite flakes when the OS ephemeral
+    port counter sits in the top 4000 of the range, because the monitoring
+    port is the listen port plus 4000. The flake tracks the counter, not
+    chance.
 edges:
   - target: aae-orc::elem-rapid-development
     type: implements

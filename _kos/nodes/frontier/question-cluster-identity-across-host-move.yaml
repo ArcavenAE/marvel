@@ -1,0 +1,51 @@
+id: question-cluster-identity-across-host-move
+type: question
+confidence: frontier
+title: "Can a cluster keep its identity and key trust when its host moves to a new address?"
+tags:
+  - marvel
+  - cluster
+  - trust
+content: |
+  Issue: marvel#434. Work item: aae-orc-me2yg (tracking each cluster's
+  address and alerting when a present cluster drops off), which a party
+  worked on 2026-10-08; its outcome record is held locally and pointed to
+  from the ticket's notes.
+
+  PARTY RESULT (2026-10-08): K1 to K8 carried 7-0. Checks during the party:
+  the ask ledger's global_ids is not persisted (director
+  `askreader.go:309-330`), and the 30-minute figure in the alert sketch is
+  the leaf-down repeat interval, not a lost bound.
+
+  RULED (operator, 2026-10-08, Decision Desk, relayed by director):
+  - O1: auto-bind on the first matching dial.
+  - O2: a one-step confirm when the same key moves address.
+  - O3: list known clusters once global_ids persists; until then, point at
+    marvel config.
+  - O4: one shared dedupe key for the hub alert and bus.leaf.down (the party
+    voted 5-2 the other way; dissent kept in the record).
+  - O5: revoke a key through `@revoked` now.
+  - O6, verbatim: "make it a marvel admin preference, default to 30 minutes".
+  - O7: yes.
+
+  FILED: aae-orc-zggui (trust keyed by key fingerprint), aae-orc-f5c74
+  (atomic config save), aae-orc-pmxxq (director persists global_ids). The
+  rest of the outcome list is unfiled; the ticket notes carry it.
+
+  REJECTED by the party 7-0, candidates for graveyard by the supervisor: a
+  presence-bucket tombstone, and a hub-side cluster registry.
+
+  OPEN: the O6 preference's shape in marvel config; whether identity is the
+  key alone or the key plus a name; how a moved cluster's old address is
+  retired.
+edges:
+  - target: elem-cluster-configuration
+    type: derives
+    note: "the known-cluster list and the admin preference live in marvel config"
+  - target: question-mrvl-exposure-and-trust-bootstrap
+    type: derives
+    note: "trust in a cluster's key is the same bootstrap question after a move"
+provenance:
+  created_by: agent
+  session: architect-2026-10-09-harvest
+  created_at: "2026-10-09"

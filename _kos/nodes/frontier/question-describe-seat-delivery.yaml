@@ -47,6 +47,17 @@ content: |
   path (the path only) and the team budget. Make it blocked by iudtl. Drop
   memory path and per-role budget from T8. Valid until 2026-10-22; the
   architect seat re-checks it then.
+
+  HARVEST 2026-10-09, redaction rulings (operator, 2026-10-08, relayed by
+  director), being built in marvel#784 (open):
+  - q1 (c), verbatim: "Redact only keys that look like secrets". Env values
+    whose key matches a secret-looking fragment print as `(redacted)`; others
+    print as declared. The stated cost: a credential under a key that matches
+    no pattern prints.
+  - q2 (a), verbatim: "Yes: they are how a human checks what a seat was told".
+    Args and Prompt stay visible.
+  finding-060 is the earlier ruling that the control plane is not a redaction
+  boundary for run output.
 edges:
   - target: question-role-tools-field-projection
     type: derives

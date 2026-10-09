@@ -125,6 +125,11 @@ content: |
 
   PROMOTION SIGNAL: the proving vertical runs end to end (bd ready through the
   seam). Then the seam is evidence, not hypothesis.
+
+  HARVEST 2026-10-09 (finding-marvel-0w59): three shapes for a credential
+  manager (a marvel Service for a vault marvel does not run, embedded, or a
+  managed child) classified under ADR-009 as written. Evidence for the ADR-009
+  revisit (aae-orc-p4fzv); it rules on nothing.
 edges:
   - target: elem-agentic-resource-matrix
     type: derives

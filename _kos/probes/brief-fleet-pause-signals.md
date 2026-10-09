@@ -1,8 +1,9 @@
 # Probe brief: does a frozen harness come back, and what does marvel see meanwhile?
 
 **Status:** COMPLETE 2026-10-08 for Darwin, except the Linux arms, which wait on a Linux machine. The void 2026-10-07 sets (S1, S2, T) are superseded by F1, F2 and F3 and the arms below. Finding: `_kos/findings/finding-marvel-1kg8-fleet-pause-substrate.md`.
-**Question:** the pause idea, `_kos/ideas/fleet-pause-resume.md` (no frontier
-node yet; the idea has not crystallized).
+**Question:** `question-fleet-pause-resume` (frontier node, harvest 2026-10-09),
+from the pause idea, `_kos/ideas/fleet-pause-resume.md`. Carried forward there:
+the unattended pid_suspend re-run (finding-marvel-1eds section 5) and the Linux arms.
 **Medium:** live harness sessions on an isolated scratch marvel daemon, built at
 `5a972a4`. claude 2.1.292 and codex-cli 0.160.1 call their cloud models; opencode
 1.18.15 and crush v0.88.1 call a local ollama model (qwen3:0.6b).

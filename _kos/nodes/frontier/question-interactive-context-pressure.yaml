@@ -409,6 +409,14 @@ content: |
   projected statusline hook's baked binary path survives an upgrade depends
   on install topology (a version-pinned path versus a stable link), not on
   platform. A conclusion drawn from one install does not generalize.
+
+  HARVEST 2026-10-09, measured in review of marvel#772 (merged 086fe594):
+  - a cumulative spend counter frozen when its stream ended is a lower bound
+    on the session's total, and exact up to that point; it is not stale data
+    to clear;
+  - the cooperative heartbeat is a second writer: `UpdateSessionHeartbeat`
+    rebuilds the session context whole, which cleared spend and rate on every
+    heartbeat. The PR body had named only `UpdateSessionContext`.
 edges:
   - target: question-stream-attachment
     type: derives
