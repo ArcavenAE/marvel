@@ -163,3 +163,9 @@ func (p *procTable) readPids() []int {
 	defer p.mu.Unlock()
 	return append([]int(nil), p.readLog...)
 }
+
+func (p *procTable) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sent = nil
+}

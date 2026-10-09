@@ -488,8 +488,16 @@ func TestLegacyPidfileWithNoListenerStartsFresh(t *testing.T) {
 			pid := reapedPid(t)
 			pt.plant(pid, brokerIdentity(s, "darwin:100.000000"))
 			writePidfile(t, s, pid)
+			// The stale file is gone before the fresh broker starts, not merely
+			// overwritten by it: a failed spawn must not leave it behind.
+			inner := s.onSpawn
+			var leftAtSpawn bool
+			s.onSpawn = func(p int) { leftAtSpawn = fileExists(s.pidFile); inner(p) }
 			if err := s.Start(context.Background()); err != nil {
 				t.Fatalf("Start: %v", err)
+			}
+			if leftAtSpawn {
+				t.Error("the legacy pidfile was still in place when the fresh broker started")
 			}
 			if got := pt.signalsTo(pid); len(got) != 0 {
 				t.Errorf("the legacy pid was signalled: %v", got)
@@ -609,5 +617,32 @@ func TestClassifyReadsTheRecordBeforeAnyProcess(t *testing.T) {
 	}
 	if got := fmt.Sprint(pt.signals()); got != "[]" {
 		t.Errorf("classifying signalled %s", got)
+	}
+}
+
+// An adopted broker is not our child, so the watcher polls it. A pid the
+// kernel hands to another process reads as the broker having exited, the
+// same crash path as a dead one, and nothing is signalled for it (design
+// section 4.4).
+func TestAdoptedWatchReadsAReusedPidAsAnExit(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	quiet(s)
+	s.adoptPoll = 20 * time.Millisecond
+	s.backoff = func(int) time.Duration { return time.Hour } // no respawn inside the test
+	pt := tableOf(s)
+	pid := reapedPid(t)
+	id := brokerIdentity(s, "darwin:100.000000")
+	pt.plant(pid, id)
+	writePidfile(t, s, pid)
+	writeSidecar(t, s, pid, id)
+	standInListener(t, s)
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pt.reset()
+	pt.change(pid, brokerIdentity(s, "darwin:300.000000")) // another process now holds the pid
+	eventually(t, "bus.crashed after the pid changed hands", func() bool { return hasKind(ring, events.KindBusCrashed) })
+	if got := pt.signalsTo(pid); len(got) != 0 {
+		t.Errorf("the watcher signalled the pid that changed hands: %v", got)
 	}
 }
