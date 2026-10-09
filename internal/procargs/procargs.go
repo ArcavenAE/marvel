@@ -31,6 +31,21 @@ func ParseCmdline(b []byte) ([]string, error) {
 	return out, nil
 }
 
+// ParseProcargs2ExecPath reads the executable path out of kern.procargs2: the
+// bytes after argc, up to the first NUL. It is the path the kernel recorded at
+// exec, which is what the identity record compares.
+func ParseProcargs2ExecPath(b []byte) (string, error) {
+	if len(b) < 4 {
+		return "", errors.New("kern.procargs2 returned too few bytes")
+	}
+	rest := b[4:]
+	end := bytes.IndexByte(rest, 0)
+	if end <= 0 {
+		return "", errors.New("kern.procargs2 has no executable path")
+	}
+	return string(rest[:end]), nil
+}
+
 // ParseProcargs2 reads kern.procargs2: argc as a native int32, the executable
 // path, NUL padding, then argc NUL-terminated arguments, then the environment,
 // which is not read. Macs this runs on are little endian.

@@ -45,10 +45,10 @@ func (k *fakeKernel) kill(pid int, sig syscall.Signal) error {
 	return nil
 }
 
-func (k *fakeKernel) set(pid int, id Identity) {
+func (k *fakeKernel) set41(id Identity) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.ids[pid] = id
+	k.ids[41] = id
 }
 
 func (k *fakeKernel) signals() []sent {
@@ -99,7 +99,7 @@ func TestProveReturnsAChildOnlyForAnExactMatch(t *testing.T) {
 	} {
 		k := newKernel(map[int]Identity{})
 		if !tc.absent {
-			k.set(41, tc.live)
+			k.set41(tc.live)
 		}
 		c, err := prober(t, k).Prove(41, want)
 		if tc.reason == "" {
@@ -132,6 +132,11 @@ func TestProveRefusesWhatCannotBeAProcess(t *testing.T) {
 	if _, err := p.Prove(41, Identity{}); err == nil {
 		t.Error("an empty recorded identity proved a process")
 	}
+	// A reader that reads nothing must not prove a record that holds nothing.
+	blank := prober(t, newKernel(map[int]Identity{41: {}}))
+	if _, err := blank.Prove(41, Identity{}); err == nil {
+		t.Error("an empty identity proved an empty identity")
+	}
 	var nilProber *Prober
 	if _, err := nilProber.Prove(41, broker("a")); err == nil {
 		t.Error("a nil Prober proved a process")
@@ -155,7 +160,7 @@ func TestSignalReadsTheIdentityAgainAndRefusesAChange(t *testing.T) {
 	if got := k.signals(); len(got) != 1 || got[0] != (sent{41, syscall.SIGHUP}) {
 		t.Fatalf("signals = %v, want one SIGHUP to 41", got)
 	}
-	k.set(41, broker("darwin:200.1")) // the pid was reaped and handed to another process
+	k.set41(broker("darwin:200.1")) // the pid was reaped and handed to another process
 	if err := p.Signal(c, syscall.SIGTERM, true); err == nil {
 		t.Error("Signal succeeded after the identity changed")
 	}
@@ -273,7 +278,7 @@ func TestSameFollowsTheIdentity(t *testing.T) {
 	if !p.Same(c) {
 		t.Error("Same is false for the live process that was proven")
 	}
-	k.set(41, broker("b"))
+	k.set41(broker("b"))
 	if p.Same(c) {
 		t.Error("Same is true after the pid was handed to another process")
 	}
@@ -283,6 +288,15 @@ func TestSameFollowsTheIdentity(t *testing.T) {
 	}
 	if p.Same(Child{}) {
 		t.Error("Same is true for the zero Child")
+	}
+	other := prober(t, newKernel(map[int]Identity{41: id}))
+	foreign, err := other.Prove(41, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.set41(id)
+	if p.Same(foreign) {
+		t.Error("Same is true for a Child another Prober proved")
 	}
 }
 

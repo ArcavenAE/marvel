@@ -12,3 +12,12 @@ func Read(pid int) ([]string, error) {
 	}
 	return ParseProcargs2(b)
 }
+
+// ExecPath reads the path a process was exec'd from, as the kernel recorded it.
+func ExecPath(pid int) (string, error) {
+	b, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return "", err
+	}
+	return ParseProcargs2ExecPath(b)
+}
