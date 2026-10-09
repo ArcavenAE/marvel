@@ -12,10 +12,10 @@
   `adopted-services-2026-09-16.md`, `wake-service.md`,
   `bus-hub-hot-reload.md`, `team-load-rollup.md`, and the speculative
   `service-provider/` set. Supersedes none of them.
-- **Evidence:** the party record,
-  `aae-orc/_bmad-output/party-mode/marvel-services-shape-2026-10-09/`
-  (commission, a brief and the chair's checks per round, replies by seat,
-  the R8 ballot and `99-outcome.md`). The code-seams study is
+- **Evidence:** the panel's record (commission, a brief and the chair's
+  checks per round, replies by seat, the R8 ballot and the outcome) is a
+  gitignored party record in a private repository; the tallies and
+  reasons that matter are carried in section 6. The code-seams study is
   finding-marvel-4m2m, unmerged and in review (#795 at `96d80e0`).
 
 ## 0. Why
@@ -27,7 +27,8 @@ provider arm. A second managed service written today would copy the bus
 supervisor (4m2m:103). These requirements state what every service
 declares and what marvel may and may not do to it, so that the second
 service is an instance of a contract rather than a copy. The panel also
-found a defect (#794) and a closed-but-unfixed issue (#339) along the way.
+found a defect (#794) along the way, and confirmed the leaf-seed drop on
+reexec (#339, open) is still current.
 
 How to read an item:
 - Each item names its consumer and a failing case a reviewer can run.
@@ -93,6 +94,10 @@ contract is unwritten and is director's). DEFERRED-SEAM.
 Consumer: the operator.
 Fails if the two render the same, or if either is signalled unproven.
 CODE `supervisor.go:243-252`. DEFERRED-SEAM: the status field.
+
+**MS-3 (retired).** The panel folded it into MS-1: in-process capabilities
+are registered in code and shown in the catalog view (section 6 V1). The
+number is kept so later items keep their ids.
 
 **MS-4 The hub stays a field of the bus record** (panel recommendation,
 section 6 V2), until something other than the bus consumes it.
@@ -170,7 +175,8 @@ DESIGN `adopted-services-2026-09-16.md` 1.3; RULED ADR-007.
   lifecycle interface. It is instantiated per entry and implemented by the
   provider's driver. Its signatures take plain types, because
   `internal/service` imports nothing and `config` imports `service`. No
-  `d.busSup` call is left (`daemon.go:847, 3452, 3556, 3649`).
+  `d.busSup` method call is left (`daemon.go:847, 3452, 3556, 3604, 3611,
+  3649` at `b2fa4ff`; the last two are in `leafSeedNeedsRestart`).
   DEFERRED-SEAM.
 - (b) The bus supervisor is one implementation, and every assertion in its
   ten tests exists by test name after the move. Whether those tests may be
@@ -211,7 +217,7 @@ ahead of it.
   loop.
 - The legacy case (a number-only pidfile at the first upgrade) is section
   6 V11, and it ships in the same PR as the proof.
-- The daemon's own guard (`checkPidFileFree`, `daemon.go:888-904`) gets the
+- The daemon's own guard (`checkPidFileFree`, `daemon.go:890-904`) gets the
   same fix as its own item.
 
 Consumer: the operator after a reexec or reboot.
@@ -329,8 +335,8 @@ Today:
 - stored values are lost on restart (CODE `credential_test.go:161`);
 - re-mint after restart has no test;
 - the leaf seed is dropped (DESIGN `admin-guide.md:483-485`,
-  `bus-hub-hot-reload.md:18`). #339 is closed, by #758, with no fix commit
-  found.
+  `bus-hub-hot-reload.md:18`); the drop is current and tracked in #339
+  (GITHUB, open).
 
 DEFERRED-SEAM.
 
@@ -531,15 +537,14 @@ These are for each file's owner. None is made by this PR.
   is V9.
 - `bus-as-service.md:98` makes the hub its own record, against
   `services-list.md:399-401` (V2).
-- `admin-guide.md:483-485` and `bus-hub-hot-reload.md:18` describe the leaf
-  seed drop as current, while #339 is closed.
 - The comment at `supervisor.go:247-248` ("rendered fresh ones") reads
   against `manager.go:181-221` (recovered).
 
 ## 6. Decisions the operator holds
 
 Each is the panel's recommendation from the R8 forced vote; the tallies
-include every seat. "Settled" means six or more of ten. Each recommendation
+include every seat. An item is an "open split" when no option reached six
+of ten. Each recommendation
 is valid until 2026-10-23, and the architect seat re-checks it then, unless
 a row names another date.
 
@@ -549,11 +554,11 @@ a row names another date.
 | V2 | Is the hub its own record? | (a) a field of the bus; (b) its own record, `mode: external` | **(a)** | a 6, b 3, abstain 1 |
 | V3 | How is an OAuth-protected service recorded? marvel holds nothing either way (MS-15) | (a) a fourth `caller_identity` value with nothing delivered; (b) a separate informational field; (c) reserved and refused for now | **open split**; plurality (a) | a 5, b 3, c 2 |
 | V4 | May a declared minimum version refuse a managed child's start? | (a) yes, managed only, through a ratified gate; (b) no, a reading only | **(b)** | b 8, a 2 |
-| V5 | Where does the hub leaf seed sit on the custody line? | (a) issuance inside the operator's trust domain (the ruled text says the hub operator mints and marvel distributes); (b) the edge: a copy marvel cannot revoke needs its own ADR-009 ruling first | **open split**; read with ADR-009 O1 | b 4, a 3, abstain 3 |
+| V5 | Where does the hub leaf seed sit on the custody line? | (a) issuance inside the operator's trust domain (the ruled text says the hub operator mints and marvel distributes); (b) the edge: a copy marvel cannot revoke needs its own ADR-009 ruling first | **open split**; read with ADR-009 open item O1 (Amendment 1, tracked in aae-orc-p4fzv) | b 4, a 3, abstain 3 |
 | V6 | The presence grant per cluster (aae-orc-93xy1) | (a) scope per cluster once part 2 exists (costs a global hub restart); (b) note the intended breadth now; (c) both | **(c)** | c 8, abstain 2 |
 | V7 | An invalid Services list | (a) skip, visible reading and event, cluster starts; (b) drop only the bad entry; (c) refuse the cluster's start | **(a)** | a 7, b 3 |
 | V8 | "State since" across a daemon restart | (a) zero; (b) restore all; (c) restore new readings only, wake stays at zero | **(c)** | c 9, abstain 1 |
-| V9 | The form of the `services-list.md:361` fix | (a) annotate "contested, see aae-orc-p4fzv"; (b) replace with "open, pending the ruling"; (c) split into token (brokering) and stored grant (custody) | **open split**; plurality (a); read with O1 | a 5, b 4, c 1 |
+| V9 | The form of the `services-list.md:361` fix | (a) annotate "contested, see aae-orc-p4fzv"; (b) replace with "open, pending the ruling"; (c) split into token (brokering) and stored grant (custody) | **open split**; plurality (a); read with ADR-009 open item O1 (aae-orc-p4fzv) | a 5, b 4, c 1 |
 | V10 | Run the `x-litellm-model-id` curl loop before any requirement speaks of "the backend of this session"? | (a) yes; (b) not needed | **(a)**, valid until 2026-10-14 (the w2bmo review) or the loop is run, whichever comes first | a 6, b 1, abstain 3 |
 | V11 | A number-only pidfile at the first upgrade | (a) adopt once if the listener answers and the executable matches; never signal the group; rewrite at once; (b) unproven: neither adopt nor signal; report "port held, child unproven" | **open split**; plurality (b) | b 5, a 4, abstain 1 |
 
