@@ -42,6 +42,11 @@ type ProcessSpec struct {
 	Check func(env []string) error
 	// LogPath receives the child's stdout and stderr, appended, mode 0600.
 	LogPath string
+	// BeforePidFile runs after the child starts and before the pidfile is
+	// written, with the child's pid. A driver records the child's identity
+	// here, so an identity record never trails the pidfile that names it. An
+	// error stops the child and fails Start. Nil does nothing.
+	BeforePidFile func(pid int) error
 	// PidFile, when set, records the child pid for adoption by a
 	// successor daemon. Written 0644 on a best-effort basis.
 	PidFile string
