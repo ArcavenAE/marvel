@@ -189,8 +189,22 @@ The socket scope issue in section 8 is filed separately, not as a child here.
    key, and leave scheme, host, port, path and query readable. This adds a
    value check to ruling 1's key rule: `redis://user:password@host/0` prints as
    `redis://(redacted)@host/0` under any key that does not already redact the
-   whole value. The cost: a password with an unencoded `/`, `?` or `#` ends the
-   URL's authority early and is not recognized (RFC 3986 requires those
-   percent-encoded); a userinfo with no password, such as a token used as the
-   username, or `git@` in `ssh://git@host`, also prints as `(redacted)`; and a
-   connection string that is not a URL (`Server=h;Password=p`) is not covered.
+   whole value. A URL is found by its `://`. Its authority ends at `/`, `?` or
+   `#`, at white space, or at a character an authority can never hold (`"`,
+   `<`, `>`, `\`, `^`, a backtick, `{`, `|`, `}`), so a URL inside JSON keeps its
+   host and the fields after it; the userinfo is everything before the last
+   `@` of that authority, so a password holding `@`, `:`, `,` or `;` is covered.
+
+   The cost, a password that still prints in full:
+   - one with an unencoded `/`, `?` or `#` (RFC 3986 requires them
+     percent-encoded; a base64 password usually holds a `/`);
+   - one with white space inside it, a space or a tab;
+   - one in the query string, such as `postgres://db/app?user=u&password=p`,
+     since the ruling keeps the query readable;
+   - one in a value with no scheme, such as `u:pw@host:5432/db` or
+     `//u:pw@host/x`;
+   - one in `https://host;user=u;password=p`, and in a connection string that is
+     not a URL (`Server=h;Password=p`).
+
+   And one over-redaction: a userinfo with no password, such as a token used as
+   the username, or `git@` in `ssh://git@host`, also prints as `(redacted)`.

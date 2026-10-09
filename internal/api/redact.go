@@ -289,6 +289,13 @@ func redactEnv(env map[string]string) map[string]string {
 // everything before the last @ in that authority, so a password that holds @
 // or : is covered. A password with an unencoded /, ? or # is not, since those
 // end the authority (RFC 3986 requires them percent-encoded).
+// authorityEnd are the characters that end a URL's authority: / ? and # by
+// RFC 3986, white space, and the characters an authority can never hold (a
+// double quote, <, >, backslash, ^, backtick, {, | and }), so a URL inside
+// JSON, markup or a template keeps its host and the text after it. A comma and
+// a semicolon are legal in userinfo and do not end it.
+const authorityEnd = "/?# \t\r\n\"<>\\^`{|}"
+
 func redactURLUserinfo(s string) string {
 	var out strings.Builder
 	last, i := 0, 0
@@ -299,7 +306,7 @@ func redactURLUserinfo(s string) string {
 		}
 		start := i + j + len("://")
 		end := len(s)
-		if k := strings.IndexAny(s[start:], "/?# \t\r\n"); k >= 0 {
+		if k := strings.IndexAny(s[start:], authorityEnd); k >= 0 {
 			end = start + k
 		}
 		if n := strings.Index(s[start:], "://"); n >= 0 {

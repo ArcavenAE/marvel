@@ -33,6 +33,7 @@ func TestRedactURLUserinfo(t *testing.T) {
 		{"tab ends the authority", "redis://u:p@h\tx@b.com", "redis://(redacted)@h\tx@b.com"},
 		{"newline ends the authority", "redis://u:p@h\nx@b.com", "redis://(redacted)@h\nx@b.com"},
 		{"carriage return ends the authority", "redis://u:p@h\rx@b.com", "redis://(redacted)@h\rx@b.com"},
+		{"semicolon in the password", "redis://u:ab;cd@h/0", "redis://(redacted)@h/0"},
 		{"not a url", "us-east-1", "us-east-1"},
 		{"address without a scheme", "a@b.com", "a@b.com"},
 		{"host and port", "host:6379", "host:6379"},
