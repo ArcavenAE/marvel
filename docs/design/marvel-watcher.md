@@ -20,8 +20,8 @@ The subject test for what belongs in marvel is: a feature belongs here only if, 
 | The message bus is a registry entry with no read contract: class `message-bus`, one provider `nats-server` | `internal/service/service.go:104-119` | read |
 | **Interactive seats produce no turn events.** The stream parsers emit `turn.started` and `turn.completed`, but only headless launches have a stream | `internal/runtime/claude.go:27-31`, `codex.go:28-33` (`SupportsStream` is `Mode == headless`) | read |
 | claude's stream emits `turn.completed` and no `turn.started` | `internal/runtime/claudecode/mapping.md:39` | read |
-| **`ContextAt` cannot be an idle signal for a claude seat on the statusline feed.** The statusline refreshes every 15 s while idle; each tick sends a heartbeat, and each heartbeat stamps `ContextAt` | `internal/runtime/claude.go` (`refreshInterval: 15`), `cmd/marvel/ctxforward.go:453`, `internal/api/store.go:811-823` | read |
-| codex's projected hooks (`SessionStart`, `Stop`, `PostToolUse`) leave no turn stamp: the event name is parsed and unused, and a payload with no occupancy sample is not sent | `internal/runtime/codex_home.go:27`, `cmd/marvel/codexctx.go:63-66`, `:83`, `:135` | read |
+| **`ContextAt` cannot be an idle signal for a claude seat on the statusline feed.** The statusline refreshes every 15 s while idle. Each tick whose payload carries a context figure sends a heartbeat (a tick without one returns at `cmd/marvel/ctxforward.go:444`, after the account-limits send), and each heartbeat stamps `ContextAt` | `internal/runtime/claude.go` (`refreshInterval: 15`), `cmd/marvel/ctxforward.go:444`, `:453`, `internal/api/store.go:811-823` | read |
+| codex's projected hooks (`SessionStart`, `Stop`, `PostToolUse`) leave no turn stamp: the event name is parsed and unused, and a payload with no occupancy sample sends no heartbeat. The account-limits RPC is still sent for every hook, but it carries account windows, not a turn | `internal/runtime/codex_home.go:27`, `cmd/marvel/codexctx.go:63-66`, `:83`, `:133-135` | read |
 | The codex composer reader returns only `MenuUnsafe` or `Unknown`; any runtime other than claude and codex gets a reader that is always `Unknown` | `internal/composer/composer.go:54-66`, `:95-112` (aae-orc-g88i1, open) | read |
 | An empty composer does not mean idle: it can read empty while text streams | `internal/composer/composer.go:24-26` | read |
 | The inject path checks before sending and verifies after | `internal/daemon/daemon.go:2257` (`handleInjectAs`), `:2460` (`verifyInject`) | read |
@@ -43,6 +43,16 @@ A daemon goroutine, `RunWatcher`, runs beside `RunLimits` and never inside the r
 When a pass has not completed within three intervals, every output reads `not-run`. A stale mail read reads `unknown`, never its last value. `get sessions` prints the watcher's mode.
 
 ## 3. Interfaces
+
+**Packages, and the import boundary.** Today only `internal/bus` imports `github.com/nats-io/...`. The watcher keeps it that way:
+
+- `internal/mail`: `MailState`, `MailReader`, `SeatMail`. No NATS import.
+- `internal/mail/mailtest`: the file-spool double.
+- `internal/mail/jetstream`: the JetStream adapter. The only new package that imports NATS.
+- `internal/turn`: `TurnState`, `TurnReader` and the per-harness dispatch. No NATS import.
+- `internal/watcher`: `RunWatcher`, the recorder and the surfaces' data. No NATS import, and it never imports `internal/mail/jetstream`.
+
+The adapter is constructed only in the daemon's start-up wiring (`internal/daemon`, beside where `RunLimits` starts), which already imports `internal/bus`, and handed to `RunWatcher` as a `MailReader`. A1 adds a source test: it lists the dependencies of `internal/mail`, `internal/turn` and `internal/watcher` with `go list -deps` and fails on any `github.com/nats-io/` path or on `internal/mail/jetstream`. Its control is a planted package under `testdata` that imports NATS, which the same check must flag, so a check that reads nothing cannot pass.
 
 ```go
 // MailState: each field is a value, unknown (tried and failed) or
@@ -146,10 +156,10 @@ Hooks become the claude source only if every prompt shows exactly one `UserPromp
 
 | id | ticket | blocked by |
 |---|---|---|
-| A1 | `internal/mail`: `MailState` with `Note`, `MailReader`; `mailtest` spool double with error injection | none |
+| A1 | `internal/mail`: `MailState` with `Note`, `MailReader`; `internal/mail/mailtest` spool double with error injection; the import-boundary source test with its planted-import control (section 3) | none |
 | A2 | Per-seat addresses on both tiers; `SeatMail`, itself a `MailReader`, with the aggregate rules | A1 |
-| A3 | JetStream adapter: Go read, broker time for age, missing durable is `unknown`; parity fixture against director's reader rows; broker tests exec a scratch `nats-server` and say where CI gets it | A2 |
-| B1 | `TurnState`, `TurnReader`, and a per-harness dispatch that can say `unsupported` | none |
+| A3 | `internal/mail/jetstream` adapter: Go read, broker time for age, missing durable is `unknown`; parity fixture against director's reader rows; broker tests exec a scratch `nats-server` and say where CI gets it | A2 |
+| B1 | `internal/turn`: `TurnState`, `TurnReader`, and a per-harness dispatch that can say `unsupported` | none |
 | B2 | Turn-stamp store on the session record and a daemon RPC for hook commands (event, source, agent id, notification type, background flag), daemon receive time; includes the `codex-ctx` send change | B1 |
 | B3 | codex prompt-submit hook and its trust entry, or `started_at: unsupported` | B2, C6 |
 | C1 | claude probe kit and checker | none |
@@ -158,15 +168,16 @@ Hooks become the claude source only if every prompt shows exactly one `UserPromp
 | C4 | claude hook command: prints nothing, exits zero, bounded timeout | B2, C2 |
 | C5 | claude `TurnReader`: open turn, open-turn ceiling, subagent stamps, background tasks, version gate | B1, C3, C4 |
 | C6 | codex scratch probe: hook names, `Stop` on interrupt, trust hashes | none |
-| D1 | `RunWatcher` core: eligibility, `turn-no-ack`, `turn-ack-unknown`, re-arm on mail movement, capture only for eligible seats | A1, B1 |
+| D1 | `internal/watcher`: `RunWatcher` core: eligibility, `turn-no-ack`, `turn-ack-unknown`, re-arm on mail movement, capture only for eligible seats | A1, B1 |
 | D2 | Watcher liveness: pass stamp, `not-run`, panic recovery, stale mail reads `unknown` | D1 |
 | D3 | Edge-triggered recorder keyed `(seat, class)` with `since`; one `resumed` record per held seat after a restart | D1 |
 | E1 | Surfaces: event, `describe session`, the pull file; no surface merges before D2 | D2, D3 |
-| W1 | Start the watcher in the daemon with mode `off | report`, printed in `get sessions` | D1, A2, A3 |
+| W1 | Start the watcher from the daemon's start-up wiring, which alone constructs the `internal/mail/jetstream` adapter; mode `off \| report`, printed in `get sessions` | D1, A2, A3 |
 | F0 | Where a seat's parent comes from (no lookup exists today) | none |
 | F1 | Decision: the director-facing sink for the push | none |
-| F2 | Push target selection; director until F0 lands | D3, B1, F0 |
+| F2 | Push target selection, director only | D3, B1 |
 | F3 | Push delivery with its own state, one push per edge | F2, E1, F1 |
+| F4 | Push to the seat's parent when it took a turn in the window, else director | F2, F0 |
 | G1 | Ring claim, written before the send; read side for another ringer | D1 |
 | G2 | Internal inject entry point recording the watcher as origin | none |
 | G3 | The ring, off by default; codex stays unrung while its reader cannot return `Empty` | G1, G2, C5 |
@@ -174,7 +185,7 @@ Hooks become the claude source only if every prompt shows exactly one `UserPromp
 
 The first PRs open the same day, with C1 merged first, because it feeds the longest chain: C1, A1, B1, G2, B2.
 
-**Separate issue, not this design (H1):** the watchdog's quiet test and its did-work clear (`internal/daemon/watchdog.go:262-271`) read `ContextAt`, and so does LAST-ACTIVE (`cmd/marvel/lastactive.go:25`). A claude statusline heartbeat re-stamps `ContextAt` every 15 s.
+**Separate issue, not this design (H1, #801):** the watchdog's quiet test and its did-work clear (`internal/daemon/watchdog.go:262-271`) read `ContextAt`, and so do LAST-ACTIVE (`cmd/marvel/lastactive.go:25`) and ACTIVE% (`internal/team/tickring.go:54`). A claude statusline heartbeat that carries a context figure re-stamps `ContextAt`, every 15 s while the seat idles.
 
 ## 8. Decisions for the operator
 
@@ -182,6 +193,8 @@ The first PRs open the same day, with C1 merged first, because it feeds the long
    - a turn-age-only first step, a strict subset of the plan;
    - director stays the ringer, and marvel's ring is built only if director's doorbell cannot confirm a turn;
    - marvel never rings.
+
+   Picking this design does not turn the ring on. Turning it on is a later operator decision, put up after C2 passes and aae-orc-g88i1 lands; until then G3 ships with the ring off.
 2. **claude's fallback turn source, for reports only (split 2-2).** Either the statusline cost or token delta, used only if the probe shows it flat while idle and moving on every turn, or none, reported as `unknown`. Recommendation: decide after C2. Both sides agree it never carries ring authority and falls to `unknown` if the probe fails.
 3. **Starting pass interval (split 2-2), 30 s or 60 s.** Recommendation: 60 s, because a JetStream read per seat per pass has a cost and the threshold is minutes.
 4. **Starting age threshold (split 2-2), 10 min or 15 min.** Recommendation: 10 min, the single default quiet window `internal/api/quiet.go:5-10` chose on purpose.
