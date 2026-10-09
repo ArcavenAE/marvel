@@ -272,11 +272,46 @@ func redactEnv(env map[string]string) map[string]string {
 	for k, val := range env {
 		if SecretKey(k) {
 			val = Redacted
+		} else {
+			val = redactURLUserinfo(val)
 		}
 		out[k] = val
 	}
 	return out
 }
 
-// redactURLUserinfo replaces the userinfo of every URL in s with Redacted.
-func redactURLUserinfo(s string) string { return s }
+// redactURLUserinfo replaces the userinfo of every URL in s with Redacted, so
+// redis://user:password@host/0 reads redis://(redacted)@host/0. Host, port,
+// path and query stay readable, and a URL with no userinfo is left as it is
+// (operator ruling redaction-url-userinfo, option a, relayed by director on
+// 2026-10-09). A URL is found by its "://"; its authority runs to the next /,
+// ?, # or white space, or to the start of a second URL, and its userinfo is
+// everything before the last @ in that authority, so a password that holds @
+// or : is covered. A password with an unencoded /, ? or # is not, since those
+// end the authority (RFC 3986 requires them percent-encoded).
+func redactURLUserinfo(s string) string {
+	var out strings.Builder
+	last, i := 0, 0
+	for {
+		j := strings.Index(s[i:], "://")
+		if j < 0 {
+			break
+		}
+		start := i + j + len("://")
+		end := len(s)
+		if k := strings.IndexAny(s[start:], "/?# \t\r\n"); k >= 0 {
+			end = start + k
+		}
+		if n := strings.Index(s[start:], "://"); n >= 0 {
+			end = min(end, start+n)
+		}
+		if at := strings.LastIndex(s[start:end], "@"); at > 0 {
+			out.WriteString(s[last:start])
+			out.WriteString(Redacted)
+			last = start + at
+		}
+		i = max(end, start)
+	}
+	out.WriteString(s[last:])
+	return out.String()
+}

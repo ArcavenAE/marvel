@@ -184,3 +184,13 @@ The socket scope issue in section 8 is filed separately, not as a child here.
    Not ruled.
 4. **No reveal verb until the socket can tell a seat from the operator.**
    Default offered: yes. Not ruled.
+5. **Passwords inside URL-shaped values.** Ruled (a), relayed by director on
+   2026-10-09: redact only the userinfo part of URL-shaped values, whatever the
+   key, and leave scheme, host, port, path and query readable. This adds a
+   value check to ruling 1's key rule: `redis://user:password@host/0` prints as
+   `redis://(redacted)@host/0` under any key that does not already redact the
+   whole value. The cost: a password with an unencoded `/`, `?` or `#` ends the
+   URL's authority early and is not recognized (RFC 3986 requires those
+   percent-encoded); a userinfo with no password, such as a token used as the
+   username, or `git@` in `ssh://git@host`, also prints as `(redacted)`; and a
+   connection string that is not a URL (`Server=h;Password=p`) is not covered.
