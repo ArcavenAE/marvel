@@ -36,14 +36,17 @@ methods than get and describe: `plan` returns whole sessions in each role's
 `Delete` list (`handlePlan`, `internal/daemon/daemon.go:1318`; `RolePlan.Delete
 []api.Session`, `internal/team/controller.go:993`), and a later method could do
 the same. So the redaction is not attached to verbs. Every successful response
-passes through one function at the dispatch boundary (`dispatchAs`,
-`daemon.go:1099`) before it is written, and that function redacts every
-`api.Runtime` it finds, at any depth, whichever method built the response.
-The simplest form: handlers return values rather than pre-marshalled bytes,
-and the boundary marshals a redacted copy. A handler that still returns bytes
-is converted, not exempted.
+body is built by one function, `respond` (`internal/daemon/redact.go`), which
+every handler returns through and which `events.watch` encodes, and it
+redacts every `api.Runtime` it finds, at any depth, whichever method built the
+value (`api.Redact`). Handlers hand it values rather than pre-marshalled
+bytes. A handler that still marshalled its own bytes would bypass it, so a
+source test (`response_source_test.go`) fails if anything else, in any
+non-test package of the module, sets `Response.Result`: a keyed or positional
+literal, an assignment, or the address taken. The test matches on the
+`Response` type, and a planted write of each form proves it catches them.
 
-The same boundary serves every transport. Nothing after it can reconstruct a
+The same function serves every transport. Nothing after it can reconstruct a
 value.
 
 ## 3. Which fields, and what shows in their place

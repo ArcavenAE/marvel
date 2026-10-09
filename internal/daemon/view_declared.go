@@ -66,6 +66,5 @@ func (d *Daemon) handleViewRefresh(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
-	result, _ := json.Marshal(map[string]any{"lines": lines})
-	return Response{Result: result}
+	return respond(map[string]any{"lines": lines})
 }

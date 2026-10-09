@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -72,11 +71,7 @@ type BuildInfo struct {
 }
 
 func (d *Daemon) handleVersion() Response {
-	result, err := json.Marshal(BuildInfo{Build: d.build, StartedAt: d.startedAt, PID: os.Getpid()})
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode build: %v", err)}
-	}
-	return Response{Result: result}
+	return respond(BuildInfo{Build: d.build, StartedAt: d.startedAt, PID: os.Getpid()})
 }
 
 // VerifiedCommit returns revision only when the version confirms it. Go's VCS

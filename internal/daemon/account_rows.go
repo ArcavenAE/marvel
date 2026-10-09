@@ -124,11 +124,7 @@ func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time
 		}
 		stored = d.accounts.RecordObserved(key, req.Windows, sess.Key(), observed, now)
 	}
-	data, err := json.Marshal(map[string]any{"account": key.String(), "stored": stored})
-	if err != nil {
-		return Response{Error: fmt.Sprintf("encode account.limits result: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(map[string]any{"account": key.String(), "stored": stored})
 }
 
 // accountObservationSkew is how far ahead of the daemon's clock a sender's

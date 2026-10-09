@@ -77,8 +77,7 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response 
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
-	data, _ := json.Marshal(meta)
-	return Response{Result: data}
+	return respond(meta)
 }
 
 // handleCredentialGet returns a credential's metadata. It never returns the
@@ -93,8 +92,7 @@ func (d *Daemon) handleCredentialGet(params json.RawMessage) Response {
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
-	data, _ := json.Marshal(cred)
-	return Response{Result: data}
+	return respond(cred)
 }
 
 // credentialRevealResult carries a revealed secret value back to the local
@@ -119,17 +117,12 @@ func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) Respon
 		return Response{Error: err.Error()}
 	}
 	d.emitCredentialEvent(events.KindCredentialRevealed, p.Name, "", c)
-	data, _ := json.Marshal(credentialRevealResult{Value: value})
-	return Response{Result: data}
+	return respond(credentialRevealResult{Value: value})
 }
 
 // handleCredentialList returns metadata for every credential.
 func (d *Daemon) handleCredentialList() Response {
-	data, err := json.Marshal(d.store.ListCredentials())
-	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal credentials: %v", err)}
-	}
-	return Response{Result: data}
+	return respond(d.store.ListCredentials())
 }
 
 // handleCredentialDelete removes a credential (its value is zeroed by the
@@ -146,8 +139,7 @@ func (d *Daemon) handleCredentialDelete(params json.RawMessage, c caller) Respon
 	if p.Name == busLeafCredential {
 		d.regenerateBus("credential.delete " + busLeafCredential)
 	}
-	data, _ := json.Marshal(map[string]string{"deleted": p.Name})
-	return Response{Result: data}
+	return respond(map[string]string{"deleted": p.Name})
 }
 
 // emitCredentialEvent records a credential action on the event ring and the
