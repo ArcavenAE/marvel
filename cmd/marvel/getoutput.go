@@ -34,7 +34,7 @@ func buildGetOutput(resource string, teams []api.Team, workspaces []api.Workspac
 	case "workspace":
 		desired, observed = api.Redact(workspaces), observedWorkspaces(workspaces, teams, sessions)
 	default:
-		return nil, fmt.Errorf("-o applies to team and workspace only, not %q", resource)
+		return nil, fmt.Errorf("get output: unhandled resource %q", resource)
 	}
 	return map[string]any{
 		"kind":     strings.TrimSuffix(resource, "s"),
@@ -127,8 +127,22 @@ func renderGetOutput(doc map[string]any, format string) (string, error) {
 		}
 		return string(y), nil
 	default:
-		return "", fmt.Errorf("unknown output format %q: use json or yaml", format)
+		return "", fmt.Errorf("get output: unhandled format %q", format)
 	}
+}
+
+// checkGetOutput is the one place a user's -o request is validated, before any
+// request reaches the daemon. buildGetOutput and renderGetOutput trust it.
+func checkGetOutput(resource, format string) error {
+	switch strings.TrimSuffix(resource, "s") {
+	case "team", "workspace":
+	default:
+		return fmt.Errorf("-o applies to team and workspace only, not %q", resource)
+	}
+	if format != "json" && format != "yaml" {
+		return fmt.Errorf("unknown output format %q: use json or yaml", format)
+	}
+	return nil
 }
 
 // fetchGet reads one resource type through the daemon into out.
@@ -146,13 +160,8 @@ func fetchGet(resourceType string, out any) error {
 
 // getWithOutput prints `get team|workspace -o json|yaml`.
 func getWithOutput(resource, format string) error {
-	switch strings.TrimSuffix(resource, "s") {
-	case "team", "workspace":
-	default:
-		return fmt.Errorf("-o applies to team and workspace only, not %q", resource)
-	}
-	if format != "json" && format != "yaml" {
-		return fmt.Errorf("unknown output format %q: use json or yaml", format)
+	if err := checkGetOutput(resource, format); err != nil {
+		return err
 	}
 	var teams []api.Team
 	var workspaces []api.Workspace

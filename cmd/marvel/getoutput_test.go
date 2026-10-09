@@ -252,3 +252,40 @@ func TestGetOutputIsForTeamsAndWorkspacesAndTwoFormats(t *testing.T) {
 		t.Errorf("get team -o xml error = %v, want one naming json or yaml", err)
 	}
 }
+
+// -o with an empty value is a mistake, not a request for the table: the flag
+// was given, so it is refused with the same words as any other bad format.
+func TestGetOutputRefusesAnEmptyFormat(t *testing.T) {
+	cannedDaemon(t, map[string]any{"team": []api.Team{outputTeam()}, "session": outputSessions()})
+	out, err := runGet(t, "team", "-o", "")
+	if err == nil || !strings.Contains(err.Error(), "json or yaml") {
+		t.Errorf("get team -o \"\" error = %v, output %q, want an error naming json or yaml", err, out)
+	}
+}
+
+// -o and --watch are two different views; the combination is refused rather
+// than letting one silently win.
+func TestGetOutputIsRefusedWithWatch(t *testing.T) {
+	cannedDaemon(t, map[string]any{"team": []api.Team{outputTeam()}, "session": outputSessions()})
+	if _, err := runGet(t, "team", "-o", "json", "--watch=2"); err == nil || !strings.Contains(err.Error(), "--watch") {
+		t.Errorf("get team -o json --watch error = %v, want one naming --watch", err)
+	}
+}
+
+// yaml is not json: json is valid yaml, so decoding alone cannot tell them
+// apart. The yaml document has no braces at its top level and a key per line.
+func TestGetOutputYAMLIsNotJSON(t *testing.T) {
+	out, err := renderGetOutput(teamDoc(t), "yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asJSON map[string]any
+	if json.Unmarshal([]byte(out), &asJSON) == nil {
+		t.Errorf("-o yaml printed json:\n%s", out)
+	}
+	for _, want := range []string{"\ndesired:\n", "\nobserved:\n", "kind: team\n"} {
+		if !strings.Contains("\n"+out, want) {
+			t.Errorf("yaml output lacks the line %q:\n%s", strings.TrimSpace(want), out)
+		}
+	}
+}
