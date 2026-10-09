@@ -259,13 +259,26 @@ Every test signals only processes the test started, or none. Two kinds of test m
 
 **Unit tests in `internal/bus`** build their `Prober` with `NewForTest` and a `kill` that fails the test on any pid outside the children the test registered. No fixture uses a literal pid such as 4242, which can name a live process; every fixture pid is a child the test started. A test that misses the swap, or a mutant that drops a guard, fails instead of signalling.
 
-**Tests in the tree that run a real broker and stop it** need real signals to reach that broker. They are:
-- `internal/bus/supervisor_test.go`: `TestSupervisorStartsReloadsAndStopsWithDaemon` (`:122`) and `TestSupervisorKeepThenAdoptAcrossDaemons` (`:171`);
-- `internal/bus/provision_test.go:138` and `internal/bus/role_users_test.go:298`, which build a second supervisor over a running broker;
-- `internal/daemon/bus_leaf_restart_test.go:66`;
-- the daemon tests that reach `daemon.go:3381` (`bus_test.go`, `bus_status_test.go`, `status_test.go`) and `cmd/marvel/bus_test.go`, which starts a daemon with a bus.
+**Tests in the tree that start a real broker or signal a process.** These were found with this command at `9c1541e`, which returns 65 lines:
 
-For the `internal/bus` tests among them, the supervisor gets an unexported spawn hook that a test sets. The hook registers `cmd.Process.Pid` as soon as the broker starts, and the test's `kill` forwards to `syscall.Kill` for registered pids only, failing on any other. The daemon and `cmd/marvel` tests cannot reach an unexported hook, so they run the production path: `daemon.go:3381` builds its supervisor with `New()`. Their real signals reach only the broker their own supervisor spawned and proved, which is the property this design adds.
+```
+grep -rnE 'newTestSupervisor|NewSupervisor|NewAdopted|attachTestBus|syscall\.Kill|Process\.Kill' --include='*_test.go' .
+```
+
+Each line is in exactly one class:
+
+| class | lines | count | what the build does |
+|---|---|---|---|
+| The `newTestSupervisor` helper (comment, signature, its `NewSupervisor`) | `internal/bus/supervisor_test.go:80`, `:83`, `:101` | 3 | the single registration point: it builds the supervisor with a `NewForTest` `Prober` and sets the spawn hook |
+| Helper callers that `Start` a real broker | `supervisor_test.go:123`, `:172`, `:207`, `:224`, `:236`, `:264`, `:305`, `:365`; `provision_test.go:24`, `:107`; `provision_transport_test.go:60`; `supervisor_env_test.go:74`; `health_test.go:42`, `:127` | 14 | covered by the helper; no change at the call site |
+| Helper callers that never call `Start` | `test_bounds_test.go:26`, `:41`; `leaf_duration_test.go:21`, `:43`, `:118`; `leaf_observed_test.go:63` | 6 | no broker, no signal |
+| Direct `NewSupervisor` | `role_users_test.go:298`; `supervisor_test.go:185`; `provision_test.go:138`; `internal/daemon/bus_leaf_restart_test.go:66`; `supervisor_test.go:287` (a test name) and `:294` (missing binary, no `Start`) | 6 | the first three are in `internal/bus` and attach the same test `Prober` as the helper, sharing the test's registry, so the second supervisor at `:185` and `:138` can signal the broker the first one spawned. `bus_leaf_restart_test.go:66` is the only real broker outside `internal/bus`; it cannot reach the unexported hook, so it builds with `New()`, whose real signals reach only the broker its own supervisor spawned and proved. The last two start nothing |
+| Test probes with signal 0 on the test's own broker | `supervisor_test.go:150`, `:157`, `:160`, `:178`, `:202`, `:258`, `:357` | 7 | observation only; unchanged |
+| Direct test kills of the test's own child, outside the seam | `supervisor_test.go:181` (Cleanup, `-pid` SIGKILL), `:241` (SIGKILL to simulate a crash), `:371` (SIGKILL); `provision_test.go:120` (Cleanup, `-pid` SIGKILL); `health_test.go:220` (Cleanup of the bare broker the test started at `:207`) | 5 | each signals a pid the test spawned and read itself; unchanged, and named here so the seam's "only inside `Signal`" claim is scoped to non-test code |
+| No broker process: `NewAdopted` and `attachTestBus` | `render_test.go:434`; `internal/daemon/status_test.go:173`; `bus_status_test.go:22`; `bus_test.go:16`, `:18`, `:44`, `:91`; `leaf_no_hub_test.go:17` | 8 | `NewAdopted` records a URL and `attachTestBus` builds only a `Manager`; neither spawns or signals |
+| Own-child signals in other packages, never the broker | `cmd/marvel/daemon_lock_hint_test.go:176`; `daemon_fastpath_test.go:101`, `:186`; `internal/daemon/shutdown_frozen_tmux_test.go:69`, `:72`, `:88`; `start_frozen_tmux_test.go:33`, `:36`; `internal/view/seal_test.go:183`; `internal/tmux/absence_plant_test.go:61`, `:62`, `:105`; `absence_test.go:262`; `internal/workload/process_test.go:102`; `internal/session/tmux_timeout_test.go:52`, `:56` | 16 | each targets a child or a tmux server the test started; out of scope |
+
+The total is 3 + 14 + 6 + 6 + 7 + 5 + 8 + 16 = 65. The registration mechanism: the spawn hook registers `cmd.Process.Pid` in the test's registry as soon as the broker starts, and the test's `kill` forwards to `syscall.Kill` for registered pids only and fails the test on any other. No test in `internal/daemon` or `cmd/marvel` reaches `daemon.go:3381`. The grep cannot see the `attachServices` tests in `internal/daemon/bus_test.go` (`:135`, `:157`, `:185`, `:196`); each configures an adopted bus, so `attachBus` returns at `daemon.go:3368-3372` before the managed supervisor is built.
 
 1. **Seams.** the `Prober`'s `read` replaces `probePID` as the identity seam, and its `kill` is the signal seam behind `Signal` (section 4.5); the test version records calls. `childproof`'s own tests cover `Signal` refusing pid 0 and pid 1 for every signal, a zero `Child`, a `Child` from another `Prober`, and a nil seam; `NewForTest` refusing a nil seam; and `AdoptLegacy` refusing a wrong executable or a missing `-c conf`. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
 2. **Reused pid, not listening** (the #794 case). The fake `read` returns a start time different from the sidecar's; the listener is closed. Assert no `kill` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
