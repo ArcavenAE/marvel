@@ -1063,7 +1063,7 @@ show as (redacted) in both.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
-			if output != "" {
+			if cmd.Flags().Changed("output") {
 				if watching {
 					return fmt.Errorf("-o and --watch cannot be combined")
 				}

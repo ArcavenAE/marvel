@@ -267,7 +267,7 @@ func TestGetOutputRefusesAnEmptyFormat(t *testing.T) {
 // than letting one silently win.
 func TestGetOutputIsRefusedWithWatch(t *testing.T) {
 	cannedDaemon(t, map[string]any{"team": []api.Team{outputTeam()}, "session": outputSessions()})
-	if _, err := runGet(t, "team", "-o", "json", "--watch"); err == nil || !strings.Contains(err.Error(), "--watch") {
+	if _, err := runGet(t, "team", "-o", "json", "--watch=2"); err == nil || !strings.Contains(err.Error(), "--watch") {
 		t.Errorf("get team -o json --watch error = %v, want one naming --watch", err)
 	}
 }
