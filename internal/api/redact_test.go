@@ -20,6 +20,12 @@ func TestSecretKeyRedactsEachPattern(t *testing.T) {
 		"DATABASE_URL", "DSN", "SENTRY_DSN", "REDIS_URL", "MONGODB_URI", "SLACK_WEBHOOK_URL",
 		"DB_PASS", "SMTP_PASS", "DB_PW", "MYSQL_PWD", "SSHKEY", "SIGNINGKEY", "AUTH", "GITHUB_AUTH",
 		"AUTHORIZATION", "GITHUBTOKEN", "ACCESS_TOKENS",
+		// Run-together, camel-case and digit-suffixed auth and token names that a
+		// second review found regressed when the whole-word rule replaced a
+		// substring one.
+		"BASICAUTH", "HTTPAUTH", "PROXYAUTH", "GITHUBAUTH", "basicAuth", "proxyAuth", "ghAuth",
+		"AUTHKEY", "AUTHHEADER", "authHeader", "AUTH2", "TOKENVALUE", "tokenValue", "TOKEN2",
+		"APITOKEN2", "GITHUB_TOKEN2", "githubTokenV2", "HTTPAuth", "PASS", "PW",
 	} {
 		if !SecretKey(key) {
 			t.Errorf("SecretKey(%q) = false, want true", key)
@@ -34,6 +40,8 @@ func TestSecretKeyLeavesOrdinaryKeysVisible(t *testing.T) {
 		// Names that only contain a pattern's letters.
 		"TOKENIZERS_PARALLELISM", "AUTHOR_NAME", "OAUTH_REDIRECT_URI", "BYPASS_CACHE", "COMPASS_DIR",
 		"PASSENGER_COUNT", "PWD", "EMPOWER_MODE", "DB_HOST", "DATABASE_NAME",
+		// A password word that is not the last word of the name.
+		"PW_DEBUG", "PASS_THROUGH", "TOKENIZER_PATH", "authorName", "AUTHORITY_URL", "OAUTH2_REDIRECT",
 	} {
 		if SecretKey(key) {
 			t.Errorf("SecretKey(%q) = true, want false", key)
