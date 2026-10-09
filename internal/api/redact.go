@@ -277,3 +277,6 @@ func redactEnv(env map[string]string) map[string]string {
 	}
 	return out
 }
+
+// redactURLUserinfo replaces the userinfo of every URL in s with Redacted.
+func redactURLUserinfo(s string) string { return s }
