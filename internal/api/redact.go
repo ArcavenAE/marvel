@@ -287,8 +287,7 @@ const authorityEnd = "/?# \t\r\n"
 // redactURLUserinfo replaces the userinfo of every URL in s with Redacted, so
 // redis://user:password@host/0 reads redis://(redacted)@host/0. Host, port,
 // path and query stay readable, and a URL with no userinfo is left as it is
-// (operator ruling redaction-url-userinfo, option a, relayed by director on
-// 2026-10-09). A URL is found by its "://"; its authority runs to the next
+// (the operator's ruling, relayed by director on 2026-10-09). A URL is found by its "://"; its authority runs to the next
 // authorityEnd character or to the start of a second URL, and its userinfo is
 // everything before the last @ in that authority, so a password that holds @, :
 // or a raw " < > \ ^ ` { | or } is covered. The syntax cannot tell u:p@h"x@y

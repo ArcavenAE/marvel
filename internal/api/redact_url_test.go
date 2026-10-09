@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Operator ruling redaction-url-userinfo (a), relayed by director on 2026-10-09:
+// The operator's ruling, relayed by director on 2026-10-09:
 // redact only the userinfo part of URL-shaped values, whatever the key. Host,
 // port, path and query stay readable. A URL with no userinfo is untouched.
 func TestRedactURLUserinfo(t *testing.T) {
