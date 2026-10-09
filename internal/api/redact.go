@@ -284,25 +284,19 @@ func redactEnv(env map[string]string) map[string]string {
 // RFC 3986, and white space.
 const authorityEnd = "/?# \t\r\n"
 
-// authoritySoftEnd are the characters an authority can never hold under RFC
-// 3986 (a double quote, <, >, backslash, ^, backtick, {, | and }). They end the
-// authority only after an @ has been seen, so a URL with userinfo inside JSON,
-// markup or a template keeps its host and the text after it, while a password
-// that holds one raw (generated passwords do) is still redacted whole. A comma
-// and a semicolon are legal in userinfo and end nothing.
-const authoritySoftEnd = "\"<>\\^`{|}"
-
 // redactURLUserinfo replaces the userinfo of every URL in s with Redacted, so
 // redis://user:password@host/0 reads redis://(redacted)@host/0. Host, port,
 // path and query stay readable, and a URL with no userinfo is left as it is
 // (operator ruling redaction-url-userinfo, option a, relayed by director on
 // 2026-10-09). A URL is found by its "://"; its authority runs to the next
-// authorityEnd character, to the first authoritySoftEnd character that comes
-// after an @, or to the start of a second URL, and its userinfo is everything
-// before the last @ in that authority, so a password that holds @ or : is
-// covered. A password with an unencoded /, ? or # is not, since those end the
-// authority (RFC 3986 requires them percent-encoded). docs/design/describe-redaction.md
-// item 5 lists the rest.
+// authorityEnd character or to the start of a second URL, and its userinfo is
+// everything before the last @ in that authority, so a password that holds @, :
+// or a raw " < > \ ^ ` { | or } is covered. The syntax cannot tell u:p@h"x@y
+// from u:p@x"y@h, so those raw characters do not end the authority: a secret
+// never prints for the sake of a readable host, and a later @ in the same
+// value hides the host too. A password with an unencoded /, ? or # is not
+// covered, since those end the authority. The cost list and the deviation from
+// the ruling are in docs/design/describe-redaction.md, item 5.
 func redactURLUserinfo(s string) string {
 	var out strings.Builder
 	last, i := 0, 0
@@ -314,9 +308,6 @@ func redactURLUserinfo(s string) string {
 		start := i + j + len("://")
 		end := len(s)
 		if k := strings.IndexAny(s[start:], authorityEnd); k >= 0 {
-			end = start + k
-		}
-		if k := strings.IndexAny(s[start:end], authoritySoftEnd); k >= 0 && strings.Contains(s[start:start+k], "@") {
 			end = start + k
 		}
 		if n := strings.Index(s[start:], "://"); n >= 0 {

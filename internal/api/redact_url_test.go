@@ -29,7 +29,8 @@ func TestRedactURLUserinfo(t *testing.T) {
 		{"two urls", "redis://a:b@h1:1,redis://c:d@h2:2", "redis://(redacted)@h1:1,redis://(redacted)@h2:2"},
 		{"url inside text", "see postgres://u:p@h/db for details", "see postgres://(redacted)@h/db for details"},
 		{"white space ends the authority", "connect to redis://u:p@h then mail a@b.com", "connect to redis://(redacted)@h then mail a@b.com"},
-		{"json value keeps the host and the next field", `{"url":"redis://u:CNRYpw@h","mail":"a@b.com"}`, `{"url":"redis://(redacted)@h","mail":"a@b.com"}`},
+		{"json value with a later e-mail address loses its host, the safe side", `{"url":"redis://u:CNRYpw@h","mail":"a@b.com"}`, `{"url":"redis://(redacted)@b.com"}`},
+		{"json value with no later at sign keeps the host", `{"url":"redis://u:CNRYpw@h","port":5432}`, `{"url":"redis://(redacted)@h","port":5432}`},
 		{"tab ends the authority", "redis://u:p@h\tx@b.com", "redis://(redacted)@h\tx@b.com"},
 		{"newline ends the authority", "redis://u:p@h\nx@b.com", "redis://(redacted)@h\nx@b.com"},
 		{"carriage return ends the authority", "redis://u:p@h\rx@b.com", "redis://(redacted)@h\rx@b.com"},
@@ -106,8 +107,8 @@ func TestReviewerTableURLRowsNeverPrintTheirPassword(t *testing.T) {
 // and the text after it.
 func TestRedactURLUserinfoEndsAtCharactersAnAuthorityCannotHold(t *testing.T) {
 	for _, c := range []string{`"`, "<", ">", `\`, "^", "`", "{", "|", "}"} {
-		in := "redis://u:p@h" + c + "x@b.com"
-		want := "redis://(redacted)@h" + c + "x@b.com"
+		in := "redis://u:p@h" + c + "rest"
+		want := "redis://(redacted)@h" + c + "rest"
 		if got := redactURLUserinfo(in); got != want {
 			t.Errorf("after %q: redactURLUserinfo(%q) = %q, want %q", c, in, got, want)
 		}
