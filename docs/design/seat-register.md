@@ -28,7 +28,7 @@ This register prints only checked facts with their age, and prints `-` where it 
 | marvel writes private files by temp file at 0600 and rename | `internal/api/bolt.go:672-694`, `cmd/marvel/accountstamp.go:70-76` | read |
 | Asks are never counted by marvel | `docs/design/team-load-rollup.md:37` | read |
 | A director ask row carries the ask's text (`Line`) and links | director `probe/nats-phase-0/director-mcp/askledger.go:66-77` | read |
-| The ask reader's own principal is the operator's grant | director `sim/design/ask-ledger.md:339` (part A5) | read; whether it is granted is unchecked |
+| The ask reader's own principal is the operator's grant. Until it exists the reader runs under director's own user and lists the streams it could not read | director `sim/design/ask-ledger.md:289-303`, `:339` (part A5) | read; whether it is granted is unchecked |
 | No cast-scope field exists in marvel | `git grep -niE 'castscope\|cast_scope' origin/main` (one hit, an env var named in a finding) | read |
 
 ## 2. Meaning
@@ -106,17 +106,17 @@ Build-derived cells (`harness.reader`, the interrupt table, `scope`, `bus.publis
 | R8b | `harness.covered`, with edge tests at the range bound | R8a |
 | R9a | `harness.reader` | R1 |
 | R9b | Interrupt table with build and range; claude `-` | R1 |
-| R10 | `bus.publish_scope`; a sentinel password never appears on any surface | R5, R2 |
+| R10 | `bus.publish_scope`: the daemon copies `Publish` and `Subscribe` out of the declared set into a plain value and hands that to the builder, so `internal/register` never sees `bus.Principal`; a sentinel password never appears on any surface | R5, R2 |
 | R11a | Finding: the manifest schema and who can write `scope` | none |
 | R11b | `scope` cell | R1, R11a |
 | R12a | `QueueSource` and `asks.*` from a fixture double; a planted `line` and `links` never appear | R1 |
 | R12b | A reported gap prints `?`; `observed_at` is the ledger's pass | R12a |
 | R13a | Director: the ledger output carries `observed_at` and the reader's cadence | (director) |
-| R13 | `QueueSource` over director's ledger output; a stopped-reader fixture prints `?` | R12a, R13a, director A5 |
+| R13 | `QueueSource` over director's ledger output, whatever streams it covers; the ledger's unread streams print as gaps (`?`); a stopped-reader fixture prints `?` | R12a, R13a |
 | R14 | The reason vocabulary and its test | R1 |
 | R15 | Pull file: temp file created 0600 in the destination, a directory the daemon user owns, rename, the same keys as the RPC and no more, `not-run since T` when stale | R3, R14 |
-| R16 | Per-team rollup over rows for #601; passes ask counts through | R4, R6a, R12a |
-| R17 | `mail.*`, clock from the broker read | R1, #800 A3, W1 |
+| R16 | Per-team rollup over rows for #601; passes ask counts through. Each role line counts its seats by state (a value, `-`, `?`) and prints the counts; an aggregate such as the oldest wait is taken over values only and says how many seats it left out; a `-` or `?` seat is never counted as zero or as free; the line's `observed_at` is its oldest input | R4, R6a, R12a |
+| R17 | `mail.*`, clock from the broker read | R1, #800 A3, #800 W1 (start the watcher in `report` mode) |
 | R18 | `turn.*`, `activity` | R1, #800 B1, B2, C5, #801 |
 | R19 | `login.state` | R1, #801 |
 | R20 | `held` / `blocker_class` from the watcher's record; a missing record prints `-`, never "no dialog" | R1, #800 D3 |
@@ -131,7 +131,12 @@ R1 and R2 open first, so the import fence exists before any field that touches t
    - put the fields in `get sessions` columns, beside the ACTIVE% and LAST-ACTIVE cells #801 breaks;
    - director-side only, which would leave director holding per-seat facts it cannot back without marvel.
 2. **Default view (4-2).** One line per role with `--seats` (recommended), or a row per seat under a role header. The dissent's concern, that a role line hides the one stale seat, is met by R4's role line printing its oldest `observed_at` and its count of `-` seats.
-3. **The director ask reader's grant (A5).** It decides whether the queue cells ever leave `-`.
+3. **The director ask reader's grant (A5).** Whether the ask reader gets its own broker user, read-only on each broker's `AGENT_AUDIT` and write-only to `ASK_LEDGER` (director `sim/design/ask-ledger.md:289-303`). Options:
+   - (a) grant it. The ledger then covers every seat's sends. The cost is that the principal can read every envelope on the stream, bodies included, because a read by sequence cannot be narrowed by subject.
+   - (b) do not grant it on this design's account. The reader keeps running under director's own user, the ledger lists the streams it could not read, and the register prints those as gaps (`?`) through R13. The queue cells cover what director can already see.
+   - (c) drop the queue cells from the register. Supervisors read asks from director directly, and R12 and R13 are not filed.
+
+   Recommendation: (b). The register's first build does not rest on the queue cells (section 6), and the grant's exposure is a question for director's ask ledger design to answer on its own terms, not one this register should force. A later grant widens coverage with no register change.
 
 The recommendations in this section are valid until 2026-10-23 or the operator's ruling, whichever comes first; the architect re-checks them then.
 
