@@ -1028,7 +1028,7 @@ func workCmd() *cobra.Command {
 }
 
 func getCmd() *cobra.Command {
-	var watchSec, columns string
+	var watchSec, columns, output string
 	var noTrunc, header bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
@@ -1053,10 +1053,22 @@ A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat r
 it, which is weaker than token flow: * reported by statusline or heartbeat,
 not token flow. A value from the token stream carries no mark. On a terminal
 one legend line under the header says so when a mark is on screen; piped
-output keeps the mark and drops the legend. A - means never measured.`,
+output keeps the mark and drops the legend. A - means never measured.
+
+-o json|yaml (get team and get workspace only) prints two labelled sections.
+desired is the store's record after scale and similar edits; it is not the file
+that was applied, and no round trip to that file is promised. observed is the
+live sessions at read time and is not for re-apply. Secret-looking Env values
+show as (redacted) in both.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
+			if output != "" {
+				if watching {
+					return fmt.Errorf("-o and --watch cannot be combined")
+				}
+				return getWithOutput(args[0], output)
+			}
 			sessions := args[0] == "sessions" || args[0] == "session"
 			var cols []sessionColumn
 			var explicit bool
@@ -1092,6 +1104,7 @@ output keeps the mark and drops the legend. A - means never measured.`,
 		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
 	cmd.Flags().BoolVar(&header, "header", false,
 		"print the daemon header above the sessions table even when stdout is not a terminal")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "print get team or get workspace as json or yaml: desired and observed sections")
 	return cmd
 }
 
