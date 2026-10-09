@@ -23,17 +23,17 @@ var secretKeySubstrings = []string{
 	"database_url", "db_url", "redis_url", "mongodb_uri", "mongodb_url", "mongo_uri", "mongo_url",
 }
 
-// secretKeyWords are whole words of a key that mark it as secret-looking. A key
-// is split into words on _ - . and :, on a lower-to-upper case change, on the
-// end of an upper-case run before a capitalised word (HTTPAuth is HTTP, Auth),
-// and between letters and digits (TOKEN2 is TOKEN, 2). They are words and not
-// substrings so KEYBOARD, MONKEY and PATH stay visible.
+// secretKeyWords are whole words that mark a key as secret-looking. They are
+// taken from the key split on _ - . and : only, so a camel-case hotKey or
+// patCount is not a key or a pat, and KEYBOARD, MONKEY and PATH stay visible.
 var secretKeyWords = []string{"key", "pat", "authorization"}
 
-// secretKeyLastWords mark a key only as its last (or only) word: DB_PASS and
-// SMTP_PW are passwords, and PASS_THROUGH and PW_DEBUG are not. pwd needs a
-// second word as well, because PWD alone is the shell's working directory.
-var secretKeyLastWords = []string{"pass", "pw"}
+// secretPasswordWords mark a key as secret-looking when they are any word but
+// the first of a longer name: DB_PASS, DB_PASS_PROD, SMTP_PW_2 and MYSQL_PWD
+// are passwords, and PASS_THROUGH and PW_DEBUG are not. pass and pw also match
+// as a whole one-word name; pwd does not, since PWD alone is the shell's working
+// directory.
+var secretPasswordWords = []string{"pass", "pw", "pwd"}
 
 // SecretKey reports whether an Env key looks like it names a secret.
 func SecretKey(name string) bool {
@@ -43,14 +43,21 @@ func SecretKey(name string) bool {
 			return true
 		}
 	}
+	for _, w := range strings.FieldsFunc(lower, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.' || r == ':'
+	}) {
+		if slices.Contains(secretKeyWords, w) {
+			return true
+		}
+	}
+	// The finer split below also cuts on case and digit changes (see keyWords),
+	// so TOKEN2, basicAuth and HTTPAuth are found.
 	words := keyWords(name)
 	for i, w := range words {
-		last := i == len(words)-1
-		switch {
-		case slices.Contains(secretKeyWords, w),
-			last && slices.Contains(secretKeyLastWords, w),
-			last && len(words) > 1 && w == "pwd",
-			tokenWord(w), authWord(w):
+		if tokenWord(w) || authWord(w) {
+			return true
+		}
+		if slices.Contains(secretPasswordWords, w) && (i > 0 || (len(words) == 1 && w != "pwd")) {
 			return true
 		}
 	}
@@ -67,9 +74,9 @@ func tokenWord(w string) bool {
 }
 
 // authWord matches a word that is, ends in, or starts with auth (BASICAUTH,
-// AUTHHEADER), but not oauth, author or authority.
+// AUTHHEADER), but not oauth, author, authority or authentication.
 func authWord(w string) bool {
-	if w == "oauth" || strings.HasPrefix(w, "author") {
+	if w == "oauth" || strings.HasPrefix(w, "author") || strings.HasPrefix(w, "authentic") {
 		return false
 	}
 	return strings.HasSuffix(w, "auth") || strings.HasPrefix(w, "auth")
@@ -105,6 +112,13 @@ func keyWords(name string) []string {
 		cur = append(cur, r)
 	}
 	flush()
+	// OAuth splits by case into o and auth; it is one word, and not a secret.
+	for i := 0; i+1 < len(words); i++ {
+		if words[i] == "o" && words[i+1] == "auth" {
+			words[i] = "oauth"
+			words = slices.Delete(words, i+1, i+2)
+		}
+	}
 	return words
 }
 
