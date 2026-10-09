@@ -30,6 +30,12 @@ Design for review. No code lands until this doc is reviewed.
   target; the cooldown's persistence traps; SB-1 marked landed as #482.
 - r9, 2026-10-03: the default's reason in ruling 12, and code cites
   refreshed to `origin/main` 33fb22a with function names beside them.
+- r10, 2026-10-09, after a four-round design party (P1, "seats that do not
+  park", under the harness plan). Checked against marvel `origin/main`
+  87160c3. Section 5b extends the design from claude to every harness:
+  a permission posture, env and flag levers, three outcomes, and a parked
+  state for prompts that seeding cannot reach. The section 5 table and
+  section 6 are corrected to match, and rulings 13 and 14 are added.
 
 ## 1. The problem, verified
 
@@ -344,8 +350,10 @@ manifest.
 |---|---|---|
 | claude, interactive | folder trust per path; onboarding flags; per-path MCP; the login | manages trust for the seat's directory (writes the one key when it is absent, under Claude Code's lock), delivers settings and MCP as per-session files, checks the login in the mode the role sets, and never moves or touches the login (section 5a) |
 | claude, headless | none shown (`-p` skips the dialog) | placement and settings sources only |
-| codex | trust per path in `config.toml` | existing seed (#308, #359); `Untrusted` becomes the resolved workdir instead of `os.Getwd()` |
-| opencode, generic, forestage | none known | placement only; recorded as `none` |
+| codex | trust per path in `config.toml`; the update menu; hook trust; approvals under `-a` | existing seed (#308, #359), keyed on `Session.WorkDir` since #711 (`codex_home.go:349`). Whether a seeded `untrusted` level still shows the folder-access dialog on 0.160.1 is open; no trust write changes until it is measured (section 5b, K7) |
+| opencode | permission gates (`external_directory`, then `edit`, `bash`, `doom_loop`), set to `ask` by the operator's global config on some hosts | env `OPENCODE_CONFIG_CONTENT`, verified after composing (section 5b) |
+| gemini-cli, goose, pi | see section 5b | no adapter yet; the rows in 5b are what an adapter must set |
+| generic, forestage | none known | placement only; recorded as `none` |
 
 **Which config a claude seat uses: the operator's own.** On a macOS host a
 seat uses the file Claude Code would use for the operator:
@@ -667,6 +675,138 @@ too, and the ledger makes every such change visible and attributable.
 SB-1 and SB-2 are unchanged and both have landed: SB-1 as #482, SB-2 as
 #467.
 
+## 5b. Every harness: posture, levers and the parked state (r10)
+
+The rule in section 2 holds for every harness, not only claude. P1 found
+that seeding before launch is not enough. Some prompts appear mid-task
+(opencode `external_directory`, then `edit`), and a seeded codex seat
+still parked on 2026-10-09. So there are two mechanisms: a bootstrap
+before launch, and a parked state after it.
+
+### The bootstrap
+
+```go
+// Optional adapter interface. An adapter without it records outcome "none".
+type Bootstrapper interface {
+    Bootstrap(ctx *LaunchContext, dir string) (BootstrapResult, error)
+}
+
+type Outcome string // "done" | "degraded" | "refused"
+
+type BootstrapResult struct {
+    Outcome Outcome
+    Steps   []Step            // one per lever tried
+    Env     map[string]string // added to LaunchResult.Env (preferred lever)
+    Args    []string          // appended after runtime.Args
+    Writes  []Write           // files, only where no env or flag lever exists
+    Posture Posture
+    Lost    []string          // degraded: what the seat will lack
+}
+
+type Step struct {
+    Name, Lever, Target string // lever: "env" | "flag" | "file"
+    Outcome Outcome
+    Reason  string
+    Wrote   bool                // false on an idempotent second run
+}
+
+type Posture struct {
+    OnPrompt string // "park" | "fail-closed" | "reduced-silent" | "auto-approve" | "auto-reject" | "none"
+    Policy   string // the permission value in force, as the harness spells it
+    Source   string // harness version and date of the evidence
+}
+
+// A refusal is *BootstrapRefusal{Step, Reason}, matched with errors.As.
+// Any other error is degraded at most, never a silent launch.
+```
+
+- **Where:** in `launch`, after `prepareSessionHome` and before
+  `adapter.Prepare` (`internal/session/manager.go:808`, `:990`). `Prepare`
+  composes the result's env and args, so it stays the one place a command
+  line is built. A refusal has its own path: a `Prepare` error today falls
+  back to `directPlan` and launches (`manager.go:996-999`).
+- **Levers:** env first, then flags, then files. Env reaches tmux as
+  separate `-e K=V` arguments with no shell (`internal/tmux/driver.go:502-504`),
+  so a JSON value needs no escaping; it is visible in `ps`, so it never
+  carries a secret. A posture is recorded, not enforced: marvel appends
+  `Args` after `runtime.Args` and does not check that an operator argument
+  narrows it.
+- **Adopt:** an adopted pane runs no bootstrap; it records `adopted,
+  outcome unknown`, and the parked state is its guard. A shift successor
+  runs the full bootstrap.
+- **Record:** the result is stored on the Session record, with the launch
+  time and the marvel version, and shown in `describe`; `get sessions`
+  shows `bootstrap: refused|degraded` when not done. The event is a
+  notification, not the record: the ring holds 100 events and lost a seed
+  event within a day.
+
+### Outcomes
+
+Refuse when launching would leave the seat unable to proceed with nobody
+to answer; degrade when it costs a feature or leaves a prompt the parked
+state can see. One default per condition. A role field `unattended`
+(bool, in the manifest) is the switch; and a harness whose default posture
+is permissive (goose `GOOSE_MODE=auto`) is refused when its role declares
+no posture.
+
+| condition | outcome |
+|---|---|
+| declared workdir missing | refused (shipped) |
+| permission posture cannot be set, role unattended | refused |
+| permission posture cannot be set, role interactive | degraded |
+| trust unseeded or unresolved | degraded `trust-unseeded`; refused if unattended |
+| half-written seed (codex hooks declared, none trusted, `codex_home.go:172-192`) | degraded `hooks-untrusted`; the next launch rewrites it whole |
+| private home cannot be made | refused if its seed carries trust or posture; else degraded |
+| login, hook, MCP or context-feed seed fails | degraded |
+| the verified posture differs from the one set (opencode managed config) | degraded `inherited-ask`; refused if unattended |
+| harness version has no recorded levers | degraded `unverified-version` |
+
+### Per harness (levers from docs unless marked measured)
+
+| harness | sets | lever | unanswered prompt |
+|---|---|---|---|
+| codex 0.160.1 | trust for the seat's WorkDir; `-s` and `-a` recorded from the role, never defaulted; update check off; hook trust records | file `projects."<key>".trust_level`, or flag `-c 'projects."<path>".trust_level="trusted"'` | trust dialog: park; approvals with `-a never`: fail closed per call |
+| opencode 1.18.15 | a `permission` object with only `external_directory`, scoped to marvel's handoff directory if opencode accepts a path value (UNCHECKED); the role's mode decides `edit` and `bash` | env `OPENCODE_CONFIG_CONTENT` (measured: merges per key over the operator's global file, and beats an `OPENCODE_CONFIG` file). The bootstrap then runs `opencode debug config` with the seat's env, keeps only `permission`, and compares (0.49 s measured), because managed config outranks the inline value per the docs | interactive: park; headless: auto-reject (adapter comment) |
+| gemini-cli | trust for the workdir; approval mode | env `GEMINI_CLI_TRUST_WORKSPACE=true` or flag `--skip-trust`; a user-tier policy file only if needed | interactive: park; headless: fail closed (exits) |
+| goose | `GOOSE_MODE` set explicitly; provider by env | env | auto: none; approve: park expected (UNCHECKED) |
+| pi | `--approve` or `--no-approve` per role; which project resources load, recorded per version | flag | interactive: park; print, json, rpc: reduced-silent, recorded degraded |
+
+Each row names a harness version. A version with no row returns degraded
+`unverified-version`.
+
+### The parked state
+
+- `HarnessStateParked` beside `logged-out` (`internal/api/types.go`), with
+  a reason (`trust`, `permission`, `update`, `other`), the pattern id, the
+  harness and version, the first visible prompt line verbatim, a since time
+  and a park count. Repeat or fresh is keyed on (session key, pattern id,
+  launch generation).
+- No new `HealthState` value. The restart path keys on `HealthState`
+  (values `unknown`, `healthy`, `unhealthy`, `types.go:66-68`), and the
+  controller rewrites `healthy` every tick for a role without a heartbeat
+  check (`internal/team/controller.go:1483-1487`).
+- What must read it: a shift's readiness check and the supervisors'
+  sweeps. Today a parked successor passes `allReady` for a role with no
+  healthcheck (`controller.go:2413-2421`), and the working predecessor
+  drains. Ruling 14 asks the operator whether readiness should exclude a
+  parked successor; ruling 9 already makes a successor not ready until its
+  login check passes.
+- Patterns are `panestate` data per harness and version. Known text: codex
+  0.160.1 trust ("Config, hooks, and exec policies from untrusted folders
+  stay disabled", "1. Open restricted", "2. Quit"); opencode ("Permission
+  required", "Access external directory", version UNCHECKED). The `edit`
+  gate and the rest need captures.
+- It never sends a key, answers, restarts or kills (`internal/daemon/watchdog.go:36-38`).
+  A restart reuses the private home and returns to the same dialog.
+
+### Found on the way
+
+The parked codex seat of 2026-10-09 ran on a daemon built at 5a972a4
+(started 2026-10-07), whose seed keyed the daemon's own directory
+(`os.Getwd()`), not the seat's WorkDir. main seeds `Session.WorkDir` since
+#711, merged 32 minutes after that seat was created. #684, which names the
+defect, is still open.
+
 ## 6. Refuse, and say why
 
 When a bootstrap step the harness needs fails (the declared workdir is
@@ -679,8 +819,15 @@ out under `refuse`; or a codex `LinkIn` entry is no longer a link):
   `bootstrap-refused` and the reason, and it is **not** charged to the restart
   policy: nothing crashed, so `max_restarts` and `restart_policy = never`
   never freeze a role over it;
-- the reconciler does not respawn it until the manifest is re-applied or the
-  operator runs `marvel reset-health`, so a refusal does not loop;
+- when the manifest is the cause (a declared workdir missing, trust absent
+  under `require`, an unattended role with no posture), the reconciler does
+  not respawn it until the manifest is re-applied or the operator runs
+  `marvel reset-health`, so a refusal does not loop. When the cause is
+  external (the config stayed locked, a write kept being lost, a login
+  check timed out), the reconciler re-evaluates each tick with a backoff,
+  and a refusal caused by a timeout clears only after two consecutive
+  passes. A later check that times out never takes down a seat already
+  running (r10, section 5b);
 - `session.bootstrap-refused` is emitted once, with the session, adapter,
   directory and missing step;
 - `describe session` shows the same.
@@ -946,3 +1093,14 @@ change first.
     Default offered: (a), switching to (c) whenever Claude Code offers it.
     Why (a) over (d): (a) never blocks a seat's start and reads no screen
     text, and (d) does both.
+13. **Refuse or warn when a bootstrap cannot seed (r10, new).** Default
+    offered: the section 5b outcome rules. Refuse only when the role is
+    `unattended`, or when a permissive-default harness has no declared
+    posture; degrade otherwise. The latch applies when the manifest is the
+    cause; an external cause is re-evaluated (section 6). Voted 6 of 6 on
+    the rules, 4 of 6 on the latch split.
+14. **A parked shift successor (r10, new).** Default offered: the
+    readiness check treats a parked successor as not ready, so the
+    predecessor keeps working, as ruling 9 already does for a failed login
+    check. It changes shift behaviour, so it comes to the operator before a
+    builder takes it. Voted 6 of 6.
