@@ -1,0 +1,189 @@
+# Seat readiness: per-duty checks, withdrawal and routing
+
+**Date:** 2026-10-09
+**Status:** design, for operator rulings (section 8). Nothing here is built.
+**Builds on:** `docs/design/seat-register.md` (#802, the register's cells,
+reason codes and routing rule) and `docs/design/marvel-watcher.md` (#800, the
+watcher's blocker names, report only). Director R-200 (`sim/requirements.md`
+in the director repository) reports a seat that took no turn or no ack, with
+its blocker.
+**Depends on:** the supervisor control-plane design (in progress), for a
+per-seat caller identity on daemon calls.
+
+## 0. Why
+
+A seat can be alive and still unable to do its job. A reviewer whose sandbox
+cannot reach GitHub, a seat denied the tool it needs to acknowledge, a seat
+held at a trust prompt or a consent dialog since spawn, a successor that never
+took a first turn: each was routed work it could not do, and someone found out
+by waiting. R-200 reports these after the fact. Nothing today records what a
+seat can do per duty, nothing keeps an unready seat off the free list, and a
+seat has no way to say "not this duty right now".
+
+This design adds three things: a per-duty readiness record in the register,
+per-role checks that prove a duty without reading a credential, and a routing
+rule that reads them. It adds no new transport and no new report path.
+
+## 1. Premises, verified at origin/main
+
+| # | Premise | Evidence |
+|---|---|---|
+| 1 | Presence carries no duty state | director's `set_presence` takes `idle`, `busy` or `away` and expires if not repeated (`probe/nats-phase-0/director-mcp/tools.go:83-100`) |
+| 2 | marvel's harness state knows one state | `HarnessStateLoggedOut` (`internal/api/types.go:1088`) |
+| 3 | The one live pane pattern covers claude 2.1.285 to 2.1.293 | `internal/panestate/patterns/claude/2.1.290/logged-out.yaml:22-24`; a newer build reads uncovered |
+| 4 | The watcher visits only seats with old unread mail and a known turn source | `docs/design/marvel-watcher.md:38`, `:123`. A seat held since spawn with an empty queue is never visited |
+| 5 | The register bars `ok`, `free` and `ready` in any cell | `docs/design/seat-register.md`, plan row R1 |
+| 6 | A zero `ValidUntil` means a cell does not expire | `internal/asof/asof.go:37-40` |
+| 7 | codex hooks leave no turn stamp | `docs/design/marvel-watcher.md:24`; codex first turn is `unsupported` |
+| 8 | A bus message does not say which seat of a team sent it | every seat of a team shares one broker user with publish on `agent.<ws>.<team>.>` (`internal/bus/declared.go:207`) |
+| 9 | marvel has no readiness check | `HealthCheckType` has two values, `heartbeat` and `process-alive`; `Readycheck` is model-only (`CLAUDE.md`, Resource Model). Health is liveness, not productivity |
+| 10 | A read-only codex sandbox blocks gh with `error connecting to api.github.com` | `docs/design/codex-reviewer-forge-access.md`, check P1. The reviewer-codex case may be this, not a bad token; the two-call check in section 4 separates them |
+
+## 2. The record
+
+Readiness lives in the register, per duty, as two cell families. Both are
+unchanged `asof.Cell`.
+
+**`duty.<name>`, observed.**
+
+| value | meaning |
+|---|---|
+| `proven` | a check passed at `observed_at`, from the vantage in `Source`; it says nothing about the next minute |
+| `fail` | a check ran and failed; `Source` carries a code |
+| `unproven` | the duty has no harmless proof, or no check has run yet |
+| `-` | never checked |
+| `?` | was checked, has expired |
+
+`Source` carries a vantage word and a stage from the register's fixed
+vocabulary: `seat:reach:<code>`, `seat:auth:<code>`, `host:...`, `peer:...`. A
+`seat` value was run in the seat and reported by it, and says so. A pass from
+another vantage never stands in for the seat's: the reviewer case above passed
+from its supervisor's seat and failed in its own.
+
+**`withdrawn.<duty>`, declared.** Set by the seat, its supervisor or director,
+named in `Source` (`by:seat`, `by:supervisor`, `by:director`). `ValidUntil` is
+zero, so it never expires into ready. A `recheck_by` sell-by in the store asks
+the named role to re-check it; it never lifts it.
+
+**Behind both,** a store record `(seat, duty, state, seq, observed_at,
+set_by)`, `seq` assigned by the daemon. It is written only through a daemon
+call. No bus message changes it (premise 8). A router pulls the register row
+at dispatch; a pushed notice only says something changed.
+
+The seat view is computed at read time as counts per value. It is never
+stored and never a score.
+
+## 3. Duties per role
+
+A role declares its duties beside `global_role`, read through one resolver as
+`config.ResolvedGlobalRole` is. Each names a check from a fixed library; a
+role cannot invent a check.
+
+| role | duties |
+|---|---|
+| every supervised seat | `first-turn`, `ack` |
+| reviewer | `gh.read`, `gh.comment` |
+| envoy | `gh.read`, `gh.post` |
+| a seat that works in Jira | `jira.read`, `jira.write` |
+
+## 4. Checks
+
+A check proves a duty. It never reads or prints a credential.
+
+| duty | check | values |
+|---|---|---|
+| a read (`gh.read`, `jira.read`) | A: an unauthenticated TLS reach to the API host. B: one harmless authenticated read of the caller's own record or rate limit (`GET /rate_limit`; Jira `GET /rest/api/3/myself`), through the seat's own tool | A fails: reach `fail`, read `unproven`. A passes, B rejected: read `fail` |
+| a write (`gh.post`, `gh.comment`, `jira.write`) | none harmless; proving a post means posting. The last successful write and its time, from the event the seat already produces | `proven` with that time, else `unproven`. A seat's own report never makes a write `proven` |
+| `ack` | the director ledger's last ack from the seat; a denial seen by the watcher | observed only; never a test send |
+| `first-turn` | turn evidence by the `ready_by` deadline (section 5) | observed only; `unsupported` where a harness gives no turn evidence |
+| a held dialog | one plain capture, matched to a version-ranged pattern | `dialog:<class>` or `blocker:unmatched`, class only, no pane text |
+
+Rules for every check:
+
+- The check runs in the seat, through the same execution path as the duty, so
+  the sandbox tested is the sandbox the duty uses. It returns a code. marvel
+  never holds the credential; it receives a code (the audience test of SOUL
+  section 3).
+- No retry after `auth-rejected` or `forbidden`; one retry after a transient
+  code. After a rejection the check reruns only on an event (a respawn, a
+  re-check request), never on a clock.
+- One circuit per bot identity label: the first rejection suspends
+  authenticated checks for that identity across its seats until an event.
+- The wrapper keeps no body, header or raw error; no `gh auth status`, no
+  verbose flags, no credential in argv. A sentinel-secret test guards it.
+- No static read of permission files: they hold the operator's settings, and a
+  classifier denial is in no file.
+
+## 5. Spawn and timing
+
+- **Default-deny.** At spawn the daemon writes every declared duty as
+  `unproven`. A seat held at a dialog or with no first turn is therefore never
+  routable, without a new visitor to find it.
+- **`ready_by`.** A deadline after spawn. When it passes with no first turn or
+  no proven duty, the daemon reports to the seat's parent if the parent took a
+  turn, else to director (the watcher's push rule). It reports; it never
+  withdraws, because it is a time threshold.
+- **The visit.** Past `ready_by`, one plain capture (the watchdog's
+  `CapturePaneJoined`, `internal/daemon/watchdog.go:528`, not the resizing
+  composer read), classified, never pressing a key.
+- **Cadence.** Per check, set by its cost as `valid_until`. No global interval.
+
+## 6. Routing
+
+The router applies a rule to the cells. marvel never disables a seat.
+
+1. A fresh structural `fail`, or a withdrawal: excluded from the free list,
+   with the reason shown. A supervisor may override by naming the seat. This
+   is the one place a cell removes a seat from a list.
+2. A fresh `proven`: eligible for that duty.
+3. `unproven`, `-` or `?`: ask first; never excluded and never assumed.
+4. A seat not eligible for a duty is not borrowed from another scope.
+
+Counts, rates and time thresholds never exclude; they stay diagnostic
+(ADR-007). A seat may withdraw itself; it may never restore or qualify itself
+by assertion. Nothing acts on silence or a clock.
+
+## 7. Plan (filed as flat tickets after the rulings)
+
+Ships first, needing no per-seat caller identity: the store record (read
+side); both cell families, the vocabulary extension and a leak-fence test; the
+role `duties` field and its resolver; the routing function as a pure function
+with golden vectors director can share; the render; spawn default-deny; the
+`ready_by` report; the deadline capture and the pattern result type; the claude
+`logged-out` range extension; the check library and wrapper as inert code; a
+codex folder-trust measurement on a scratch folder.
+
+Waits for per-seat caller identity: every value a seat reports, the restore
+call's confirm, and withdrawals set by a supervisor or director. Until then a
+seat-reported value has no proof of which seat sent it.
+
+Patterns to add: claude `consent`, claude `trust`, codex `folder-trust`.
+opencode has no turn, composer or dialog reader; its duties read `-` with
+`no-turn-reader` and `no-dialog-pattern`, and only an observed ack serves.
+
+## 8. Decisions for the operator
+
+Each recommendation is valid until 2026-10-23 or the operator's ruling,
+whichever comes first; the architect re-checks it then. Nothing takes effect
+on silence.
+
+1. **Restore.** (a) By duty: a seat-run reach pass restores; ack and first turn
+   restore on observed evidence; writes need evidence plus a supervisor
+   confirm. (b) Every restore from a seat-run pass needs a supervisor confirm;
+   observed evidence restores alone. The design party split 3-3.
+   **Recommendation: (b) to start**, since a seat never raises itself; relax to
+   (a) once a false-pass rate is measured.
+2. **Self-withdraw before per-seat identity.** (a) Withdraw-only on the
+   existing per-session token. (b) Wait for the control-plane identity. Split
+   3-3. **Recommendation: (b)**, since default-deny and daemon-observed
+   failures already keep an unready seat off the free list.
+3. **Exclusion on a fresh structural `fail`** (section 6 rule 1). (a) Exclude
+   with a named override. (b) Ask first only. 4-2 for (a).
+   **Recommendation: (a).**
+4. **Check rulings.** (i) An unauthenticated reach check from the seat's
+   sandbox. (ii) Seat-run authenticated reads as the bot identities, with the
+   circuit. (iii) codex folder pre-trust for a named folder set, after the
+   scratch measurement, never by a bypass flag. (iv) Dialog patterns harvested
+   and masked from the first live detection, after the sentinel-secret test.
+   **Recommendation: allow each.**
+5. **This design.** **Recommendation: accept**, with tickets filed after 1 to 4.
