@@ -255,9 +255,11 @@ const (
 	// legacyUnruled is the placeholder until the operator rules V11 (the open
 	// split in docs/design/services-shape-requirements.md section 6). It is
 	// neither option: it signals nothing and adopts nothing, and a port held
-	// under such a pidfile refuses with a message naming the ruling. A draft
-	// carrying it cannot ship by accident, and TestLegacyPidfileIsRuled fails
-	// under MARVEL_REQUIRE_V11=1 until the constant is set.
+	// under such a pidfile refuses with a message naming the ruling, so a build
+	// carrying it is safe to run. No workflow sets MARVEL_REQUIRE_V11, so
+	// nothing stops it reaching a release by itself: before the PR goes ready,
+	// someone runs TestLegacyPidfileIsRuled with MARVEL_REQUIRE_V11=1, which
+	// fails until the constant is set.
 	legacyUnruled legacyMode = iota
 	// legacyAdoptOnExecMatch (V11 option a) adopts a broker whose executable is
 	// nats-server and whose arguments carry this daemon's conf.
@@ -506,7 +508,7 @@ func (s *Supervisor) spawnLocked() error {
 			}
 			if err != nil {
 				_ = os.Remove(sidecarPath(s.pidFile))
-				log.Printf("bus: record the identity of nats-server pid %d: %v", c.Pid(), err)
+				s.emit(events.KindBusIdentityUnrecorded, events.SeverityWarning, fmt.Sprintf("nats-server pid %d started, but its identity record could not be written (%v); the next start reads its pidfile as legacy", c.Pid(), err))
 			}
 			return nil
 		},

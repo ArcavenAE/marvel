@@ -299,6 +299,7 @@ func TestSupervisorUserAgainstARealBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attach(t, s, newProcTable(t))
 	s.backoff = func(int) time.Duration { return 200 * time.Millisecond }
 	s.dialTimeout = loadedBrokerWait
 	s.AfterReady = func() error {

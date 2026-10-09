@@ -434,8 +434,15 @@ func TestSpawnedGivesUpAndProveDoesNotRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if _, err := p.Spawned(cmd); err == nil {
-		t.Error("Spawned succeeded for a process that never reads")
+	done := make(chan error, 1)
+	go func() { _, err := p.Spawned(cmd); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("Spawned succeeded for a process that never reads")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Spawned is still retrying long after its window ended")
 	}
 	if calls < 2 || time.Since(start) > 2*time.Second {
 		t.Errorf("Spawned made %d reads in %s; want a few inside the window", calls, time.Since(start))
@@ -464,6 +471,15 @@ func TestSpawnedRefusesWhatIsNotAFreshlyStartedChild(t *testing.T) {
 	waited := exec.Command("sleep", "0")
 	if err := waited.Run(); err != nil {
 		t.Skipf("no sleep: %v", err)
+	}
+	// Even a reader that answers for every pid must not make a waited-for
+	// process, whose pid may already belong to another, into a Child.
+	always, err := NewForTest(func(int) (Identity, error) { return broker("a"), nil }, k.kill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := always.Spawned(waited); err == nil {
+		t.Error("Spawned accepted a command that was already waited for")
 	}
 	if _, err := p.Spawned(waited); err == nil {
 		t.Error("Spawned accepted a command that was already waited for")
