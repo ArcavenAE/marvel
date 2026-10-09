@@ -86,7 +86,7 @@ Keep `nats-server.pid` exactly as it is: the bare pid and a newline. Add a sidec
 
 ### 3.2 Reading a live process's identity
 
-One function per platform, behind one seam. It lives in `internal/childproof` beside the proven child (section 4.5), as the `Read` field of `Prober`:
+One function per platform, behind one seam. It lives in `internal/childproof` beside the proven child (section 4.5), as the default `read` seam that `New` installs in a `Prober`:
 
 ```go
 // readIdentity reads what the kernel says about pid now. Any error, including
@@ -151,37 +151,53 @@ MS-9 asks for "one injectable function that takes a proven child". Unexported fi
 package childproof
 
 // Child is a process whose identity was read and matched. Its fields are
-// unexported, so only Prove and AdoptLegacy build one. The zero value has
-// pid 0, which Signal refuses.
+// unexported, so only Prove and AdoptLegacy build one. It records the
+// Prober that built it. The zero value has pid 0 and no Prober, and Signal
+// refuses it.
 type Child struct {
 	pid int
 	id  Identity
+	by  *Prober
 }
 
-// Prober holds the two seams. The bus supervisor gets one at construction;
-// tests pass fakes.
+// Prober holds the two seams. Both are unexported, so code outside this
+// package cannot build a Prober whose Read lies or whose Kill is real by
+// accident; it gets one from New or NewForTest.
 type Prober struct {
-	Read func(pid int) (Identity, error)       // section 3.2, per platform
-	Kill func(pid int, sig syscall.Signal) error // syscall.Kill by default
+	read func(pid int) (Identity, error)
+	kill func(pid int, sig syscall.Signal) error
 }
+
+// New returns the production Prober: the platform reader (section 3.2) and
+// syscall.Kill.
+func New() *Prober
+
+// NewForTest returns a Prober with the given seams. It returns an error
+// unless testing.Testing() reports a test binary (Go 1.21 and later; the
+// module is on 1.26), or when either seam is nil, so a test cannot get the
+// real kill by leaving one unset.
+func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal) error) (*Prober, error)
 
 // Prove reads pid's live identity and returns a Child when it equals want
 // (section 4.1, rules 2 to 5).
-func (p Prober) Prove(pid int, want Identity) (Child, error)
+func (p *Prober) Prove(pid int, want Identity) (Child, error)
 
 // AdoptLegacy is the one constructor without a recorded identity: V11 (a)
 // only. It returns a Child when the live executable's base name is
 // nats-server and argv carries -c and conf. Deleted if V11 is ruled (b).
-func (p Prober) AdoptLegacy(pid int, conf string) (Child, error)
+func (p *Prober) AdoptLegacy(pid int, conf string) (Child, error)
 
-// Signal refuses pid <= 1 for every signal, re-reads the identity and
-// refuses on any difference, then sends sig: to -pid when group is set and
-// the live pgid == pid, otherwise to pid.
-func (p Prober) Signal(c Child, sig syscall.Signal, group bool) error
+// Signal refuses a nil Prober, a nil seam, a Child built by another Prober,
+// and pid <= 1, for every signal. It then re-reads the identity, refuses on
+// any difference, and sends sig: to -pid when group is set and the live
+// pgid == pid, otherwise to pid.
+func (p *Prober) Signal(c Child, sig syscall.Signal, group bool) error
 
 // Identity returns what the proof read, so the caller can write the sidecar.
 func (c Child) Identity() Identity
 ```
+
+The bus supervisor takes a `*Prober` at construction: `New()` in production, `NewForTest` in its tests. Binding a `Child` to its `Prober` means a `Child` proven by a test's fake reader can never be signalled through the production `Prober`, or the other way round.
 
 Every site in section 2 calls `Signal`. Because `Signal` re-reads the identity itself, "re-proven immediately before" is part of the seam, not a rule each site has to remember. The raw `kill` is only ever called inside `Signal`. Refusing pid 0 and pid 1 for every signal matters for more than the group form: `kill(0, sig)` signals the caller's own process group, so a zero `Child` would otherwise reach the daemon.
 
@@ -210,6 +226,13 @@ Otherwise, signal nothing. Remove the pidfile; spawn if the port is free, and re
 
 **(b) `legacyRefuseUnproven`.** Neither adopt nor signal. If the listener answers, the bus stays down and reports "port held, child unproven". This shows in `bus status` and in a `bus.pidfile-unproven` event, which names the pid, the port and the remedy: stop the old broker by hand, or set `bus.managed: false` and `bus.url` to adopt it explicitly. If the listener does not answer, remove the pidfile and spawn.
 
+**What `AdoptLegacy` cannot tell apart.** It checks only the executable's base name and `-c <conf>`, so it also adopts a nats-server someone started by hand with marvel's conf. For that process the worst case is:
+- the adoption SIGHUP makes it reload marvel's freshly rendered authorization;
+- the sidecar written from it makes it proven from then on;
+- a later `terminate` sends TERM and then KILL to its process group. A process started from a shell leads its own job group, so the group can include its pipeline partners.
+
+The operator weighs this in V11 alongside the cost of (b).
+
 **What each costs.**
 - (a) keeps every session's bus connection across the upgrade. It adopts on argv and executable without start time, which is weaker evidence than the MS-9 proof. Its full worst case: the sidecar it writes at adoption makes the adopted process "proven" from then on, so a wrong adopt is not limited to one SIGHUP. `terminate` can later send that process TERM and KILL, and send them to its group when it leads one.
 - (b) never acts on an unproven process. It strands the live broker at the first upgrade on every cluster: new spawns hold on the bus gate until the operator acts, which is one manual stop per cluster.
@@ -228,10 +251,10 @@ Otherwise, signal nothing. Remove the pidfile; spawn if the port is free, and re
 
 ## 7. Test plan (red first)
 
-Every test signals only processes the test started, or none. The tests build their `Prober` with a `Kill` that fails the test on any pid outside the children the test registered, so a test that misses the swap, or a mutant that drops a guard, fails instead of signalling. No fixture uses a literal pid such as 4242, which can name a live process; every fixture pid is a child the test started.
+Every test signals only processes the test started, or none. The tests build their `Prober` with `NewForTest` and a `kill` that fails the test on any pid outside the children the test registered, so a test that misses the swap, or a mutant that drops a guard, fails instead of signalling. No fixture uses a literal pid such as 4242, which can name a live process; every fixture pid is a child the test started.
 
-1. **Seams.** `Prober.Read` replaces `probePID` as the identity seam, and `Prober.Kill` is the signal seam behind `Signal` (section 4.5); the test version records calls. `childproof`'s own tests cover `Signal` refusing pid 0 and pid 1 for every signal, and `AdoptLegacy` refusing a wrong executable or a missing `-c conf`. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
-2. **Reused pid, not listening** (the #794 case). The fake `Read` returns a start time different from the sidecar's; the listener is closed. Assert no `Kill` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
+1. **Seams.** the `Prober`'s `read` replaces `probePID` as the identity seam, and its `kill` is the signal seam behind `Signal` (section 4.5); the test version records calls. `childproof`'s own tests cover `Signal` refusing pid 0 and pid 1 for every signal, a zero `Child`, a `Child` from another `Prober`, and a nil seam; `NewForTest` refusing a nil seam; and `AdoptLegacy` refusing a wrong executable or a missing `-c conf`. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
+2. **Reused pid, not listening** (the #794 case). The fake `read` returns a start time different from the sidecar's; the listener is closed. Assert no `kill` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
 3. **Reused pid, real kernel.** The test starts its own `sleep` with `Setpgid` and records its real identity. It then rewrites the sidecar's `start` to another value and calls `Start`. Assert the `sleep` is still alive afterwards (`readIdentity` succeeds with the real start time) and received nothing: its state shows not stopped, and the test reaps it itself.
 4. **HUP path.** Adoption with a proven identity sends exactly one SIGHUP to `pid`. A mismatch at adoption sends none. `Reload` and the structural SIGHUP (`:540`, `:654`) each send none when the identity read fails between the proof and the signal: the fake changes its answer between calls.
 5. **Terminate path.** A proven broker with `pgid == pid` gets TERM, then KILL, to `-pid`. With `pgid != pid`, both go to `pid`. When the identity changes between TERM and KILL, KILL is not sent.
