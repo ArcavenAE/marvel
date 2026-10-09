@@ -118,6 +118,19 @@ func TestRedactURLUserinfoEndsAtCharactersAnAuthorityCannotHold(t *testing.T) {
 	}
 }
 
+// RFC 3986 wants these characters percent-encoded, but generated passwords carry
+// them raw. They end the authority only after an @ has been seen, so a password
+// holding one is redacted whole (review 5466478390, item 1).
+func TestRedactURLUserinfoCoversAPasswordHoldingACharacterAnAuthorityCannotHold(t *testing.T) {
+	for _, c := range []string{`"`, "<", ">", `\`, "^", "`", "{", "|", "}"} {
+		in := "redis://u:CNRY" + c + "pw@h/0"
+		want := "redis://(redacted)@h/0"
+		if got := redactURLUserinfo(in); got != want {
+			t.Errorf("password holding %q: redactURLUserinfo(%q) = %q, want %q", c, in, got, want)
+		}
+	}
+}
+
 // Shapes the ruling does not reach print as they were stored. Pinning them keeps
 // the cost list in docs/design/describe-redaction.md honest: a change that makes
 // one of these redact is a change to the ruling's reach and should be a choice.
