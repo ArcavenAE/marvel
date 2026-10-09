@@ -4,6 +4,7 @@ Proposal, 2026-10-09. Issue: #794. Code read at marvel `9c1541e` (`9c1541ea858af
 
 - Author: the architect seat, team arcaven.
 - Builder: red tests first, then green, after this design merges.
+- Requirement: MS-9 in `docs/design/services-shape-requirements.md` ("The pidfile proves the child"). Section 4.5 is how this design meets its seam clause.
 - V11 is not ruled. Section 5 designs both options behind one switch; everything else here holds under either.
 
 ## 0. Why
@@ -21,16 +22,16 @@ After a crash or a reboot, a daemon restart can send SIGTERM and then SIGKILL to
 | The pidfile holds a bare pid and a newline | `internal/workload/process.go:89-95` | read |
 | The child leads its own process group | `workload/process.go:82` (`Setpgid: true`) | read |
 | `procargs` reads exact argv; the darwin parser reads past the executable path and discards it | `internal/procargs/procargs.go`, `ParseProcargs2` | read |
-| darwin: `kern.proc.pid` gives `p_starttime` and `e_pgid`; `kern.procargs2` gives the exec path | `golang.org/x/sys` v0.48.0 (`KinfoProc.Proc.P_starttime`, `Eproc.Pgid`) | MEASURED: a scratch program on darwin arm64 read `p_starttime` 1791533001.303086 for a `/bin/sleep` child, matching `ps -o lstart` to the second, and exec path `/bin/sleep` |
-| darwin: a pid that does not exist returns an error from `kern.proc.pid`, not an empty record | same program, pid 999999 | MEASURED: `input/output error` |
+| darwin: `kern.proc.pid` gives `p_starttime` and `e_pgid`; `kern.procargs2` gives the exec path | `golang.org/x/sys` v0.48.0 (`KinfoProc.Proc.P_starttime`, `Eproc.Pgid`) | MEASURED on macOS 26.5.2, arm64 laptop, go1.26.5, with a short Go program that calls `unix.SysctlKinfoProc("kern.proc.pid", pid)` and `unix.SysctlRaw("kern.procargs2", pid)` and prints `P_starttime` and the exec path: a `/bin/sleep` child read 1791533001.303086, matching `ps -o lstart` to the second, and exec path `/bin/sleep`. The reviewer reproduced it on the same OS version with two children, whose values differed and whose repeat reads were identical. |
+| darwin: a pid that does not exist returns an error from `kern.proc.pid`, not an empty record | the same program and conditions, pid 999999 | MEASURED: `input/output error`. The reviewer saw the same for pid 999999 and for a child after it exited. |
 | linux: `/proc/<pid>/stat` field 22 is the start time in clock ticks since boot; `/proc/sys/kernel/random/boot_id` names the boot; `/proc/<pid>/exe` is the executable | proc(5) | NOT MEASURED here (no Linux host). CI runs the tests on ubuntu. |
 
 ## 2. Every signalling site
 
-Enumerated at `9c1541e` with:
+Enumerated at `9c1541e` with this command, which returns 43 lines:
 
 ```
-grep -rnE 'syscall\.Kill|unix\.Kill|\.Signal\(|Process\.Kill|\.Kill\(\)|FindProcess|pkill|"kill' --include='*.go' . | grep -v _test.go
+grep -rnE 'syscall\.Kill|unix\.Kill|\.Signal\(|Process\.Kill|\.Kill\(\)|FindProcess|pkill|"kill|CommandContext' --include='*.go' . | grep -v _test.go
 ```
 
 **In scope: the bus broker's pid, all in `internal/bus/supervisor.go`.**
@@ -46,7 +47,7 @@ grep -rnE 'syscall\.Kill|unix\.Kill|\.Signal\(|Process\.Kill|\.Kill\(\)|FindProc
 | `:524` terminate | SIGKILL to `-pid` | `s.pid` | signal 0 | proven immediately before; group rule |
 | `:540` `Reload` | SIGHUP to `pid` | `s.pid` | `ready` flag | proven immediately before |
 | `:654` structural miss | SIGHUP to `pid` | `s.pid` | `pid != 0` | proven immediately before |
-| `:826`, `:839` | pidfile read, signal 0 | pidfile | this is the proof | replaced by `proveIdentity` |
+| `:826`, `:839` | pidfile read, signal 0 | pidfile | this is the proof | replaced by `prove` (section 4.5) |
 
 `terminate` is called from `Restart` (`:501`) and `Stop` (`:590`). Between a child's exit and the next spawn, `s.pid` can name a pid the kernel has reaped. That is why every site re-proves rather than trusting a proof taken at `Start`.
 
@@ -55,7 +56,8 @@ grep -rnE 'syscall\.Kill|unix\.Kill|\.Signal\(|Process\.Kill|\.Kill\(\)|FindProc
 - `internal/daemon/daemon.go:915-919` (`checkPidFileFree`) and `cmd/marvel/daemon_lock_hint.go:20-24`. These probe the daemon's own pidfile with signal 0 and only ever refuse or hint; neither sends a signal that does anything. A reused pid makes a second daemon refuse when it need not (fail closed). #744 is the adjacent issue for the same guard.
 - `internal/runtime/codex_home.go:246` (`cmd.Process.Kill` on a child it holds).
 - `internal/tmux/tmuxtest/sweep.go:71` (test helper).
-- The other 20 of the command's 37 lines send no signal to a pid. They are tmux `kill-pane`, `kill-session` and `kill-server` calls, which name panes, sessions and servers (`internal/tmux/driver.go:640-691`, `tmuxtest/sweep.go:86`), and strings that contain "kill": messages and errors in `session/manager.go` and `runtime/instance_tmux.go`, JSON field names, CLI help, and a simulator function name.
+- `exec.CommandContext` children, which the runtime kills when their context ends: `internal/runtime/codex_home.go:226`, `internal/view/view.go:295` and `:331`, `internal/tmux/absence.go:65`, `internal/tmux/driver.go:197` (with `WaitDelay` at `:201`), and `internal/api/trusted_folders.go:34`. Each signals its own child before that child is reaped, so a reused pid cannot redirect it, the same reasoning as `codex_home.go:246`.
+- The other 20 lines send no signal to a pid. They are tmux `kill-pane`, `kill-session` and `kill-server` calls, which name panes, sessions and servers (`internal/tmux/driver.go:640-691`, `tmuxtest/sweep.go:86`), and strings that contain "kill": messages and errors in `session/manager.go` and `runtime/instance_tmux.go`, JSON field names, CLI help, and a simulator function name.
 
 ## 3. What the pidfile records
 
@@ -105,6 +107,8 @@ type procIdentity struct {
 
 ## 4. The match rule
 
+The pid that is signalled only ever comes from `pidfile.Parse` (a positive decimal that fits 32 bits, `internal/pidfile/pidfile.go:12-18`) or from `cmd.Process.Pid`, never from the sidecar. A wide or negative `pid` in the sidecar cannot match under rule 1.
+
 ### 4.1 Proven
 
 A pidfile pid is proven when all of these hold:
@@ -128,20 +132,48 @@ Start time is the identity: on one boot, the pair (pid, start time) names one pr
 | pid | matches | proven | yes | adopt; SIGHUP to `pid` (`:251`) |
 | pid | matches | proven | no | ours and wedged: terminate (section 4.3), remove both files, spawn |
 | pid | matches or present | not proven: dead, or start, exe or argv differ | no | stale: remove both files, signal nothing, emit `bus.pidfile-stale` with the reason, spawn |
-| pid | matches or present | not proven | yes | stale as above, then refuse as a stranger: something holds the port and it is not the recorded broker |
+| pid | matches or present | not proven | yes | stale as above, signal nothing, and report "port held, child unproven" (MS-9) in `bus status` and in one `bus.pidfile-unproven` event; the bus stays down, with no crash loop |
 | pid | **none** (legacy) | | | **V11** (section 5) |
 
 ### 4.3 Group signals
 
-`-pid` addresses the process group whose id is `pid`. `workload.Start` makes the broker a group leader, so for a proven broker `pgid == pid`. Before any `-pid` signal, the supervisor re-reads the identity. If the proof fails, it sends nothing. If the proof holds but `pgid != pid` (something moved the broker into another group), it signals `pid` alone. The group is signalled only when the proven process leads it.
+`-pid` addresses the process group whose id is `pid`. `workload.Start` makes the broker a group leader, so for a proven broker `pgid == pid`. Before any `-pid` signal, the supervisor re-reads the identity. If the proof fails, it sends nothing. A group signal also needs `pid > 1`: `Parse` accepts 1, and `kill(-1, ...)` is the every-process broadcast, not a group. If the proof holds but `pgid != pid` (something moved the broker into another group), it signals `pid` alone. The group is signalled only when the proven process leads it.
 
 ### 4.4 The adopted-broker watch
 
 `:417` polls signal 0 every 2 s. It becomes an identity read with the start-time compare. A pid that is alive but now belongs to another process reads as "adopted nats-server exited", the same crash path as today, and the restart does not signal it, because `terminate` re-proves first.
 
+### 4.5 The signal seam takes a proven child (MS-9)
+
+MS-9 asks for "one injectable function that takes a proven child". The seam is typed so that an unproven pid does not compile at a call site:
+
+```go
+// provenChild is built only by prove. It carries the identity the proof read.
+type provenChild struct {
+	pid int
+	id  procIdentity
+}
+
+// prove compares pid's live identity with want and returns a provenChild on a match.
+func prove(pid int, want procIdentity) (provenChild, error)
+
+// signalProven re-reads c's identity, refuses on any difference, and then
+// sends sig: to -pid when group is set, pid > 1 and the live pgid == pid,
+// otherwise to pid.
+var signalProven = func(c provenChild, sig syscall.Signal, group bool) error
+```
+
+Every site in section 2 calls `signalProven`. Because the function re-reads the identity itself, "re-proven immediately before" is part of the seam, not a rule each site has to remember. The raw `syscall.Kill` stays in one place, behind `signalProven`'s default.
+
+### 4.6 What the rule does not close
+
+- **A corrupt sidecar** fails rule 1 and reaches the not-proven rows, which signal nothing. That is fail closed.
+- **linux resolution.** Stat field 22 counts clock ticks, commonly 10 ms. Two processes on one boot that share a pid and start within one tick of each other read alike. A pid reused that fast must also match the recorded executable and argv to be signalled.
+- **Proof to kill.** A pid can exit and be reused between `signalProven`'s re-read and its `kill`. On linux, `pidfd_open` at the proof and `pidfd_send_signal` would close that window; this design leaves it as a follow-up. On darwin nothing closes it. What remains is a window of microseconds between two system calls, against the minutes-to-days gap the current code trusts.
+
 ## 5. V11: a pidfile from a binary that wrote no sidecar
 
-This is the first daemon start after the upgrade that adds the sidecar. The running broker was spawned by the old binary, so its pidfile holds a bare pid and nothing proves it. It is the common case for every cluster, once. The services review left V11 open, and the operator has not ruled it (`svc-v11-pidfile`). The build carries both options behind one switch:
+This is the first daemon start after the upgrade that adds the sidecar. The running broker was spawned by the old binary, so its pidfile holds a bare pid and nothing proves it. It is the common case for every cluster, once. V11 is an open split in `docs/design/services-shape-requirements.md` section 6: plurality (b), 5 to 4, one abstention, and the operator has not ruled it. MS-9 asks that the legacy handling ship in the same PR as the proof. The build carries both options behind one switch:
 
 ```go
 // legacyPidfile decides a pidfile with no identity sidecar (V11). Set in code
@@ -159,8 +191,10 @@ Otherwise, signal nothing. Remove the pidfile; spawn if the port is free, and re
 **(b) `legacyRefuseUnproven`.** Neither adopt nor signal. If the listener answers, the bus stays down and reports "port held, child unproven". This shows in `bus status` and in a `bus.pidfile-unproven` event, which names the pid, the port and the remedy: stop the old broker by hand, or set `bus.managed: false` and `bus.url` to adopt it explicitly. If the listener does not answer, remove the pidfile and spawn.
 
 **What each costs.**
-- (a) keeps every session's bus connection across the upgrade, and the check it relies on is argv and executable without start time. A reused pid would have to be a nats-server started with this daemon's own conf path for (a) to adopt it wrongly. Even then it sends only a SIGHUP, which a nats-server answers by re-reading its config.
-- (b) never acts on an unproven process. It strands the live broker at the first upgrade on every cluster: new spawns hold on the bus gate until the operator acts, which is a planned outage per cluster.
+- (a) keeps every session's bus connection across the upgrade. It adopts on argv and executable without start time, which is weaker evidence than the MS-9 proof. Its full worst case: the sidecar it writes at adoption makes the adopted process "proven" from then on, so a wrong adopt is not limited to one SIGHUP. `terminate` can later send that process TERM and KILL, and send them to its group when it leads one.
+- (b) never acts on an unproven process. It strands the live broker at the first upgrade on every cluster: new spawns hold on the bus gate until the operator acts, which is one manual stop per cluster.
+
+**Side (b)'s argument, and my answer.** Side (b) says (a) "adopts on evidence that is not yet the MS-9 proof, and that a wrong adopt of a stateful child risks its data". The evidence (a) requires is a nats-server executable whose argv carries `-c` and this daemon's own conf path, while that daemon's listener answers. The conf names the JetStream `store_dir` (`internal/bus/render.go:157`). A process that matches is therefore already serving this daemon's port from this daemon's store. A wrong adopt can only pick a process that holds the data at risk already, and later stopping it is what marvel does to its own broker. The case this does not cover is a nats-server someone started by hand with marvel's conf; (a) would take that process over.
 
 **What is V11-independent.** Sections 2, 3, 4 and 6, and the new-format paths in section 7, are the same under either option. The switch touches one branch of `Start`: pidfile present, sidecar absent.
 
@@ -169,15 +203,15 @@ Otherwise, signal nothing. Remove the pidfile; spawn if the port is free, and re
 ## 6. Events and status
 
 - `bus.pidfile-stale` (warning): pid, reason (`dead`, `start`, `exe`, `argv`, `sidecar-pid`), the action taken (removed, spawned or refused). Emitted once per start.
-- `bus.pidfile-unproven` (warning, V11 (b) only): pid, port, remedy.
+- `bus.pidfile-unproven` (warning): pid, port, remedy. Emitted for a mismatch with the listener answering, and for a legacy pidfile under V11 (b).
 - `bus status` gains `pidfile: proven | stale | legacy | none`.
 
 ## 7. Test plan (red first)
 
-Every test signals only processes the test started, or none.
+Every test signals only processes the test started, or none. The package's tests replace the raw `kill` behind `signalProven` with one that fails the test on any pid outside the children the test registered, so a test that misses the swap, or a mutant that drops a guard, fails instead of signalling. No fixture uses a literal pid such as 4242, which can name a live process; every fixture pid is a child the test started.
 
-1. **Seams.** `readIdentity` replaces `probePID` as the identity seam, and a `sendSignal func(pid int, sig syscall.Signal) error` seam records calls. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
-2. **Reused pid, not listening** (the #794 case). The fake `readIdentity` returns a start time different from the sidecar's; the listener is closed. Assert no `sendSignal` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
+1. **Seams.** `readIdentity` replaces `probePID` as the identity seam, and `signalProven` (section 4.5) is the signal seam; the test version records calls. Unit tests drive both fakes; the existing `pidfile_alive_test.go` moves to the new seam.
+2. **Reused pid, not listening** (the #794 case). The fake `readIdentity` returns a start time different from the sidecar's; the listener is closed. Assert no `signalProven` call, both files removed, one `bus.pidfile-stale` with reason `start`, and a spawn.
 3. **Reused pid, real kernel.** The test starts its own `sleep` with `Setpgid` and records its real identity. It then rewrites the sidecar's `start` to another value and calls `Start`. Assert the `sleep` is still alive afterwards (`readIdentity` succeeds with the real start time) and received nothing: its state shows not stopped, and the test reaps it itself.
 4. **HUP path.** Adoption with a proven identity sends exactly one SIGHUP to `pid`. A mismatch at adoption sends none. `Reload` and the structural SIGHUP (`:540`, `:654`) each send none when the identity read fails between the proof and the signal: the fake changes its answer between calls.
 5. **Terminate path.** A proven broker with `pgid == pid` gets TERM, then KILL, to `-pid`. With `pgid != pid`, both go to `pid`. When the identity changes between TERM and KILL, KILL is not sent.
@@ -190,4 +224,6 @@ Every test signals only processes the test started, or none.
 
 ## 8. Plan
 
-One flat ticket for the builder, with red tests 2 to 8 before green. I recommend the V11 constant ship set to (a), with a code comment naming the open ruling, unless the operator rules before the build starts. The reason is the cost in section 5: (b) takes the bus down on every cluster at its first upgrade, and (a)'s worst case is a SIGHUP to a nats-server started with this daemon's own conf path. If the ruling is (b), the change is the constant and the test that asserts the default. That default is a recommendation, valid until 2026-10-23 or until V11 is ruled, whichever comes first; the architect re-checks it then.
+One flat ticket for the builder, with red tests 2 to 8 before green. The builder ships whichever V11 value is ruled.
+
+My recommendation is (a), against the (b) plurality, for the reasons in section 5: (b) costs a manual stop on every cluster, and the cost of a wrong adopt under (a) falls on a process already serving this daemon's port from this daemon's store. This recommendation is valid until 2026-10-23 or until V11 is ruled, whichever comes first; the architect re-checks it then.
