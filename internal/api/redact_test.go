@@ -15,6 +15,11 @@ func TestSecretKeyRedactsEachPattern(t *testing.T) {
 		"DB_PASSWORD", "db_passwd", "SSH_PASSPHRASE", "CLIENT_SECRET", "AWS_SECRET_ACCESS_KEY",
 		"AWS_ACCESS_KEY_ID", "accessKey", "PRIVATE_KEY", "privateKey", "KEY", "SIGNING_KEY", "ssh.key",
 		"CREDENTIALS", "BEARER", "AUTH_HEADER", "COOKIE", "SESSION_COOKIE", "GH_PAT", "NPM_PAT",
+		// Shapes a review found missed: connection strings and webhooks,
+		// short password words, and run-together key names.
+		"DATABASE_URL", "DSN", "SENTRY_DSN", "REDIS_URL", "MONGODB_URI", "SLACK_WEBHOOK_URL",
+		"DB_PASS", "SMTP_PASS", "DB_PW", "MYSQL_PWD", "SSHKEY", "SIGNINGKEY", "AUTH", "GITHUB_AUTH",
+		"AUTHORIZATION", "GITHUBTOKEN", "ACCESS_TOKENS",
 	} {
 		if !SecretKey(key) {
 			t.Errorf("SecretKey(%q) = false, want true", key)
@@ -26,6 +31,9 @@ func TestSecretKeyLeavesOrdinaryKeysVisible(t *testing.T) {
 	for _, key := range []string{
 		"REGION", "AWS_REGION", "HOME", "PATH", "LOG_LEVEL", "TERM", "EDITOR", "MARVEL_ROLE",
 		"KEYBOARD", "MONKEY", "KEYMAP", "TURKEY", "PATIENT", "PATH_EXTRA", "",
+		// Names that only contain a pattern's letters.
+		"TOKENIZERS_PARALLELISM", "AUTHOR_NAME", "OAUTH_REDIRECT_URI", "BYPASS_CACHE", "COMPASS_DIR",
+		"PASSENGER_COUNT", "PWD", "EMPOWER_MODE", "DB_HOST", "DATABASE_NAME",
 	} {
 		if SecretKey(key) {
 			t.Errorf("SecretKey(%q) = true, want false", key)
@@ -94,6 +102,18 @@ func TestRedactReachesEveryRuntimeAtAnyDepth(t *testing.T) {
 	}
 	if n := strings.Count(string(data), Redacted); n != 5 {
 		t.Fatalf("(redacted) appears %d times, want 5 (one per Runtime copy: Sessions, ByName, Ptr, Any, Anon):\n%s", n, data)
+	}
+}
+
+// A Runtime held in an array is reached like one in a slice.
+func TestRedactReachesARuntimeInAnArray(t *testing.T) {
+	type holder struct{ A [2]Runtime }
+	in := holder{A: [2]Runtime{{Env: map[string]string{"SERVICE_TOKEN": "canary-secret"}}, {}}}
+	if got := Redact(in).A[0].Env["SERVICE_TOKEN"]; got != Redacted {
+		t.Fatalf("array element Env value = %q, want %q", got, Redacted)
+	}
+	if in.A[0].Env["SERVICE_TOKEN"] != "canary-secret" {
+		t.Fatal("Redact wrote through to its input")
 	}
 }
 

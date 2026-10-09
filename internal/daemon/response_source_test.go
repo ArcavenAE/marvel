@@ -273,6 +273,69 @@ func assign(r *daemon.Response) { r.Result = nil }
 		}
 	})
 
+	// Each of these spellings reaches Response.Result without writing
+	// "Response{Result:" or "resp.Result =" against the named type, and each is
+	// planted from another package, where Response is only exported.
+	for name, src := range map[string]string{
+		"a type alias": `package other
+
+import "github.com/arcavenae/marvel/internal/daemon"
+
+type Reply = daemon.Response
+
+func viaAlias() Reply { return Reply{Result: nil} }
+`,
+		"an embedded promoted field": `package other
+
+import "github.com/arcavenae/marvel/internal/daemon"
+
+type Wrapped struct{ daemon.Response }
+
+func viaEmbed(w *Wrapped) { w.Result = nil }
+`,
+		"a pointer embedded promoted field": `package other
+
+import "github.com/arcavenae/marvel/internal/daemon"
+
+type Wrapped struct{ *daemon.Response }
+
+func viaEmbed(w Wrapped) { w.Result = nil }
+`,
+		"a conversion from a defined type": `package other
+
+import "github.com/arcavenae/marvel/internal/daemon"
+
+type Shadow daemon.Response
+
+func viaConvert() daemon.Response { return daemon.Response(Shadow{}) }
+`,
+		"a conversion from an anonymous struct": `package other
+
+import (
+	"encoding/json"
+
+	"github.com/arcavenae/marvel/internal/daemon"
+)
+
+func viaAnon(raw json.RawMessage) daemon.Response {
+	return daemon.Response(struct {
+		Result json.RawMessage
+	}{raw})
+}
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := []*ast.File{planted("scratch_form.go", src)}
+			bad, err := responseWrites(fset, modulePath+"/scratch/form", files, imp, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(bad) == 0 {
+				t.Errorf("a write through %s was not caught", name)
+			}
+		})
+	}
+
 	t.Run("an unrelated Result field is left alone", func(t *testing.T) {
 		files := []*ast.File{planted("scratch_unrelated.go", `package other
 
