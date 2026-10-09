@@ -5,8 +5,10 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -105,7 +107,7 @@ func TestNewForTestIsReferencedOnlyFromTestFiles(t *testing.T) {
 		t.Fatalf("parsed only %d non-test files under %s; the walk is not reaching the module", checked, root)
 	}
 	if len(bad) > 0 {
-		t.Errorf("NewForTest is referenced outside a _test.go file: %v", bad)
+		t.Errorf("a test-only name (%s) is referenced outside a _test.go file: %v", strings.Join(slices.Sorted(maps.Keys(testOnlyNames)), ", "), bad)
 	}
 }
 
@@ -132,6 +134,94 @@ func TestNewForTestCheckSeesEachWayToReachIt(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if got := len(newForTestRefs(fset, f)); got != tc.hits {
+			t.Errorf("%s: %d references found, want %d", name, got, tc.hits)
+		}
+	}
+}
+
+// spawnedAllowed are the non-test files that may call Prober.Spawned. It is the
+// one constructor that proves a process without a record, and it trusts the
+// *exec.Cmd it is given, so its call sites are listed, as NewForTest's are.
+var spawnedAllowed = map[string]bool{"internal/bus/supervisor.go": true}
+
+// spawnedRefs returns the position of every selector named Spawned in a parsed
+// file: a call, a method value, or a method expression.
+func spawnedRefs(fset *token.FileSet, f *ast.File) []token.Position {
+	var out []token.Position
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "Spawned" {
+			out = append(out, fset.Position(sel.Sel.Pos()))
+		}
+		return true
+	})
+	return out
+}
+
+func TestSpawnedIsCalledOnlyFromTheSupervisor(t *testing.T) {
+	root := moduleRoot(t)
+	fset := token.NewFileSet()
+	var bad []string
+	allowedSeen, checked := 0, 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil
+		}
+		checked++
+		rel, _ := filepath.Rel(root, path)
+		for _, pos := range spawnedRefs(fset, f) {
+			if spawnedAllowed[filepath.ToSlash(rel)] {
+				allowedSeen++
+				continue
+			}
+			bad = append(bad, pos.String())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked < 50 {
+		t.Fatalf("parsed only %d non-test files under %s; the walk is not reaching the module", checked, root)
+	}
+	if allowedSeen == 0 {
+		t.Error("the supervisor no longer calls Spawned; the allowed list is stale")
+	}
+	if len(bad) > 0 {
+		t.Errorf("Spawned is referenced outside %v: %v", spawnedAllowed, bad)
+	}
+}
+
+func TestSpawnedCheckSeesEachWayToReachIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		src  string
+		hits int
+	}{
+		"a call":              {"package p\nfunc f() { p.Spawned(cmd) }\n", 1},
+		"a method value":      {"package p\nvar g = p.Spawned\n", 1},
+		"a method expression": {"package p\nvar g = (*childproof.Prober).Spawned\n", 1},
+		"the declaration":     {"package p\nfunc (p *Prober) Spawned() {}\n", 0},
+		"another name":        {"package p\nfunc f() { p.Prove(1, id) }\n", 0},
+	} {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "x.go", tc.src, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := len(spawnedRefs(fset, f)); got != tc.hits {
 			t.Errorf("%s: %d references found, want %d", name, got, tc.hits)
 		}
 	}
