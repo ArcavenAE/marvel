@@ -13,8 +13,8 @@ The operator asked where marvel's largest files split, which splits fit the serv
 The answer in three lines:
 
 - **The seams are real.** Each file breaks into four to eight contiguous concerns. One of them, the client half of `daemon.go`, has almost no coupling to the daemon and is a package-sized seam on its own.
-- **The layout's conflict cost is small once PR size is held equal.** Most of the excess is large, multi-layer PRs and one feature landed as five parallel PRs on one day.
-- **The cost that matters for the backplane is a duplicated supervisor.** The restart backoff exists twice, byte for byte, and moving the bus supervisor's lifecycle into `workload.Process` stalled because tests reach private fields.
+- **The layout's conflict cost is small once PR size is held equal.** Most of the excess is large, multi-layer PRs, and one feature landed as five parallel PRs on one day carries four of the nine conflicts that name `daemon.go`.
+- **The cost that matters for the backplane is a duplicated supervisor.** The restart backoff is implemented twice with the same logic, and moving the bus supervisor's lifecycle into `workload.Process` stalled because tests reach private fields.
 
 Tags:
 - **MEASURED:** a command run at `7f1c81e`, or against GitHub PR history, named beside the number.
@@ -29,7 +29,7 @@ Director's figures were about 3938, 2600 and 1817 lines and 35 internal packages
 
 - **MEASURED** (`wc -l`): `daemon.go` 3883, `controller.go` 2600, `manager.go` 1817.
 - **MEASURED** (`go list ./internal/... | wc -l`): 38 internal packages. There are 33 top-level directories under `internal/`, and `runtime/claudecode`, `runtime/codex`, `runtime/events`, `runtime/opencode` and `tmux/tmuxtest` are nested packages.
-- **MEASURED**, growth (`git show $(git rev-list -1 --before=<date> origin/main):<file> | wc -l`):
+- **MEASURED**, growth (`git show $(git rev-list -1 --before=<date>T23:59:59-05:00 origin/main):<file> | wc -l`, the last commit on main before the end of each date in UTC-5):
 
 | date | daemon.go | controller.go | manager.go |
 |---|---|---|---|
@@ -45,11 +45,11 @@ Director's figures were about 3938, 2600 and 1817 lines and 35 internal packages
 
 **MEASURED** (`go list -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' ./internal/... ./cmd/...`, internal edges only):
 
-- **No cycles, and one wide importer.** `internal/daemon` imports 23 internal packages. The next widest are `cmd/marvel` (17), `session` (8), `usage` (7), `bus` (6), `runtime` (6) and `team` (4).
+- **No cycles, and one wide importer.** `internal/daemon` imports 23 internal packages. The next widest are `cmd/marvel` (17), `session` (8), `usage` (7), `bus` (6), `runtime` (6), and `team` and `limitact` (4 each).
 - **One hub.** `internal/api` is imported by 16 packages and imports only `asof`. `events` is imported by 10, `paths` by 7 and `runtime/events` by 6.
 - **`daemon` is a leaf in the other direction.** Only `cmd/marvel`, `cmd/simulator` and `internal/simulator` import it.
 - **`team` imports `session`; `session` does not import `team`.** The layering daemon, then team, then session, then runtime and tmux holds without exceptions.
-- **`toolchain` and `gittest` have no internal importers.** `toolchain` holds no non-test file at the top level.
+- **`toolchain` and `gittest` have no non-test internal importers** (`gittest` is a test helper). `toolchain` holds no non-test file at the top level.
 
 **INFERRED:** the graph is not the problem. The width is concentrated in one package whose job is composition.
 
@@ -95,7 +95,7 @@ The backplane is four functions generalized from "a tmux session" to "any part":
 
 **The supervise function exists twice.**
 
-- **MEASURED** (`sed -n '183,192p' internal/team/controller.go`, `sed -n '190,200p' internal/bus/supervisor.go`): `computeBackoff` is the same ten lines in both packages.
+- **MEASURED** (`sed -n '183,192p' internal/team/controller.go`, `sed -n '190,200p' internal/bus/supervisor.go`): `computeBackoff` has the same logic in both packages: the two print 10 and 11 lines and differ only by a comment and a blank line.
 - **CODE:** `bus.Supervisor` keeps its own watch, crash, restart, terminate and stop (`supervisor.go:400-595`).
 - **The supervisor extraction gate is half met.** marvel#351 (merged 2026-09-25, `4ef7222`) added `internal/workload` and the allowlisted child environment, and `bus.Supervisor` now spawns through `workload.Start` (`supervisor.go:316`). That closed the environment hazard in services-list.md section 3.2.
 - The gate's structural claim is not met. Section 3.5 says that after the extraction "`spawnLocked` no longer exists". It does exist (`supervisor.go:306`), and the lifecycle (watch, backoff, adopt, `Restart`, `Stop`) did not move.
@@ -122,25 +122,25 @@ The other seams fit less directly.
 **MEASURED** (`gh pr list --state merged --search "merged:2026-09-08..2026-10-08" --json number,files,additions,deletions`; then for each PR, `gh api repos/ArcavenAE/marvel/pulls/<n>/commits`, counting commits with two parents, and among those, messages containing "onflict"):
 
 - 382 merged PRs; 86 touched at least one of the three files, and 23 touched two or more.
-- **Hot PRs** (touch one of the three, 86): 29 have a base merge (34%), and 13 name a conflict (15%).
+- **Hot PRs** (touch one of the three, 86): 29 have a base merge (34%), and 13 name a conflict (15%). Percentages here are rounded to the nearest whole number.
 - **Other PRs** (296): 21 have a base merge (7%), and 4 name a conflict (1%).
 
 Most of that gap is PR size. Bucketed by diff lines, Go PRs only:
 
 | diff lines | hot: n, base merge, conflict | other Go: n, base merge, conflict |
 |---|---|---|
-| 0-300 | 21, 19%, 4% | 81, 8%, 1% |
-| 300-1000 | 42, 28%, 9% | 26, 34%, 7% |
-| 1000 and up | 23, 56%, 34% | 3, 33%, 0% |
+| 0-300 | 21, 19%, 5% | 81, 9%, 1% |
+| 300-1000 | 42, 29%, 10% | 26, 35%, 8% |
+| 1000 and up | 23, 57%, 35% | 3, 33%, 0% |
 
 - In the middle band, where both groups have samples, PRs touching the three files fold in main no more often than other Go PRs.
-- Small hot PRs do fold in main about twice as often (19% against 8%).
+- Small hot PRs do fold in main about twice as often (19% against 9%).
 - The large band has three PRs on the other side, too few to compare.
 
 Where the conflicts land is a separate question from how often they happen.
 
 - **MEASURED** (file paths parsed from the 13 conflict-named merge messages; 12 list files): `daemon.go` appears in 9 of the 12.
-- **MEASURED:** 5 of those 9 are #548, #549, #551, #552 and #556. All five belong to one feature (usage limits), all are based on main, and all merged on 2026-10-04.
+- **MEASURED:** the nine are #285, #286, #478, #482, #531, #548, #549, #552 and #556. Four of them, #548, #549, #552 and #556, are four of the five PRs of one feature (usage limits; the fifth, #551, also conflicted, in `internal/api/account_test.go`). All five are based on main and merged on 2026-10-04.
 - **MEASURED:** two more are the #285/#286 stack that the 2026-09 reflection already diagnosed as a workflow artifact.
 
 Limits:
@@ -155,7 +155,7 @@ Limits:
 | file | PRs | median lines changed in the file | median PR diff | median files per PR |
 |---|---|---|---|---|
 | `daemon.go` | 63 | 17 | 688 | 10 |
-| `controller.go` | 22 | 12 | 566 | 9 |
+| `controller.go` | 22 | 12 | 565.5 | 9 |
 | `manager.go` | 26 | 14.5 | 551 | 11 |
 | none of the three | 296 | | 115 | |
 
@@ -163,15 +163,15 @@ A PR that touches `daemon.go` changes a median of 17 lines in it. The review cos
 
 ### 5.4 Test isolation
 
-**MEASURED** (a `go/ast` walk over `internal/daemon/*_test.go`, following same-package helpers): 334 `Test` functions.
+**MEASURED** (a `go/ast` walk over `internal/daemon/*_test.go`, following same-package helpers): 334 functions named `Test*`, which includes `TestMain`, so 333 tests.
 
 - 21 start a daemon (`Start`, `startTestDaemon`, `StartMRVL`).
 - 192 construct one (`New`, `NewWithOptions`, or a `Daemon{}` literal) without starting it.
-- 121 use neither.
+- 121 use neither (including `TestMain`).
 
 **MEASURED** (`grep -c 'skipIfNoTmux(t)'`): tests that need a real tmux: daemon 30, team 84, session 43, tmux 34.
 
-**MEASURED** (`env -u MARVEL_* go test -count=1`):
+**MEASURED**, one run each, on 2026-10-09 between about 06:30Z and 06:40Z, on a macOS arm64 workstation with go1.26.5 and tmux 3.7b on `PATH`, every `MARVEL_*` unset (`go test -count=1`). These are single runs on one host, not a benchmark:
 
 | package | time |
 |---|---|
@@ -187,7 +187,7 @@ A PR that touches `daemon.go` changes a median of 17 lines in it. The review cos
 - Next come two module-wide source checks: `TestOnlyRespondSetsResponseResult` at 9.1 s and `TestResponseSourceCheckCatchesPlantedWrites` at 5.3 s. They type-check the whole module and do not depend on the file layout.
 - The rest are lifecycle and adoption tests.
 
-**MEASURED** (`grep -oE '\bd\.[a-z][A-Za-z]*\b'` over the daemon tests): tests reach 56 distinct unexported names on `d` (fields and methods), in 550 places, and build `Daemon{}` literals in 14 places across 5 files.
+**MEASURED** (`grep -oE '\bd\.[a-z][A-Za-z]*\b'` over the daemon tests): tests reach 56 distinct lowercase names after `d.`, in 550 places; 54 of them are `Daemon` fields or methods (`d.sock` is a filename string and `d.limitAct` appears only in a comment and a string). They build `Daemon{}` literals in 14 places across 5 files.
 
 **INFERRED:** two consequences.
 
@@ -209,7 +209,7 @@ A PR that touches `daemon.go` changes a median of 17 lines in it. The review cos
   - Gives: the supervisor gate fully met, one supervise primitive for the backplane, and `cmd/marvel` off the daemon package for client calls.
   - Costs: two PRs, the second with test edits.
 - **(c) Backplane-first restructure.** Packages for register, route, supervise and meter now.
-  - Costs: the largest change, against a design that is speculative (`question-marvel-service-provider-shape`), with 56 private names reached by tests, and no second part kind to prove the generalization. SOUL section 7 (gradual elaboration) argues against it.
+  - Costs: the largest change, against a design that is speculative (`question-marvel-service-provider-shape`), with 54 private members reached by tests, and no second part kind to prove the generalization. SOUL section 7 (gradual elaboration) argues against it.
 - **(d) Workflow only.** Land a feature as one PR or as a sequenced chain rather than as parallel siblings; the 2026-10-04 usage-limits wave is the specimen. No code change.
 
 ## 7. Recommendation
