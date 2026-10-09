@@ -130,6 +130,13 @@ content: |
   manager (a marvel Service for a vault marvel does not run, embedded, or a
   managed child) classified under ADR-009 as written. Evidence for the ADR-009
   revisit (aae-orc-p4fzv); it rules on nothing.
+
+  CODE SEAMS 2026-10-09 (finding-marvel-4m2m): the backplane's four functions
+  map onto seams in daemon.go, team/controller.go and session/manager.go. The
+  supervise function exists twice (the same `computeBackoff` in team and bus),
+  and the supervisor extraction gate is half met: the allowlisted spawn
+  shipped in #351, the lifecycle move did not (bd aae-orc-oo62t). Options and
+  a recommendation for the operator are in the finding.
 edges:
   - target: elem-agentic-resource-matrix
     type: derives
