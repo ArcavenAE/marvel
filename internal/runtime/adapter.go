@@ -67,9 +67,13 @@ type LaunchContext struct {
 	// it does today. User and password are the team credential the daemon
 	// minted into the broker's authorization file; per-session users are a
 	// follow-on on the same seam.
-	BusURL      string
-	BusUser     string
-	BusPassword string
+	BusURL string
+	// CredentialHelper is the path of the helper a seat runs to get a
+	// short-lived token from the credential broker. Empty when the cluster
+	// runs no broker. It is a pointer: no token rides in the environment.
+	CredentialHelper string
+	BusUser          string
+	BusPassword      string
 	// GlobalRole is the global role the role holds on this cluster, resolved
 	// by config.ResolvedGlobalRole through the bus provider: "supervisor", or
 	// empty for none. It rides to the seat as DIRECTOR_GLOBAL_ROLE.

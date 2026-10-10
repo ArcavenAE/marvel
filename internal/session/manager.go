@@ -57,6 +57,9 @@ type Manager struct {
 	// being killed: a delete, a reaped pane, a failed kill. The credential
 	// broker revokes the seat's tokens here. Nil means nothing is told.
 	SessionEnded func(key string)
+	// CredentialHelper is the path a seat's environment carries to its
+	// credential helper. Empty means the cluster has no credential broker.
+	CredentialHelper string
 	// StreamDir holds the per-session FIFOs marvel reads agent output
 	// from. Defaults to a per-layout temp directory (see daemonTempDir).
 	// The pipes carry no content at rest, so nothing here needs to survive
