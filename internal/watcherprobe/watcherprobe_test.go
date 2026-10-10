@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const ms = int64(1_000_000)
@@ -521,6 +523,83 @@ func TestC9RefusesATranscriptOutsideTheScratchRoots(t *testing.T) {
 	// No roots given means nothing may be read at all.
 	if c := get(t, RunWith(canaryWindow(outside), "s", Options{}), "c9"); c.Status != StatusNotRun {
 		t.Errorf("no roots: c9 = %+v", c)
+	}
+}
+
+// A transcript path that names something other than a regular file is refused
+// without being opened for a blocking read: a FIFO under a root has no writer
+// and would hang a plain open.
+func TestC9RefusesAFifoWithoutHanging(t *testing.T) {
+	root := t.TempDir()
+	fifo := filepath.Join(root, "projects", "p", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(fifo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("no mkfifo: %v", err)
+	}
+	done := make(chan Check, 1)
+	go func() {
+		done <- get(t, RunWith(canaryWindow(fifo), "s", Options{TranscriptRoots: []string{root}}), "c9")
+	}()
+	select {
+	case c := <-done:
+		if c.Status != StatusFail || !strings.Contains(c.Note, "regular file") {
+			t.Errorf("a FIFO: c9 = %+v, want a refusal that says it is not a regular file", c)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("c9 is still blocked on a FIFO after 3 s")
+	}
+}
+
+// Something under a root that is not a regular file is refused, whatever it is.
+func TestC9RefusesWhatIsNotARegularFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "p", "adir.jsonl")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := get(t, RunWith(canaryWindow(dir), "s", Options{TranscriptRoots: []string{root}}), "c9")
+	if c.Status != StatusFail || !strings.Contains(c.Note, "regular file") {
+		t.Errorf("a directory: c9 = %+v, want a refusal that says it is not a regular file", c)
+	}
+}
+
+// The filesystem root and an empty root are never roots: with either, every
+// path would be "inside" one.
+func TestC9NeverTreatsTheFilesystemRootAsARoot(t *testing.T) {
+	_, path := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	for name, roots := range map[string][]string{"slash": {"/"}, "empty": {""}, "both": {"/", ""}} {
+		c := get(t, RunWith(canaryWindow(path), "s", Options{TranscriptRoots: roots}), "c9")
+		if c.Status != StatusFail {
+			t.Errorf("roots %s: c9 = %+v, want a refusal", name, c)
+		}
+		if v, _ := c.Value.(map[string]any); v != nil && v["reached"] == true {
+			t.Errorf("roots %s: a transcript was read: %+v", name, c)
+		}
+	}
+}
+
+// Only a hook inside the canary window names the transcript: a hook before or
+// after it carries some other session's path.
+func TestC9TakesTheTranscriptPathOnlyFromTheCanaryWindow(t *testing.T) {
+	root, path := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	named := func(ns int64) Line {
+		return hookBody(ns, "UserPromptSubmit", fmt.Sprintf(`{"hook_event_name":"UserPromptSubmit","transcript_path":%q}`, path))
+	}
+	opt := Options{TranscriptRoots: []string{root}}
+	for name, lines := range map[string][]Line{
+		"a hook before the window": {named(1 * ms), mark(2*ms, "canary-start", ""), hook(3*ms, "UserPromptSubmit"), mark(4*ms, "canary-end", "")},
+		"a hook after the window":  {mark(2*ms, "canary-start", ""), hook(3*ms, "UserPromptSubmit"), mark(4*ms, "canary-end", ""), named(5 * ms)},
+	} {
+		c := get(t, RunWith(lines, "s", opt), "c9")
+		if c.Status != StatusNotRun || !strings.Contains(c.Note, "transcript_path") {
+			t.Errorf("%s: c9 = %+v, want not-run for want of a path in the window", name, c)
+		}
+	}
+	inside := []Line{mark(2*ms, "canary-start", ""), named(3 * ms), mark(4*ms, "canary-end", "")}
+	if c := get(t, RunWith(inside, "s", opt), "c9"); c.Status != StatusObserved {
+		t.Errorf("a hook inside the window: c9 = %+v", c)
 	}
 }
 
