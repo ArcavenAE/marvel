@@ -71,3 +71,45 @@ func TestCheckRefusesATornLog(t *testing.T) {
 		t.Error("a result file exists for a malformed log")
 	}
 }
+
+func TestMaskHidesKeyShapesAndFragmentsOfTheSecret(t *testing.T) {
+	const secret = "sk-ant-api03-FAKEFAKEFAKE0123456789abcdefXYZ"
+	t.Setenv("WATCHER_PROBE_MASK", secret)
+	in := strings.Join([]string{
+		"full " + secret,
+		"shape sk-ant-api03-OTHERKEYTEXT99",
+		"ellipsis sk-ant-...0123456789abcdefXYZ",
+		"tail 0123456789abcdefXYZ",
+		"short 0123456 stays",
+		"task-queue stays and so does sk",
+	}, "\n") + "\n"
+	var out, errb bytes.Buffer
+	if code := run([]string{"mask"}, strings.NewReader(in), &out, &errb); code != 0 {
+		t.Fatalf("mask exited %d: %s", code, errb.String())
+	}
+	got := out.String()
+	for _, leak := range []string{"FAKEFAKE", "OTHERKEY", "sk-ant-", "0123456789", "XYZ"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("mask left %q in:\n%s", leak, got)
+		}
+	}
+	for _, keep := range []string{"short 0123456 stays", "task-queue stays and so does sk"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("mask changed ordinary text %q:\n%s", keep, got)
+		}
+	}
+	if strings.Count(got, "\n") != strings.Count(in, "\n") {
+		t.Errorf("mask changed the line count:\n%s", got)
+	}
+}
+
+func TestMaskWithNoSecretStillHidesKeyShapes(t *testing.T) {
+	t.Setenv("WATCHER_PROBE_MASK", "")
+	var out, errb bytes.Buffer
+	if code := run([]string{"mask"}, strings.NewReader("key sk-ant-api03-ABCDEFGH12345\n"), &out, &errb); code != 0 {
+		t.Fatalf("mask exited %d: %s", code, errb.String())
+	}
+	if strings.Contains(out.String(), "ABCDEFGH") || !strings.HasPrefix(out.String(), "key ") {
+		t.Errorf("mask output = %q; want the key shape hidden and the rest kept", out.String())
+	}
+}
