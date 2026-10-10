@@ -251,6 +251,29 @@ func TestAnUnreadableConfigFailsTheScan(t *testing.T) {
 	}
 }
 
+func TestAnAncestorThatCannotBeListedFailsTheScan(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root lists everything")
+	}
+	root := t.TempDir()
+	mid := filepath.Join(root, "mid")
+	cwd := filepath.Join(mid, "work")
+	write(t, filepath.Join(mid, "crush.json"), "{}")
+	write(t, filepath.Join(cwd, "main.go"), "package main")
+	// Search without read: os.Stat of crush.json by name still succeeds, as
+	// Crush's probe does, but the directory cannot be listed.
+	if err := os.Chmod(mid, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(mid, 0o755) })
+	if _, err := os.Stat(filepath.Join(mid, "crush.json")); err != nil {
+		t.Fatalf("precondition: crush.json must be reachable by name: %v", err)
+	}
+	if _, err := InspectConfig(cwd, root, nil); err == nil {
+		t.Fatal("an ancestor that cannot be listed produced a verdict; the scan must fail closed")
+	}
+}
+
 func TestAScanOfAMissingDirectoryFails(t *testing.T) {
 	if _, err := InspectConfig(filepath.Join(t.TempDir(), "gone"), "", nil); err == nil {
 		t.Fatal("a missing working directory produced a verdict")
