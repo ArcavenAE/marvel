@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/broker"
@@ -28,6 +29,12 @@ func (a storeSessionAuth) Authenticate(key, token string) (broker.Identity, erro
 // nothing.
 func (d *Daemon) UseBrokerDriver(drv broker.Driver) {
 	d.broker = broker.New(drv, storeSessionAuth{store: d.store})
+	b := d.broker
+	d.sessMgr.SessionEnded = func(key string) {
+		if err := b.RevokeSession(context.Background(), key); err != nil {
+			log.Printf("warning: session %s: revoke broker tokens: %v", key, err)
+		}
+	}
 }
 
 // handleBrokerToken issues one short-lived token to a seat that proves it
