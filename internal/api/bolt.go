@@ -83,6 +83,7 @@ var allBuckets = [][]byte{
 	bucketPolicies,
 	bucketRoleHealth,
 	bucketScheduleStatus,
+	bucketDutyReadiness,
 	bucketMeta,
 }
 
@@ -304,7 +305,7 @@ func (s *Store) rehydrate() error {
 			return err
 		}
 		// Schedule status
-		return tx.Bucket(bucketScheduleStatus).ForEach(func(k, v []byte) error {
+		if err := tx.Bucket(bucketScheduleStatus).ForEach(func(k, v []byte) error {
 			var st ScheduleStatus
 			if err := json.Unmarshal(v, &st); err != nil {
 				return fmt.Errorf("unmarshal schedule status %s: %w", string(k), err)
@@ -312,7 +313,11 @@ func (s *Store) rehydrate() error {
 			st.Key = string(k)
 			s.scheduleStatus[st.Key] = &st
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
+		// Seat readiness
+		return s.rehydrateDuties(tx)
 	})
 }
 

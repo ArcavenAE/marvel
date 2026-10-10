@@ -216,6 +216,12 @@ func TestWithdrawnCellNeverExpires(t *testing.T) {
 	if st := c.State(t0.Add(100 * 365 * 24 * time.Hour)); st != asof.Fresh {
 		t.Errorf("a century later the withdrawn cell is %s, want fresh: it never expires into ready", st)
 	}
+	// Whatever a record carries, the cell builder drops a withdrawal's expiry.
+	odd := w
+	odd.ValidUntil = t1
+	if got := ReadinessCells([]DutyRecord{odd})[WithdrawnCellName("gh.comment")]; !got.ValidUntil.IsZero() {
+		t.Errorf("a withdrawn cell kept valid_until %v", got.ValidUntil)
+	}
 	bad := w
 	bad.ValidUntil = t1
 	if err := ValidateDutyRecord(bad); err == nil {
@@ -288,7 +294,6 @@ func TestNoPaneTextOrCredentialReachesACell(t *testing.T) {
 			func(r *DutyRecord) { r.Source = "pane:dialog:" + sent },
 			func(r *DutyRecord) { r.State = DutyState(sent) },
 			func(r *DutyRecord) { r.Duty = sent },
-			func(r *DutyRecord) { r.Seat = sent },
 			func(r *DutyRecord) { r.SetBy = sent },
 		} {
 			r := good
@@ -312,6 +317,9 @@ func TestNoPaneTextOrCredentialReachesACell(t *testing.T) {
 			t.Errorf("the sentinel %q reached a stored record or a cell: %s", sent, blob)
 		}
 	}
+	// The seat is the daemon's own session key, the key of the record and not a
+	// field a seat or a pane supplies; it is checked for shape (see the newline
+	// case above) and stays out of every cell.
 	// A DutyRecord has no field that could carry a free-text body, so the type
 	// itself is part of the fence: a new string field has to be named here.
 	want := map[string]bool{"seat": true, "duty": true, "withdrawn": true, "state": true, "source": true, "seq": true, "observed_at": true, "valid_until": true, "set_by": true}
@@ -359,5 +367,39 @@ func TestBusDoesNotWriteReadiness(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatalf("no bus sources found in %s: the guard checked nothing", dir)
+	}
+}
+
+// The high-water mark is its own record: once every record of a seat is gone and
+// the daemon has restarted, the next number is still new.
+func TestDutySeqIsNotReusedAfterEveryRecordIsGone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	sess := &Session{Name: "seat-0", Workspace: "aae", Team: "t", Role: "r", State: SessionRunning}
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"gh.read", "gh.comment"} {
+		if _, err := s1.RecordDuty(proven(d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s1.DeleteSession(sess.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	next, err := s2.RecordDuty(proven("gh.read"))
+	if err != nil || next.Seq != 3 {
+		t.Errorf("seq after every record was deleted and the daemon restarted = %d (%v), want 3", next.Seq, err)
 	}
 }
