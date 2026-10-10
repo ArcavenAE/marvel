@@ -127,7 +127,17 @@ The provider key is bearer authority at a third party, so marvel never holds it,
 
 A private `GOOSE_PATH_ROOT` does not move the keyring entry (G10). A goose seat therefore reads the operator's own goose keyring entry: the operator's credential, used by the operator's own seat. That is not marvel custody, but it is not isolation either.
 
-**Ruled 2026-10-10 by the operator: "(a) with (c) as future option".** v1 keeps the keyring. The seat reads the operator's goose entry, and marvel sets nothing that disables the keyring. The future option is a key a broker mints for the seat, short-lived and revocable, once that broker exists; it is not designed here. The option not taken was to disable the keyring (`GOOSE_DISABLE_KEYRING`) and link the operator's file store into the home. Where the operator already uses file storage, `config/secrets.yaml` is linked into the home, never copied (`SessionHomeSpec.LinkIn`).
+**The options put to the operator** (drafted by the architect seat from goose v1.54.0 source, and carried to the operator as a decision card). `GOOSE_DISABLE_KEYRING`, set in env or config, moves secrets to the File backend at `<config_dir>/secrets.yaml` (`crates/goose/src/config/base.rs:216-220`, `:397-406`), and the config dir follows an absolute `GOOSE_PATH_ROOT`:
+
+- (a) Keep the keyring. The seat reads the operator's own goose entry, and the acknowledgement stands as written.
+- (b) Project `GOOSE_DISABLE_KEYRING=1` and link the operator's own `secrets.yaml` into the home (`SessionHomeSpec.LinkIn`, never a copy). The acknowledgement narrows to "the seat reads this one linked file", and the operator's keychain is no longer touched.
+- (c) Project `GOOSE_DISABLE_KEYRING=1` and have a broker mint a short-lived credential into the home file. No operator credential is used. It needs adapter kit checklist line 20 reworded to allow a brokered, revocable, short-lived credential in a seeded file.
+
+The architect recommended (b) for the probe and v1, then (c) once a broker exists.
+
+**Ruled 2026-10-10 by the operator: "(a) with (c) as future option".**
+
+This design reads the ruling as follows; the reading is the design's, not the operator's words. v1 keeps the keyring: the seat reads the operator's goose entry, and marvel projects no `GOOSE_DISABLE_KEYRING`. (c) is designed later, once a broker exists, together with the checklist line 20 rewording it needs. Where the operator already uses file storage, `config/secrets.yaml` is linked into the home, never copied (`SessionHomeSpec.LinkIn`).
 
 For the probe's credentials, short-lived Bedrock credentials fit the brokering clause best. A per-trial API key is acceptable only if the operator or a vault holds it and can revoke it.
 
