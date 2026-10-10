@@ -2968,6 +2968,9 @@ func newSessionRow(s api.Session) sessionRow {
 	if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateLoggedOut {
 		health += " (logged-out)"
 	}
+	if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateParked && s.HarnessState.Reason != "" {
+		health += " (parked: " + s.HarnessState.Reason + ")"
+	}
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
 	// to an ordinary failure the reconciler is about to replace, so the
