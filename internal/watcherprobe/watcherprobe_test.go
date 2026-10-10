@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const ms = int64(1_000_000)
@@ -436,15 +438,225 @@ func TestC8IdleNotificationSeconds(t *testing.T) {
 	}
 }
 
-func TestC9HookStdoutReachesTheContext(t *testing.T) {
-	for body, want := range map[string]bool{"yes": true, "no": false} {
-		c := get(t, Run([]Line{mark(1*ms, "stdout-canary", body)}, "s"), "c9")
-		if c.Status != StatusObserved || c.Value != want {
-			t.Errorf("canary %q: c9 = %+v", body, c)
+// c9 reads the session transcript the hook payload names, not a pane capture.
+const canary = "WATCHER-CANARY-7f3a91"
+
+func transcriptRoot(t *testing.T, records ...string) (root, path string) {
+	t.Helper()
+	root = t.TempDir()
+	path = filepath.Join(root, "projects", "p", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(records, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root, path
+}
+
+func canaryWindow(path string) []Line {
+	body := fmt.Sprintf(`{"hook_event_name":"UserPromptSubmit","transcript_path":%q}`, path)
+	return []Line{mark(1*ms, "canary-start", ""), hookBody(2*ms, "UserPromptSubmit", body), hook(5*ms, "Stop"), mark(6*ms, "canary-end", "")}
+}
+
+func TestC9ReadsTheTranscriptTheHookPayloadNames(t *testing.T) {
+	userRec := `{"type":"user","message":{"content":"What token did a hook just print?"}}`
+	hookRec := `{"type":"attachment","attachment":{"type":"hook_success","stdout":"` + canary + `\n"}}`
+	replyRec := `{"type":"assistant","message":{"content":[{"type":"text","text":"` + canary + `"}]}}`
+	cases := map[string]struct {
+		records []string
+		reached bool
+		context int
+		reply   int
+	}{
+		"a hook record in the context": {[]string{userRec, hookRec, replyRec}, true, 1, 1},
+		"only the reply names it":      {[]string{userRec, replyRec}, true, 0, 1},
+		"the token appears nowhere":    {[]string{userRec, `{"type":"assistant","message":{"content":"I saw nothing"}}`}, false, 0, 0},
+		"a record that is not json":    {[]string{userRec, "not json " + canary, hookRec}, true, 2, 0},
+	}
+	for name, tc := range cases {
+		root, path := transcriptRoot(t, tc.records...)
+		c := get(t, RunWith(canaryWindow(path), "s", Options{TranscriptRoots: []string{root}}), "c9")
+		v, _ := c.Value.(map[string]any)
+		if c.Status != StatusObserved || v["reached"] != tc.reached || v["in_context_records"] != tc.context || v["in_reply_records"] != tc.reply {
+			t.Errorf("%s: c9 = %+v", name, c)
 		}
 	}
-	if c := get(t, Run([]Line{mark(1*ms, "stdout-canary", "maybe")}, "s"), "c9"); c.Status != StatusFail {
-		t.Errorf("an unreadable answer: c9 = %+v", c)
+}
+
+func TestC9RefusesATranscriptOutsideTheScratchRoots(t *testing.T) {
+	root, _ := transcriptRoot(t, `{"type":"user"}`)
+	outsideRoot, outside := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	_ = outsideRoot
+	link := filepath.Join(root, "projects", "p", "link.jsonl")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"a path outside the roots":     outside,
+		"a symlink inside that leaves": link,
+		"a path that climbs out":       filepath.Join(root, "projects", "..", "..", filepath.Base(filepath.Dir(outside)), "session.jsonl"),
+		"a path that is not absolute":  "projects/p/session.jsonl",
+		"a path that does not exist":   filepath.Join(root, "projects", "p", "gone.jsonl"),
+	} {
+		c := get(t, RunWith(canaryWindow(path), "s", Options{TranscriptRoots: []string{root}}), "c9")
+		if c.Status != StatusFail {
+			t.Errorf("%s: c9 = %+v, want a refusal", name, c)
+		}
+		if v, _ := c.Value.(map[string]any); v != nil && v["reached"] == true {
+			t.Errorf("%s: a transcript outside the roots was read: %+v", name, c)
+		}
+	}
+	// A directory whose name only starts with the root's name is not under it.
+	sibling := root + "-sibling"
+	if err := os.MkdirAll(sibling, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sibling) })
+	sib := filepath.Join(sibling, "session.jsonl")
+	if err := os.WriteFile(sib, []byte(`{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c := get(t, RunWith(canaryWindow(sib), "s", Options{TranscriptRoots: []string{root}}), "c9"); c.Status != StatusFail {
+		t.Errorf("a sibling that shares the root's prefix: c9 = %+v, want a refusal", c)
+	}
+	// No roots given means nothing may be read at all.
+	if c := get(t, RunWith(canaryWindow(outside), "s", Options{}), "c9"); c.Status != StatusNotRun {
+		t.Errorf("no roots: c9 = %+v", c)
+	}
+}
+
+// A transcript path that names something other than a regular file is refused
+// without being opened for a blocking read: a FIFO under a root has no writer
+// and would hang a plain open.
+func TestC9RefusesAFifoWithoutHanging(t *testing.T) {
+	root := t.TempDir()
+	fifo := filepath.Join(root, "projects", "p", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(fifo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("no mkfifo: %v", err)
+	}
+	done := make(chan Check, 1)
+	go func() {
+		done <- get(t, RunWith(canaryWindow(fifo), "s", Options{TranscriptRoots: []string{root}}), "c9")
+	}()
+	select {
+	case c := <-done:
+		if c.Status != StatusFail || !strings.Contains(c.Note, "regular file") {
+			t.Errorf("a FIFO: c9 = %+v, want a refusal that says it is not a regular file", c)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("c9 is still blocked on a FIFO after 3 s")
+	}
+}
+
+// Something under a root that is not a regular file is refused, whatever it is.
+func TestC9RefusesWhatIsNotARegularFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "projects", "p", "adir.jsonl")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := get(t, RunWith(canaryWindow(dir), "s", Options{TranscriptRoots: []string{root}}), "c9")
+	if c.Status != StatusFail || !strings.Contains(c.Note, "regular file") {
+		t.Errorf("a directory: c9 = %+v, want a refusal that says it is not a regular file", c)
+	}
+}
+
+// A directory under a root that is a link leading out must not carry a
+// transcript out with it. O_NOFOLLOW refuses a link in the last component only,
+// so this is the case that depends on resolving the whole path first.
+func TestC9RefusesATranscriptReachedThroughADirectorySymlinkOutOfTheRoot(t *testing.T) {
+	// Resolve the root first, so the dirlink is the only link on the path and
+	// a platform whose temp dir is itself a link (macOS /var) cannot make the
+	// path look outside the root for a different reason.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, outside := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	if err := os.MkdirAll(filepath.Join(root, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(outside), filepath.Join(root, "projects", "dirlink")); err != nil {
+		t.Fatal(err)
+	}
+	via := filepath.Join(root, "projects", "dirlink", filepath.Base(outside))
+	if b, err := os.ReadFile(via); err != nil || !strings.Contains(string(b), canary) {
+		t.Fatalf("the fixture is wrong: the file is not readable through the link: %v", err)
+	}
+	c := get(t, RunWith(canaryWindow(via), "s", Options{TranscriptRoots: []string{root}}), "c9")
+	if c.Status != StatusFail || !strings.Contains(c.Note, "outside") {
+		t.Errorf("a directory link out of the root: c9 = %+v, want a refusal that says outside", c)
+	}
+	if v, _ := c.Value.(map[string]any); v != nil {
+		t.Errorf("the transcript was read through the link: %+v", c)
+	}
+}
+
+// The filesystem root and an empty root are never roots: with either, every
+// path would be "inside" one.
+func TestC9NeverTreatsTheFilesystemRootAsARoot(t *testing.T) {
+	_, path := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	for name, roots := range map[string][]string{"slash": {"/"}, "empty": {""}, "both": {"/", ""}} {
+		c := get(t, RunWith(canaryWindow(path), "s", Options{TranscriptRoots: roots}), "c9")
+		if c.Status != StatusFail {
+			t.Errorf("roots %s: c9 = %+v, want a refusal", name, c)
+		}
+		if v, _ := c.Value.(map[string]any); v != nil && v["reached"] == true {
+			t.Errorf("roots %s: a transcript was read: %+v", name, c)
+		}
+	}
+}
+
+// Only a hook inside the canary window names the transcript: a hook before or
+// after it carries some other session's path.
+func TestC9TakesTheTranscriptPathOnlyFromTheCanaryWindow(t *testing.T) {
+	root, path := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	named := func(ns int64) Line {
+		return hookBody(ns, "UserPromptSubmit", fmt.Sprintf(`{"hook_event_name":"UserPromptSubmit","transcript_path":%q}`, path))
+	}
+	opt := Options{TranscriptRoots: []string{root}}
+	for name, lines := range map[string][]Line{
+		"a hook before the window": {named(1 * ms), mark(2*ms, "canary-start", ""), hook(3*ms, "UserPromptSubmit"), mark(4*ms, "canary-end", "")},
+		"a hook after the window":  {mark(2*ms, "canary-start", ""), hook(3*ms, "UserPromptSubmit"), mark(4*ms, "canary-end", ""), named(5 * ms)},
+	} {
+		c := get(t, RunWith(lines, "s", opt), "c9")
+		if c.Status != StatusNotRun || !strings.Contains(c.Note, "transcript_path") {
+			t.Errorf("%s: c9 = %+v, want not-run for want of a path in the window", name, c)
+		}
+	}
+	inside := []Line{mark(2*ms, "canary-start", ""), named(3 * ms), mark(4*ms, "canary-end", "")}
+	if c := get(t, RunWith(inside, "s", opt), "c9"); c.Status != StatusObserved {
+		t.Errorf("a hook inside the window: c9 = %+v", c)
+	}
+}
+
+func TestC9NeedsAWindowAndAPath(t *testing.T) {
+	root, _ := transcriptRoot(t, `{"type":"user"}`)
+	opt := Options{TranscriptRoots: []string{root}}
+	if c := get(t, RunWith(nil, "s", opt), "c9"); c.Status != StatusNotRun {
+		t.Errorf("no marks: c9 = %+v", c)
+	}
+	noPath := []Line{mark(1*ms, "canary-start", ""), hook(2*ms, "UserPromptSubmit"), mark(3*ms, "canary-end", "")}
+	if c := get(t, RunWith(noPath, "s", opt), "c9"); c.Status != StatusNotRun || !strings.Contains(c.Note, "transcript_path") {
+		t.Errorf("no transcript_path: c9 = %+v", c)
+	}
+}
+
+func TestC9NeverCarriesTranscriptTextIntoTheResult(t *testing.T) {
+	const key = "sk-ant-api03-FAKEFAKEFAKE0123456789abcdefXYZ"
+	root, path := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+` `+key+`"}}`)
+	b, err := json.Marshal(RunWith(canaryWindow(path), "s", Options{TranscriptRoots: []string{root}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"FAKEFAKE", "sk-ant-", canary} {
+		if strings.Contains(string(b), leak) {
+			t.Errorf("the result holds %q: %s", leak, b)
+		}
 	}
 }
 
@@ -472,6 +684,72 @@ func TestC11SubagentStamps(t *testing.T) {
 	v, _ := c.Value.(map[string]any)
 	if c.Status != StatusObserved || v["subagent_events"] != 2 || v["with_agent_id"] != 1 || v["turn_stops"] != 1 {
 		t.Errorf("c11 = %+v", c)
+	}
+}
+
+// c11 also asks whether a main turn's Stop ever carries agent_id.
+func TestC11MainTurnStopAgentID(t *testing.T) {
+	stopWith := func(ns int64, body string) Line { return hookBody(ns, "Stop", body) }
+	withID := []Line{mark(1*ms, "subagent-start", ""), stopWith(2*ms, `{"hook_event_name":"Stop","agent_id":"main-1"}`), stopWith(3*ms, `{"hook_event_name":"Stop"}`), mark(4*ms, "subagent-end", "")}
+	v, _ := get(t, Run(withID, "s"), "c11").Value.(map[string]any)
+	if v["turn_stops"] != 2 || v["turn_stops_with_agent_id"] != 1 || v["main_stop_carries_agent_id"] != true {
+		t.Errorf("a Stop with an agent_id: %+v", v)
+	}
+	without := []Line{mark(1*ms, "subagent-start", ""), stopWith(2*ms, `{"hook_event_name":"Stop"}`), hook(3*ms, "StopFailure"), mark(4*ms, "subagent-end", "")}
+	v, _ = get(t, Run(without, "s"), "c11").Value.(map[string]any)
+	if v["turn_stops"] != 2 || v["turn_stops_with_agent_id"] != 0 || v["main_stop_carries_agent_id"] != false {
+		t.Errorf("Stops with no agent_id: %+v", v)
+	}
+	// An empty agent_id is not one.
+	empty := []Line{mark(1*ms, "subagent-start", ""), stopWith(2*ms, `{"hook_event_name":"Stop","agent_id":""}`), mark(4*ms, "subagent-end", "")}
+	if v, _ := get(t, Run(empty, "s"), "c11").Value.(map[string]any); v["main_stop_carries_agent_id"] != false {
+		t.Errorf("an empty agent_id counted: %+v", v)
+	}
+}
+
+// c12 also asks whether a Stop after a backgrounded task carries a non-empty
+// background_tasks, and whether a turn then resumes with no prompt.
+func TestC12BackgroundTasksFieldAndResume(t *testing.T) {
+	stop := func(ns int64, body string) Line { return hookBody(ns, "Stop", body) }
+	open := mark(1*ms, "bg-start", "")
+	submit := hook(2*ms, "UserPromptSubmit")
+	done, end := mark(8*ms, "bg-task-done", ""), mark(20*ms, "bg-end", "")
+	for name, tc := range map[string]struct {
+		lines                      []Line
+		nonEmpty, present, resumed bool
+	}{
+		"a Stop listing a task, no resume": {[]Line{open, submit, stop(5*ms, `{"hook_event_name":"Stop","background_tasks":["t1"]}`), done, end}, true, true, false},
+		"an empty list, then a resume":     {[]Line{open, submit, stop(5*ms, `{"hook_event_name":"Stop","background_tasks":[]}`), done, stop(12*ms, `{"hook_event_name":"Stop"}`), end}, false, true, true},
+		"no field at all":                  {[]Line{open, submit, stop(5*ms, `{"hook_event_name":"Stop"}`), done, end}, false, false, false},
+		"a second stop after a new prompt": {[]Line{open, submit, stop(5*ms, `{"hook_event_name":"Stop"}`), done, hook(10*ms, "UserPromptSubmit"), stop(12*ms, `{"hook_event_name":"Stop"}`), end}, false, false, false},
+		"a StopFailure resumes the turn":   {[]Line{open, submit, stop(5*ms, `{"hook_event_name":"Stop"}`), done, hook(12*ms, "StopFailure"), end}, false, false, true},
+	} {
+		c := get(t, Run(tc.lines, "s"), "c12")
+		v, _ := c.Value.(map[string]any)
+		if c.Status != StatusObserved || v["stop_has_background_tasks"] != tc.nonEmpty || v["background_tasks_field_present"] != tc.present || v["resumed_without_prompt"] != tc.resumed {
+			t.Errorf("%s: c12 = %+v", name, c)
+		}
+		if _, ok := v["stop_before_task_done"]; !ok {
+			t.Errorf("%s: c12 lost stop_before_task_done: %+v", name, v)
+		}
+	}
+}
+
+// c2 records how long the idle window was, and says so when it is shorter than
+// the five minutes the party asked for.
+func TestC2RecordsTheWindowAndFlagsAShortOne(t *testing.T) {
+	const s = int64(1_000_000_000)
+	long := []Line{mark(1*s, "idle-start", ""), status(2*s, "0.10", 500), mark(301*s, "idle-end", "")}
+	c := get(t, Run(long, "x"), "c2")
+	v, _ := c.Value.(map[string]any)
+	if v["window_s"] != 300 || c.Note != "" {
+		t.Errorf("a five minute window: c2 = %+v", c)
+	}
+	short := []Line{mark(1*s, "idle-start", ""), status(2*s, "0.10", 500), mark(61*s, "idle-end", "")}
+	c = get(t, Run(short, "x"), "c2")
+	v, _ = c.Value.(map[string]any)
+	if v["window_s"] != 60 || !strings.Contains(c.Note, "five minutes") {
+		t.Errorf("a 60 s window: c2 = %+v, want window_s 60 and a note", c)
 	}
 }
 

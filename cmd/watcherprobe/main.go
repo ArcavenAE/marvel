@@ -8,7 +8,7 @@
 //	watcherprobe mono                     print the monotonic clock
 //	watcherprobe mask                     copy stdin to stdout with key text hidden;
 //	                                      the secret is in WATCHER_PROBE_MASK
-//	watcherprobe check      --log FILE --out FILE --stamp TEXT
+//	watcherprobe check      --log FILE --out FILE --stamp TEXT [--root DIR]...
 //
 // WATCHER_PROBE_KEY, when set, is the credential the loggers and the checker
 // keep out of every file they write.
@@ -37,6 +37,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	logPath := fs.String("log", "", "the event log")
 	out := fs.String("out", "", "where check writes probe_result.json")
 	stamp := fs.String("stamp", "", "the claude build stamp the result carries")
+	var roots []string
+	fs.Func("root", "a directory check may read a transcript from (repeatable)", func(v string) error { roots = append(roots, v); return nil })
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -98,7 +100,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, "usage: watcherprobe check --log FILE --out FILE --stamp TEXT")
 			return 2
 		}
-		if err := check(*logPath, *out, *stamp); err != nil {
+		if err := check(*logPath, *out, *stamp, roots); err != nil {
 			_, _ = fmt.Fprintln(stderr, "watcherprobe check:", err)
 			return 1
 		}
@@ -110,7 +112,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // check reads the log and writes probe_result.json by rename, so a reader never
 // sees half a file.
-func check(logPath, outPath, stamp string) error {
+func check(logPath, outPath, stamp string, roots []string) error {
 	f, err := os.Open(logPath)
 	if err != nil {
 		return err
@@ -120,7 +122,7 @@ func check(logPath, outPath, stamp string) error {
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(watcherprobe.Run(lines, stamp), "", "  ")
+	b, err := json.MarshalIndent(watcherprobe.RunWith(lines, stamp, watcherprobe.Options{TranscriptRoots: roots}), "", "  ")
 	if err != nil {
 		return err
 	}

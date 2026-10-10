@@ -28,17 +28,17 @@ digits of the binary's sha256) and `c1` to `c13`. Each check is `pass`, `fail`,
 | key | name | measures |
 |---|---|---|
 | c1 | `pre_session_hooks` | hooks that fire at the trust dialog and the setup menu |
-| c2 | `idle_cost_moves` | statusline cost and context movement while idle |
+| c2 | `idle_cost_moves` | statusline cost and context movement while idle, with the window length in seconds. The window is five minutes by default (`WATCHER_PROBE_IDLE_SECS`), and the note says so when a run used a shorter one |
 | c3 | `one_submit_one_stop` | exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` per prompt; hooks become the turn source only if this passes |
 | c4 | `ring_form` | one key for the exact ring form: its source (the payload's `source`, its event and payload keys) and the submit-to-hook latency in ms |
 | c5 | `denial_reason` | `PermissionDenied.reason` plus the `Notification.notification_type` values seen |
 | c6 | `interrupt_event` | `stop`, `stopfailure` or `none` after Esc |
 | c7 | `nonprompt_moves` | turn hooks with no prompt sent (fails on any); statusline changes are recorded |
 | c8 | `idle_notification_s` | seconds from when claude went idle to the `idle_prompt` notification, or `never`. Claude went idle at `setup-closed`, or at the last `Stop` or `StopFailure` before the wait window opened, whichever is later; the window's own start if neither is marked. The result's note says which. The driver opens the wait straight after setup, before c2's idle sleep, so a notification that fires early is inside it |
-| c9 | `hook_stdout_reaches_context` | whether a hook's stdout reaches the context |
+| c9 | `hook_stdout_reaches_context` | whether the line a hook prints reaches the session, read from the session transcript the hook payload names. The checker reads it only from the scratch `HOME` and `CLAUDE_CONFIG_DIR` (symlinks resolved), counts the records that hold the token, and tells reply records from context records. No transcript text enters the result |
 | c10 | `hook_exit2_effect` | what an exit 2 does to a prompt |
-| c11 | `subagent_stamps` | subagent hooks and whether they carry an agent id |
-| c12 | `stop_background` | whether the turn's `Stop` comes before a background task ends |
+| c11 | `subagent_stamps` | whether subagent hooks carry an agent id, and whether a main turn's `Stop` ever carries one |
+| c12 | `stop_background` | whether the turn's `Stop` came before a background task ended, whether a `Stop` lists a non-empty `background_tasks` (and whether the field is there at all), and whether a turn resumed with no prompt |
 | c13 | `version_visible_to_hook` | whether a hook can see the claude version (payload field or environment) |
 
 Keys stay `c1` to `c13`; each check also carries its `name`. Section 6 of the
