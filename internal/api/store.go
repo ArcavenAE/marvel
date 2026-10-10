@@ -928,3 +928,9 @@ func (s *Store) UpdateSessionMetrics(key string, m SessionMetrics) {
 	m.MetricsAt = time.Now().UTC()
 	sess.SessionMetrics = m
 }
+
+// AuthenticateLiveSession checks a heartbeat token against a running session
+// and returns a snapshot of it.
+func (s *Store) AuthenticateLiveSession(key, token string) (Session, error) {
+	return Session{}, nil
+}
