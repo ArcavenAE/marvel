@@ -2405,7 +2405,7 @@ Daemon-side (on the machine running marvel daemon):
 		},
 	})
 
-	// keys trust — add a cluster's host key to ~/.marvel/known_hosts. It
+	// keys trust: add a cluster's host key to ~/.marvel/known_hosts. It
 	// shows the presented key's fingerprint and asks first; --yes skips the
 	// question for non-interactive bootstraps where the admin has already
 	// confirmed the fingerprint out-of-band (marvel#838).
@@ -2447,7 +2447,7 @@ refuses and names the fingerprint.`,
 			if identityPath != "" {
 				opts.Identity = identityPath
 			}
-			resp, err := daemon.SendRequestWith(addr, daemon.Request{
+			resp, err := keysTrustSend(addr, daemon.Request{
 				Method: "get",
 				Params: json.RawMessage(`{"resource_type":"workspaces"}`),
 			}, opts)
@@ -2466,6 +2466,10 @@ refuses and names the fingerprint.`,
 
 	return cmd
 }
+
+// keysTrustSend is the request keys trust makes; a test replaces it so the
+// command's dial options can be read without a network or a daemon.
+var keysTrustSend = daemon.SendRequestWith
 
 // keysTrustDialOptions builds the dial options for keys trust. Only --yes lets
 // the dial record an unknown host key unasked; without it the dial uses the

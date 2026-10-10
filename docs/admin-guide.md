@@ -257,8 +257,9 @@ marvel keys host-fingerprint
 
 Share the fingerprint with clients so they can verify they're connecting
 to the right daemon. Clients record trusted daemon keys in
-`~/.marvel/known_hosts`; first connection prompts interactively or is
-bootstrapped with `marvel keys trust <cluster>`. Host key changes are
+`~/.marvel/known_hosts`; first connection prompts interactively, and
+`marvel keys trust <cluster>` shows the fingerprint and asks before it records
+the key (`--yes` skips the question for scripted bootstraps). Host key changes are
 detected and refused — see the [keys guide](keys.md) for details.
 
 ## Cluster configuration
