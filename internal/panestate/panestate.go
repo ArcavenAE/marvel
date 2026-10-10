@@ -23,6 +23,9 @@ type State string
 const (
 	// StateLoggedOut is a harness sitting at its login prompt.
 	StateLoggedOut State = "logged-out"
+	// StateParked is a harness waiting at a prompt that needs a person: a
+	// trust, permission or update dialog. Reason says which.
+	StateParked State = "parked"
 	// StateUnknown is every other answer, including a low-confidence match.
 	StateUnknown State = "unknown"
 )
@@ -124,6 +127,10 @@ type Pattern struct {
 	MaxVersion  string
 	SampleWidth int
 	Rows        []Row
+	// State is what a full, same-version match sets. Reason is set for
+	// StateParked only.
+	State  State
+	Reason string
 }
 
 // Covers reports whether the pattern is for the harness version v. With no
@@ -206,6 +213,7 @@ type Result struct {
 	PatternID      string
 	PatternVersion int
 	HarnessVersion string
+	Reason         string
 	Evidence       []string
 }
 
