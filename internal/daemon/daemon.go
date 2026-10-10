@@ -2873,13 +2873,14 @@ type DialOptions struct {
 	// set, it takes precedence over SSH_AUTH_SOCK and default key files.
 	Identity string
 	// TrustUnknownHost, when true, auto-adds any unknown host key to
-	// ~/.marvel/known_hosts without prompting. Used by
-	// `marvel keys trust` — do not set for ordinary RPC calls.
+	// ~/.marvel/known_hosts without prompting, printing its fingerprint
+	// first. Used by `marvel keys trust --yes`; do not set for ordinary
+	// RPC calls.
 	TrustUnknownHost bool
 	// StrictHostKey, when true, refuses unknown hosts without prompting.
 	// Intended for non-interactive scripts. When false and the caller
 	// is on a TTY, marvel prompts; when false and off-TTY, marvel
-	// refuses with a pointer to `marvel keys trust`.
+	// refuses with a pointer to `marvel keys trust --yes`.
 	StrictHostKey bool
 	// Timeout bounds the whole request/response exchange when positive. Zero
 	// keeps the historical behavior of no deadline; a best-effort sender sets it.

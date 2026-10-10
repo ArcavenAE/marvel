@@ -118,3 +118,54 @@ func TestCallback_PromptMode_AcceptsOnYes(t *testing.T) {
 		t.Errorf("error should point at keys trust: %v", err)
 	}
 }
+
+// A trust-mode record names the key it is about to write, so an admin who
+// ran this command can compare it with the daemon's fingerprint. The recorded
+// line stays the same OpenSSH line it always was.
+func TestCallback_TrustMode_PrintsTheFingerprintBeforeRecording(t *testing.T) {
+	l := testLayout(t)
+	prompt := &bytes.Buffer{}
+	cb := Callback(l, ModeTrust, prompt, nil)
+
+	key := genKey(t)
+	addr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 6785}
+	if err := cb("127.0.0.1:6785", addr, key); err != nil {
+		t.Fatalf("ModeTrust first call: %v", err)
+	}
+
+	out := prompt.String()
+	if !strings.Contains(out, ssh.FingerprintSHA256(key)) {
+		t.Errorf("output should carry the SHA256 fingerprint %s, got %q", ssh.FingerprintSHA256(key), out)
+	}
+	if !strings.Contains(out, key.Type()) {
+		t.Errorf("output should carry the key type %s, got %q", key.Type(), out)
+	}
+	data, err := os.ReadFile(l.KnownHosts())
+	if err != nil {
+		t.Fatalf("read known_hosts: %v", err)
+	}
+	if want := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))); !strings.Contains(string(data), want) {
+		t.Errorf("recorded line should keep the OpenSSH format ending in %q, got %q", want, string(data))
+	}
+}
+
+// Off a terminal the refusal names the fingerprint and the way to record it
+// after comparing, so the instruction does not point back at a command that
+// would ask the same question.
+func TestCallback_PromptMode_OffTTYNamesTheFingerprintAndYes(t *testing.T) {
+	l := testLayout(t)
+	cb := Callback(l, ModePrompt, &bytes.Buffer{}, strings.NewReader(""))
+
+	key := genKey(t)
+	addr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 6785}
+	err := cb("127.0.0.1:6785", addr, key)
+	if err == nil {
+		t.Fatal("expected refusal when not on a TTY")
+	}
+	if !strings.Contains(err.Error(), strings.TrimPrefix(ssh.FingerprintSHA256(key), "SHA256:")) {
+		t.Errorf("error should show the fingerprint: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("error should name 'keys trust --yes' for a scripted record: %v", err)
+	}
+}

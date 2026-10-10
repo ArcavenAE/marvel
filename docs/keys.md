@@ -130,11 +130,13 @@ Clients record trusted daemon host keys in `~/.marvel/known_hosts`
 
 - **Interactive (TTY):** marvel prompts with the fingerprint and asks
   whether to trust it.
-- **Non-interactive (CI, pipelines):** marvel refuses and tells you to
-  run `marvel keys trust <cluster>`.
+- **Non-interactive (CI, pipelines):** marvel refuses, shows the
+  fingerprint, and tells you to run `marvel keys trust --yes <cluster>`
+  once you have compared it.
 
 ```bash
-marvel keys trust prod                   # record the current host key
+marvel keys trust prod                   # show the fingerprint, ask, then record the host key
+marvel keys trust --yes prod             # record without asking (fingerprint checked out of band)
 ```
 
 If the daemon's host key ever changes (genuine reinstall, or a MITM

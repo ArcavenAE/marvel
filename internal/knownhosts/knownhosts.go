@@ -36,8 +36,10 @@ const (
 	ModePrompt Mode = iota
 	// ModeStrict refuses unknown hosts — use this for scripts and CI.
 	ModeStrict
-	// ModeTrust silently records any unknown host (dangerous; used by
-	// the `marvel keys trust` command to bootstrap non-interactive use).
+	// ModeTrust records any unknown host without asking (dangerous; used by
+	// `marvel keys trust --yes` to bootstrap non-interactive use). It prints
+	// the key type and SHA256 fingerprint to the prompt writer first, so the
+	// admin's run leaves a record of what was trusted.
 	ModeTrust
 )
 
@@ -98,18 +100,20 @@ func Callback(layout paths.Layout, mode Mode, prompt io.Writer, answer io.Reader
 		case ModeStrict:
 			return fmt.Errorf(
 				"host key for %s is not trusted (SHA256:%s); run "+
-					"'marvel keys trust <cluster>' or connect interactively to add it",
+					"'marvel keys trust <cluster>' (add --yes in a script) or connect interactively to add it",
 				hostname, fingerprintBytes(key),
 			)
 		case ModeTrust:
+			_, _ = fmt.Fprintf(prompt, "Recording %s host key for %s: SHA256:%s\n", key.Type(), hostname, fingerprintBytes(key))
 			return appendKnownHost(path, hostname, key)
 		case ModePrompt:
 			if isTTY(answer) {
 				return promptAndTrust(path, hostname, key, prompt, answer)
 			}
 			return fmt.Errorf(
-				"host key for %s is not trusted (SHA256:%s); run "+
-					"'marvel keys trust <cluster>' to accept non-interactively",
+				"host key for %s is not trusted (SHA256:%s); compare it with "+
+					"'marvel keys host-fingerprint' on the daemon, then run "+
+					"'marvel keys trust --yes <cluster>' to record it non-interactively",
 				hostname, fingerprintBytes(key),
 			)
 		}

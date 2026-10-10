@@ -2405,18 +2405,26 @@ Daemon-side (on the machine running marvel daemon):
 		},
 	})
 
-	// keys trust — add a cluster's host key to ~/.marvel/known_hosts
-	// without prompting. Intended for non-interactive bootstraps where
-	// the admin has already confirmed the fingerprint out-of-band.
+	// keys trust: add a cluster's host key to ~/.marvel/known_hosts. It
+	// shows the presented key's fingerprint and asks first; --yes skips the
+	// question for non-interactive bootstraps where the admin has already
+	// confirmed the fingerprint out-of-band (marvel#838).
+	var trustYes bool
 	trust := &cobra.Command{
 		Use:   "trust [cluster]",
 		Short: "Trust and record a cluster's host key in ~/.marvel/known_hosts",
 		Long: `Connect to the named cluster (or the current one) and add its
-host key to ~/.marvel/known_hosts without prompting.
+host key to ~/.marvel/known_hosts.
 
-Use 'marvel keys host-fingerprint' on the daemon machine and compare
-the fingerprint that 'marvel keys trust' prints before relying on
-the connection.`,
+The command prints the key type and SHA256 fingerprint the daemon
+presented and asks before it records the key. Run
+'marvel keys host-fingerprint' on the daemon machine and compare the
+two before answering y.
+
+With --yes it records the key without asking, still printing the
+fingerprint. Use that in scripted bootstraps where the fingerprint was
+checked out of band. Without a terminal and without --yes the command
+refuses and names the fingerprint.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := clusterName
@@ -2435,11 +2443,11 @@ the connection.`,
 				return fmt.Errorf("cluster %q has no mrvl:// address; nothing to trust", name)
 			}
 			addr := cl.Server
-			opts := daemon.DialOptions{Identity: cl.Identity, TrustUnknownHost: true}
+			opts := keysTrustDialOptions(cl.Identity, trustYes)
 			if identityPath != "" {
 				opts.Identity = identityPath
 			}
-			resp, err := daemon.SendRequestWith(addr, daemon.Request{
+			resp, err := keysTrustSend(addr, daemon.Request{
 				Method: "get",
 				Params: json.RawMessage(`{"resource_type":"workspaces"}`),
 			}, opts)
@@ -2453,9 +2461,21 @@ the connection.`,
 			return nil
 		},
 	}
+	trust.Flags().BoolVar(&trustYes, "yes", false, "record the host key without asking (the fingerprint is still printed)")
 	cmd.AddCommand(trust)
 
 	return cmd
+}
+
+// keysTrustSend is the request keys trust makes; a test replaces it so the
+// command's dial options can be read without a network or a daemon.
+var keysTrustSend = daemon.SendRequestWith
+
+// keysTrustDialOptions builds the dial options for keys trust. Only --yes lets
+// the dial record an unknown host key unasked; without it the dial uses the
+// prompt path, which shows the fingerprint and asks.
+func keysTrustDialOptions(identity string, yes bool) daemon.DialOptions {
+	return daemon.DialOptions{Identity: identity, TrustUnknownHost: yes}
 }
 
 // nameArg returns " --name <name>" for the default help string when the
