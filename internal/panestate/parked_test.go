@@ -26,9 +26,9 @@ rows:
 
 const parkedScreen = "earlier output\n| Permission required\n| Access directory /some/where\n  Allow once   Reject\n"
 
-func parkedSet(t *testing.T, yaml string) []Pattern {
+func parkedSet(t *testing.T) []Pattern {
 	t.Helper()
-	fsys := fstest.MapFS{"synth/1.0.0/ask.yaml": {Data: []byte(yaml)}}
+	fsys := fstest.MapFS{"synth/1.0.0/ask.yaml": {Data: []byte(parkedYAML)}}
 	sets, err := Load(fsys, ".")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -37,7 +37,7 @@ func parkedSet(t *testing.T, yaml string) []Pattern {
 }
 
 func TestClassifyParkedPatternSetsParkedWithItsReason(t *testing.T) {
-	r := Classify(parkedSet(t, parkedYAML), "synth", "1.0.0", rows(parkedScreen))
+	r := Classify(parkedSet(t), "synth", "1.0.0", rows(parkedScreen))
 	if r.State != StateParked || r.Confidence != ConfHigh || r.Reason != "permission" {
 		t.Fatalf("result = %+v, want parked/high/permission", r)
 	}
@@ -48,14 +48,14 @@ func TestClassifyParkedPatternSetsParkedWithItsReason(t *testing.T) {
 }
 
 func TestClassifyParkedOtherVersionStaysUnknown(t *testing.T) {
-	r := Classify(parkedSet(t, parkedYAML), "synth", "1.0.1", rows(parkedScreen))
+	r := Classify(parkedSet(t), "synth", "1.0.1", rows(parkedScreen))
 	if r.State != StateUnknown || r.Confidence != ConfLow {
 		t.Fatalf("result = %+v, want unknown/low", r)
 	}
 }
 
 func TestClassifyParkedPromptAboveLaterOutputDoesNotMatch(t *testing.T) {
-	r := Classify(parkedSet(t, parkedYAML), "synth", "1.0.0", rows(parkedScreen+"working again\n"))
+	r := Classify(parkedSet(t), "synth", "1.0.0", rows(parkedScreen+"working again\n"))
 	if r.State == StateParked {
 		t.Fatalf("parked read from a prompt that scrolled away: %+v", r)
 	}
@@ -84,7 +84,7 @@ func TestLoadRefusesABadStateOrReason(t *testing.T) {
 }
 
 func TestControlPassesAParkedPatternOnItsOwnSample(t *testing.T) {
-	sets := parkedSet(t, parkedYAML)
+	sets := parkedSet(t)
 	sample := func(Pattern) (string, error) { return parkedScreen, nil }
 	res := Control(sets, sample)
 	if len(res) != 1 || !res[0].Pass {
