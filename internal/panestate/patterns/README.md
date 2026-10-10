@@ -11,3 +11,9 @@ shipped range also spans 2.1.286, which was not available to capture and is
 covered on the strength of its neighbours. A version outside the range reads
 `unknown`, and the watchdog reports it uncovered. A part of a version with a
 leading zero is not a version.
+
+A pattern may carry `state: parked` and a `reason` (trust, permission, update or
+other) for a harness waiting at a prompt that needs a person; with no `state` it
+is logged-out. A pattern whose sampled version is not known is kept under
+`internal/panestate/testdata-parked` and does not ship until a version is read
+from a seat that shows the prompt.

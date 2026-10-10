@@ -543,6 +543,7 @@ func TestRenderSessionTableParkedAdvisory(t *testing.T) {
 	}{
 		{"permission", &api.HarnessState{State: api.HarnessStateParked, Reason: "permission", Confidence: "high"}, api.SessionRunning, "healthy (parked: permission)"},
 		{"trust", &api.HarnessState{State: api.HarnessStateParked, Reason: "trust", Confidence: "high"}, api.SessionRunning, "healthy (parked: trust)"},
+		{"reason on another state", &api.HarnessState{State: "unknown", Reason: "trust", Confidence: "low"}, api.SessionRunning, "healthy"},
 		{"not running", &api.HarnessState{State: api.HarnessStateParked, Reason: "trust", Confidence: "high"}, api.SessionCrashed, "healthy"},
 	}
 	for _, c := range cases {
