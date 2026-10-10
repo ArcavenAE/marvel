@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,8 @@ type patternFile struct {
 		Min string `yaml:"min"`
 		Max string `yaml:"max"`
 	} `yaml:"version_range"`
+	State       string   `yaml:"state"`
+	Reason      string   `yaml:"reason"`
 	SampleWidth int      `yaml:"sample_width"`
 	VarRunes    int      `yaml:"var_runes"`
 	Rows        []string `yaml:"rows"`
@@ -51,7 +54,11 @@ func Load(fsys fs.FS, root string) ([]Pattern, error) {
 		if f.VarRunes < 0 {
 			return fmt.Errorf("pattern %s: var_runes must not be negative", p)
 		}
-		pat := Pattern{ID: f.ID, Version: f.Version, Harness: f.Harness, HarnessVersion: f.HarnessVersion, SampleWidth: f.SampleWidth}
+		state, err := patternState(f.State, f.Reason)
+		if err != nil {
+			return fmt.Errorf("pattern %s: %w", p, err)
+		}
+		pat := Pattern{State: state, Reason: f.Reason, ID: f.ID, Version: f.Version, Harness: f.Harness, HarnessVersion: f.HarnessVersion, SampleWidth: f.SampleWidth}
 		if r := f.VersionRange; r != nil {
 			pat.MinVersion, pat.MaxVersion = r.Min, r.Max
 			if err := checkRange(pat); err != nil {
@@ -106,4 +113,27 @@ func checkRange(p Pattern) error {
 		return fmt.Errorf("harness_version %s, the sampled version, is outside version_range %s", p.HarnessVersion, p.VersionLabel())
 	}
 	return nil
+}
+
+// parkedReasons are the reasons a parked pattern may name.
+var parkedReasons = []string{"trust", "permission", "update", "other"}
+
+// patternState reads a pattern's state and reason. No state means logged-out,
+// the only state a pattern set before parked existed. A parked pattern names
+// one of the reasons, and no other state carries one.
+func patternState(state, reason string) (State, error) {
+	switch State(state) {
+	case "", StateLoggedOut:
+		if reason != "" {
+			return "", fmt.Errorf("reason is only for a parked pattern")
+		}
+		return StateLoggedOut, nil
+	case StateParked:
+		if !slices.Contains(parkedReasons, reason) {
+			return "", fmt.Errorf("a parked pattern needs a reason, one of %s", strings.Join(parkedReasons, ", "))
+		}
+		return StateParked, nil
+	default:
+		return "", fmt.Errorf("state must be logged-out or parked")
+	}
 }

@@ -133,6 +133,15 @@ type Pattern struct {
 	Reason string
 }
 
+// state is the state a full match sets: logged-out unless the pattern says
+// otherwise.
+func (p Pattern) state() State {
+	if p.State == "" {
+		return StateLoggedOut
+	}
+	return p.State
+}
+
 // Covers reports whether the pattern is for the harness version v. With no
 // range it is exact. With one, v is covered when it lies inside the inclusive
 // range, compared by dotted numeric parts, so 2.1.10 is above 2.1.9. A version
@@ -272,7 +281,7 @@ func Classify(sets []Pattern, harness, sessVersion string, rows []string) Result
 			res.Evidence = append(res.Evidence, m.Render())
 		}
 		if full && p.Covers(sessVersion) {
-			res.State, res.Confidence = StateLoggedOut, ConfHigh
+			res.State, res.Confidence, res.Reason = p.state(), ConfHigh, p.Reason
 			return res
 		}
 		if low == nil || len(res.Evidence) > len(low.Evidence) {

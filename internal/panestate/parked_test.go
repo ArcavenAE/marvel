@@ -1,6 +1,7 @@
 package panestate
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -92,5 +93,58 @@ func TestControlPassesAParkedPatternOnItsOwnSample(t *testing.T) {
 	edited := func(Pattern) (string, error) { return strings.Replace(parkedScreen, "Reject", "Cancel", 1), nil }
 	if res := Control(sets, edited); res[0].Pass {
 		t.Fatalf("control passed a pattern against a sample it does not match: %+v", res[0])
+	}
+}
+
+func opencodeSet(t *testing.T) ([]Pattern, string) {
+	t.Helper()
+	sets, err := Load(os.DirFS("testdata-parked"), ".")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(sets) != 1 {
+		t.Fatalf("patterns = %d, want 1", len(sets))
+	}
+	raw, err := Sample(os.DirFS("testdata-parked"), ".", sets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sets, raw
+}
+
+// The opencode pattern matches the capture it was built from, over the chat
+// above it, and reads a different directory in the same prompt.
+func TestOpencodeAccessExternalDirectoryReadsParkedPermission(t *testing.T) {
+	sets, raw := opencodeSet(t)
+	screen := "  some chat text above\n\n" + raw
+	r := Classify(sets, "opencode", "0.0.0", rows(screen))
+	if r.State != StateParked || r.Confidence != ConfHigh || r.Reason != "permission" {
+		t.Fatalf("result = %+v, want parked/high/permission", r)
+	}
+	other := strings.ReplaceAll(screen, "/tmp", "/srv/other/place")
+	if r := Classify(sets, "opencode", "0.0.0", rows(other)); r.State != StateParked {
+		t.Fatalf("another directory: %+v, want parked", r)
+	}
+	for _, e := range r.Evidence {
+		if strings.Contains(e, "/tmp") || strings.Contains(e, "ctrl+f") {
+			t.Fatalf("evidence carries captured text: %q", e)
+		}
+	}
+}
+
+// A prompt that has been answered and scrolled up is not a park.
+func TestOpencodeAnsweredPromptAboveNewOutputIsNotParked(t *testing.T) {
+	sets, raw := opencodeSet(t)
+	r := Classify(sets, "opencode", "0.0.0", rows(raw+"\n  ┃ build finished\n"))
+	if r.State == StateParked {
+		t.Fatalf("parked from a prompt with output below it: %+v", r)
+	}
+}
+
+func TestOpencodeParkedPatternPassesItsControl(t *testing.T) {
+	sets, _ := opencodeSet(t)
+	res := Control(sets, func(p Pattern) (string, error) { return Sample(os.DirFS("testdata-parked"), ".", p) })
+	if len(res) != 1 || !res[0].Pass {
+		t.Fatalf("control = %+v", res)
 	}
 }
