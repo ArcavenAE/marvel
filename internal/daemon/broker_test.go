@@ -111,3 +111,26 @@ func TestBrokerTokenValueStaysOutOfStateAndEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestBrokerRevokesAnEndedSeatsTokens(t *testing.T) {
+	d, m := brokerDaemon(t)
+	keyA, tokenA := registerSession(t, d, "agent-0", true)
+	keyB, tokenB := registerSession(t, d, "agent-1", true)
+	for _, c := range []struct{ key, token string }{{keyA, tokenA}, {keyA, tokenA}, {keyB, tokenB}} {
+		if resp := d.handleBrokerToken(context.Background(), brokerParams(t, c.key, c.token)); resp.Error != "" {
+			t.Fatalf("broker.token: %s", resp.Error)
+		}
+	}
+	if d.sessMgr.SessionEnded == nil {
+		t.Fatal("the session manager is not told when a seat ends")
+	}
+
+	d.sessMgr.SessionEnded(keyA)
+	if live := m.Live(); len(live) != 1 {
+		t.Fatalf("live tokens after seat A ended = %v, want only seat B's", live)
+	}
+	d.sessMgr.SessionEnded(keyB)
+	if live := m.Live(); len(live) != 0 {
+		t.Fatalf("live tokens after both seats ended = %v, want none", live)
+	}
+}
