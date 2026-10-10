@@ -803,9 +803,9 @@ Each row names a harness version. A version with no row returns degraded
 
 ### Work items, proposed (r10)
 
-The party's work items are listed here so the doc stands alone. None is
-filed until the operator rules on 13 and 14; each lands as its own ticket
-with the edges shown.
+The party's work items are listed here so the doc stands alone. The operator
+ruled 13 and 14 on 2026-10-10; each lands as its own ticket with the edges
+shown.
 
 | id | work | depends on |
 |---|---|---|
@@ -1124,9 +1124,9 @@ change first.
 
     Recommended: (a). Voted 6 of 6 on the rules; on the latch, 4 for (a),
     1 for (b) (the marvel seat) and 1 for (c) (the refusal seat).
-    **RULED 2026-10-10:** "(a)", relayed by director. Applied: a refusal
-    latches when the manifest is its cause, and a refusal with an outside
-    cause is re-evaluated (section 6).
+    **RULED 2026-10-10:** "(a)", relayed by director. Applied: the
+    section 5b outcome rules, and a refusal latches when the manifest is
+    its cause and is re-evaluated when the cause is outside (section 6).
 14. **A parked shift successor (r10, new).** It changes shift
     behaviour, so it comes to the operator before a builder takes it.
     - (a) The readiness check treats a parked successor as not ready, so

@@ -172,9 +172,13 @@ agent observability.
    Recommended: adopt.
 
 **RULED 2026-10-10:** "adopt all three", relayed by director. The design
-and plan T1 to T8 are adopted, the bridge (V7) is adopted, and the earlier
-NATS-path tickets are rewritten as ruling 3 says. Tickets are filed
-from section 4 as their own step.
+and the section 4 plan (T1 to T8 and probes P1 to P4) are adopted, the
+bridge (V7) is adopted, re-checked by 2026-10-20, and the earlier NATS-path
+tickets are rewritten as ruling 3 says.
+
+The bridge stays under its re-check: the architect seat re-checks it by
+2026-10-20 and renews, revises or withdraws it. Tickets are filed from
+section 4 as their own step.
 
 Each recommendation was valid until 2026-10-20, or a change to the schedule
 clock, the inject path, the composer reader or a Claude Code release that
