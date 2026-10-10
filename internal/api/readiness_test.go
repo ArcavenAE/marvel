@@ -543,6 +543,36 @@ func TestRehydrateSkipsARecordWhoseSessionIsGone(t *testing.T) {
 	}
 }
 
+// The session check runs, and runs while the store's write lock is held, so a
+// seat deleted while a write is in flight cannot be written for. The seam
+// reports each check, and the test probes the lock from inside it: a read lock
+// can be taken only when no writer holds the lock, so TryRLock succeeding means
+// the check ran without the write lock (a plain TryLock would also fail under a
+// reader and could not tell the two apart). What no probe from inside the check
+// can see is a check that takes the write lock, releases it, and takes it again
+// for the write; that shape is for review, not for this test.
+func TestRecordDutyChecksTheSessionUnderTheWriteLock(t *testing.T) {
+	s := newReadinessStore(t)
+	calls, held := 0, true
+	seatCheckHook = func() {
+		calls++
+		if s.mu.TryRLock() { // no writer holds the lock, so the check is not under it
+			s.mu.RUnlock()
+			held = false
+		}
+	}
+	t.Cleanup(func() { seatCheckHook = nil })
+	if _, err := s.RecordDuty(proven("gh.read")); err != nil {
+		t.Fatalf("RecordDuty: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("the seat check ran %d times, want once per write", calls)
+	}
+	if !held {
+		t.Error("the seat check ran without the store's write lock held")
+	}
+}
+
 // The reviewer's sequence, exactly: a seat is proven, its session row goes
 // missing, the store reopens (the orphan is dropped), the same name is created
 // and deleted again (no row is left), then created and reopened once more (the
