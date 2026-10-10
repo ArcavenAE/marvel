@@ -1,0 +1,64 @@
+id: question-spend-dollar-column
+type: question
+confidence: frontier
+title: "Could get sessions show dollars spent as a column for harnesses that report spend, and what does it show for one that does not?"
+tags:
+  - marvel
+  - usage
+  - cli
+content: |
+  The operator, verbatim (2026-10-10, relayed by director): "kos question
+  marvel could we show $ as a column for harnesses that are reporting
+  spending?"
+
+  WHAT EXISTS, read at main 4f65cc3:
+  - `get sessions` has opt-in TOUT, PROMPT and RATE columns
+    (`cmd/marvel/columns.go:40-53`). They are token counts and output tokens
+    a second, not dollars. ACCT is opt-in too (#770).
+  - #772 keeps TOUT, PROMPT and RATE across a bolt load. The persisted
+    spend slice, `api.SessionSpend` (`internal/api/types.go:1095`), holds
+    output tokens, prompt tokens and the rate. It has no dollar field.
+  - The usage accountant does sum dollars per session and per team
+    (`internal/usage/accountant.go:523-605`, `:865`), from `Sample.CostUSD`.
+    Nothing projects that figure into a session row today.
+  - The claude statusline prints a per-session dollar figure
+    (`cmd/marvel/ctxforward.go:399`, from `cost.total_cost_usd`), but the
+    heartbeat it sends carries no cost field
+    (`internal/api/heartbeat.go:92-112`), so the daemon never receives it.
+
+  WHO REPORTS DOLLARS, per the parsers:
+  - claude headless: `total_cost_usd` on the terminal result line only
+    (`internal/runtime/claudecode/parser.go:505`;
+    `internal/admission/doc.go:72-78`), so a running session reads no
+    cost until it ends.
+  - claude interactive: only through the statusline payload, which the
+    heartbeat does not forward.
+  - opencode: a cost per request (`internal/runtime/opencode/parser.go:181`).
+  - codex: no cost at all (`internal/runtime/codex/parser.go:155`).
+  - crush: no stream parser in marvel.
+  - OTEL is not a source; marvel has no ingest path.
+
+  OPEN:
+  1. Which sources the column reads: the stream (opencode per request, claude
+     headless at end), a cost field added to the heartbeat for the
+     statusline feed, or both. Whether a figure the harness computes is
+     shown as the harness's estimate, not a bill.
+  2. No report: the cell reads `-` (never reported) or `?` (expired), per
+     `internal/asof`, never a guessed 0. A claude headless session that has
+     not ended reads `-` mid-run, not 0.
+  3. Session total, a window, or both: whether the cell is the session's
+     running total, and whether a team or account rollup belongs here or in
+     the team-load rows (question-team-load-rollup).
+  4. Default or opt-in: every token and account column is opt-in today.
+  5. Whether the figure survives a bolt load the way #772 keeps tokens.
+edges:
+  - target: question-marvel-otel-architecture
+    type: derives
+    note: "OTEL would be another cost source; no ingest path exists"
+  - target: question-team-load-rollup
+    type: derives
+    note: "a per-team dollar total may belong in the rollup rows"
+provenance:
+  created_by: agent
+  session: architect-2026-10-10-spend-column
+  created_at: "2026-10-10"
