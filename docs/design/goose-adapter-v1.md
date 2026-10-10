@@ -1,7 +1,7 @@
 # goose adapter v1: design brief
 
 - **Status:** proposed, 2026-10-10. Nothing here is built. The tickets in section 10 are listed, not filed: filing waits on the harness plan's decision D8.
-- **Author seat:** architect, team arcaven, as chair of a four-round design party. The seats were goose, adapter, telemetry, containment and a second harness (gemini-cli). Round 4 was a forced vote, with no open split.
+- **Author seat:** architect, team arcaven, as chair of a four-round design party. The seats were goose, adapter, telemetry, containment and a second harness (gemini-cli). Round 4 was a forced vote and every item carried; the reason store carried 3-2, with the dissent in section 9.
 - **Pins:** marvel main 493de32; goose v1.54.0 at cd643d2 (released 2026-10-08), read in source through the GitHub API on 2026-10-10. Nothing was installed or run.
 - **Companion:** `docs/adapter-kit-checklist.md`, the lines any new harness walks.
 
