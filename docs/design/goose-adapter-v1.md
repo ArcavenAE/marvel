@@ -125,7 +125,9 @@ OTEL is not the channel in v1: marvel has no receiver (M6). Export is off and co
 
 The provider key is bearer authority at a third party, so marvel never holds it, never puts it in env, args, seeded files or fixtures, and never copies it.
 
-A private `GOOSE_PATH_ROOT` does not move the keyring entry (G10). A goose seat therefore reads the operator's own goose keyring entry: the operator's credential, used by the operator's own seat. That is not marvel custody, but it is not isolation either, and it needs the operator's acknowledgement (section 11). Where the operator uses file storage, `config/secrets.yaml` is linked into the home, never copied (`SessionHomeSpec.LinkIn`).
+A private `GOOSE_PATH_ROOT` does not move the keyring entry (G10). A goose seat therefore reads the operator's own goose keyring entry: the operator's credential, used by the operator's own seat. That is not marvel custody, but it is not isolation either.
+
+**Ruled 2026-10-10 by the operator: "(a) with (c) as future option".** v1 keeps the keyring. The seat reads the operator's goose entry, and marvel sets nothing that disables the keyring. The future option is a key a broker mints for the seat, short-lived and revocable, once that broker exists; it is not designed here. The option not taken was to disable the keyring (`GOOSE_DISABLE_KEYRING`) and link the operator's file store into the home. Where the operator already uses file storage, `config/secrets.yaml` is linked into the home, never copied (`SessionHomeSpec.LinkIn`).
 
 For the probe's credentials, short-lived Bedrock credentials fit the brokering clause best. A per-trial API key is acceptable only if the operator or a vault holds it and can revoke it.
 
@@ -190,7 +192,7 @@ There is no ticket E: the goose-specific reason store folded into C. Not tracked
 - D1, the sandbox; D3, trial credentials, spend cap and host, asked once for this probe and the gemini-cli T7 probe. Pin dates: goose v1.54.0 to 2026-10-24; gemini-cli v0.63.0 at 5738466 to 2026-10-17.
 - D8, filing the tickets above.
 - K6's `unattended` role field, which the posture rules read.
-- The operator's acknowledgement that a goose seat reads the operator's own goose keyring entry (section 6).
+- Ruled 2026-10-10: a goose seat reads the operator's own goose keyring entry, with a broker-minted key as the future option (section 6).
 - Acceptance that the refusal stub reruns under backoff, at no spend, until K8.
 
 ## 12. Second harness, in one table
