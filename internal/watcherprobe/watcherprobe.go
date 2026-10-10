@@ -7,17 +7,17 @@
 // The keys are c1 to c13, and each check also carries its design name:
 //
 //	c1  pre_session_hooks            hooks at the trust dialog and the setup menu
-//	c2  idle_cost_moves              cost and context movement while idle
+//	c2  idle_cost_moves              cost and context movement while idle, with the window length (five minutes asked)
 //	c3  one_submit_one_stop          one submit and one stop per prompt (the gate for hooks as the turn source)
 //	c4  ring_form                    one key: the exact ring form's source and its submit-to-hook latency in ms
 //	c5  denial_reason                PermissionDenied.reason and the Notification.notification_type seen
 //	c6  interrupt_event              stop, stopfailure or none after Esc
 //	c7  nonprompt_moves              turn hooks and statusline movement with no prompt
 //	c8  idle_notification_s          seconds from when claude went idle (setup-closed, or the last Stop before the wait window) to the idle_prompt notification, or "never"
-//	c9  hook_stdout_reaches_context  whether a hook's stdout reaches the context
+//	c9  hook_stdout_reaches_context  whether a hook's stdout reaches the context, read from the transcript the hook payload names
 //	c10 hook_exit2_effect            what an exit 2 does to a prompt
-//	c11 subagent_stamps              subagent hooks and their agent ids
-//	c12 stop_background              whether Stop comes before a background task ends
+//	c11 subagent_stamps              subagent hooks and their agent ids, and whether a main turn's Stop carries one
+//	c12 stop_background              whether Stop comes before a background task ends, whether it lists background_tasks, and whether a turn resumes with no prompt
 //	c13 version_visible_to_hook      whether a hook can see the claude version
 //
 // (Section 6 of the design lists twelve measurements; c8 was lost when it was
@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -62,6 +63,9 @@ const (
 	StatusObserved = "observed"
 	StatusNotRun   = "not-run"
 )
+
+// canaryToken is what hook-canary.sh prints for c9.
+const canaryToken = "WATCHER-CANARY-7f3a91"
 
 // maxHookInput bounds what a logger reads from a hook's stdin.
 const maxHookInput = 1 << 20
@@ -340,11 +344,21 @@ var names = map[string]string{
 	"c12": "stop_background", "c13": "version_visible_to_hook",
 }
 
-// Run evaluates the log into the c1 to c13 result.
-func Run(lines []Line, stamp string) Result {
+// Options are what the checker may read besides the log.
+type Options struct {
+	// TranscriptRoots are the only directories a session transcript may be read
+	// from. With none, c9 reads nothing and says so.
+	TranscriptRoots []string
+}
+
+// Run evaluates the log into the c1 to c13 result, reading nothing else.
+func Run(lines []Line, stamp string) Result { return RunWith(lines, stamp, Options{}) }
+
+// RunWith evaluates the log, and reads a transcript for c9 from opt's roots only.
+func RunWith(lines []Line, stamp string, opt Options) Result {
 	r := Result{BuildStamp: stamp, Checks: map[string]Check{
 		"c1": c1(lines), "c2": c2(lines), "c3": c3(lines), "c4": c4(lines), "c5": c5(lines),
-		"c6": c6(lines), "c7": c7(lines), "c8": c8(lines), "c9": c9(lines), "c10": c10(lines),
+		"c6": c6(lines), "c7": c7(lines), "c8": c8(lines), "c9": c9(lines, opt), "c10": c10(lines),
 		"c11": c11(lines), "c12": c12(lines), "c13": c13(lines),
 	}}
 	for k, c := range r.Checks {
@@ -367,7 +381,11 @@ func c1(lines []Line) Check {
 	return Check{Status: StatusObserved, Value: len(inWindow(lines, w, KindHook))}
 }
 
-// c2: statusline cost and context between idle-start and idle-end.
+// minIdleSeconds is the idle window the party asked for.
+const minIdleSeconds = 300
+
+// c2: statusline cost and context between idle-start and idle-end, with the
+// window's length, and a note when it is shorter than the five minutes asked.
 func c2(lines []Line) Check {
 	w := windowOf(lines, "idle-start", "idle-end")
 	if !w.ok {
@@ -375,7 +393,12 @@ func c2(lines []Line) Check {
 	}
 	samples := inWindow(lines, w, KindStatus)
 	cost, ctx, _ := statusChanges(samples)
-	return Check{Status: StatusObserved, Value: map[string]any{"cost_moved": cost, "context_moved": ctx, "samples": len(samples)}}
+	secs := int((w.to - w.from) / 1_000_000_000)
+	c := Check{Status: StatusObserved, Value: map[string]any{"cost_moved": cost, "context_moved": ctx, "samples": len(samples), "window_s": secs}}
+	if secs < minIdleSeconds {
+		c.Note = fmt.Sprintf("the idle window was %d s, shorter than the five minutes asked", secs)
+	}
+	return c
 }
 
 // c3: exactly one UserPromptSubmit and one Stop or StopFailure inside each
@@ -541,20 +564,91 @@ func c8(lines []Line) Check {
 	return Check{Status: StatusObserved, Value: "never", Note: note}
 }
 
-// c9: the driver's reading of whether a hook's stdout reached the context.
-func c9(lines []Line) Check {
-	for _, l := range lines {
-		if l.Kind == KindMark && l.Name == "stdout-canary" {
-			switch l.Body {
-			case "yes":
-				return Check{Status: StatusObserved, Value: true}
-			case "no":
-				return Check{Status: StatusObserved, Value: false}
-			}
-			return Check{Status: StatusFail, Note: "the stdout-canary mark held neither yes nor no"}
+// maxTranscript bounds how much of a transcript c9 reads.
+const maxTranscript = 64 << 20
+
+// confined resolves path and reports it only if it lies under one of roots, with
+// symlinks followed on both sides, so a link or a .. cannot lead out.
+func confined(path string, roots []string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", errors.New("the transcript path is not absolute")
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", errors.New("the transcript path cannot be resolved")
+	}
+	for _, r := range roots {
+		rr, err := filepath.EvalSymlinks(r)
+		if err != nil || rr == "" || rr == string(filepath.Separator) {
+			continue
+		}
+		if real == rr || strings.HasPrefix(real, rr+string(filepath.Separator)) {
+			return real, nil
 		}
 	}
-	return notRun("needs a stdout-canary mark")
+	return "", errors.New("the transcript path is outside the scratch roots")
+}
+
+// c9: whether the canary a hook printed reached the session, read from the
+// transcript the hook payload names. The transcript is read only from the given
+// roots and only counted: no transcript text enters the result. A record counts
+// as the reply when its type is assistant, and as context otherwise, so the two
+// can be told apart.
+func c9(lines []Line, opt Options) Check {
+	w := windowOf(lines, "canary-start", "canary-end")
+	if !w.ok {
+		return notRun("needs canary-start and canary-end marks")
+	}
+	if len(opt.TranscriptRoots) == 0 {
+		return notRun("no transcript root was given, so no transcript is read")
+	}
+	path := ""
+	for _, h := range inWindow(lines, w, KindHook) {
+		if p := jsonString(h.Body, "transcript_path"); p != "" {
+			path = p
+			break
+		}
+	}
+	if path == "" {
+		return notRun("no hook payload in the window carried transcript_path")
+	}
+	real, err := confined(path, opt.TranscriptRoots)
+	if err != nil {
+		return Check{Status: StatusFail, Note: err.Error()}
+	}
+	f, err := os.Open(real)
+	if err != nil {
+		return Check{Status: StatusFail, Note: "the transcript cannot be opened"}
+	}
+	defer func() { _ = f.Close() }()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return Check{Status: StatusFail, Note: "the transcript is not a regular file"}
+	}
+	records, inContext, inReply := 0, 0, 0
+	sc := bufio.NewScanner(io.LimitReader(f, maxTranscript))
+	sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
+	for sc.Scan() {
+		records++
+		line := sc.Text()
+		if !strings.Contains(line, canaryToken) {
+			continue
+		}
+		var rec struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "assistant" {
+			inReply++
+		} else {
+			inContext++
+		}
+	}
+	c := Check{Status: StatusObserved, Value: map[string]any{
+		"reached": inContext+inReply > 0, "in_context_records": inContext, "in_reply_records": inReply, "records": records,
+	}}
+	if err := sc.Err(); err != nil {
+		c.Note = "the transcript was read only in part"
+	}
+	return c
 }
 
 // c10: the driver's reading of what an exit 2 did to a prompt.
@@ -575,13 +669,14 @@ func markBody(lines []Line, name string) (string, bool) {
 	return "", false
 }
 
-// c11: subagent hooks, and whether they carry an agent id, between the marks.
+// c11: subagent hooks, and whether they carry an agent id, between the marks;
+// and whether a main turn's Stop ever carries one.
 func c11(lines []Line) Check {
 	w := windowOf(lines, "subagent-start", "subagent-end")
 	if !w.ok {
 		return notRun("needs subagent-start and subagent-end marks")
 	}
-	events, withID, stops := 0, 0, 0
+	events, withID, stops, stopsWithID := 0, 0, 0, 0
 	for _, h := range inWindow(lines, w, KindHook) {
 		switch {
 		case h.Name == "SubagentStart" || h.Name == "SubagentStop":
@@ -591,12 +686,36 @@ func c11(lines []Line) Check {
 			}
 		case isStop(h):
 			stops++
+			if jsonString(h.Body, "agent_id") != "" {
+				stopsWithID++
+			}
 		}
 	}
-	return Check{Status: StatusObserved, Value: map[string]any{"subagent_events": events, "with_agent_id": withID, "turn_stops": stops}}
+	return Check{Status: StatusObserved, Value: map[string]any{
+		"subagent_events": events, "with_agent_id": withID, "turn_stops": stops,
+		"turn_stops_with_agent_id": stopsWithID, "main_stop_carries_agent_id": stopsWithID > 0,
+	}}
 }
 
-// c12: whether the turn's Stop came before the background task finished.
+// nonEmptyJSON reports whether raw is a non-empty array or object.
+func nonEmptyJSON(raw json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	switch t := v.(type) {
+	case []any:
+		return len(t) > 0
+	case map[string]any:
+		return len(t) > 0
+	}
+	return false
+}
+
+// c12: whether the turn's Stop came before the background task finished,
+// whether any Stop in the window lists background tasks (and whether the field
+// is there at all), and whether a turn resumed with no prompt: a Stop or
+// StopFailure that follows an earlier Stop with no UserPromptSubmit between.
 func c12(lines []Line) Check {
 	w := windowOf(lines, "bg-start", "bg-end")
 	if !w.ok {
@@ -606,13 +725,33 @@ func c12(lines []Line) Check {
 	if !ok || done > w.to {
 		return notRun("needs a bg-task-done mark inside the window")
 	}
-	before := false
+	before, listed, present, resumed, prevStop := false, false, false, false, false
 	for _, h := range inWindow(lines, w, KindHook) {
-		if isStop(h) && h.MonoNS < done {
+		if h.Name == "UserPromptSubmit" {
+			prevStop = false
+			continue
+		}
+		if !isStop(h) {
+			continue
+		}
+		if h.MonoNS < done {
 			before = true
 		}
+		if raw, has := jsonObject(h.Body)["background_tasks"]; has {
+			present = true
+			if nonEmptyJSON(raw) {
+				listed = true
+			}
+		}
+		if prevStop {
+			resumed = true
+		}
+		prevStop = true
 	}
-	return Check{Status: StatusObserved, Value: map[string]any{"stop_before_task_done": before}}
+	return Check{Status: StatusObserved, Value: map[string]any{
+		"stop_before_task_done": before, "stop_has_background_tasks": listed,
+		"background_tasks_field_present": present, "resumed_without_prompt": resumed,
+	}}
 }
 
 // c13: whether a hook's payload or environment carries the claude version.
@@ -672,12 +811,3 @@ func Mask(text, secret string) string {
 	}
 	return out.String()
 }
-
-// Options are what the checker may read besides the log.
-type Options struct {
-	// TranscriptRoots are the only directories a transcript may be read from.
-	TranscriptRoots []string
-}
-
-// RunWith evaluates the log with options.
-func RunWith(lines []Line, stamp string, _ Options) Result { return Run(lines, stamp) }

@@ -22,7 +22,8 @@
 #        WATCHER_PROBE_CLAUDE      the claude binary (default: claude on PATH)
 #        WATCHER_PROBE_TOOL        a built watcherprobe (default: built from this tree)
 #        WATCHER_PROBE_READY       text that shows claude's prompt box ('? for shortcuts')
-#        WATCHER_PROBE_IDLE_SECS   idle and quiet window length, a positive integer (default 60)
+#        WATCHER_PROBE_IDLE_SECS   c2's idle window, a positive integer (default 300, five minutes)
+#        WATCHER_PROBE_QUIET_SECS  c7's no-prompt window, a positive integer (default 60)
 #        WATCHER_PROBE_NOTIFY_SECS seconds to wait for the idle_prompt notification, a positive integer (default 120)
 #
 # The loggers and checker are tested; this driver is not, against a live claude.
@@ -41,9 +42,10 @@ while (($#)); do
 	esac
 done
 
-for v in WATCHER_PROBE_IDLE_SECS WATCHER_PROBE_NOTIFY_SECS; do
+for v in WATCHER_PROBE_IDLE_SECS WATCHER_PROBE_QUIET_SECS WATCHER_PROBE_NOTIFY_SECS; do
 	[[ -z ${!v+x} || ${!v} =~ ^[1-9][0-9]*$ ]] || die "$v must be a positive integer"
 done
+idle=${WATCHER_PROBE_IDLE_SECS:-300} quiet=${WATCHER_PROBE_QUIET_SECS:-60} notify=${WATCHER_PROBE_NOTIFY_SECS:-120}
 [[ -n $scratch ]] || die "--scratch is required"
 [[ $scratch == /* ]] || die "--scratch must be an absolute path"
 [[ $scratch =~ ^[A-Za-z0-9_./-]+$ ]] || die "--scratch may hold only letters, digits and _ . / -"
@@ -99,7 +101,8 @@ cred_state=missing
 
 if ((dry)); then
 	printf '%s\n' "HOME=$scratch/home" "CLAUDE_CONFIG_DIR=$scratch/config" "TMUX_SOCKET=$sock" \
-		"REPO=$scratch/repo" "EVENTS=$events" "RESULT=$result" "CREDENTIAL=$cred_state"
+		"REPO=$scratch/repo" "EVENTS=$events" "RESULT=$result" "CREDENTIAL=$cred_state" \
+		"IDLE_SECS=$idle" "QUIET_SECS=$quiet" "NOTIFY_SECS=$notify"
 	exit 0
 fi
 [[ $cred_state == supplied ]] || die "WATCHER_PROBE_CREDENTIAL is required for a real run"
@@ -129,7 +132,6 @@ done
 unset WATCHER_PROBE_CREDENTIAL
 export HOME=$scratch/home CLAUDE_CONFIG_DIR=$scratch/config TERM=${TERM:-xterm-256color}
 ready=${WATCHER_PROBE_READY:-'? for shortcuts'}
-idle=${WATCHER_PROBE_IDLE_SECS:-60} notify=${WATCHER_PROBE_NOTIFY_SECS:-120}
 
 hookcmd="$tool hook --log $events"
 event_hook() { printf '"%s":[{"hooks":[{"type":"command","command":"%s"}]}]' "$1" "$hookcmd"; }
@@ -239,17 +241,18 @@ settle 5
 mark interrupt-end
 
 # c7: no prompt at all.
-mark quiet-start; sleep "$idle"; mark quiet-end
+mark quiet-start; sleep "$quiet"; mark quiet-end
 
 # c9: does a hook's stdout reach the context? The token is printed only by the
-# hook, so seeing it in the pane after the question means claude was told it or
-# the UI showed it; the capture is kept for C2 to read, since the two differ.
+# hook. The checker reads the session transcript the hook payload names, from the
+# scratch HOME and CLAUDE_CONFIG_DIR only, and counts the records that hold the
+# token; no pane capture is read for this.
 : >"$scratch/canary.on"
+mark canary-start
 type_line "What token did a hook just print for you? Answer with the token only."
 settle
+mark canary-end
 rm -f "$scratch/canary.on"
-pane | save_capture "$scratch/capture-c9.txt"
-if /usr/bin/grep -q 'WATCHER-CANARY-7f3a91' "$scratch/capture-c9.txt"; then mark stdout-canary yes; else mark stdout-canary no; fi
 
 # c10: what an exit 2 does to a prompt. The word is built from two halves so it
 # appears only in a reply, never in the prompt.
@@ -280,5 +283,6 @@ mark bg-end
 
 stamp="$("$claude" --version 2>&1 | head -1) sha256:$(shasum -a 256 "$claude" | cut -c1-12)"
 pane | save_capture "$scratch/pane-final.txt"
-WATCHER_PROBE_KEY=$cred "$tool" check --log "$events" --out "$result" --stamp "$stamp"
+WATCHER_PROBE_KEY=$cred "$tool" check --log "$events" --out "$result" --stamp "$stamp" \
+	--root "$HOME" --root "$CLAUDE_CONFIG_DIR"
 echo "wrote $result"
