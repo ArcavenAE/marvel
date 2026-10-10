@@ -1,7 +1,7 @@
 # A multicluster view: one marvel client, several clusters at once
 
-- **Status:** idea (pre-hypothesis, no commitment). Exploration only: no
-  frontier node, probe or ticket.
+- **Status:** idea, extracted. Its open problems are now the frontier
+  question below and its design ticket.
 - **Became:** frontier node `question-multicluster-view` (2026-10-10), with
   the design ticket #816. The open problems below are answered there, and
   three remain the operator's to decide.
@@ -25,8 +25,7 @@
   (one more column competes for width). bd aae-orc-f08m0 carries the
   CLUSTER column and the `-w` header indicator (its close note leaves the
   column a candidate here; the design in #816 settles it as one KEY cell,
-  `<cluster>:<workspace>/<name>`, shown whenever a cluster-set flag is
-  given); aae-orc-4hku4 carries the
+  `<cluster>:<workspace>/<name>`, in the table); aae-orc-4hku4 carries the
   name grammar.
 
 ## Why look at it
