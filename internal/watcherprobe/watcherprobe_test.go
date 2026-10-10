@@ -565,6 +565,37 @@ func TestC9RefusesWhatIsNotARegularFile(t *testing.T) {
 	}
 }
 
+// A directory under a root that is a link leading out must not carry a
+// transcript out with it. O_NOFOLLOW refuses a link in the last component only,
+// so this is the case that depends on resolving the whole path first.
+func TestC9RefusesATranscriptReachedThroughADirectorySymlinkOutOfTheRoot(t *testing.T) {
+	// Resolve the root first, so the dirlink is the only link on the path and
+	// a platform whose temp dir is itself a link (macOS /var) cannot make the
+	// path look outside the root for a different reason.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, outside := transcriptRoot(t, `{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`)
+	if err := os.MkdirAll(filepath.Join(root, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(outside), filepath.Join(root, "projects", "dirlink")); err != nil {
+		t.Fatal(err)
+	}
+	via := filepath.Join(root, "projects", "dirlink", filepath.Base(outside))
+	if b, err := os.ReadFile(via); err != nil || !strings.Contains(string(b), canary) {
+		t.Fatalf("the fixture is wrong: the file is not readable through the link: %v", err)
+	}
+	c := get(t, RunWith(canaryWindow(via), "s", Options{TranscriptRoots: []string{root}}), "c9")
+	if c.Status != StatusFail || !strings.Contains(c.Note, "outside") {
+		t.Errorf("a directory link out of the root: c9 = %+v, want a refusal that says outside", c)
+	}
+	if v, _ := c.Value.(map[string]any); v != nil {
+		t.Errorf("the transcript was read through the link: %+v", c)
+	}
+}
+
 // The filesystem root and an empty root are never roots: with either, every
 // path would be "inside" one.
 func TestC9NeverTreatsTheFilesystemRootAsARoot(t *testing.T) {
