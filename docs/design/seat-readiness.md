@@ -68,7 +68,9 @@ the named role to re-check it; it never lifts it.
 
 **Behind both,** a store record `(seat, duty, state, seq, observed_at,
 set_by)`, `seq` assigned by the daemon. It is written only through a daemon
-call. No bus message changes it (premise 8). A router pulls the register row
+call. No bus message changes it (premise 8). A record is written only for a
+session that exists in the store, checked under the same lock as the write,
+and it goes when its session goes. A router pulls the register row
 at dispatch; a pushed notice only says something changed.
 
 The seat view is computed at read time as counts per value. It is never

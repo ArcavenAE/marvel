@@ -33,4 +33,4 @@ Through the whole idle window, `get sessions` showed LAST-ACTIVE between 6 and 8
 
 ## Ruling that followed
 
-The operator ruled watcher decision 2 on 2026-10-10: "statusline". A statusline cost or context change counts as a turn, for reports only. It never restarts, rings or routes. If a later test shows misses, it falls back to `unknown`. It is recorded in `docs/design/marvel-watcher.md` section 8. Decision 1, the design, is still open, so this ruling files no ticket by itself.
+The operator ruled watcher decision 2 on 2026-10-10: "statusline". A statusline cost or context change counts as a turn, for reports only. It never restarts, rings or routes. If a later test shows misses, it falls back to `unknown`. It is recorded in `docs/design/marvel-watcher.md` section 8. Decision 1, the design, was ruled later the same day (report-only first build, no ringing yet); the watcher plan was filed from it, and this ruling files no ticket of its own.
