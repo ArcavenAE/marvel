@@ -526,3 +526,30 @@ func TestRenderSessionTableLoggedOutAdvisory(t *testing.T) {
 		}
 	}
 }
+
+// A parked seat shows its reason in HEALTH, and only while it is running. The
+// reason is a fixed word, never a captured row.
+func TestRenderSessionTableParkedAdvisory(t *testing.T) {
+	base := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "opencode"},
+		HealthState: api.HealthHealthy,
+	}
+	cases := []struct {
+		name string
+		hs   *api.HarnessState
+		st   api.SessionState
+		want string
+	}{
+		{"permission", &api.HarnessState{State: api.HarnessStateParked, Reason: "permission", Confidence: "high"}, api.SessionRunning, "healthy (parked: permission)"},
+		{"trust", &api.HarnessState{State: api.HarnessStateParked, Reason: "trust", Confidence: "high"}, api.SessionRunning, "healthy (parked: trust)"},
+		{"not running", &api.HarnessState{State: api.HarnessStateParked, Reason: "trust", Confidence: "high"}, api.SessionCrashed, "healthy"},
+	}
+	for _, c := range cases {
+		s := base
+		s.HarnessState, s.State = c.hs, c.st
+		if got := column(t, renderSessionTable([]api.Session{s}), "HEALTH"); got != c.want {
+			t.Errorf("%s: HEALTH = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
