@@ -210,10 +210,11 @@ Relayed by director from the operator's decision desk. Each ruling quotes the op
 | # | ruling | the chosen option, as written |
 |---|---|---|
 | 2, claude's fallback turn source | **probe first** | "Run a short test first: watch an idle Claude seat and see whether the cost and token numbers in its status line stay flat. Decide between the two options below on the result." |
+| 2, after the probe (2026-10-10) | **statusline** | "a statusline cost or context change counts as a turn, for reports only, never to restart, ring or route; fall back to unknown if a later test shows misses." The probe result is finding-marvel-so6h (FLAT). |
 | 3, starting pass interval | **60 s**, as recommended | "Every 60 seconds." |
 | 4, starting age threshold | **10 min**, as recommended | "10 minutes. Matches the quiet window marvel already uses to decide a seat is idle." |
 
-Decision 2 is not yet settled: it waits on the probe's result, and then comes back to the operator as a choice between the statusline delta and `unknown`. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Decision 1 is still open, and these rulings file no ticket by themselves.
+Decision 2 was first ruled probe first; the probe found the figures flat while idle (finding-marvel-so6h), and the operator then ruled "statusline", in the second row. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Decision 1 is still open, and these rulings file no ticket by themselves.
 
 ## 9. For the capability register
 
