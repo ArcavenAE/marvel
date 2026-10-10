@@ -6,19 +6,19 @@
 
 ## 1. Why
 
-Two harnesses on the roster have no permission system of their own: pi has none, and mini-swe-agent's headless run confirms nothing. The harness plan recommended that neither run outside a sandbox. Today marvel can only start a seat on the host, so neither can be tried safely.
+Two harnesses on the roster, by the harness plan's reading, have no permission system marvel can project. pi has none, and mini-swe-agent's headless run (`-y`) confirms nothing. The plan recommended that neither run outside a sandbox. That reading is the 2026-10-09 harness plan party's, from each harness's docs; it is not yet measured here. The T5 trial (mini-swe-agent) and the T6 probe (pi) confirm or correct it before S5 and S6 build on it. Today marvel can only start a seat on the host, so neither can be tried safely.
 
 The operator answered with a shape rather than a patch. A workspace chooses where its agents run. "Sandboxed" also covers the harness's own operating mode and permissions, where the harness has them. Every harness matures toward one marvel surface, as far as it can. This doc writes that shape down so the first build fits inside it, and does not become the shape by accident.
 
 ## 2. The rulings this rests on
 
-The operator ruled 2026-10-10 on two decisions from the harness plan. Both are quoted verbatim.
+The operator ruled 2026-10-10 on two decisions from the harness plan: the plan of the 2026-10-09 harness party, kept in the fleet's private orchestrator repository, which is why it has no path here. The rulings are quoted verbatim.
 
 **D1, what "sandboxed only" means:** "we should have the option for any, a workspace choice of localhost file system, container, each can be with or without curtain. Here sandboxed also means controlling the operating mode and permissions of the harness, when it supports it. We do not need to do all of it now, but we should have the concepts and the plan, cross-harness view, we have a common surface/target/concept, and we mature each towards that common marvel experience/interface, to the degree each can/as we improve each. And yes, we can focus on (a) now specifically with these two, in execution, but I want the full shape of my intent understood and roughly planned and documented, then we build immediately around (a) for these two"
 
 **D2, a sandbox as a launch precondition:** "no, it's workspace defaults, and marvel operator can change them by explicitly setting different manifest options. If they don't specificy different options, container is assumed for these two harnesses (possibly others, but this is focused on these two; any harnesses that haven't specifically recommended sandbox will not default to container, but can be set as such with a workspace defined as such. This may raise questions about ... mixed agent teams using the same container, I lean towards saying that container is a function of the workspace, it's container or localhost; agents run in the container. I'm not sure we can do that yet. It's more theory than practice right now and for the moment these two agents get their own container per but we'll need some architecture work around this and we have some problems to work out. Let's not stop the train to work these out just yet. Let's have some working harnesses that it matters for first."
 
-**Which two.** D1 and D2 in the harness plan are both titled "for pi and mini-swe-agent", and option (a) of D1 is "a container now, with the curtain build left to P3". So "these two" are **pi and mini-swe-agent**, and "(a)" is a container now. They are also the two harnesses the plan recommended keeping inside a sandbox, which matches the D2 wording "harnesses that haven't specifically recommended sandbox".
+**Which two.** In the harness plan, decision D1 reads "what "sandboxed only" means for pi and mini-swe-agent" and D2 reads "a sandbox as a launch precondition for pi and mini-swe-agent". Option (a) of D1 is "a container now, with the curtain build left to P3". These are the plan's words, quoted. So "these two" are **pi and mini-swe-agent**, and "(a)" is a container now. They are also the two harnesses the plan recommended keeping inside a sandbox, which matches the D2 wording "harnesses that haven't specifically recommended sandbox".
 
 ## 3. The three axes of "sandboxed"
 
@@ -28,7 +28,7 @@ A seat's sandbox is three independent choices. Each has a value marvel can recor
 |---|---|---|---|
 | **placement** | `localhost` (the host's file system) or `container` | marvel, when it launches | localhost only |
 | **curtain** | `off` or a named curtain profile | curtain, as a wrapper marvel puts before the command | not built; curtain at origin/main is a stub, and the profile resource is parked with aae-orc-10x (`internal/api/types.go:649-650`, `:989-990`) |
-| **posture** | the harness's own operating mode and permission settings | the harness, through the adapter's launch line | Claude Code only: `permissions` and `dangerous_permissions` (`internal/api/types.go:615-637`), plus the projected Policy file (`:982-995`) |
+| **posture** | the harness's own operating mode and permission settings | the harness, through the adapter's launch line | Claude Code only: `permissions` and `dangerous_permissions` (`internal/api/types.go:615-637`), plus the projected Policy file (`:984-995`) |
 
 The four combinations of placement and curtain are all valid, as the operator ruled. Posture is set in every combination, wherever the harness offers it.
 
@@ -42,7 +42,7 @@ The target is one manifest vocabulary and one report for every harness. A harnes
 - **Adapter capability:** each adapter declares what it can honour. That means whether it can run in a container, whether it has a posture lever, and whether it recommends a sandbox. The same pattern is used today for optional capabilities (`SessionHomeAssigner`, `SessionIDAssigner`, `StreamCapable`): a harness without the capability simply does not implement the interface.
 - **Report:** `marvel get sessions` (or `describe`) shows the placement, curtain and posture **in force**, each read back after launch where the harness writes it. The adapter kit checklist already asks for this read-back (line 9).
 
-Where each harness stands now. Each cell is a claim to verify when that harness's adapter work starts, not a finding.
+Where each harness stands now. Each cell is a claim to verify when that harness's adapter work starts, not a finding. The goose row cites this repo. The pi and mini-swe-agent rows are the harness plan's reading from each harness's docs, unmeasured until T6 and T5. The other rows are this author's reading of the existing adapters and are unchecked.
 
 | harness | posture lever | sandbox recommended | adapter |
 |---|---|---|---|
