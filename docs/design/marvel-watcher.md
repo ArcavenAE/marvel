@@ -210,7 +210,7 @@ Relayed by director from the operator's decision desk. Each ruling quotes the op
 | # | ruling | the chosen option, as written |
 |---|---|---|
 | 2, claude's fallback turn source | **probe first** | "Run a short test first: watch an idle Claude seat and see whether the cost and token numbers in its status line stay flat. Decide between the two options below on the result." |
-| 2, after the probe (2026-10-10) | **statusline** | A statusline cost or context change counts as a turn, for reports only. It never restarts, rings or routes. If a later test shows misses, it falls back to `unknown`. The probe result is finding-marvel-so6h (FLAT). |
+| 2, after the probe (2026-10-10) | **statusline** | "a statusline cost or context change counts as a turn, for reports only, never to restart, ring or route; fall back to unknown if a later test shows misses." The probe result is finding-marvel-so6h (FLAT). |
 | 3, starting pass interval | **60 s**, as recommended | "Every 60 seconds." |
 | 4, starting age threshold | **10 min**, as recommended | "10 minutes. Matches the quiet window marvel already uses to decide a seat is idle." |
 

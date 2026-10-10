@@ -11,7 +11,7 @@ The watcher needs to know when a claude seat took a turn, and an interactive cla
 
 ## Result: FLAT
 
-- **Seat:** an idle, marvel-managed interactive claude reviewer seat with the statusline context feed on, chosen by the team supervisor, with nothing dispatched to it for the window.
+- **Seat:** a marvel-managed interactive claude reviewer seat with the statusline context feed on, chosen by the team supervisor. The supervisor reported it idle at the start and stated it would dispatch nothing to it during the window. That statement is the only source for "nothing dispatched": the probe did not read the seat's inbox, its roster state or a dispatch ledger (see limit 4).
 - **Window:** 2026-10-10T05:44:10Z to 06:14:12Z, one sample every 60 s, 31 samples.
 - **Valid samples:** 31 of 31. The session's context `observed_at` advanced on every sample, so the statusline command ran between each pair.
 - **Turns:** none. The capture showed no working indicator on any sample.
@@ -21,10 +21,10 @@ Each sample recorded these fields: UTC time, cost, context %, the context `obser
 
 ## Limits
 
-1. One seat, one host, and one claude build (Opus 5.5, 1M context), in one window.
+1. One seat, one host, and one claude build (Opus 5.5, 1M context), in one window. The harness (Claude Code) version, which the brief asked for, was not recorded: no sample kept it, so the finding cannot name it.
 2. This statusline's token figure is a context percentage, not a token count. The probe compared the cost and the context %.
 3. Stale paint is not ruled out. `observed_at` shows the statusline command ran, not that the frame was repainted after it. The only way to force a repaint, `marvel capture --repaint`, resizes the seat's pane, so the probe did not use it.
-4. The cross-check against events is weak. An interactive claude emits no `agent.*` stream, and the seat's only event in the ring was its adoption, before the window. So "no turn" rests on the capture's turn flag.
+4. The cross-check against events is weak. An interactive claude emits no `agent.*` stream, and the seat's only event in the ring was its adoption, before the window. So "no turn" rests on the capture's turn flag, which limit 3 says may be stale paint, and on the supervisor's statement that nothing was dispatched. Neither is independent proof that the seat was idle. The figures not moving across 31 fresh `observed_at` stamps is consistent with idle, but it is the thing under test, so it cannot also confirm it.
 5. No turn happened, so whether the figures move on every turn was not observed. The C2 scratch kit (watcher section 6) still answers that, and it still gates any ring authority.
 
 ## Side observation, for #801
