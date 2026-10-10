@@ -83,6 +83,7 @@ var allBuckets = [][]byte{
 	bucketPolicies,
 	bucketRoleHealth,
 	bucketScheduleStatus,
+	bucketDutyReadiness,
 	bucketMeta,
 }
 
@@ -173,6 +174,14 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 		s.bolt = nil
 		s.boltPath = ""
 		return fmt.Errorf("rehydrate from %s: %w", path, err)
+	}
+	// Orphan readiness rows are removed here, after the read-only load, so a
+	// seat respawned under the same name never inherits a dead seat's record.
+	if err := s.purgeOrphanDuties(); err != nil {
+		_ = db.Close()
+		s.bolt = nil
+		s.boltPath = ""
+		return fmt.Errorf("purge orphan readiness from %s: %w", path, err)
 	}
 
 	return nil
@@ -304,7 +313,7 @@ func (s *Store) rehydrate() error {
 			return err
 		}
 		// Schedule status
-		return tx.Bucket(bucketScheduleStatus).ForEach(func(k, v []byte) error {
+		if err := tx.Bucket(bucketScheduleStatus).ForEach(func(k, v []byte) error {
 			var st ScheduleStatus
 			if err := json.Unmarshal(v, &st); err != nil {
 				return fmt.Errorf("unmarshal schedule status %s: %w", string(k), err)
@@ -312,7 +321,11 @@ func (s *Store) rehydrate() error {
 			st.Key = string(k)
 			s.scheduleStatus[st.Key] = &st
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
+		// Seat readiness
+		return s.rehydrateDuties(tx)
 	})
 }
 

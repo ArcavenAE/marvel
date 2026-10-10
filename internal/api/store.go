@@ -37,6 +37,11 @@ type Store struct {
 	// a team's ShiftState, so it has its own bucket rather than riding the
 	// team record that apply replaces. See schedule_status.go.
 	scheduleStatus map[string]*ScheduleStatus
+	// duties are the seat readiness records, keyed seat|cell name, and
+	// dutySeq is the highest Seq the daemon has assigned. See readiness.go.
+	duties      map[string]*DutyRecord
+	dutySeq     uint64
+	dutyOrphans []string // rows found at load with no session; see purgeOrphanDuties
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by
@@ -97,6 +102,7 @@ func NewStore() *Store {
 		credentials: make(map[string]*Credential),
 
 		scheduleStatus: make(map[string]*ScheduleStatus),
+		duties:         make(map[string]*DutyRecord),
 	}
 }
 
@@ -405,7 +411,8 @@ func (s *Store) DeleteSession(key string) error {
 		return err
 	}
 	delete(s.sessions, key)
-	return nil
+	// A deleted seat's readiness goes with it: nothing is left to route to.
+	return s.deleteSeatDutiesLocked(key)
 }
 
 // UpdateSession applies fn to the live session under the write lock.
