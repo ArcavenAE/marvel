@@ -1,6 +1,6 @@
 # Code restructure plan: two package moves and a sequencing rule
 
-- **Status:** Proposal, 2026-10-10, revision 3. It is for review. It changes
+- **Status:** Proposal, 2026-10-10, revision 4. It is for review. It changes
   no code, and no ticket is filed from it until it has been reviewed.
 - **Ruling it implements:** the operator chose (b) plus (d) from
   finding-marvel-4m2m section 6, on 2026-10-09:
@@ -11,8 +11,9 @@
   The operator also asked for an adversarial architecture review of this
   plan.
 - **Revisions:** revision 2 answered review round 1 (at `6abc0af`), and
-  revision 3 answers round 2 (at `9d13728`). Sections 7 and 8 list each
-  finding and what changed for it.
+  revision 3 answered round 2 (at `9d13728`), and revision 4 answers the
+  formal review of revision 3 and records D1's ruling. Sections 7 to 9 list
+  each finding and what changed for it.
 - **Author seat:** architect, team arcaven.
 - **Code read at:** marvel `76a7db9` (the squash of #799). `daemon.go`,
   `team/controller.go`, `services-list.md` and
@@ -59,11 +60,17 @@ At `76a7db9`. The Move 1 facts read the same at `2329fa1`, because `daemon.go` i
     - `isMRVL` (`:81`) is used by the client only (`:2993`);
     - `busLeafCredential` (`:3293`) is a server constant that sits just
       after the block (used at `:3375`).
-- **The block's callers outside the package.** Seven files:
+- **The block's callers outside the package.** Seven files call the client
+  functions:
   - five in `cmd/marvel`: `accountlimits.go`, `codexctx.go`,
     `ctxforward.go`, `header.go` and `main.go`;
   - `cmd/simulator/main.go`;
   - `internal/simulator/lua.go`.
+
+  Counting every moved name, not only the client functions, 27 files outside
+  `internal/daemon` use them at `76a7db9`: 14 non-test and 13 test files, all
+  in `cmd/marvel`, `cmd/simulator` and `internal/simulator`
+  (`grep -rlE '\bdaemon\.(Request|Response|EventsBatch|DialOptions|Method[A-Z]\w*|ErrWatchUnsupported|SendRequest|SendRequestWith|WatchEventsWith|DefaultMRVLPort)\b'`).
 
   `cmd/marvel` keeps importing the daemon package either way, because
   `marvel daemon` runs the server from it (`NewWithOptions`, `Daemon`,
@@ -148,9 +155,15 @@ At `76a7db9`. The Move 1 facts read the same at `2329fa1`, because `daemon.go` i
   (`bus-pidfile-identity.md` 4.5). `TestBusSignalsOnlyThroughTheProber`
   (`signal_source_test.go:56`) fails on any other way to signal.
   `childproof` imports only the standard library.
-- **The recorded lock order.** `manager.go:64-68` records that `Regenerate`
-  takes `m.mu` and then the supervisor lock through `Reload`, and
-  `Supervisor.Reload` (`:687`) releases `s.mu` before it signals.
+- **The real lock nesting.** `becomeReady` holds `s.mu` and calls
+  `AfterReady` (`supervisor.go:387-391`). The daemon's `AfterReady` calls
+  `mgr.Admin()` (`daemon.go:3407-3408`), which takes `m.mu`
+  (`manager.go:319-321`). So the code nests `s.mu`, then `m.mu`.
+  `manager.go:64-68` describes the reverse (`Regenerate` taking `m.mu`, then
+  the supervisor lock through `Reload`). But `Regenerate` (`:341-355`) calls
+  `Reload` only after `Render` has returned, so at `76a7db9` nothing holds
+  `m.mu` across `Reload`. The comment describes an order the code does not
+  have.
 - **The events.** Fifteen `bus.*` kinds at `76a7db9` (twelve, plus #799's
   `bus.pidfile-stale`, `bus.pidfile-unproven` and
   `bus.identity-unrecorded`). `bus.unavailable` is emitted by
@@ -211,9 +224,12 @@ format and its client, and the server consumes the types.
   exactly `internal/events`, `internal/paths` and `internal/knownhosts` among
   internal packages, so any growth is visible.
 
-**PR 1b: the callers outside the package.**
-- Point the seven caller files at `daemonrpc`.
-- Delete the forwarders. The type aliases stay until 1c.
+**PR 1b: every user outside the package.**
+- Rewrite all 27 files outside `internal/daemon` that name a moved
+  identifier (section 2), not only the seven client callers, with the same
+  `gofmt -r` rewrites 1c uses. The PR body lists the 27 files.
+- Delete the forwarders. The type aliases stay until 1c, so a file 1b
+  missed still builds, and 1c's build is the check that none was missed.
 
 **PR 1c: the package's own names, and the aliases removed.** Without the
 aliases, every use of the wire types inside `internal/daemon` needs a
@@ -276,7 +292,10 @@ The driver keeps:
 `bus.unavailable` stays in `team/bushold.go`.
 
 `workload.Process` owns everything after a child is in hand:
-- spawn and respawn through `workload.Start`, with the driver's `ProcessSpec`;
+- spawn and respawn through `workload.Start`, with the driver's `ProcessSpec`.
+  `ProcessSpec` gains `Grace`, the wait between SIGTERM and SIGKILL that
+  `terminate` uses (`supervisor.go:667`), so the driver keeps its `grace`
+  field and passes it in;
 - adopt of a child the driver has already proven (`Adopt`);
 - the watch loop, with its one ticker;
 - crash detection and the restart wait;
@@ -324,6 +343,8 @@ type Exit struct {
 func New(spec ProcessSpec, d Driver, p childproof.Prober, sched backoff.Schedule) *Process
 func (p *Process) Spawn(ctx context.Context) error
 func (p *Process) Adopt(ctx context.Context, c childproof.Child) error
+func (p *Process) Restart(reason string) error
+func (p *Process) Stop(keep bool)
 func (p *Process) Snapshot() State
 ```
 
@@ -354,18 +375,29 @@ preferred over a no-op method, but not before that driver exists.
   that goroutine, so spawn, adopt, a requested restart and the crash respawn
   are serialized by the loop, not by holding `p.mu`. `p.mu` guards only the
   state `Snapshot` copies.
-- The fleet order is `m.mu`, then `s.mu`, then `p.mu`. It is recorded next
-  to the `leafAttached` note in `manager.go`.
+- The order is `s.mu`, then `m.mu`, which is the only nesting the code has
+  (section 2). `p.mu` is never held while another lock is taken, and never
+  taken while `s.mu` is held: a driver takes `Snapshot` first, then `s.mu`.
+  `Ready()` and `Status()` both do this. The order is recorded next to the
+  `leafAttached` note in `manager.go`, and PR 2c corrects that note's
+  `m.mu`-first sentence.
 
 **Readiness: today's window, and the fix.** Today `Ready()` can be true
 before the first structural reading, and on a restart true on the dead
 child's reading (section 2). This plan closes that window, which is stricter
 than today:
-- The driver records `readyGen = s.Child.Gen` at the end of `Started`.
-- `bus.Supervisor.Ready()` takes one `Snapshot` and returns
-  `snap.Ready && snap.Gen == readyGen && (!structureKnown || structure.Healthy())`.
-- A crash bumps the generation on respawn, so a reading from the dead child
-  can never make the new one ready. `Exited` resets nothing.
+- Each structural reading is tagged with the generation of the child it was
+  read from (`structureGen`), taken from `Snapshot` when the read starts.
+- `Started` clears the reading (`structureKnown = false`) before taking the
+  first one, and records `readyGen = s.Child.Gen` when it ends.
+- A reading whose generation is not the current one is dropped on arrival.
+  This covers a failed first reading, which today keeps the dead child's
+  structure (`supervisor.go:803`), and a late reading from Reload's delayed
+  `checkStructure` (`:705-716`) that lands after a respawn.
+- `bus.Supervisor.Ready()` takes one `Snapshot`, then `s.mu`, and returns
+  `snap.Ready && snap.Gen == readyGen && (!structureKnown || (structureGen == snap.Gen && structure.Healthy()))`.
+  With no reading for the current child it behaves as today's first start
+  does, which is ready with no reading.
 - The comment at `supervisor.go:396-398` is corrected in PR 2c.
 
 `bus.Supervisor.Status()` takes the same single `Snapshot` at its top, so its
@@ -427,8 +459,13 @@ allows happen here.
     the script does not reach, and it is kept apart from the concurrent test,
     where another goroutine's `Snapshot` would make it fail spuriously;
   - concurrent: a crash, `Snapshot` and `Tick` run together under `-race`;
-- **readiness:** a crash during `Started` never leaves `Ready()` true for
-  the new child before its own first reading.
+- **readiness, in `internal/bus`:**
+  - a crash during `Started` never leaves `Ready()` true for the new child
+    before its own first reading;
+  - after a respawn, a failed first reading leaves no structure from the
+    dead child in effect;
+  - a delayed reading from `Reload`, released after a respawn, is dropped and
+    does not change `Ready()`.
 
 **Tests that prove it, in `internal/bus`:**
 - every supervisor test passes, edited only as D1 allows;
@@ -480,15 +517,20 @@ the same time.
 `manager.go` is next edited for a feature, it may move to its own file in the
 same package, in a separate commit inside that PR. Never as a sweep.
 
-## 5. Decision needed
+## 5. Decision D1, ruled
 
-**D1. May the supervisor tests be edited for Move 2?** Counted at `76a7db9`
+**D1. May the supervisor tests be edited for Move 2?** The operator ruled on
+2026-10-10, relayed by director, verbatim: "yes, the plan may edit the
+supervisors tests, allow the five edits". The grant covers the five
+live-state reaches in the last row of the table below, and nothing else.
+
+Counted at `76a7db9`
 (`grep -oE '\bs\.<field>\b' internal/bus/*_test.go`), sorted by what each
 reach does under the split in section 3:
 
 | class | reaches | count | under the split |
 |---|---|---|---|
-| configuration set before `Start` | `s.backoff` 4, `s.dialTimeout` 5, `s.prober` set 1 (`proctable_test.go:34`), `s.onSpawn` 3, `s.adoptPoll` 1 | 14 | the driver keeps these fields and passes them to `New` at `Start`: no edit |
+| configuration set before `Start` | `s.backoff` 4, `s.dialTimeout` 5, `s.prober` set 1 (`proctable_test.go:34`), `s.onSpawn` 3, `s.adoptPoll` 1, `s.grace` 1 (`supervisor_identity_test.go:318`) | 15 | the driver keeps these fields and passes them to `New` or its `ProcessSpec` at `Start` (`grace` as `ProcessSpec.Grace`): no edit |
 | file paths | `s.pidFile` 22, `s.logPath` 2 | 24 | the driver keeps the paths and puts them in its `ProcessSpec`: no edit |
 | structure and leaf state | `s.mu` 6, `s.leafPoll` 5, and the leaf and structure methods | 11 or more | stays in the driver: no edit |
 | live lifecycle state | `s.pid` 1 (`proctable_test.go:142`), `s.child` 3 and `s.prober.Same` 1 (`supervisor_identity_test.go:298-299`) | 5, in two tests | lives in `Process` after the split |
@@ -497,27 +539,18 @@ reach does under the split in section 3:
 `s.stopping` have no reaches. There are ten `func Test` in
 `supervisor_test.go`.
 
-Options:
-- (a) Allow edits for the live-state class only: the five reaches in two
-  tests read through `Snapshot()` instead. No assertion changes, and the PR
-  lists each edited line with its before and after.
-- (b) No edits. The driver also keeps its own copy of the pid and child, so
-  the two tests read it. That gives the lifecycle a second source of truth,
-  which goes stale on a respawn.
-- (c) Defer Move 2, and ship Move 1 and PR 2a alone.
+The options were (a) edit the five live-state reaches, (b) no edits, with
+a second copy of live state in the driver, and (c) defer Move 2. (a) was
+recommended and ruled. If the split as built needs any edit beyond these
+five, it comes back as its own decision and is not folded into this grant.
 
-**Recommended: (a).** The edit is five reaches in two tests, and it avoids
-keeping a stale copy of live state alive for the sake of test text. The other
-three classes need no edit. `services-list.md` 3.4 item 3, "the ten existing
-supervisor tests pass unedited", is amended in PR 2d to "pass, with five
-live-state reads in two tests re-pointed at `Process.Snapshot`".
-
-This recommendation is valid until 2026-10-23; the architect re-checks it
-then. Nothing executes on silence or on that date.
+`services-list.md` 3.4 item 3, "the ten existing supervisor tests pass
+unedited", is amended in PR 2d to "pass, with five live-state reads in two
+tests re-pointed at `Process.Snapshot`".
 
 ## 6. Work items, proposed
 
-None is filed until this plan has been reviewed and D1 is ruled. Each would
+None is filed until this plan has been reviewed. D1 is ruled (section 5). Each would
 land as its own ticket, with the edges shown.
 
 | id | work | depends on |
@@ -528,7 +561,7 @@ land as its own ticket, with the edges shown.
 | R3 | Move 1, PR 1c | R2 |
 | R4 | `internal/backoff` (PR 2a) | none |
 | R5 | `Driver`, `New`, `Process` and their tests, and the golden event list (PR 2b) | R0 |
-| R6 | bus as a driver, and the dead code removed (PRs 2c, 2d) | R5, D1 |
+| R6 | bus as a driver, and the dead code removed (PRs 2c, 2d) | R5 |
 
 `aae-orc-oo62t` is the existing ticket for R5 and R6. Its REMAINING note would
 point here, rather than a new ticket being filed beside it.
@@ -580,3 +613,16 @@ held, and none was rejected.
 | N5, #799's file list | "among others", with `identity.go` named |
 | N6, interface shape | Noted: optional interfaces only when a second driver needs them |
 | N7, `services-list.md` 3.4 item 3 | Amended in PR 2d with D1's wording |
+
+## 9. Review of revision 3 (`c939206`), item by item
+
+Each item was checked at `76a7db9` before anything changed. All of them held.
+
+| item | what changed |
+|---|---|
+| 1, readiness gates the generation, not the reading | Readings are tagged with their generation; `Started` clears the reading; a reading from another generation is dropped; three readiness tests, including the failed first reading and the late `Reload` reading |
+| 2, lock order reversed | Section 2 records the real nesting, `s.mu` then `m.mu`, and that the `manager.go:64-68` comment does not match `Regenerate`. The contract states it, and states `Snapshot` before `s.mu` for `Ready()` and `Status()`; PR 2c corrects the comment |
+| 3, PR 1b and 1c scope | 27 files outside `internal/daemon` (14 non-test, 13 test) counted and named as PR 1b's scope; the aliases stay through 1b so 1c's build checks nothing was missed |
+| D1, `s.grace` missing | `s.grace` is set before `Start`, so it is in the configuration class (now 15) and reaches `Process` as `ProcessSpec.Grace`. The live-state edits stay at five, inside the operator's grant |
+| low, the API omits `Restart` and `Stop` | Both added to the API block |
+
