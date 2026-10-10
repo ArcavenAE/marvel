@@ -302,3 +302,48 @@ func TestNotesNameEveryCheck(t *testing.T) {
 		}
 	}
 }
+
+// Claude must already be idle when the c8 clock starts: the wait opens right
+// after setup-closed, before c2's idle sleep and before any prompt, so an
+// idle_prompt that fires early is still inside the measurement.
+func TestKitOpensTheIdleNotificationWaitStraightAfterSetup(t *testing.T) {
+	b, err := os.ReadFile(kitScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(b), "\n")
+	at := func(want string) int {
+		for i, l := range lines {
+			code, _, _ := strings.Cut(l, "#")
+			if strings.Contains(code, want) {
+				return i
+			}
+		}
+		t.Fatalf("run.sh has no %q", want)
+		return -1
+	}
+	setup, wait, c2 := at("mark setup-closed"), at("mark idle-wait-start"), at("mark idle-start")
+	if setup >= wait || wait >= c2 {
+		t.Fatalf("order: setup-closed line %d, idle-wait-start line %d, idle-start line %d; want that order", setup+1, wait+1, c2+1)
+	}
+	for _, l := range lines[setup+1 : wait] {
+		code, _, _ := strings.Cut(l, "#")
+		if strings.Contains(code, "type_line") || strings.Contains(code, "prompt ") || strings.Contains(code, "send-keys") {
+			t.Errorf("something is sent between setup-closed and idle-wait-start: %s", strings.TrimSpace(l))
+		}
+	}
+}
+
+func TestKitRefusesAWaitThatIsNotAPositiveInteger(t *testing.T) {
+	for _, name := range []string{"WATCHER_PROBE_NOTIFY_SECS", "WATCHER_PROBE_IDLE_SECS"} {
+		for _, bad := range []string{"abc", "0", "-5", "1.5", "10s", " 7"} {
+			out, err := runKit(t, []string{name + "=" + bad}, "--dry-run", "--scratch", filepath.Join(t.TempDir(), "probe"))
+			if err == nil || !strings.Contains(out, name) {
+				t.Errorf("%s=%q: err=%v\n%s", name, bad, err, out)
+			}
+		}
+		if out, err := runKit(t, []string{name + "=45"}, "--dry-run", "--scratch", filepath.Join(t.TempDir(), "probe")); err != nil {
+			t.Errorf("%s=45 refused: %v\n%s", name, err, out)
+		}
+	}
+}

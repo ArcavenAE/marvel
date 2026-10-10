@@ -372,27 +372,67 @@ func TestC7MovementWithNoPrompt(t *testing.T) {
 	}
 }
 
-// c8 is the seconds until the idle_prompt notification, or "never".
+// c8 is the seconds until the idle_prompt notification, or "never", measured
+// from when claude went idle: the later of setup-closed and the last Stop or
+// StopFailure before the wait window opens, or the window's own start when
+// neither is marked.
 func TestC8IdleNotificationSeconds(t *testing.T) {
+	const s = int64(1_000_000_000)
 	idle := func(ns int64) Line {
 		return hookBody(ns, "Notification", `{"hook_event_name":"Notification","notification_type":"idle_prompt"}`)
 	}
-	other := hookBody(10*ms, "Notification", `{"hook_event_name":"Notification","notification_type":"permission_prompt"}`)
-	const s = int64(1_000_000_000)
-	got := Run([]Line{mark(1*s, "idle-wait-start", ""), other, idle(61*s + 500*ms), idle(90 * s), mark(120*s, "idle-wait-end", "")}, "x")
-	if c := get(t, got, "c8"); c.Status != StatusObserved || c.Value != 60.5 {
-		t.Errorf("c8 = %+v, want 60.5 s from the first idle_prompt only", c)
+	other := func(ns int64) Line {
+		return hookBody(ns, "Notification", `{"hook_event_name":"Notification","notification_type":"permission_prompt"}`)
 	}
-	never := Run([]Line{mark(1*s, "idle-wait-start", ""), other, mark(120*s, "idle-wait-end", "")}, "x")
-	if c := get(t, never, "c8"); c.Status != StatusObserved || c.Value != "never" {
-		t.Errorf("no idle_prompt: c8 = %+v, want \"never\"", c)
+	seconds := func(lines []Line) Check { return get(t, Run(lines, "x"), "c8") }
+
+	// A non-idle Notification inside the window is not the idle prompt, and the
+	// first idle_prompt is the one counted.
+	c := seconds([]Line{mark(1*s, "idle-wait-start", ""), other(30 * s), idle(61*s + 500*ms), idle(90 * s), mark(120*s, "idle-wait-end", "")})
+	if c.Status != StatusObserved || c.Value != 60.5 {
+		t.Errorf("c8 = %+v, want 60.5 s from the first idle_prompt, past the permission_prompt at 30 s", c)
 	}
-	outside := Run([]Line{mark(1*s, "idle-wait-start", ""), mark(120*s, "idle-wait-end", ""), idle(130 * s)}, "x")
-	if c := get(t, outside, "c8"); c.Value != "never" {
-		t.Errorf("an idle_prompt after the window: c8 = %+v", c)
+	never := seconds([]Line{mark(1*s, "idle-wait-start", ""), other(30 * s), mark(120*s, "idle-wait-end", "")})
+	if never.Status != StatusObserved || never.Value != "never" {
+		t.Errorf("only a permission_prompt: c8 = %+v, want \"never\"", never)
+	}
+	outside := seconds([]Line{mark(1*s, "idle-wait-start", ""), mark(120*s, "idle-wait-end", ""), idle(130 * s)})
+	if outside.Value != "never" {
+		t.Errorf("an idle_prompt after the window: c8 = %+v", outside)
 	}
 	if got := get(t, Run(nil, "x"), "c8").Status; got != StatusNotRun {
 		t.Errorf("no window: c8 = %q", got)
+	}
+
+	// Claude was already idle when the window opened: the clock starts at
+	// setup-closed, and an idle_prompt before the window counts.
+	late := seconds([]Line{mark(1*s, "setup-closed", ""), mark(61*s, "idle-wait-start", ""), idle(65 * s), mark(181*s, "idle-wait-end", "")})
+	if late.Value != 64.0 || !strings.Contains(late.Note, "setup-closed") {
+		t.Errorf("a window opened 60 s after setup: c8 = %+v, want 64 s from setup-closed", late)
+	}
+	before := seconds([]Line{mark(1*s, "setup-closed", ""), idle(50 * s), mark(61*s, "idle-wait-start", ""), mark(181*s, "idle-wait-end", "")})
+	if before.Value != 49.0 {
+		t.Errorf("an idle_prompt during the earlier idle: c8 = %+v, want 49 s, not never", before)
+	}
+
+	// After a turn, idle starts at the last Stop.
+	afterStop := seconds([]Line{mark(1*s, "setup-closed", ""), hook(100*s, "Stop"), mark(120*s, "idle-wait-start", ""), idle(170 * s), mark(300*s, "idle-wait-end", "")})
+	if afterStop.Value != 70.0 || !strings.Contains(afterStop.Note, "Stop") {
+		t.Errorf("after a Stop at 100 s: c8 = %+v, want 70 s from the Stop", afterStop)
+	}
+	failed := seconds([]Line{mark(1*s, "setup-closed", ""), hook(100*s, "StopFailure"), mark(120*s, "idle-wait-start", ""), idle(170 * s), mark(300*s, "idle-wait-end", "")})
+	if failed.Value != 70.0 {
+		t.Errorf("after a StopFailure: c8 = %+v", failed)
+	}
+	// A Stop after the window opened is activity inside it, not the idle start.
+	inside := seconds([]Line{mark(1*s, "setup-closed", ""), mark(10*s, "idle-wait-start", ""), hook(20*s, "Stop"), idle(70 * s), mark(300*s, "idle-wait-end", "")})
+	if inside.Value != 69.0 {
+		t.Errorf("a Stop inside the window: c8 = %+v, want 69 s from setup-closed", inside)
+	}
+	// With neither mark, the window's own start is all there is.
+	bare := seconds([]Line{mark(5*s, "idle-wait-start", ""), idle(35 * s), mark(60*s, "idle-wait-end", "")})
+	if bare.Value != 30.0 {
+		t.Errorf("no setup-closed and no Stop: c8 = %+v, want 30 s", bare)
 	}
 }
 
