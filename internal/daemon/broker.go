@@ -24,10 +24,11 @@ func (a storeSessionAuth) Authenticate(key, token string) (broker.Identity, erro
 	return broker.Identity{Session: sess.Key(), Team: sess.Team, Role: sess.Role}, nil
 }
 
-// UseBrokerDriver turns the credential broker on with drv as its driver. A
-// daemon that never calls it answers broker.token with a refusal and issues
-// nothing.
-func (d *Daemon) UseBrokerDriver(drv broker.Driver) {
+// UseBrokerDriver turns the credential broker on with drv as its driver and
+// points every seat's environment at helper. A daemon that never calls it
+// answers broker.token with a refusal and issues nothing.
+func (d *Daemon) UseBrokerDriver(drv broker.Driver, helper string) {
+	d.sessMgr.CredentialHelper = helper
 	d.broker = broker.New(drv, storeSessionAuth{store: d.store})
 	b := d.broker
 	d.sessMgr.SessionEnded = func(key string) {

@@ -966,6 +966,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	} else if layout, err := paths.Default(); err == nil {
 		lctx.ViewsDir = layout.ViewsDir()
 	}
+	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {
 		lctx.BusURL = m.Bus.URL()
 		lctx.GlobalRole = m.Bus.GlobalRole(*role)

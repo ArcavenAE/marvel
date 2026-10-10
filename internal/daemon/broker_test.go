@@ -16,7 +16,7 @@ func brokerDaemon(t *testing.T) (*Daemon, *broker.Mock) {
 	t.Helper()
 	d := newHandlerDaemon(t)
 	m := broker.NewMock(15*time.Minute, time.Now)
-	d.UseBrokerDriver(m)
+	d.UseBrokerDriver(m, "/opt/marvel/credential-helper")
 	return d, m
 }
 
@@ -132,5 +132,12 @@ func TestBrokerRevokesAnEndedSeatsTokens(t *testing.T) {
 	d.sessMgr.SessionEnded(keyB)
 	if live := m.Live(); len(live) != 0 {
 		t.Fatalf("live tokens after both seats ended = %v, want none", live)
+	}
+}
+
+func TestUseBrokerDriverPointsSeatsAtTheHelper(t *testing.T) {
+	d, _ := brokerDaemon(t)
+	if d.sessMgr.CredentialHelper != "/opt/marvel/credential-helper" {
+		t.Fatalf("CredentialHelper = %q, want the path UseBrokerDriver was given", d.sessMgr.CredentialHelper)
 	}
 }

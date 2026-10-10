@@ -450,6 +450,9 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 			env["DIRECTOR_GLOBAL_ROLE"] = ctx.GlobalRole
 		}
 	}
+	if ctx.CredentialHelper != "" {
+		env[api.CredentialHelperEnv] = ctx.CredentialHelper
+	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
 		// The socket is what makes a heartbeat possible, so the token
@@ -523,6 +526,7 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 // failure it enables is silent.
 var roleEnvRefusedKeys = []string{
 	api.HeartbeatTokenEnv,
+	api.CredentialHelperEnv,
 	"DIRECTOR_NATS_USER",
 	"DIRECTOR_NATS_PASS",
 }
