@@ -4,7 +4,7 @@ Proposal, 2026-10-09. Code read at marvel `ff9d210`.
 
 - **Author:** the architect seat, team arcaven, from a six-round design panel. The seats were messaging, observability, runtime and harness; the panel's record is kept outside this repository.
 - **The operator's ask:** "marvel builtin watcher, bearing in mind that while marvel bus is native, nats is not, and other agent message queues may be swapped in".
-- **Status:** ruled 2026-10-10 (section 8, "Operator rulings"). Decision 1 chose the report-only first build with no ringing; decisions 2 to 4 set its turn source, interval and threshold. The section 7 plan is filed as flat tickets, with the ring rows held. Builders work red tests first.
+- **Status:** decisions 2 to 4 were ruled on 2026-10-10 (section 8, "Operator rulings"). On the same day the operator ordered the report-only build ("kick off 2"), which is read as settling decision 1, pending the operator's confirmation (section 8). The section 7 plan is filed as flat tickets, with the ring rows held. Builders work red tests first.
 
 ## 0. Why
 
@@ -136,29 +136,29 @@ A probe kit runs on a scratch claude:
 - a throwaway repository;
 - a credential supplied for the run, never a fleet seat's.
 
-Hook loggers and a statusline logger append monotonic-stamped lines. A checker writes `probe_result.json` with thirteen keys, one measurement each:
+Hook loggers and a statusline logger append monotonic-stamped lines. A checker writes `probe_result.json` with thirteen keys, `c1` to `c13`, each carrying a name field and one measurement:
 
-| key | measures |
-|---|---|
-| `c1_pre_session_hooks` | hook events logged at the trust dialog and setup menu (expected none) |
-| `c2_idle_cost_moves` | ticks in five idle minutes where the cost or a token class changed |
-| `c3_one_submit_one_stop` | every prompt shows exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` |
-| `c4_ring_form` | for the exact ring form, the `source` value and the submit-to-hook latency in ms (one key, two fields) |
-| `c5_denial_reason` | the `PermissionDenied.reason` text, and the `Notification.notification_type` seen |
-| `c6_interrupt_event` | `stop`, `stopfailure` or `none` after Esc mid-turn |
-| `c7_nonprompt_moves` | cost or token movement with no prompt (a background task, compaction) |
-| `c8_idle_notification_s` | seconds until the `idle_prompt` notification, or `never` |
-| `c9_hook_stdout_reaches_context` | whether a line a hook prints appears in the transcript |
-| `c10_hook_exit2_effect` | what a nonzero hook exit does to the prompt |
-| `c11_subagent_stamps` | whether subagent activity stamps carry `agent_id`, and whether a main turn's `Stop` ever does |
-| `c12_stop_background` | whether `Stop` carries background tasks, and whether a turn resumes with no prompt |
-| `c13_version_visible_to_hook` | whether the hook process can learn the claude version |
+| key | name | measures |
+|---|---|---|
+| `c1` | `pre_session_hooks` | hook events logged at the trust dialog and setup menu (expected none) |
+| `c2` | `idle_cost_moves` | whether the statusline cost moved and whether its context moved while idle, with the sample count; the idle window is five minutes |
+| `c3` | `one_submit_one_stop` | every prompt shows exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` |
+| `c4` | `ring_form` | for the exact ring form, the `source` value and the submit-to-hook latency in ms (one key, two fields) |
+| `c5` | `denial_reason` | the `PermissionDenied.reason` text, and the `Notification.notification_type` seen |
+| `c6` | `interrupt_event` | `stop`, `stopfailure` or `none` after Esc mid-turn |
+| `c7` | `nonprompt_moves` | with no prompt sent, the count of turn hooks (any is a fail) and the count of statusline changes; the statusline fallback is trusted only while that change count is zero |
+| `c8` | `idle_notification_s` | seconds until the `idle_prompt` notification, or `never` |
+| `c9` | `hook_stdout_reaches_context` | whether a line a hook prints reaches the session's context, read from the transcript |
+| `c10` | `hook_exit2_effect` | what a hook's exit 2 does to the prompt |
+| `c11` | `subagent_stamps` | whether subagent hooks carry `agent_id`, and whether a main turn's `Stop` ever carries one |
+| `c12` | `stop_background` | whether a `Stop` after a backgrounded task carries a non-empty `background_tasks`, and whether a turn then resumes with no prompt |
+| `c13` | `version_visible_to_hook` | whether the hook process can learn the claude version |
 
-The key names are the party's (round 4, with `c13` added in round 5). An earlier revision of this section listed twelve measurements for thirteen keys, dropping `c8`.
+The names are the party's (round 4, with `c13` added in round 5). An earlier revision of this section listed twelve measurements for thirteen keys, dropping `c8`.
 
 Hooks become the claude source only if every prompt shows exactly one `UserPromptSubmit` and one `Stop` or `StopFailure`. The result carries the build stamp and is re-run on a newer claude before the stamp is reused.
 
-## 7. Plan (filed as flat tickets on 2026-10-10, after decision 1; G1 to G4 are held until ringing is turned on)
+## 7. Plan (filed as flat tickets on 2026-10-10, after the order to build report-only; G1 to G4 are held until ringing is turned on)
 
 | id | ticket | blocked by |
 |---|---|---|
@@ -215,13 +215,14 @@ Relayed by director from the operator's decision desk. Each ruling quotes the op
 
 | # | ruling | the chosen option, as written |
 |---|---|---|
-| 1, the design | **report-only first build, no ringing yet** | The operator's order, verbatim: "kick off 2", relayed by director and the team supervisor as starting seat health, the watcher report-only and the readiness cells. The relay states it answers decision 1: build report-only first, with no ringing yet; checks every 60 s; report unread mail older than 10 min; a statusline cost or context change counts as a turn, for reports only, never to restart, ring or route. |
 | 2, claude's fallback turn source | **probe first** | "Run a short test first: watch an idle Claude seat and see whether the cost and token numbers in its status line stay flat. Decide between the two options below on the result." |
 | 2, after the probe (2026-10-10) | **statusline** | "a statusline cost or context change counts as a turn, for reports only, never to restart, ring or route; fall back to unknown if a later test shows misses." The probe result is finding-marvel-so6h (FLAT). |
 | 3, starting pass interval | **60 s**, as recommended | "Every 60 seconds." |
 | 4, starting age threshold | **10 min**, as recommended | "10 minutes. Matches the quiet window marvel already uses to decide a seat is idle." |
 
-Decision 2 was first ruled probe first; the probe found the figures flat while idle (finding-marvel-so6h), and the operator then ruled "statusline", in the second row. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Decision 1 was ruled later the same day (first row), and the section 7 plan was filed from it. Turning the ring on remains a later operator decision, put up after C2 passes and aae-orc-g88i1 lands.
+Decision 2 was first ruled probe first; the probe found the figures flat while idle (finding-marvel-so6h), and the operator then ruled "statusline", in the second row. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Turning the ring on remains a later operator decision, put up after C2 passes and aae-orc-g88i1 lands.
+
+**Decision 1, read from an order (pending the operator's confirmation).** On 2026-10-10 the operator ordered the report-only build: "kick off 2". That order is read as settling decision 1, pending the operator's confirmation through director. The build it starts is report-only, with no ringing yet. Checks run every 60 s, unread mail older than 10 min is reported, and a statusline cost or context change counts as a turn for reports only, never to restart, ring or route. The section 7 plan was filed from it.
 
 ## 9. For the capability register
 
