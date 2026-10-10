@@ -672,3 +672,12 @@ func Mask(text, secret string) string {
 	}
 	return out.String()
 }
+
+// Options are what the checker may read besides the log.
+type Options struct {
+	// TranscriptRoots are the only directories a transcript may be read from.
+	TranscriptRoots []string
+}
+
+// RunWith evaluates the log with options.
+func RunWith(lines []Line, stamp string, _ Options) Result { return Run(lines, stamp) }

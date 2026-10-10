@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,5 +181,45 @@ func TestCheckMasksTheResultEvenFromAnUnmaskedLog(t *testing.T) {
 	}
 	if strings.Contains(string(b), "FAKEFAKE") || !strings.Contains(string(b), "bad key") {
 		t.Errorf("result = %s", b)
+	}
+}
+
+// check reads a transcript only from a root it was given with --root.
+func TestCheckReadsTheTranscriptOnlyUnderARoot(t *testing.T) {
+	root := t.TempDir()
+	tp := filepath.Join(root, "t.jsonl")
+	if err := os.WriteFile(tp, []byte(`{"type":"attachment","attachment":{"stdout":"WATCHER-CANARY-7f3a91"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log, res := filepath.Join(dir, "events.tsv"), filepath.Join(dir, "probe_result.json")
+	lines := "1\tmark\tcanary-start\t\n" +
+		"2\thook\tUserPromptSubmit\t{\"hook_event_name\":\"UserPromptSubmit\",\"transcript_path\":\"" + tp + "\"}\n" +
+		"3\tmark\tcanary-end\t\n"
+	if err := os.WriteFile(log, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	reached := func(args ...string) string {
+		t.Helper()
+		if code := run(append([]string{"check", "--log", log, "--out", res, "--stamp", "s"}, args...), strings.NewReader(""), &out, &errb); code != 0 {
+			t.Fatalf("check exited %d: %s", code, errb.String())
+		}
+		b, _ := os.ReadFile(res)
+		var m map[string]struct {
+			Status string         `json:"status"`
+			Value  map[string]any `json:"value"`
+		}
+		_ = json.Unmarshal(bytes.ReplaceAll(b, []byte(`"build_stamp": "s",`), nil), &m)
+		return m["c9"].Status + "/" + fmt.Sprint(m["c9"].Value["reached"])
+	}
+	if got := reached("--root", root); got != "observed/true" {
+		t.Errorf("with the root: c9 = %s", got)
+	}
+	if got := reached(); got != "not-run/<nil>" {
+		t.Errorf("with no root: c9 = %s", got)
+	}
+	if got := reached("--root", t.TempDir()); got != "fail/<nil>" {
+		t.Errorf("with another root: c9 = %s", got)
 	}
 }

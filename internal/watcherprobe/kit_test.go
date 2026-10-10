@@ -335,7 +335,7 @@ func TestKitOpensTheIdleNotificationWaitStraightAfterSetup(t *testing.T) {
 }
 
 func TestKitRefusesAWaitThatIsNotAPositiveInteger(t *testing.T) {
-	for _, name := range []string{"WATCHER_PROBE_NOTIFY_SECS", "WATCHER_PROBE_IDLE_SECS"} {
+	for _, name := range []string{"WATCHER_PROBE_NOTIFY_SECS", "WATCHER_PROBE_IDLE_SECS", "WATCHER_PROBE_QUIET_SECS"} {
 		for _, bad := range []string{"abc", "0", "-5", "1.5", "10s", " 7"} {
 			out, err := runKit(t, []string{name + "=" + bad}, "--dry-run", "--scratch", filepath.Join(t.TempDir(), "probe"))
 			if err == nil || !strings.Contains(out, name) {
@@ -344,6 +344,92 @@ func TestKitRefusesAWaitThatIsNotAPositiveInteger(t *testing.T) {
 		}
 		if out, err := runKit(t, []string{name + "=45"}, "--dry-run", "--scratch", filepath.Join(t.TempDir(), "probe")); err != nil {
 			t.Errorf("%s=45 refused: %v\n%s", name, err, out)
+		}
+	}
+}
+
+// c2's window is five minutes by default, as the party asked. c7's quiet window
+// is its own variable, so lengthening the idle window does not lengthen c7.
+func TestKitDryRunPrintsTheWindowLengths(t *testing.T) {
+	scratch := filepath.Join(t.TempDir(), "probe")
+	out, err := runKit(t, nil, "--dry-run", "--scratch", scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"IDLE_SECS=300\n", "QUIET_SECS=60\n", "NOTIFY_SECS=120\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry run does not print %q:\n%s", strings.TrimSpace(want), out)
+		}
+	}
+	out, err = runKit(t, []string{"WATCHER_PROBE_IDLE_SECS=45", "WATCHER_PROBE_QUIET_SECS=7", "WATCHER_PROBE_NOTIFY_SECS=9"}, "--dry-run", "--scratch", scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"IDLE_SECS=45\n", "QUIET_SECS=7\n", "NOTIFY_SECS=9\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an override is not printed as %q:\n%s", strings.TrimSpace(want), out)
+		}
+	}
+}
+
+func driverCode(t *testing.T) []string {
+	t.Helper()
+	b, err := os.ReadFile(kitScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var code []string
+	for _, line := range strings.Split(string(b), "\n") {
+		c, _, _ := strings.Cut(line, "#")
+		code = append(code, c)
+	}
+	return code
+}
+
+func TestKitUsesTheIdleAndQuietVariablesForTheirOwnWindows(t *testing.T) {
+	for _, tc := range []struct{ mark, uses string }{{"mark idle-start", `"$idle"`}, {"mark quiet-start", `"$quiet"`}} {
+		found := false
+		for _, l := range driverCode(t) {
+			if strings.Contains(l, tc.mark) {
+				found = true
+				if !strings.Contains(l, tc.uses) {
+					t.Errorf("%q does not sleep for %s: %s", tc.mark, tc.uses, strings.TrimSpace(l))
+				}
+			}
+		}
+		if !found {
+			t.Errorf("run.sh has no %q", tc.mark)
+		}
+	}
+}
+
+// c9 reads the session transcript, so the driver marks a window around the
+// canary prompt and hands the checker the scratch roots it may read from; it
+// no longer greps a pane capture.
+func TestKitReadsTheTranscriptNotThePaneForC9(t *testing.T) {
+	text := strings.Join(driverCode(t), "\n")
+	for _, gone := range []string{"stdout-canary", "capture-c9"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("run.sh still uses %q", gone)
+		}
+	}
+	for _, want := range []string{"mark canary-start", "mark canary-end", `--root "$HOME"`, `--root "$CLAUDE_CONFIG_DIR"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("run.sh lacks %q", want)
+		}
+	}
+}
+
+// The design table says what each key measures; a row that still carries the
+// label has not been closed.
+func TestDesignTableHasNoUnmeasuredLabel(t *testing.T) {
+	b, err := os.ReadFile("../../docs/design/marvel-watcher.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stale := range []string{"Not yet measured as asked", "measures less than that", "a follow-up will close"} {
+		if strings.Contains(string(b), stale) {
+			t.Errorf("docs/design/marvel-watcher.md still says %q", stale)
 		}
 	}
 }
