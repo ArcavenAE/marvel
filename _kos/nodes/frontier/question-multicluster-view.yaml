@@ -13,8 +13,11 @@ content: |
   a35d93d; the design ticket is #816.
 
   WHAT EXISTS: the client talks to one daemon per command, resolved as
-  `--socket`, `MARVEL_SOCKET`, the selected cluster, then the layout
-  default (`cmd/marvel/main.go`, `resolveDaemonRung`). Clusters are named
+  `--socket`; then a cluster named with `--cluster`; then `MARVEL_SOCKET`,
+  only when no cluster is named (#586); then the config's current cluster;
+  then the layout default (`cmd/marvel/main.go`, `resolveDaemonRung`). Every
+  seat has `MARVEL_SOCKET` set, so a multi-cluster read names its clusters
+  explicitly and never falls to that rung. Clusters are named
   config entries, each with its own address and identity. An unreachable
   cluster waits out the SSH dial and then prints usage text (#812).
 
