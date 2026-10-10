@@ -26,6 +26,27 @@ content: |
     heartbeat it sends carries no cost field
     (`internal/api/heartbeat.go:92-112`), so the daemon never receives it.
 
+  WHY TOUT AND RATE READ "-" TODAY. The operator, verbatim: "oh, rate, tout,
+  neither seemd to be working". Read-only on one live cluster, 2026-10-10,
+  daemon 76a7db9: all 33 seats read `-` for RATE, TOUT and PROMPT. Every
+  seat is interactive (`Runtime.Mode` empty), fed by the statusline
+  heartbeat (`ContextSource` heartbeat, `ContextRequests` 0), with
+  `SpendOut` nil. Only the usage accountant writes those cells
+  (`internal/usage/accountant.go:306`, `:309`), and it reads a stream,
+  which only a headless seat has. The heartbeat request has no output-token
+  field (`internal/api/heartbeat.go:92-127`). So the cells read "never
+  metered", which is true, not a fault. It is not the #779 flip either: that
+  needs a headless seat with the statusline feed, and no live seat is
+  headless. A dollar column built on the same path would read `-` on the
+  same seats, so question 1 below decides whether the column shows anything
+  on an interactive fleet at all.
+
+  The heartbeats themselves spend no model tokens. The operator, verbatim:
+  "are the heartbeats costing us tokens?" `marvel ctx-forward` is the
+  command the harness runs for its statusline; it reads the JSON the
+  harness pipes in and makes one RPC to the daemon socket
+  (`cmd/marvel/ctxforward.go:430`). It makes no model call.
+
   WHO REPORTS DOLLARS, per the parsers:
   - claude headless: `total_cost_usd` on the terminal result line only
     (`internal/runtime/claudecode/parser.go:505`;
@@ -41,8 +62,10 @@ content: |
   OPEN:
   1. Which sources the column reads: the stream (opencode per request, claude
      headless at end), a cost field added to the heartbeat for the
-     statusline feed, or both. Whether a figure the harness computes is
-     shown as the harness's estimate, not a bill.
+     statusline feed, or both. On a fleet of interactive seats only the
+     heartbeat path would show anything, and the same widening could carry
+     output tokens so TOUT and RATE fill too. Whether a figure the harness
+     computes is shown as the harness's estimate, not a bill.
   2. No report: the cell reads `-` (never reported) or `?` (expired), per
      `internal/asof`, never a guessed 0. A claude headless session that has
      not ended reads `-` mid-run, not 0.
