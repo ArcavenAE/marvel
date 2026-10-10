@@ -136,22 +136,22 @@ A probe kit runs on a scratch claude:
 - a throwaway repository;
 - a credential supplied for the run, never a fleet seat's.
 
-Hook loggers and a statusline logger append monotonic-stamped lines. A checker writes `probe_result.json` with thirteen keys, `c1` to `c13`, each carrying a name field and one measurement:
+Hook loggers and a statusline logger append monotonic-stamped lines. A checker writes `probe_result.json` with thirteen keys, `c1` to `c13`, each carrying a name field. The measures column is what the party asked each key to measure. For `c2`, `c9`, `c11` and `c12` the probe kit as built (marvel#844) measures less than that; those rows say what it measures today, and a follow-up after #844 merges will close each gap:
 
 | key | name | measures |
 |---|---|---|
 | `c1` | `pre_session_hooks` | hook events logged at the trust dialog and setup menu (expected none) |
-| `c2` | `idle_cost_moves` | whether the statusline cost moved and whether its context moved while idle, with the sample count; the idle window is five minutes |
+| `c2` | `idle_cost_moves` | whether the statusline cost moved and whether its context moved while idle, with the sample count; the idle window is five minutes. **Not yet measured as asked:** the kit as built idles 60 s by default (`WATCHER_PROBE_IDLE_SECS`). A follow-up will close it. |
 | `c3` | `one_submit_one_stop` | every prompt shows exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` |
 | `c4` | `ring_form` | for the exact ring form, the `source` value and the submit-to-hook latency in ms (one key, two fields) |
 | `c5` | `denial_reason` | the `PermissionDenied.reason` text, and the `Notification.notification_type` seen |
 | `c6` | `interrupt_event` | `stop`, `stopfailure` or `none` after Esc mid-turn |
 | `c7` | `nonprompt_moves` | with no prompt sent, the count of turn hooks (any is a fail) and the count of statusline changes; the statusline fallback is trusted only while that change count is zero |
 | `c8` | `idle_notification_s` | seconds until the `idle_prompt` notification, or `never` |
-| `c9` | `hook_stdout_reaches_context` | whether a line a hook prints reaches the session's context, read from the transcript |
+| `c9` | `hook_stdout_reaches_context` | whether a line a hook prints reaches the session's context, read from the transcript. **Not yet measured as asked:** the kit as built reads a capture of the pane, not the transcript. A follow-up will close it. |
 | `c10` | `hook_exit2_effect` | what a hook's exit 2 does to the prompt |
-| `c11` | `subagent_stamps` | whether subagent hooks carry `agent_id`, and whether a main turn's `Stop` ever carries one |
-| `c12` | `stop_background` | whether a `Stop` after a backgrounded task carries a non-empty `background_tasks`, and whether a turn then resumes with no prompt |
+| `c11` | `subagent_stamps` | whether subagent hooks carry `agent_id`, and whether a main turn's `Stop` ever carries one. **Not yet measured as asked:** the kit as built counts `agent_id` on subagent hooks and counts turn `Stop` events, but does not check a `Stop` for `agent_id`. A follow-up will close it. |
+| `c12` | `stop_background` | whether a `Stop` after a backgrounded task carries a non-empty `background_tasks`, and whether a turn then resumes with no prompt. **Not yet measured as asked:** the kit as built records only whether a `Stop` came before the task finished. A follow-up will close it. |
 | `c13` | `version_visible_to_hook` | whether the hook process can learn the claude version |
 
 The names are the party's (round 4, with `c13` added in round 5). An earlier revision of this section listed twelve measurements for thirteen keys, dropping `c8`.
