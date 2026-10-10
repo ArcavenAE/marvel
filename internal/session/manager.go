@@ -1288,6 +1288,7 @@ const instanceTeardownGrace = 3 * time.Second
 // The instance is released either way; a retry goes through the driver.
 // It also returns the run's tail, for a cancelled run's record.
 func (m *Manager) retireInstance(key string) (bool, runTail, error) {
+	m.sessionEnded(key)
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
 		return false, m.forgetUsage(key, drain), nil
@@ -1302,11 +1303,20 @@ func (m *Manager) retireInstance(key string) (bool, runTail, error) {
 	return true, tail, nil
 }
 
+// sessionEnded tells SessionEnded, when set, that a session's process is gone
+// or being killed. It runs before the kill so a refused kill still revokes.
+func (m *Manager) sessionEnded(key string) {
+	if m.SessionEnded != nil {
+		m.SessionEnded(key)
+	}
+}
+
 // detachInstance retires the stream of a session whose pane already
 // vanished. Distinct from retireInstance so the reap path does not log a
 // kill-pane failure for a pane it knows is gone. It returns the run's
 // tail for the reap path's run record.
 func (m *Manager) detachInstance(key string) runTail {
+	m.sessionEnded(key)
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
 		return m.forgetUsage(key, drain)
