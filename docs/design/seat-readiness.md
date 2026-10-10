@@ -232,15 +232,18 @@ section 7's tickets are filed from them.
 3. **Exclusion on a fresh structural `fail`:** "Exclude it at once; its
    supervisor can override by name." This is option (a), section 6 rule 1 as
    written.
-4. **Reach check from the seat's sandbox:** allow.
-5. **Seat-run authenticated reads as the bot identities:** allow.
+4. **Reach check from the seat's sandbox:** "Allow it."
+5. **Seat-run authenticated reads as the bot identities:** "Allow it."
 6. **codex folder pre-trust:** "Allow it, for the named folders only."
-7. **Dialog patterns:** allow, with the operator's note, verbatim: "and
-   capture for stagekeeper also". The design reads the note as: the deadline
-   capture (section 5), masked and truncated as the watcher keeps it, also
-   goes to stagekeeper's patterns database: the harness and its version, the matched class or
-   `no-dialog-pattern`, and the masked text. An unmatched capture is the
-   case a new pattern is built from. No unmasked pane text and no credential
-   leaves the seat's host this way.
-8. **This design:** accept.
+7. **Dialog patterns:** "Allow it." This is decision 4(iv) as written:
+   patterns harvested and masked from the first live detection, after the
+   sentinel-secret test. The operator added a note, verbatim: "and capture
+   for stagekeeper also".
+
+   **Open question, back to the operator.** The note conflicts with section
+   4, which says this design adds no text retention to the register or the
+   watcher's record. Sending a capture to stagekeeper would add a copy of
+   pane text outside both. Until the operator rules on it, no capture goes
+   to stagekeeper and this design adopts no such path.
+8. **This design:** "Accept."
 
