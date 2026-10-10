@@ -172,7 +172,7 @@ marvel config remove-cluster <name>                  # remove a cluster
 marvel keys generate                                 # generate a client keypair
 marvel keys show                                     # print a client public key to share with a daemon admin
 marvel keys list                                     # list local client keypairs
-marvel keys trust <cluster>                          # record a cluster's host key in known_hosts
+marvel keys trust <cluster>                          # show a cluster's host key fingerprint, ask, then record it (--yes skips the question)
 marvel keys authorize <pubkey>                       # authorize a client's key on this daemon
 marvel keys authorized                               # list clients authorized on this daemon
 marvel keys revoke <fingerprint>                     # revoke a client

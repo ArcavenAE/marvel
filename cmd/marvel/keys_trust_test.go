@@ -17,3 +17,13 @@ func TestKeysTrustHasAYesFlagThatDefaultsOff(t *testing.T) {
 		t.Errorf("--yes default = %q, want false: the command must ask unless told not to", f.DefValue)
 	}
 }
+
+// Only --yes lets the dial record an unknown key unasked.
+func TestKeysTrustDialRecordsUnaskedOnlyWithYes(t *testing.T) {
+	if got := keysTrustDialOptions("id", false); got.TrustUnknownHost || got.Identity != "id" {
+		t.Errorf("without --yes: %+v, want the prompt path with the identity kept", got)
+	}
+	if got := keysTrustDialOptions("id", true); !got.TrustUnknownHost {
+		t.Errorf("with --yes: %+v, want TrustUnknownHost", got)
+	}
+}
