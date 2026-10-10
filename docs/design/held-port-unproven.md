@@ -3,7 +3,7 @@
 Proposal, 2026-10-09. Code read at marvel main `adf6c65`. Builds on `docs/design/bus-pidfile-identity.md` (#794), section 5 (V11), and the interim ruling for #799: V11 (b), "port held, child unproven".
 
 - Author: the architect seat, team arcaven.
-- Status: design for the operator. Nothing here is ratified; section 9 carries the decisions.
+- Status: design, ruled 2026-10-10 (section 10). The adopt switch stays off until both halves of the measurement pass (section 7).
 - Builder: red tests first, then green, after the rulings and this design merge.
 
 ## 0. Why
@@ -51,7 +51,7 @@ Behind a code constant that defaults off until section 7's measurements pass. Wh
 4. the executable base name is `nats-server`;
 5. the config argument is exactly this daemon's conf path;
 6. the holder's start time is not after the pidfile's modification time;
-7. before any credential is sent: the server's INFO line, read without sending CONNECT, and the monitor endpoint's domain and store directory. These can only refuse.
+7. before any credential is sent: the server's INFO line, read without sending CONNECT, and the monitor endpoint's domain and store directory. The store directory is compared by real path on both sides, since nats-server reports the resolved path. These can only refuse.
 
 Design rules for this path:
 
@@ -77,11 +77,18 @@ A legacy holder is never reloaded, so a broker user added after it started canno
 Both are runnable scripts with coded PASS or STOP checks.
 
 1. **Scratch measurement**, run by the operator on a darwin host and in Linux CI, against throwaway brokers on scratch ports and a scratch store, never the live bus. It measures the owner read (including the monitor port), the re-observe cost at the proposed cadence, and each corroboration fact against a matching and a mismatching holder. A store-collision step is information only. Its PASS gates both section 4's constant and section 3's cadence.
+   Darwin half, run 2026-10-10 by the architect seat on nats-server v2.14.6, scratch brokers only: PASS in three runs after one fix. The owner read answered `owner=yes` on both ports, `owner=no` for a wrong pid and after the broker stopped, and refused a mismatching holder by its executable name. One owner read plus the listener test costs about 50 ms, so a 60 s cadence uses under 0.1% of one core. Two results feed the design:
+
+   - Compare the store directory by real path on both sides. On macOS the temporary directory is under `/var`, which resolves to `/private/var`, and nats-server reports the resolved form; the first run's literal compare refused a broker the script had started itself.
+   - Neither the INFO line nor `/varz` carries a pid, so tying a broker to its pid rests on the owner read and the process facts alone.
+
+   Linux half: not yet run. The adopt switch stays off until it passes.
+
 2. **Recovery check**, read-only, run by the operator on the live host when the bus reads "port held, child unproven". It reports the pidfile, the sidecar state, the owner read and the code. It signals nothing; the stop stays the operator's act.
 
 ## 8. Later
 
-- TLS on the client listener of brokers marvel spawns, filed as its own flat ticket, unprioritised.
+- TLS on the client listener of brokers marvel spawns: filed as its own flat ticket, #818, unprioritised.
 
 ## 9. Decisions for the operator
 
@@ -93,3 +100,14 @@ Each recommendation is valid until 2026-10-23 or the operator's ruling, whicheve
 4. **What may be printed about a holder** (section 6). (a) the fixed fields listed, including the executable base name; (b) yes/no values, pid and codes only. Party 3-1 for (a). Recommendation: (a).
 5. **TLS on new spawns** (section 8). (a) file the ticket now; (b) not now. Party 4-0 for (a). Recommendation: (a).
 6. **This design** (sections 1 to 8). Recommendation: accept.
+
+## 10. Rulings (operator, 2026-10-10, relayed by director)
+
+Each ruling quotes the operator's answer to the matching decision in section 9.
+
+1. **Spawn when the port frees:** "Yes: re-check quietly on a timer (at least every 30 s, 60 s proposed, backing off to 10 minutes), measured first, and start a bus once the port is free."
+2. **Adopt-for-use of a corroborated legacy holder:** "Allow it in code, behind a switch that stays off until the measurements in card 3 pass." Card 3 is decision 3. The darwin half has passed; the Linux half has not been run, so the switch stays off.
+3. **Run the scratch measurement:** "Yes."
+4. **What may be printed about a holder:** "A fixed set of fields, including the program's file name; never its arguments or environment."
+5. **TLS on new spawns:** "File a flat ticket now." Filed as #818.
+6. **This design:** "Accept, after review."
