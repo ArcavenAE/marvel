@@ -53,6 +53,10 @@ type Manager struct {
 	// Views builds each seat's read-only views at spawn and removes them with
 	// the session. Nil means no views are built.
 	Views *view.Keeper
+	// SessionEnded is called with a session's key when its process is gone or
+	// being killed: a delete, a reaped pane, a failed kill. The credential
+	// broker revokes the seat's tokens here. Nil means nothing is told.
+	SessionEnded func(key string)
 	// StreamDir holds the per-session FIFOs marvel reads agent output
 	// from. Defaults to a per-layout temp directory (see daemonTempDir).
 	// The pipes carry no content at rest, so nothing here needs to survive
