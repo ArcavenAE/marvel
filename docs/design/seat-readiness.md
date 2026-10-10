@@ -1,7 +1,7 @@
 # Seat readiness: per-duty checks, withdrawal and routing
 
 **Date:** 2026-10-09
-**Status:** design, for operator rulings (section 8). Nothing here is built.
+**Status:** design, ruled 2026-10-10 (section 9). Nothing here is built.
 **Builds on:** `docs/design/seat-register.md` (#802, the register's cells,
 reason codes and routing rule) and `docs/design/marvel-watcher.md` (#800, the
 watcher's blocker names, report only). Director R-200 (`sim/requirements.md`
@@ -216,3 +216,34 @@ on silence.
    and masked from the first live detection, after the sentinel-secret test.
    **Recommendation: allow each.**
 5. **This design.** **Recommendation: accept**, with tickets filed after 1 to 4.
+
+## 9. Rulings (operator, 2026-10-10, relayed by director)
+
+Each ruling quotes the option the operator chose. They settle section 8, and
+section 7's tickets are filed from them.
+
+1. **Restore:** "Every restore from the seat's own check needs its
+   supervisor to confirm; evidence the daemon itself observed restores on its
+   own. Can be relaxed later once we measure how often a seat's check wrongly
+   passes." This is option (b).
+2. **Self-withdraw:** "Wait for the per-seat control identity. Meanwhile an
+   unready seat is still kept out of routing because it starts unproven and
+   the daemon sees its failures."
+3. **Exclusion on a fresh structural `fail`:** "Exclude it at once; its
+   supervisor can override by name." This is option (a), section 6 rule 1 as
+   written.
+4. **Reach check from the seat's sandbox:** "Allow it."
+5. **Seat-run authenticated reads as the bot identities:** "Allow it."
+6. **codex folder pre-trust:** "Allow it, for the named folders only."
+7. **Dialog patterns:** "Allow it." This is decision 4(iv) as written:
+   patterns harvested and masked from the first live detection, after the
+   sentinel-secret test. The operator added a note, verbatim: "and capture
+   for stagekeeper also".
+
+   **Open question, back to the operator.** The note conflicts with section
+   4, which says this design adds no text retention to the register or the
+   watcher's record. Sending a capture to stagekeeper would add a copy of
+   pane text outside both. Until the operator rules on it, no capture goes
+   to stagekeeper and this design adopts no such path.
+8. **This design:** "Accept."
+
