@@ -248,10 +248,16 @@ func TestKitNeverSetsAnthropicAPIKeyAndUsesAnAPIKeyHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "ANTHROPIC_API_KEY") {
+	var code []string
+	for _, line := range strings.Split(string(b), "\n") {
+		c, _, _ := strings.Cut(line, "#") // the header may name the variable it avoids
+		code = append(code, c)
+	}
+	text := strings.Join(code, "\n")
+	if strings.Contains(text, "ANTHROPIC_API_KEY") {
 		t.Error("run.sh sets ANTHROPIC_API_KEY, which makes claude ask about a custom API key and show a piece of it; use apiKeyHelper")
 	}
-	if !strings.Contains(string(b), "apiKeyHelper") {
+	if !strings.Contains(text, "apiKeyHelper") {
 		t.Error("run.sh configures no apiKeyHelper")
 	}
 }

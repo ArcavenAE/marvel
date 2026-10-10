@@ -10,9 +10,12 @@
 #   repository                   a throwaway git init
 #   credential                   WATCHER_PROBE_CREDENTIAL, never a fleet seat's;
 #                                it reaches only the scratch tmux server's
-#                                environment, reaches claude through an
-#                                apiKeyHelper, and is never printed or logged;
-#                                every capture is masked before it is written
+#                                environment as WATCHER_PROBE_KEY, which claude,
+#                                its hooks and its Bash-tool commands inherit.
+#                                claude reads it through an apiKeyHelper, so
+#                                ANTHROPIC_API_KEY is never set (no custom-key
+#                                dialog). It is never printed, and every capture,
+#                                log body and result is masked before it is written
 #
 # usage: run.sh --scratch ABSOLUTE_DIR [--dry-run]
 # env:   WATCHER_PROBE_CREDENTIAL  required for a real run
@@ -273,5 +276,5 @@ mark bg-end
 
 stamp="$("$claude" --version 2>&1 | head -1) sha256:$(shasum -a 256 "$claude" | cut -c1-12)"
 pane | save_capture "$scratch/pane-final.txt"
-"$tool" check --log "$events" --out "$result" --stamp "$stamp"
+WATCHER_PROBE_KEY=$cred "$tool" check --log "$events" --out "$result" --stamp "$stamp"
 echo "wrote $result"

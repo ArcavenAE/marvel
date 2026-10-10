@@ -49,8 +49,8 @@ form's source and its latency as two (c4, c5).
 - `run.sh`: the driver. It writes the scenario marks and stops with the pane saved on any timeout.
 - `cmd/watcherprobe`: the hook and statusline loggers, the mark writer and the checker. A hook command prints nothing and exits zero whatever happens.
 - `hook-canary.sh`, `hook-exit.sh`: the two helper hooks behind c9 and c10.
-- `key-helper.sh`: claude's `apiKeyHelper`. The credential reaches claude through it and not through `ANTHROPIC_API_KEY`, so claude has no custom-key dialog that could show part of it.
-- `lib.sh`: `save_capture`, which every capture the driver writes goes through. It hides anything shaped like an API key and any run of 8 or more characters of the credential, so no key text lands in a file.
+- `key-helper.sh`: claude's `apiKeyHelper`. It avoids `ANTHROPIC_API_KEY`, so claude has no custom-key dialog that could show part of the key. It does not take the key out of claude's environment: claude and its hooks inherit `WATCHER_PROBE_KEY` from the scratch tmux server, and so do Bash-tool commands unless something scrubs them.
+- `lib.sh`: `save_capture`, which every capture the driver writes goes through. It hides anything shaped like an API key and any run of 8 or more characters of the credential, so no key text lands in a capture. The hook and statusline loggers mask each payload the same way before it reaches `events.tsv`, and the checker masks `probe_result.json`, since c6 copies notification text.
 
 ## Status
 

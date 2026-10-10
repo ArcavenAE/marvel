@@ -156,3 +156,29 @@ func TestAKeyInAHookStatuslineOrNotificationPayloadReachesNeitherFile(t *testing
 		t.Errorf("the denial text was lost along with the key:\n%s", b)
 	}
 }
+
+// The result is masked on its own, so a log that holds key text (written by an
+// older logger, or by hand) still cannot carry it into probe_result.json.
+func TestCheckMasksTheResultEvenFromAnUnmaskedLog(t *testing.T) {
+	const key = "sk-ant-api03-FAKEFAKEFAKE0123456789abcdefXYZ"
+	t.Setenv("WATCHER_PROBE_KEY", key)
+	dir := t.TempDir()
+	log, res := filepath.Join(dir, "events.tsv"), filepath.Join(dir, "probe_result.json")
+	lines := "1\tmark\tdenial-start\t\n" +
+		"2\thook\tNotification\t{\"hook_event_name\":\"Notification\",\"message\":\"bad key " + key + "\"}\n" +
+		"3\tmark\tdenial-end\t\n"
+	if err := os.WriteFile(log, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"check", "--log", log, "--out", res, "--stamp", "s"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("check exited %d: %s", code, errb.String())
+	}
+	b, err := os.ReadFile(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "FAKEFAKE") || !strings.Contains(string(b), "bad key") {
+		t.Errorf("result = %s", b)
+	}
+}

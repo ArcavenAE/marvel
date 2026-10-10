@@ -147,16 +147,30 @@ func compact(b []byte) (string, bool) {
 	return out.String(), true
 }
 
+// secretFrom reads the credential the loggers must never write: the kit hands
+// it to the scratch tmux server as WATCHER_PROBE_KEY, so claude, its hooks and
+// its statusline command inherit it.
+func secretFrom(environ []string) string {
+	for _, e := range environ {
+		if v, ok := strings.CutPrefix(e, "WATCHER_PROBE_KEY="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // RecordHook logs one hook firing: the payload on stdin as one hook line, then
 // one hookenv line naming the variables claude set for the hook. A variable is
 // named when it starts with CLAUDE, and its value is logged only when the name
-// ends in VERSION, so a credential never reaches the log.
+// ends in VERSION, so a credential never reaches the log. The payload is masked
+// first, since a prompt or a notification can quote a key.
 func RecordHook(path string, stdin io.Reader, environ []string) error {
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxHookInput))
 	if err != nil {
 		return err
 	}
 	body, isJSON := compact(raw)
+	body = Mask(body, secretFrom(environ))
 	name := "unparsed"
 	if isJSON {
 		var p struct {
@@ -186,14 +200,15 @@ func RecordHook(path string, stdin io.Reader, environ []string) error {
 	return Append(path, Line{MonoNS: MonoNS(), Kind: KindHookEnv, Name: name, Body: strings.Join(vars, " ")})
 }
 
-// RecordStatusline logs one statusline refresh and returns the one line claude
-// shows for it.
-func RecordStatusline(path string, stdin io.Reader, _ []string) (string, error) {
+// RecordStatusline logs one statusline refresh, masked like a hook payload, and
+// returns the one line claude shows for it.
+func RecordStatusline(path string, stdin io.Reader, environ []string) (string, error) {
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxHookInput))
 	if err != nil {
 		return "", err
 	}
 	body, _ := compact(raw)
+	body = Mask(body, secretFrom(environ))
 	if err := Append(path, Line{MonoNS: MonoNS(), Kind: KindStatus, Name: "statusline", Body: body}); err != nil {
 		return "", err
 	}

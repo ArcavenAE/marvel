@@ -9,6 +9,9 @@
 //	watcherprobe mask                     copy stdin to stdout with key text hidden;
 //	                                      the secret is in WATCHER_PROBE_MASK
 //	watcherprobe check      --log FILE --out FILE --stamp TEXT
+//
+// WATCHER_PROBE_KEY, when set, is the credential the loggers and the checker
+// keep out of every file they write.
 package main
 
 import (
@@ -121,6 +124,9 @@ func check(logPath, outPath, stamp string) error {
 	if err != nil {
 		return err
 	}
+	// The log is masked when it is written; the result is masked again, so a
+	// check that copies text from the log can never carry a key out.
+	b = []byte(watcherprobe.Mask(string(b), os.Getenv("WATCHER_PROBE_KEY")))
 	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".probe_result-*")
 	if err != nil {
 		return err
