@@ -1,0 +1,49 @@
+id: question-multicluster-view
+type: question
+confidence: frontier
+title: "How should one marvel client read several clusters at once, and what must stay single-cluster?"
+tags:
+  - marvel
+  - cli
+  - clusters
+content: |
+  Extracted from `_kos/ideas/multicluster-view.md` (seeded by the operator
+  2026-10-04). The operator, verbatim, on taking it further: "yes, let's do
+  it 6ptdd". A six-round design panel ran on 2026-10-10 against marvel main
+  a35d93d; the design ticket is #816.
+
+  WHAT EXISTS: the client talks to one daemon per command, resolved as
+  `--socket`, `MARVEL_SOCKET`, the selected cluster, then the layout
+  default (`cmd/marvel/main.go`, `resolveDaemonRung`). Clusters are named
+  config entries, each with its own address and identity. An unreachable
+  cluster waits out the SSH dial and then prints usage text (#812).
+
+  AGREED BY THE PANEL (see #816 for the full list):
+  - reads may span clusters; every write names one cluster;
+  - each cluster resolves from its own entry only, with a per-call timer
+    over the whole exchange and no prompt during a fan-out;
+  - every named cluster gets an outcome line and record, and a partial
+    answer exits with its own nonzero code;
+  - one KEY cell `<cluster>:<workspace>/<name>`, a stable sort on the
+    fields, and a write that takes a qualified key also needs a typed
+    `--cluster` that matches;
+  - two entries reaching one daemon merge only when `version` and the
+    session sets agree, so a merge never removes a session from view;
+  - nine single-cluster fixes ship first, each standing alone.
+
+  OPEN (operator decisions):
+  1. Whether `kill`, `delete` and `inject` need a typed cluster once a
+     config holds more than one cluster, or keep today's default with the
+     cluster named on the result line (panel 3-3).
+  2. Whether a character rule for new workspace names lands before the
+     qualified-key grammar, or separately without gating it (panel 3-3).
+  3. Whether seats may ever read other clusters; the panel's 4-1 view is
+     not until a read-only daemon scope exists, and then by its own ruling.
+edges:
+  - target: question-multi-host
+    type: derives
+    note: "reading several clusters is the first multi-host read in the client"
+provenance:
+  created_by: agent
+  session: architect-2026-10-10-multicluster-6ptdd
+  created_at: "2026-10-10"

@@ -2,6 +2,9 @@
 
 - **Status:** idea (pre-hypothesis, no commitment). Exploration only: no
   frontier node, probe or ticket.
+- **Became:** frontier node `question-multicluster-view` (2026-10-10), with
+  the design ticket #816. The open problems below are answered there, and
+  three remain the operator's to decide.
 - **Date:** 2026-10-04
 - **Seed (operator's words, via director):** "what would it look like to
   have a multicluster view with marvel, to be able to connect to,
