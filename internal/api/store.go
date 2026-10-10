@@ -39,8 +39,9 @@ type Store struct {
 	scheduleStatus map[string]*ScheduleStatus
 	// duties are the seat readiness records, keyed seat|cell name, and
 	// dutySeq is the highest Seq the daemon has assigned. See readiness.go.
-	duties  map[string]*DutyRecord
-	dutySeq uint64
+	duties      map[string]*DutyRecord
+	dutySeq     uint64
+	dutyOrphans []string // rows found at load with no session; see purgeOrphanDuties
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by

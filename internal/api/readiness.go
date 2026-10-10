@@ -231,7 +231,7 @@ func (s *Store) RecordDuty(r DutyRecord) (DutyRecord, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.sessions[r.Seat]; !ok {
+	if !s.seatHasSessionLocked(r.Seat) {
 		return DutyRecord{}, fmt.Errorf("readiness: seat has no session: %w", ErrNotFound)
 	}
 	if s.duties == nil {
@@ -250,6 +250,20 @@ func (s *Store) RecordDuty(r DutyRecord) (DutyRecord, error) {
 	stored := r
 	s.duties[key] = &stored
 	return r, nil
+}
+
+// seatCheckHook, when set by a test, runs at the start of every seat check so
+// the test can see that the check ran and whether the store lock was held.
+var seatCheckHook func()
+
+// seatHasSessionLocked reports whether the seat is a stored session. The caller
+// holds the write lock, so the answer cannot change before the write it guards.
+func (s *Store) seatHasSessionLocked(seat string) bool {
+	if seatCheckHook != nil {
+		seatCheckHook()
+	}
+	_, ok := s.sessions[seat]
+	return ok
 }
 
 // ListDuties returns a seat's records, ordered by cell name.
@@ -286,6 +300,24 @@ func (s *Store) deleteSeatDutiesLocked(seat string) error {
 	return nil
 }
 
+// purgeOrphanDuties deletes, in one write transaction, the rows rehydrateDuties
+// found with no session. It runs once, right after the load.
+func (s *Store) purgeOrphanDuties() error {
+	orphans := s.dutyOrphans
+	s.dutyOrphans = nil
+	if len(orphans) == 0 || s.bolt == nil {
+		return nil
+	}
+	return s.bolt.Update(func(tx *bolt.Tx) error {
+		for _, k := range orphans {
+			if err := tx.Bucket(bucketDutyReadiness).Delete([]byte(k)); err != nil {
+				return fmt.Errorf("delete orphan readiness %s: %w", k, err)
+			}
+		}
+		return bumpVersion(tx)
+	})
+}
+
 // rehydrateDuties loads the readiness records and the sequence high-water mark.
 func (s *Store) rehydrateDuties(tx *bolt.Tx) error {
 	if v := tx.Bucket(bucketMeta).Get(metaKeyReadinessSeq); v != nil {
@@ -304,11 +336,13 @@ func (s *Store) rehydrateDuties(tx *bolt.Tx) error {
 			s.dutySeq = r.Seq
 		}
 		// Sessions are loaded before this runs. A record whose session is gone
-		// is an orphan (a delete that did not finish): skip it, so it does not
-		// come back, and say so. The file is opened read-only here, so the
-		// stale row is left for the next delete of that seat to clear.
+		// is an orphan (a delete that did not finish): do not load it, and
+		// remember its key so purgeOrphanDuties removes the row once this
+		// read-only pass is over. Leaving the row would let it come back the
+		// next time a session of that name exists.
 		if _, ok := s.sessions[r.Seat]; !ok {
-			log.Printf("readiness: skipping a record with no session (seq %d)", r.Seq)
+			log.Printf("readiness: dropping a record with no session (seq %d)", r.Seq)
+			s.dutyOrphans = append(s.dutyOrphans, string(k))
 			return nil
 		}
 		s.duties[string(k)] = &r

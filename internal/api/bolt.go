@@ -175,6 +175,14 @@ func (s *Store) OpenBoltWithOptions(path string, opts BoltOptions) error {
 		s.boltPath = ""
 		return fmt.Errorf("rehydrate from %s: %w", path, err)
 	}
+	// Orphan readiness rows are removed here, after the read-only load, so a
+	// seat respawned under the same name never inherits a dead seat's record.
+	if err := s.purgeOrphanDuties(); err != nil {
+		_ = db.Close()
+		s.bolt = nil
+		s.boltPath = ""
+		return fmt.Errorf("purge orphan readiness from %s: %w", path, err)
+	}
 
 	return nil
 }

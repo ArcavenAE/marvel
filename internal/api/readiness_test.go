@@ -526,27 +526,107 @@ func TestRehydrateSkipsARecordWhoseSessionIsGone(t *testing.T) {
 	}
 }
 
-// The session check and the write share one lock. The test holds the store's
-// read lock, which lets a check made without the write lock pass but keeps the
-// write waiting, removes the session, and releases. A check made before the
-// write lock was taken would already have passed, and the write would leave an
-// orphan record behind. (The delete under a read lock is the test standing in
-// for a concurrent DeleteSession; the write takes no part in it.)
+// The session check runs, and runs under the store's write lock, so a seat
+// deleted while a write is in flight cannot be written for. The seam reports
+// each check; the test reads the lock state from inside it.
 func TestRecordDutyChecksTheSessionUnderTheWriteLock(t *testing.T) {
 	s := newReadinessStore(t)
-	s.mu.RLock()
-	errc := make(chan error, 1)
-	go func() {
-		_, err := s.RecordDuty(proven("gh.read"))
-		errc <- err
-	}()
-	time.Sleep(150 * time.Millisecond) // the write is now waiting for the write lock
-	delete(s.sessions, seatKey)
-	s.mu.RUnlock()
-	if err := <-errc; !errors.Is(err, ErrNotFound) {
-		t.Fatalf("RecordDuty = %v, want ErrNotFound: the session was gone when the write took the lock", err)
+	calls, held := 0, true
+	seatCheckHook = func() {
+		calls++
+		if s.mu.TryLock() { // the write lock was free, so the check is not under it
+			s.mu.Unlock()
+			held = false
+		}
 	}
-	if left := s.ListDuties(seatKey); len(left) != 0 {
-		t.Errorf("a write for a deleted seat left a record: %+v", left)
+	t.Cleanup(func() { seatCheckHook = nil })
+	if _, err := s.RecordDuty(proven("gh.read")); err != nil {
+		t.Fatalf("RecordDuty: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("the seat check ran %d times, want once per write", calls)
+	}
+	if !held {
+		t.Error("the seat check ran without the store's write lock held")
+	}
+}
+
+// The reviewer's sequence, exactly: a seat is proven, its session row goes
+// missing, the store reopens (the orphan is dropped), the same name is created
+// and deleted again (no row is left), then created and reopened once more (the
+// old proven record must not come back, or a respawned seat would read proven
+// with no check).
+func TestAnOrphanedRecordNeverComesBackForARespawnedSeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	rows := func(s *Store) int {
+		n := 0
+		if err := s.bolt.View(func(tx *bolt.Tx) error {
+			return tx.Bucket(bucketDutyReadiness).ForEach(func(_, _ []byte) error { n++; return nil })
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	newSeat := func() *Session {
+		return &Session{Name: "seat-0", Workspace: "aae", Team: "t", Role: "r", State: SessionRunning}
+	}
+
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	if err := s1.CreateSession(newSeat()); err != nil {
+		t.Fatal(err)
+	}
+	day := proven("gh.read")
+	day.ValidUntil = t0.Add(24 * time.Hour)
+	if _, err := s1.RecordDuty(day); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.bolt.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSessions).Delete([]byte(seatKey))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	if got := s2.ListDuties(seatKey); len(got) != 0 {
+		t.Fatalf("after reopening, the orphan loaded: %+v", got)
+	}
+	if n := rows(s2); n != 0 {
+		t.Errorf("after reopening, %d readiness rows remain in bolt, want the orphan removed", n)
+	}
+	if err := s2.CreateSession(newSeat()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.DeleteSession(seatKey); err != nil {
+		t.Fatal(err)
+	}
+	if n := rows(s2); n != 0 {
+		t.Errorf("after delete, %d readiness rows remain in bolt, want 0", n)
+	}
+	if err := s2.CreateSession(newSeat()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s3 := NewStore()
+	if err := s3.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #3: %v", err)
+	}
+	t.Cleanup(func() { _ = s3.CloseBolt() })
+	if got := s3.ListDuties(seatKey); len(got) != 0 {
+		t.Errorf("a respawned seat inherited the dead seat's record: %+v", got)
+	}
+	if got := s3.SeatReadiness(seatKey); len(got) != 0 {
+		t.Errorf("a respawned seat reads %v with no check", got)
 	}
 }
