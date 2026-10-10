@@ -42,6 +42,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -582,7 +583,9 @@ func confined(path string, roots []string) (string, error) {
 		if err != nil || rr == "" || rr == string(filepath.Separator) {
 			continue
 		}
-		if real == rr || strings.HasPrefix(real, rr+string(filepath.Separator)) {
+		// The filesystem root and an empty root were skipped above: either would
+		// put every path under it.
+		if real == rr || strings.HasPrefix(real, strings.TrimSuffix(rr, string(filepath.Separator))+string(filepath.Separator)) {
 			return real, nil
 		}
 	}
@@ -616,7 +619,10 @@ func c9(lines []Line, opt Options) Check {
 	if err != nil {
 		return Check{Status: StatusFail, Note: err.Error()}
 	}
-	f, err := os.Open(real)
+	// O_NONBLOCK keeps a FIFO from blocking the open, and O_NOFOLLOW refuses a link
+	// swapped in after the path was resolved. The descriptor is checked, not the
+	// path, so what is read is what was opened.
+	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return Check{Status: StatusFail, Note: "the transcript cannot be opened"}
 	}
