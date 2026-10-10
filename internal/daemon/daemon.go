@@ -29,6 +29,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/broker"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/config"
@@ -143,6 +144,7 @@ type Daemon struct {
 	build              Build
 	startedAt          time.Time
 	store              *api.Store
+	broker             *broker.Broker
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
@@ -1123,6 +1125,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
+	case "broker.token":
+		return d.handleBrokerToken(context.Background(), req.Params)
 	case "account.limits":
 		return d.handleAccountLimits(req.Params)
 	case "run":
