@@ -594,7 +594,7 @@ architect seat that chaired the panel.
 | V9 | **(c)** split: the token (brokering) passes; the stored grant (custody) is open | "marvel isn't the vault. it's a service orchestrator, it will probably manage a vault, be able to access the vault, provide identifies and help agents access the vault" |
 | V11 | **(b)** unproven: neither adopt nor signal; report "port held, child unproven" | "we need improved handling for this, route 3ptdd with casting call to figure out how to handle this more reliably" (it ran as the held-port 3ptdd, closed 2026-10-09) |
 
-svc-party-release: **rework**. The operator's note, verbatim: "four rounds,
+Party release ruling: **rework**. The operator's note, verbatim: "four rounds,
 if converging two more, if diverging, stop and ask, one card per question".
 The recorder reads this as the panel not being released, pending
 director's confirmation.
