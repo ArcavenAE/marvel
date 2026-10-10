@@ -1,7 +1,10 @@
 # A multicluster view: one marvel client, several clusters at once
 
-- **Status:** idea (pre-hypothesis, no commitment). Exploration only: no
-  frontier node, probe or ticket.
+- **Status:** idea, extracted. Its open problems are now the frontier
+  question below and its design ticket.
+- **Became:** frontier node `question-multicluster-view` (2026-10-10), with
+  the design ticket #816. The open problems below are answered there, and
+  three remain the operator's to decide.
 - **Date:** 2026-10-04
 - **Seed (operator's words, via director):** "what would it look like to
   have a multicluster view with marvel, to be able to connect to,
@@ -20,7 +23,9 @@
   [[token-rate-column-and-configurable-columns]] (a CLUSTER column would be
   one of its selectable columns), [[get-sessions-width-and-truncation]]
   (one more column competes for width). bd aae-orc-f08m0 carries the
-  CLUSTER column and the `-w` header indicator; aae-orc-4hku4 carries the
+  CLUSTER column and the `-w` header indicator (its close note leaves the
+  column a candidate here; the design in #816 settles it as one KEY cell,
+  `<cluster>:<workspace>/<name>`, in the table); aae-orc-4hku4 carries the
   name grammar.
 
 ## Why look at it
@@ -34,8 +39,11 @@ first seems, so this file lists the problems and settles none of them.
 ## Today
 
 - The client talks to exactly one daemon per command. It resolves that
-  daemon as `--socket`, then `MARVEL_SOCKET`, then the selected cluster's
-  socket or server, then the layout default (`cmd/marvel/main.go:50-56`).
+  daemon as `--socket`; then the cluster named with `--cluster`; then
+  `MARVEL_SOCKET`, only when no cluster is named (#586); then the config's
+  current cluster's socket or server; then the layout default
+  (`cmd/marvel/main.go`, `resolveDaemonRung`). Corrected 2026-10-10; the
+  first version of this file put `MARVEL_SOCKET` ahead of `--cluster`.
 - Clusters are named entries in `~/.marvel/config.yaml`, each with a
   socket or an `mrvl://` server and its own client identity
   (`internal/config/config.go:202-206`). One of them is current
