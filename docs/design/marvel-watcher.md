@@ -4,7 +4,7 @@ Proposal, 2026-10-09. Code read at marvel `ff9d210`.
 
 - **Author:** the architect seat, team arcaven, from a six-round design panel. The seats were messaging, observability, runtime and harness; the panel's record is kept outside this repository.
 - **The operator's ask:** "marvel builtin watcher, bearing in mind that while marvel bus is native, nats is not, and other agent message queues may be swapped in".
-- **Status:** the operator picks the design (section 8) before any ticket is filed. Builders then work red tests first.
+- **Status:** the operator picks the design (section 8) before any ticket is filed. Builders then work red tests first. Decisions 2 to 4 were ruled on 2026-10-10 (section 8, "Operator rulings"); decision 1, the design, is still open.
 
 ## 0. Why
 
@@ -202,6 +202,18 @@ The first PRs open the same day, with C1 merged first, because it feeds the long
 Every number here is unmeasured. Report mode measures the interval and the threshold, and C2 measures the confirm window: `max(60 s, 3 x p95 ring-to-submit latency)`, and 120 s until then.
 
 The recommendations in this section are valid until 2026-10-23 or the operator's ruling, whichever comes first; the architect re-checks them then.
+
+### Operator rulings (2026-10-10)
+
+Relayed by director from the operator's decision desk. Each ruling quotes the option the operator chose, as it was written on the card.
+
+| # | ruling | the chosen option, as written |
+|---|---|---|
+| 2, claude's fallback turn source | **probe first** | "Run a short test first: watch an idle Claude seat and see whether the cost and token numbers in its status line stay flat. Decide between the two options below on the result." |
+| 3, starting pass interval | **60 s**, as recommended | "Every 60 seconds." |
+| 4, starting age threshold | **10 min**, as recommended | "10 minutes. Matches the quiet window marvel already uses to decide a seat is idle." |
+
+Decision 2 is not yet settled: it waits on the probe's result, and then comes back to the operator as a choice between the statusline delta and `unknown`. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Decision 1 is still open, and these rulings file no ticket by themselves.
 
 ## 9. For the capability register
 
