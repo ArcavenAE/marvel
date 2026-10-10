@@ -134,7 +134,9 @@ pattern class as a code, and no pane text, because pane and dialog text are on
 the register's Never list (`docs/design/seat-register.md:83`). The watcher's
 own record keeps truncated, masked text for `dialog` and `denial`
 (`docs/design/marvel-watcher.md:98`) for whoever reads that record; this
-design adds no text retention to either.
+design adds no text retention to either. The one copy outside them is a finished
+pattern sent to stagekeeper after the masking test (section 9, ruling 7);
+no capture is sent.
 
 ## 5. Spawn and timing
 
@@ -240,10 +242,12 @@ section 7's tickets are filed from them.
    sentinel-secret test. The operator added a note, verbatim: "and capture
    for stagekeeper also".
 
-   **Open question, back to the operator.** The note conflicts with section
-   4, which says this design adds no text retention to the register or the
-   watcher's record. Sending a capture to stagekeeper would add a copy of
-   pane text outside both. Until the operator rules on it, no capture goes
-   to stagekeeper and this design adopts no such path.
+   **The note, ruled (operator, 2026-10-10, relayed by director).** The
+   operator chose "patterns": stagekeeper gets the codes (the harness, its
+   version, and the matched class or `no-dialog-pattern`) plus each new
+   finished pattern, once it has passed the planted-fake-secret masking test.
+   No raw captures are sent. The pattern text is the same text marvel keeps in
+   its own pattern files, so section 4's retention line gains one named copy
+   and nothing else. Build ticket: #836.
 8. **This design:** "Accept."
 
