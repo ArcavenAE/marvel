@@ -6,11 +6,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"io/fs"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 
 	"github.com/arcavenae/marvel/internal/asof"
 )
@@ -22,6 +25,24 @@ var (
 
 const seatKey = "aae/seat-0"
 
+// newReadinessStore is a store holding the two seats the tests write for: a
+// record belongs to a session, so the session comes first.
+func newReadinessStore(t *testing.T) *Store {
+	t.Helper()
+	s := NewStore()
+	addSeats(t, s)
+	return s
+}
+
+func addSeats(t *testing.T, s *Store) {
+	t.Helper()
+	for _, name := range []string{"seat-0", "seat-1"} {
+		if err := s.CreateSession(&Session{Name: name, Workspace: "aae", Team: "t", Role: "r", State: SessionRunning}); err != nil {
+			t.Fatalf("CreateSession %s: %v", name, err)
+		}
+	}
+}
+
 func proven(duty string) DutyRecord {
 	return DutyRecord{Seat: seatKey, Duty: duty, State: DutyProven, Source: "seat:reach", ObservedAt: t0, ValidUntil: t1, SetBy: SetByDaemon}
 }
@@ -29,7 +50,7 @@ func proven(duty string) DutyRecord {
 // The daemon assigns seq: it ignores the caller's value, and the numbers rise
 // across duties and across seats.
 func TestRecordDutyAssignsAnIncreasingSeq(t *testing.T) {
-	s := NewStore()
+	s := newReadinessStore(t)
 	a := proven("gh.read")
 	a.Seq = 99
 	got, err := s.RecordDuty(a)
@@ -56,7 +77,7 @@ func TestRecordDutyAssignsAnIncreasingSeq(t *testing.T) {
 
 // A zero observed_at is the daemon's own clock; the rest is stored as given.
 func TestRecordDutyStampsAZeroObservedAt(t *testing.T) {
-	s := NewStore()
+	s := newReadinessStore(t)
 	r := DutyRecord{Seat: seatKey, Duty: "first-turn", State: DutyUnproven, SetBy: SetByDaemon}
 	got, err := s.RecordDuty(r)
 	if err != nil {
@@ -92,6 +113,10 @@ func TestDutyRecordsAndSeqSurviveARestart(t *testing.T) {
 	}
 	if left := s1.ListDuties(seatKey); len(left) != 0 {
 		t.Errorf("deleting a seat left %d readiness records", len(left))
+	}
+	// The seat comes back (a respawn), and its first write follows the session.
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatalf("CreateSession again: %v", err)
 	}
 	if _, err := s1.RecordDuty(proven("gh.read")); err != nil {
 		t.Fatal(err)
@@ -144,7 +169,7 @@ func TestRecordDutyRefusesWordsOutsideTheClosedSets(t *testing.T) {
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewStore()
+			s := newReadinessStore(t)
 			r := proven("gh.read")
 			tc.edit(&r)
 			if _, err := s.RecordDuty(r); err == nil {
@@ -178,7 +203,7 @@ func TestRecordDutyAcceptsTheDesignsVocabulary(t *testing.T) {
 		if r.State != DutyUnproven {
 			r.ValidUntil = t1
 		}
-		if _, err := NewStore().RecordDuty(r); err != nil {
+		if _, err := newReadinessStore(t).RecordDuty(r); err != nil {
 			t.Errorf("RecordDuty(%s %s %q): %v", r.Duty, r.State, r.Source, err)
 		}
 	}
@@ -187,7 +212,7 @@ func TestRecordDutyAcceptsTheDesignsVocabulary(t *testing.T) {
 // Withdrawals and seat-reported values wait for a per-seat caller identity: the
 // store refuses to write a withdrawal today, and the refusal says why.
 func TestRecordDutyRefusesAWithdrawalForNow(t *testing.T) {
-	s := NewStore()
+	s := newReadinessStore(t)
 	w := DutyRecord{Seat: seatKey, Duty: "gh.comment", Withdrawn: true, State: DutyWithdrawn, Source: "by:seat", ObservedAt: t0, SetBy: SetByDaemon}
 	_, err := s.RecordDuty(w)
 	if !errors.Is(err, ErrWithdrawalNotBuilt) {
@@ -238,7 +263,7 @@ func TestWithdrawnCellNeverExpires(t *testing.T) {
 // the question mark at valid_until, and a duty never seen has no cell at all
 // (the dash).
 func TestReadinessCellsAgeAndAreAbsentWhenNeverObserved(t *testing.T) {
-	s := NewStore()
+	s := newReadinessStore(t)
 	if _, err := s.RecordDuty(proven("gh.read")); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +308,7 @@ func TestNoPaneTextOrCredentialReachesACell(t *testing.T) {
 		"ghp_SENTINELCREDENTIAL0123456789",
 		"AKIASENTINELCREDENTIAL",
 	}
-	s := NewStore()
+	s := newReadinessStore(t)
 	good := proven("gh.read")
 	if _, err := s.RecordDuty(good); err != nil {
 		t.Fatal(err)
@@ -321,49 +346,51 @@ func TestNoPaneTextOrCredentialReachesACell(t *testing.T) {
 	// field a seat or a pane supplies; it is checked for shape (see the newline
 	// case above) and stays out of every cell.
 	// A DutyRecord has no field that could carry a free-text body, so the type
-	// itself is part of the fence: a new string field has to be named here.
-	want := map[string]bool{"seat": true, "duty": true, "withdrawn": true, "state": true, "source": true, "seq": true, "observed_at": true, "valid_until": true, "set_by": true}
-	var fields map[string]json.RawMessage
-	raw, _ := json.Marshal(DutyRecord{Seat: "a", Duty: "b", Withdrawn: true, State: "c", Source: "d", Seq: 1, ObservedAt: t0, ValidUntil: t1, SetBy: "e"})
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		t.Fatal(err)
-	}
-	for name := range fields {
-		if !want[name] {
+	// itself is part of the fence: a new field of any kind, tagged or not, has to
+	// be named here by someone who has checked it cannot carry pane text or a
+	// credential. Read from the struct, so a field the tests never set is seen.
+	wantFields := map[string]bool{"Seat": true, "Duty": true, "Withdrawn": true, "State": true, "Source": true, "Seq": true, "ObservedAt": true, "ValidUntil": true, "SetBy": true}
+	typ := reflect.TypeOf(DutyRecord{})
+	for i := 0; i < typ.NumField(); i++ {
+		if name := typ.Field(i).Name; !wantFields[name] {
 			t.Errorf("DutyRecord gained the field %q: check that it cannot carry pane text or a credential, then list it here", name)
 		}
 	}
-	if len(fields) != len(want) {
-		t.Errorf("DutyRecord has %d fields, the fence lists %d", len(fields), len(want))
+	if typ.NumField() != len(wantFields) {
+		t.Errorf("DutyRecord has %d fields, the fence lists %d", typ.NumField(), len(wantFields))
 	}
 }
 
 // The record is written only by the daemon. A bus message cannot say which seat
-// of a team sent it, so nothing in internal/bus may call the writer or name its
-// types. A source-level check, the cheapest guard against a later handler.
+// of a team sent it, so nothing under internal/bus, subpackages included, may
+// call the writer or name its types. A source-level check, the cheapest guard
+// against a later handler.
 func TestBusDoesNotWriteReadiness(t *testing.T) {
 	dir := filepath.Join("..", "bus")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
 	forbidden := map[string]bool{"RecordDuty": true, "DutyRecord": true, "ReadinessCells": true, "SeatReadiness": true}
 	checked := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
 		}
 		checked++
-		f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, e.Name()), nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", e.Name(), err)
+		f, perr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if perr != nil {
+			return perr
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			if id, ok := n.(*ast.Ident); ok && forbidden[id.Name] {
-				t.Errorf("internal/bus/%s names %s: readiness is written only by the daemon", e.Name(), id.Name)
+				t.Errorf("%s names %s: readiness is written only by the daemon", path, id.Name)
 			}
 			return true
 		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
 	}
 	if checked == 0 {
 		t.Fatalf("no bus sources found in %s: the guard checked nothing", dir)
@@ -398,8 +425,128 @@ func TestDutySeqIsNotReusedAfterEveryRecordIsGone(t *testing.T) {
 		t.Fatalf("OpenBolt #2: %v", err)
 	}
 	t.Cleanup(func() { _ = s2.CloseBolt() })
+	if err := s2.CreateSession(&Session{Name: "seat-0", Workspace: "aae", Team: "t", Role: "r", State: SessionRunning}); err != nil {
+		t.Fatal(err)
+	}
 	next, err := s2.RecordDuty(proven("gh.read"))
 	if err != nil || next.Seq != 3 {
 		t.Errorf("seq after every record was deleted and the daemon restarted = %d (%v), want 3", next.Seq, err)
+	}
+}
+
+// A record belongs to a session. A credential-shaped seat with no session is
+// refused, uses no seq, and is absent from the cells and from the bolt bucket;
+// a well-formed seat with no session is refused the same way.
+func TestRecordDutyRefusesASeatWithNoSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s := NewStore()
+	if err := s.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	t.Cleanup(func() { _ = s.CloseBolt() })
+	addSeats(t, s)
+
+	const secret = "ghp_SENTINELCREDENTIAL0123456789"
+	for _, seat := range []string{secret, "aae/no-such-seat"} {
+		r := proven("gh.read")
+		r.Seat = seat
+		_, err := s.RecordDuty(r)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("RecordDuty for %q with no session = %v, want ErrNotFound", seat, err)
+		}
+		if strings.Contains(err.Error(), seat) {
+			t.Errorf("the refusal echoes the seat %q: %v", seat, err)
+		}
+		if got := s.SeatReadiness(seat); len(got) != 0 {
+			t.Errorf("SeatReadiness(%q) = %v, want none", seat, got)
+		}
+	}
+	rows := 0
+	if err := s.bolt.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketDutyReadiness).ForEach(func(k, v []byte) error {
+			rows++
+			if strings.Contains(string(k)+string(v), "SENTINEL") {
+				t.Errorf("the credential-shaped seat reached the bolt bucket: %s", k)
+			}
+			return nil
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("bolt bucket holds %d rows after refused writes, want 0", rows)
+	}
+	if next, err := s.RecordDuty(proven("gh.read")); err != nil || next.Seq != 1 {
+		t.Errorf("a refused write used a seq: next = %d (%v), want 1", next.Seq, err)
+	}
+}
+
+// An orphan row (a session deleted without its records, as a crash between the
+// two deletes would leave) does not come back at the next start, and its seq is
+// still never reused.
+func TestRehydrateSkipsARecordWhoseSessionIsGone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	addSeats(t, s1)
+	if _, err := s1.RecordDuty(proven("gh.read")); err != nil {
+		t.Fatal(err)
+	}
+	other := proven("gh.read")
+	other.Seat = "aae/seat-1"
+	if _, err := s1.RecordDuty(other); err != nil {
+		t.Fatal(err)
+	}
+	// Remove seat-0's session row only, leaving its readiness row behind.
+	if err := s1.bolt.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSessions).Delete([]byte(seatKey))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	if got := s2.ListDuties(seatKey); len(got) != 0 {
+		t.Errorf("an orphan record came back: %+v", got)
+	}
+	if got := s2.ListDuties("aae/seat-1"); len(got) != 1 {
+		t.Errorf("seat-1's record = %+v, want it kept", got)
+	}
+	next, err := s2.RecordDuty(other)
+	if err != nil || next.Seq != 3 {
+		t.Errorf("next seq = %d (%v), want 3: the orphan's number is not reused", next.Seq, err)
+	}
+}
+
+// The session check and the write share one lock. The test holds the store's
+// read lock, which lets a check made without the write lock pass but keeps the
+// write waiting, removes the session, and releases. A check made before the
+// write lock was taken would already have passed, and the write would leave an
+// orphan record behind. (The delete under a read lock is the test standing in
+// for a concurrent DeleteSession; the write takes no part in it.)
+func TestRecordDutyChecksTheSessionUnderTheWriteLock(t *testing.T) {
+	s := newReadinessStore(t)
+	s.mu.RLock()
+	errc := make(chan error, 1)
+	go func() {
+		_, err := s.RecordDuty(proven("gh.read"))
+		errc <- err
+	}()
+	time.Sleep(150 * time.Millisecond) // the write is now waiting for the write lock
+	delete(s.sessions, seatKey)
+	s.mu.RUnlock()
+	if err := <-errc; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RecordDuty = %v, want ErrNotFound: the session was gone when the write took the lock", err)
+	}
+	if left := s.ListDuties(seatKey); len(left) != 0 {
+		t.Errorf("a write for a deleted seat left a record: %+v", left)
 	}
 }

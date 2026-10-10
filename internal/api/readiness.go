@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -212,6 +213,12 @@ func dutyKey(seat, cell string) string { return seat + "|" + cell }
 // RecordDuty writes one readiness record and returns it as stored. The daemon
 // assigns Seq (a caller's value is ignored) and fills a zero ObservedAt with
 // its own clock. A withdrawal is refused: see ErrWithdrawalNotBuilt.
+//
+// A record belongs to a session: the seat must exist in the store, checked
+// under the same lock as the write, or the write is refused with ErrNotFound
+// and no Seq is used. So the first write for a seat, including the spawn
+// default-deny writes (aae-orc-0m1lo), must run after the session is stored.
+// The refusal does not echo the seat.
 func (s *Store) RecordDuty(r DutyRecord) (DutyRecord, error) {
 	if r.Withdrawn {
 		return DutyRecord{}, ErrWithdrawalNotBuilt
@@ -224,6 +231,9 @@ func (s *Store) RecordDuty(r DutyRecord) (DutyRecord, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.sessions[r.Seat]; !ok {
+		return DutyRecord{}, fmt.Errorf("readiness: seat has no session: %w", ErrNotFound)
+	}
 	if s.duties == nil {
 		s.duties = make(map[string]*DutyRecord)
 	}
@@ -292,6 +302,14 @@ func (s *Store) rehydrateDuties(tx *bolt.Tx) error {
 		}
 		if r.Seq > s.dutySeq {
 			s.dutySeq = r.Seq
+		}
+		// Sessions are loaded before this runs. A record whose session is gone
+		// is an orphan (a delete that did not finish): skip it, so it does not
+		// come back, and say so. The file is opened read-only here, so the
+		// stale row is left for the next delete of that seat to clear.
+		if _, ok := s.sessions[r.Seat]; !ok {
+			log.Printf("readiness: skipping a record with no session (seq %d)", r.Seq)
+			return nil
 		}
 		s.duties[string(k)] = &r
 		return nil
