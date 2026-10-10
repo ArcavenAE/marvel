@@ -4,7 +4,7 @@ Proposal, 2026-10-09. Code read at marvel `ff9d210`.
 
 - **Author:** the architect seat, team arcaven, from a six-round design panel. The seats were messaging, observability, runtime and harness; the panel's record is kept outside this repository.
 - **The operator's ask:** "marvel builtin watcher, bearing in mind that while marvel bus is native, nats is not, and other agent message queues may be swapped in".
-- **Status:** the operator picks the design (section 8) before any ticket is filed. Builders then work red tests first. Decisions 2 to 4 were ruled on 2026-10-10 (section 8, "Operator rulings"); decision 1, the design, is still open.
+- **Status:** decisions 2 to 4 were ruled on 2026-10-10 (section 8, "Operator rulings"). On the same day the operator ordered the report-only build ("kick off 2"), which is read as settling decision 1, pending the operator's confirmation (section 8). The section 7 plan is filed as flat tickets, with the ring rows held. Builders work red tests first.
 
 ## 0. Why
 
@@ -136,23 +136,29 @@ A probe kit runs on a scratch claude:
 - a throwaway repository;
 - a credential supplied for the run, never a fleet seat's.
 
-Hook loggers and a statusline logger append monotonic-stamped lines. A checker writes `probe_result.json` with keys `c1` to `c13`, covering:
-- hooks at the trust dialog;
-- cost movement while idle;
-- one submit and one stop per prompt;
-- the ring form's source and latency;
-- denial text;
-- interrupt behavior;
-- movement with no prompt;
-- whether hook stdout reaches the context;
-- a nonzero exit's effect;
-- subagent stamps;
-- background tasks;
-- whether a hook can see the version.
+Hook loggers and a statusline logger append monotonic-stamped lines. A checker writes `probe_result.json` with thirteen keys, `c1` to `c13`, each carrying a name field. The measures column is what the party asked each key to measure. For `c2`, `c9`, `c11` and `c12` the probe kit as built (marvel#844) measures less than that; those rows say what it measures today, and a follow-up after #844 merges will close each gap:
+
+| key | name | measures |
+|---|---|---|
+| `c1` | `pre_session_hooks` | hook events logged at the trust dialog and setup menu (expected none) |
+| `c2` | `idle_cost_moves` | whether the statusline cost moved and whether its context moved while idle, with the sample count; the idle window is five minutes. **Not yet measured as asked:** the kit as built idles 60 s by default (`WATCHER_PROBE_IDLE_SECS`). A follow-up will close it. |
+| `c3` | `one_submit_one_stop` | every prompt shows exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` |
+| `c4` | `ring_form` | for the exact ring form, the `source` value and the submit-to-hook latency in ms (one key, two fields) |
+| `c5` | `denial_reason` | the `PermissionDenied.reason` text, and the `Notification.notification_type` seen |
+| `c6` | `interrupt_event` | `stop`, `stopfailure` or `none` after Esc mid-turn |
+| `c7` | `nonprompt_moves` | with no prompt sent, the count of turn hooks (any is a fail) and the count of statusline changes; the statusline fallback is trusted only while that change count is zero |
+| `c8` | `idle_notification_s` | seconds until the `idle_prompt` notification, or `never` |
+| `c9` | `hook_stdout_reaches_context` | whether a line a hook prints reaches the session's context, read from the transcript. **Not yet measured as asked:** the kit as built reads a capture of the pane, not the transcript. A follow-up will close it. |
+| `c10` | `hook_exit2_effect` | what a hook's exit 2 does to the prompt |
+| `c11` | `subagent_stamps` | whether subagent hooks carry `agent_id`, and whether a main turn's `Stop` ever carries one. **Not yet measured as asked:** the kit as built counts `agent_id` on subagent hooks and counts turn `Stop` events, but does not check a `Stop` for `agent_id`. A follow-up will close it. |
+| `c12` | `stop_background` | whether a `Stop` after a backgrounded task carries a non-empty `background_tasks`, and whether a turn then resumes with no prompt. **Not yet measured as asked:** the kit as built records only whether a `Stop` came before the task finished. A follow-up will close it. |
+| `c13` | `version_visible_to_hook` | whether the hook process can learn the claude version |
+
+The names are the party's (round 4, with `c13` added in round 5). An earlier revision of this section listed twelve measurements for thirteen keys, dropping `c8`.
 
 Hooks become the claude source only if every prompt shows exactly one `UserPromptSubmit` and one `Stop` or `StopFailure`. The result carries the build stamp and is re-run on a newer claude before the stamp is reused.
 
-## 7. Plan (filed as flat tickets after the operator's pick)
+## 7. Plan (filed as flat tickets on 2026-10-10, after the order to build report-only; G1 to G4 are held until ringing is turned on)
 
 | id | ticket | blocked by |
 |---|---|---|
@@ -214,7 +220,9 @@ Relayed by director from the operator's decision desk. Each ruling quotes the op
 | 3, starting pass interval | **60 s**, as recommended | "Every 60 seconds." |
 | 4, starting age threshold | **10 min**, as recommended | "10 minutes. Matches the quiet window marvel already uses to decide a seat is idle." |
 
-Decision 2 was first ruled probe first; the probe found the figures flat while idle (finding-marvel-so6h), and the operator then ruled "statusline", in the second row. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Decision 1 is still open, and these rulings file no ticket by themselves.
+Decision 2 was first ruled probe first; the probe found the figures flat while idle (finding-marvel-so6h), and the operator then ruled "statusline", in the second row. The probe observes a live idle seat by capture only. It is separate from the C2 scratch kit in section 6, which still gates any ring authority. Turning the ring on remains a later operator decision, put up after C2 passes and aae-orc-g88i1 lands.
+
+**Decision 1, read from an order (pending the operator's confirmation).** On 2026-10-10 the operator ordered the report-only build: "kick off 2". That order is read as settling decision 1, pending the operator's confirmation through director. The build it starts is report-only, with no ringing yet. Checks run every 60 s, unread mail older than 10 min is reported, and a statusline cost or context change counts as a turn for reports only, never to restart, ring or route. The section 7 plan was filed from it.
 
 ## 9. For the capability register
 
