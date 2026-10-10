@@ -50,6 +50,7 @@ func (d *recordingDriver) Issue(_ context.Context, r Request) (Token, error) {
 	id := fmt.Sprintf("t%d", d.nextID)
 	return Token{ID: id, Value: "v-" + id}, nil
 }
+
 func (d *recordingDriver) Revoke(_ context.Context, t Token) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

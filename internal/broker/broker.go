@@ -11,7 +11,12 @@ package broker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"sort"
+	"sync"
 	"time"
 )
 
@@ -67,51 +72,125 @@ var (
 
 // Broker issues tokens to authenticated seats and revokes them when the seat
 // ends.
-type Broker struct{}
+type Broker struct {
+	driver Driver
+	auth   SessionAuth
+
+	mu     sync.Mutex
+	issued map[string][]Token // by session key
+}
 
 // New returns a broker that issues through d for seats a authenticates.
-func New(d Driver, a SessionAuth) *Broker { return &Broker{} }
+func New(d Driver, a SessionAuth) *Broker {
+	return &Broker{driver: d, auth: a, issued: make(map[string][]Token)}
+}
 
 // Issue authenticates the seat, then asks the driver for a token.
 func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (Token, error) {
-	return Token{}, nil
+	id, err := b.auth.Authenticate(sessionKey, heartbeatToken)
+	if err != nil {
+		return Token{}, err
+	}
+	tok, err := b.driver.Issue(ctx, Request{Team: id.Team, Role: id.Role, Session: id.Session})
+	if err != nil {
+		return Token{}, fmt.Errorf("broker: %s driver: %w", b.driver.Name(), err)
+	}
+	b.mu.Lock()
+	b.issued[sessionKey] = append(b.issued[sessionKey], tok)
+	b.mu.Unlock()
+	return tok, nil
 }
 
 // RevokeSession revokes every token issued to the seat. It revokes the rest
 // when one revoke fails, and reports every failure.
-func (b *Broker) RevokeSession(ctx context.Context, sessionKey string) error { return nil }
+func (b *Broker) RevokeSession(ctx context.Context, sessionKey string) error {
+	b.mu.Lock()
+	toks := b.issued[sessionKey]
+	delete(b.issued, sessionKey)
+	b.mu.Unlock()
+	var errs []error
+	for _, t := range toks {
+		if err := b.driver.Revoke(ctx, t); err != nil {
+			errs = append(errs, fmt.Errorf("revoke %s: %w", t.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // Mock is a driver that issues opaque tokens and tracks them, for tests and
 // for a cluster with no identity provider. It signs nothing.
-type Mock struct{}
+type Mock struct {
+	ttl time.Duration
+	now func() time.Time
+
+	mu   sync.Mutex
+	live map[string]bool
+}
 
 // NewMock returns a mock driver whose tokens live for ttl.
-func NewMock(ttl time.Duration, now func() time.Time) *Mock { return &Mock{} }
+func NewMock(ttl time.Duration, now func() time.Time) *Mock {
+	if now == nil {
+		now = time.Now
+	}
+	return &Mock{ttl: ttl, now: now, live: make(map[string]bool)}
+}
 
 // Name is the driver's registered name.
-func (m *Mock) Name() string { return "" }
+func (m *Mock) Name() string { return "mock" }
 
 // Issue returns an opaque token for the seat.
-func (m *Mock) Issue(ctx context.Context, r Request) (Token, error) { return Token{}, nil }
+func (m *Mock) Issue(_ context.Context, r Request) (Token, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return Token{}, fmt.Errorf("mint mock token: %w", err)
+	}
+	id := hex.EncodeToString(b[:8])
+	t := Token{ID: id, Value: "mock." + id + "." + hex.EncodeToString(b[8:]), Expires: m.now().Add(m.ttl)}
+	m.mu.Lock()
+	m.live[id] = true
+	m.mu.Unlock()
+	return t, nil
+}
 
 // Revoke forgets the token.
-func (m *Mock) Revoke(ctx context.Context, t Token) error { return nil }
+func (m *Mock) Revoke(_ context.Context, t Token) error {
+	m.mu.Lock()
+	delete(m.live, t.ID)
+	m.mu.Unlock()
+	return nil
+}
 
 // Live returns the ids of the tokens not yet revoked.
-func (m *Mock) Live() []string { return nil }
+func (m *Mock) Live() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.live))
+	for id := range m.live {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
 
 // GenericOIDC will sign a client assertion through the host keystore. It
 // holds the key's name and a Signer, nothing else.
-type GenericOIDC struct{}
+type GenericOIDC struct {
+	keyName string
+	signer  Signer
+}
 
 // NewGenericOIDC returns the stub driver for the keystore key named keyName.
-func NewGenericOIDC(keyName string, s Signer) *GenericOIDC { return &GenericOIDC{} }
+func NewGenericOIDC(keyName string, s Signer) *GenericOIDC {
+	return &GenericOIDC{keyName: keyName, signer: s}
+}
 
 // Name is the driver's registered name.
-func (g *GenericOIDC) Name() string { return "" }
+func (g *GenericOIDC) Name() string { return "generic-oidc" }
 
 // Issue is not built until the claim shape is ruled.
-func (g *GenericOIDC) Issue(ctx context.Context, r Request) (Token, error) { return Token{}, nil }
+func (g *GenericOIDC) Issue(context.Context, Request) (Token, error) {
+	return Token{}, ErrClaimShapeUndecided
+}
 
 // Revoke is not built until the claim shape is ruled.
-func (g *GenericOIDC) Revoke(ctx context.Context, t Token) error { return nil }
+func (g *GenericOIDC) Revoke(context.Context, Token) error { return ErrClaimShapeUndecided }
