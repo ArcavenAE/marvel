@@ -88,3 +88,48 @@ func TestKitNeverNamesTheOperatorsClaudeConfig(t *testing.T) {
 		}
 	}
 }
+
+// A tmux call without -S would reach the default server, which is the fleet's.
+func TestKitNamesItsOwnSocketOnEveryTmuxCall(t *testing.T) {
+	b, err := os.ReadFile(kitScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for i, line := range strings.Split(string(b), "\n") {
+		code, _, _ := strings.Cut(line, "#")
+		idx := strings.Index(code, "tmux")
+		for idx >= 0 {
+			rest := code[idx+len("tmux"):]
+			before := ""
+			if idx > 0 {
+				before = code[idx-1 : idx]
+			}
+			// A word on its own, such as the command: not part of a name like TMUX_SOCKET.
+			if (before == "" || before == " " || before == "\t" || before == "(" || before == "=") && (rest == "" || rest[0] == ' ') {
+				calls++
+				if !strings.HasPrefix(rest, ` -S "$sock"`) {
+					t.Errorf("run.sh:%d calls tmux without -S \"$sock\": %s", i+1, strings.TrimSpace(line))
+				}
+			}
+			next := strings.Index(rest, "tmux")
+			if next < 0 {
+				break
+			}
+			idx += len("tmux") + next
+		}
+	}
+	if calls == 0 {
+		t.Error("found no tmux call; the check reads nothing")
+	}
+}
+
+func TestKitDryRunNeverPrintsTheCredential(t *testing.T) {
+	out, err := runKit(t, []string{"WATCHER_PROBE_CREDENTIAL=sk-sekret-1234"}, "--dry-run", "--scratch", filepath.Join(t.TempDir(), "probe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "sekret") || !strings.Contains(out, "CREDENTIAL=supplied\n") {
+		t.Errorf("dry run output:\n%s", out)
+	}
+}
