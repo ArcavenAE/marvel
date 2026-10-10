@@ -1,7 +1,7 @@
 # Declared cadence: a periodic prompt into an interactive seat
 
-Status: design, voted by a 4-round party (ptdd), 2026-10-06. Proposal only:
-the rulings in section 7 are the operator's. Code references are pinned to
+Status: design, voted by a 4-round party (ptdd), 2026-10-06. The operator
+adopted all three rulings in section 7 on 2026-10-10. Code references are pinned to
 marvel `409593c` and director `813c595`. V4's gate was tightened in review
 after the vote (a second read before Enter, and copy mode); the panel voted
 the single-read form.
@@ -171,7 +171,12 @@ agent observability.
    senses, and rewrite the process-text ticket to its event wake only.
    Recommended: adopt.
 
-Each recommendation is valid until 2026-10-20, or a change to the schedule
+**RULED 2026-10-10:** "adopt all three", relayed by director. The design
+and plan T1 to T8 are adopted, the bridge (V7) is adopted, and the earlier
+NATS-path tickets are rewritten as ruling 3 says. Tickets are filed
+from section 4 as their own step.
+
+Each recommendation was valid until 2026-10-20, or a change to the schedule
 clock, the inject path, the composer reader or a Claude Code release that
 changes the facts in section 2, whichever comes first; the architect seat
 that wrote this re-checks it then. Nothing here executes on silence.

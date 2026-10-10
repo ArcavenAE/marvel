@@ -36,6 +36,8 @@ Design for review. No code lands until this doc is reviewed.
   a permission posture, env and flag levers, three outcomes, and a parked
   state for prompts that seeding cannot reach. The section 5 table and
   section 6 are corrected to match, and rulings 13 and 14 are added.
+- 2026-10-10: the operator ruled 13 and 14, both (a), relayed by director;
+  section 11 records them.
 
 ## 1. The problem, verified
 
@@ -788,7 +790,7 @@ Each row names a harness version. A version with no row returns degraded
 - What must read it: a shift's readiness check and the supervisors'
   sweeps. Today a parked successor passes `allReady` for a role with no
   healthcheck (`controller.go:2413-2421`), and the working predecessor
-  drains. Ruling 14 asks the operator whether readiness should exclude a
+  drains. Ruling 14 (ruled 2026-10-10, (a)) makes readiness exclude a
   parked successor; ruling 9 already makes a successor not ready until its
   login check passes.
 - Patterns are `panestate` data per harness and version. Known text: codex
@@ -1121,9 +1123,10 @@ change first.
     - (c) The same rules, with no latch: every refusal is re-evaluated.
 
     Recommended: (a). Voted 6 of 6 on the rules; on the latch, 4 for (a),
-    1 for (b) (the marvel seat) and 1 for (c) (the refusal seat). This recommendation is valid until
-    2026-10-16; the architect re-checks it then. Nothing executes on
-    silence or on that date.
+    1 for (b) (the marvel seat) and 1 for (c) (the refusal seat).
+    **RULED 2026-10-10:** "(a)", relayed by director. Applied: a refusal
+    latches when the manifest is its cause, and a refusal with an outside
+    cause is re-evaluated (section 6).
 14. **A parked shift successor (r10, new).** It changes shift
     behaviour, so it comes to the operator before a builder takes it.
     - (a) The readiness check treats a parked successor as not ready, so
@@ -1135,6 +1138,7 @@ change first.
       shown how often a park is a false match.
 
     Recommended: (a). Voted 6 of 6; (b) and (c) are offered here for the
-    operator and were not argued in the party. This recommendation is valid until
-    2026-10-16; the architect re-checks it then. Nothing executes on
-    silence or on that date.
+    operator and were not argued in the party.
+    **RULED 2026-10-10:** "(a)", relayed by director. Applied: a parked
+    successor is not ready, so the predecessor keeps working, as ruling 9
+    does for a failed login check. K4 takes it.
