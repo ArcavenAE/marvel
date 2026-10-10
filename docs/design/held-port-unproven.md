@@ -31,8 +31,8 @@ The owner read asks "does the pidfile pid P hold port N", never "who holds port 
 
 It is a new refusal at adopt, inside the new-format proof of #794. It is not added at `terminate` of marvel's own child.
 
-- darwin: `lsof` by its absolute path (`/usr/sbin/lsof`), a fixed environment, a 2 s timeout, filtered to the one pid, the one TCP port and the listen state. The output is parsed for the one pid and never logged or printed whole.
-- linux: `/proc/net/tcp` (and `tcp6`) for the listening inode, then `/proc/<pid>/fd` for that inode.
+- darwin: `lsof` by its absolute path (`/usr/sbin/lsof`), a fixed environment, a 2 s timeout, filtered to the one pid, the one TCP port and the listen state. The output is parsed for the one pid. lsof output is never logged; only the `owner=` answer is printed.
+- linux: `/proc/net/tcp` (and `tcp6`) for the listening inode, then `/proc/<pid>/fd` for that inode. The same rule holds: what these files contain is never logged; only the `owner=` answer is printed.
 
 ## 3. Spawn when the port frees
 
