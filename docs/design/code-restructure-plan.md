@@ -1,6 +1,6 @@
 # Code restructure plan: two package moves and a sequencing rule
 
-- **Status:** Proposal, 2026-10-10, revision 4. It is for review. It changes
+- **Status:** Proposal, 2026-10-10, revision 5. It is for review. It changes
   no code, and no ticket is filed from it until it has been reviewed.
 - **Ruling it implements:** the operator chose (b) plus (d) from
   finding-marvel-4m2m section 6, on 2026-10-09:
@@ -12,8 +12,9 @@
   plan.
 - **Revisions:** revision 2 answered review round 1 (at `6abc0af`), and
   revision 3 answered round 2 (at `9d13728`), and revision 4 answers the
-  formal review of revision 3 and records D1's ruling. Sections 7 to 9 list
-  each finding and what changed for it.
+  formal review of revision 3 and records D1's ruling, and revision 5 answers
+  the review of revision 4. Sections 7 to 10 list each finding and what
+  changed for it.
 - **Author seat:** architect, team arcaven.
 - **Code read at:** marvel `76a7db9` (the squash of #799). `daemon.go`,
   `team/controller.go`, `services-list.md` and
@@ -285,6 +286,16 @@ The driver keeps:
 - `startLegacy`, `refuseUnproven`, `strangerRefusal` and `listenerAnswers`;
 - the SIGHUP on adopt, sent through the prober before it hands the child to
   `Process`;
+- `terminate`, as a driver method. Start's proven-wedged branch
+  (`supervisor.go:290-293`) ends a child before any child reaches `Process`,
+  and `TestTerminateProvesBeforeEverySignal` calls `s.terminate` directly
+  (`supervisor_identity_test.go:343`, the call at `:386`). Its body becomes a
+  call to a stateless `workload.Terminate(p childproof.Prober, c
+  childproof.Child, grace time.Duration)`, which `Process` also uses, so the
+  TERM, wait and KILL logic exists once;
+- the public methods the daemon and the tests call (`Start`, `Restart`,
+  `Stop`, `Reload`, `Ready`, `Status`), which keep their signatures and
+  delegate to `Process` where the work moved;
 - the `BeforePidFile` closure that writes the identity record;
 - the leaf poll, the structural check, provisioning and `confirmAsync`;
 - `mgr`, the leaf and domain status, and every `bus.*` event.
@@ -299,7 +310,8 @@ The driver keeps:
 - adopt of a child the driver has already proven (`Adopt`);
 - the watch loop, with its one ticker;
 - crash detection and the restart wait;
-- `Restart`, terminate and `Stop(keep)`.
+- `Restart`, terminate (through `workload.Terminate`) and `Stop(keep)` for the
+  child it holds.
 
 **The interface:**
 
@@ -464,8 +476,10 @@ allows happen here.
     before its own first reading;
   - after a respawn, a failed first reading leaves no structure from the
     dead child in effect;
-  - a delayed reading from `Reload`, released after a respawn, is dropped and
-    does not change `Ready()`.
+  - a delayed reading from `Reload` that started before a respawn is dropped
+    and does not change `Ready()`;
+  - one that started after the respawn is kept, because its generation is
+    taken when the read starts, not when it lands.
 
 **Tests that prove it, in `internal/bus`:**
 - every supervisor test passes, edited only as D1 allows;
@@ -536,7 +550,15 @@ reach does under the split in section 3:
 | live lifecycle state | `s.pid` 1 (`proctable_test.go:142`), `s.child` 3 and `s.prober.Same` 1 (`supervisor_identity_test.go:298-299`) | 5, in two tests | lives in `Process` after the split |
 
 `s.restarts`, `s.ready`, `s.backoffTill`, `s.cmd`, `s.watchDone` and
-`s.stopping` have no reaches. There are ten `func Test` in
+`s.stopping` have no reaches.
+
+The table counts field reaches. Method calls were counted separately
+(`grep -ohE '\bs\.<method>\(' internal/bus/*_test.go`, every lifecycle and
+adopt method): `Status` 30, `Start` 23, `Ready` 13, `Stop` 4,
+`classifyPidfile` 4, `Restart` 2, `Reload` 1 and `terminate` 1. Each of these
+stays a `bus.Supervisor` method under the split (section 3), so none is an
+edit. `watch`, `onCrash`, `spawnLocked` and `becomeReady` have no calls in
+the tests. There are ten `func Test` in
 `supervisor_test.go`.
 
 The options were (a) edit the five live-state reaches, (b) no edits, with
@@ -625,4 +647,11 @@ Each item was checked at `76a7db9` before anything changed. All of them held.
 | 3, PR 1b and 1c scope | 27 files outside `internal/daemon` (14 non-test, 13 test) counted and named as PR 1b's scope; the aliases stay through 1b so 1c's build checks nothing was missed |
 | D1, `s.grace` missing | `s.grace` is set before `Start`, so it is in the configuration class (now 15) and reaches `Process` as `ProcessSpec.Grace`. The live-state edits stay at five, inside the operator's grant |
 | low, the API omits `Restart` and `Stop` | Both added to the API block |
+
+## 10. Review of revision 4 (`bba2166`), item by item
+
+| item | what changed |
+|---|---|
+| a possible sixth edit: the driver's wedged branch and a test call `s.terminate` | Option 1: `terminate` stays a driver method over a shared `workload.Terminate`, so the test still reaches it and the edits stay at five. Section 5 adds the method-call count, which shows no other lifecycle method the tests call leaves `bus.Supervisor` |
+| non-blocking: which `Reload` reading is kept | The readiness tests pin it: a read started before the respawn is dropped, and one started after it is kept |
 
