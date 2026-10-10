@@ -1,0 +1,33 @@
+# Captured, not synthetic: a read-only marvel capture of a running opencode
+# seat parked at its "Access external directory" prompt, taken on 2026-10-10
+# from a pane 80 columns wide and trimmed to the prompt block. The rows above
+# the block were another party's text and are not kept. The last row is the
+# prompt's own border line, kept because the matcher aligns a block to the
+# last non-blank row of the screen. The seat ran an unpinned install, so its
+# version is not known; 0.0.0 below stands for "unknown".
+#
+# TEST DATA, NOT SHIPPED. The matcher refuses a pattern whose version is not the
+# seat's, so this set is under testdata-parked and not under patterns. It moves
+# to patterns/opencode/<version>/ once the sampled version is read from a seat.
+#
+# The variable spans are the directory the seat asked for (two rows) and the
+# key hints after "Reject", which opencode cuts to the pane width.
+id: access-external-directory
+version: 1
+harness: opencode
+harness_version: 0.0.0
+state: parked
+reason: permission
+sample_width: 80
+var_runes: 80
+rows:
+  - "  ┃  △ Permission required"
+  - "  ┃    ← Access external directory {{var}}"
+  - "  ┃"
+  - "  ┃  Patterns"
+  - "  ┃"
+  - "  ┃  - {{var}}"
+  - "  ┃"
+  - "  ┃"
+  - "  ┃   Allow once   Allow always   Reject{{var}}"
+  - "  ┃"

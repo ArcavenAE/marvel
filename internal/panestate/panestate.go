@@ -23,6 +23,9 @@ type State string
 const (
 	// StateLoggedOut is a harness sitting at its login prompt.
 	StateLoggedOut State = "logged-out"
+	// StateParked is a harness waiting at a prompt that needs a person: a
+	// trust, permission or update dialog. Reason says which.
+	StateParked State = "parked"
 	// StateUnknown is every other answer, including a low-confidence match.
 	StateUnknown State = "unknown"
 )
@@ -124,6 +127,19 @@ type Pattern struct {
 	MaxVersion  string
 	SampleWidth int
 	Rows        []Row
+	// State is what a full, same-version match sets. Reason is set for
+	// StateParked only.
+	State  State
+	Reason string
+}
+
+// state is the state a full match sets: logged-out unless the pattern says
+// otherwise.
+func (p Pattern) state() State {
+	if p.State == "" {
+		return StateLoggedOut
+	}
+	return p.State
 }
 
 // Covers reports whether the pattern is for the harness version v. With no
@@ -206,6 +222,7 @@ type Result struct {
 	PatternID      string
 	PatternVersion int
 	HarnessVersion string
+	Reason         string
 	Evidence       []string
 }
 
@@ -264,7 +281,7 @@ func Classify(sets []Pattern, harness, sessVersion string, rows []string) Result
 			res.Evidence = append(res.Evidence, m.Render())
 		}
 		if full && p.Covers(sessVersion) {
-			res.State, res.Confidence = StateLoggedOut, ConfHigh
+			res.State, res.Confidence, res.Reason = p.state(), ConfHigh, p.Reason
 			return res
 		}
 		if low == nil || len(res.Evidence) > len(low.Evidence) {

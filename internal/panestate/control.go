@@ -21,7 +21,7 @@ type ControlResult struct {
 // pattern, in order (docs/design/watchdog-control-and-uncovered.md section 2).
 // The sample is read, normalized and classified through the same Classify a
 // pane goes through, with only that pattern in the set and its own harness
-// version as the session version. A pattern passes on logged-out at high
+// version as the session version. A pattern passes on its own state at high
 // confidence naming that pattern. Anything else fails it, an unreadable
 // sample included.
 //
@@ -49,11 +49,11 @@ func Control(sets []Pattern, sample func(Pattern) (string, error)) []ControlResu
 		got := Classify([]Pattern{p}, p.Harness, p.HarnessVersion, rows)
 		res.State, res.Confidence = got.State, got.Confidence
 		// The state and confidence checks are redundant with the pattern id
-		// today: Classify over a one-pattern set returns logged-out at high
-		// only for that pattern. They are kept on purpose, so a later change
+		// today: Classify over a one-pattern set returns the pattern's own
+		// state at high only for that pattern. They are kept on purpose, so a later change
 		// to Classify (a second state, another confidence tier) cannot make a
 		// pattern pass on a weaker verdict than the one a pane needs.
-		res.Pass = got.State == StateLoggedOut && got.Confidence == ConfHigh && got.PatternID == p.ID
+		res.Pass = got.State == p.state() && got.Confidence == ConfHigh && got.PatternID == p.ID
 		out = append(out, res)
 	}
 	return out

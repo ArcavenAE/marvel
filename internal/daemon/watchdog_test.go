@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -466,5 +467,84 @@ func TestAccountLabelCanonicalizesTheConfigDir(t *testing.T) {
 	}
 	if strings.Contains(one, home) {
 		t.Errorf("a path reached the label: %s", one)
+	}
+}
+
+const wdParkedYAML = `id: ask
+version: 1
+harness: claude
+harness_version: 2.1.283
+state: parked
+reason: trust
+sample_width: 80
+var_runes: 40
+rows:
+  - "Do you trust the files in this folder?"
+  - "Folder: {{var}}"
+  - " 1. Yes   2. No"
+`
+
+const wdParkedScreen = "chat above\nDo you trust the files in this folder?\nFolder: /some/where\n 1. Yes   2. No\n"
+
+// parkedRig is the rig with one parked pattern for the same harness as the
+// logged-out fixture, so one seat kind can show either screen.
+func parkedRig(t *testing.T) *wdRig {
+	t.Helper()
+	r := newWDRig(t)
+	sets, err := panestate.Load(fstest.MapFS{"claude/2.1.283/ask.yaml": {Data: []byte(wdParkedYAML)}}, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.w.sets = append(r.w.sets, sets...)
+	return r
+}
+
+func TestWatchdogSetsParkedWithItsReasonAndOneEvent(t *testing.T) {
+	r := parkedRig(t)
+	p := r.seat("a", "claude", "2.1.283", 11*time.Minute, 0)
+	p.screen = wdParkedScreen
+	r.w.Once()
+	hs := r.get("a").HarnessState
+	if hs == nil || hs.State != api.HarnessStateParked || hs.Reason != "trust" || hs.Confidence != "high" {
+		t.Fatalf("harness state = %+v, want parked/trust/high", hs)
+	}
+	if strings.Join(hs.Evidence, "|") != "Do you trust the files in this folder?|Folder: <masked>| 1. Yes   2. No" {
+		t.Fatalf("evidence = %q", hs.Evidence)
+	}
+	r.now = r.now.Add(11 * time.Minute)
+	r.w.Once()
+	evs := r.kinds(events.KindSessionHarnessState)
+	if len(evs) != 1 || evs[0].Severity != events.SeverityWarning || !strings.HasPrefix(evs[0].Message, "parked ") {
+		t.Fatalf("events = %+v, want one warning starting with parked", evs)
+	}
+	if strings.Contains(evs[0].Message, "/some/where") {
+		t.Fatalf("event carries the captured folder: %q", evs[0].Message)
+	}
+}
+
+func TestWatchdogClearsParkedWhenThePromptGoes(t *testing.T) {
+	r := parkedRig(t)
+	p := r.seat("a", "claude", "2.1.283", 30*time.Minute, 0)
+	p.screen = wdParkedScreen
+	r.w.Once()
+	p.screen = "> hello\n"
+	r.now = r.now.Add(11 * time.Minute)
+	r.w.Once()
+	if r.get("a").HarnessState != nil {
+		t.Fatal("parked state not cleared when the prompt went")
+	}
+	if got := len(r.kinds(events.KindSessionHarnessStateCleared)); got != 1 {
+		t.Fatalf("cleared events = %d, want 1", got)
+	}
+}
+
+func TestWatchdogParkedSeatsNeverRollUpAsLoggedOut(t *testing.T) {
+	r := parkedRig(t)
+	for _, n := range []string{"a", "b", "c"} {
+		r.seat(n, "claude", "2.1.283", 30*time.Minute, 0).screen = wdParkedScreen
+	}
+	r.w.Once()
+	if got := len(r.kinds(events.KindAccountLoggedOut)); got != 0 {
+		t.Fatalf("three parked seats rolled up as logged-out: %d events", got)
 	}
 }

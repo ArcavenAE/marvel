@@ -310,7 +310,7 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 	switch {
 	case res.Confidence == "":
 		w.clear(s, "the block no longer matches")
-	case res.State == panestate.StateLoggedOut:
+	case res.State == panestate.StateLoggedOut, res.State == panestate.StateParked:
 		w.set(now, s, res, adapter.Name(), version, width)
 	default:
 		w.clearEvent(s, "the block no longer fully matches")
@@ -401,13 +401,13 @@ func harnessState(now time.Time, s api.Session, res panestate.Result, harness, v
 		State: string(res.State), Confidence: string(res.Confidence),
 		Harness: harness, HarnessVersion: version,
 		PatternID: res.PatternID, PatternVersion: res.PatternVersion, PatternFor: res.HarnessVersion,
-		PaneWidth: width, Evidence: res.Evidence, CapturedAt: now, ContextAt: s.ContextAt,
+		Reason: res.Reason, PaneWidth: width, Evidence: res.Evidence, CapturedAt: now, ContextAt: s.ContextAt,
 	}
 }
 
 func (w *watchdog) set(now time.Time, s api.Session, res panestate.Result, harness, version string, width int) {
 	hs := harnessState(now, s, res, harness, version, width)
-	already := s.HarnessState != nil && s.HarnessState.State == api.HarnessStateLoggedOut
+	already := s.HarnessState != nil && s.HarnessState.State == hs.State
 	w.store.SetHarnessState(s.Key(), hs)
 	if already {
 		return
@@ -416,7 +416,7 @@ func (w *watchdog) set(now time.Time, s api.Session, res panestate.Result, harne
 		Kind: events.KindSessionHarnessState, Severity: events.SeverityWarning,
 		Workspace: s.Workspace, Team: s.Team, Role: s.Role, Session: s.Name,
 		Message: fmt.Sprintf("%s %s (%s, %s %s, pattern %s@%d, width %d): %s",
-			api.HarnessStateLoggedOut, s.Name, res.Confidence, harness, versionOrUnknown(version),
+			hs.State, s.Name, res.Confidence, harness, versionOrUnknown(version),
 			res.PatternID, res.PatternVersion, width, strings.Join(res.Evidence, " / ")),
 	})
 }
@@ -428,15 +428,16 @@ func versionOrUnknown(v string) string {
 	return v
 }
 
-// clearEvent emits the cleared event when a logged-out state is ending.
+// clearEvent emits the cleared event when a logged-out or parked state is
+// ending.
 func (w *watchdog) clearEvent(s api.Session, why string) {
-	if s.HarnessState == nil || s.HarnessState.State != api.HarnessStateLoggedOut {
+	if s.HarnessState == nil || (s.HarnessState.State != api.HarnessStateLoggedOut && s.HarnessState.State != api.HarnessStateParked) {
 		return
 	}
 	events.Emit(w.ring, events.Event{
 		Kind: events.KindSessionHarnessStateCleared, Severity: events.SeverityInfo,
 		Workspace: s.Workspace, Team: s.Team, Role: s.Role, Session: s.Name,
-		Message: fmt.Sprintf("logged-out cleared for %s: %s", s.Name, why),
+		Message: fmt.Sprintf("%s cleared for %s: %s", s.HarnessState.State, s.Name, why),
 	})
 }
 
