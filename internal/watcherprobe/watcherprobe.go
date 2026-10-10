@@ -217,6 +217,7 @@ func RecordStatusline(path string, stdin io.Reader, environ []string) (string, e
 
 // Check is the answer for one of c1 to c13.
 type Check struct {
+	Name   string `json:"name"`
 	Status string `json:"status"`
 	Value  any    `json:"value,omitempty"`
 	Note   string `json:"note,omitempty"`

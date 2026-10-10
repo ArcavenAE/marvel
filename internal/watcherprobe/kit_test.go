@@ -286,3 +286,19 @@ func TestKitNotesStateWhoInheritsTheKey(t *testing.T) {
 		}
 	}
 }
+
+// The notes name each check as the design does, so the README and the package
+// doc cannot drift from the keys in probe_result.json.
+func TestNotesNameEveryCheck(t *testing.T) {
+	for _, path := range []string{"../../scripts/probes/watcher-claude/README.md", "watcherprobe.go"} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, name := range checkNames {
+			if !strings.Contains(string(b), name) {
+				t.Errorf("%s does not name %s (%s)", filepath.Base(path), key, name)
+			}
+		}
+	}
+}

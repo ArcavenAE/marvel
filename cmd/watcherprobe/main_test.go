@@ -132,8 +132,8 @@ func TestAKeyInAHookStatuslineOrNotificationPayloadReachesNeitherFile(t *testing
 	}
 	do("", "mark", "--log", log, "denial-start")
 	do(`{"hook_event_name":"UserPromptSubmit","prompt":"my key is `+key+`"}`, "hook", "--log", log)
-	do(`{"hook_event_name":"Notification","message":"auth failed for sk-ant-...0123456789abcdefXYZ"}`, "hook", "--log", log)
-	do(`{"hook_event_name":"PermissionDenied","message":"tail 0123456789abcdefXYZ was refused"}`, "hook", "--log", log)
+	do(`{"hook_event_name":"Notification","notification_type":"auth_error","message":"auth failed for sk-ant-...0123456789abcdefXYZ"}`, "hook", "--log", log)
+	do(`{"hook_event_name":"PermissionDenied","reason":"tail 0123456789abcdefXYZ was refused"}`, "hook", "--log", log)
 	do(`{"cost":{"total_cost_usd":0.5},"note":"`+key+`"}`, "statusline", "--log", log)
 	if strings.Contains(out.String(), "FAKEFAKE") {
 		t.Errorf("the statusline printed key text: %q", out.String())
@@ -152,8 +152,8 @@ func TestAKeyInAHookStatuslineOrNotificationPayloadReachesNeitherFile(t *testing
 		}
 	}
 	b, _ := os.ReadFile(res)
-	if !strings.Contains(string(b), "was refused") {
-		t.Errorf("the denial text was lost along with the key:\n%s", b)
+	if !strings.Contains(string(b), "was refused") || !strings.Contains(string(b), "auth_error") {
+		t.Errorf("the denial reason or the notification type was lost along with the key:\n%s", b)
 	}
 }
 
@@ -165,7 +165,7 @@ func TestCheckMasksTheResultEvenFromAnUnmaskedLog(t *testing.T) {
 	dir := t.TempDir()
 	log, res := filepath.Join(dir, "events.tsv"), filepath.Join(dir, "probe_result.json")
 	lines := "1\tmark\tdenial-start\t\n" +
-		"2\thook\tNotification\t{\"hook_event_name\":\"Notification\",\"message\":\"bad key " + key + "\"}\n" +
+		"2\thook\tPermissionDenied\t{\"hook_event_name\":\"PermissionDenied\",\"reason\":\"bad key " + key + "\"}\n" +
 		"3\tmark\tdenial-end\t\n"
 	if err := os.WriteFile(log, []byte(lines), 0o600); err != nil {
 		t.Fatal(err)

@@ -167,14 +167,28 @@ func TestRecordStatuslineAppendsAndPrintsOneLine(t *testing.T) {
 	}
 }
 
+// The keys stay c1 to c13; each check also carries the name it has in the
+// design, so a reader of probe_result.json need not know the numbering.
+var checkNames = map[string]string{
+	"c1": "pre_session_hooks", "c2": "idle_cost_moves", "c3": "one_submit_one_stop", "c4": "ring_form",
+	"c5": "denial_reason", "c6": "interrupt_event", "c7": "nonprompt_moves", "c8": "idle_notification_s",
+	"c9": "hook_stdout_reaches_context", "c10": "hook_exit2_effect", "c11": "subagent_stamps",
+	"c12": "stop_background", "c13": "version_visible_to_hook",
+}
+
 func TestCheckWithNothingLoggedIsNotRun(t *testing.T) {
 	r := Run(nil, "claude 2.1.296")
 	if len(r.Checks) != 13 {
 		t.Fatalf("%d checks, want 13", len(r.Checks))
 	}
 	for i := 1; i <= 13; i++ {
-		if c := get(t, r, fmt.Sprintf("c%d", i)); c.Status != StatusNotRun {
-			t.Errorf("c%d = %q with an empty log, want %q", i, c.Status, StatusNotRun)
+		key := fmt.Sprintf("c%d", i)
+		c := get(t, r, key)
+		if c.Status != StatusNotRun {
+			t.Errorf("%s = %q with an empty log, want %q", key, c.Status, StatusNotRun)
+		}
+		if c.Name != checkNames[key] {
+			t.Errorf("%s is named %q, want %q", key, c.Name, checkNames[key])
 		}
 	}
 }
@@ -241,11 +255,16 @@ func TestC3OneSubmitAndOneStopPerPrompt(t *testing.T) {
 	}
 }
 
-func TestC1HooksAtTheTrustDialog(t *testing.T) {
+func TestC1HooksAtTheTrustDialogAndTheSetupMenu(t *testing.T) {
 	r := Run([]Line{mark(1*ms, "trust-open", ""), hook(2*ms, "SessionStart"), hook(3*ms, "Notification"), mark(4*ms, "trust-closed", ""), hook(5*ms, "SessionStart")}, "s")
 	c := get(t, r, "c1")
 	if c.Status != StatusObserved || c.Value != 2 {
 		t.Errorf("c1 = %+v, want observed with 2 hooks inside the dialog", c)
+	}
+	// The setup menu follows the trust dialog; its hooks count when it is marked.
+	withSetup := []Line{mark(1*ms, "trust-open", ""), hook(2*ms, "SessionStart"), mark(4*ms, "trust-closed", ""), hook(5*ms, "Notification"), mark(6*ms, "setup-closed", ""), hook(7*ms, "Stop")}
+	if c := get(t, Run(withSetup, "s"), "c1"); c.Value != 2 {
+		t.Errorf("c1 with a setup menu = %+v, want 2 hooks up to setup-closed", c)
 	}
 	if got := get(t, Run([]Line{mark(1*ms, "trust-open", "")}, "s"), "c1").Status; got != StatusNotRun {
 		t.Errorf("an unclosed dialog window gave c1 %q", got)
@@ -271,75 +290,109 @@ func TestC2CostMovementWhileIdle(t *testing.T) {
 	}
 }
 
-func TestC4AndC5TheRingFormAndItsLatency(t *testing.T) {
+// c4 is one key: the ring form's source and the submit-to-hook latency in ms.
+func TestC4RingFormHoldsTheSourceAndTheLatency(t *testing.T) {
 	lines := []Line{
 		mark(100*ms, "ring-sent", "wake"),
-		hookBody(130*ms, "UserPromptSubmit", `{"hook_event_name":"UserPromptSubmit","prompt":"wake","session_id":"s"}`),
+		hookBody(130*ms, "UserPromptSubmit", `{"hook_event_name":"UserPromptSubmit","prompt":"wake","source":"typed","session_id":"s"}`),
 		hook(400*ms, "Stop"), mark(410*ms, "ring-done", ""),
 	}
-	r := Run(lines, "s")
-	c4, c5 := get(t, r, "c4"), get(t, r, "c5")
-	v, _ := c4.Value.(map[string]any)
-	if c4.Status != StatusObserved || v["event"] != "UserPromptSubmit" || v["prompt_matches_ring"] != true {
-		t.Errorf("c4 = %+v", c4)
-	}
-	if c5.Status != StatusObserved || c5.Value != int64(30) {
-		t.Errorf("c5 = %+v, want 30 ms", c5)
+	c := get(t, Run(lines, "s"), "c4")
+	v, _ := c.Value.(map[string]any)
+	if c.Status != StatusObserved || v["event"] != "UserPromptSubmit" || v["source"] != "typed" || v["prompt_matches_ring"] != true || v["latency_ms"] != int64(30) {
+		t.Errorf("c4 = %+v", c)
 	}
 	none := Run([]Line{mark(100*ms, "ring-sent", "wake"), hook(400*ms, "Stop"), mark(410*ms, "ring-done", "")}, "s")
-	if get(t, none, "c4").Status != StatusFail || get(t, none, "c5").Status != StatusFail {
-		t.Errorf("a ring that produced no submit: c4 %+v c5 %+v", get(t, none, "c4"), get(t, none, "c5"))
+	if got := get(t, none, "c4").Status; got != StatusFail {
+		t.Errorf("a ring that produced no submit: c4 = %q", got)
+	}
+	if got := get(t, Run(nil, "s"), "c4").Status; got != StatusNotRun {
+		t.Errorf("no ring: c4 = %q", got)
 	}
 }
 
-func TestC6DenialText(t *testing.T) {
+// c5 is PermissionDenied.reason plus the Notification.notification_type seen.
+func TestC5DenialReasonAndNotificationType(t *testing.T) {
 	lines := []Line{
 		mark(1*ms, "denial-start", ""),
-		hookBody(2*ms, "PermissionDenied", `{"hook_event_name":"PermissionDenied","message":"Permission to use Bash was denied"}`),
-		hookBody(3*ms, "Notification", `{"hook_event_name":"Notification","message":"Claude needs your permission"}`),
-		hook(4*ms, "Stop"),
-		mark(5*ms, "denial-end", ""),
+		hookBody(2*ms, "PermissionDenied", `{"hook_event_name":"PermissionDenied","reason":"Permission to use Bash was denied"}`),
+		hookBody(3*ms, "Notification", `{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}`),
+		hookBody(4*ms, "Notification", `{"hook_event_name":"Notification","notification_type":"idle_prompt"}`),
+		hookBody(5*ms, "Notification", `{"hook_event_name":"Notification","notification_type":"permission_prompt"}`),
+		hook(6*ms, "Stop"),
+		mark(7*ms, "denial-end", ""),
 	}
-	c := get(t, Run(lines, "s"), "c6")
-	texts, _ := c.Value.([]string)
-	if c.Status != StatusObserved || len(texts) != 2 || texts[0] != "Permission to use Bash was denied" {
-		t.Errorf("c6 = %+v", c)
-	}
-}
-
-func TestC7InterruptBehavior(t *testing.T) {
-	lines := []Line{mark(1*ms, "interrupt-sent", ""), hook(5*ms, "Stop"), mark(9*ms, "interrupt-end", "")}
-	c := get(t, Run(lines, "s"), "c7")
+	c := get(t, Run(lines, "s"), "c5")
 	v, _ := c.Value.(map[string]any)
-	if c.Status != StatusObserved || v["stops"] != 1 || v["failures"] != 0 {
-		t.Errorf("c7 = %+v", c)
+	types, _ := v["notification_types"].([]string)
+	if c.Status != StatusObserved || v["reason"] != "Permission to use Bash was denied" || len(types) != 2 || types[0] != "permission_prompt" || types[1] != "idle_prompt" {
+		t.Errorf("c5 = %+v", c)
 	}
-	lines = []Line{mark(1*ms, "interrupt-sent", ""), hook(5*ms, "StopFailure"), mark(9*ms, "interrupt-end", "")}
-	if v, _ := get(t, Run(lines, "s"), "c7").Value.(map[string]any); v["failures"] != 1 || v["stops"] != 0 {
-		t.Errorf("an interrupt that ended in StopFailure: %+v", v)
-	}
-	lines = []Line{mark(1*ms, "interrupt-sent", ""), mark(9*ms, "interrupt-end", "")}
-	if v, _ := get(t, Run(lines, "s"), "c7").Value.(map[string]any); v["stops"] != 0 || v["failures"] != 0 {
-		t.Errorf("an interrupt that produced no stop: %+v", v)
+	none := []Line{mark(1*ms, "denial-start", ""), hook(2*ms, "Stop"), mark(3*ms, "denial-end", "")}
+	if v, _ := get(t, Run(none, "s"), "c5").Value.(map[string]any); v["reason"] != "" {
+		t.Errorf("a window with no denial: %+v", v)
 	}
 }
 
-func TestC8MovementWithNoPrompt(t *testing.T) {
+func TestC6InterruptEvent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		hook string
+		want string
+	}{"a Stop": {"Stop", "stop"}, "a StopFailure": {"StopFailure", "stopfailure"}, "nothing": {"", "none"}} {
+		lines := []Line{mark(1*ms, "interrupt-sent", "")}
+		if tc.hook != "" {
+			lines = append(lines, hook(5*ms, tc.hook))
+		}
+		lines = append(lines, mark(9*ms, "interrupt-end", ""))
+		if c := get(t, Run(lines, "s"), "c6"); c.Status != StatusObserved || c.Value != tc.want {
+			t.Errorf("%s: c6 = %+v, want %q", name, c, tc.want)
+		}
+	}
+	if got := get(t, Run(nil, "s"), "c6").Status; got != StatusNotRun {
+		t.Errorf("no interrupt marks: c6 = %q", got)
+	}
+}
+
+func TestC7MovementWithNoPrompt(t *testing.T) {
 	quiet := []Line{mark(1*ms, "quiet-start", ""), status(2*ms, "0.10", 500), status(3*ms, "0.10", 500), mark(4*ms, "quiet-end", "")}
-	if c := get(t, Run(quiet, "s"), "c8"); c.Status != StatusPass {
-		t.Errorf("a quiet window with no turn hook: c8 = %+v", c)
+	if c := get(t, Run(quiet, "s"), "c7"); c.Status != StatusPass {
+		t.Errorf("a quiet window with no turn hook: c7 = %+v", c)
 	}
 	// A statusline change alone is movement for the report, and is recorded, but
 	// it is not a turn hook, so it does not fail the check.
 	moved := []Line{mark(1*ms, "quiet-start", ""), status(2*ms, "0.10", 500), status(3*ms, "0.20", 700), mark(4*ms, "quiet-end", "")}
-	c := get(t, Run(moved, "s"), "c8")
+	c := get(t, Run(moved, "s"), "c7")
 	v, _ := c.Value.(map[string]any)
 	if c.Status != StatusPass || v["statusline_changes"] != 1 || v["turn_hooks"] != 0 {
-		t.Errorf("c8 with a statusline change = %+v", c)
+		t.Errorf("c7 with a statusline change = %+v", c)
 	}
 	turn := []Line{mark(1*ms, "quiet-start", ""), hook(2*ms, "UserPromptSubmit"), mark(4*ms, "quiet-end", "")}
-	if c := get(t, Run(turn, "s"), "c8"); c.Status != StatusFail {
-		t.Errorf("a UserPromptSubmit with no prompt: c8 = %+v", c)
+	if c := get(t, Run(turn, "s"), "c7"); c.Status != StatusFail {
+		t.Errorf("a UserPromptSubmit with no prompt: c7 = %+v", c)
+	}
+}
+
+// c8 is the seconds until the idle_prompt notification, or "never".
+func TestC8IdleNotificationSeconds(t *testing.T) {
+	idle := func(ns int64) Line {
+		return hookBody(ns, "Notification", `{"hook_event_name":"Notification","notification_type":"idle_prompt"}`)
+	}
+	other := hookBody(10*ms, "Notification", `{"hook_event_name":"Notification","notification_type":"permission_prompt"}`)
+	const s = int64(1_000_000_000)
+	got := Run([]Line{mark(1*s, "idle-wait-start", ""), other, idle(61*s + 500*ms), idle(90 * s), mark(120*s, "idle-wait-end", "")}, "x")
+	if c := get(t, got, "c8"); c.Status != StatusObserved || c.Value != 60.5 {
+		t.Errorf("c8 = %+v, want 60.5 s from the first idle_prompt only", c)
+	}
+	never := Run([]Line{mark(1*s, "idle-wait-start", ""), other, mark(120*s, "idle-wait-end", "")}, "x")
+	if c := get(t, never, "c8"); c.Status != StatusObserved || c.Value != "never" {
+		t.Errorf("no idle_prompt: c8 = %+v, want \"never\"", c)
+	}
+	outside := Run([]Line{mark(1*s, "idle-wait-start", ""), mark(120*s, "idle-wait-end", ""), idle(130 * s)}, "x")
+	if c := get(t, outside, "c8"); c.Value != "never" {
+		t.Errorf("an idle_prompt after the window: c8 = %+v", c)
+	}
+	if got := get(t, Run(nil, "x"), "c8").Status; got != StatusNotRun {
+		t.Errorf("no window: c8 = %q", got)
 	}
 }
 
@@ -355,15 +408,14 @@ func TestC9HookStdoutReachesTheContext(t *testing.T) {
 	}
 }
 
-func TestC10ANonzeroExitsEffect(t *testing.T) {
-	r := Run([]Line{mark(1*ms, "exit1-effect", "ran on"), mark(2*ms, "exit2-effect", "blocked")}, "s")
-	c := get(t, r, "c10")
-	v, _ := c.Value.(map[string]any)
-	if c.Status != StatusObserved || v["exit1"] != "ran on" || v["exit2"] != "blocked" {
+// c10 is an exit 2 only: what a blocking exit does to the prompt.
+func TestC10HookExit2Effect(t *testing.T) {
+	c := get(t, Run([]Line{mark(2*ms, "exit2-effect", "blocked")}, "s"), "c10")
+	if c.Status != StatusObserved || c.Value != "blocked" {
 		t.Errorf("c10 = %+v", c)
 	}
 	if got := get(t, Run([]Line{mark(1*ms, "exit1-effect", "ran on")}, "s"), "c10").Status; got != StatusNotRun {
-		t.Errorf("only one exit measured: c10 = %q", got)
+		t.Errorf("an exit 1 alone is not c10: %q", got)
 	}
 }
 
@@ -383,7 +435,7 @@ func TestC11SubagentStamps(t *testing.T) {
 	}
 }
 
-func TestC12BackgroundTasks(t *testing.T) {
+func TestC12StopBackground(t *testing.T) {
 	early := []Line{mark(1*ms, "bg-start", ""), hook(2*ms, "UserPromptSubmit"), hook(5*ms, "Stop"), mark(8*ms, "bg-task-done", ""), mark(9*ms, "bg-end", "")}
 	late := []Line{mark(1*ms, "bg-start", ""), hook(2*ms, "UserPromptSubmit"), mark(5*ms, "bg-task-done", ""), hook(8*ms, "Stop"), mark(9*ms, "bg-end", "")}
 	for name, tc := range map[string]struct {
@@ -398,7 +450,7 @@ func TestC12BackgroundTasks(t *testing.T) {
 	}
 }
 
-func TestC13CanAHookSeeTheVersion(t *testing.T) {
+func TestC13VersionVisibleToAHook(t *testing.T) {
 	inPayload := []Line{hookBody(1*ms, "SessionStart", `{"hook_event_name":"SessionStart","version":"2.1.296"}`)}
 	inEnv := []Line{{MonoNS: 1 * ms, Kind: KindHookEnv, Name: "SessionStart", Body: "CLAUDECODE CLAUDE_CODE_VERSION=2.1.296"}}
 	neither := []Line{hook(1*ms, "SessionStart"), {MonoNS: 2 * ms, Kind: KindHookEnv, Name: "SessionStart", Body: "CLAUDECODE"}}
