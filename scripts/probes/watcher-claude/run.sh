@@ -22,8 +22,8 @@
 #        WATCHER_PROBE_CLAUDE      the claude binary (default: claude on PATH)
 #        WATCHER_PROBE_TOOL        a built watcherprobe (default: built from this tree)
 #        WATCHER_PROBE_READY       text that shows claude's prompt box ('? for shortcuts')
-#        WATCHER_PROBE_IDLE_SECS   idle and quiet window length (default 60)
-#        WATCHER_PROBE_NOTIFY_SECS how long to wait for the idle_prompt notification (default 120)
+#        WATCHER_PROBE_IDLE_SECS   idle and quiet window length, a positive integer (default 60)
+#        WATCHER_PROBE_NOTIFY_SECS seconds to wait for the idle_prompt notification, a positive integer (default 120)
 #
 # The loggers and checker are tested; this driver is not, against a live claude.
 # It stops with the pane saved on any timeout instead of guessing. C2 runs it.
@@ -41,6 +41,9 @@ while (($#)); do
 	esac
 done
 
+for v in WATCHER_PROBE_IDLE_SECS WATCHER_PROBE_NOTIFY_SECS; do
+	[[ -z ${!v+x} || ${!v} =~ ^[1-9][0-9]*$ ]] || die "$v must be a positive integer"
+done
 [[ -n $scratch ]] || die "--scratch is required"
 [[ $scratch == /* ]] || die "--scratch must be an absolute path"
 [[ $scratch =~ ^[A-Za-z0-9_./-]+$ ]] || die "--scratch may hold only letters, digits and _ . / -"
@@ -126,7 +129,7 @@ done
 unset WATCHER_PROBE_CREDENTIAL
 export HOME=$scratch/home CLAUDE_CONFIG_DIR=$scratch/config TERM=${TERM:-xterm-256color}
 ready=${WATCHER_PROBE_READY:-'? for shortcuts'}
-idle=${WATCHER_PROBE_IDLE_SECS:-60}
+idle=${WATCHER_PROBE_IDLE_SECS:-60} notify=${WATCHER_PROBE_NOTIFY_SECS:-120}
 
 hookcmd="$tool hook --log $events"
 event_hook() { printf '"%s":[{"hooks":[{"type":"command","command":"%s"}]}]' "$1" "$hookcmd"; }
@@ -203,11 +206,12 @@ wait_for "$ready" 60 || stop "claude never showed its prompt box"
 mark setup-closed
 echo "scenario c1 done"
 
+# c8 first: claude has been idle since setup-closed, nothing has been typed, so
+# the wait opens here and an early idle_prompt is inside it.
+mark idle-wait-start; sleep "$notify"; mark idle-wait-end
+
 # c2: cost and context while idle.
 mark idle-start; sleep "$idle"; mark idle-end
-
-# c8: how long until the idle_prompt notification, if it comes at all.
-mark idle-wait-start; sleep "${WATCHER_PROBE_NOTIFY_SECS:-120}"; mark idle-wait-end
 
 # c3: three plain prompts, one submit and one stop each.
 for n in 1 2 3; do prompt "p$n" "Reply with the single word ok."; done

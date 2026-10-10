@@ -34,7 +34,7 @@ digits of the binary's sha256) and `c1` to `c13`. Each check is `pass`, `fail`,
 | c5 | `denial_reason` | `PermissionDenied.reason` plus the `Notification.notification_type` values seen |
 | c6 | `interrupt_event` | `stop`, `stopfailure` or `none` after Esc |
 | c7 | `nonprompt_moves` | turn hooks with no prompt sent (fails on any); statusline changes are recorded |
-| c8 | `idle_notification_s` | seconds until the `idle_prompt` notification, or `never` |
+| c8 | `idle_notification_s` | seconds from when claude went idle to the `idle_prompt` notification, or `never`. Claude went idle at `setup-closed`, or at the last `Stop` or `StopFailure` before the wait window opened, whichever is later; the window's own start if neither is marked. The result's note says which. The driver opens the wait straight after setup, before c2's idle sleep, so a notification that fires early is inside it |
 | c9 | `hook_stdout_reaches_context` | whether a hook's stdout reaches the context |
 | c10 | `hook_exit2_effect` | what an exit 2 does to a prompt |
 | c11 | `subagent_stamps` | subagent hooks and whether they carry an agent id |

@@ -13,7 +13,7 @@
 //	c5  denial_reason                PermissionDenied.reason and the Notification.notification_type seen
 //	c6  interrupt_event              stop, stopfailure or none after Esc
 //	c7  nonprompt_moves              turn hooks and statusline movement with no prompt
-//	c8  idle_notification_s          seconds until the idle_prompt notification, or "never"
+//	c8  idle_notification_s          seconds from when claude went idle (setup-closed, or the last Stop before the wait window) to the idle_prompt notification, or "never"
 //	c9  hook_stdout_reaches_context  whether a hook's stdout reaches the context
 //	c10 hook_exit2_effect            what an exit 2 does to a prompt
 //	c11 subagent_stamps              subagent hooks and their agent ids
@@ -512,19 +512,33 @@ func c7(lines []Line) Check {
 	return Check{Status: st, Value: map[string]any{"turn_hooks": turn, "statusline_changes": changes}}
 }
 
-// c8: seconds from idle-wait-start to the first idle_prompt notification inside
-// the window, or "never".
+// c8: seconds from when claude went idle to the first idle_prompt notification
+// up to idle-wait-end, or "never". Claude went idle at the later of setup-closed
+// and the last Stop or StopFailure at or before the wait window opened; with
+// neither, at the window's own start. The note says which, and a notification
+// before the window opened still counts, since claude was already idle.
 func c8(lines []Line) Check {
 	w := windowOf(lines, "idle-wait-start", "idle-wait-end")
 	if !w.ok {
 		return notRun("needs idle-wait-start and idle-wait-end marks")
 	}
-	for _, h := range inWindow(lines, w, KindHook) {
-		if h.Name == "Notification" && jsonString(h.Body, "notification_type") == "idle_prompt" {
-			return Check{Status: StatusObserved, Value: float64((h.MonoNS-w.from)/100_000_000) / 10}
+	from, basis := w.from, "idle-wait-start"
+	if t, ok := markAt(lines, "setup-closed", 0); ok && t <= w.from {
+		from, basis = t, "setup-closed"
+	}
+	for _, l := range lines {
+		if l.Kind == KindHook && isStop(l) && l.MonoNS <= w.from && l.MonoNS >= from {
+			from, basis = l.MonoNS, "the last Stop or StopFailure"
 		}
 	}
-	return Check{Status: StatusObserved, Value: "never"}
+	note := "measured from " + basis
+	for _, h := range lines {
+		if h.Kind == KindHook && h.Name == "Notification" && h.MonoNS >= from && h.MonoNS <= w.to &&
+			jsonString(h.Body, "notification_type") == "idle_prompt" {
+			return Check{Status: StatusObserved, Value: float64((h.MonoNS-from)/100_000_000) / 10, Note: note}
+		}
+	}
+	return Check{Status: StatusObserved, Value: "never", Note: note}
 }
 
 // c9: the driver's reading of whether a hook's stdout reached the context.
