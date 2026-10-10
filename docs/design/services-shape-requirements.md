@@ -1,8 +1,8 @@
 # The shape of marvel services: candidate requirements
 
-- **Status:** Proposal, 2026-10-09. Nothing here is ratified. Every
-  requirement is provisional, and section 6 lists the decisions the
-  operator holds.
+- **Status:** Proposal, 2026-10-09. The operator ruled every section 6
+  decision on 2026-10-09 (section 6, "Operator rulings"). The requirements
+  themselves stay provisional until a ticket takes each one.
 - **Author seat:** architect, team arcaven, chairing an eight-round,
   ten-seat panel on the operator's request relayed by director.
 - **Code read at:** marvel `7f1c81e`. Between it and `b2fa4ff`, the only
@@ -16,7 +16,7 @@
   checks per round, replies by seat, the R8 ballot and the outcome) is a
   gitignored party record in a private repository; the tallies and
   reasons that matter are carried in section 6. The code-seams study is
-  finding-marvel-4m2m, unmerged and in review (#795 at `96d80e0`).
+  finding-marvel-4m2m (#795, merged as `d9ef67a`).
 
 ## 0. Why
 
@@ -110,8 +110,8 @@ and whichever way V2 is ruled, one of the two texts is corrected.
 - The record has no field that can carry a third-party credential.
 - Each provider's body decoder refuses any key it does not name, with a test
   per driver.
-- Whatever vocabulary V3 yields carries no field that can hold a token, key
-  or refresh value.
+- The informational field V3 (b) adds carries no value that can be a
+  token, key or refresh value.
 
 Consumer: the operator, judging what a compromised daemon host exposes.
 Fails if an entry with an undeclared key loads or round-trips through
@@ -156,7 +156,7 @@ Two things are not lifecycle verbs:
   credential);
 - distributing, to the managed child that needs it, a credential the
   service's own operator minted, where declared (the hub leaf seed;
-  pending V5).
+  allowed, V5).
 
 Consumer: the owner of that service.
 Fails if a recording lifecycle fake bound to an adopted or external entry
@@ -215,8 +215,9 @@ ahead of it.
 - A mismatch neither adopts nor signals. It produces one reading and one
   event, and the operator sees "port held, child unproven", not a crash
   loop.
-- The legacy case (a number-only pidfile at the first upgrade) is section
-  6 V11, and it ships in the same PR as the proof.
+- The legacy case (a number-only pidfile at the first upgrade) is ruled
+  section 6 V11 (b): neither adopt nor signal; report "port held, child
+  unproven". It ships in the same PR as the proof.
 - The daemon's own guard (`checkPidFileFree`, `daemon.go:890-904`) gets the
   same fix as its own item.
 
@@ -300,7 +301,7 @@ marvel may also deliver:
 - an operator-declared launch command (command and args), naming
   environment variables but never their values;
 - the declared leaf seed, to the managed broker child only, never to a seat
-  and never into a log (pending V5).
+  and never into a log (allowed, V5).
 
 A value the operator placed in the environment the daemon inherits, passed
 through unread, is not marvel delivering it.
@@ -354,7 +355,8 @@ Fails if a credential name is stored and read by nothing (GITHUB #344).
 
 **MS-15 Nothing durable for an OAuth service.** marvel holds no refresh
 token or other vendor grant. It holds nothing, or a short-lived token from
-a vault it does not run. The record vocabulary is section 6 V3.
+a vault it does not run. The record is a separate informational field
+(section 6 V3 (b)), not a `caller_identity` value.
 Consumer: the operator.
 Fails if the record schema, the store types or a harness seed struct gains
 a field typed as a vendor grant, or if the closed `CredentialKind` set
@@ -533,8 +535,8 @@ These are for each file's owner. None is made by this PR.
 - `services-list.md:189-192` states a refusal no code performs yet
   (aae-orc-chwhk).
 - `services-list.md:361` scores a self-hosted vault "Passes", which a 5-0
-  party vote of the ADR-009 revisit reads as custody. The form of the fix
-  is V9.
+  party vote of the ADR-009 revisit reads as custody. Ruled V9 (c), and
+  applied in this revision: the token passes, the stored grant is open.
 - `bus-as-service.md:98` makes the hub its own record, against
   `services-list.md:399-401` (V2).
 - The comment at `supervisor.go:247-248` ("rendered fresh ones") reads
@@ -571,13 +573,31 @@ The four open splits, with the deciding consideration each side gave:
 - **V5.** Side (a) relies on the ruled text that hub NKeys are issuance
   inside the operator's trust domain. Side (b) says the SOUL section 3 test
   asks whether marvel can revoke the copy, and it cannot. MS-7 and MS-13
-  carry the seed as "pending V5".
+  carried the seed as "pending V5" until the ruling below.
 - **V9.** Side (a) says an annotation asserts no verdict before the revisit
   rules. Side (b) says a "Passes" left standing beside an annotation still
   reads as a verdict to a driver author.
 - **V11.** Side (a) says (b) costs one manual stop per upgraded cluster.
   Side (b) says (a) adopts on evidence that is not yet the MS-9 proof, and
   that a wrong adopt of a stateful child risks its data.
+
+### Operator rulings (2026-10-09)
+
+Relayed by director from the operator's decision desk; recorded by the
+architect seat that chaired the panel.
+
+| id | ruling | operator note, verbatim |
+|---|---|---|
+| V1, V2, V4, V6, V7, V8, V10 | accepted as the panel recommended | |
+| V3 | **(b)** a separate informational field | "point of clarification: marvel should not be the storage for secrets, that does not mean it can't handle, distribute, or coordinate them." |
+| V5 | "it's allowed" (no letter given; the recorder maps it to (a), issuance allowed as is) | "it's allowed" |
+| V9 | **(c)** split: the token (brokering) passes; the stored grant (custody) is open | "marvel isn't the vault. it's a service orchestrator, it will probably manage a vault, be able to access the vault, provide identifies and help agents access the vault" |
+| V11 | **(b)** unproven: neither adopt nor signal; report "port held, child unproven" | "we need improved handling for this, route 3ptdd with casting call to figure out how to handle this more reliably" (it ran as the held-port 3ptdd, closed 2026-10-09) |
+
+Party release ruling: **rework**. The operator's note, verbatim: "four rounds,
+if converging two more, if diverging, stop and ask, one card per question".
+The recorder reads this as the panel not being released, pending
+director's confirmation.
 
 Recorded and not voted here:
 - aae-orc-oo62t: may the supervisor tests be edited? This is 4m2m's own
