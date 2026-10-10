@@ -25,24 +25,25 @@ the kit's own tmux socket, a throwaway repository, `events.tsv`, and the result.
 digits of the binary's sha256) and `c1` to `c13`. Each check is `pass`, `fail`,
 `observed` (a value with no right answer) or `not-run` (its marks are missing).
 
-| key | measures |
-|---|---|
-| c1 | hooks that fire while the trust dialog is open |
-| c2 | statusline cost and context movement while idle |
-| c3 | exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` per prompt; hooks become the turn source only if this passes |
-| c4 | the ring form: which hook it produced and which payload keys it held |
-| c5 | the ring's latency to its first submit, in ms |
-| c6 | denial text |
-| c7 | what an interrupt does (stops and failures) |
-| c8 | turn hooks with no prompt sent (fails on any); statusline changes are recorded |
-| c9 | whether a hook's stdout reaches the context |
-| c10 | what an exit 1 and an exit 2 do to a prompt |
-| c11 | subagent hooks and whether they carry an agent id |
-| c12 | whether the turn's `Stop` comes before a background task ends |
-| c13 | whether a hook can see the claude version (payload field or environment) |
+| key | name | measures |
+|---|---|---|
+| c1 | `pre_session_hooks` | hooks that fire at the trust dialog and the setup menu |
+| c2 | `idle_cost_moves` | statusline cost and context movement while idle |
+| c3 | `one_submit_one_stop` | exactly one `UserPromptSubmit` and one `Stop` or `StopFailure` per prompt; hooks become the turn source only if this passes |
+| c4 | `ring_form` | one key for the exact ring form: its source (the payload's `source`, its event and payload keys) and the submit-to-hook latency in ms |
+| c5 | `denial_reason` | `PermissionDenied.reason` plus the `Notification.notification_type` values seen |
+| c6 | `interrupt_event` | `stop`, `stopfailure` or `none` after Esc |
+| c7 | `nonprompt_moves` | turn hooks with no prompt sent (fails on any); statusline changes are recorded |
+| c8 | `idle_notification_s` | seconds until the `idle_prompt` notification, or `never` |
+| c9 | `hook_stdout_reaches_context` | whether a hook's stdout reaches the context |
+| c10 | `hook_exit2_effect` | what an exit 2 does to a prompt |
+| c11 | `subagent_stamps` | subagent hooks and whether they carry an agent id |
+| c12 | `stop_background` | whether the turn's `Stop` comes before a background task ends |
+| c13 | `version_visible_to_hook` | whether a hook can see the claude version (payload field or environment) |
 
-Section 6 lists twelve measurements for thirteen keys. The kit reads the ring
-form's source and its latency as two (c4, c5).
+Keys stay `c1` to `c13`; each check also carries its `name`. Section 6 of the
+design lists twelve measurements for these thirteen keys: c8 was lost when it
+was condensed, and c4 holds the ring form's source and latency together.
 
 ## Parts
 

@@ -4,22 +4,24 @@
 // monotonic-stamped lines to one log, and Run turns that log into the c1 to
 // c13 result that C2 reads. Nothing here rings, restarts or routes anything.
 //
-// Section 6 names twelve measurements for thirteen keys. This kit reads "the
-// ring form's source and latency" as two, so the keys are:
+// The keys are c1 to c13, and each check also carries its design name:
 //
-//	c1  hooks at the trust dialog
-//	c2  cost and context movement while idle
-//	c3  one submit and one stop per prompt (the gate for hooks as the turn source)
-//	c4  the ring form: which hook it produced and what the payload held
-//	c5  the ring's latency to its first submit
-//	c6  denial text
-//	c7  interrupt behavior
-//	c8  movement with no prompt
-//	c9  whether hook stdout reaches the context
-//	c10 a nonzero exit's effect
-//	c11 subagent stamps
-//	c12 background tasks
-//	c13 whether a hook can see the version
+//	c1  pre_session_hooks            hooks at the trust dialog and the setup menu
+//	c2  idle_cost_moves              cost and context movement while idle
+//	c3  one_submit_one_stop          one submit and one stop per prompt (the gate for hooks as the turn source)
+//	c4  ring_form                    one key: the exact ring form's source and its submit-to-hook latency in ms
+//	c5  denial_reason                PermissionDenied.reason and the Notification.notification_type seen
+//	c6  interrupt_event              stop, stopfailure or none after Esc
+//	c7  nonprompt_moves              turn hooks and statusline movement with no prompt
+//	c8  idle_notification_s          seconds until the idle_prompt notification, or "never"
+//	c9  hook_stdout_reaches_context  whether a hook's stdout reaches the context
+//	c10 hook_exit2_effect            what an exit 2 does to a prompt
+//	c11 subagent_stamps              subagent hooks and their agent ids
+//	c12 stop_background              whether Stop comes before a background task ends
+//	c13 version_visible_to_hook      whether a hook can see the claude version
+//
+// (Section 6 of the design lists twelve measurements; c8 was lost when it was
+// condensed, and c4 is the ring form's source and latency together.)
 //
 // The log is one tab-separated line per event: a monotonic nanosecond stamp, a
 // kind, a name and a body. The driver writes mark lines around each scenario
@@ -330,29 +332,37 @@ func statusChanges(samples []Line) (cost, ctx bool, changes int) {
 	return cost, ctx, changes
 }
 
+// names are the design names of c1 to c13.
+var names = map[string]string{
+	"c1": "pre_session_hooks", "c2": "idle_cost_moves", "c3": "one_submit_one_stop", "c4": "ring_form",
+	"c5": "denial_reason", "c6": "interrupt_event", "c7": "nonprompt_moves", "c8": "idle_notification_s",
+	"c9": "hook_stdout_reaches_context", "c10": "hook_exit2_effect", "c11": "subagent_stamps",
+	"c12": "stop_background", "c13": "version_visible_to_hook",
+}
+
 // Run evaluates the log into the c1 to c13 result.
 func Run(lines []Line, stamp string) Result {
-	r := Result{BuildStamp: stamp, Checks: map[string]Check{}}
-	r.Checks["c1"] = c1(lines)
-	r.Checks["c2"] = c2(lines)
-	r.Checks["c3"] = c3(lines)
-	r.Checks["c4"], r.Checks["c5"] = c4c5(lines)
-	r.Checks["c6"] = c6(lines)
-	r.Checks["c7"] = c7(lines)
-	r.Checks["c8"] = c8(lines)
-	r.Checks["c9"] = c9(lines)
-	r.Checks["c10"] = c10(lines)
-	r.Checks["c11"] = c11(lines)
-	r.Checks["c12"] = c12(lines)
-	r.Checks["c13"] = c13(lines)
+	r := Result{BuildStamp: stamp, Checks: map[string]Check{
+		"c1": c1(lines), "c2": c2(lines), "c3": c3(lines), "c4": c4(lines), "c5": c5(lines),
+		"c6": c6(lines), "c7": c7(lines), "c8": c8(lines), "c9": c9(lines), "c10": c10(lines),
+		"c11": c11(lines), "c12": c12(lines), "c13": c13(lines),
+	}}
+	for k, c := range r.Checks {
+		c.Name = names[k]
+		r.Checks[k] = c
+	}
 	return r
 }
 
-// c1: hook firings between trust-open and trust-closed.
+// c1: hook firings from trust-open to setup-closed, or to trust-closed when the
+// setup menu was not marked.
 func c1(lines []Line) Check {
 	w := windowOf(lines, "trust-open", "trust-closed")
 	if !w.ok {
 		return notRun("needs trust-open and trust-closed marks")
+	}
+	if end, ok := markAt(lines, "setup-closed", w.to); ok {
+		w.to = end
 	}
 	return Check{Status: StatusObserved, Value: len(inWindow(lines, w, KindHook))}
 }
@@ -417,19 +427,14 @@ func c3(lines []Line) Check {
 	return Check{Status: st, Value: per}
 }
 
-// c4 and c5: the first UserPromptSubmit after ring-sent, and its latency.
-func c4c5(lines []Line) (Check, Check) {
+// c4: the first UserPromptSubmit after ring-sent, with its source and the
+// latency from the ring, for the exact ring form the driver sent.
+func c4(lines []Line) Check {
 	sent, ok := markAt(lines, "ring-sent", 0)
 	if !ok {
-		return notRun("needs a ring-sent mark"), notRun("needs a ring-sent mark")
+		return notRun("needs a ring-sent mark")
 	}
-	ringText := ""
-	for _, l := range lines {
-		if l.Kind == KindMark && l.Name == "ring-sent" {
-			ringText = l.Body
-			break
-		}
-	}
+	ringText, _ := markBody(lines, "ring-sent")
 	end := int64(1<<63 - 1)
 	if done, ok := markAt(lines, "ring-done", sent); ok {
 		end = done
@@ -441,49 +446,59 @@ func c4c5(lines []Line) (Check, Check) {
 				keys = append(keys, k)
 			}
 			slices.Sort(keys)
-			c4 := Check{Status: StatusObserved, Value: map[string]any{
-				"event": l.Name, "payload_keys": keys, "prompt_matches_ring": jsonString(l.Body, "prompt") == ringText,
+			return Check{Status: StatusObserved, Value: map[string]any{
+				"event": l.Name, "source": jsonString(l.Body, "source"), "payload_keys": keys,
+				"prompt_matches_ring": jsonString(l.Body, "prompt") == ringText,
+				"latency_ms":          (l.MonoNS - sent) / 1_000_000,
 			}}
-			return c4, Check{Status: StatusObserved, Value: (l.MonoNS - sent) / 1_000_000}
 		}
 	}
-	fail := Check{Status: StatusFail, Note: "the ring produced no UserPromptSubmit before ring-done"}
-	return fail, fail
+	return Check{Status: StatusFail, Note: "the ring produced no UserPromptSubmit before ring-done"}
 }
 
-// c6: the text of PermissionDenied and Notification hooks between denial marks.
-func c6(lines []Line) Check {
+// c5: the reason on PermissionDenied and the notification types seen, between the
+// denial marks.
+func c5(lines []Line) Check {
 	w := windowOf(lines, "denial-start", "denial-end")
 	if !w.ok {
 		return notRun("needs denial-start and denial-end marks")
 	}
-	texts := []string{}
+	reason, types := "", []string{}
 	for _, h := range inWindow(lines, w, KindHook) {
-		if h.Name != "PermissionDenied" && h.Name != "Notification" {
-			continue
+		switch h.Name {
+		case "PermissionDenied":
+			if reason == "" {
+				reason = jsonString(h.Body, "reason")
+			}
+		case "Notification":
+			if t := jsonString(h.Body, "notification_type"); t != "" && !slices.Contains(types, t) {
+				types = append(types, t)
+			}
 		}
-		t := jsonString(h.Body, "message")
-		if t == "" {
-			t = h.Body
-		}
-		texts = append(texts, t)
 	}
-	return Check{Status: StatusObserved, Value: texts}
+	return Check{Status: StatusObserved, Value: map[string]any{"reason": reason, "notification_types": types}}
 }
 
-// c7: Stop and StopFailure firings between the interrupt marks.
-func c7(lines []Line) Check {
+// c6: the first Stop or StopFailure after the interrupt, or none.
+func c6(lines []Line) Check {
 	w := windowOf(lines, "interrupt-sent", "interrupt-end")
 	if !w.ok {
 		return notRun("needs interrupt-sent and interrupt-end marks")
 	}
-	hooks := inWindow(lines, w, KindHook)
-	return Check{Status: StatusObserved, Value: map[string]any{"stops": countNamed(hooks, "Stop"), "failures": countNamed(hooks, "StopFailure")}}
+	for _, h := range inWindow(lines, w, KindHook) {
+		switch h.Name {
+		case "Stop":
+			return Check{Status: StatusObserved, Value: "stop"}
+		case "StopFailure":
+			return Check{Status: StatusObserved, Value: "stopfailure"}
+		}
+	}
+	return Check{Status: StatusObserved, Value: "none"}
 }
 
-// c8: with no prompt sent, a turn hook is a failure; statusline movement is
+// c7: with no prompt sent, a turn hook is a failure; statusline movement is
 // recorded for the report and is not one.
-func c8(lines []Line) Check {
+func c7(lines []Line) Check {
 	w := windowOf(lines, "quiet-start", "quiet-end")
 	if !w.ok {
 		return notRun("needs quiet-start and quiet-end marks")
@@ -495,6 +510,21 @@ func c8(lines []Line) Check {
 		st = StatusFail
 	}
 	return Check{Status: st, Value: map[string]any{"turn_hooks": turn, "statusline_changes": changes}}
+}
+
+// c8: seconds from idle-wait-start to the first idle_prompt notification inside
+// the window, or "never".
+func c8(lines []Line) Check {
+	w := windowOf(lines, "idle-wait-start", "idle-wait-end")
+	if !w.ok {
+		return notRun("needs idle-wait-start and idle-wait-end marks")
+	}
+	for _, h := range inWindow(lines, w, KindHook) {
+		if h.Name == "Notification" && jsonString(h.Body, "notification_type") == "idle_prompt" {
+			return Check{Status: StatusObserved, Value: float64((h.MonoNS-w.from)/100_000_000) / 10}
+		}
+	}
+	return Check{Status: StatusObserved, Value: "never"}
 }
 
 // c9: the driver's reading of whether a hook's stdout reached the context.
@@ -513,14 +543,13 @@ func c9(lines []Line) Check {
 	return notRun("needs a stdout-canary mark")
 }
 
-// c10: the driver's reading of what an exit 1 and an exit 2 did to a prompt.
+// c10: the driver's reading of what an exit 2 did to a prompt.
 func c10(lines []Line) Check {
-	e1, ok1 := markBody(lines, "exit1-effect")
-	e2, ok2 := markBody(lines, "exit2-effect")
-	if !ok1 || !ok2 {
-		return notRun("needs exit1-effect and exit2-effect marks")
+	e2, ok := markBody(lines, "exit2-effect")
+	if !ok {
+		return notRun("needs an exit2-effect mark")
 	}
-	return Check{Status: StatusObserved, Value: map[string]any{"exit1": e1, "exit2": e2}}
+	return Check{Status: StatusObserved, Value: e2}
 }
 
 func markBody(lines []Line, name string) (string, bool) {

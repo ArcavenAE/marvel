@@ -23,6 +23,7 @@
 #        WATCHER_PROBE_TOOL        a built watcherprobe (default: built from this tree)
 #        WATCHER_PROBE_READY       text that shows claude's prompt box ('? for shortcuts')
 #        WATCHER_PROBE_IDLE_SECS   idle and quiet window length (default 60)
+#        WATCHER_PROBE_NOTIFY_SECS how long to wait for the idle_prompt notification (default 120)
 #
 # The loggers and checker are tested; this driver is not, against a live claude.
 # It stops with the pane saved on any timeout instead of guessing. C2 runs it.
@@ -192,28 +193,32 @@ prompt() { # id text: one prompt, with its window marked
 # variable so save_capture can mask it.
 WATCHER_PROBE_KEY=$cred tmux -S "$sock" -f /dev/null new-session -d -s probe -x 200 -y 50 -c "$scratch/repo" "$claude"
 
-# c1: the trust dialog, with whatever hooks fire while it is open.
+# c1: the trust dialog and the setup menu, with whatever hooks fire while open.
 mark trust-open
 wait_for 'trust' 60 || stop "no trust dialog appeared"
 sleep 5
 tm send-keys -t probe Enter
 mark trust-closed
 wait_for "$ready" 60 || stop "claude never showed its prompt box"
+mark setup-closed
 echo "scenario c1 done"
 
 # c2: cost and context while idle.
 mark idle-start; sleep "$idle"; mark idle-end
 
+# c8: how long until the idle_prompt notification, if it comes at all.
+mark idle-wait-start; sleep "${WATCHER_PROBE_NOTIFY_SECS:-120}"; mark idle-wait-end
+
 # c3: three plain prompts, one submit and one stop each.
 for n in 1 2 3; do prompt "p$n" "Reply with the single word ok."; done
 
-# c4 and c5: a ring stand-in typed into the composer.
+# c4: a ring stand-in typed into the composer.
 mark ring-sent "wake up and reply ok"
 type_line "wake up and reply ok"
 settle
 mark ring-done
 
-# c6: a tool call that the permission dialog can deny.
+# c5: a tool call that the permission dialog can deny.
 mark denial-start
 type_line "Use the Bash tool to run: ls /"
 wait_for 'Do you want|permission' 60 || stop "no permission dialog appeared"
@@ -221,7 +226,7 @@ tm send-keys -t probe Escape
 settle
 mark denial-end
 
-# c7: an interrupt in the middle of a long answer.
+# c6: an interrupt in the middle of a long answer.
 type_line "Count from 1 to 300, one number per line."
 sleep 5
 mark interrupt-sent
@@ -229,7 +234,7 @@ tm send-keys -t probe Escape
 settle 5
 mark interrupt-end
 
-# c8: no prompt at all.
+# c7: no prompt at all.
 mark quiet-start; sleep "$idle"; mark quiet-end
 
 # c9: does a hook's stdout reach the context? The token is printed only by the
@@ -242,18 +247,13 @@ rm -f "$scratch/canary.on"
 pane | save_capture "$scratch/capture-c9.txt"
 if /usr/bin/grep -q 'WATCHER-CANARY-7f3a91' "$scratch/capture-c9.txt"; then mark stdout-canary yes; else mark stdout-canary no; fi
 
-# c10: what a nonzero exit does to a prompt. Each word is built from two halves
-# so it appears only in a reply, never in the prompt, and each round has its own.
-words=("" pineapple watermelon)
-halves=("" "pine and apple" "water and melon")
-for code in 1 2; do
-	echo "$code" >"$scratch/exit.code"
-	type_line "Reply with the one word formed by joining ${halves[$code]}."
-	settle
-	if pane | /usr/bin/grep -q "${words[$code]}"; then effect="ran on"; else effect=blocked; fi
-	mark "exit$code-effect" "$effect"
-	echo 0 >"$scratch/exit.code"
-done
+# c10: what an exit 2 does to a prompt. The word is built from two halves so it
+# appears only in a reply, never in the prompt.
+echo 2 >"$scratch/exit.code"
+type_line "Reply with the one word formed by joining water and melon."
+settle
+if pane | /usr/bin/grep -q 'watermelon'; then effect="ran on"; else effect=blocked; fi
+mark exit2-effect "$effect"
 rm -f "$scratch/exit.code"
 
 # c11: a subagent.
