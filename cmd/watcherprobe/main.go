@@ -6,6 +6,8 @@
 //	watcherprobe statusline --log FILE    log one statusline refresh
 //	watcherprobe mark       --log FILE NAME [BODY]
 //	watcherprobe mono                     print the monotonic clock
+//	watcherprobe mask                     copy stdin to stdout with key text hidden;
+//	                                      the secret is in WATCHER_PROBE_MASK
 //	watcherprobe check      --log FILE --out FILE --stamp TEXT
 package main
 
@@ -24,7 +26,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: watcherprobe hook|statusline|mark|mono|check ...")
+		_, _ = fmt.Fprintln(stderr, "usage: watcherprobe hook|statusline|mark|mono|mask|check ...")
 		return 2
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -76,6 +78,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, "watcherprobe mark:", err)
 			return 1
 		}
+		return 0
+	case "mask":
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "watcherprobe mask:", err)
+			return 1
+		}
+		_, _ = io.WriteString(stdout, watcherprobe.Mask(string(b), os.Getenv("WATCHER_PROBE_MASK")))
 		return 0
 	case "mono":
 		_, _ = fmt.Fprintln(stdout, watcherprobe.MonoNS())

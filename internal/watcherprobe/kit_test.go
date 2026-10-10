@@ -187,7 +187,7 @@ func TestKitSaveCaptureMasksKeysAndFragments(t *testing.T) {
 		"an ordinary line with task-queue and sk in it",
 	}, "\n") + "\n"
 	out := filepath.Join(dir, "capture.txt")
-	cmd := exec.Command("bash", "-c", `tool=$1 cred=$2 source "$3"; save_capture "$4"`, "bash", tool, fakeKey, filepath.Join(filepath.Dir(kitScript), "lib.sh"), out)
+	cmd := exec.Command("bash", "-c", `tool=$1; cred=$2; source "$3"; save_capture "$4"`, "bash", tool, fakeKey, filepath.Join(filepath.Dir(kitScript), "lib.sh"), out)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	cmd.Stdin = strings.NewReader(pane)
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -223,7 +223,7 @@ func TestKitWritesNoCaptureExceptThroughSaveCapture(t *testing.T) {
 			t.Errorf("run.sh:%d reads the pane outside pane(): %s", i+1, strings.TrimSpace(line))
 		}
 		trimmed := strings.TrimSpace(code)
-		if strings.HasPrefix(trimmed, "pane()") || !strings.Contains(code, "pane") {
+		if strings.HasPrefix(trimmed, "pane()") || strings.HasPrefix(trimmed, "echo ") || !strings.Contains(code, "pane") {
 			continue
 		}
 		for _, f := range strings.Fields(code) {

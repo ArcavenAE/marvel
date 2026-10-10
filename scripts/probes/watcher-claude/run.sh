@@ -10,7 +10,9 @@
 #   repository                   a throwaway git init
 #   credential                   WATCHER_PROBE_CREDENTIAL, never a fleet seat's;
 #                                it reaches only the scratch tmux server's
-#                                environment and is never printed or logged
+#                                environment, reaches claude through an
+#                                apiKeyHelper, and is never printed or logged;
+#                                every capture is masked before it is written
 #
 # usage: run.sh --scratch ABSOLUTE_DIR [--dry-run]
 # env:   WATCHER_PROBE_CREDENTIAL  required for a real run
@@ -43,12 +45,42 @@ scratch=${scratch%/}
 [[ -n $scratch && $scratch != / ]] || die "--scratch may not be /"
 
 # Refuse any place a real claude keeps its state, before anything is created.
-real_home=${HOME:-}
-for forbidden in "$real_home/.claude" "$real_home/.config/claude" "${CLAUDE_CONFIG_DIR:-}"; do
-	[[ -n $forbidden ]] || continue
-	[[ $scratch != "$forbidden" && $scratch != "$forbidden"/* ]] || die "--scratch is inside $forbidden"
+# Paths are compared resolved, so a symlinked component cannot lead into it, and
+# the home directory comes from the passwd entry as well as from HOME.
+resolve() { # an absolute path, resolved through its deepest existing ancestor
+	local p=$1 rest="" d
+	while [[ ! -e $p && ! -L $p ]]; do
+		rest=/$(basename "$p")$rest
+		p=$(dirname "$p")
+	done
+	d=$(cd -P "$p" 2>/dev/null && pwd -P) || return 1
+	[[ $d == / ]] && d=""
+	printf '%s%s\n' "$d" "$rest"
+}
+inside() { [[ $1 == "$2" || $1 == "$2"/* ]]; }
+pw_user=$(id -un)
+[[ $pw_user =~ ^[A-Za-z0-9._-]+$ ]] || die "cannot read the passwd home for user $pw_user"
+pw_home=$(eval "printf %s ~$pw_user")
+[[ $pw_home == /* ]] || die "cannot read the passwd home for user $pw_user"
+real_scratch=$(resolve "$scratch") || die "--scratch cannot be resolved"
+for home in "${HOME:-}" "$pw_home"; do
+	[[ -n $home ]] || continue
+	for forbidden in "$home/.claude" "$home/.config/claude"; do
+		for f in "$forbidden" "$(resolve "$forbidden" 2>/dev/null || true)"; do
+			[[ -n $f ]] || continue
+			! inside "$scratch" "$f" && ! inside "$real_scratch" "$f" || die "--scratch is inside $forbidden"
+		done
+	done
+	real_home=$(resolve "$home" 2>/dev/null || true)
+	[[ -z $real_home ]] || ! inside "$real_home" "$real_scratch" || die "--scratch is the real home or holds it"
 done
-[[ -z $real_home || $scratch != "$real_home" ]] || die "--scratch is the real home"
+if [[ -n ${CLAUDE_CONFIG_DIR:-} ]]; then
+	for f in "$CLAUDE_CONFIG_DIR" "$(resolve "$CLAUDE_CONFIG_DIR" 2>/dev/null || true)"; do
+		[[ -n $f ]] || continue
+		! inside "$scratch" "$f" && ! inside "$real_scratch" "$f" || die "--scratch is inside $CLAUDE_CONFIG_DIR"
+	done
+fi
+[[ -n ${HOME:-} ]] || die "HOME is empty; the kit will not guess where a real config lives"
 if [[ -e $scratch ]]; then
 	[[ -d $scratch ]] || die "--scratch exists and is not a directory"
 	[[ -z $(ls -A "$scratch") ]] || die "--scratch is not empty"
@@ -70,6 +102,8 @@ root=$(cd "$kit/../../.." && pwd)
 claude=$(command -v "${WATCHER_PROBE_CLAUDE:-claude}") || die "no claude binary"
 
 mkdir -p "$scratch"/{home,config,repo,bin}
+# shellcheck source=lib.sh
+source "$kit/lib.sh"
 tool=${WATCHER_PROBE_TOOL:-$scratch/bin/watcherprobe}
 [[ -n ${WATCHER_PROBE_TOOL:-} ]] || (cd "$root" && go build -o "$tool" ./cmd/watcherprobe)
 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -C "$scratch/repo" init -q
@@ -94,6 +128,7 @@ hookcmd="$tool hook --log $events"
 event_hook() { printf '"%s":[{"hooks":[{"type":"command","command":"%s"}]}]' "$1" "$hookcmd"; }
 cat >"$CLAUDE_CONFIG_DIR/settings.json" <<JSON
 {
+  "apiKeyHelper": "bash $kit/key-helper.sh",
   "statusLine": {"type": "command", "command": "$tool statusline --log $events", "refreshInterval": 15},
   "hooks": {
     $(event_hook SessionStart),
@@ -118,7 +153,7 @@ cleanup() { tm kill-server 2>/dev/null || true; }
 trap cleanup EXIT
 stop() {
 	echo "STOP: $*" >&2
-	tm capture-pane -p -S - -t probe >"$scratch/stop-capture.txt" 2>/dev/null || true
+	pane 2>/dev/null | save_capture "$scratch/stop-capture.txt" || true
 	echo "pane saved to $scratch/stop-capture.txt" >&2
 	exit 1
 }
@@ -150,9 +185,9 @@ prompt() { # id text: one prompt, with its window marked
 }
 
 # The server starts with the credential in its own environment, so no argument
-# list carries it. The pane inherits it from there.
-ANTHROPIC_API_KEY=$cred tmux -S "$sock" -f /dev/null new-session -d -s probe -x 200 -y 50 -c "$scratch/repo" "$claude"
-unset cred
+# list carries it, and the panes inherit it for key-helper.sh. It stays a plain
+# variable so save_capture can mask it.
+WATCHER_PROBE_KEY=$cred tmux -S "$sock" -f /dev/null new-session -d -s probe -x 200 -y 50 -c "$scratch/repo" "$claude"
 
 # c1: the trust dialog, with whatever hooks fire while it is open.
 mark trust-open
@@ -160,7 +195,6 @@ wait_for 'trust' 60 || stop "no trust dialog appeared"
 sleep 5
 tm send-keys -t probe Enter
 mark trust-closed
-if wait_for 'API key' 15; then tm send-keys -t probe Up Enter; fi
 wait_for "$ready" 60 || stop "claude never showed its prompt box"
 echo "scenario c1 done"
 
@@ -202,7 +236,7 @@ mark quiet-start; sleep "$idle"; mark quiet-end
 type_line "What token did a hook just print for you? Answer with the token only."
 settle
 rm -f "$scratch/canary.on"
-pane >"$scratch/capture-c9.txt"
+pane | save_capture "$scratch/capture-c9.txt"
 if /usr/bin/grep -q 'WATCHER-CANARY-7f3a91' "$scratch/capture-c9.txt"; then mark stdout-canary yes; else mark stdout-canary no; fi
 
 # c10: what a nonzero exit does to a prompt. Each word is built from two halves
@@ -238,6 +272,6 @@ settle
 mark bg-end
 
 stamp="$("$claude" --version 2>&1 | head -1) sha256:$(shasum -a 256 "$claude" | cut -c1-12)"
-pane >"$scratch/pane-final.txt"
+pane | save_capture "$scratch/pane-final.txt"
 "$tool" check --log "$events" --out "$result" --stamp "$stamp"
 echo "wrote $result"

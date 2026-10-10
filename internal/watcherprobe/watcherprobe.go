@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -579,4 +580,36 @@ func c13(lines []Line) Check {
 		return notRun("no hook ran")
 	}
 	return Check{Status: StatusObserved, Value: map[string]any{"payload_field": payload, "env": env}}
+}
+
+// minFragment is the shortest piece of the secret that Mask hides. Claude's
+// custom-key dialog is reported to show part of a key, so a piece counts as
+// well as the whole.
+const minFragment = 8
+
+var keyShape = regexp.MustCompile(`\bsk-[A-Za-z0-9_.-]{3,}`)
+
+// Mask hides key text in captured pane text: anything shaped like an API key,
+// and every run of minFragment or more characters that also occurs in secret.
+// It keeps the line structure, so a masked capture still reads as the pane.
+func Mask(text, secret string) string {
+	text = keyShape.ReplaceAllString(text, "[masked]")
+	if len(secret) < minFragment {
+		return text
+	}
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		n := 0
+		for i+n < len(text) && strings.Contains(secret, text[i:i+n+1]) {
+			n++
+		}
+		if n >= minFragment {
+			out.WriteString("[masked]")
+			i += n
+			continue
+		}
+		out.WriteByte(text[i])
+		i++
+	}
+	return out.String()
 }
