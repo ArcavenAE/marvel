@@ -4,7 +4,7 @@
 - **Status:** design for the operator. Section 7 carries the decisions. No ticket is filed from it yet (harness-plan decision D8).
 - **Author:** the architect seat, team arcaven.
 - **Builds on:** `docs/design/seat-bootstrap.md` r10 (the `Bootstrapper` contract and the parked state, section 5b), `internal/runtime/opencode.go`, `internal/runtime/opencode/mapping.md`, and a scratch probe of opencode 1.18.15 on a local model (T4, 2026-10-10; its decisive output is in appendix A).
-- **Method:** a four-round party (opencode, marvel adapter, containment, builder view and fleet operations seats), with a forced vote in the last round. Every item passed 5-0, with no dissent. The record is a party record in a private repository; this file is the result.
+- **Method:** a four-round party (opencode, marvel adapter, containment, builder view and fleet operations seats), with a forced vote in the last round. Every item passed 5-0, with no dissent. The party record is kept in a gitignored working tree on one fleet host and is not published; this file is the result.
 
 ## 0. Why
 
@@ -19,13 +19,13 @@ opencode is the thinnest adapter marvel ships. It has no settings projection, no
 | 3 | `run --session <id>` resumes across a fresh process | T4, appendix A.3 |
 | 4 | `external_directory` defaults to ask on `*`, and a headless seat auto-rejects the ask | T4; `opencode.go:17-20` |
 | 5 | First start installs an npm plugin into the config dir | T4, appendix A.4 |
-| 6 | **A denied subagent printed the expected output without running anything.** Its session has no tool call, yet its text and the parent's task result carry the marker | T4 session export, appendix A.2 |
+| 6 | **A subagent whose bash was denied printed the expected output without running anything.** Its session has no tool call, yet its text and the parent's task result carry the marker | T4 session export, appendix A.2 |
 | 7 | The adapter projects nothing (`ProjectionFor` is false) and passes no `--session` | `opencode.go:37-38`, `:61-64` |
 | 8 | Headless launches already redirect stdin to `/dev/null` | `opencode.go:67` |
 | 9 | A `Prepare` error launches the seat anyway, with the raw command and only `MARVEL_*` env | `internal/session/manager.go:995-999`, `:1330-1360` |
 | 10 | The run record's `result` is the last assistant text, and opencode's denial count is always 0, because it comes only from a `session.ended` that opencode never emits | `internal/session/run_record.go:14-24`, `:45-48`; `mapping.md:32-41` |
 | 11 | `HarnessSessionID` is the id marvel assigns and re-mints on every launch | `internal/api/types.go:300-314` |
-| 12 | marvel has no container launch path | `git grep -i 'docker\|podman'` over `internal` and `cmd` finds only a comment, `claude.go:227` |
+| 12 | marvel has no container launch path | `git grep -i 'docker\|podman'` over `internal` and `cmd` finds, outside tests, only a comment, `claude.go:227` |
 | 13 | Go's `encoding/json` sorts map keys | `go doc encoding/json.Marshal` |
 | 14 | After the user's rules, opencode appends `external_directory` allow on `<data>/opencode/tool-output/*` again, unless the config holds an explicit deny on exactly that glob. Under last-match evaluation a bare `"external_directory":"deny"` therefore leaves that directory open, and with `edit` allowed a write there goes through | opencode v1.18.15 `agent.ts:296-310` (from review); T4 appendix A.1 shows the same rule order. T4 tried no write there, so this is agreement on rule order, not a measured write |
 
@@ -44,7 +44,8 @@ opencode is the thinnest adapter marvel ships. It has no settings projection, no
   ```
 
   - `edit` covers `write`.
-  - `<data>` is the seat's own resolved opencode data dir, written into the block at launch. The exact-glob deny is what stops opencode re-allowing its tool-output dir after the user rules (fact 14); a bare `"external_directory":"deny"` would leave it open.
+  - `<data>` is the seat's XDG data base, the value of `XDG_DATA_HOME`, not the opencode dir under it. opencode builds the re-appended pattern as `path.join(xdgData, "opencode", "tool-output", "*")` and skips it only on plain string equality with a config deny, expanding nothing but a leading `~` or `$HOME` in config patterns (from review: `core/src/global.ts:11`, `permission/index.ts:178-184`). So the launch always sets `XDG_DATA_HOME` for the seat, and the block carries that same absolute string, joined as `path.join` joins and never passed through realpath (which would turn `/var` into `/private/var` on macOS and break the equality). T4 measured only the case with `XDG_DATA_HOME` set (appendix A.1); the default base, `.local/share` under home, is unmeasured, which is one more reason the launch sets it.
+  - The exact-glob deny is what stops opencode re-allowing its tool-output dir after the user rules (fact 14); a bare `"external_directory":"deny"` would leave it open.
   - `.env` reads are denied rather than asked: headless, an ask auto-rejects anyway; interactive, an ask parks the seat where nobody sees it.
   - **No `ask` survives** the projection.
   - The `**` forms and the order of matching are probe cases.
@@ -154,7 +155,7 @@ Each recommendation is valid until 2026-10-24 or the operator's ruling, whicheve
 
 ## Appendix A. T4 output cited above
 
-T4 was a scratch run of opencode 1.18.15 on a local model (`ollama/qwen3:4b`), with every opencode path in a throwaway tree, no credential and no paid model. Its full record is in a private repository, so the decisive lines are copied here. The throwaway tree's path is replaced by `<data>`; the JSON is shortened to the fields that matter and otherwise unchanged. These lines passed the fleet's pre-filing scan before this file was published.
+T4 was a scratch run of opencode 1.18.15 on a local model (`ollama/qwen3:4b`), with every opencode path in a throwaway tree, no credential and no paid model. Its record is in a gitignored scratch tree on one fleet host and is not published, so the decisive lines are copied here. The run's `XDG_DATA_HOME`, a path inside that tree, is replaced by `<data>`; the JSON is shortened to the fields that matter and otherwise unchanged. These lines passed the fleet's pre-filing scan before this file was published.
 
 ### A.1 Rule order (facts 1 and 14)
 
