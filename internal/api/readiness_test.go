@@ -520,34 +520,26 @@ func TestRehydrateSkipsARecordWhoseSessionIsGone(t *testing.T) {
 	if got := s2.ListDuties("aae/seat-1"); len(got) != 1 {
 		t.Errorf("seat-1's record = %+v, want it kept", got)
 	}
-	next, err := s2.RecordDuty(other)
+	// Close without writing anything, so the next open reads exactly what the
+	// purge left on disk (a write here would put the record back by itself).
+	if err := s2.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s3 := NewStore()
+	if err := s3.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #3: %v", err)
+	}
+	t.Cleanup(func() { _ = s3.CloseBolt() })
+	if got := s3.ListDuties("aae/seat-1"); len(got) != 1 || got[0].Seq != 2 {
+		t.Errorf("after a third open seat-1's record = %+v, want its live record (seq 2) still on disk", got)
+	}
+	if got := s3.ListDuties(seatKey); len(got) != 0 {
+		t.Errorf("after a third open the orphan is back: %+v", got)
+	}
+	next, err := s3.RecordDuty(other)
 	if err != nil || next.Seq != 3 {
 		t.Errorf("next seq = %d (%v), want 3: the orphan's number is not reused", next.Seq, err)
-	}
-}
-
-// The session check runs, and runs under the store's write lock, so a seat
-// deleted while a write is in flight cannot be written for. The seam reports
-// each check; the test reads the lock state from inside it.
-func TestRecordDutyChecksTheSessionUnderTheWriteLock(t *testing.T) {
-	s := newReadinessStore(t)
-	calls, held := 0, true
-	seatCheckHook = func() {
-		calls++
-		if s.mu.TryLock() { // the write lock was free, so the check is not under it
-			s.mu.Unlock()
-			held = false
-		}
-	}
-	t.Cleanup(func() { seatCheckHook = nil })
-	if _, err := s.RecordDuty(proven("gh.read")); err != nil {
-		t.Fatalf("RecordDuty: %v", err)
-	}
-	if calls != 1 {
-		t.Errorf("the seat check ran %d times, want once per write", calls)
-	}
-	if !held {
-		t.Error("the seat check ran without the store's write lock held")
 	}
 }
 

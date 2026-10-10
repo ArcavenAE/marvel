@@ -320,6 +320,7 @@ func (s *Store) purgeOrphanDuties() error {
 
 // rehydrateDuties loads the readiness records and the sequence high-water mark.
 func (s *Store) rehydrateDuties(tx *bolt.Tx) error {
+	s.dutyOrphans = nil // a failed earlier load must not leave a stale list for this one
 	if v := tx.Bucket(bucketMeta).Get(metaKeyReadinessSeq); v != nil {
 		var n uint64
 		if err := json.Unmarshal(v, &n); err != nil {
