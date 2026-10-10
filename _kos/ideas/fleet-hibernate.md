@@ -54,7 +54,9 @@ It reuses three things marvel already has rather than adding a parallel path:
 3. **A paid-backend selector.** Optionally skip seats on local inference and
    hibernate only seats on paid services. marvel already records a role's
    intended backend label (`Role.Runtime.Backend`, `internal/api/types.go`),
-   but nothing yet says which labels are paid; that may belong to the
+   which also decides whether a spawn gets a backend overlay
+   (`internal/session/backend.go`), but nothing yet says which labels are
+   paid; that may belong to the
    backend registry idea (`_kos/ideas/inference-backend-registry-and-quota-estimation.md`).
 4. **An ordered resume.** Supervisors first, then a fresh shift of workers,
    each bootstrapped from the handoff its predecessor wrote
@@ -72,9 +74,12 @@ start from them rather than reopen them:
 - From `docs/design/read-only-seat-handoff.md`: a handoff file marvel writes
   expires, configurable, default 7 days, and the first scope is max-age
   rotations.
-- For crash-safe handoff, the operator asked that the leading options in
-  `docs/design/handoff-crash-options.md` both be shown, with the panel's 5 to
-  4 split.
+
+One more input is relayed and not yet recorded in a design document: the
+operator has given a direction on the crash-safe handoff options in
+`docs/design/handoff-crash-options.md`. That document still carries them as
+recommendations, so a hibernate design should confirm the ruling before
+relying on it.
 
 ## Tensions
 
