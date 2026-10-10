@@ -1073,6 +1073,9 @@ type HarnessState struct {
 	PatternID      string `json:"pattern_id"`
 	PatternVersion int    `json:"pattern_version"`
 	PatternFor     string `json:"pattern_for,omitempty"`
+	// Reason says why a parked seat is waiting: trust, permission, update or
+	// other. It is set on the parked state only.
+	Reason string `json:"reason,omitempty"`
 	// Covered lists the harness versions that have at least one passing
 	// pattern. It is set on the two coverage states only.
 	Covered    []string  `json:"covered,omitempty"`
@@ -1086,6 +1089,12 @@ type HarnessState struct {
 
 // HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"
+
+// HarnessStateParked is the state a matched prompt screen sets: the seat is
+// waiting for a person at a trust, permission or update dialog. The watchdog
+// only reads it; it never answers the prompt (docs/design/seat-bootstrap.md
+// section 5b).
+const HarnessStateParked = "parked"
 
 // SessionSpend is the spend-only slice of a session's context reading: the
 // cumulative output and prompt tokens and the output-token rate. The usage
