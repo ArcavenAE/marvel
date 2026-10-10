@@ -27,7 +27,7 @@ func TestMarkThenCheckWritesTheResultByRename(t *testing.T) {
 	log, res := filepath.Join(dir, "events.tsv"), filepath.Join(dir, "probe_result.json")
 	var out, errb bytes.Buffer
 	for _, args := range [][]string{
-		{"mark", "--log", log, "stdout-canary", "yes"},
+		{"mark", "--log", log, "exit2-effect", "blocked"},
 		{"check", "--log", log, "--out", res, "--stamp", "claude 2.1.296"},
 	} {
 		if code := run(args, strings.NewReader(""), &out, &errb); code != 0 {
@@ -49,7 +49,7 @@ func TestMarkThenCheckWritesTheResultByRename(t *testing.T) {
 		_ = json.Unmarshal(raw[key], &c)
 		return c.Status
 	}
-	if string(raw["build_stamp"]) != `"claude 2.1.296"` || status("c9") != "observed" || status("c1") != "not-run" {
+	if string(raw["build_stamp"]) != `"claude 2.1.296"` || status("c10") != "observed" || status("c1") != "not-run" {
 		t.Errorf("result = %s", b)
 	}
 	leftovers, _ := filepath.Glob(filepath.Join(dir, ".probe_result-*"))

@@ -505,6 +505,19 @@ func TestC9RefusesATranscriptOutsideTheScratchRoots(t *testing.T) {
 			t.Errorf("%s: a transcript outside the roots was read: %+v", name, c)
 		}
 	}
+	// A directory whose name only starts with the root's name is not under it.
+	sibling := root + "-sibling"
+	if err := os.MkdirAll(sibling, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sibling) })
+	sib := filepath.Join(sibling, "session.jsonl")
+	if err := os.WriteFile(sib, []byte(`{"type":"attachment","attachment":{"stdout":"`+canary+`"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c := get(t, RunWith(canaryWindow(sib), "s", Options{TranscriptRoots: []string{root}}), "c9"); c.Status != StatusFail {
+		t.Errorf("a sibling that shares the root's prefix: c9 = %+v, want a refusal", c)
+	}
 	// No roots given means nothing may be read at all.
 	if c := get(t, RunWith(canaryWindow(outside), "s", Options{}), "c9"); c.Status != StatusNotRun {
 		t.Errorf("no roots: c9 = %+v", c)
