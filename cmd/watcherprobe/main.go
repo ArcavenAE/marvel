@@ -58,7 +58,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if !needLog() {
 			return 2
 		}
-		line, err := watcherprobe.RecordStatusline(*logPath, stdin)
+		line, err := watcherprobe.RecordStatusline(*logPath, stdin, os.Environ())
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, "watcherprobe statusline:", err)
 		}

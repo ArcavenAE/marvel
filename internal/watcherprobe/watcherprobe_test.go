@@ -156,7 +156,7 @@ func TestRecordHookNamesTheEventAndKeepsNoSecrets(t *testing.T) {
 
 func TestRecordStatuslineAppendsAndPrintsOneLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.tsv")
-	out, err := RecordStatusline(path, strings.NewReader(`{"cost":{"total_cost_usd":0.5}}`))
+	out, err := RecordStatusline(path, strings.NewReader(`{"cost":{"total_cost_usd":0.5}}`), nil)
 	if err != nil || out == "" || strings.Contains(out, "\n") {
 		t.Fatalf("printed %q, %v; want one line", out, err)
 	}

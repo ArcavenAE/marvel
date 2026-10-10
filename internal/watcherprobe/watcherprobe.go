@@ -188,7 +188,7 @@ func RecordHook(path string, stdin io.Reader, environ []string) error {
 
 // RecordStatusline logs one statusline refresh and returns the one line claude
 // shows for it.
-func RecordStatusline(path string, stdin io.Reader) (string, error) {
+func RecordStatusline(path string, stdin io.Reader, _ []string) (string, error) {
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxHookInput))
 	if err != nil {
 		return "", err

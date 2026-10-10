@@ -113,3 +113,46 @@ func TestMaskWithNoSecretStillHidesKeyShapes(t *testing.T) {
 		t.Errorf("mask output = %q; want the key shape hidden and the rest kept", out.String())
 	}
 }
+
+// The credential can appear in a hook payload, a statusline payload or a
+// Notification message, and c6 copies that message into the result. None of it
+// may reach events.tsv or probe_result.json, whole or in part.
+func TestAKeyInAHookStatuslineOrNotificationPayloadReachesNeitherFile(t *testing.T) {
+	const key = "sk-ant-api03-FAKEFAKEFAKE0123456789abcdefXYZ"
+	t.Setenv("WATCHER_PROBE_KEY", key)
+	dir := t.TempDir()
+	log, res := filepath.Join(dir, "events.tsv"), filepath.Join(dir, "probe_result.json")
+	var out, errb bytes.Buffer
+	do := func(stdin string, args ...string) {
+		t.Helper()
+		out.Reset()
+		if code := run(args, strings.NewReader(stdin), &out, &errb); code != 0 {
+			t.Fatalf("%v exited %d: %s", args, code, errb.String())
+		}
+	}
+	do("", "mark", "--log", log, "denial-start")
+	do(`{"hook_event_name":"UserPromptSubmit","prompt":"my key is `+key+`"}`, "hook", "--log", log)
+	do(`{"hook_event_name":"Notification","message":"auth failed for sk-ant-...0123456789abcdefXYZ"}`, "hook", "--log", log)
+	do(`{"hook_event_name":"PermissionDenied","message":"tail 0123456789abcdefXYZ was refused"}`, "hook", "--log", log)
+	do(`{"cost":{"total_cost_usd":0.5},"note":"`+key+`"}`, "statusline", "--log", log)
+	if strings.Contains(out.String(), "FAKEFAKE") {
+		t.Errorf("the statusline printed key text: %q", out.String())
+	}
+	do("", "mark", "--log", log, "denial-end")
+	do("", "check", "--log", log, "--out", res, "--stamp", "s")
+	for _, path := range []string{log, res} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, leak := range []string{"FAKEFAKE", "0123456789", "sk-ant-", "XYZ"} {
+			if strings.Contains(string(b), leak) {
+				t.Errorf("%s holds %q:\n%s", filepath.Base(path), leak, b)
+			}
+		}
+	}
+	b, _ := os.ReadFile(res)
+	if !strings.Contains(string(b), "was refused") {
+		t.Errorf("the denial text was lost along with the key:\n%s", b)
+	}
+}

@@ -77,8 +77,8 @@ func TestKitRefusesWhatWouldTouchALiveConfig(t *testing.T) {
 		"a scratch reached through a symlink":    {[]string{"HOME=" + home}, []string{"--dry-run", "--scratch", filepath.Join(links, "cfg", "probe")}, "", "is inside"},
 		"a scratch under a symlink to the home":  {[]string{"HOME=" + home}, []string{"--dry-run", "--scratch", filepath.Join(links, "home", ".claude", "probe")}, "", "is inside"},
 		"an empty HOME":                          {[]string{"HOME="}, []string{"--dry-run", "--scratch", filepath.Join(t.TempDir(), "probe")}, "", "HOME is empty"},
-		"an empty HOME and the real config":      {[]string{"HOME="}, []string{"--dry-run", "--scratch", filepath.Join(pw.HomeDir, ".claude", "probe-test-only")}, "", "is inside"},
-		"the passwd home when HOME says another": {[]string{"HOME=" + home}, []string{"--dry-run", "--scratch", filepath.Join(pw.HomeDir, ".claude", "probe-test-only")}, "", "is inside"},
+		"an empty HOME and the passwd home":      {[]string{"HOME="}, []string{"--dry-run", "--scratch", pw.HomeDir}, "", "real home"},
+		"the passwd home when HOME says another": {[]string{"HOME=" + home}, []string{"--dry-run", "--scratch", pw.HomeDir}, "", "real home"},
 		"a scratch that is not empty":            {nil, []string{"--dry-run", "--scratch", full}, "", "is not empty"},
 		"a relative scratch":                     {nil, []string{"--dry-run", "--scratch", "probe"}, "", "absolute"},
 		"a real run with no credential":          {nil, []string{"--scratch", filepath.Join(t.TempDir(), "probe")}, "/usr/bin:/bin", "WATCHER_PROBE_CREDENTIAL is required"},
@@ -243,7 +243,7 @@ func TestKitWritesNoCaptureExceptThroughSaveCapture(t *testing.T) {
 	}
 }
 
-func TestKitHandsTheCredentialToClaudeOnlyThroughAHelper(t *testing.T) {
+func TestKitNeverSetsAnthropicAPIKeyAndUsesAnAPIKeyHelper(t *testing.T) {
 	b, err := os.ReadFile(kitScript)
 	if err != nil {
 		t.Fatal(err)
@@ -253,5 +253,30 @@ func TestKitHandsTheCredentialToClaudeOnlyThroughAHelper(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "apiKeyHelper") {
 		t.Error("run.sh configures no apiKeyHelper")
+	}
+}
+
+// The helper avoids ANTHROPIC_API_KEY, nothing more: claude and its hooks inherit
+// WATCHER_PROBE_KEY from the scratch tmux server, and so do Bash-tool commands
+// unless scrubbed. The notes must say that and not claim the key is out of
+// claude's environment.
+func TestKitNotesStateWhoInheritsTheKey(t *testing.T) {
+	dir := filepath.Dir(kitScript)
+	for _, name := range []string{"key-helper.sh", "README.md"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := strings.Join(strings.Fields(string(b)), " ")
+		for _, want := range []string{"WATCHER_PROBE_KEY", "inherit", "Bash-tool"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not mention %q", name, want)
+			}
+		}
+		for _, bad := range []string{"never given the key", "claude never has the key"} {
+			if strings.Contains(text, bad) {
+				t.Errorf("%s says %q, which is false", name, bad)
+			}
+		}
 	}
 }
