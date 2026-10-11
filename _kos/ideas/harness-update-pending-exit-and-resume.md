@@ -3,7 +3,7 @@
 **Status: idea. Pre-hypothesis. Nothing here is designed or measured.**
 
 Captured: 2026-10-04
-Source: operator, typed to director in session (no public source), in director's REQUEST 01M43NG31RH7D5PWPV4JG5SS9P, item 2, sent 2026-10-04 at about 14:20Z, and passed on by arcaven-supervisor (message 01M43TRVF923SCX871Q3RAZEYX, 2026-10-04T16:08Z).
+Source: operator, typed to director in session (no public source), relayed by director on 2026-10-04 at about 14:20Z, and passed on by arcaven-supervisor at 16:08Z.
 
 ## Why this is worth reading
 
