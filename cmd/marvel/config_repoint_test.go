@@ -5,8 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,7 +56,7 @@ func newRepointEnv(t *testing.T) *repointEnv {
 	e := &repointEnv{home: home, recorded: repointKey(t), presented: map[string]ssh.PublicKey{}}
 	if err := config.Save(&config.Config{
 		Clusters: []config.Cluster{
-			{Name: "prod", Server: repointOld, Identity: "/keys/prod"},
+			{Name: "prod", Server: repointOld, Identity: "/keys/prod", Bus: &config.Bus{URL: "nats://10.0.0.5:4222"}, ScheduleHistoryMax: 50},
 			{Name: "other", Server: "mrvl://op@10.0.0.9:6785", Identity: "/keys/other"},
 			{Name: "sock", Socket: "/run/marvel.sock"},
 		},
@@ -151,6 +153,42 @@ func TestRepointMovesTheClusterWhenTheKeyMatchesAndTheOperatorConfirms(t *testin
 	}
 	if other := e.cluster(t, "other"); other.Server != "mrvl://op@10.0.0.9:6785" || other.Identity != "/keys/other" {
 		t.Errorf("an unrelated cluster changed: %+v", other)
+	}
+}
+
+func TestRepointChangesOnlyTheServerOfTheCluster(t *testing.T) {
+	e := newRepointEnv(t)
+	e.presented["10.0.0.77:6785"] = e.recorded
+	want := e.cluster(t, "prod")
+	want.Server = repointNew
+	if want.Bus == nil || want.ScheduleHistoryMax == 0 || want.Identity == "" {
+		t.Fatalf("fixture cluster carries too little to pin the other fields: %+v", want)
+	}
+	otherBefore := e.cluster(t, "other")
+	sockBefore := e.cluster(t, "sock")
+
+	if err := runRepoint(&bytes.Buffer{}, strings.NewReader("y\n"), true, "prod", repointNew); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := e.cluster(t, "prod"); !reflect.DeepEqual(got, want) {
+		t.Errorf("prod = %+v, want only the server changed: %+v", got, want)
+	}
+	if got := e.cluster(t, "other"); !reflect.DeepEqual(got, otherBefore) {
+		t.Errorf("other = %+v, want %+v", got, otherBefore)
+	}
+	if got := e.cluster(t, "sock"); !reflect.DeepEqual(got, sockBefore) {
+		t.Errorf("sock = %+v, want %+v", got, sockBefore)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CurrentCluster != "prod" {
+		t.Errorf("current-cluster = %q, want prod", cfg.CurrentCluster)
+	}
+	if len(cfg.Clusters) != 3 {
+		t.Errorf("clusters = %d, want 3", len(cfg.Clusters))
 	}
 }
 
@@ -274,6 +312,57 @@ func TestRepointNeedsATerminalAndWritesNothingWithout(t *testing.T) {
 	}
 	if after := e.state(t); after != before {
 		t.Error("a non-interactive repoint wrote files")
+	}
+}
+
+// runRepointCmd runs the command the way the CLI does, so the terminal check
+// that repointCmd makes on its own input is the one under test.
+func runRepointCmd(t *testing.T, in io.Reader) error {
+	t.Helper()
+	cmd := repointCmd()
+	var out bytes.Buffer
+	cmd.SetIn(in)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"prod", repointNew})
+	return cmd.Execute()
+}
+
+func TestRepointCommandRefusesInputThatIsNotATerminal(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pr.Close(); _ = pw.Close() })
+	if _, err := pw.WriteString("y\n"); err != nil {
+		t.Fatal(err)
+	}
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = devNull.Close() })
+
+	for name, in := range map[string]io.Reader{
+		"a string reader":     strings.NewReader("y\n"),
+		"a pipe with y piped": pr,
+		"a character device":  devNull,
+	} {
+		e := newRepointEnv(t)
+		e.presented["10.0.0.77:6785"] = e.recorded
+		before := e.state(t)
+
+		err := runRepointCmd(t, in)
+
+		if err == nil || !strings.Contains(err.Error(), "terminal") {
+			t.Errorf("%s: err = %v, want a refusal that names the terminal", name, err)
+		}
+		if after := e.state(t); after != before {
+			t.Errorf("%s: a repoint without a terminal wrote files", name)
+		}
+		if got := e.cluster(t, "prod").Server; got != repointOld {
+			t.Errorf("%s: prod moved to %q", name, got)
+		}
 	}
 }
 
