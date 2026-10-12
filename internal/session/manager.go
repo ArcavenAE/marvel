@@ -138,6 +138,17 @@ func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
 	if err := os.MkdirAll(m.TokenDir, 0o700); err != nil {
 		return "", fmt.Errorf("create token dir: %w", err)
 	}
+	// The default directory sits under the shared temp directory, where
+	// another account could have made it first. Unlike a harness home there
+	// is no safe fallback location for a secret, so a directory that is not a
+	// private directory of this user is refused (compare harnessHomeBase).
+	fi, err := os.Lstat(m.TokenDir)
+	if err != nil {
+		return "", fmt.Errorf("stat token dir: %w", err)
+	}
+	if !fi.IsDir() || fi.Mode().Perm() != 0o700 || !ownedByMe(fi) {
+		return "", fmt.Errorf("token dir %s is not a private directory of this user (mode %v)", m.TokenDir, fi.Mode())
+	}
 	path := m.tokenFilePath(sess.Key())
 	tmp, err := os.CreateTemp(m.TokenDir, ".token-*")
 	if err != nil {

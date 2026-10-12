@@ -23,18 +23,17 @@ const HeartbeatTokenEnv = "MARVEL_HEARTBEAT_TOKEN"
 // nothing to a reader of the environment who cannot read the file.
 const HeartbeatTokenFileEnv = "MARVEL_HEARTBEAT_TOKEN_FILE"
 
-// HeartbeatTokenFromEnv returns the session's heartbeat token: the variable
-// when it is set, otherwise the contents of the file HeartbeatTokenFileEnv
-// names. Every forwarder reads through it, so none can honor one delivery and
-// miss the other. A file that cannot be read gives an empty token, which the
-// daemon treats as no token presented.
+// HeartbeatTokenFromEnv returns the session's heartbeat token: the contents of
+// the file HeartbeatTokenFileEnv names when it is set, otherwise the variable.
+// A launch sets one delivery or the other, so both set means a stale variable
+// inherited from a parent, and the file marvel wrote for this seat wins. A
+// named file that cannot be read gives an empty token, never the variable,
+// which the daemon treats as no token presented. Every forwarder reads
+// through it, so none can honor one delivery and miss the other.
 func HeartbeatTokenFromEnv() string {
-	if t := os.Getenv(HeartbeatTokenEnv); t != "" {
-		return t
-	}
 	path := os.Getenv(HeartbeatTokenFileEnv)
 	if path == "" {
-		return ""
+		return os.Getenv(HeartbeatTokenEnv)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

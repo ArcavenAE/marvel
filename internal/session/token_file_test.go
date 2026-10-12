@@ -114,7 +114,7 @@ func TestAByFileLaunchPutsTheTokenInAPrivateFileAndOnlyItsPathInTheEnvironment(t
 
 func TestADirectFallbackForAByFileRuntimeStillDeliversByFile(t *testing.T) {
 	t.Parallel()
-	mgr := tokenManager(t, t.TempDir())
+	mgr := tokenManager(t, filepath.Join(t.TempDir(), "tokens"))
 	sess := seat("filed", "filed")
 	sess.Team = "no-such-team" // no team: planLaunch takes the direct path
 
@@ -165,7 +165,7 @@ func TestALaunchWhoseAdapterDoesNotAskForAFileKeepsTheEnvironmentToken(t *testin
 
 func TestDroppingASessionRemovesItsTokenFile(t *testing.T) {
 	t.Parallel()
-	mgr := tokenManager(t, t.TempDir())
+	mgr := tokenManager(t, filepath.Join(t.TempDir(), "tokens"))
 	sess := seat("filed", "filed")
 	plan := mgr.planLaunch(sess)
 	path := plan.env[api.HeartbeatTokenFileEnv]
@@ -188,7 +188,7 @@ func TestDroppingASessionRemovesItsTokenFile(t *testing.T) {
 
 func TestEachSessionGetsItsOwnTokenFile(t *testing.T) {
 	t.Parallel()
-	mgr := tokenManager(t, t.TempDir())
+	mgr := tokenManager(t, filepath.Join(t.TempDir(), "tokens"))
 	a := seat("filed", "filed")
 	b := seat("filed", "filed")
 	b.Name = "squad-filed-g1-1"
