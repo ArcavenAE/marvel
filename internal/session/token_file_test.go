@@ -204,3 +204,80 @@ func TestEachSessionGetsItsOwnTokenFile(t *testing.T) {
 		t.Errorf("first file holds %q after the second launch", got)
 	}
 }
+
+func TestADirectLaunchThatCannotWriteItsFileCarriesNoTokenAtAll(t *testing.T) {
+	t.Parallel()
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := tokenManager(t, filepath.Join(blocker, "tokens"))
+	sess := seat("filed", "filed")
+	sess.Team = "no-such-team" // no team: planLaunch takes the direct path
+
+	plan := mgr.planLaunch(sess)
+
+	for _, k := range []string{api.HeartbeatTokenEnv, api.HeartbeatTokenFileEnv} {
+		if v, present := plan.env[k]; present {
+			t.Errorf("%s = %q on the direct path after the token file could not be written", k, v)
+		}
+	}
+}
+
+// A shared temp directory lets another account pre-create the token directory
+// wide open. A directory that is not private is refused, and the launch
+// carries no token, as it does for any other write failure.
+func TestATokenDirectoryThatIsNotPrivateIsRefused(t *testing.T) {
+	t.Parallel()
+	for name, direct := range map[string]bool{"adapter path": false, "direct path": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "tokens")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mgr := tokenManager(t, dir)
+			sess := seat("filed", "filed")
+			if direct {
+				sess.Team = "no-such-team"
+			}
+
+			plan := mgr.planLaunch(sess)
+
+			for _, k := range []string{api.HeartbeatTokenEnv, api.HeartbeatTokenFileEnv} {
+				if v, present := plan.env[k]; present {
+					t.Errorf("%s = %q although the token directory is mode 755", k, v)
+				}
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("%d entries written into a directory that is not private", len(entries))
+			}
+		})
+	}
+}
+
+func TestATokenDirectoryThatIsASymlinkIsRefused(t *testing.T) {
+	t.Parallel()
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "tokens")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mgr := tokenManager(t, link)
+
+	plan := mgr.planLaunch(seat("filed", "filed"))
+
+	if v, present := plan.env[api.HeartbeatTokenFileEnv]; present {
+		t.Errorf("%s = %q through a symlinked token directory", api.HeartbeatTokenFileEnv, v)
+	}
+}

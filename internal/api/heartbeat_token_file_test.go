@@ -32,11 +32,21 @@ func TestHeartbeatTokenFromEnvReadsTheFileWhenTheVariableIsEmpty(t *testing.T) {
 	}
 }
 
-func TestHeartbeatTokenFromEnvPrefersTheVariableOverTheFile(t *testing.T) {
-	t.Setenv(HeartbeatTokenEnv, "from-env")
+// A launch sets one delivery or the other, so both set means a stale variable
+// inherited from a parent; the file is the one marvel wrote for this seat.
+func TestHeartbeatTokenFromEnvPrefersTheFileOverTheVariable(t *testing.T) {
+	t.Setenv(HeartbeatTokenEnv, "stale-from-env")
 	t.Setenv(HeartbeatTokenFileEnv, tokenFile(t, "from-file"))
-	if got := HeartbeatTokenFromEnv(); got != "from-env" {
-		t.Errorf("token = %q, want from-env", got)
+	if got := HeartbeatTokenFromEnv(); got != "from-file" {
+		t.Errorf("token = %q, want from-file", got)
+	}
+}
+
+func TestHeartbeatTokenFromEnvDoesNotFallBackToTheVariableWhenTheNamedFileCannotBeRead(t *testing.T) {
+	t.Setenv(HeartbeatTokenEnv, "stale-from-env")
+	t.Setenv(HeartbeatTokenFileEnv, filepath.Join(t.TempDir(), "absent"))
+	if got := HeartbeatTokenFromEnv(); got != "" {
+		t.Errorf("token = %q, want empty: a named file that cannot be read is not licence to use a stale variable", got)
 	}
 }
 
