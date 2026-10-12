@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -279,5 +280,37 @@ func TestATokenDirectoryThatIsASymlinkIsRefused(t *testing.T) {
 
 	if v, present := plan.env[api.HeartbeatTokenFileEnv]; present {
 		t.Errorf("%s = %q through a symlinked token directory", api.HeartbeatTokenFileEnv, v)
+	}
+}
+
+// Where link modes are real (darwin), a symlink can be set to 0700, so the mode
+// test alone does not refuse a link another account left in a shared temp
+// directory. Only the directory test does.
+func TestATokenDirectorySymlinkWithAPrivateLinkModeIsRefused(t *testing.T) {
+	t.Parallel()
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "tokens")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("chmod", "-h", "700", link).Run(); err != nil {
+		t.Skipf("cannot set a link mode here: %v", err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Skip("link modes are fixed on this platform")
+	}
+	mgr := tokenManager(t, link)
+
+	plan := mgr.planLaunch(seat("filed", "filed"))
+
+	if v, present := plan.env[api.HeartbeatTokenFileEnv]; present {
+		t.Errorf("%s = %q through a 0700 symlink", api.HeartbeatTokenFileEnv, v)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("%d files written through the link into its target", len(entries))
 	}
 }
