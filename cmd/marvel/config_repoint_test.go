@@ -73,14 +73,10 @@ func newRepointEnv(t *testing.T) *repointEnv {
 		t.Fatal(err)
 	}
 	old := repointProbe
-	repointProbe = func(addr string) (ssh.PublicKey, error) {
-		e.probed = append(e.probed, addr)
+	repointProbe = func(hp string) (ssh.PublicKey, error) {
+		e.probed = append(e.probed, hp)
 		if e.probeErr != nil {
 			return nil, e.probeErr
-		}
-		hp := strings.TrimPrefix(addr, "mrvl://")
-		if i := strings.Index(hp, "@"); i >= 0 {
-			hp = hp[i+1:]
 		}
 		k, ok := e.presented[hp]
 		if !ok {
