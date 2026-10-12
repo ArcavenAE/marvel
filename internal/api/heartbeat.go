@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // HeartbeatTokenEnv is the environment variable adapters inject the
@@ -18,12 +19,28 @@ const HeartbeatTokenEnv = "MARVEL_HEARTBEAT_TOKEN"
 
 // HeartbeatTokenFileEnv names a file holding the session's heartbeat token. A
 // launch sets it in place of HeartbeatTokenEnv for a harness that may publish
-// its own environment.
+// its own environment (finding-033 section 7b). The path alone confers
+// nothing to a reader of the environment who cannot read the file.
 const HeartbeatTokenFileEnv = "MARVEL_HEARTBEAT_TOKEN_FILE"
 
-// HeartbeatTokenFromEnv returns the session's heartbeat token.
+// HeartbeatTokenFromEnv returns the session's heartbeat token: the variable
+// when it is set, otherwise the contents of the file HeartbeatTokenFileEnv
+// names. Every forwarder reads through it, so none can honor one delivery and
+// miss the other. A file that cannot be read gives an empty token, which the
+// daemon treats as no token presented.
 func HeartbeatTokenFromEnv() string {
-	return os.Getenv(HeartbeatTokenEnv)
+	if t := os.Getenv(HeartbeatTokenEnv); t != "" {
+		return t
+	}
+	path := os.Getenv(HeartbeatTokenFileEnv)
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(string(b), "\r\n")
 }
 
 // ErrHeartbeatUnauthorized is returned when a heartbeat presents no token
@@ -145,7 +162,7 @@ type HeartbeatRequest struct {
 // forget to pass; there is nothing here to omit. Tests and any caller
 // holding a token by other means use NewHeartbeatRequestWithToken.
 func NewHeartbeatRequest(sessionKey string, contextPercent float64, model string) HeartbeatRequest {
-	return NewHeartbeatRequestWithToken(sessionKey, os.Getenv(HeartbeatTokenEnv), contextPercent, model)
+	return NewHeartbeatRequestWithToken(sessionKey, HeartbeatTokenFromEnv(), contextPercent, model)
 }
 
 // NewHeartbeatRequestWithToken is NewHeartbeatRequest with the token

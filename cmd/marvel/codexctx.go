@@ -135,7 +135,7 @@ func newCodexCtxCmd() *cobra.Command {
 			if !send {
 				return nil
 			}
-			p := codexHeartbeatParams(workspace, session, os.Getenv(api.HeartbeatTokenEnv), model, pct, tokens, window)
+			p := codexHeartbeatParams(workspace, session, api.HeartbeatTokenFromEnv(), model, pct, tokens, window)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemon.SendRequest(socket, daemon.Request{

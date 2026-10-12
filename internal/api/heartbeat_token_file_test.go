@@ -3,6 +3,7 @@ package api
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,5 +58,47 @@ func TestNewHeartbeatRequestReadsTheTokenFromTheFile(t *testing.T) {
 	req := NewHeartbeatRequest("acme/s", 10, "m")
 	if req.SessionToken != "from-file" {
 		t.Errorf("request token = %q, want from-file", req.SessionToken)
+	}
+}
+
+// A forwarder that reads the variable itself honors one delivery and misses
+// the other, which is the failure HeartbeatTokenFromEnv exists to remove.
+func TestNoForwarderReadsTheTokenVariableDirectly(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := []string{"os.Getenv(api.HeartbeatTokenEnv)", "os.Getenv(HeartbeatTokenEnv)", `os.Getenv("MARVEL_HEARTBEAT_TOKEN")`, `os.LookupEnv(api.HeartbeatTokenEnv)`, `os.LookupEnv(HeartbeatTokenEnv)`}
+	var seen int
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "vendor") {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		seen++
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if filepath.Base(path) == "heartbeat.go" && filepath.Base(filepath.Dir(path)) == "api" {
+			return nil
+		}
+		for _, r := range reads {
+			if strings.Contains(string(src), r) {
+				t.Errorf("%s reads the token variable with %s; use api.HeartbeatTokenFromEnv", path, r)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen < 50 {
+		t.Fatalf("scanned %d Go files under %s; the walk is not reaching the tree", seen, root)
 	}
 }

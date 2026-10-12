@@ -110,11 +110,74 @@ type Manager struct {
 	paneStatus func(paneID string) (tmux.PaneStatus, error)
 }
 
-// writeTokenFile writes the session's token for a by-file launch.
-func (m *Manager) writeTokenFile(sess *api.Session) (string, error) { return "", nil }
+// byFile reports whether this session's runtime asks for its heartbeat token
+// by file.
+func (m *Manager) byFile(sess *api.Session) bool {
+	c, ok := m.adapters.Resolve(sess.Runtime.Name).(runtime.TokenFileCapable)
+	return ok && c.DeliversTokenByFile()
+}
 
-// removeTokenFile removes the session's token file.
-func (m *Manager) removeTokenFile(key string) {}
+// tokenFilePath names the session's token file under TokenDir. The name is a
+// digest of the key, so two keys cannot collapse to one file and the key's own
+// characters never reach the filesystem.
+func (m *Manager) tokenFilePath(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(m.TokenDir, hex.EncodeToString(sum[:16])+".token")
+}
+
+// writeTokenFile writes the session's token for a by-file launch: the
+// directory at mode 0700, the file at 0600, replaced by rename so a reader
+// never sees half a token. A session with no token has no file and no error.
+func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
+	if sess.HeartbeatToken == "" {
+		return "", nil
+	}
+	if m.TokenDir == "" {
+		return "", errors.New("no token directory")
+	}
+	if err := os.MkdirAll(m.TokenDir, 0o700); err != nil {
+		return "", fmt.Errorf("create token dir: %w", err)
+	}
+	path := m.tokenFilePath(sess.Key())
+	tmp, err := os.CreateTemp(m.TokenDir, ".token-*")
+	if err != nil {
+		return "", fmt.Errorf("create token file: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("chmod token file: %w", err)
+	}
+	if _, err := tmp.WriteString(sess.HeartbeatToken); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("write token file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close token file: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return "", fmt.Errorf("place token file: %w", err)
+	}
+	return path, nil
+}
+
+// removeTokenFile removes the session's token file. Best effort: a missing
+// file is not an error.
+func (m *Manager) removeTokenFile(key string) {
+	if m.TokenDir == "" {
+		return
+	}
+	if err := os.Remove(m.tokenFilePath(key)); err != nil && !os.IsNotExist(err) {
+		log.Printf("warning: remove token file for %s: %v", key, err)
+	}
+}
+
+func defaultTokenDir() string {
+	if dir := os.Getenv("MARVEL_TOKEN_DIR"); dir != "" {
+		return dir
+	}
+	return daemonTempDir("marvel-tokens")
+}
 
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
@@ -123,6 +186,7 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		driver:            driver,
 		adapters:          runtime.NewRegistry(),
 		StreamDir:         defaultStreamDir(),
+		TokenDir:          defaultTokenDir(),
 		ProjectionDir:     defaultProjectionDir(),
 		HarnessHomeDir:    defaultHarnessHomeDir(),
 		BackendOverlayDir: defaultBackendOverlayDir(),
@@ -954,12 +1018,25 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 
 	adapter := m.adapters.Resolve(sess.Runtime.Name)
+	// A harness that may publish its environment gets the token by file.
+	// When the file cannot be written the launch carries no token at all:
+	// falling back to the environment would hand the secret to the very
+	// harness the file was meant to keep it from.
+	byFile := m.byFile(sess)
+	var tokenFile string
+	if byFile {
+		var terr error
+		if tokenFile, terr = m.writeTokenFile(sess); terr != nil {
+			log.Printf("session %s: token file: %v; launching without a heartbeat token", sess.Key(), terr)
+		}
+	}
 	lctx := &runtime.LaunchContext{
 		Session:    sess,
 		Role:       role,
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+		TokenFile:  tokenFile,
 		Events:     m.Events,
 	}
 	if m.Views != nil {
@@ -1008,6 +1085,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 
 	plan := launchPlan{command: result.Command, env: result.Env}
+	if byFile && tokenFile == "" {
+		delete(plan.env, api.HeartbeatTokenEnv)
+	}
 	sess.SettingSources = result.SettingSources
 	sess.SettingSourcesDelivery = result.SettingSourcesDelivery
 	switch {
@@ -1361,7 +1441,15 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath
-		if sess.HeartbeatToken != "" {
+		switch {
+		case m.byFile(sess):
+			// Same rule as the adapter path: a file, or no token.
+			if path, err := m.writeTokenFile(sess); err != nil {
+				log.Printf("session %s: token file: %v; launching without a heartbeat token", sess.Key(), err)
+			} else if path != "" {
+				envs[api.HeartbeatTokenFileEnv] = path
+			}
+		case sess.HeartbeatToken != "":
 			envs[api.HeartbeatTokenEnv] = sess.HeartbeatToken
 		}
 	}
@@ -1466,6 +1554,7 @@ func (m *Manager) dropSession(sess api.Session, message string) error {
 	// session). Best-effort; a missing file is not an error.
 	m.sweepBackendOverlay(sess)
 	m.teardownViews(key)
+	m.removeTokenFile(key)
 
 	log.Printf("session %s deleted", key)
 	events.Emit(m.Events, events.Event{

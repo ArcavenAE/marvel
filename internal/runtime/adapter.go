@@ -55,7 +55,9 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
-	// TokenFile is the file holding this launch's heartbeat token.
+	// TokenFile is the file holding this launch's heartbeat token, set by the
+	// session manager for an adapter that implements TokenFileCapable. Empty
+	// means the token travels in the environment.
 	TokenFile string
 	// Events receives an event an adapter's seed step records, such as the
 	// folder trust a codex seat was given. Nil is safe.
@@ -227,7 +229,11 @@ type SessionIDAssigner interface {
 }
 
 // TokenFileCapable is implemented by an adapter whose harness may publish its
-// own environment.
+// own environment, as a Crush server started with CRUSH_CLIENT_SERVER=1 does
+// (finding-033 section 7b). The session manager then writes the heartbeat
+// token to a private file and the launch carries the file's path instead of
+// the token. An adapter that does not implement it, or returns false, keeps
+// the token in the environment.
 type TokenFileCapable interface {
 	DeliversTokenByFile() bool
 }
@@ -461,7 +467,14 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 		// carries no secret. This is enforcement locus 1: marvel
 		// constructs the environment, and what the agent can prove about
 		// itself is what marvel put there.
-		if ctx.Session.HeartbeatToken != "" {
+		//
+		// A harness that may publish its own environment gets the path of a
+		// file instead (TokenFile), so the secret is not in what it
+		// publishes.
+		switch {
+		case ctx.TokenFile != "":
+			env[api.HeartbeatTokenFileEnv] = ctx.TokenFile
+		case ctx.Session.HeartbeatToken != "":
 			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
 		}
 	}
@@ -527,6 +540,7 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 // failure it enables is silent.
 var roleEnvRefusedKeys = []string{
 	api.HeartbeatTokenEnv,
+	api.HeartbeatTokenFileEnv,
 	"DIRECTOR_NATS_USER",
 	"DIRECTOR_NATS_PASS",
 }
