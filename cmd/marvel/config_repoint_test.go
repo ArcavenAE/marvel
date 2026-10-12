@@ -347,6 +347,8 @@ func TestRepointRefusesANewAddressThatCannotBeDialedDirectly(t *testing.T) {
 
 func TestRepointRefusesTheAddressTheClusterAlreadyHas(t *testing.T) {
 	e := newRepointEnv(t)
+	// The probe would succeed, so only the same-address check can refuse.
+	e.presented["10.0.0.5:6785"] = e.recorded
 	before := e.state(t)
 	err := runRepoint(&bytes.Buffer{}, strings.NewReader("y\n"), true, "prod", repointOld)
 	if err == nil {
