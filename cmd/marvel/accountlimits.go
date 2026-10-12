@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"math"
-	"os"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -112,7 +111,7 @@ const accountLimitsTimeout = 3 * time.Second
 // (which carries none) the time this seat first saw the figure. A zero one is
 // read by the daemon as unknown and never displaces a stamped reading.
 func sendAccountLimits(socket, workspace, session string, windows []api.AccountWindow, observedAt time.Time) {
-	req, ok := accountLimitsRequest(workspace, session, os.Getenv(api.HeartbeatTokenEnv), windows, observedAt)
+	req, ok := accountLimitsRequest(workspace, session, api.HeartbeatTokenFromEnv(), windows, observedAt)
 	if !ok {
 		return
 	}
