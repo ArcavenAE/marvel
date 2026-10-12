@@ -2113,6 +2113,7 @@ or ~/.ssh/ keys.`,
 	addCluster.Flags().StringVar(&addIdentity, "identity", "", "private key file to use for SSH auth on this cluster")
 	addCluster.Flags().BoolVar(&addIdentityDefault, "no-default-identity", false, "do not auto-attach ~/.marvel/keys/client_ed25519")
 	cmd.AddCommand(addCluster)
+	cmd.AddCommand(repointCmd())
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "remove-cluster <name>",
