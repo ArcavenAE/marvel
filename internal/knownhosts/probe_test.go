@@ -203,6 +203,7 @@ func testKey(t *testing.T) ssh.PublicKey {
 }
 
 func TestProbeFailsWhenNothingListens(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
