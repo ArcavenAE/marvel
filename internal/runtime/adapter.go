@@ -55,6 +55,8 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// TokenFile is the file holding this launch's heartbeat token.
+	TokenFile string
 	// Events receives an event an adapter's seed step records, such as the
 	// folder trust a codex seat was given. Nil is safe.
 	Events events.Emitter
@@ -222,6 +224,12 @@ type SessionIDAssigner interface {
 	// adapter, so a harness whose pin depends on mode or on the caller's
 	// own args can decline the launches it cannot name.
 	AssignsSessionID(ctx *LaunchContext) bool
+}
+
+// TokenFileCapable is implemented by an adapter whose harness may publish its
+// own environment.
+type TokenFileCapable interface {
+	DeliversTokenByFile() bool
 }
 
 // StatuslineFeeder is the optional half of the projection contract. An

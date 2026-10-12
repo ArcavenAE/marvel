@@ -58,6 +58,8 @@ type Manager struct {
 	// The pipes carry no content at rest, so nothing here needs to survive
 	// a restart; NewFIFO replaces a leftover pipe rather than failing on it.
 	StreamDir string
+	// TokenDir holds the per-session heartbeat token files.
+	TokenDir string
 	// ProjectionDir holds the per-session projected policy settings files
 	// (finding-024's contract half). Defaults to a per-layout temp
 	// directory (see daemonTempDir). The path must survive a restart even
@@ -107,6 +109,12 @@ type Manager struct {
 	// Nil when there is no driver; Delete then treats the pane as live.
 	paneStatus func(paneID string) (tmux.PaneStatus, error)
 }
+
+// writeTokenFile writes the session's token for a by-file launch.
+func (m *Manager) writeTokenFile(sess *api.Session) (string, error) { return "", nil }
+
+// removeTokenFile removes the session's token file.
+func (m *Manager) removeTokenFile(key string) {}
 
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {

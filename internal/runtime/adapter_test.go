@@ -824,3 +824,52 @@ func TestBaseEnvCarriesTheViewPathOnceTheViewExists(t *testing.T) {
 		t.Errorf("MARVEL_VIEW_OTHER = %q for a view that was not built, want it absent", got)
 	}
 }
+
+// A harness that may publish its environment gets the token by file: the
+// variable that names the file is in the environment, the token is not.
+func TestBaseEnvWithATokenFileCarriesThePathAndNotTheToken(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.SocketPath = "/run/marvel.sock"
+	ctx.Session.HeartbeatToken = "9c1e77aa"
+	ctx.TokenFile = "/state/tokens/acme-squad-worker-g1-0"
+
+	env := baseEnv(ctx)
+
+	if got := env[api.HeartbeatTokenFileEnv]; got != ctx.TokenFile {
+		t.Errorf("%s = %q, want %q", api.HeartbeatTokenFileEnv, got, ctx.TokenFile)
+	}
+	if v, present := env[api.HeartbeatTokenEnv]; present {
+		t.Errorf("%s = %q reached an environment that was to carry the file instead", api.HeartbeatTokenEnv, v)
+	}
+}
+
+func TestBaseEnvWithoutATokenFileCarriesTheTokenOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.SocketPath = "/run/marvel.sock"
+	ctx.Session.HeartbeatToken = "9c1e77aa"
+
+	env := baseEnv(ctx)
+
+	if got := env[api.HeartbeatTokenEnv]; got != "9c1e77aa" {
+		t.Errorf("%s = %q, want the token", api.HeartbeatTokenEnv, got)
+	}
+	if _, present := env[api.HeartbeatTokenFileEnv]; present {
+		t.Errorf("%s set on a launch with no token file", api.HeartbeatTokenFileEnv)
+	}
+}
+
+func TestBaseEnvRefusesATokenFileFromRoleEnv(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.SocketPath = "/run/marvel.sock"
+	ctx.Role.Runtime.Env = map[string]string{api.HeartbeatTokenFileEnv: "/etc/passwd"}
+
+	if v, present := baseEnv(ctx)[api.HeartbeatTokenFileEnv]; present {
+		t.Errorf("%s = %q came from the manifest; a role must not point the seat at another file", api.HeartbeatTokenFileEnv, v)
+	}
+}

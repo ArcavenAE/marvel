@@ -16,6 +16,16 @@ import (
 // the host can list it.
 const HeartbeatTokenEnv = "MARVEL_HEARTBEAT_TOKEN"
 
+// HeartbeatTokenFileEnv names a file holding the session's heartbeat token. A
+// launch sets it in place of HeartbeatTokenEnv for a harness that may publish
+// its own environment.
+const HeartbeatTokenFileEnv = "MARVEL_HEARTBEAT_TOKEN_FILE"
+
+// HeartbeatTokenFromEnv returns the session's heartbeat token.
+func HeartbeatTokenFromEnv() string {
+	return os.Getenv(HeartbeatTokenEnv)
+}
+
 // ErrHeartbeatUnauthorized is returned when a heartbeat presents no token
 // or the wrong one for the session it claims.
 var ErrHeartbeatUnauthorized = errors.New("heartbeat token does not match the session it claims")
