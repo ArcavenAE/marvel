@@ -101,7 +101,7 @@ Each table has the eight columns the command fixes. A row's trace back names cla
 
 ## 4. Rationale
 
-The rows follow the brief. Each is either a claim the records observed (C-001, C-011 and so on), a decision the operator ruled (C-007 to C-009, C-013, C-017, C-018, C-043 and the objectives C-039 to C-046), or a forward intent (C-021, C-023). Claims classed JUDGMENT in the brief (C-027 to C-030) are the brief's inference from findings and became rows STREQ-010, STREQ-011, STREQ-012 and STREQ-014. They stay `proposed` like every other row until the operator ratifies them.
+The rows follow the brief. Each is either a claim the records observed (C-001, C-011 and so on), a decision the operator ruled (C-007 to C-009, C-013, C-018, C-043 and the objectives C-039 to C-046; C-017 is carried as an open question, see below), or a forward intent (C-021, C-023). Claims classed JUDGMENT in the brief (C-027 to C-030) are the brief's inference from findings and became rows STREQ-010, STREQ-011, STREQ-012 and STREQ-014. They stay `proposed` like every other row until the operator ratifies them.
 
 Where the brief cites no measure, date or classification, the row says "not yet measurable" and points at an open question, so the gap stays visible. Rows STREQ-019 and STREQ-031 point at frontier nodes that already exist.
 
