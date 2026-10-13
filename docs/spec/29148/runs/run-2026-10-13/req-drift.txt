@@ -9,8 +9,6 @@ index: docs/spec/29148/evidence-index.md
 3. built rows whose PR is not merged
    none
 4. rows whose trace back reaches a graveyard node
-   STREQ-028: C-017 reaches NODE:grv-standalone-pack-manager (graveyard)
-   STREQ-028: NODE:grv-standalone-pack-manager reaches NODE:grv-standalone-pack-manager (graveyard)
    STREQ-OPS-004: C-018 reaches NODE:grv-private-claude-config-home-macos (graveyard)
    STREQ-OPS-004: NODE:grv-private-claude-config-home-macos reaches NODE:grv-private-claude-config-home-macos (graveyard)
 5. frontier questions with no row and no proposed node
@@ -33,9 +31,7 @@ index: docs/spec/29148/evidence-index.md
    question-marvel-otel-architecture: frontier node with no row and no proposed node
    question-marvel-service-provider-shape: frontier node with no row and no proposed node
    question-model-runtime-posture: frontier node with no row and no proposed node
-   question-mrvl-exposure-and-trust-bootstrap: frontier node with no row and no proposed node
    question-multicluster-view: frontier node with no row and no proposed node
-   question-pack-integration: frontier node with no row and no proposed node
    question-permission-model: frontier node with no row and no proposed node
    question-persistence: frontier node with no row and no proposed node
    question-role-tools-field-projection: frontier node with no row and no proposed node
