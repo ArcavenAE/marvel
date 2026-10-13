@@ -486,9 +486,17 @@ func (s *Supervisor) spawnLocked() error {
 // binaryVersion runs `<bin> --version` and returns the version token
 // ("v2.14.6" from "nats-server: v2.14.6"), or "unknown" when the binary
 // does not answer. Read once at construction; the pin lives in mise.toml
-// and this is how a disagreeing PATH shows up in marvel bus status.
+// and this is how a disagreeing PATH shows up in marvel bus status. The
+// probe child gets the message-bus class allowlist and no minted keys, not
+// the daemon's own environment (aae-orc-433bj).
 func binaryVersion(bin string) string {
-	out, err := exec.Command(bin, "--version").Output()
+	class, err := service.Class(service.ClassMessageBus)
+	if err != nil {
+		return "unknown"
+	}
+	cmd := exec.Command(bin, "--version")
+	cmd.Env = workload.AllowedEnv(class.ChildEnvAllow)
+	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
 	}

@@ -110,6 +110,13 @@ func Start(spec ProcessSpec) (*Child, error) {
 	return &Child{Cmd: cmd, Pid: pid, Env: env}, nil
 }
 
+// AllowedEnv is the environment of a short-lived child that mints nothing:
+// the allowed keys the daemon actually has, and no others. It is childEnv with
+// no minted keys, for a child that is not started through Start.
+func AllowedEnv(allow []string) []string {
+	return childEnv(allow, nil)
+}
+
 // childEnv is the only constructor of a managed child's environment: the
 // allowed keys the daemon actually has, then the minted secrets. A minted
 // key that repeats an allowed one comes last and wins, as exec resolves it.
