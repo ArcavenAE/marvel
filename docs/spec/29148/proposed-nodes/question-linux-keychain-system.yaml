@@ -1,0 +1,16 @@
+id: question-linux-keychain-system
+type: question
+confidence: frontier
+title: "Which keychain system will marvel require and support on Linux?"
+content: |
+  The brief records that macOS and Linux are both target platforms, that the
+  Linux keychain system is not yet chosen, and that it will not require a GUI
+  desktop or a display server (no GNOME, KDE, X or Wayland). STREQ-OPS-003 has
+  no Linux pass condition until the system is chosen.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - finding-041@hash:9adc836d154a3453fc7e9007b7cf41d7c8d2a44d
+    - brs-review@hash:eddc89399e3a63a5ed9c57a1503a1f4893591a8a

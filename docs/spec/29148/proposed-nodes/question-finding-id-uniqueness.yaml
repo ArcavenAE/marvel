@@ -1,0 +1,17 @@
+id: question-finding-id-uniqueness
+type: question
+confidence: frontier
+title: "Should marvel's finding ids be made unique?"
+content: |
+  Two findings share the id finding-039 (the b69n contract-lane harvest, and
+  the tap push race), so a citation of finding-039 cannot say which is meant
+  (Q-007). The operator says it is not the only conflict and a fix or renumber
+  is in progress. Rows that need finding-039 cannot cite it until the ids are
+  unique.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - finding-039@hash:fd12356e7cecadb73c408a253890b55d85e158ac
+    - brs-review@hash:eddc89399e3a63a5ed9c57a1503a1f4893591a8a

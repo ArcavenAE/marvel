@@ -1,0 +1,16 @@
+id: question-objective-measures
+type: question
+confidence: frontier
+title: "How are the objectives of stable services, chosen by other users and an improved new-user experience measured?"
+content: |
+  The brief gives objectives with dates (C-040 two months, C-041 four months,
+  C-044 six months) but no measure for stable, for other users having chosen
+  marvel, or for an improved new-user experience. STREQ-020, STREQ-021 and
+  STREQ-023 have no pass condition until each has a measure and an instrument.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - brs@hash:e110b9e867fef114947f10604af5ae0aeb52e317
+    - brs-review@hash:eddc89399e3a63a5ed9c57a1503a1f4893591a8a

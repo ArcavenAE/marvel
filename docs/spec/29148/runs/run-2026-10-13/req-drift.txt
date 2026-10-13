@@ -1,0 +1,49 @@
+req-drift report (a diagnostic; always exits 0)
+strs: docs/spec/29148/strs.md
+brief: docs/spec/29148/brs.md
+index: docs/spec/29148/evidence-index.md
+1. ratified rows with no trace forward
+   none
+2. closed bd ids on rows not built, verified or retired
+   none
+3. built rows whose PR is not merged
+   none
+4. rows whose trace back reaches a graveyard node
+   STREQ-028: C-017 reaches NODE:grv-standalone-pack-manager (graveyard)
+   STREQ-028: NODE:grv-standalone-pack-manager reaches NODE:grv-standalone-pack-manager (graveyard)
+   STREQ-OPS-004: C-018 reaches NODE:grv-private-claude-config-home-macos (graveyard)
+   STREQ-OPS-004: NODE:grv-private-claude-config-home-macos reaches NODE:grv-private-claude-config-home-macos (graveyard)
+5. frontier questions with no row and no proposed node
+   question-agent-communication-broker: frontier node with no row and no proposed node
+   question-channel-observation-cost: frontier node with no row and no proposed node
+   question-cluster-identity-across-host-move: frontier node with no row and no proposed node
+   question-container-session-placement: frontier node with no row and no proposed node
+   question-convergence-posture: frontier node with no row and no proposed node
+   question-credential-custody-beyond-nkey: frontier node with no row and no proposed node
+   question-cross-workspace-teams: frontier node with no row and no proposed node
+   question-daemon-isolation-boundary: frontier node with no row and no proposed node
+   question-describe-seat-delivery: frontier node with no row and no proposed node
+   question-event-ring-as-signal-bus: frontier node with no row and no proposed node
+   question-fleet-pause-resume: frontier node with no row and no proposed node
+   question-host-resource-lease: frontier node with no row and no proposed node
+   question-interactive-context-pressure: frontier node with no row and no proposed node
+   question-managed-runtime-placement: frontier node with no row and no proposed node
+   question-marvel-graceful-stop: frontier node with no row and no proposed node
+   question-marvel-mcp-service-provider: frontier node with no row and no proposed node
+   question-marvel-otel-architecture: frontier node with no row and no proposed node
+   question-marvel-service-provider-shape: frontier node with no row and no proposed node
+   question-model-runtime-posture: frontier node with no row and no proposed node
+   question-mrvl-exposure-and-trust-bootstrap: frontier node with no row and no proposed node
+   question-multicluster-view: frontier node with no row and no proposed node
+   question-pack-integration: frontier node with no row and no proposed node
+   question-permission-model: frontier node with no row and no proposed node
+   question-persistence: frontier node with no row and no proposed node
+   question-role-tools-field-projection: frontier node with no row and no proposed node
+   question-router-and-backend-layering: frontier node with no row and no proposed node
+   question-scheduled-cues: frontier node with no row and no proposed node
+   question-seat-harness-state: frontier node with no row and no proposed node
+   question-seat-readonly-view: frontier node with no row and no proposed node
+   question-session-active-backend: frontier node with no row and no proposed node
+   question-spend-dollar-column: frontier node with no row and no proposed node
+   question-stream-attachment: frontier node with no row and no proposed node
+   question-team-load-rollup: frontier node with no row and no proposed node

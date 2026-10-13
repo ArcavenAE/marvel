@@ -1,0 +1,16 @@
+run_id: run-2026-10-13
+run_start: 2026-10-13T21:34:57Z
+session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+polish: none
+run_end: 2026-10-13T21:37:24Z
+measurement_wall_seconds: 147
+measurement_active_seconds: 147
+measurement_tokens: input 14, output 19339, cache_read 1703708, cache_creation 40788
+rows_generated: 36
+rows_ratified: 0
+corrections_by_row: not yet counted: no row is ratified, so there is no ratified text to compare the generated rows against; the count is correct plus reject plus add, taken when the operator reviews
+inputs_brs_sha: e110b9e867fef114947f10604af5ae0aeb52e317
+inputs_evidence_index_sha: 33868053df119d067a71c4e545970846aac59ed4
+inputs_brs_review_sha: eddc89399e3a63a5ed9c57a1503a1f4893591a8a
+inputs_marvel_main: 8029b3ca373a2c76f0a604294e4df5e22349f274
+inputs_spectacle_main: e8958c954a7ea823f067139f07f344513cbd892e
