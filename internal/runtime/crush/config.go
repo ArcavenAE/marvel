@@ -97,6 +97,22 @@ func (v Verdict) Refused() []File {
 	return out
 }
 
+// withoutRepoVars drops the variables that point git at a particular
+// repository. A git hook, or a process started from a linked worktree, carries
+// them, and git would then read that repository instead of the one cwd is in.
+func withoutRepoVars(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE":
+		default:
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // Boundary returns the directory Crush stops its upward config search at: the
 // git working tree root of cwd, or cwd itself when git cannot name one. It
 // asks git the way Crush does, so the two agree.
@@ -107,6 +123,7 @@ func Boundary(cwd string) (string, error) {
 	}
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = cwd
+	cmd.Env = withoutRepoVars(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return abs, nil

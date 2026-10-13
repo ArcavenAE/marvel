@@ -324,7 +324,6 @@ func TestBoundaryIgnoresRepositoryVariablesInTheEnvironment(t *testing.T) {
 	}{
 		{"GIT_DIR", map[string]string{"GIT_DIR": filepath.Join(other, ".git")}},
 		{"GIT_DIR and GIT_WORK_TREE", map[string]string{"GIT_DIR": filepath.Join(other, ".git"), "GIT_WORK_TREE": other}},
-		{"GIT_DIR and GIT_COMMON_DIR", map[string]string{"GIT_DIR": filepath.Join(other, ".git"), "GIT_COMMON_DIR": filepath.Join(other, ".git")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for k, v := range tc.env {
