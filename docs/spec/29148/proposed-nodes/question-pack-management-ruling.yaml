@@ -1,0 +1,21 @@
+id: question-pack-management-ruling
+type: question
+confidence: frontier
+title: "Does the ruling against a standalone pack manager (C-017) still hold after ADR-008's phasing across sideshow and marvel?"
+content: |
+  Does C-017 still hold? The brief records a ruling that pack management is
+  not built as a separate tool outside marvel. marvel's CLAUDE.md (lines
+  512-514 at 8029b3ca) says pack management is phased across sideshow and
+  marvel under ADR-008, with sideshow installing packs now and marvel
+  consuming what is on the host filesystem. That is the reopener the graveyard
+  node names. The StRS carries no pack-management row until the operator rules
+  whether C-017 reopens.
+provenance:
+  created_by: builder role, by hand
+  note: "Written by hand in the review revision of marvel#869, after review 5510706500 found that STREQ-028 conflicted with ADR-008. It was not produced by the reverse-prd run, which ended at 2026-10-13T21:37:24Z. The session id is the session the revision was written in."
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T22:20:22Z
+  derived_from:
+    - grv-standalone-pack-manager@hash:fa57c261c334bdbf9cf8a7efec269c2f3e8ba4a1
+    - question-pack-integration@hash:61d770a9c0802ed0429cc144945e517cc2c8b3a6
+    - CLAUDE@hash:38a0b1b5687d30f55df555f222ac1189d2f45299

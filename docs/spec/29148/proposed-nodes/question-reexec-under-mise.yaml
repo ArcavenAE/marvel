@@ -1,0 +1,17 @@
+id: question-reexec-under-mise
+type: question
+confidence: frontier
+title: "How does marvel daemon reexec start the new version when marvel is installed by mise?"
+content: |
+  Under mise each version lives in its own directory and reexec re-executes
+  the binary at the running daemon's own path, so it restarts the old version
+  (Q-010, marvel#523, tracked in marvel#592). The operator wants reexec to
+  work under mise even if the architecture has to change. STREQ-OPS-005 cannot
+  pass today.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - elem-staged-activation-upgrades@hash:fd6e1ac35361cba2e5d380b1cb0dfee4b7f398ac
+    - brs-review@hash:eddc89399e3a63a5ed9c57a1503a1f4893591a8a

@@ -1,0 +1,20 @@
+run_id: run-2026-10-13
+run_start: 2026-10-13T21:34:57Z
+session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+polish: none
+run_end: 2026-10-13T21:37:24Z
+measurement_wall_seconds: 147
+measurement_active_seconds: 147
+measurement_tokens: input 16, output 20024, cache_read 1979616, cache_creation 42470
+rows_generated: 36
+rows_after_review_1: 35
+rows_ratified: 0
+corrections_by_row: not yet counted: no row is ratified, so there is no ratified text to compare the generated rows against; the count is correct plus reject plus add, taken when the operator reviews
+inputs_brs_sha: e110b9e867fef114947f10604af5ae0aeb52e317
+inputs_evidence_index_sha: 33868053df119d067a71c4e545970846aac59ed4
+inputs_brs_review_sha: eddc89399e3a63a5ed9c57a1503a1f4893591a8a
+inputs_marvel_main: 8029b3ca373a2c76f0a604294e4df5e22349f274
+inputs_spectacle_main: e8958c954a7ea823f067139f07f344513cbd892e
+measurement_tokens_note: the first count (7 messages: input 14, output 19339, cache_read 1703708, cache_creation 40788) was taken before the run's last message, at 21:37:23Z, was written to the transcript. Counted again on kinu, where session 9b948f8e's transcript is, with scripts/tokens and with a separate script that keeps the largest value per message id, both give 8 messages: input 16, output 20024, cache_read 1979616, cache_creation 42470. Wall time is unchanged.
+revision_1: after review 5510706500. STREQ-028 dropped (C-017 goes to the operator, see question-pack-management-ruling); STREQ-012, 017, 021, 025 and 031 reworded or cited; strs-check and req-drift rerun on the revised StRS. The run window and the token count above cover the original run only, not the revision.
+frontier_coverage: 39 frontier nodes at marvel 8029b3ca. The original run cited 6 and left 33 with no row and no proposed node; 24 of the 33 are rows of the evidence index and 9 are not. After review 1, two of the 33 are covered (question-mrvl-exposure-and-trust-bootstrap by STREQ-017, question-pack-integration by the new proposed node), leaving 31: 22 in the index and 9 not. The common reason is that brs.md names none of them, and the command drafts from the brief, so a frontier node the brief does not name gets no row.

@@ -1,0 +1,17 @@
+id: question-reported-state-names
+type: question
+confidence: frontier
+title: "What state should marvel report for a finished headless run and for a run blocked at a modal dialog?"
+content: |
+  Finding-027's truth table shows a finished one-shot run reported as crashed
+  and a blocked run reported as running. The records say what is wrong, not
+  which state names should replace them, and the session-state observation
+  question is still open. STREQ-010 passes on what must not be reported, not
+  on what must.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - finding-027@hash:6354a35231448b66ab2a252968d3ae7870dcbf9f
+    - question-session-state-observation@hash:cef6b7a26e81a84cebb7cb40ece43ee22190cd43
