@@ -97,9 +97,31 @@ func (v Verdict) Refused() []File {
 	return out
 }
 
+// withoutRepoVars drops the variables that change which repository git finds
+// for a directory: GIT_DIR and GIT_WORK_TREE name another repository, and
+// GIT_CEILING_DIRECTORIES stops the search before it reaches the right one, so
+// git exits 128 and Boundary would fall back to cwd. A git hook, or a process
+// started from a linked worktree, can carry the first two. Other git
+// variables, GIT_COMMON_DIR among them, leave --show-toplevel unchanged.
+func withoutRepoVars(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_CEILING_DIRECTORIES":
+		default:
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // Boundary returns the directory Crush stops its upward config search at: the
 // git working tree root of cwd, or cwd itself when git cannot name one. It
-// asks git the way Crush does, so the two agree.
+// asks git with GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES removed from
+// the environment, so a hook's or a launcher's values cannot change the answer.
+// Crush finds its own boundary in the environment it is started with, so the
+// two agree only when the adapter starts Crush with those variables removed too.
 func Boundary(cwd string) (string, error) {
 	abs, err := filepath.Abs(cwd)
 	if err != nil {
@@ -107,6 +129,7 @@ func Boundary(cwd string) (string, error) {
 	}
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = cwd
+	cmd.Env = withoutRepoVars(os.Environ())
 	out, err := cmd.Output()
 	if err != nil {
 		return abs, nil

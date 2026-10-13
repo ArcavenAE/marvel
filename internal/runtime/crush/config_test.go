@@ -306,3 +306,38 @@ func TestBoundaryIsTheGitRootAndFallsBackToTheWorkingDirectory(t *testing.T) {
 		t.Fatalf("Boundary(no repo) = %q, want the directory itself %q", got, plain)
 	}
 }
+
+// A git hook, and a launcher started from a linked worktree, set GIT_DIR and
+// friends in the environment. Boundary must still name the repository that
+// contains cwd, as Crush does when it is started in a clean environment.
+func TestBoundaryIgnoresRepositoryVariablesInTheEnvironment(t *testing.T) {
+	root := t.TempDir()
+	repo := gittest.Repo(t, filepath.Join(root, "repo"))
+	other := gittest.Repo(t, filepath.Join(root, "other"))
+	sub := filepath.Join(repo, "pkg", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{"GIT_DIR", map[string]string{"GIT_DIR": filepath.Join(other, ".git")}},
+		{"GIT_DIR and GIT_WORK_TREE", map[string]string{"GIT_DIR": filepath.Join(other, ".git"), "GIT_WORK_TREE": other}},
+		{"GIT_CEILING_DIRECTORIES at the repository root", map[string]string{"GIT_CEILING_DIRECTORIES": repo}},
+		{"GIT_CEILING_DIRECTORIES between the root and cwd", map[string]string{"GIT_CEILING_DIRECTORIES": filepath.Join(repo, "pkg")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			got, err := Boundary(sub)
+			if err != nil {
+				t.Fatalf("Boundary: %v", err)
+			}
+			if got != repo {
+				t.Fatalf("Boundary with %s set = %q, want %q", tc.name, got, repo)
+			}
+		})
+	}
+}
