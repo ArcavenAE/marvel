@@ -10,18 +10,20 @@ import (
 
 // fakeLifecycle is a provider the daemon drives with no bus in sight.
 type fakeLifecycle struct {
+	starts   int
+	reloads  int
 	restarts []string
 	stops    []bool
 	status   service.Status
 }
 
-func (f *fakeLifecycle) Start(context.Context) error { return nil }
+func (f *fakeLifecycle) Start(context.Context) error { f.starts++; return nil }
 func (f *fakeLifecycle) Stop(keep bool)              { f.stops = append(f.stops, keep) }
 func (f *fakeLifecycle) Restart(reason string) error {
 	f.restarts = append(f.restarts, reason)
 	return nil
 }
-func (f *fakeLifecycle) Reload() error          { return nil }
+func (f *fakeLifecycle) Reload() error          { f.reloads++; return nil }
 func (f *fakeLifecycle) Status() service.Status { return f.status }
 
 // fingerprintingLifecycle also reports an environment fingerprint.
@@ -117,5 +119,18 @@ func TestBusStatusFromAPlainLifecycle(t *testing.T) {
 	}
 	if !st.Managed || !st.Ready || st.PID != 42 || st.Restarts != 3 {
 		t.Errorf("busStatus = %+v, want managed, ready, pid 42, 3 restarts", st)
+	}
+}
+
+// A render that changes the configuration reloads the broker through the
+// lifecycle, not through the concrete supervisor.
+func TestRenderReloadsThroughTheLifecycle(t *testing.T) {
+	d := newHandlerDaemon(t)
+	attachTestBus(t, d, "")
+	f := &fakeLifecycle{}
+	wireBusReloader(d.bus, f)
+	d.regenerateBus("test render")
+	if f.reloads != 1 {
+		t.Errorf("reloads = %d after a changed render, want 1", f.reloads)
 	}
 }

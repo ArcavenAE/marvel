@@ -3568,6 +3568,9 @@ func (d *Daemon) stopBus(teardown bool) {
 	}
 }
 
+// wireBusReloader is a stub in the red commit.
+func wireBusReloader(mgr *bus.Manager, lc service.Lifecycle) {}
+
 // restartBus restarts the supervised broker so a change that only a new
 // process can pick up (the leaf seed in its environment) takes effect. A
 // failure is logged and surfaced as bus.crashed-shaped warning text on the

@@ -3,10 +3,12 @@ package bus
 import (
 	"context"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/service"
 )
 
@@ -117,4 +119,80 @@ func TestLifecycleStatusReadsBackoff(t *testing.T) {
 	if got := NewLifecycle(s).Status().State; got != service.StateBackoff {
 		t.Errorf("State = %q, want backoff", got)
 	}
+}
+
+func ringHas(r *events.Ring, kind, substr string) bool {
+	for _, ev := range r.Snapshot(events.Filter{}, 0) {
+		if string(ev.Kind) == kind && strings.Contains(ev.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reload reaches the broker: a started broker records the reload on the ring.
+func TestLifecycleReloadReachesTheBroker(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	l := NewLifecycle(s)
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { l.Stop(false) })
+	if err := l.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !ringHas(ring, string(events.KindBusReloaded), "reloaded authorization") {
+		t.Error("Reload did not reach the broker: no bus.reloaded event on the ring")
+	}
+}
+
+// Restart carries its reason to the supervisor's start event.
+func TestLifecycleRestartCarriesItsReason(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	l := NewLifecycle(s)
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { l.Stop(false) })
+	if err := l.Restart("because of a test"); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if !ringHas(ring, string(events.KindBusStarted), "because of a test") {
+		t.Error("the restart reason did not reach the supervisor")
+	}
+}
+
+// The restart count is the supervisor's, not a zero.
+func TestLifecycleStatusCarriesTheRestartCount(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	s.mu.Lock()
+	s.restarts = 3
+	s.mu.Unlock()
+	if got := NewLifecycle(s).Status().Restarts; got != 3 {
+		t.Errorf("Restarts = %d, want 3", got)
+	}
+}
+
+// Stop(false) takes the broker process down, not just the supervision.
+func TestLifecycleStopWithoutKeepKillsTheChild(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	l := NewLifecycle(s)
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := l.Status().PID
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = proc.Kill() })
+	l.Stop(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if proc.Signal(syscall.Signal(0)) != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Errorf("pid %d is still running after Stop(keep=false)", pid)
 }
