@@ -352,10 +352,9 @@ func TestContainerCommandQuotesTheCommand(t *testing.T) {
 	}
 }
 
-// Whitespace that splits a shell word, newline and tab included, must not leave
-// the quotes: a command, a path or a runtime carrying one reaches the host
-// wrapper shell, which runs the text it is given. The marker is created only if
-// the host shell ran the second line.
+// Every argument is quoted, whatever it holds: a command, a path or a runtime
+// reaches the host wrapper shell, which runs the text it is given. The marker is
+// created only if the host shell ran any of the payloads.
 func TestContainerCommandQuotesNewlineAndTabOnTheHost(t *testing.T) {
 	for _, sh := range shells(t) {
 		for name, payload := range map[string]string{
@@ -394,8 +393,7 @@ func TestContainerCommandQuotesNewlineAndTabOnTheHost(t *testing.T) {
 	}
 }
 
-// A path or the runtime with a tab in it, and no space, is one word too: the old
-// quoting let that through.
+// A path or the runtime with a tab in it, and no space, is one word too.
 func TestContainerCommandQuotesPathsAndRuntimeWithWhitespace(t *testing.T) {
 	bin, log := fakeRuntime(t, "0")
 	dir := t.TempDir()

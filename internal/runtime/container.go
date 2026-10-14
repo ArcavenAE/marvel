@@ -104,11 +104,9 @@ func sanitizeContainerPart(s string) string {
 	return b.String()
 }
 
-// containerQuote single-quotes s unconditionally. shellQuote, which the adapters
-// use, quotes only when a string holds a listed metacharacter, and newline and
-// tab are not listed, so text carrying one would reach the host shell unquoted.
-// The host wrapper shell runs whatever it is handed, so this path never takes
-// that shortcut.
+// containerQuote single-quotes s unconditionally, escaping embedded single
+// quotes. The host wrapper shell runs whatever it is handed, so every argument
+// is quoted.
 func containerQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
