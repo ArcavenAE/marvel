@@ -19,9 +19,12 @@ import (
 // default (operator ruling 2026-10-14), and nothing here starts a container-placed
 // seat on the host.
 //
-// What a seat does when no container runtime is installed is not decided here:
-// it waits on the operator's answer to card sandbox-refusal-vs-d2. Until then a
-// missing runtime is a plain launch failure, not a refusal and not a fallback.
+// With no container runtime (docker or podman) on PATH a container placement is
+// refused too, with a message that says what to install and that an explicit
+// placement = "localhost" runs on the host (operator ruling 2026-10-14, "7.2
+// refuse"). The refusal is the same shape as the missing image: no session
+// record, a standing record with its own reason, one event per change, and it
+// ends on its own when a runtime appears.
 
 // containerRefusalSuffix keys the container refusal apart from the directory
 // refusal of the same role, so each keeps its own record and neither clears the
@@ -38,8 +41,9 @@ func (m *Manager) lookPath() func(string) (string, error) {
 // containerPlacement resolves where sess runs. It returns the role's image and
 // true when the placement is container, and false when it is not. A container
 // placement with no image returns an error wrapping ErrPlacementRefused, after
-// recording the refusal; an image that is not a plain reference, or a missing
-// runtime, returns a plain error. Nothing is created in any of those cases.
+// recording the refusal, and so does a container placement with no container
+// runtime; an image that is not a plain reference returns a plain error.
+// Nothing is created in any of those cases.
 func (m *Manager) containerPlacement(sess *api.Session) (string, bool, error) {
 	roleKey := sess.Workspace + "/" + sess.Team + "/" + sess.Role
 	key := roleKey + containerRefusalSuffix
@@ -74,13 +78,16 @@ func (m *Manager) containerPlacement(sess *api.Session) (string, bool, error) {
 		m.noteRefusal(sess, key, RefusalContainerImage, events.KindSessionContainerRefused, "", msg)
 		return "", true, fmt.Errorf("refuse to start session %s: container placement with no container_image: %w", sess.Key(), ErrPlacementRefused)
 	}
-	delete(m.refused, key)
 	if !api.ValidContainerImage(image) {
+		delete(m.refused, key)
 		return "", true, fmt.Errorf("session %s: container_image %q is not a plain image reference", sess.Key(), image)
 	}
 	if _, ok := runtime.DetectContainerRuntime(m.lookPath()); !ok {
-		return "", true, fmt.Errorf("session %s: placement is container and no container runtime (docker or podman) is installed; not started on the host", sess.Key())
+		msg := fmt.Sprintf("not started: %s/%s resolves to a container placement and no container runtime (docker or podman) is on PATH; nothing is started on the host (install one, or set placement = \"localhost\" on the workspace)", sess.Team, sess.Role)
+		m.noteRefusal(sess, key, RefusalContainerRuntime, events.KindSessionContainerRefused, "", msg)
+		return "", true, fmt.Errorf("refuse to start session %s: container placement and no container runtime (docker or podman) on PATH: %w", sess.Key(), ErrPlacementRefused)
 	}
+	delete(m.refused, key)
 	return image, true, nil
 }
 

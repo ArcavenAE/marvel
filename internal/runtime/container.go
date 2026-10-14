@@ -13,10 +13,9 @@ import (
 
 // The container half of a seat whose placement resolved to container
 // (docs/design/workspace-sandbox-shape.md, sections 5 and 7). Everything here is
-// pure: nothing probes a daemon, reads the environment or starts a process, and
-// nothing in the launch path calls it yet. The wiring into Manager.planLaunch,
-// the image source and the refusal when no runtime can be had belong to the next
-// step.
+// pure: nothing probes a daemon, reads the environment or starts a process. The
+// launch path calls it from internal/session/container_launch.go, which also
+// owns the image source and the refusal when no runtime can be had.
 
 // ContainerSpec is everything the run command needs, passed in explicitly.
 type ContainerSpec struct {
