@@ -81,3 +81,11 @@ A reproduction, reported to me and not re-run for this section, tested whether t
 - **2.13.2:** the key does not depend on the path, but the entry stores a relative path.
 
 Those are two different mechanisms from the one the earlier instances suppose, and both ran on 2.13.x. Of the first three instances, only the second and third record a version, 2.12.2; the first records none. 2.12.2 is the only version any replay is recorded under, and likely this sighting's too, but its record leaves that open. The reproduction does not test 2.12.2 directly. That is the open question: whether the replay depends on a version or on a cache layout that 2.13 changed. A probe on 2.12.2 would answer it. This section proposes nothing further.
+
+## Fifth instance, 2026-10-14: a removed worktree again, errcheck again
+
+A builder seat's clone of this repository hit it once, reported verbatim except for the worktree's name, shown in brackets: "lefthook pre-commit lint fails with errcheck findings attributed to files under a deleted worktree path (a [builder] worktree that no longer exists), exit status 1, while golangci-lint run ./... on the same tree with a fresh cache reports 0 issues".
+
+- **Workaround:** `GOLANGCI_LINT_CACHE` pointed at a scratch directory for the commit. The hook ran in full and nothing was skipped.
+- **Cause, unconfirmed:** the seat's reading was "default golangci-lint cache entries keyed on file content replayed with the old absolute paths of a worktree that has since been removed". That is candidate (a) from the third instance, and the fourth instance's reproduction did not confirm it on 2.13.x, so this sighting adds a vote, not a mechanism.
+- **Against the earlier instances:** the linter is errcheck, as in the first and third; the second was staticcheck and the fourth unparam. The carrier is a removed worktree, as in the third and fourth. The golangci-lint version and the files and lines named were not recorded, so this sighting cannot answer the fourth instance's version question.
