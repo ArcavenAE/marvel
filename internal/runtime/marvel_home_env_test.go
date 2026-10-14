@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // Not parallel: these set HOME and MARVEL_HOME.
 
 func TestBaseEnvCarriesMarvelHomeBesideTheSocketForANonDefaultRoot(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "mh")
+	root := shortRoot(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(paths.HomeEnv, root)
 
@@ -43,10 +44,22 @@ func TestBaseEnvOmitsMarvelHomeForTheDefaultRootAndWhenUnset(t *testing.T) {
 
 func TestBaseEnvWithoutASocketCarriesNoMarvelHome(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv(paths.HomeEnv, filepath.Join(t.TempDir(), "mh"))
+	t.Setenv(paths.HomeEnv, shortRoot(t))
 	ctx := testContext()
 	ctx.SocketPath = ""
 	if got, present := baseEnv(ctx)[paths.HomeEnv]; present {
 		t.Errorf("%s = %q with no socket to go beside", paths.HomeEnv, got)
 	}
+}
+
+// shortRoot returns a layout root short enough that its control socket fits in
+// a unix socket path; t.TempDir carries the test's name and may not.
+func shortRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "mh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "mh")
 }

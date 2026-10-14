@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 func TestDirectCommandCarriesMarvelHomeForANonDefaultRoot(t *testing.T) {
 	user := t.TempDir()
-	root := filepath.Join(t.TempDir(), "mh")
+	root := shortRoot(t)
 	t.Setenv("HOME", user)
 	sess := &api.Session{Name: "s", Runtime: api.Runtime{Command: "claude"}}
 	m := &Manager{SocketPath: "/run/marvel.sock", adapters: runtime.NewRegistry()}
@@ -31,4 +32,16 @@ func TestDirectCommandCarriesMarvelHomeForANonDefaultRoot(t *testing.T) {
 			t.Errorf("%s: %s reached a seat of a default-rooted daemon", name, paths.HomeEnv)
 		}
 	}
+}
+
+// shortRoot returns a layout root short enough that its control socket fits in
+// a unix socket path; t.TempDir carries the test's name and may not.
+func shortRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "mh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "mh")
 }
