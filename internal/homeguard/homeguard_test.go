@@ -101,10 +101,39 @@ func TestCheckAllowsVariablesTheSetupSet(t *testing.T) {
 
 func layoutAt(home string) paths.Layout { return paths.WithHome(filepath.Join(home, ".marvel")) }
 
-// hasGuardedTestMain reports whether src declares TestMain and calls the guard
-// from it (stub in the red commit: a substring match, which a comment satisfies).
+// hasGuardedTestMain reports whether src declares a TestMain whose body calls
+// homeguard.Run or homeguard.RunWith (or, inside this package, Run or RunWith).
+// A comment, or a call from any other function, does not count.
 func hasGuardedTestMain(src []byte) bool {
-	return strings.Contains(string(src), "homeguard.Run(") || strings.Contains(string(src), "Run(m)")
+	f, err := parser.ParseFile(token.NewFileSet(), "", src, 0)
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			switch fun := call.Fun.(type) {
+			case *ast.SelectorExpr:
+				if id, ok := fun.X.(*ast.Ident); ok && id.Name == "homeguard" && (fun.Sel.Name == "Run" || fun.Sel.Name == "RunWith") {
+					found = true
+				}
+			case *ast.Ident:
+				if fun.Name == "Run" || fun.Name == "RunWith" {
+					found = true
+				}
+			}
+			return true
+		})
+	}
+	return found
 }
 
 // TestEveryPackageWithTestsHasTheGuard lists every directory that holds a
@@ -241,8 +270,8 @@ func TestSetupValueUnderTheRealHomeFailsTheBinary(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a setup that set MARVEL_SOCKET under the real home was accepted:\n%s", out)
 	}
-	if !strings.Contains(string(out), "MARVEL_SOCKET") {
-		t.Errorf("failure does not name the variable:\n%s", out)
+	if !strings.Contains(string(out), "setup: MARVEL_SOCKET") || !strings.Contains(string(out), "real home") {
+		t.Errorf("the failure should come from the setup check, name the variable and the real home:\n%s", out)
 	}
 }
 
@@ -270,6 +299,9 @@ func TestCheckValues(t *testing.T) {
 			problems := checkValues([]string{"MARVEL_PROBE"}, real, roots)
 			if (len(problems) > 0) != c.bad {
 				t.Errorf("checkValues(%q) = %v, want bad=%v", c.value, problems, c.bad)
+			}
+			if strings.HasPrefix(c.value, real) && c.bad && !strings.Contains(strings.Join(problems, "\n"), "real home") {
+				t.Errorf("a value under the real home should say so: %v", problems)
 			}
 		})
 	}

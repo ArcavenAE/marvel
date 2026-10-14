@@ -20,6 +20,8 @@ package homeguard
 import (
 	"fmt"
 	"os"
+	"os/user"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -38,6 +40,9 @@ func Run(m *testing.M) int { return RunWith(m, nil) }
 // guarded variable it leaves set is expected at the end of the run, and any
 // other one is a leak.
 func RunWith(m *testing.M, setup func() error) int {
+	if u, err := user.Current(); err == nil {
+		realHome = u.HomeDir
+	}
 	home, err := os.MkdirTemp("", "marvel-test-home-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "homeguard: scratch home: %v\n", err)
@@ -64,6 +69,12 @@ func RunWith(m *testing.M, setup func() error) int {
 			allowed = append(allowed, name)
 		}
 	}
+	if problems := checkValues(allowed, realHome, scratchRoots(home)); len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "homeguard: setup: %s\n", p)
+		}
+		return 1
+	}
 	want, err := paths.Default()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "homeguard: paths.Default: %v\n", err)
@@ -87,6 +98,8 @@ func RunWith(m *testing.M, setup func() error) int {
 // It is exported so the guard's own tests can feed it a bad state.
 func Check(home string, want paths.Layout, allowed ...string) []string {
 	var problems []string
+	// os.UserHomeDir is read here on purpose: it is what the code under test
+	// resolves, so a changed HOME shows up as a changed answer.
 	got, err := os.UserHomeDir()
 	if err != nil || got != home {
 		return append(problems, fmt.Sprintf("HOME is %q after the run, want the scratch home %q: a test changed it without restoring", got, home))
@@ -96,6 +109,7 @@ func Check(home string, want paths.Layout, allowed ...string) []string {
 			problems = append(problems, name+" is set after the run: a test set it without restoring")
 		}
 	}
+	problems = append(problems, checkValues(allowed, realHome, scratchRoots(home))...)
 	layout, err := paths.Default()
 	if err != nil {
 		return append(problems, "paths.Default: "+err.Error())
@@ -107,15 +121,72 @@ func Check(home string, want paths.Layout, allowed ...string) []string {
 }
 
 // HomeVars is every variable, besides HOME, that marvel or a harness it reaches
-// reads to find a home or config directory (stub in the red commit).
-var HomeVars []string
+// reads to find a home or config directory: codex relocates its home with
+// CODEX_HOME, claude its config with CLAUDE_CONFIG_DIR, and the XDG variables
+// move the base directories a tool falls back to. They are cleared with
+// MARVEL_*, so a test run from a seat pane cannot reach that seat's credential
+// files. The list lives here only; TestEveryHomeLikeVariableTheCodeNamesIsCleared
+// fails when the source names a home-like variable that is missing from it.
+var HomeVars = []string{
+	"CODEX_HOME", "CLAUDE_CONFIG_DIR",
+	"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
+}
 
-// checkValues reports each named variable whose value is a path under the real
-// home or outside the scratch roots (stub in the red commit).
-func checkValues(names []string, realHome string, roots []string) []string { return nil }
+// realHome is the operator's home as the password database records it, read
+// once before HOME is replaced. It is user.Current, not os.UserHomeDir, so the
+// guard's own replacement of HOME cannot move it.
+var realHome string
+
+// checkValues reports each named variable whose value is a path that is not
+// under the scratch home (roots[0]) or another scratch root, or that is under
+// the real home. A value with no path separator is a name (a tmux socket
+// name), not a path, and passes.
+func checkValues(names []string, real string, roots []string) []string {
+	var problems []string
+	for _, name := range names {
+		v := os.Getenv(name)
+		if v == "" || !strings.ContainsAny(v, "/") && !strings.HasPrefix(v, "~") && v != "." && v != ".." {
+			continue
+		}
+		if !filepath.IsAbs(v) {
+			problems = append(problems, fmt.Sprintf("%s=%q is not an absolute path inside the scratch roots %v", name, v, roots))
+			continue
+		}
+		switch {
+		case len(roots) > 0 && under(v, roots[0]):
+		case real != "" && under(v, real):
+			problems = append(problems, fmt.Sprintf("%s=%q is under the real home %s", name, v, real))
+		case underAny(v, roots[min(1, len(roots)):]):
+		default:
+			problems = append(problems, fmt.Sprintf("%s=%q is outside the scratch roots %v", name, v, roots))
+		}
+	}
+	return problems
+}
+
+func underAny(path string, roots []string) bool {
+	for _, r := range roots {
+		if under(path, r) {
+			return true
+		}
+		if ev, err := filepath.EvalSymlinks(r); err == nil && under(path, ev) {
+			return true
+		}
+	}
+	return false
+}
+
+func under(path, root string) bool {
+	rel, err := filepath.Rel(root, filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// scratchRoots is where a path-valued variable the setup sets may point: the
+// scratch home first, then the temp dir.
+func scratchRoots(home string) []string { return []string{home, os.TempDir()} }
 
 func guarded(name string) bool {
-	return strings.HasPrefix(name, "MARVEL_") || name == "TMUX" || name == "TMUX_PANE"
+	return strings.HasPrefix(name, "MARVEL_") || name == "TMUX" || name == "TMUX_PANE" || slices.Contains(HomeVars, name)
 }
 
 func clearEnv() error {
