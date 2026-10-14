@@ -22,18 +22,12 @@ import (
 	"github.com/arcavenae/marvel/internal/paths"
 )
 
-// ExpectedRoot returns the directory marvel's layout must resolve to when HOME
-// is home. It is the one parameter the guard checks resolved paths against.
-var ExpectedRoot = func(home string) string {
-	return filepath.Join(home, ".marvel")
-}
-
 // Run is the stub the red commit carries: it runs the tests as they are.
 func Run(m *testing.M) int { return m.Run() }
 
 // Check is the stub the red commit carries: it reports nothing.
-func Check(home string) []string { return nil }
+func Check(home string, want paths.Layout) []string { return nil }
 
 func under(path, root string) bool { return true }
 
-var _ = []any{fmt.Sprint, os.Getenv, strings.HasPrefix, paths.Default}
+var _ = []any{fmt.Sprint, os.Getenv, strings.HasPrefix, filepath.Join}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 func TestMain(m *testing.M) { os.Exit(Run(m)) }
@@ -24,7 +26,7 @@ func TestRunGivesAScratchHomeAndNoMarvelEnv(t *testing.T) {
 
 func TestCheckAcceptsTheScratchHome(t *testing.T) {
 	home := os.Getenv("HOME")
-	if problems := Check(home); len(problems) != 0 {
+	if problems := Check(home, layoutAt(home)); len(problems) != 0 {
 		t.Errorf("Check on a clean scratch home reported %v", problems)
 	}
 }
@@ -32,29 +34,43 @@ func TestCheckAcceptsTheScratchHome(t *testing.T) {
 func TestCheckFlagsAMovedHome(t *testing.T) {
 	scratch := os.Getenv("HOME")
 	t.Setenv("HOME", t.TempDir())
-	if problems := Check(scratch); len(problems) == 0 {
+	if problems := Check(scratch, layoutAt(scratch)); len(problems) == 0 {
 		t.Error("Check accepted a HOME that moved off the scratch home")
 	}
 }
 
 func TestCheckFlagsALeftoverMarvelVariable(t *testing.T) {
 	t.Setenv("MARVEL_SOCKET", "/tmp/x.sock")
-	problems := Check(os.Getenv("HOME"))
+	problems := Check(os.Getenv("HOME"), layoutAt(os.Getenv("HOME")))
 	if len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "MARVEL_SOCKET") {
 		t.Errorf("Check did not name the leftover variable: %v", problems)
 	}
 }
 
-// The expected root is the one parameter: a root that does not match where
-// paths resolves is reported, so changing the layout changes this one place.
-func TestCheckComparesAgainstTheExpectedRoot(t *testing.T) {
-	old := ExpectedRoot
-	t.Cleanup(func() { ExpectedRoot = old })
-	ExpectedRoot = func(home string) string { return filepath.Join(home, "elsewhere") }
-	if problems := Check(os.Getenv("HOME")); len(problems) == 0 {
-		t.Error("Check accepted paths outside the expected root")
+// The expected layout is the one parameter: a layout that does not match where
+// paths resolves is reported, so a change to the layout changes paths.Default
+// and nothing here.
+func TestCheckComparesAgainstTheExpectedLayout(t *testing.T) {
+	home := os.Getenv("HOME")
+	other := paths.WithHome(filepath.Join(home, "elsewhere"))
+	if problems := Check(home, other); len(problems) == 0 {
+		t.Error("Check accepted paths outside the expected layout")
 	}
 }
+
+func TestRunClearsTmuxVariables(t *testing.T) {
+	for _, name := range []string{"TMUX", "TMUX_PANE"} {
+		if v, ok := os.LookupEnv(name); ok {
+			t.Errorf("%s=%q is set inside a guarded test binary", name, v)
+		}
+	}
+	t.Setenv("TMUX_PANE", "%1")
+	if problems := Check(os.Getenv("HOME"), layoutAt(os.Getenv("HOME"))); len(problems) == 0 {
+		t.Error("Check accepted a leftover TMUX_PANE")
+	}
+}
+
+func layoutAt(home string) paths.Layout { return paths.WithHome(filepath.Join(home, ".marvel")) }
 
 // TestEveryPackageWithTestsHasTheGuard lists every directory that holds a
 // _test.go file and fails for each whose tests never call homeguard.Run.
