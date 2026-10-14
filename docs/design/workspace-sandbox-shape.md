@@ -90,6 +90,8 @@ These are flat tickets with dependency edges, listed here for the supervisor to 
 
 S1 to S4 spend nothing and can start now. S5 and S6 run a model, so they wait on D3.
 
+**S2 as built.** The capability is the optional adapter interface `runtime.SandboxRecommender`, in the pattern of `ComposerCapable`: an adapter that implements it and returns true recommends a container. A harness with no adapter of its own cannot implement it, so the registry carries a small table, `sandboxRecommendedHarnesses`, naming pi and mini-swe-agent. When pi gets its adapter, the adapter implements the interface and the table entry is deleted. An adapter's answer beats the table in both directions. `Registry.RecommendedPlacement` returns `container` or the empty value, never `localhost`, and its result is the second argument of `api.ResolvePlacement`. Nothing launches from it yet; that is S3.
+
 **Test for the build:** a workspace with no `placement` and one pi seat starts the seat in a container, and `describe` shows `placement: container`. The same workspace with `placement = "localhost"` starts it on the host. With no container runtime configured, the pi seat is refused with a named reason, and a Claude seat in the same workspace starts on the host.
 
 ## 8. Decisions for the operator
