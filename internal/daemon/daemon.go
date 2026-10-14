@@ -187,8 +187,11 @@ type Daemon struct {
 	// busSup supervises the managed broker as a child of this daemon; nil when
 	// the cluster has no managed bus. keepBus asks shutdown to leave it running
 	// for the next daemon to adopt (reexec, `marvel stop --keep-bus`).
-	busSup  *bus.Supervisor
-	keepBus bool
+	busSup *bus.Supervisor
+	// lifecycle is the daemon-facing handle on the managed service (stub in the
+	// red commit; unused until the green one).
+	lifecycle service.Lifecycle
+	keepBus   bool
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -3544,6 +3547,9 @@ func (d *Daemon) emitBusRender(reason string, changed bool, err error) {
 		log.Printf("%s: %s", events.KindBusRendered, msg)
 	}
 }
+
+// stopBus is a stub in the red commit.
+func (d *Daemon) stopBus(teardown bool) {}
 
 // restartBus restarts the supervised broker so a change that only a new
 // process can pick up (the leaf seed in its environment) takes effect. A
