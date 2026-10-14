@@ -1,6 +1,8 @@
 # Probe brief: can one host still run more than one marvel cluster?
 
-**Status:** OPEN 2026-10-14, revised after review the same day. Static half
+**Status:** RUN IN PART 2026-10-14; result in
+`_kos/findings/finding-marvel-7i6o-multiple-clusters-per-host.md`. The pane
+steps wait on an operator ruling. Revised after review the same day. Static half
 read at marvel `main` @ `3188a08`; the live half (two daemons under scratch
 homes) is commissioned and not yet run. The finding follows the run.
 **Question asked:** "did we break the ability to run multiple marvel clusters
@@ -98,8 +100,13 @@ the system has since reused for an unrelated process:
 - before each kill, run `ps -p "$pid" -o command=` OUTSIDE the sandbox;
 - kill only if the command names the binary built into `<root>`; otherwise
   record the pid and the command, and skip it;
-- the same gate for every nats-server pid in T3, including
-  `<root>/h*/.marvel/run/nats-server.pid`.
+- for a nats-server pid in T3 (the installed binary, not one built into the
+  root), kill only if the command is the installed `nats-server` path AND
+  carries a config or store argument under `<root>`, including the pids in
+  `<root>/h*/.marvel/run/nats-server.pid`. The first run matched only
+  root-built binaries, so an orphaned broker would have been skipped; a
+  clean daemon stop takes its broker down, and every daemon in that run
+  stopped cleanly.
 
 Remove the root at the end only after both daemons have exited.
 
