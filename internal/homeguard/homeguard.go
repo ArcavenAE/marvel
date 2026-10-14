@@ -106,6 +106,14 @@ func Check(home string, want paths.Layout, allowed ...string) []string {
 	return problems
 }
 
+// HomeVars is every variable, besides HOME, that marvel or a harness it reaches
+// reads to find a home or config directory (stub in the red commit).
+var HomeVars []string
+
+// checkValues reports each named variable whose value is a path under the real
+// home or outside the scratch roots (stub in the red commit).
+func checkValues(names []string, realHome string, roots []string) []string { return nil }
+
 func guarded(name string) bool {
 	return strings.HasPrefix(name, "MARVEL_") || name == "TMUX" || name == "TMUX_PANE"
 }
