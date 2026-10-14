@@ -57,7 +57,7 @@ func TestSpawnEnvKeepsTodaysActorWithoutACluster(t *testing.T) {
 	if v, ok := env[seatURIEnv]; ok {
 		t.Errorf("%s = %q, want it unset with no cluster", seatURIEnv, v)
 	}
-	if len(*lines) != 1 || !strings.Contains((*lines)[0], "cluster") {
+	if len(*lines) != 1 || !strings.Contains((*lines)[0], "cluster entry name") {
 		t.Errorf("log lines = %q, want exactly one naming the cluster", *lines)
 	}
 }

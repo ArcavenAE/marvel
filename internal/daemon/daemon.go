@@ -3366,6 +3366,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return err
 	}
 	rb := spec.Resolve(layout.StateDir())
+	d.sessMgr.SeatCluster = cl.Name
 	if !rb.Managed {
 		// Sessions still learn the URL; there is no authorization to hand out.
 		d.sessMgr.Bus = bus.NewAdopted(rb)

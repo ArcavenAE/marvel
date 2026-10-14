@@ -1050,6 +1050,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+		Cluster:    m.SeatCluster,
 		TokenFile:  tokenFile,
 		Events:     m.Events,
 	}
