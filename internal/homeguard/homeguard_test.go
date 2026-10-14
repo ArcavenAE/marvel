@@ -34,8 +34,9 @@ func TestCheckAcceptsTheScratchHome(t *testing.T) {
 func TestCheckFlagsAMovedHome(t *testing.T) {
 	scratch := os.Getenv("HOME")
 	t.Setenv("HOME", t.TempDir())
-	if problems := Check(scratch, layoutAt(scratch)); len(problems) == 0 {
-		t.Error("Check accepted a HOME that moved off the scratch home")
+	problems := Check(scratch, layoutAt(scratch))
+	if len(problems) != 1 || !strings.Contains(problems[0], "HOME is") {
+		t.Errorf("Check on a moved HOME reported %v, want the HOME problem alone", problems)
 	}
 }
 
@@ -53,8 +54,9 @@ func TestCheckFlagsALeftoverMarvelVariable(t *testing.T) {
 func TestCheckComparesAgainstTheExpectedLayout(t *testing.T) {
 	home := os.Getenv("HOME")
 	other := paths.WithHome(filepath.Join(home, "elsewhere"))
-	if problems := Check(home, other); len(problems) == 0 {
-		t.Error("Check accepted paths outside the expected layout")
+	problems := Check(home, other)
+	if len(problems) != 1 || !strings.Contains(problems[0], "paths.Default resolves") {
+		t.Errorf("Check reported %v, want the layout mismatch alone", problems)
 	}
 }
 
@@ -67,6 +69,17 @@ func TestRunClearsTmuxVariables(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%1")
 	if problems := Check(os.Getenv("HOME"), layoutAt(os.Getenv("HOME"))); len(problems) == 0 {
 		t.Error("Check accepted a leftover TMUX_PANE")
+	}
+}
+
+func TestCheckAllowsVariablesTheSetupSet(t *testing.T) {
+	t.Setenv("MARVEL_TMUX_SOCKET", "marvel-test-x")
+	home := os.Getenv("HOME")
+	if problems := Check(home, layoutAt(home), "MARVEL_TMUX_SOCKET"); len(problems) != 0 {
+		t.Errorf("Check flagged a variable the package's setup set: %v", problems)
+	}
+	if problems := Check(home, layoutAt(home)); len(problems) == 0 {
+		t.Error("Check accepted MARVEL_TMUX_SOCKET with no allowance")
 	}
 }
 
