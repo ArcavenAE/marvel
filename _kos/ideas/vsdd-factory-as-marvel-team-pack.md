@@ -86,3 +86,12 @@ speed, and other factors.**
   for the converted factory.
 - **critic** (its own graph): the side-by-side measurement on a test
   project and spec, and the arena it would run in.
+
+## What this became (2026-10-14)
+
+A frontier question, `_kos/nodes/frontier/question-vsdd-factory-as-marvel-team.yaml`,
+and its probe brief, `_kos/probes/probe-vsdd-factory-as-marvel-team.md`. The
+probe narrows the idea to one contrast: each parallel branch of a pinned
+release as its own marvel session, against the same release as subagents of
+one session. Nothing has run yet. The `marvel run` changes it needs (headless
+named one-shots and `marvel wait`) are the only outside blocker.
