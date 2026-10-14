@@ -145,6 +145,7 @@ type Workspace struct {
 	// trusted; every other folder stays untrusted (marvel#684).
 	TrustedFolders []string  `toml:"trusted_folders,omitempty"`
 	CreatedAt      time.Time `toml:"-"`
+	Placement      Placement `toml:"placement,omitempty"`
 }
 
 // RuntimeMode selects how a harness is launched within its pane.

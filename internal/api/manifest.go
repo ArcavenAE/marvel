@@ -76,6 +76,10 @@ type ManifestWorkspace struct {
 	// A pointer, so an absent key (leave the stored list alone) differs from an
 	// empty list (revoke it); omitempty on a plain slice would lose that.
 	TrustedFolders *[]string `toml:"trusted_folders,omitempty" yaml:"trusted_folders,omitempty"`
+	// Placement is where the workspace's sessions run: "localhost" or
+	// "container". Absent or empty means the manifest names none, so the
+	// harness's recommendation and then localhost decide (ResolvePlacement).
+	Placement string `toml:"placement,omitempty" yaml:"placement,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
@@ -375,6 +379,9 @@ func (p replicasProbe) mark(m *Manifest) {
 func validateManifest(m *Manifest) (*Manifest, error) {
 	if m.Workspace.Name == "" {
 		return nil, fmt.Errorf("parse manifest: workspace.name is required")
+	}
+	if err := Placement(m.Workspace.Placement).check("parse manifest: workspace.placement"); err != nil {
+		return nil, err
 	}
 	policyNames := make(map[string]bool, len(m.Policies))
 	for i, p := range m.Policies {
@@ -856,7 +863,7 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), CreatedAt: now}
 	if m.Workspace.TrustedFolders != nil {
 		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
 	}
@@ -866,7 +873,7 @@ func (m *Manifest) Apply(store *Store) error {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil || m.Workspace.Placement != "" {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
 				if m.Workspace.Root != "" {
 					live.Root = m.Workspace.Root
@@ -875,6 +882,11 @@ func (m *Manifest) Apply(store *Store) error {
 				// list revokes it, and an absent key leaves it alone.
 				if m.Workspace.TrustedFolders != nil {
 					live.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+				}
+				// A named placement replaces the stored one; an absent key
+				// leaves it alone.
+				if m.Workspace.Placement != "" {
+					live.Placement = Placement(m.Workspace.Placement)
 				}
 				return nil
 			}); err != nil {
