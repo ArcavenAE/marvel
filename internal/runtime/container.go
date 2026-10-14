@@ -7,14 +7,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // The container half of a seat whose placement resolved to container
 // (docs/design/workspace-sandbox-shape.md, sections 5 and 7). Everything here is
-// pure: nothing probes a daemon, reads the environment or starts a process, and
-// nothing in the launch path calls it yet. The wiring into Manager.planLaunch,
-// the image source and the refusal when no runtime can be had belong to the next
-// step.
+// pure: nothing probes a daemon, reads the environment or starts a process. The
+// launch path calls it from internal/session/container_launch.go, which also
+// owns the image source and the refusal when no runtime can be had.
 
 // ContainerSpec is everything the run command needs, passed in explicitly.
 type ContainerSpec struct {
@@ -56,7 +57,6 @@ func DetectContainerRuntime(lookPath func(string) (string, error)) (string, bool
 var (
 	containerNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 	containerEnvRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	containerImgRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$`)
 )
 
 // containerNameMax is the longest name ContainerName returns.
@@ -147,7 +147,7 @@ func ContainerCommand(s ContainerSpec) (string, error) {
 		return "", fmt.Errorf("container runtime is empty")
 	case s.Image == "":
 		return "", fmt.Errorf("container image is empty")
-	case !containerImgRE.MatchString(s.Image):
+	case !api.ValidContainerImage(s.Image):
 		return "", fmt.Errorf("container image %q is not a plain image reference", s.Image)
 	case !containerNameRE.MatchString(s.Name) || !strings.HasPrefix(s.Name, containerNamePrefix):
 		return "", fmt.Errorf("container name %q is not a legal %s name", s.Name, containerNamePrefix+"...")
