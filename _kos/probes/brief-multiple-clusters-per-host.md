@@ -10,7 +10,7 @@ per host in how we currently organize ~/.marvel? we previously did a lot of
 work to isolate and make running more than one cluster safe, where have we
 broken that and what can we do to restore that ability?"
 **Medium:** reading this repo; one read-only listing of the operator's
-`~/.marvel` (names only), a listing of the user LaunchAgents, and the
+`~/.marvel` (names only), a listing of the user LaunchAgents (names only), and the
 running daemon's command line, each done once for the static half and not
 repeated by the trial; a two-daemon trial under scratch homes with the
 simulator runtime. No model calls, no harness logins, no service changes on
@@ -63,7 +63,7 @@ Not on the list, checked: the socket and its lock (`--socket`, lock beside
 it), the bolt store, the pid file and the log (all flags), the tmux server
 (`MARVEL_TMUX_SOCKET`), the mrvl listener (an explicit address), and
 launchd or brew services (the formula has no `service` block; no marvel
-LaunchAgent on the host; the running daemon was started by hand).
+LaunchAgent on the host; the running daemon was not started by launchd or brew services).
 
 **Hypothesis.** Nothing broke G-HOME. G-FLAGS, the recipe that works with
 real seats, no longer separates four places added or rekeyed since it was
