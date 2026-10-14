@@ -76,6 +76,8 @@ func TestSpawnEnvRefusesAnActorTheBuilderRejects(t *testing.T) {
 		},
 		"name with no index":     func(c *LaunchContext) { c.Session.Name = "squad-worker" },
 		"non-numeric generation": func(c *LaunchContext) { c.Session.Name = "squad-worker-gx-0" },
+		"empty generation":       func(c *LaunchContext) { c.Session.Name = "squad-worker-g-0" },
+		"empty index":            func(c *LaunchContext) { c.Session.Name = "squad-worker-g1-" },
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -102,5 +104,37 @@ func TestSpawnEnvActorOverrideStillWins(t *testing.T) {
 	ctx.Role.Runtime.Env = map[string]string{"BEADS_ACTOR": "operator/explicit"}
 	if got := baseEnv(ctx)["BEADS_ACTOR"]; got != "operator/explicit" {
 		t.Errorf("BEADS_ACTOR = %q, want the declared override", got)
+	}
+}
+
+// A codex launch builds the constructed environment twice, once to seed the
+// director hook's forwarded names and once for the launch itself. A refused
+// mint is still one launch, so it logs one line.
+func TestCodexLaunchLogsARefusedMintOnce(t *testing.T) {
+	lines := captureSeatLog(t)
+	ctx := seatContext("squad-worker-g1-0")
+	ctx.Cluster = ""
+	ctx.Session.Runtime.Command = "codex"
+	_ = codexForwardedEnv(ctx)
+	if _, err := (&Codex{}).Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(*lines) != 1 {
+		t.Errorf("log lines = %q, want exactly one for the launch", *lines)
+	}
+}
+
+// The names the seeder forwards match the launch environment's, with the same
+// URI minted or refused.
+func TestCodexForwardedNamesIncludeTheSeatURI(t *testing.T) {
+	names := codexForwardedEnv(seatContext("squad-worker-g1-0"))
+	found := false
+	for _, n := range names {
+		if n == seatURIEnv {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("forwarded names %v lack %s", names, seatURIEnv)
 	}
 }
