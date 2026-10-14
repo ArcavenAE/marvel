@@ -23,21 +23,33 @@
 
 **The contrast is separate sessions, not parallelism.** Arm A already fans branches out concurrently, as subagents of one session. Arm B gives each branch its own session: its own process, conversation prefix and cache TTL class, drawing on the same account.
 
+## 0.1 Open operator rulings
+
+Five decisions in this brief are recommendations until the operator rules on them. Each site that depends on one names it here. Nothing below runs on a recommendation alone.
+
+| ruling | the recommendation | gates |
+|---|---|---|
+| R1. Pilot spend | spend the pilot ceiling only (smoke, seed and three pilot runs, s11); the series is a separate go at M6 | M3, the first model spend |
+| R2. The decision metric | one primary, cost per accepted story, with every axis reported (s9.3); the recorded alternative is a verdict per axis | M1, which freezes it into the protocol |
+| R3. The probe host | a host with no live seats, whose signing key signs unattended (S15) | M3 |
+| R4. The permission mode | `auto`, the same in both arms, with classifier requests metered (s11) | M1 |
+| R5. The marvel CLI surface | the flags and verb proposed in s4 | B1 |
+
 ## 1. Order of work and gates
 
 Track M (measurement) and track B (the arm B build) start together and join at step 8. A failed step that triggers no close stops the probe and returns it to this brief's authors.
 
 | step | entry | output | can close |
 |---|---|---|---|
-| M1. Pre-register (s8) | this brief merged | protocol file at a sha | none |
+| M1. Pre-register (s8) | this brief merged; R2 and R4 ruled | protocol file at a sha | none |
 | M2. Test project and suite (s9, s12) | M1 | both frozen at a sha; canary planted | none |
-| M3. Smoke (s5) | pack verified | every smoke check passes | (a), if hooks cannot load headless |
+| M3. Smoke (s5) | pack verified; R1 and R3 ruled | every smoke check passes | (a), if hooks cannot load headless |
 | M3b. Ledger and meter (s10, s11) | M3 | the reader passes its fixture and reconciles one smoke run | none |
 | M4. Seed (s12) | M2, M3 | Phase 2 snapshot at a sha, its wave widths recorded; exit check S8 (resume) | (a), if the seed cannot meet s12 after two revisions of the brief. A brief revision returns the probe to M2; the suite is re-frozen before the next seed. |
 | M4b. Suite mapping | M4 | scenarios tagged with the seed's story ids, or with the brief's features if S8 failed (s12), and frozen; the seed snapshot, or the test project's start commit, fails every scenario | none |
 | M5. Pilot | M3b, M4b; prices frozen; token ceiling set | 3 arm A runs: noise floor per axis, serial estimate per wave | (b), by s8.5's blind stop |
 | M6. Pilot card | M5 | spend; computed n (reported only); the spread with its 80% and 95% intervals; per-run cost and accepted stories, naming any run with zero accepted; the serial estimate beside rate-limit retries in the node; blocks per weekly window the quota allows, and the projected series end date | none; going on is the operator's call |
-| B1. marvel PR (s4) | none | merged and tested | none |
+| B1. marvel PR (s4) | R5 ruled | merged and tested | none |
 | B2. Patch and shim (s3, s4) | B1 | arm B pack at a sha | none |
 | B3. Entry drill (s7) | B2 | D1 to D5 pass | none; a failure is a defect to fix |
 | 8. Fidelity run | M6 go, B3 | one arm B run, outside the statistics; checklist from transcripts | (a), if a step cannot be reproduced |
@@ -55,7 +67,7 @@ This is an estimate, not a bound: `T_longest` is measured under sibling contenti
 
 ## 2. Arm A
 
-**Install, by hash.** The pack comes from ArcavenAE/sideshow-packs release `vsdd-factory-v1.0.0-rc.25`:
+**Install, by hash.** The pack comes from ArcavenAE/sideshow-packs release `vsdd-factory-v1.0.0-rc.25`, part of the VSDD-as-sideshow-packs work (aae-orc-amet):
 - `install.meta.yaml`: upstream commit `51023185658350afaacaa931a175103d915d14ba`, subtree `d4fa6515`;
 - tarball sha256 `6d38a905222bcf9de3b0fe74acd4fc29fbaca6d954f18c6ab3db27387831cee1`;
 - file manifest sha256 `e0ec70a15ebf74f409ef0b468b59bc400804157224383a62f526c8421c94325c`.
@@ -87,6 +99,7 @@ The test project pins `feature_type` and a single-service topology (s12), so the
 - the full model id per role and the MCP servers present;
 - adversary passes to convergence per story;
 - re-dispatches per story and model escalations;
+- duplicate executions: from the step trace and the marvel session list, any story with two live sessions at once, or any delivery item run twice for one story and attempt. Pass: zero, in both arms (s7.2);
 - compaction events per session, each with the step in progress and the re-anchor hook's output;
 - the pack digests, read back;
 - wall clock as s8.6 defines it.
@@ -121,7 +134,7 @@ Models stay at their frontmatter values. Phases 1, 2 and 4 to 7 run in the orche
 
 ## 4. Arm B, build
 
-**The marvel PR.** Today `marvel run` sets no mode, no prompt and no environment (`internal/daemon/daemon.go:2111-2116`; `cmd/marvel/main.go:1597-1602`), names the session by the clock (`daemon.go:2129`), and returns at once. The PR adds:
+**The marvel PR.** Today `marvel run` sets no mode, no prompt and no environment (`internal/daemon/daemon.go:2111-2116`; `cmd/marvel/main.go:1597-1602`), names the session by the clock (`daemon.go:2129`), and returns at once. The proposed surface below stays a proposal until R5 is ruled. The PR would add:
 
 - `--mode headless` and `--prompt-file <f>`, copied into the runtime. The claude adapter already refuses headless without a prompt (`internal/runtime/claude.go:102`), and adds stream-json output (`:119`).
 - `--env KEY=VALUE`, repeatable, copied into `Runtime.Env`.
@@ -146,7 +159,7 @@ Unit tests (Go):
 **The shim** is a shell command in arm B's pack, called through the orchestrator's Bash tool:
 
 - `dispatch <key> <prompt-file>` runs `marvel run --mode headless --workspace <probe workspace> --team arm-b-<run-id> --role branch-run --name <key> --workdir <project path> --prompt-file <f> --env PROBE_BRANCH_KEY=<key> --env ... -- claude --agent vsdd-orchestrator --model <full model id> --permission-mode <permission mode>`. It refuses when `PROBE_BRANCH_KEY` is already set, so a branch seat cannot dispatch. Four reasons for the shape:
-  - **Team and role.** Each run declares a fresh team, `arm-b-<run-id>`, with its `max_sessions` and `max_tokens`, and declares no role named `branch-run`. A fresh team matters because the token guard counts ended sessions as well as live ones (`internal/daemon/admission.go:33-39`), so one team across the series would carry earlier runs' tokens. Admission is team-scoped (`internal/daemon/daemon.go:2116-2122`), while the controller sheds a declared role's excess, oldest first, and counts a finished headless session in its slot (`internal/team/controller.go:1265-1281`; `internal/api/budget.go:252-257`). `max_sessions` leaves room for the widest wave above the declared orchestrator.
+  - **Team and role.** Each run declares a fresh team, `arm-b-<run-id>`, with its `max_sessions` and `max_tokens`, and declares no role named `branch-run`. A fresh team matters because the token guard counts ended sessions as well as live ones (`internal/daemon/admission.go:33-39`), so one team across the series would carry earlier runs' tokens. Admission is team-scoped (`internal/daemon/daemon.go:2118-2126`), while the controller sheds a declared role's excess, oldest first, and counts a finished headless session in its slot (`internal/team/controller.go:1265-1281`; `internal/api/budget.go:252-257`). `max_sessions` leaves room for the widest wave above the declared orchestrator.
   - **The `--`.** It keeps `--agent` for the harness, since `cmd/marvel` never disables interspersed flags.
   - **The bare word `claude`.** The adapter is chosen by runtime name, with a generic fallback (`internal/runtime/adapter.go:386-394`).
   - **"Already exists".** That reply counts as dispatched. Any other dispatch error, an admission refusal for one (`internal/daemon/admission.go:73-85`), prints `refused` with marvel's message. The orchestrator raises no `attempt` on it and ends the run as a limit stop (s8.5). It first stops every live session of team `arm-b-<run-id>` and confirms each one is terminal with `marvel wait`; the inter-run gap starts only then.
@@ -184,7 +197,7 @@ Unit tests (shell, with a fake `marvel` on PATH):
 - **tmux 3.5 or later** on the probe tmux server (`tmux -L <probe socket> -V`), because below 3.5 a dead pane's exit status can be lost and a clean exit recorded as crashed (ArcavenAE/marvel#714, open).
 - **Pins on the marvel side:** the marvel commit the probe daemon runs (`marvel version`).
 
-**5.2 Smoke checks.** A failure stops the probe before the pilot.
+**5.2 Smoke checks.** A failure stops the probe before the pilot. Ids S2 and S11 were retired during design and are not reused.
 
 | id | check | pass |
 |---|---|---|
@@ -222,7 +235,7 @@ The harness facts held identical in both arms. They are pinned in the protocol f
 | Auth | one subscription account | login method in clear; the full `claude auth status` output as a sha256 only | same every run |
 | Cache TTL | `CLAUDE_CODE_PROMPT_CACHE_TTL=5m`, `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`; `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` unset | 5-minute against 1-hour write tokens, for every write record | 1-hour writes under 0.1%, each listed |
 | Model per role | the factory frontmatter, with `ANTHROPIC_DEFAULT_SONNET_MODEL` and `ANTHROPIC_DEFAULT_OPUS_MODEL` set to full model ids and `--model <full model id>` on every orchestrator-agent session (the orchestrator has no `model:` line); `CLAUDE_CODE_SUBAGENT_MODEL` unset | `message.model` per assistant record | matches the role, or a logged escalation by the orchestrator (`per-story-delivery.md:139`), counted per arm |
-| Permission mode | the permission mode the operator chose, recorded in the protocol file, as `--permission-mode` in both arms | `permission-mode` records in every main transcript | identical |
+| Permission mode | the permission mode the operator chooses (R4), recorded in the protocol file, as `--permission-mode` in both arms | `permission-mode` records in every main transcript | identical |
 | Bash timeout | `BASH_DEFAULT_TIMEOUT_MS=600000` and `BASH_MAX_TIMEOUT_MS=600000`, as headroom; `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS` unset, since it caps a main agent's Bash call when set | the env check | identical |
 | Subagent caps | depth 3, concurrency 20, set explicitly | the cap messages; peak overlapping subagents per wave | no cap message |
 | Forks and teams | `CLAUDE_CODE_FORK_SUBAGENT=0`; agent teams off | subagent `agentType`; teammate records | none |
@@ -232,7 +245,7 @@ The harness facts held identical in both arms. They are pinned in the protocol f
 | Throttling | none possible | rate-limit and overload retries per session, and the seconds spent in them, from transcripts and telemetry | reported per run; speed is also reported net of throttle time |
 | Inter-run gap | no session on the account, on any host, makes model requests during a run or the 65 minutes before it, except the run's own sessions and its named supervising session, which is metered (s11) | the first-request cache read of each run | no more than the S14 cold reference |
 
-**Why the TTL is pinned.** On the probe host at defaults, main threads write 1-hour cache entries and subagents write 5-minute ones. A branch seat is a main thread; the same work in arm A is a subagent. So at defaults, the harness would decide part of the cache result.
+**Why the TTL is pinned.** On the host used during design, at defaults, main threads write 1-hour cache entries and subagents write 5-minute ones. A branch seat is a main thread; the same work in arm A is a subagent. So at defaults, the harness would decide part of the cache result.
 
 The 5-minute pin penalizes main threads, and arm B has more of them. So the base cell's cache result is a lower bound for arm B under subscription defaults. A defaults cell of one block, one run per arm, with both variables unset and recorded, runs after the base series closes. It is reported beside the finding and never enters the primary.
 
@@ -246,9 +259,9 @@ So branch seats write under `.factory/` only within their own stories' `.factory
 
 Detection, every run, both arms: a post-run disk and transcript check. An exception is a tool call by a branch seat (Write, Edit or Bash) on `STATE.md`, on `factory-artifacts`, on either script, or on a `.factory/` path outside its own stories' `.factory/cycles/<cycle>/<story-id>/`. Hook writes are not exceptions. In both arms they are recorded per path, session and time. For `STATE.md`, `wave-state.yaml` and `.factory/sidecar-learning.md`, the check compares the final content with each writer's last write and counts every lost update. Lost updates per run are a fidelity record in both arms, never a stop. Pass: zero exceptions, and every orchestrator commit is in `git log factory-artifacts`.
 
-A marvel Policy is not the wall, because projection fails open: "the session launches unprojected rather than being refused" (`internal/session/projection.go:22-23`).
+A marvel Policy is not the wall, because projection fails open: "the session launches unprojected rather than being refused" (`internal/session/projection.go:23-24`).
 
-**7.2 The key.** After a tool timeout or error, the shim re-sends the same key. A refusal means the seat exists, so the shim waits. `attempt` rises only at the orchestrator, only when the previous attempt reads `failed`, `crashed` or `unknown` and git shows the story unmerged. It never rises on `pending` or on a failed `await` call.
+**7.2 The key.** After a tool timeout or error, the shim re-sends the same key. A refusal means the seat exists, so the shim waits. `attempt` rises only at the orchestrator, only when the previous attempt reads `failed`, `crashed` or `unknown` and git shows the story unmerged. It never rises on `pending` or on a failed `await` call. The per-run duplicate check (s2, Recorded per run) confirms that no story ran twice.
 
 **7.3 The wait.** A missing session is unknown, not success. The reaper keeps at most one crashed marker per role (`internal/session/manager.go:1605-1609`), so another seat's crash can clear it. On every state, succeeded included, the orchestrator verifies in git; only git marks a story done.
 
@@ -327,7 +340,7 @@ Committed beside this brief before the pilot. Every run's marker records its sha
 - **On a hit:** the run counts as zero accepted.
 
 **9.3 Metrics.**
-- **Primary:** API-equivalent cost per accepted story (per accepted feature when S8 fails, s12), as a ratio of sums over the series (total cost over total accepted stories), so a run with zero accepted still counts. Cost covers every request class, classifier and compaction requests included (s11).
+- **Primary** (this brief's recommendation, ruled as R2 before M1 freezes the protocol): API-equivalent cost per accepted story (per accepted feature when S8 fails, s12), as a ratio of sums over the series (total cost over total accepted stories), so a run with zero accepted still counts. Cost covers every request class, classifier and compaction requests included (s11).
 - **Secondaries, each with its interval and the n that would resolve it:**
   - wall clock (s8.6), and wall clock net of throttle time;
   - throughput: accepted stories per hour of wall clock;
@@ -346,13 +359,13 @@ Committed beside this brief before the pilot. Every run's marker records its sha
 - **The verdict:**
   - (b) per s8.5's blind stop, decided at the pilot;
   - (c) when the interval excludes 1; reported as past the smallest effect when its near end is, and otherwise as a gap below the smallest effect;
-  - (d) when it includes 1, stating the n that would resolve it.
+  - (d) when it includes 1, stating the n that would resolve it. (d) is never written for a series in which any run's widest wave is under 2, because arm B changes nothing in such a run; that series closes (a), with the widths listed.
 - **A claim on a secondary** is Holm-adjusted, meaning corrected for testing several axes.
 - **Recorded dissent:** two of the twelve design seats recommended a verdict per axis rather than one primary. Every axis is reported with its interval and the n that would resolve it, so that reading stays available.
 
 ## 10. Cache ledger
 
-A reader that turns each run's transcripts into per-request cache records, then sums them. It reads the same files in both arms, reports tokens only, and leaves pricing to s11.
+A reader that turns each run's transcripts into per-request cache records, then sums them. It and the cost meter (s11) are built for this probe. The critic run registry (aae-orc-hp96) can ingest these runs later, and is not a dependency. It reads the same files in both arms, reports tokens only, and leaves pricing to s11.
 
 **Inputs.** For every session in the run, from the harness transcript directory:
 - the main transcript;
@@ -364,7 +377,7 @@ From each assistant record:
 - `message.id`, `requestId`, `isSidechain`, `timestamp`, `version`, `message.model`;
 - `usage`: `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, the 5-minute and 1-hour creation split, and `output_tokens`.
 
-**Dedupe.** One record per `message.id`. Streaming repeats a message, and on the probe host the copies carried identical usage.
+**Dedupe.** One record per `message.id`. Streaming repeats a message, and on the host used during design the copies carried identical usage. The fixture check (Validation) confirms it on the probe host.
 
 **Outputs, per run, per seat, per role and per phase:**
 1. Tokens by class.
@@ -426,7 +439,7 @@ Before the pilot, the pilot ceiling is the smoke runs, the seed and 3 runs, pric
 
 **Where the arms differ.** Only greenfield's one parallel node, in Phase 3 (`greenfield.lobster:627-1002`). Every axis is recorded per phase. Phases 4 to 7 are controls: a gap there is a fidelity defect. Phases 1 and 2 run once, in the seed.
 
-**The seed.** Wave width is an output of Phase 2, so a brief can only invite it. One arm A run goes through Phase 2 and stops at the Phase 3 entry: its answer file answers phase-2-human-approval (`greenfield.lobster:538`) with "approve, then stop", and the snapshot is taken after phase-2-state-backup (`:530`). Its repository, `.factory/` state and wave schedule are snapshotted at a sha. Every pilot and series run in both arms starts from that seed (smoke S8). If the seed misses a requirement below, the brief is revised (back to M2) and the seed re-run, and every discarded seed is recorded with its widths. If S8 fails, each run starts from the brief, the width each run got is reported as a covariate, the suite maps to the brief's features, and the primary becomes cost per accepted feature.
+**The seed.** Wave width is an output of Phase 2, so a brief can only invite it. One arm A run goes through Phase 2 and stops at the Phase 3 entry: its answer file answers phase-2-human-approval (`greenfield.lobster:538`) with "approve, then stop", and the snapshot is taken after phase-2-state-backup (`:530`). Its repository, `.factory/` state and wave schedule are snapshotted at a sha. Every pilot and series run in both arms starts from that seed (smoke S8). If the seed misses a requirement below, the brief is revised (back to M2) and the seed re-run, and every discarded seed is recorded with its widths. If S8 fails, each run starts from the brief, the width each run got is reported as a covariate, the suite maps to the brief's features, and the primary becomes cost per accepted feature. A run on this path whose widest wave is under 2 is reported, and bars a (d) close (s9.4).
 
 **The seed's wave schedule must have:**
 - at least two waves;

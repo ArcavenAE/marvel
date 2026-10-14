@@ -18,7 +18,8 @@ content: |
   in parallel inside one session. Greenfield fans out story groups in its one
   `type: parallel` node (rc.25 commit 51023185,
   plugins/vsdd-factory/workflows/greenfield.lobster:652-654), and Claude Code
-  2.1.299 runs up to 20 subagents at once by default. Arm B changes one thing:
+  2.1.299 runs subagents concurrently (the brief pins the cap at 20). Arm B
+  changes one thing:
   each branch runs as its own headless marvel session, with its own process,
   conversation prefix and cache TTL class, drawing on the same account.
 
@@ -33,7 +34,9 @@ content: |
   all pass. The suite is executable, authored outside both arms, frozen at a
   sha before the pilot, has at least 30 scenarios, and is separate from the
   factory's own holdouts. Its author sees the seed's story ids, titles and
-  waves, never story bodies.
+  waves, never story bodies. If the seed cannot be resumed (the brief's S8
+  check), runs start from the brief instead, and the deliverable becomes an
+  accepted feature.
 
   SUB-QUESTIONS, closed in order.
   1. FIDELITY: is arm B the same factory? It is checked from transcripts:
@@ -49,21 +52,24 @@ content: |
      - compaction events per session;
      - zero human interventions;
      - a canary leak test in both arms;
-     - zero duplicate executions;
+     - zero duplicate executions, checked per run from the step trace and the
+       marvel session list;
      - zero branch-seat tool writes outside its own story paths, with each
        session's hook writes attributed as their own writer and lost updates
        to shared .factory/ files counted.
   2. NOISE FLOOR: the spread of three arm A pilot runs from one frozen Phase 2
-     seed, per axis and per phase, with its interval.
-  3. COMPARISON: per accepted deliverable, on cost, cache reuse and wall
-     clock and throughput, recorded per phase. Arm B changes only Phase 3
+     seed (from the brief, on the S8-failure path), per axis and per phase,
+     with its interval.
+  3. COMPARISON: per accepted deliverable, on cost, cache reuse, wall clock
+     and throughput, recorded per phase. Arm B changes only Phase 3
      (greenfield.lobster:627-1002); a gap in another phase is a fidelity
      defect. The hub's wait cost is its own row, so a gap made by the wait
      design is not read as a property of separate sessions.
 
   WHAT CLOSES IT. Four outcomes, each an answer:
   (a) not comparable: arm B cannot reproduce a named step, listed, or
-      neither arm accepts a story on the test project;
+      neither arm accepts a story on the test project, or a run's widest wave
+      is under 2;
   (b) instrument blind: even a generous reading of the noise floor is wider
       than the pre-registered smallest effect;
   (c) a comparison with stated power;
@@ -82,7 +88,8 @@ content: |
   - a retry policy or the hub's polling read as a session effect;
   - a branch that fell back to an in-session subagent;
   - "equal" written for a gap inside the noise floor;
-  - a not-distinguishable close at a wave width under 2;
+  - a not-distinguishable close on a series in which any run's widest wave is
+    under 2 (such a series closes not comparable);
   - any close stated past its one seed.
 
   KNOWN GAPS (2026-10-14, marvel 0e6dd4d).
