@@ -55,6 +55,9 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// Cluster is the first segment of the seat URI (aae-orc-2pss4): the daemon's
+	// own cluster entry name.
+	Cluster string
 	// TokenFile is the file holding this launch's heartbeat token, set by the
 	// session manager for an adapter that implements TokenFileCapable. Empty
 	// means the token travels in the environment.
@@ -395,6 +398,12 @@ func (r *Registry) Resolve(runtimeName string) Adapter {
 
 // baseEnv returns the environment variables common to all adapters: the
 // values marvel constructs, then the role's declared env merged over them.
+// seatURIEnv carries the full seat URI to the harness (the director shim reads it).
+const seatURIEnv = "MARVEL_SEAT_URI"
+
+// logSeat is where the adapter reports a seat-URI mint decision.
+var logSeat = log.Printf
+
 func baseEnv(ctx *LaunchContext) map[string]string {
 	return mergeRoleEnv(ctx, constructedEnv(ctx))
 }
