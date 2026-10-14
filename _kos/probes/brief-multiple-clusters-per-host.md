@@ -10,8 +10,9 @@ per host in how we currently organize ~/.marvel? we previously did a lot of
 work to isolate and make running more than one cluster safe, where have we
 broken that and what can we do to restore that ability?"
 **Medium:** reading this repo; one read-only listing of the operator's
-`~/.marvel` (names only), done once for the static half and not repeated by
-the trial; a two-daemon trial under scratch homes with the
+`~/.marvel` (names only), a listing of the user LaunchAgents, and the
+running daemon's command line, each done once for the static half and not
+repeated by the trial; a two-daemon trial under scratch homes with the
 simulator runtime. No model calls, no harness logins, no service changes on
 the host, nothing written under the real `~/.marvel`.
 **bd:** aae-orc-7t7d (no layout-home selector, open), aae-orc-cg6w1 (the
@@ -51,7 +52,7 @@ daemons share it.
 | # | Resource | Where | Since | Under G-FLAGS |
 |---|---|---|---|---|
 | 1 | stream, policy and backend-overlay temp dirs, `$TMPDIR/marvel-{streams,policies,backend-overlays}-<tag>` | `internal/session/manager.go` `daemonTempDir` | #154, 2026-08-09 (keyed on the pid before) | shared when both daemons also share `TMPDIR` (the base is `os.TempDir()`); the overlay dir alone has its own override, `MARVEL_BACKEND_OVERLAY_DIR` |
-| 2 | bus manager dir, always `<StateDir>/nats`; the default store under it; the broker's `nats-server.pid` in `RunDir` and `nats-server.log` in `LogDir`, both fixed names | `internal/daemon/daemon.go` `attachBus` (:3374); `internal/bus/supervisor.go:233-234`; `internal/config/config.go` bus `Resolve` | #265, 2026-09-15 | shared whenever two daemons in one HOME each attach a bus; `store_dir` moves only the store, not the manager dir or the pid and log |
+| 2 | bus manager dir, always `<StateDir>/nats`; the default store under it; the broker's `nats-server.pid` in `RunDir` and `nats-server.log` in `LogDir`, both fixed names | `internal/daemon/daemon.go` `attachBus` (:3375); `internal/bus/supervisor.go:233-234`; `internal/config/config.go` bus `Resolve` | #265, 2026-09-15 | shared whenever two daemons in one HOME each attach a bus; `store_dir` moves only the store, not the manager dir or the pid and log |
 | 3 | private harness homes, `/tmp/marvel-h-<tag>/<hash of session key>` | `internal/session/manager.go` `defaultHarnessHomeDir` | #362, 2026-09-26 | shared; two clusters with the same workspace, team and role names get the same home |
 | 4 | read-only views, `<StateDir>/views` | `internal/daemon/daemon.go` view keeper; `manager.go` launch context | #641, 2026-10-06 | shared |
 | 5 | daemon self-reported home | `daemon.go` `New` | (Decision 8) | both daemons report the same home, so the client's home-mismatch warning cannot tell them apart |

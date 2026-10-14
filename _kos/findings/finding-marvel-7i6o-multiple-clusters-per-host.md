@@ -2,8 +2,9 @@
 
 **Date:** 2026-10-14
 **Probe:** `_kos/probes/brief-multiple-clusters-per-host.md`
-**Confidence:** frontier. Rows 2 and 5 below are measured; rows 1, 3 and 4
-are read from code at `3188a08`, with row 3's shared path seen in the daemon
+**Confidence:** frontier. Row 2 below is measured, and so is row 5's
+cross-HOME half; row 5's one-HOME half and rows 1, 3 and 4 are read from
+code at `3188a08`, with row 3's shared path seen in the daemon
 logs but nothing written there. The pane steps of the trial (T0.3, T0.4,
 T1's adopt check, T2) did not run; they wait on an operator ruling about the
 sandbox profile.
@@ -17,7 +18,9 @@ more than one cluster per host. It did not. What holds and what does not:
 
 - **Two daemons under two HOMEs (G-HOME) still separate.** T0.1 and T0.2
   passed at `3188a08`: both start, each answers on its own socket, a third
-  start under a live HOME exits nonzero, and the first still answers. This
+  start under a live HOME exits nonzero, and the first still answers. The
+  brief's "each `version` reports its own home" check is carried by T4's
+  mismatch case, since `version` prints no home when the homes match. This
   is the isolation unit `daemon-isolation.md` ratified. Its cost was
   measured in finding-025: a claude seat under a moved HOME is not logged in.
 - **Two daemons under one HOME (G-FLAGS) do not separate.** That is the
@@ -26,8 +29,6 @@ more than one cluster per host. It did not. What holds and what does not:
   and `MARVEL_TMUX_SOCKET` place exactly what they name (T1). Everything
   else daemon-owned derives from the HOME layout or its tag, so two daemons
   share it. On the bus that sharing is destructive (T3).
-- **The operator's host is not in that state.** One marvel daemon runs on
-  the host today; the other marvel processes are clients.
 
 So the regression is narrower than the question: no change undid G-HOME.
 The one-HOME recipe was never made safe for two concurrent daemons, and
@@ -53,18 +54,20 @@ localhost only, write-deny outside the root, every kill gated on `ps`.
   `run/nats-server.pid` and its `.pid.identity`, and `log/nats-server.log`.
   The first starts its broker. The second then logs `bus: pidfile names our
   nats-server pid <A's pid>, which is not listening on 127.0.0.1:<B's
-  port>; stopping it`, starts its own, and finds the first one's streams.
+  port>; stopping it`, starts its own on the same store directory (`state/nats/store`).
   The first logs `bus.crashed ... restart #1 in 30s`, restarts from the
   second one's rendered conf, and then `did not answer on
-  127.0.0.1:<A's port>`. End state: the first daemon has no broker and loops
-  on the second one's config.
+  127.0.0.1:<A's port>`. End state: the first daemon restarted once from the
+  second one's conf and did not answer on its own port.
 - **T4, self-report.** With a matching client HOME, `version` prints no home
   line and no warning. With a mismatch, `version` and `get sessions` both
   print `warning: the daemon at <root>/ha/.marvel/run/marvel.sock is rooted
   at <root>/ha/.marvel, but this client resolved against <root>/hb/.marvel.
   The answer above came from a different marvel. Pass --socket, or set
-  MARVEL_SOCKET, to reach the one you meant.` Decision 8 works across HOMEs;
-  under one HOME both daemons report the same home, so it cannot fire.
+  MARVEL_SOCKET, to reach the one you meant.` Decision 8 works across HOMEs.
+  Under one HOME both daemons report the same home, so it cannot fire; that
+  half is read from code (`New` takes the home from `paths.Default()`,
+  `internal/daemon/daemon.go:419-421`), not measured.
 
 ## Each row, when it came in, and the command that shows it
 
@@ -92,8 +95,13 @@ one-HOME recipe disagree.
   the tag and the tmux name all follow it, because they all resolve through
   `internal/paths`. One setting per cluster, the harness keeps its login,
   and anything added later is covered by default. Decision 1 left this open
-  on purpose ("There is no `MARVEL_HOME` ... Whether to add one is
-  deliberately left open").
+  on purpose: "Whether to add one is deliberately left open; the override in
+  Decision 3 solves the immediate need without introducing a second way to
+  relocate everything." Cost: that last clause is the case against R1. It
+  adds a second way to relocate marvel's state beside `--socket` and
+  `MARVEL_SOCKET`, so the precedence between the root setting and the
+  existing flags has to be defined and tested, and every `paths.Default()`
+  caller changes meaning at once.
 - **R2, a flag per resource.** Extend the four flags to rows 1 to 4. Matches
   today's recipe, but every new daemon-owned place needs its own flag, which
   is how rows 2 to 4 came to be shared.
@@ -110,7 +118,8 @@ Separate from the choice: the T3 log shows the second daemon treating a pid
 file it did not write as its own (`pidfile names our nats-server pid`). Under
 R1 the two daemons would not share that file. Whether the broker's pid
 identity check should also refuse a pid another daemon started is a
-question for the bus supervisor, not a restore option.
+question for the bus supervisor, not a restore option. It is filed as
+marvel#883.
 
 ## Limits
 
