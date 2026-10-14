@@ -309,7 +309,9 @@ func codexListHooks(codexBin, home string) ([]codexHook, error) {
 // codexForwardedEnv names the constructed variables codex should hand the
 // director server, sorted so the seeded file is stable across launches.
 func codexForwardedEnv(ctx *LaunchContext) []string {
-	env := constructedEnv(ctx)
+	// The launch builds the same environment and reports a refused seat URI
+	// once; this call only reads the names.
+	env := constructedEnvQuiet(ctx, true)
 	names := make([]string, 0, len(env))
 	for k := range env {
 		names = append(names, k)

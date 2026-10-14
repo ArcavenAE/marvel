@@ -422,7 +422,11 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 // cluster name or the builder rejects the string: no URI is minted and nothing is
 // defaulted (aae-orc-2pss4). legacy is only named in the log line. The same
 // string is BEADS_ACTOR and MARVEL_SEAT_URI.
-func seatURI(ctx *LaunchContext, legacy string) (string, bool) {
+func seatURI(ctx *LaunchContext, legacy string, quiet bool) (string, bool) {
+	logSeat := logSeat
+	if quiet {
+		logSeat = func(string, ...any) {}
+	}
 	if ctx.Cluster == "" {
 		logSeat("session %s: no seat URI minted, BEADS_ACTOR stays %s: the daemon has no cluster entry name", ctx.Session.Name, legacy)
 		return "", false
@@ -476,8 +480,15 @@ func allDigits(s string) bool {
 }
 
 func constructedEnv(ctx *LaunchContext) map[string]string {
+	return constructedEnvQuiet(ctx, false)
+}
+
+// constructedEnvQuiet is constructedEnv with the seat-URI refusal line
+// optionally suppressed, for a caller that only reads the variable names while
+// the launch itself reports the refusal.
+func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
 	actor := "marvel/" + ctx.Workspace.Name + "/" + ctx.Session.Name
-	uri, haveURI := seatURI(ctx, actor)
+	uri, haveURI := seatURI(ctx, actor, quiet)
 	if haveURI {
 		actor = uri
 	}
