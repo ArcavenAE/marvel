@@ -307,6 +307,41 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
+// TestShellQuoteAlwaysQuotes pins the hardening: every non-empty argument is
+// single-quoted, including control whitespace the old allowlist missed.
+func TestShellQuoteAlwaysQuotes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"newline", "a\nb", "'a\nb'"},
+		{"tab", "a\tb", "'a\tb'"},
+		{"carriage return", "a\rb", "'a\rb'"},
+		{"embedded single quote", "it's", `'it'\''s'`},
+		{"plain word", "simple", "'simple'"},
+		{"empty", "", "''"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shellQuote(tt.input); got != tt.want {
+				t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCommandQuotesNewlineAndTab(t *testing.T) {
+	t.Parallel()
+	got := buildCommand("bin", []string{"a\nb", "c\td"})
+	want := "bin 'a\nb' 'c\td'"
+	if got != want {
+		t.Errorf("buildCommand = %q, want %q", got, want)
+	}
+}
+
 func TestForestagePrepareWithScript(t *testing.T) {
 	t.Parallel()
 	f := &Forestage{}
