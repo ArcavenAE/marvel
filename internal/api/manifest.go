@@ -436,6 +436,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
 			}
+			if r.ContainerImage != "" && !ValidContainerImage(r.ContainerImage) {
+				return nil, fmt.Errorf("parse manifest: team %q role %q: container_image %q is not a plain image reference", t.Name, r.Name, r.ContainerImage)
+			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
 			}
@@ -954,6 +957,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
+				ContainerImage:       mr.ContainerImage,
 				SettingsSources:      mr.SettingsSources,
 			}
 			if mr.RestartPolicy != "" {
