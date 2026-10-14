@@ -98,6 +98,9 @@ func TestLifecycleStopWithKeepLeavesTheChildRunning(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	pid := l.Status().PID
+	if pid <= 0 {
+		t.Fatalf("Status().PID = %d after Start, want a running child", pid)
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +184,9 @@ func TestLifecycleStopWithoutKeepKillsTheChild(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	pid := l.Status().PID
+	if pid <= 0 {
+		t.Fatalf("Status().PID = %d after Start, want a running child", pid)
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		t.Fatal(err)

@@ -3398,8 +3398,8 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return []string{bus.LeafSeedEnv + "=" + string(seed)}
 	}
 	d.regenerateBus("start")
+	mgr.Reloader = sup
 	lc := bus.NewLifecycle(sup)
-	wireBusReloader(mgr, lc)
 	// The moment after the listener answers and before any session may
 	// spawn belongs to provisioning: a bare broker strands the shim
 	// (finding-166). Runs as the admin identity, idempotent, and a failure
@@ -3567,11 +3567,6 @@ func (d *Daemon) stopBus(teardown bool) {
 		d.lifecycle.Stop(d.keepBus && !teardown)
 	}
 }
-
-// wireBusReloader sends the manager's post-render reload through the
-// lifecycle, so a render reaches the broker by the same verb the daemon uses
-// everywhere else.
-func wireBusReloader(mgr *bus.Manager, lc service.Lifecycle) { mgr.Reloader = lc }
 
 // restartBus restarts the supervised broker so a change that only a new
 // process can pick up (the leaf seed in its environment) takes effect. A

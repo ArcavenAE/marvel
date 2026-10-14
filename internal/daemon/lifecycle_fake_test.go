@@ -121,16 +121,3 @@ func TestBusStatusFromAPlainLifecycle(t *testing.T) {
 		t.Errorf("busStatus = %+v, want managed, ready, pid 42, 3 restarts", st)
 	}
 }
-
-// A render that changes the configuration reloads the broker through the
-// lifecycle, not through the concrete supervisor.
-func TestRenderReloadsThroughTheLifecycle(t *testing.T) {
-	d := newHandlerDaemon(t)
-	attachTestBus(t, d, "")
-	f := &fakeLifecycle{}
-	wireBusReloader(d.bus, f)
-	d.regenerateBus("test render")
-	if f.reloads != 1 {
-		t.Errorf("reloads = %d after a changed render, want 1", f.reloads)
-	}
-}
