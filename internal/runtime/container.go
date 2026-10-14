@@ -129,9 +129,9 @@ func containerMountPath(what, p string) error {
 //
 //   - it removes any container of the same name before the run, so a relaunch
 //     cannot collide with a leftover;
-//   - it removes the container when the shell ends and when it is hung up,
-//     terminated or interrupted, which is what a pane kill, a deleted team, a
-//     shift drain and a stop with teardown deliver (finding-051 measured the
+//   - it removes the container when the shell ends and when it is hung up or
+//     terminated, which is what a pane kill, a deleted team, a shift drain and a
+//     stop with teardown deliver (finding-051 measured the
 //     container surviving all four);
 //   - it passes the client's own exit status through.
 //
@@ -185,6 +185,6 @@ func ContainerCommand(s ContainerSpec) (string, error) {
 	rm := `"$r" rm -f "$n" >/dev/null 2>&1`
 	return "n=" + containerQuote(s.Name) + "; r=" + containerQuote(s.Runtime) + "; " +
 		"trap '" + rm + "' EXIT; " +
-		"trap 'exit 129' HUP; trap 'exit 143' TERM; trap 'exit 130' INT; " +
+		"trap 'exit 129' HUP; trap 'exit 143' TERM; " +
 		rm + "; " + run.String(), nil
 }

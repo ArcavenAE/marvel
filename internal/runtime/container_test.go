@@ -258,7 +258,7 @@ func TestContainerCommandRemovesTheContainerOnNormalExit(t *testing.T) {
 // shift drain and a stop with teardown.
 func TestContainerCommandRemovesTheContainerWhenThePaneIsKilled(t *testing.T) {
 	for _, sh := range shells(t) {
-		for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT} {
+		for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM} {
 			bin, log := fakeRuntime(t, "30")
 			spec := goodSpec()
 			spec.Runtime = bin
