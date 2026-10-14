@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/homeguard"
 )
 
 // loadedBrokerWait is the least a test that starts a real nats-server may wait
@@ -15,7 +17,7 @@ const loadedBrokerWait = 30 * time.Second
 // run a real broker behind the rest of the suite.
 func TestMain(m *testing.M) {
 	provisionRPC, structureRPC = loadedBrokerWait, loadedBrokerWait
-	os.Exit(m.Run())
+	os.Exit(homeguard.Run(m))
 }
 
 // A test that starts a real broker waits long enough for it on a loaded host.

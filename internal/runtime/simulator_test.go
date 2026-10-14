@@ -68,13 +68,13 @@ func TestSimulatorPrepareInjectsHeartbeatFlags(t *testing.T) {
 		t.Errorf("command should start with binary, got: %s", result.Command)
 	}
 	for _, want := range []string{
-		"--socket /tmp/marvel.sock",
-		"--name squad-agent-g1-0",
-		"--workspace demo",
-		"--team squad",
-		"--role agent",
-		"--script scripts/chaos.lua",
-		"--tick 3000",
+		qw("--socket /tmp/marvel.sock"),
+		qw("--name squad-agent-g1-0"),
+		qw("--workspace demo"),
+		qw("--team squad"),
+		qw("--role agent"),
+		qw("--script scripts/chaos.lua"),
+		qw("--tick 3000"),
 	} {
 		if !strings.Contains(result.Command, want) {
 			t.Errorf("command missing %q, got: %s", want, result.Command)
