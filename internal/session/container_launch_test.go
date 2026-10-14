@@ -17,9 +17,9 @@ import (
 // seat whose placement resolves to container runs its prepared command under the
 // container runtime, with the role's container_image. A role with no image is
 // refused, never given a default one, and nothing in these paths starts a
-// container-placed seat on the host. What happens when no runtime is installed is
-// not decided here (card sandbox-refusal-vs-d2); the tests only pin that such a
-// seat does not start.
+// container-placed seat on the host. With no container runtime installed the seat
+// is refused with a message, and an explicit localhost still runs on the host
+// (operator ruling 2026-10-14, "7.2 refuse").
 
 type containerRig struct {
 	store *api.Store
@@ -263,18 +263,74 @@ func TestARecommendedContainerWithNoImageIsRefused(t *testing.T) {
 // container runtime installed the launch fails: no record, no pane, no call.
 // What the operator wants there (refuse with a reason, or fall back) is the open
 // card sandbox-refusal-vs-d2; this pins only that it never starts on the host.
-func TestContainerPlacementWithNoRuntimeNeverStartsOnTheHost(t *testing.T) {
+func TestContainerPlacementWithNoRuntimeIsRefused(t *testing.T) {
 	r := newContainerRig(t, "test-ctr-noruntime", api.PlacementContainer, api.Role{Name: "seat", Replicas: 1, ContainerImage: "img:1"})
 	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
 	sess := r.session("sleep")
-	if err := r.mgr.Create(sess); err == nil {
-		t.Fatal("Create succeeded with no container runtime")
+	err := r.mgr.Create(sess)
+	if !errors.Is(err, ErrPlacementRefused) {
+		t.Fatalf("Create = %v, want an error wrapping ErrPlacementRefused", err)
 	}
-	if _, err := r.store.GetSession(sess.Key()); err == nil {
-		t.Error("a failed launch left a session record")
+	if _, gerr := r.store.GetSession(sess.Key()); gerr == nil {
+		t.Error("a refused launch left a session record")
 	}
 	if !r.neverRan(t) {
 		t.Error("the seat started on the host")
+	}
+	if len(r.calls()) != 0 {
+		t.Errorf("the container runtime was called: %v", r.calls())
+	}
+	// The reconcile loop retries every tick: a second try is one event, not two.
+	_ = r.mgr.Create(r.session("sleep"))
+	got := r.refusals()
+	if len(got) != 1 {
+		t.Fatalf("%d container-refused events, want 1", len(got))
+	}
+	for _, want := range []string{"seat", "docker or podman", `placement = "localhost"`} {
+		if !strings.Contains(got[0].Message, want) {
+			t.Errorf("the event message lacks %q: %q", want, got[0].Message)
+		}
+	}
+	standing := r.mgr.PlacementRefusals()
+	if len(standing) != 1 || standing[0].Reason != RefusalContainerRuntime || standing[0].Role != "seat" {
+		t.Errorf("standing refusals = %+v, want one with reason %q for role seat", standing, RefusalContainerRuntime)
+	}
+}
+
+// Installing a runtime ends the refusal without anyone clearing it, and the seat
+// starts under it.
+func TestInstallingAContainerRuntimeEndsTheRefusal(t *testing.T) {
+	r := newContainerRig(t, "test-ctr-install", api.PlacementContainer, api.Role{Name: "seat", Replicas: 1, ContainerImage: "img:1"})
+	withRuntime := r.mgr.LookPath
+	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	if err := r.mgr.Create(r.session("sleep")); !errors.Is(err, ErrPlacementRefused) {
+		t.Fatalf("first Create = %v", err)
+	}
+	r.mgr.LookPath = withRuntime
+	if err := r.mgr.Create(r.session("sleep")); err != nil {
+		t.Fatalf("Create after a runtime appeared: %v", err)
+	}
+	if !r.ran(t) {
+		t.Error("the seat did not start")
+	}
+	if n := len(r.mgr.PlacementRefusals()); n != 0 {
+		t.Errorf("%d standing refusals after the refusal's cause went", n)
+	}
+}
+
+// The other half of the ruling: an explicit localhost never needs a runtime, so
+// with none installed it still runs on the host, with no refusal.
+func TestExplicitLocalhostWithNoRuntimeStillRunsOnTheHost(t *testing.T) {
+	r := newContainerRig(t, "test-ctr-local-nort", api.PlacementLocalhost, api.Role{Name: "seat", Replicas: 1})
+	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	if err := r.mgr.Create(r.session("pi")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !r.ran(t) {
+		t.Fatal("the seat did not run on the host")
+	}
+	if len(r.refusals()) != 0 || len(r.mgr.PlacementRefusals()) != 0 {
+		t.Errorf("localhost placement was refused for a missing runtime: %v %v", r.refusals(), r.mgr.PlacementRefusals())
 	}
 }
 
