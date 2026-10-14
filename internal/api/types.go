@@ -610,10 +610,14 @@ type Role struct {
 	Replicas        int      `toml:"replicas"`
 	// WorkDir is where this role's sessions run; empty means the team's
 	// workdir, then the workspace root. Absolute once applied.
-	WorkDir       string        `toml:"workdir,omitempty"`
-	Runtime       Runtime       `toml:"runtime"`
-	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
-	Permissions   string        `toml:"permissions,omitempty"`
+	WorkDir string `toml:"workdir,omitempty"`
+	// ContainerImage is the image a seat of this role runs in when its placement
+	// resolves to container. Empty means none: such a seat is refused, and no
+	// default image is ever substituted.
+	ContainerImage string        `toml:"container_image,omitempty"`
+	Runtime        Runtime       `toml:"runtime"`
+	RestartPolicy  RestartPolicy `toml:"restart_policy,omitempty"`
+	Permissions    string        `toml:"permissions,omitempty"`
 	// DangerousPermissions, when true, causes adapters that support it to
 	// append --dangerously-skip-permissions (or equivalent) to the spawned
 	// agent. Intended for autonomous marvel-managed teams where no

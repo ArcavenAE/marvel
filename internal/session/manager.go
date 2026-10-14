@@ -36,6 +36,8 @@ type Manager struct {
 	refused   map[string]*refusal
 	// Clock is the time source for refusal bookkeeping; nil means time.Now.
 	Clock func() time.Time
+	// LookPath finds the container runtime CLI; nil means exec.LookPath.
+	LookPath func(string) (string, error)
 
 	store      *api.Store
 	driver     *tmux.Driver
@@ -1867,10 +1869,19 @@ var ErrPlacementRefused = errors.New("placement refused")
 // directory.
 type PlacementRefusal struct {
 	Workspace, Team, Role string
-	WorkDir               string
-	Message               string
-	Since                 time.Time
+	// Reason is what the spawn is refused for: RefusalDirectory or
+	// RefusalContainerImage.
+	Reason  string
+	WorkDir string
+	Message string
+	Since   time.Time
 }
+
+// The reasons a spawn is refused for its placement.
+const (
+	RefusalDirectory      = "directory"
+	RefusalContainerImage = "container image"
+)
 
 // refusal is the standing record of one refused role, with when it was last
 // logged and emitted.
