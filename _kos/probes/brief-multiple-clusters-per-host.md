@@ -21,7 +21,7 @@ test HOME guard, in build), aae-orc-cxdf (the rehydrate-and-spawn hazard).
 |---|---|
 | `docs/design/daemon-isolation.md`, ratified 2026-08-07 | Decision 1: the isolation unit is the HOME-rooted layout (`paths.Layout`). Decision 2: the control socket moves to `RunDir()/marvel.sock`. Decision 3: `--socket` > `MARVEL_SOCKET` > cluster entry > layout default. Decision 4: the tmux server name derives from the layout. Decision 5: leave unrecorded tmux state alone by default. Its own "Out of scope" says concurrent daemons are not made safe by it alone. |
 | #122 (socket through the layout, advisory lock), #123 (leave-alone default), #128 (tmux name from the layout), #126 (the daemon reports its layout home on every response, Decision 8) | The code side of Decisions 2 to 5 and 8, all merged 2026-08-07. #118 (name the acting daemon in the kill event) merged the same day and predates the design. |
-| finding-012 (`scripts/rig-daemon-isolation.sh`) | Eight two-daemon scenarios pass with HOME-separated daemons: a second daemon no longer destroys the first's fleet, takes its socket, or strands it. Some scenarios deliberately share one socket or one tmux server across the two HOMEs. Its own correction (2026-08-07) found the first reap scenario measured the wrong object, and scenario 4b no longer reproduces. |
+| finding-012 (`scripts/rig-daemon-isolation.sh`) | Eight scenarios pass (0 to 6 and 4b; 0 and 5 run one daemon, the rest two, HOME-separated): a second daemon no longer destroys the first's fleet, takes its socket, or strands it. Some scenarios deliberately share one socket or one tmux server across the two HOMEs. Its own correction (2026-08-07) found the first reap scenario measured the wrong object, and scenario 4b no longer reproduces. |
 | finding-013 | Two HOMEs get two tmux servers by default. |
 | finding-025, 2026-08-09 | A daemon under another HOME de-authenticates claude ("Not logged in"). The recipe that works for a real-model second daemon keeps the real HOME and moves marvel state by flag: `--socket`, `--state-bolt`, `--log-file`, `--pidfile`, plus `MARVEL_TMUX_SOCKET`. #188 made the demo runbook default to that scratch layout. aae-orc-7t7d asks for one selector in place of five settings. |
 | #586 (issue, closed) | An explicit `--cluster` outranks `MARVEL_SOCKET`, so a seat aiming at another cluster no longer lands on its own daemon. |
@@ -41,8 +41,9 @@ G-FLAGS is the shape a host with real seats would need.
 ## 2. What on `main` assumes one daemon per HOME
 
 Every row below resolves through `paths.Default()` or the HOME tag
-(`Layout.Tag()`, the first 8 hex of sha256 of the layout home), with no flag
-or variable to move it. Under G-HOME each is per daemon. Under G-FLAGS two
+(`Layout.Tag()`, the first 8 hex of sha256 of the layout home), with no
+per-daemon marvel flag to move it. Row 1 follows `TMPDIR`, and its overlay
+dir alone has an env override; nothing else here moves without moving HOME. Under G-HOME each is per daemon. Under G-FLAGS two
 daemons share it.
 
 | # | Resource | Where | Since | Under G-FLAGS |
@@ -86,10 +87,31 @@ conditions:
 4. Nothing under the real `~/.marvel` is read or written, not even names.
 
 Cleanup stops only the daemons and tmux servers this trial started, by the
-pid files and tmux socket names inside the root (`kill "$(cat <root>/a/daemon.pid)"`,
-`tmux -S <root>/tmux/... kill-server`). Never `pkill -f` by a pattern: write-deny
-does not stop a signal, and a pattern can match another session's process.
+pid files and tmux socket names inside the root (for T0, the daemon pid file
+is `<root>/ha/.marvel/run/daemon.pid`; tmux by `tmux -S <root>/tmux/...
+kill-server`). Never `pkill -f` by a pattern: write-deny does not stop a
+signal, and a pattern can match another session's process.
+
+Each kill is gated, because after a crash a stale pid file can name a pid
+the system has since reused for an unrelated process:
+
+- before each kill, run `ps -p "$pid" -o command=` OUTSIDE the sandbox;
+- kill only if the command names the binary built into `<root>`; otherwise
+  record the pid and the command, and skip it;
+- the same gate for every nats-server pid in T3, including
+  `<root>/h*/.marvel/run/nats-server.pid`.
+
 Remove the root at the end only after both daemons have exited.
+
+Two notes on the conditions, from the run:
+
+- Localhost only is tested, not enforced: the refused-connection control
+  shows the localhost path works, and no outbound connection was seen at
+  daemon start. Nothing in the profile blocks the network.
+- Under `sandbox-exec`, marvel's tmux absence check runs `/bin/ps`, which is
+  setuid, and the default write-deny refuses it (`file-write-setugid`). The
+  profile carries one narrow allow for `/bin/ps` only, approved by the
+  supervisor, and the write controls were re-run after adding it.
 
 Steps:
 
