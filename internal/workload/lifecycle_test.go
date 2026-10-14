@@ -477,3 +477,22 @@ func TestProcessSignalReachesAReadyChildAndNothingElse(t *testing.T) {
 		t.Error("a signal ended the child")
 	}
 }
+
+func TestProcessConfigureReplacesTheSettingsInForce(t *testing.T) {
+	f := newFixture(t)
+	p := NewProcess(f.cfg)
+	var backoffs atomic.Int32
+	changed := f.cfg
+	changed.Backoff = func(int) time.Duration { backoffs.Add(1); return 5 * time.Millisecond }
+	p.Configure(changed)
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer p.Stop(false)
+	first := p.State().Pid
+	if err := syscall.Kill(first, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the reconfigured backoff to be read", func() bool { return backoffs.Load() == 1 })
+	eventually(t, "a second child", func() bool { st := p.State(); return st.Ready && st.Pid != first })
+}

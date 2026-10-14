@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -133,7 +134,7 @@ type State struct {
 // restarts a crash under backoff, restarts on request, and stops with or
 // without leaving the child for a successor.
 type Process struct {
-	cfg Config
+	conf atomic.Pointer[Config]
 
 	mu          sync.Mutex
 	parent      context.Context
@@ -152,8 +153,19 @@ type Process struct {
 
 // NewProcess prepares a Process for a driver's Config.
 func NewProcess(cfg Config) *Process {
-	return &Process{cfg: cfg, pidState: PidNone}
+	p := &Process{pidState: PidNone}
+	p.conf.Store(&cfg)
+	return p
 }
+
+// cfg is the Config in force, read without the lock so the watch goroutine
+// and a driver's Configure never race.
+func (p *Process) cfg() *Config { return p.conf.Load() }
+
+// Configure replaces the Config. A driver calls it before a lifecycle call
+// so a setting changed since construction is the one in force; it waits for
+// a lifecycle call in progress.
+func (p *Process) Configure(cfg Config) { p.conf.Store(&cfg) }
 
 // State snapshots the Process.
 func (p *Process) State() State {
@@ -179,42 +191,42 @@ func (p *Process) Start(ctx context.Context) error {
 	p.parent = ctx
 	ctx, p.cancel = context.WithCancel(ctx)
 
-	v := p.cfg.Classify()
+	v := p.cfg().Classify()
 	p.pidState = v.Kind
 	switch v.Kind {
 	case PidProven:
-		if p.cfg.Listener(time.Second) {
+		if p.cfg().Listener(time.Second) {
 			p.pid, p.adopted, p.child = v.Pid, true, v.Child
-			log.Printf("%s: adopted running %s pid %d on %s", p.cfg.Name, p.cfg.Label, v.Pid, p.cfg.Listen)
+			log.Printf("%s: adopted running %s pid %d on %s", p.cfg().Name, p.cfg().Label, v.Pid, p.cfg().Listen)
 			// The child still holds what the previous daemon gave it; this
 			// daemon has just rendered fresh values. Reload before anything
 			// connects. Connected clients are kept.
-			if p.cfg.Reload != 0 {
-				if err := p.cfg.Prober.Signal(v.Child, p.cfg.Reload, false); err != nil {
-					log.Printf("%s: reload adopted %s pid %d: %v", p.cfg.Name, p.cfg.Label, v.Pid, err)
+			if p.cfg().Reload != 0 {
+				if err := p.cfg().Prober.Signal(v.Child, p.cfg().Reload, false); err != nil {
+					log.Printf("%s: reload adopted %s pid %d: %v", p.cfg().Name, p.cfg().Label, v.Pid, err)
 				}
 			}
 			return p.becomeReady(ctx, "adopted")
 		}
 		// Proven and not listening: it is ours and wedged.
-		log.Printf("%s: pidfile names our %s pid %d, which is not listening on %s; stopping it", p.cfg.Name, p.cfg.Label, v.Pid, p.cfg.Listen)
+		log.Printf("%s: pidfile names our %s pid %d, which is not listening on %s; stopping it", p.cfg().Name, p.cfg().Label, v.Pid, p.cfg().Listen)
 		p.Terminate(v.Child)
 		p.removeIdentity()
 	case PidStale:
 		p.removeIdentity()
-		if p.cfg.OnStale != nil {
-			p.cfg.OnStale(v)
+		if p.cfg().OnStale != nil {
+			p.cfg().OnStale(v)
 		}
-		if p.cfg.Listener(500 * time.Millisecond) {
-			return p.cfg.Unproven(v.Pid, "the pidfile does not prove it is ours")
+		if p.cfg().Listener(500 * time.Millisecond) {
+			return p.cfg().Unproven(v.Pid, "the pidfile does not prove it is ours")
 		}
 	case PidLegacy:
 		if done, err := p.startLegacy(v); done {
 			return err
 		}
 	}
-	if p.cfg.Listener(500 * time.Millisecond) {
-		return p.cfg.Stranger()
+	if p.cfg().Listener(500 * time.Millisecond) {
+		return p.cfg().Stranger()
 	}
 	if err := p.spawnLocked(); err != nil {
 		return err
@@ -223,8 +235,8 @@ func (p *Process) Start(ctx context.Context) error {
 }
 
 func (p *Process) removeIdentity() {
-	if p.cfg.RemoveIdentity != nil {
-		p.cfg.RemoveIdentity()
+	if p.cfg().RemoveIdentity != nil {
+		p.cfg().RemoveIdentity()
 	}
 }
 
@@ -233,14 +245,14 @@ func (p *Process) removeIdentity() {
 // With the listener answering, the child is unproven and nothing is done about
 // it. done is true when Start is over. Caller holds p.mu.
 func (p *Process) startLegacy(v Verdict) (done bool, err error) {
-	if !p.cfg.Listener(time.Second) {
-		log.Printf("%s: pidfile names pid %d with no identity record and nothing is listening on %s; removing it", p.cfg.Name, v.Pid, p.cfg.Listen)
-		if p.cfg.RemovePidFile != nil {
-			p.cfg.RemovePidFile()
+	if !p.cfg().Listener(time.Second) {
+		log.Printf("%s: pidfile names pid %d with no identity record and nothing is listening on %s; removing it", p.cfg().Name, v.Pid, p.cfg().Listen)
+		if p.cfg().RemovePidFile != nil {
+			p.cfg().RemovePidFile()
 		}
 		return false, nil
 	}
-	return true, p.cfg.Unproven(v.Pid, "its pidfile has no identity record")
+	return true, p.cfg().Unproven(v.Pid, "its pidfile has no identity record")
 }
 
 // becomeReady waits for the listener, runs AfterReady, marks ready, hands the
@@ -248,17 +260,17 @@ func (p *Process) startLegacy(v Verdict) (done bool, err error) {
 // released around OnReady, so a slow driver read cannot hold State.
 func (p *Process) becomeReady(ctx context.Context, how string) error {
 	if !p.waitListener(ctx) {
-		return fmt.Errorf("%s: %s pid %d did not answer on %s within %s (see %s)", p.cfg.Name, p.cfg.Label, p.pid, p.cfg.Listen, p.cfg.DialTimeout, p.cfg.LogPath)
+		return fmt.Errorf("%s: %s pid %d did not answer on %s within %s (see %s)", p.cfg().Name, p.cfg().Label, p.pid, p.cfg().Listen, p.cfg().DialTimeout, p.cfg().LogPath)
 	}
-	if p.cfg.AfterReady != nil {
-		if err := p.cfg.AfterReady(); err != nil {
-			return fmt.Errorf("%s: listener up but provisioning failed: %w", p.cfg.Name, err)
+	if p.cfg().AfterReady != nil {
+		if err := p.cfg().AfterReady(); err != nil {
+			return fmt.Errorf("%s: listener up but provisioning failed: %w", p.cfg().Name, err)
 		}
 	}
 	p.ready = true
-	if p.cfg.OnReady != nil {
+	if p.cfg().OnReady != nil {
 		p.mu.Unlock()
-		p.cfg.OnReady(ctx, how)
+		p.cfg().OnReady(ctx, how)
 		p.mu.Lock()
 	}
 	// Hand the child to the watcher here, under the lock the caller holds,
@@ -273,7 +285,7 @@ func (p *Process) becomeReady(ctx context.Context, how string) error {
 // environment is the class allowlist plus what the driver minted, never the
 // daemon's own. Caller holds p.mu.
 func (p *Process) spawnLocked() error {
-	spec, err := p.cfg.Spec()
+	spec, err := p.cfg().Spec()
 	if err != nil {
 		return err
 	}
@@ -281,18 +293,18 @@ func (p *Process) spawnLocked() error {
 	// what the kernel says about the child now. The child is proven from the
 	// handle that started it, never from a pid.
 	var spawned childproof.Child
-	spec.PidFile = p.cfg.PidFile
+	spec.PidFile = p.cfg().PidFile
 	spec.BeforePidFile = func(cmd *exec.Cmd) error {
-		if p.cfg.OnSpawnPid != nil {
-			p.cfg.OnSpawnPid(cmd.Process.Pid)
+		if p.cfg().OnSpawnPid != nil {
+			p.cfg().OnSpawnPid(cmd.Process.Pid)
 		}
-		c, err := p.cfg.Prober.Spawned(cmd)
+		c, err := p.cfg().Prober.Spawned(cmd)
 		if err != nil {
-			return fmt.Errorf("read the identity of the new %s (pid %d): %w", p.cfg.Label, cmd.Process.Pid, err)
+			return fmt.Errorf("read the identity of the new %s (pid %d): %w", p.cfg().Label, cmd.Process.Pid, err)
 		}
 		spawned = c
-		if p.cfg.RecordIdentity != nil {
-			return p.cfg.RecordIdentity(c)
+		if p.cfg().RecordIdentity != nil {
+			return p.cfg().RecordIdentity(c)
 		}
 		return nil
 	}
@@ -300,8 +312,8 @@ func (p *Process) spawnLocked() error {
 	if err != nil {
 		return err
 	}
-	if p.cfg.Spawned != nil {
-		p.cfg.Spawned(child)
+	if p.cfg().Spawned != nil {
+		p.cfg().Spawned(child)
 	}
 	p.cmd, p.pid, p.adopted, p.child, p.pidState = child.Cmd, child.Pid, false, spawned, PidProven
 	return nil
@@ -319,7 +331,7 @@ func (p *Process) watch(ctx context.Context, done chan struct{}, cmd *exec.Cmd, 
 			return
 		}
 		// Adopted: not our child, so poll its identity.
-		every := p.cfg.AdoptPoll
+		every := p.cfg().AdoptPoll
 		if every <= 0 {
 			every = 2 * time.Second
 		}
@@ -333,29 +345,29 @@ func (p *Process) watch(ctx context.Context, done chan struct{}, cmd *exec.Cmd, 
 			case <-t.C:
 				// Same is an identity read: a pid handed to another process
 				// reads as the child having exited.
-				if !p.cfg.Prober.Same(c) {
-					exit <- fmt.Errorf("adopted %s exited", p.cfg.Label)
+				if !p.cfg().Prober.Same(c) {
+					exit <- fmt.Errorf("adopted %s exited", p.cfg().Label)
 					return
 				}
 			}
 		}
 	}()
 	var tick <-chan time.Time
-	if p.cfg.PollEvery > 0 {
-		t := time.NewTicker(p.cfg.PollEvery)
+	if p.cfg().PollEvery > 0 {
+		t := time.NewTicker(p.cfg().PollEvery)
 		defer t.Stop()
 		tick = t.C
 	}
-	if p.cfg.PollFirst != nil {
-		p.cfg.PollFirst()
+	if p.cfg().PollFirst != nil {
+		p.cfg().PollFirst()
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick:
-			if p.cfg.Poll != nil {
-				p.cfg.Poll(ctx)
+			if p.cfg().Poll != nil {
+				p.cfg().Poll(ctx)
 			}
 		case err := <-exit:
 			p.mu.Lock()
@@ -375,12 +387,12 @@ func (p *Process) watch(ctx context.Context, done chan struct{}, cmd *exec.Cmd, 
 func (p *Process) onCrash(ctx context.Context, err error) {
 	p.mu.Lock()
 	p.restarts++
-	wait := p.cfg.Backoff(p.restarts)
+	wait := p.cfg().Backoff(p.restarts)
 	p.backoffTill = time.Now().UTC().Add(wait)
 	pid, restarts := p.pid, p.restarts
 	p.mu.Unlock()
-	if p.cfg.OnCrash != nil {
-		p.cfg.OnCrash(pid, err, restarts, wait)
+	if p.cfg().OnCrash != nil {
+		p.cfg().OnCrash(pid, err, restarts, wait)
 	}
 	select {
 	case <-ctx.Done():
@@ -393,12 +405,12 @@ func (p *Process) onCrash(ctx context.Context, err error) {
 		return
 	}
 	if serr := p.spawnLocked(); serr != nil {
-		log.Printf("%s: restart failed: %v", p.cfg.Name, serr)
+		log.Printf("%s: restart failed: %v", p.cfg().Name, serr)
 		go func() { p.onCrash(ctx, serr) }()
 		return
 	}
 	if rerr := p.becomeReady(ctx, fmt.Sprintf("restarted (#%d)", p.restarts)); rerr != nil {
-		log.Printf("%s: %v", p.cfg.Name, rerr)
+		log.Printf("%s: %v", p.cfg().Name, rerr)
 	}
 }
 
@@ -410,7 +422,7 @@ func (p *Process) Restart(reason string) error {
 	p.mu.Lock()
 	if p.parent == nil {
 		p.mu.Unlock()
-		return fmt.Errorf("%s: restart before start", p.cfg.Name)
+		return fmt.Errorf("%s: restart before start", p.cfg().Name)
 	}
 	p.stopping = true // the watcher must not read this exit as a crash
 	if p.cancel != nil {
@@ -424,7 +436,7 @@ func (p *Process) Restart(reason string) error {
 	}
 	if pid != 0 {
 		p.Terminate(child)
-		log.Printf("%s: %s pid %d stopped to restart (%s)", p.cfg.Name, p.cfg.Label, pid, reason)
+		log.Printf("%s: %s pid %d stopped to restart (%s)", p.cfg().Name, p.cfg().Label, pid, reason)
 	}
 
 	p.mu.Lock()
@@ -444,22 +456,22 @@ func (p *Process) Restart(reason string) error {
 // point stops the rest. A child that is gone or no longer the one proven is
 // left alone.
 func (p *Process) Terminate(c childproof.Child) {
-	if err := p.cfg.Prober.Signal(c, syscall.SIGTERM, true); err != nil {
-		log.Printf("%s: not stopping %s pid %d: %v", p.cfg.Name, p.cfg.Label, c.Pid(), err)
+	if err := p.cfg().Prober.Signal(c, syscall.SIGTERM, true); err != nil {
+		log.Printf("%s: not stopping %s pid %d: %v", p.cfg().Name, p.cfg().Label, c.Pid(), err)
 		return
 	}
-	grace := p.cfg.Grace
+	grace := p.cfg().Grace
 	if grace <= 0 {
 		grace = DefaultGrace
 	}
 	step := min(100*time.Millisecond, grace/4)
 	deadline := time.Now().Add(grace)
-	for time.Now().Before(deadline) && p.cfg.Prober.Same(c) {
+	for time.Now().Before(deadline) && p.cfg().Prober.Same(c) {
 		time.Sleep(step)
 	}
-	if p.cfg.Prober.Same(c) {
-		if err := p.cfg.Prober.Signal(c, syscall.SIGKILL, true); err != nil {
-			log.Printf("%s: not killing %s pid %d: %v", p.cfg.Name, p.cfg.Label, c.Pid(), err)
+	if p.cfg().Prober.Same(c) {
+		if err := p.cfg().Prober.Signal(c, syscall.SIGKILL, true); err != nil {
+			log.Printf("%s: not killing %s pid %d: %v", p.cfg().Name, p.cfg().Label, c.Pid(), err)
 		}
 	}
 }
@@ -473,7 +485,7 @@ func (p *Process) Signal(sig syscall.Signal) (pid int, running bool, err error) 
 	if pid == 0 || !ready {
 		return pid, false, nil
 	}
-	return pid, true, p.cfg.Prober.Signal(child, sig, false)
+	return pid, true, p.cfg().Prober.Signal(child, sig, false)
 }
 
 // Stop ends supervision. With keep the child is left running for the next
@@ -497,25 +509,25 @@ func (p *Process) Stop(keep bool) {
 		return
 	}
 	if keep {
-		log.Printf("%s: leaving %s pid %d running for the next daemon to adopt", p.cfg.Name, p.cfg.Label, pid)
+		log.Printf("%s: leaving %s pid %d running for the next daemon to adopt", p.cfg().Name, p.cfg().Label, pid)
 		return
 	}
 	// Our own child was already reaped by cmd.Wait inside watch; an adopted
 	// process is not ours to wait on, so both are given the grace by polling.
 	p.Terminate(child)
 	p.removeIdentity()
-	if p.cfg.OnStopped != nil {
-		p.cfg.OnStopped(pid)
+	if p.cfg().OnStopped != nil {
+		p.cfg().OnStopped(pid)
 	}
 }
 
 func (p *Process) waitListener(ctx context.Context) bool {
-	deadline := time.Now().Add(p.cfg.DialTimeout)
+	deadline := time.Now().Add(p.cfg().DialTimeout)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return false
 		}
-		if p.cfg.Listener(300 * time.Millisecond) {
+		if p.cfg().Listener(300 * time.Millisecond) {
 			return true
 		}
 		time.Sleep(150 * time.Millisecond)
