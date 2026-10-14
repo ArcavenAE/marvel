@@ -57,7 +57,7 @@ func TestPrepareInjectsProjectionFlag(t *testing.T) {
 		if err != nil {
 			t.Fatalf("prepare: %v", err)
 		}
-		if !strings.Contains(res.Command, "--settings "+path) {
+		if !strings.Contains(res.Command, qw("--settings "+path)) {
 			t.Errorf("command missing --settings %s:\n%s", path, res.Command)
 		}
 	})
@@ -70,11 +70,11 @@ func TestPrepareInjectsProjectionFlag(t *testing.T) {
 		if err != nil {
 			t.Fatalf("prepare: %v", err)
 		}
-		sep := strings.Index(res.Command, " -- ")
+		sep := strings.Index(res.Command, " '--' ")
 		if sep < 0 {
 			t.Fatalf("no -- passthrough separator in:\n%s", res.Command)
 		}
-		flag := strings.Index(res.Command, "--settings "+path)
+		flag := strings.Index(res.Command, qw("--settings "+path))
 		if flag < 0 {
 			t.Fatalf("command missing --settings %s:\n%s", path, res.Command)
 		}

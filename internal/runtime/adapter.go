@@ -566,37 +566,10 @@ func buildCommand(binary string, args []string) string {
 	return cmd
 }
 
-// shellQuote wraps an argument in single quotes if it contains spaces or
-// shell metacharacters. Empty strings become ”.
+// shellQuote wraps an argument in single quotes unconditionally, escaping
+// embedded single quotes. An empty string becomes a pair of quotes.
 func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, c := range s {
-		if c == ' ' || c == '\'' || c == '"' || c == '\\' || c == '$' ||
-			c == '`' || c == '!' || c == '&' || c == '|' || c == ';' ||
-			c == '(' || c == ')' || c == '{' || c == '}' || c == '<' ||
-			c == '>' || c == '*' || c == '?' || c == '[' || c == ']' ||
-			c == '#' || c == '~' {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	// Single-quote the string, escaping embedded single quotes.
-	result := "'"
-	for _, c := range s {
-		if c == '\'' {
-			result += `'\''`
-		} else {
-			result += string(c)
-		}
-	}
-	result += "'"
-	return result
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // settingsProjectionPath is the per-session projected settings file for
