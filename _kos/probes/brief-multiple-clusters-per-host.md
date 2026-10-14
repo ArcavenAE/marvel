@@ -108,10 +108,13 @@ Two notes on the conditions, from the run:
 - Localhost only is tested, not enforced: the refused-connection control
   shows the localhost path works, and no outbound connection was seen at
   daemon start. Nothing in the profile blocks the network.
-- Under `sandbox-exec`, marvel's tmux absence check runs `/bin/ps`, which is
-  setuid, and the default write-deny refuses it (`file-write-setugid`). The
-  profile carries one narrow allow for `/bin/ps` only, approved by the
-  supervisor, and the write controls were re-run after adding it.
+- Under `sandbox-exec`, marvel's tmux absence check cannot run `/bin/ps`,
+  which is setuid: the write-deny refuses it (`file-write-setugid`), so the
+  steps that need a pane are blocked. A narrow allow for `/bin/ps` was
+  refused by a policy control and awaits the operator's ruling; the profile
+  is unchanged. Until then the trial runs only the steps that need no pane
+  (T0.1, T0.2, T1's start-and-list, T3, T4). T0.3, T0.4, T1's adopt check
+  and T2 wait for the ruling.
 
 Steps:
 
