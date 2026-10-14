@@ -3398,8 +3398,8 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return []string{bus.LeafSeedEnv + "=" + string(seed)}
 	}
 	d.regenerateBus("start")
-	mgr.Reloader = sup
 	lc := bus.NewLifecycle(sup)
+	mgr.Reloader = lc
 	// The moment after the listener answers and before any session may
 	// spawn belongs to provisioning: a bare broker strands the shim
 	// (finding-166). Runs as the admin identity, idempotent, and a failure
