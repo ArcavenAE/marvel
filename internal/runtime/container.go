@@ -62,6 +62,10 @@ var (
 // containerNameMax is the longest name ContainerName returns.
 const containerNameMax = 63
 
+// containerNamePrefix starts every name. `rm -f <name>` then cannot match a
+// container by an all-hex ID prefix, and a name that lacks it is refused.
+const containerNamePrefix = "marvel-"
+
 // ContainerName builds a container name for one launch of one session. launch
 // is any string that differs between launches of the same session (a
 // generation, a start time): a relaunch after a restart or a shift then never
@@ -72,7 +76,7 @@ const containerNameMax = 63
 func ContainerName(sessionKey, launch string) string {
 	sum := sha256.Sum256([]byte(sessionKey + "\x00" + launch))
 	suffix := "-" + sanitizeContainerPart(launch) + "-" + hex.EncodeToString(sum[:4])
-	const prefix = "marvel-"
+	const prefix = containerNamePrefix
 	room := containerNameMax - len(prefix) - len(suffix)
 	if room < 1 {
 		// An absurd launch string: drop it from the readable part; the hash
@@ -100,6 +104,15 @@ func sanitizeContainerPart(s string) string {
 	return b.String()
 }
 
+// containerQuote single-quotes s unconditionally. shellQuote, which the adapters
+// use, quotes only when a string holds a listed metacharacter, and newline and
+// tab are not listed, so text carrying one would reach the host shell unquoted.
+// The host wrapper shell runs whatever it is handed, so this path never takes
+// that shortcut.
+func containerQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func containerMountPath(what, p string) error {
 	switch {
 	case !filepath.IsAbs(p):
@@ -122,6 +135,13 @@ func containerMountPath(what, p string) error {
 //     container surviving all four);
 //   - it passes the client's own exit status through.
 //
+// The removal on a hangup depends on the client exiting when its tty hangs up:
+// a shell runs a trap only after its foreground command ends, so a client that
+// ignores the hangup keeps the wrapper, and the removal, waiting. The tests
+// cover the case where the hangup reaches the whole process group, which is
+// what a pty hangup delivers; the real docker client's behavior under a real
+// pty is unmeasured here.
+//
 // The harness runs under `sh -c` inside the image, so the image needs a sh.
 func ContainerCommand(s ContainerSpec) (string, error) {
 	switch {
@@ -131,8 +151,8 @@ func ContainerCommand(s ContainerSpec) (string, error) {
 		return "", fmt.Errorf("container image is empty")
 	case !containerImgRE.MatchString(s.Image):
 		return "", fmt.Errorf("container image %q is not a plain image reference", s.Image)
-	case !containerNameRE.MatchString(s.Name):
-		return "", fmt.Errorf("container name %q is not a legal name", s.Name)
+	case !containerNameRE.MatchString(s.Name) || !strings.HasPrefix(s.Name, containerNamePrefix):
+		return "", fmt.Errorf("container name %q is not a legal %s name", s.Name, containerNamePrefix+"...")
 	case strings.TrimSpace(s.Command) == "":
 		return "", fmt.Errorf("container command is empty")
 	}
@@ -152,18 +172,18 @@ func ContainerCommand(s ContainerSpec) (string, error) {
 
 	var run strings.Builder
 	run.WriteString(`"$r" run --rm --init -it --name "$n"`)
-	run.WriteString(" -w " + shellQuote(s.WorkDir))
-	run.WriteString(" -v " + shellQuote(s.WorkDir+":"+s.WorkDir))
+	run.WriteString(" -w " + containerQuote(s.WorkDir))
+	run.WriteString(" -v " + containerQuote(s.WorkDir+":"+s.WorkDir))
 	if s.HomeDir != "" {
-		run.WriteString(" -v " + shellQuote(s.HomeDir+":"+s.HomeDir))
+		run.WriteString(" -v " + containerQuote(s.HomeDir+":"+s.HomeDir))
 	}
 	for _, e := range s.EnvNames {
 		run.WriteString(" -e " + e)
 	}
-	run.WriteString(" " + s.Image + " sh -c " + shellQuote(s.Command))
+	run.WriteString(" " + s.Image + " sh -c " + containerQuote(s.Command))
 
 	rm := `"$r" rm -f "$n" >/dev/null 2>&1`
-	return "n=" + shellQuote(s.Name) + "; r=" + shellQuote(s.Runtime) + "; " +
+	return "n=" + containerQuote(s.Name) + "; r=" + containerQuote(s.Runtime) + "; " +
 		"trap '" + rm + "' EXIT; " +
 		"trap 'exit 129' HUP; trap 'exit 143' TERM; trap 'exit 130' INT; " +
 		rm + "; " + run.String(), nil

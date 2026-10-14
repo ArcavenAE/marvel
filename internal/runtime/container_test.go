@@ -162,6 +162,10 @@ func TestContainerCommandRefusesBadInput(t *testing.T) {
 		"colon in home":            func(s *ContainerSpec) { s.HomeDir = "/h/a:b" },
 		"illegal name":             func(s *ContainerSpec) { s.Name = "bad name" },
 		"name starts with dash":    func(s *ContainerSpec) { s.Name = "-rm" },
+		"prefixed name with space": func(s *ContainerSpec) { s.Name = "marvel-a b" },
+		"prefixed name with ;":     func(s *ContainerSpec) { s.Name = "marvel-a;b" },
+		"prefixed name with $()":   func(s *ContainerSpec) { s.Name = "marvel-$(x)" },
+		"prefixed name with nl":    func(s *ContainerSpec) { s.Name = "marvel-a\nb" },
 		"image starts with dash":   func(s *ContainerSpec) { s.Image = "--privileged" },
 		"image with a space":       func(s *ContainerSpec) { s.Image = "a b" },
 		"env name with equals":     func(s *ContainerSpec) { s.EnvNames = []string{"A=1"} },
@@ -186,12 +190,21 @@ func fakeRuntime(t *testing.T, runSecs string) (bin, log string) {
 	dir := t.TempDir()
 	bin = filepath.Join(dir, "fakedocker")
 	log = filepath.Join(dir, "calls.log")
-	script := "#!/bin/sh\necho \"$1 $*\" >> '" + log + "'\n" +
-		"if [ \"$1\" = run ]; then\n  if [ '" + runSecs + "' != 0 ]; then sleep " + runSecs + "; fi\n  exit ${FAKE_RUN_EXIT:-0}\nfi\nexit 0\n"
+	// One record per call, with newline, tab and carriage return in an argument
+	// written as \001, \002 and \003, so an argument holding one cannot split
+	// the record (see logForm).
+	script := "#!/bin/sh\n{ printf '%s' \"$1 $*\" | tr '\\n\\t\\r' '\\001\\002\\003'; echo; } >> '" + log + "'\n" +
+		"if [ \"$1\" = run ]; then\n  for a; do last=$a; done; printf '%s' \"$last\" > '" + log + ".last'\n  if [ '" + runSecs + "' != 0 ]; then sleep " + runSecs + "; fi\n  exit ${FAKE_RUN_EXIT:-0}\nfi\nexit 0\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin, log
+}
+
+// logForm is how fakeRuntime records an argument: newline, tab and carriage
+// return become \001, \002 and \003.
+func logForm(s string) string {
+	return strings.NewReplacer("\n", "\x01", "\t", "\x02", "\r", "\x03").Replace(s)
 }
 
 func calls(t *testing.T, log string) []string {
@@ -346,10 +359,10 @@ func TestContainerCommandQuotesTheCommand(t *testing.T) {
 func TestContainerCommandQuotesNewlineAndTabOnTheHost(t *testing.T) {
 	for _, sh := range shells(t) {
 		for name, payload := range map[string]string{
-			"newline":      "true\ntouch MARKER",
-			"tab":          "true\ttouch MARKER",
-			"carriage":     "true\rtouch MARKER",
-			"semicolon":    "true;touch MARKER",
+			"newline":      "true\ntouch\tMARKER",
+			"tab":          "true\ttouch\tMARKER",
+			"carriage":     "true\rtouch\tMARKER",
+			"semicolon":    "true;touch\tMARKER",
 			"quote":        "true';touch MARKER;'",
 			"substitution": "true$(touch MARKER)",
 			"backtick":     "true`touch MARKER`",
@@ -370,31 +383,30 @@ func TestContainerCommandQuotesNewlineAndTabOnTheHost(t *testing.T) {
 			if _, err := os.Stat(marker); err == nil {
 				t.Errorf("%s %s: the host wrapper shell ran the command text", sh, name)
 			}
-			var run string
-			for _, c := range calls(t, log) {
-				if strings.HasPrefix(c, "run ") {
-					run = c
-				}
+			last, err := os.ReadFile(log + ".last")
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !strings.Contains(run, strings.ReplaceAll(payload, "MARKER", marker)) {
-				t.Errorf("%s %s: the text did not arrive as one argument: %q", sh, name, run)
+			if want := strings.ReplaceAll(payload, "MARKER", marker); string(last) != want {
+				t.Errorf("%s %s: the container got %q as its command argument, want %q", sh, name, last, want)
 			}
 		}
 	}
 }
 
-// A path or the runtime with whitespace in it is one word too.
+// A path or the runtime with a tab in it, and no space, is one word too: the old
+// quoting let that through.
 func TestContainerCommandQuotesPathsAndRuntimeWithWhitespace(t *testing.T) {
 	bin, log := fakeRuntime(t, "0")
 	dir := t.TempDir()
-	spacedBin := filepath.Join(dir, "my docker\tcli")
+	spacedBin := filepath.Join(dir, "my\tdocker")
 	if err := os.Symlink(bin, spacedBin); err != nil {
 		t.Fatal(err)
 	}
 	spec := goodSpec()
 	spec.Runtime = spacedBin
-	spec.WorkDir = "/work/with space\tand tab"
-	spec.HomeDir = "/home/with space"
+	spec.WorkDir = "/work/a\tb\tc"
+	spec.HomeDir = "/home/h\tx"
 	cmd, err := ContainerCommand(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -408,8 +420,8 @@ func TestContainerCommandQuotesPathsAndRuntimeWithWhitespace(t *testing.T) {
 			run = c
 		}
 	}
-	for _, want := range []string{"-w /work/with space\tand tab", "-v /work/with space\tand tab:/work/with space\tand tab", "-v /home/with space:/home/with space"} {
-		if !strings.Contains(run, want) {
+	for _, want := range []string{"-w /work/a\tb\tc", "-v /work/a\tb\tc:/work/a\tb\tc", "-v /home/h\tx:/home/h\tx"} {
+		if !strings.Contains(run, logForm(want)) {
 			t.Errorf("run line lacks %q: %q", want, run)
 		}
 	}
