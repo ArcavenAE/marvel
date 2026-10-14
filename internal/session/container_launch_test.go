@@ -317,3 +317,28 @@ func TestAddingTheImageEndsTheRefusal(t *testing.T) {
 		t.Errorf("%d standing refusals after the refusal's cause went", n)
 	}
 }
+
+// A wrap that cannot be built after the plan exists (a container seat with no
+// working directory has nothing to mount) fails the launch: the session record
+// is removed, nothing starts, and the raw command is not used instead.
+func TestAContainerWrapThatCannotBeBuiltFailsTheLaunchAndLeavesNothing(t *testing.T) {
+	r := newContainerRig(t, "test-ctr-nowd", api.PlacementContainer, api.Role{Name: "seat", Replicas: 1, ContainerImage: "img:1"})
+	sess := r.session("sleep")
+	sess.WorkDir = ""
+	err := r.mgr.Create(sess)
+	if err == nil {
+		t.Fatal("Create succeeded for a container seat with no working directory")
+	}
+	if errors.Is(err, ErrPlacementRefused) {
+		t.Errorf("a wrap failure is not a placement refusal: %v", err)
+	}
+	if _, gerr := r.store.GetSession(sess.Key()); gerr == nil {
+		t.Error("the failed launch left a session record")
+	}
+	if !r.neverRan(t) {
+		t.Error("the raw command ran on the host")
+	}
+	if len(r.calls()) != 0 {
+		t.Errorf("the container runtime was called: %v", r.calls())
+	}
+}
