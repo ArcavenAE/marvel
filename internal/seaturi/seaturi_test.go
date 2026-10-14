@@ -30,16 +30,20 @@ func TestBuildRejectsEachRuleBreak(t *testing.T) {
 		edit func(*Seat)
 		rule string
 	}{
-		{"leading hyphen role", func(s *Seat) { s.Role = "-" }, "CAND-ID-1"},
+		{"leading hyphen role", func(s *Seat) { s.Role = "-builder" }, "CAND-ID-1"},
+		{"role of one hyphen", func(s *Seat) { s.Role = "-" }, "CAND-ID-1"},
 		{"doubled hyphen", func(s *Seat) { s.Role = "x--y" }, "CAND-ID-1"},
 		{"only hyphens", func(s *Seat) { s.Team = "--" }, "CAND-ID-1"},
 		{"trailing hyphen", func(s *Seat) { s.Workspace = "ws-" }, "CAND-ID-1"},
 		{"uppercase fleet", func(s *Seat) { s.Fleet = "Fleet1" }, "CAND-ID-1"},
 		{"underscore cluster", func(s *Seat) { s.Cluster = "c_1" }, "CAND-ID-1"},
-		{"percent in a segment", func(s *Seat) { s.Team = "team%2D1" }, "CAND-ID-1"},
+		{"percent escape, uppercase hex", func(s *Seat) { s.Team = "team%2D1" }, "CAND-ID-1"},
+		{"percent escape, lowercase hex", func(s *Seat) { s.Team = "team%2d1" }, "CAND-ID-1"},
+		{"percent escape, digits only", func(s *Seat) { s.Team = "team%30" }, "CAND-ID-1"},
 		{"slash in a segment", func(s *Seat) { s.Team = "a/b" }, "CAND-ID-1"},
 		{"empty segment", func(s *Seat) { s.Cluster = "" }, "CAND-ID-1"},
 		{"role ends in a generation tail", func(s *Seat) { s.Role = "widget-g4" }, "CAND-ID-3"},
+		{"role ends in a two-digit generation tail", func(s *Seat) { s.Role = "widget-g12" }, "CAND-ID-3"},
 		{"negative index", func(s *Seat) { s.Index = -1 }, "CAND-ID-3"},
 	}
 	for _, tt := range tests {
@@ -78,7 +82,11 @@ func TestParseRoundTripsAndRejects(t *testing.T) {
 		{"no index", "marvel://fleet1/c1/ws1/team1/builder", "CAND-ID-3"},
 		{"empty role", "marvel://fleet1/c1/ws1/team1/-0", "CAND-ID-1"},
 		{"uppercase fleet", "marvel://Fleet1/c1/ws1/team1/builder-0", "CAND-ID-1"},
-		{"percent escape", "marvel://fleet1/c1/ws1/team1/builder%2D0", "CAND-ID-1"},
+		{"percent escape, uppercase hex", "marvel://fleet1/c1/ws1/team1/builder%2D0", "CAND-ID-1"},
+		{"percent escape, lowercase hex", "marvel://fleet1/c1/ws1/team1/builder%2d0", "CAND-ID-1"},
+		{"percent escape, digits only", "marvel://fleet1/c1/ws1/team1/builder%300", "CAND-ID-1"},
+		{"leading hyphen role", "marvel://fleet1/c1/ws1/team1/-builder-0", "CAND-ID-1"},
+		{"two-digit generation shape", "marvel://fleet1/c1/ws1/team1/widget-g12-3", "CAND-ID-3"},
 		{"trailing slash", "marvel://fleet1/c1/ws1/team1/builder-0/", "CAND-ID-2"},
 		{"query", "marvel://fleet1/c1/ws1/team1/builder-0?x=1", "CAND-ID-2"},
 		{"fragment", "marvel://fleet1/c1/ws1/team1/builder-0#x", "CAND-ID-2"},
