@@ -2,6 +2,8 @@ package bus
 
 import (
 	"context"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -83,5 +85,36 @@ func TestLifecycleEnvFingerprintReportsOnlyTheLeafSeed(t *testing.T) {
 	}
 	if fp, ok := l.EnvFingerprint("something/else"); ok || fp != "" {
 		t.Errorf("EnvFingerprint of another key = %q, %v, want empty and false", fp, ok)
+	}
+}
+
+// Stop(true) hands the child over: it is still running afterwards.
+func TestLifecycleStopWithKeepLeavesTheChildRunning(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	l := NewLifecycle(s)
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := l.Status().PID
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = proc.Kill() })
+	l.Stop(true)
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("pid %d is gone after Stop(keep=true): %v", pid, err)
+	}
+}
+
+// A broker waiting out a restart delay reads as backoff, not up.
+func TestLifecycleStatusReadsBackoff(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	s.mu.Lock()
+	s.pid = 4242
+	s.backoffTill = time.Now().Add(time.Minute)
+	s.mu.Unlock()
+	if got := NewLifecycle(s).Status().State; got != service.StateBackoff {
+		t.Errorf("State = %q, want backoff", got)
 	}
 }

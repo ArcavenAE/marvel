@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/service"
 )
@@ -22,23 +23,44 @@ var (
 	_ service.EnvFingerprinter = (*Lifecycle)(nil)
 )
 
-// Start is a stub in the red commit.
-func (l *Lifecycle) Start(context.Context) error { return nil }
+// Start brings the broker up; see Supervisor.Start.
+func (l *Lifecycle) Start(ctx context.Context) error { return l.s.Start(ctx) }
 
-// Stop is a stub in the red commit.
-func (l *Lifecycle) Stop(bool) {}
+// Stop ends the supervision, leaving the child running when keep is set.
+func (l *Lifecycle) Stop(keep bool) { l.s.Stop(keep) }
 
-// Restart is a stub in the red commit.
-func (l *Lifecycle) Restart(string) error { return nil }
+// Restart replaces the broker process; see Supervisor.Restart.
+func (l *Lifecycle) Restart(reason string) error { return l.s.Restart(reason) }
 
-// Reload is a stub in the red commit.
-func (l *Lifecycle) Reload() error { return nil }
+// Reload asks the running broker to re-read its configuration.
+func (l *Lifecycle) Reload() error { return l.s.Reload() }
 
-// Status is a stub in the red commit.
-func (l *Lifecycle) Status() service.Status { return service.Status{} }
+// Status is one reading in plain values. A broker with no pid reads as down, one
+// waiting out a restart delay as backoff, any other as up. The detail the
+// status RPC serves stays behind BusStatus until the as-of cells land
+// (MS-8 (h)).
+func (l *Lifecycle) Status() service.Status {
+	b := l.s.Status()
+	state := service.StateUp
+	switch {
+	case b.BackoffUntil != "":
+		state = service.StateBackoff
+	case b.PID == 0:
+		state = service.StateDown
+	}
+	return service.Status{State: state, Ready: b.Ready, PID: b.PID, Restarts: b.Restarts, ObservedAt: time.Now()}
+}
 
-// EnvFingerprint is a stub in the red commit.
-func (l *Lifecycle) EnvFingerprint(string) (string, bool) { return "", false }
+// EnvFingerprint reports the fingerprint of the leaf seed the running broker
+// was spawned with, under LeafSeedKey, and false when it booted without one or
+// the key is another.
+func (l *Lifecycle) EnvFingerprint(key string) (string, bool) {
+	if key != LeafSeedKey || !l.s.LeafSeedInEnv() {
+		return "", false
+	}
+	return l.s.LeafSeedFingerprint(), true
+}
 
-// BusStatus is a stub in the red commit.
-func (l *Lifecycle) BusStatus() Status { return Status{} }
+// BusStatus is the broker-specific status the RPC serves: the one bus-typed
+// call the daemon keeps.
+func (l *Lifecycle) BusStatus() Status { return l.s.Status() }
