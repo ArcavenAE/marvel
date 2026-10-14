@@ -6,19 +6,19 @@ import (
 )
 
 func okSeat() Seat {
-	return Seat{Fleet: "fleet1", Cluster: "c1", Workspace: "ws1", Team: "team1", Role: "builder", Index: 0}
+	return Seat{Cluster: "c1", Workspace: "ws1", Team: "team1", Role: "builder", Index: 0}
 }
 
 func TestBuildAcceptsTheWorkedExamples(t *testing.T) {
 	t.Parallel()
 	s := okSeat()
 	got, err := Build(s)
-	if err != nil || got != "marvel://fleet1/c1/ws1/team1/builder-0" {
+	if err != nil || got != "marvel://c1/ws1/team1/builder-0" {
 		t.Fatalf("Build = %q, %v", got, err)
 	}
 	s.Role, s.Index = "widget-maker", 3
 	got, err = Build(s)
-	if err != nil || got != "marvel://fleet1/c1/ws1/team1/widget-maker-3" {
+	if err != nil || got != "marvel://c1/ws1/team1/widget-maker-3" {
 		t.Fatalf("Build = %q, %v", got, err)
 	}
 }
@@ -35,7 +35,7 @@ func TestBuildRejectsEachRuleBreak(t *testing.T) {
 		{"doubled hyphen", func(s *Seat) { s.Role = "x--y" }, "CAND-ID-1"},
 		{"only hyphens", func(s *Seat) { s.Team = "--" }, "CAND-ID-1"},
 		{"trailing hyphen", func(s *Seat) { s.Workspace = "ws-" }, "CAND-ID-1"},
-		{"uppercase fleet", func(s *Seat) { s.Fleet = "Fleet1" }, "CAND-ID-1"},
+		{"uppercase cluster", func(s *Seat) { s.Cluster = "C1" }, "CAND-ID-1"},
 		{"underscore cluster", func(s *Seat) { s.Cluster = "c_1" }, "CAND-ID-1"},
 		{"percent escape, uppercase hex", func(s *Seat) { s.Team = "team%2D1" }, "CAND-ID-1"},
 		{"percent escape, lowercase hex", func(s *Seat) { s.Team = "team%2d1" }, "CAND-ID-1"},
@@ -65,11 +65,11 @@ func TestBuildRejectsEachRuleBreak(t *testing.T) {
 func TestParseRoundTripsAndRejects(t *testing.T) {
 	t.Parallel()
 	want := okSeat()
-	got, err := Parse("marvel://fleet1/c1/ws1/team1/builder-0")
+	got, err := Parse("marvel://c1/ws1/team1/builder-0")
 	if err != nil || got != want {
 		t.Fatalf("Parse = %+v, %v; want %+v", got, err, want)
 	}
-	got, err = Parse("marvel://fleet1/c1/ws1/team1/widget-maker-12")
+	got, err = Parse("marvel://c1/ws1/team1/widget-maker-12")
 	if err != nil || got.Role != "widget-maker" || got.Index != 12 {
 		t.Fatalf("Parse = %+v, %v", got, err)
 	}
@@ -77,22 +77,22 @@ func TestParseRoundTripsAndRejects(t *testing.T) {
 	bad := []struct {
 		name, uri, rule string
 	}{
-		{"leading zero index", "marvel://fleet1/c1/ws1/team1/builder-00", "CAND-ID-3"},
-		{"old generation shape", "marvel://fleet1/c1/ws1/team1/widget-g4-3", "CAND-ID-3"},
-		{"no index", "marvel://fleet1/c1/ws1/team1/builder", "CAND-ID-3"},
-		{"empty role", "marvel://fleet1/c1/ws1/team1/-0", "CAND-ID-1"},
-		{"uppercase fleet", "marvel://Fleet1/c1/ws1/team1/builder-0", "CAND-ID-1"},
-		{"percent escape, uppercase hex", "marvel://fleet1/c1/ws1/team1/builder%2D0", "CAND-ID-1"},
-		{"percent escape, lowercase hex", "marvel://fleet1/c1/ws1/team1/builder%2d0", "CAND-ID-1"},
-		{"percent escape, digits only", "marvel://fleet1/c1/ws1/team1/builder%300", "CAND-ID-1"},
-		{"leading hyphen role", "marvel://fleet1/c1/ws1/team1/-builder-0", "CAND-ID-1"},
-		{"two-digit generation shape", "marvel://fleet1/c1/ws1/team1/widget-g12-3", "CAND-ID-3"},
-		{"trailing slash", "marvel://fleet1/c1/ws1/team1/builder-0/", "CAND-ID-2"},
-		{"query", "marvel://fleet1/c1/ws1/team1/builder-0?x=1", "CAND-ID-2"},
-		{"fragment", "marvel://fleet1/c1/ws1/team1/builder-0#x", "CAND-ID-2"},
-		{"four segments", "marvel://fleet1/c1/team1/builder-0", "4"},
-		{"six segments", "marvel://fleet1/c1/ws1/team1/extra/builder-0", "6"},
-		{"wrong scheme", "agent://fleet1/c1/ws1/team1/builder-0", "scheme"},
+		{"leading zero index", "marvel://c1/ws1/team1/builder-00", "CAND-ID-3"},
+		{"old generation shape", "marvel://c1/ws1/team1/widget-g4-3", "CAND-ID-3"},
+		{"no index", "marvel://c1/ws1/team1/builder", "CAND-ID-3"},
+		{"empty role", "marvel://c1/ws1/team1/-0", "CAND-ID-1"},
+		{"uppercase cluster", "marvel://C1/ws1/team1/builder-0", "CAND-ID-1"},
+		{"percent escape, uppercase hex", "marvel://c1/ws1/team1/builder%2D0", "CAND-ID-1"},
+		{"percent escape, lowercase hex", "marvel://c1/ws1/team1/builder%2d0", "CAND-ID-1"},
+		{"percent escape, digits only", "marvel://c1/ws1/team1/builder%300", "CAND-ID-1"},
+		{"leading hyphen role", "marvel://c1/ws1/team1/-builder-0", "CAND-ID-1"},
+		{"two-digit generation shape", "marvel://c1/ws1/team1/widget-g12-3", "CAND-ID-3"},
+		{"trailing slash", "marvel://c1/ws1/team1/builder-0/", "CAND-ID-2"},
+		{"query", "marvel://c1/ws1/team1/builder-0?x=1", "CAND-ID-2"},
+		{"fragment", "marvel://c1/ws1/team1/builder-0#x", "CAND-ID-2"},
+		{"four segments", "marvel://c1/team1/builder-0", "4"},
+		{"six segments", "marvel://c1/ws1/team1/extra/builder-0", "6"},
+		{"wrong scheme", "agent://c1/ws1/team1/builder-0", "scheme"},
 	}
 	for _, tt := range bad {
 		t.Run(tt.name, func(t *testing.T) {
