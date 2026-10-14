@@ -86,42 +86,42 @@ func TestForestagePrepare(t *testing.T) {
 	}
 
 	// Should inject persona and identity (finding-019 taxonomy)
-	if !strings.Contains(result.Command, "--persona naomi-nagata") {
+	if !strings.Contains(result.Command, qw("--persona naomi-nagata")) {
 		t.Errorf("command should contain --persona, got: %s", result.Command)
 	}
 	if !strings.Contains(result.Command, "--identity") || !strings.Contains(result.Command, "systems researcher") {
 		t.Errorf("command should contain --identity with value, got: %s", result.Command)
 	}
 	// Role is now job assignment, not character lookup
-	if !strings.Contains(result.Command, "--role worker") {
+	if !strings.Contains(result.Command, qw("--role worker")) {
 		t.Errorf("command should contain --role, got: %s", result.Command)
 	}
 	// Marvel identity flags
-	if !strings.Contains(result.Command, "--name squad-worker-g1-0") {
+	if !strings.Contains(result.Command, qw("--name squad-worker-g1-0")) {
 		t.Errorf("command should contain --name, got: %s", result.Command)
 	}
-	if !strings.Contains(result.Command, "--workspace acme") {
+	if !strings.Contains(result.Command, qw("--workspace acme")) {
 		t.Errorf("command should contain --workspace, got: %s", result.Command)
 	}
-	if !strings.Contains(result.Command, "--team squad") {
+	if !strings.Contains(result.Command, qw("--team squad")) {
 		t.Errorf("command should contain --team, got: %s", result.Command)
 	}
-	if !strings.Contains(result.Command, "--socket /tmp/marvel.sock") {
+	if !strings.Contains(result.Command, qw("--socket /tmp/marvel.sock")) {
 		t.Errorf("command should contain --socket, got: %s", result.Command)
 	}
 
 	// Permission mode is a forestage flag (forestage passes it to claude)
-	if !strings.Contains(result.Command, "--permission-mode plan") {
+	if !strings.Contains(result.Command, qw("--permission-mode plan")) {
 		t.Errorf("command should contain --permission-mode, got: %s", result.Command)
 	}
 
 	// Identity system prompt goes after "--" as claude passthrough
-	if !strings.Contains(result.Command, "-- --append-system-prompt") {
+	if !strings.Contains(result.Command, qw("-- --append-system-prompt")) {
 		t.Errorf("command should pass --append-system-prompt after --, got: %s", result.Command)
 	}
 
 	// Should preserve original args
-	if !strings.Contains(result.Command, "--model sonnet") {
+	if !strings.Contains(result.Command, qw("--model sonnet")) {
 		t.Errorf("command should contain original args, got: %s", result.Command)
 	}
 
@@ -147,7 +147,7 @@ func TestClaudePrepare(t *testing.T) {
 	}
 
 	// Should inject permission mode
-	if !strings.Contains(result.Command, "--permission-mode plan") {
+	if !strings.Contains(result.Command, qw("--permission-mode plan")) {
 		t.Errorf("command should contain --permission-mode, got: %s", result.Command)
 	}
 
@@ -216,7 +216,7 @@ func TestClaudePrepareSystemPromptOnlyForBareHarness(t *testing.T) {
 				t.Errorf("--append-system-prompt count = %d, want %d in: %s", got, tc.want, result.Command)
 			}
 			// The rest of the adapter's contract is unchanged for a wrapper.
-			if !strings.Contains(result.Command, "--permission-mode plan") {
+			if !strings.Contains(result.Command, qw("--permission-mode plan")) {
 				t.Errorf("command should still carry --permission-mode, got: %s", result.Command)
 			}
 			if result.Env["MARVEL_SESSION"] == "" {
@@ -240,7 +240,7 @@ func TestClaudePreparePreservesJoinedAndFileSystemPrompt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Prepare: %v", err)
 		}
-		if strings.Contains(result.Command, "--append-system-prompt 'You are") {
+		if strings.Contains(result.Command, "'--append-system-prompt' 'You are") {
 			t.Errorf("%s: marvel injected a second prompt: %s", arg, result.Command)
 		}
 	}
@@ -260,8 +260,8 @@ func TestGenericPrepare(t *testing.T) {
 	}
 
 	// Should just be command + args, no identity injection
-	if result.Command != "python3 agent.py" {
-		t.Errorf("command = %q, want %q", result.Command, "python3 agent.py")
+	if result.Command != "python3 'agent.py'" {
+		t.Errorf("command = %q, want %q", result.Command, "python3 'agent.py'")
 	}
 
 	// Env should still have marvel identity
@@ -291,12 +291,12 @@ func TestShellQuote(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"simple", "simple"},
+		{"simple", "'simple'"},
 		{"has space", "'has space'"},
 		{"has'quote", `'has'\''quote'`},
 		{"$var", "'$var'"},
 		{"", "''"},
-		{"no-special-chars", "no-special-chars"},
+		{"no-special-chars", "'no-special-chars'"},
 	}
 
 	for _, tt := range tests {
@@ -353,7 +353,7 @@ func TestForestagePrepareWithScript(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 
-	if !strings.Contains(result.Command, "--script review-code.lua") {
+	if !strings.Contains(result.Command, qw("--script review-code.lua")) {
 		t.Errorf("command should contain --script, got: %s", result.Command)
 	}
 }
@@ -449,8 +449,8 @@ func TestClaudePrepareHeadlessRedirectsToSink(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"--print", "--output-format stream-json", "--verbose",
-		"> /tmp/marvel-streams/acme-agent.ndjson",
+		"--print", qw("--output-format stream-json"), "--verbose",
+		"> '/tmp/marvel-streams/acme-agent.ndjson'",
 	} {
 		if !strings.Contains(result.Command, want) {
 			t.Errorf("command missing %q: %s", want, result.Command)
@@ -458,7 +458,7 @@ func TestClaudePrepareHeadlessRedirectsToSink(t *testing.T) {
 	}
 	// The prompt is positional and must be the last thing before the
 	// redirection, or claude reads it as a flag value.
-	if !strings.Contains(result.Command, "'summarize the diff' > ") {
+	if !strings.Contains(result.Command, "'summarize the diff' > '") {
 		t.Errorf("prompt not positioned before the redirect: %s", result.Command)
 	}
 	if result.Stream == nil {
@@ -907,4 +907,14 @@ func TestBaseEnvRefusesATokenFileFromRoleEnv(t *testing.T) {
 	if v, present := baseEnv(ctx)[api.HeartbeatTokenFileEnv]; present {
 		t.Errorf("%s = %q came from the manifest; a role must not point the seat at another file", api.HeartbeatTokenFileEnv, v)
 	}
+}
+
+// qw quotes each space-separated word the way buildCommand does, so a test
+// can name the flag and value it expects without spelling the quotes.
+func qw(words string) string {
+	parts := strings.Split(words, " ")
+	for i, p := range parts {
+		parts[i] = shellQuote(p)
+	}
+	return strings.Join(parts, " ")
 }
