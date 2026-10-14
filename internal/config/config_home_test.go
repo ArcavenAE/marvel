@@ -76,3 +76,14 @@ func TestTheDefaultSocketIsUnderTheMarvelHomeRoot(t *testing.T) {
 		t.Errorf("ResolveSocket() = %q, want %q", got, want)
 	}
 }
+
+// A cluster entry's "~/" is the user's home, not the layout root: the entry
+// names a path the operator wrote, and MARVEL_HOME is marvel's own state.
+func TestMarvelHomeDoesNotMoveAClusterEntrysTilde(t *testing.T) {
+	user := t.TempDir()
+	t.Setenv("HOME", user)
+	t.Setenv(paths.HomeEnv, filepath.Join(t.TempDir(), "mh"))
+	if got, want := cleanPath("~/sockets/m.sock"), filepath.Join(user, "sockets", "m.sock"); got != want {
+		t.Errorf("cleanPath(~/sockets/m.sock) = %q, want %q", got, want)
+	}
+}
