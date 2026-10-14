@@ -37,6 +37,14 @@ func TestDetectContainerRuntime(t *testing.T) {
 		"both prefers docker":    {has("podman", "docker"), "/opt/bin/docker", true},
 		"neither":                {has(), "", false},
 		"orb alone is not a one": {has("orb"), "", false},
+		// exec.LookPath can return a path together with an error (found, not
+		// executable); that docker is not usable and podman is.
+		"a path with an error is skipped": {func(n string) (string, error) {
+			if n == "docker" {
+				return "/opt/bin/docker", errors.New("permission denied")
+			}
+			return "/opt/bin/" + n, nil
+		}, "/opt/bin/podman", true},
 	} {
 		got, ok := DetectContainerRuntime(tc.lookup)
 		if got != tc.want || ok != tc.found {
@@ -45,7 +53,7 @@ func TestDetectContainerRuntime(t *testing.T) {
 	}
 }
 
-var containerNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+var legalContainerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 // A name is legal for the runtimes, differs per launch of the same session (a
 // restart or a shift never collides with an orphan), and is stable for the same
@@ -54,7 +62,7 @@ func TestContainerNameIsLegalAndUniquePerLaunch(t *testing.T) {
 	key := "pt8k/probe/seat-g1-0"
 	a := ContainerName(key, "1")
 	b := ContainerName(key, "2")
-	if !containerNameRE.MatchString(a) || !containerNameRE.MatchString(b) {
+	if !legalContainerName.MatchString(a) || !legalContainerName.MatchString(b) {
 		t.Fatalf("illegal names %q %q", a, b)
 	}
 	if a == b {
@@ -68,12 +76,19 @@ func TestContainerNameIsLegalAndUniquePerLaunch(t *testing.T) {
 	}
 	for _, hostile := range []string{"ws/te am/ro$le", "a/b/../c", "x;rm -rf /", "naïve/café/seat", strings.Repeat("long/", 40)} {
 		n := ContainerName(hostile, "7")
-		if !containerNameRE.MatchString(n) {
+		if !legalContainerName.MatchString(n) {
 			t.Errorf("ContainerName(%q) = %q is not a legal name", hostile, n)
 		}
 		if len(n) > 63 {
 			t.Errorf("ContainerName(%q) is %d bytes, want at most 63", hostile, len(n))
 		}
+	}
+	// Inputs that sanitize to the same text still get different names.
+	if ContainerName("ws/te am/seat", "1") == ContainerName("ws/te-am/seat", "1") {
+		t.Error("two keys that sanitize alike share a name")
+	}
+	if ContainerName(key, "a b") == ContainerName(key, "a-b") {
+		t.Error("two launches that sanitize alike share a name")
 	}
 	// Truncation must not merge two different long keys.
 	long := strings.Repeat("segment/", 20)
@@ -191,7 +206,7 @@ func calls(t *testing.T, log string) []string {
 func shells(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, s := range []string{"sh", "bash", "zsh"} {
+	for _, s := range []string{"sh", "bash", "zsh", "dash"} {
 		if _, err := exec.LookPath(s); err == nil {
 			out = append(out, s)
 		}
@@ -301,7 +316,8 @@ func TestContainerCommandQuotesTheCommand(t *testing.T) {
 	bin, log := fakeRuntime(t, "0")
 	spec := goodSpec()
 	spec.Runtime = bin
-	spec.Command = "echo 'x'; touch /tmp/should-not-exist-" + t.Name() + " `id` $(id)"
+	marker := filepath.Join(t.TempDir(), "should-not-exist")
+	spec.Command = "echo 'x'; touch " + marker + "; echo `id` $(id)"
 	cmd, err := ContainerCommand(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +334,7 @@ func TestContainerCommandQuotesTheCommand(t *testing.T) {
 	if !strings.Contains(run, "`id`") || !strings.Contains(run, "$(id)") {
 		t.Errorf("the prepared command did not arrive as one literal argument: %q", run)
 	}
-	if _, err := os.Stat("/tmp/should-not-exist-" + t.Name()); err == nil {
+	if _, err := os.Stat(marker); err == nil {
 		t.Error("the prepared command ran in the wrapper's shell")
 	}
 }
