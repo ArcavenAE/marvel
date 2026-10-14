@@ -1,6 +1,6 @@
 // Package seaturi is the one place marvel cuts a seat's identity string.
 //
-// A seat is named marvel://<fleet>/<cluster>/<ws>/<team>/<slot>, where the
+// A seat is named marvel://<cluster>/<ws>/<team>/<slot>, where the
 // slot is <role>-<idx>. The generation and instance are liveness facts and
 // never ride in the name, so a shift keeps the URI. Every identifier marvel
 // stamps for a seat is cut from Build's output; a string assembled by hand
@@ -18,9 +18,8 @@ import (
 // Scheme is the URI prefix of a seat identity.
 const Scheme = "marvel://"
 
-// Seat is the five names and the index that identify one slot.
+// Seat is the four names and the index that identify one slot.
 type Seat struct {
-	Fleet     string
 	Cluster   string
 	Workspace string
 	Team      string
@@ -32,7 +31,6 @@ type Seat struct {
 // breaks. A string that breaks a rule is rejected, never rewritten.
 func Build(s Seat) (string, error) {
 	for _, seg := range []struct{ name, value string }{
-		{"fleet", s.Fleet},
 		{"cluster", s.Cluster},
 		{"workspace", s.Workspace},
 		{"team", s.Team},
@@ -45,7 +43,7 @@ func Build(s Seat) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return Scheme + strings.Join([]string{s.Fleet, s.Cluster, s.Workspace, s.Team, slot}, "/"), nil
+	return Scheme + strings.Join([]string{s.Cluster, s.Workspace, s.Team, slot}, "/"), nil
 }
 
 // Slot returns <role>-<idx> after checking the slot rules.
@@ -76,15 +74,18 @@ func Parse(uri string) (Seat, error) {
 		return Seat{}, fmt.Errorf("seaturi: %q ends in a slash (CAND-ID-2)", uri)
 	}
 	parts := strings.Split(rest, "/")
-	if len(parts) != 5 {
-		return Seat{}, fmt.Errorf("seaturi: %q has %d segments, want exactly 5 (CAND-ID-4)", uri, len(parts))
+	if len(parts) == 5 {
+		return Seat{}, fmt.Errorf("seaturi: %q has 5 segments: the fleet segment was dropped, a seat is %s<cluster>/<ws>/<team>/<slot> (CAND-ID-4)", uri, Scheme)
 	}
-	for i, name := range []string{"fleet", "cluster", "workspace", "team", "slot"} {
+	if len(parts) != 4 {
+		return Seat{}, fmt.Errorf("seaturi: %q has %d segments, want exactly 4 (CAND-ID-4)", uri, len(parts))
+	}
+	for i, name := range []string{"cluster", "workspace", "team", "slot"} {
 		if err := checkSegment(name, parts[i]); err != nil {
 			return Seat{}, err
 		}
 	}
-	slot := parts[4]
+	slot := parts[3]
 	cut := strings.LastIndex(slot, "-")
 	if cut < 0 {
 		return Seat{}, fmt.Errorf("seaturi: slot %q has no -<index> (CAND-ID-3)", slot)
@@ -101,7 +102,7 @@ func Parse(uri string) (Seat, error) {
 		return Seat{}, err
 	}
 	return Seat{
-		Fleet: parts[0], Cluster: parts[1], Workspace: parts[2], Team: parts[3],
+		Cluster: parts[0], Workspace: parts[1], Team: parts[2],
 		Role: slot[:cut], Index: idx,
 	}, nil
 }

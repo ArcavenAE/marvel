@@ -90,8 +90,9 @@ func TestParseRoundTripsAndRejects(t *testing.T) {
 		{"trailing slash", "marvel://c1/ws1/team1/builder-0/", "CAND-ID-2"},
 		{"query", "marvel://c1/ws1/team1/builder-0?x=1", "CAND-ID-2"},
 		{"fragment", "marvel://c1/ws1/team1/builder-0#x", "CAND-ID-2"},
-		{"four segments", "marvel://c1/team1/builder-0", "4"},
-		{"six segments", "marvel://c1/ws1/team1/extra/builder-0", "6"},
+		{"three segments", "marvel://c1/team1/builder-0", "3 segments"},
+		{"five segments, the dropped fleet form", "marvel://fleet1/c1/ws1/team1/builder-0", "fleet segment was dropped"},
+		{"six segments", "marvel://a/b/c/d/e/builder-0", "6 segments"},
 		{"wrong scheme", "agent://c1/ws1/team1/builder-0", "scheme"},
 	}
 	for _, tt := range bad {
