@@ -151,28 +151,32 @@ func TestContainerCommandShape(t *testing.T) {
 
 func TestContainerCommandRefusesBadInput(t *testing.T) {
 	for name, edit := range map[string]func(*ContainerSpec){
-		"no runtime":               func(s *ContainerSpec) { s.Runtime = "" },
-		"no image":                 func(s *ContainerSpec) { s.Image = "" },
-		"no name":                  func(s *ContainerSpec) { s.Name = "" },
-		"no command":               func(s *ContainerSpec) { s.Command = "" },
-		"relative workdir":         func(s *ContainerSpec) { s.WorkDir = "repo" },
-		"empty workdir":            func(s *ContainerSpec) { s.WorkDir = "" },
-		"relative home":            func(s *ContainerSpec) { s.HomeDir = "home" },
-		"colon in workdir":         func(s *ContainerSpec) { s.WorkDir = "/work/a:b" },
-		"colon in home":            func(s *ContainerSpec) { s.HomeDir = "/h/a:b" },
-		"illegal name":             func(s *ContainerSpec) { s.Name = "bad name" },
-		"name starts with dash":    func(s *ContainerSpec) { s.Name = "-rm" },
-		"prefixed name with space": func(s *ContainerSpec) { s.Name = "marvel-a b" },
-		"prefixed name with ;":     func(s *ContainerSpec) { s.Name = "marvel-a;b" },
-		"prefixed name with $()":   func(s *ContainerSpec) { s.Name = "marvel-$(x)" },
-		"prefixed name with nl":    func(s *ContainerSpec) { s.Name = "marvel-a\nb" },
-		"image starts with dash":   func(s *ContainerSpec) { s.Image = "--privileged" },
-		"image with a space":       func(s *ContainerSpec) { s.Image = "a b" },
-		"env name with equals":     func(s *ContainerSpec) { s.EnvNames = []string{"A=1"} },
-		"env name with a space":    func(s *ContainerSpec) { s.EnvNames = []string{"A B"} },
-		"env name starts digit":    func(s *ContainerSpec) { s.EnvNames = []string{"1A"} },
-		"env name empty":           func(s *ContainerSpec) { s.EnvNames = []string{""} },
-		"env name shell injection": func(s *ContainerSpec) { s.EnvNames = []string{"A;rm"} },
+		"no runtime":                 func(s *ContainerSpec) { s.Runtime = "" },
+		"no image":                   func(s *ContainerSpec) { s.Image = "" },
+		"no name":                    func(s *ContainerSpec) { s.Name = "" },
+		"no command":                 func(s *ContainerSpec) { s.Command = "" },
+		"relative workdir":           func(s *ContainerSpec) { s.WorkDir = "repo" },
+		"empty workdir":              func(s *ContainerSpec) { s.WorkDir = "" },
+		"relative home":              func(s *ContainerSpec) { s.HomeDir = "home" },
+		"colon in workdir":           func(s *ContainerSpec) { s.WorkDir = "/work/a:b" },
+		"colon in home":              func(s *ContainerSpec) { s.HomeDir = "/h/a:b" },
+		"newline in workdir":         func(s *ContainerSpec) { s.WorkDir = "/work/a\nb" },
+		"newline in home":            func(s *ContainerSpec) { s.HomeDir = "/h/a\nb" },
+		"carriage return in workdir": func(s *ContainerSpec) { s.WorkDir = "/work/a\rb" },
+		"carriage return in home":    func(s *ContainerSpec) { s.HomeDir = "/h/a\rb" },
+		"illegal name":               func(s *ContainerSpec) { s.Name = "bad name" },
+		"name starts with dash":      func(s *ContainerSpec) { s.Name = "-rm" },
+		"prefixed name with space":   func(s *ContainerSpec) { s.Name = "marvel-a b" },
+		"prefixed name with ;":       func(s *ContainerSpec) { s.Name = "marvel-a;b" },
+		"prefixed name with $()":     func(s *ContainerSpec) { s.Name = "marvel-$(x)" },
+		"prefixed name with nl":      func(s *ContainerSpec) { s.Name = "marvel-a\nb" },
+		"image starts with dash":     func(s *ContainerSpec) { s.Image = "--privileged" },
+		"image with a space":         func(s *ContainerSpec) { s.Image = "a b" },
+		"env name with equals":       func(s *ContainerSpec) { s.EnvNames = []string{"A=1"} },
+		"env name with a space":      func(s *ContainerSpec) { s.EnvNames = []string{"A B"} },
+		"env name starts digit":      func(s *ContainerSpec) { s.EnvNames = []string{"1A"} },
+		"env name empty":             func(s *ContainerSpec) { s.EnvNames = []string{""} },
+		"env name shell injection":   func(s *ContainerSpec) { s.EnvNames = []string{"A;rm"} },
 	} {
 		s := goodSpec()
 		edit(&s)
@@ -282,12 +286,20 @@ func TestContainerCommandRemovesTheContainerWhenThePaneIsKilled(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() { done <- c.Wait() }()
+			var waitErr error
 			select {
-			case <-done:
+			case waitErr = <-done:
 			case <-time.After(10 * time.Second):
 				_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
 				t.Errorf("%s %v: the wrapper did not exit", sh, sig)
 				continue
+			}
+			// The wrapper ends with the shell's own convention for the signal,
+			// 128 plus its number, and not with the client's status.
+			wantExit := 128 + int(sig)
+			var ee *exec.ExitError
+			if !errors.As(waitErr, &ee) || ee.ExitCode() != wantExit {
+				t.Errorf("%s %v: exit = %v, want %d", sh, sig, waitErr, wantExit)
 			}
 			got := calls(t, log)
 			last := got[len(got)-1]
