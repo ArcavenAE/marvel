@@ -120,9 +120,9 @@ func TestContainerCommandShape(t *testing.T) {
 	for _, want := range []string{
 		" run --rm --init -it ",
 		"--name ",
-		" -w /work/repo ",
-		" -v /work/repo:/work/repo ",
-		" -v /tmp/marvel-h-abc/def:/tmp/marvel-h-abc/def ",
+		" -w '/work/repo' ",
+		" -v '/work/repo:/work/repo' ",
+		" -v '/tmp/marvel-h-abc/def:/tmp/marvel-h-abc/def' ",
 		" -e MARVEL_SESSION ",
 		" -e MARVEL_HEARTBEAT_TOKEN ",
 		" registry.example/marvel-pi:1 sh -c ",
@@ -336,5 +336,115 @@ func TestContainerCommandQuotesTheCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("the prepared command ran in the wrapper's shell")
+	}
+}
+
+// Whitespace that splits a shell word, newline and tab included, must not leave
+// the quotes: a command, a path or a runtime carrying one reaches the host
+// wrapper shell, which runs the text it is given. The marker is created only if
+// the host shell ran the second line.
+func TestContainerCommandQuotesNewlineAndTabOnTheHost(t *testing.T) {
+	for _, sh := range shells(t) {
+		for name, payload := range map[string]string{
+			"newline":      "true\ntouch MARKER",
+			"tab":          "true\ttouch MARKER",
+			"carriage":     "true\rtouch MARKER",
+			"semicolon":    "true;touch MARKER",
+			"quote":        "true';touch MARKER;'",
+			"substitution": "true$(touch MARKER)",
+			"backtick":     "true`touch MARKER`",
+		} {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "marker")
+			bin, log := fakeRuntime(t, "0")
+			spec := goodSpec()
+			spec.Runtime = bin
+			spec.Command = strings.ReplaceAll(payload, "MARKER", marker)
+			cmd, err := ContainerCommand(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := exec.Command(sh, "-c", cmd).Run(); err != nil {
+				t.Fatalf("%s %s: %v", sh, name, err)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Errorf("%s %s: the host wrapper shell ran the command text", sh, name)
+			}
+			var run string
+			for _, c := range calls(t, log) {
+				if strings.HasPrefix(c, "run ") {
+					run = c
+				}
+			}
+			if !strings.Contains(run, strings.ReplaceAll(payload, "MARKER", marker)) {
+				t.Errorf("%s %s: the text did not arrive as one argument: %q", sh, name, run)
+			}
+		}
+	}
+}
+
+// A path or the runtime with whitespace in it is one word too.
+func TestContainerCommandQuotesPathsAndRuntimeWithWhitespace(t *testing.T) {
+	bin, log := fakeRuntime(t, "0")
+	dir := t.TempDir()
+	spacedBin := filepath.Join(dir, "my docker\tcli")
+	if err := os.Symlink(bin, spacedBin); err != nil {
+		t.Fatal(err)
+	}
+	spec := goodSpec()
+	spec.Runtime = spacedBin
+	spec.WorkDir = "/work/with space\tand tab"
+	spec.HomeDir = "/home/with space"
+	cmd, err := ContainerCommand(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
+		t.Fatal(err)
+	}
+	var run string
+	for _, c := range calls(t, log) {
+		if strings.HasPrefix(c, "run ") {
+			run = c
+		}
+	}
+	for _, want := range []string{"-w /work/with space\tand tab", "-v /work/with space\tand tab:/work/with space\tand tab", "-v /home/with space:/home/with space"} {
+		if !strings.Contains(run, want) {
+			t.Errorf("run line lacks %q: %q", want, run)
+		}
+	}
+}
+
+// A very long launch string cannot push the name past the limit or make two
+// launches collide; the hash still covers what the readable part drops.
+func TestContainerNameWithAVeryLongLaunch(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	a := ContainerName("ws/team/seat", long+"a")
+	b := ContainerName("ws/team/seat", long+"b")
+	for _, n := range []string{a, b} {
+		if !legalContainerName.MatchString(n) || len(n) > 63 {
+			t.Errorf("name %q is illegal or longer than 63 bytes (%d)", n, len(n))
+		}
+	}
+	if a == b {
+		t.Error("two long launches that differ at the end share a name")
+	}
+}
+
+// Every name carries the marvel- prefix, so `rm -f <name>` can never match a
+// container by an all-hex ID prefix, and a name that does not start with it is
+// refused.
+func TestContainerNameAlwaysCarriesThePrefixAndTheSpecRequiresIt(t *testing.T) {
+	for _, k := range []string{"deadbeef", "0123", "ws/team/seat"} {
+		if n := ContainerName(k, "1"); !strings.HasPrefix(n, "marvel-") {
+			t.Errorf("ContainerName(%q) = %q lacks the marvel- prefix", k, n)
+		}
+	}
+	for _, bad := range []string{"deadbeef", "seat-1", "Marvel-x", "xmarvel-1"} {
+		s := goodSpec()
+		s.Name = bad
+		if cmd, err := ContainerCommand(s); err == nil {
+			t.Errorf("name %q accepted:\n%s", bad, cmd)
+		}
 	}
 }
