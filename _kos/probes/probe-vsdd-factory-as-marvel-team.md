@@ -25,13 +25,13 @@
 
 ## 0.1 Open operator rulings
 
-Five decisions in this brief are recommendations until the operator rules on them. Each site that depends on one names it here. Nothing below runs on a recommendation alone.
+Five decisions in this brief are recommendations until the operator rules on them. Each site that depends on one names it here. Nothing below runs on a recommendation alone. No step on either track spends on models before R1 and R3 are ruled: M3 is track M's first model spend, and B2 is track B's.
 
 | ruling | the recommendation | gates |
 |---|---|---|
-| R1. Pilot spend | spend the pilot ceiling only (smoke, seed and three pilot runs, s11); the series is a separate go at M6 | M3, the first model spend |
+| R1. Pilot spend | spend the pilot ceiling only (the smoke runs, arm B's live tests and entry drill, the seed and three pilot runs, s11); the series is a separate go at M6 | M3 and B2, each track's first model spend; B3 follows B2 |
 | R2. The decision metric | one primary, cost per accepted story, with every axis reported (s9.3); the recorded alternative is a verdict per axis | M1, which freezes it into the protocol |
-| R3. The probe host | a host with no live seats, whose signing key signs unattended (S15) | M3 |
+| R3. The probe host | a host with no live seats, whose signing key signs unattended (S15) | M3 and B2, since the live tests and the drill run on the probe host |
 | R4. The permission mode | `auto`, the same in both arms, with classifier requests metered (s11) | M1 |
 | R5. The marvel CLI surface | the flags and verb proposed in s4 | B1 |
 
@@ -50,7 +50,7 @@ Track M (measurement) and track B (the arm B build) start together and join at s
 | M5. Pilot | M3b, M4b; prices frozen; token ceiling set | 3 arm A runs: noise floor per axis, serial estimate per wave | (b), by s8.5's blind stop |
 | M6. Pilot card | M5 | spend; computed n (reported only); the spread with its 80% and 95% intervals; per-run cost and accepted stories, naming any run with zero accepted; the serial estimate beside rate-limit retries in the node; blocks per weekly window the quota allows, and the projected series end date | none; going on is the operator's call |
 | B1. marvel PR (s4) | R5 ruled | merged and tested | none |
-| B2. Patch and shim (s3, s4) | B1 | arm B pack at a sha | none |
+| B2. Patch and shim (s3, s4) | B1; R1 and R3 ruled | arm B pack at a sha | none |
 | B3. Entry drill (s7) | B2 | D1 to D5 pass | none; a failure is a defect to fix |
 | 8. Fidelity run | M6 go, B3 | one arm B run, outside the statistics; checklist from transcripts | (a), if a step cannot be reproduced |
 | 9. Paired series | 8 | 7 blocks of one run per arm, order by the protocol, no interim looks | none |
@@ -176,7 +176,7 @@ Unit tests (shell, with a fake `marvel` on PATH):
 - dispatch refuses under `PROBE_BRANCH_KEY`;
 - the exit codes map to the five words.
 
-**Live tests:**
+**Live tests,** on the probe host, inside the pilot ceiling (s11):
 1. One headless seat with a trivial prompt: the state reaches `succeeded`, the session id matches a transcript, and `--env` values reach the seat process.
 2. One branch of the test project, end to end, with the patch.
 3. The entry drill (s7.4).
@@ -427,7 +427,7 @@ The smoke run reads which full model ids the factory's `sonnet` and `opus` alias
 
 **Ceiling:** 3 pilot and 14 series runs, plus the seed, fidelity, reference and drill runs, about 21 full-run equivalents; 3 spares for voided blocks and seed revisions; and the defaults block's 2 runs at the 1-hour write rate. That is about 26 full-run equivalents: $2,254 (all Sonnet 5.5) to $4,508 (all Opus 5.5), from 24 runs at $85 and $170 plus the defaults block's 2 runs at $107 and $214, an upper bound since series runs start at Phase 3. Each voided block or seed revision draws on the spares, and the pilot card reports the spares left.
 
-Before the pilot, the pilot ceiling is the smoke runs, the seed and 3 runs, priced at the all-Opus figure ($680 for the seed and 3 runs), and re-priced once the smoke count is in the protocol file. The ceiling is re-stated before the first block from the pilot's median for arm A and the fidelity run for arm B, with cache deaths per run (s10, output 5) shown for each. Reaching it pauses the series for an operator card (s8.5).
+Before the pilot, the pilot ceiling is the smoke runs, arm B's live tests and entry drill, the seed and 3 runs, priced at the all-Opus figure ($680 for the seed and 3 runs), and re-priced once the smoke, live-test and drill counts are in the protocol file. The ceiling is re-stated before the first block from the pilot's median for arm A and the fidelity run for arm B, with cache deaths per run (s10, output 5) shown for each. Reaching it pauses the series for an operator card (s8.5).
 
 ## 12. Test project
 
