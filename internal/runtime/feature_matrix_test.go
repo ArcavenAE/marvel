@@ -44,6 +44,7 @@ func matrixCapabilities() []matrixCapability {
 		{"StatuslineFeeder", func(a Adapter) bool { _, ok := a.(StatuslineFeeder); return ok }},
 		{"ComposerCapable", func(a Adapter) bool { _, ok := a.(ComposerCapable); return ok }},
 		{"ForegroundRule", func(a Adapter) bool { _, ok := a.(ForegroundRule); return ok }},
+		{"SandboxRecommender", func(a Adapter) bool { _, ok := a.(SandboxRecommender); return ok }},
 	}
 }
 
