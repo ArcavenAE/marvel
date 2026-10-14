@@ -56,6 +56,32 @@ func TestAnAdapterThatImplementsTheCapabilityBeatsTheTable(t *testing.T) {
 	}
 }
 
+// plainAdapter is an adapter that does not implement the capability.
+type plainAdapter struct {
+	Generic
+	name string
+}
+
+func (a *plainAdapter) Name() string { return a.name }
+
+// A harness that gets an adapter keeps its table recommendation until the
+// adapter declares one: an adapter without the capability leaves the table in
+// force, so adding an adapter for pi cannot silently drop its container default.
+func TestAnAdapterWithoutTheCapabilityLeavesTheTableInForce(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&plainAdapter{name: "pi"})
+	if _, ok := reg.Resolve("pi").(SandboxRecommender); ok {
+		t.Fatal("the test adapter must not implement SandboxRecommender")
+	}
+	if got := reg.RecommendedPlacement("pi"); got != api.PlacementContainer {
+		t.Errorf("pi with an adapter that has no capability: got %q, want the table's container", got)
+	}
+	reg.Register(&plainAdapter{name: "somethingelse"})
+	if got := reg.RecommendedPlacement("somethingelse"); got != "" {
+		t.Errorf("an adapter with no capability and no table entry: got %q, want no recommendation", got)
+	}
+}
+
 // The registry's answer feeds the resolution order from S1 unchanged: an
 // explicit localhost still wins, and a harness with no recommendation lands on
 // localhost.
