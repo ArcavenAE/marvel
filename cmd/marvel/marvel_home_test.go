@@ -164,14 +164,13 @@ func TestEmptyAndRelativeValuesGetOneErrorInBothSpellings(t *testing.T) {
 // Help lists the flag, cobra accepts it before and after the subcommand, and
 // the value cobra holds is the value the pre-parse acted on.
 func TestCobraAndThePreParseSeeTheSameValue(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "mh")
 	// A short root: the same reason as the daemon-defaults test.
 	dir, err := os.MkdirTemp("", "mh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	root = filepath.Join(dir, "mh")
+	root := filepath.Join(dir, "mh")
 
 	if help := newRootCmd().UsageString(); !strings.Contains(help, "--marvel-home") {
 		t.Errorf("help does not list --marvel-home:\n%s", help)
