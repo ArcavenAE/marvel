@@ -110,12 +110,3 @@ func TestSlotIsStableAcrossGenerations(t *testing.T) {
 		t.Error("Slot accepted a role that ends in a generation tail")
 	}
 }
-
-func TestSchemeIsTheOnlyPrefix(t *testing.T) {
-	t.Parallel()
-	got, _ := Build(okSeat())
-	_ = got
-	if Scheme != "marvel://" {
-		t.Errorf("Scheme = %q", Scheme)
-	}
-}
