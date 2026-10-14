@@ -398,3 +398,41 @@ func TestAContainerWrapThatCannotBeBuiltFailsTheLaunchAndLeavesNothing(t *testin
 		t.Errorf("the container runtime was called: %v", r.calls())
 	}
 }
+
+// The two decisions above, asked without starting a pane: placement is resolved
+// before anything is created, so the refusal and the way out of it can be read
+// straight from containerPlacement.
+
+func TestARuntimeAppearingClearsTheRuntimeRefusalInThePlacementDecision(t *testing.T) {
+	r := newContainerRig(t, "test-ctr-place-clear", api.PlacementContainer, api.Role{Name: "seat", Replicas: 1, ContainerImage: "img:1"})
+	withRuntime := r.mgr.LookPath
+	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	if _, _, err := r.mgr.containerPlacement(r.session("sleep")); !errors.Is(err, ErrPlacementRefused) {
+		t.Fatalf("with no runtime: %v, want a placement refusal", err)
+	}
+	if got := r.mgr.PlacementRefusals(); len(got) != 1 || got[0].Reason != RefusalContainerRuntime {
+		t.Fatalf("standing refusals = %+v, want one for the runtime", got)
+	}
+	r.mgr.LookPath = withRuntime
+	image, isContainer, err := r.mgr.containerPlacement(r.session("sleep"))
+	if err != nil || !isContainer || image != "img:1" {
+		t.Fatalf("with a runtime: %q, %v, %v; want img:1, true, nil", image, isContainer, err)
+	}
+	if n := len(r.mgr.PlacementRefusals()); n != 0 {
+		t.Errorf("%d standing refusals after a runtime appeared", n)
+	}
+}
+
+func TestALocalhostPlacementNeedsNoRuntimeInThePlacementDecision(t *testing.T) {
+	r := newContainerRig(t, "test-ctr-place-local", api.PlacementLocalhost, api.Role{Name: "seat", Replicas: 1})
+	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	for _, harness := range []string{"pi", "sleep"} {
+		image, isContainer, err := r.mgr.containerPlacement(r.session(harness))
+		if err != nil || isContainer || image != "" {
+			t.Errorf("%s on an explicit localhost with no runtime: %q, %v, %v; want empty, false, nil", harness, image, isContainer, err)
+		}
+	}
+	if n := len(r.mgr.PlacementRefusals()) + len(r.refusals()); n != 0 {
+		t.Errorf("%d refusals for a localhost placement", n)
+	}
+}
