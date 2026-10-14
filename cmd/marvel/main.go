@@ -184,6 +184,10 @@ func bindRootFlags(root *cobra.Command) {
 		"explicit daemon address (overrides --cluster)")
 	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
 		"private key file for SSH auth (overrides cluster identity)")
+	// The value is read by applyMarvelHomeFlag in main, before this tree is
+	// built; the flag is declared here so cobra accepts and documents it.
+	root.PersistentFlags().String("marvel-home", "",
+		"marvel's state root, an absolute path (default ~/.marvel); sets $"+paths.HomeEnv+", and the flag wins over the variable")
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		clusterFlagGiven = cmd.Flags().Changed("cluster")
 	}
@@ -193,6 +197,11 @@ func main() {
 	// Strip shell-style comments from args so inline notes work:
 	//   ./marvel shift test/squad  # replace all workers
 	os.Args = stripComments(os.Args)
+
+	if err := applyMarvelHomeFlag(os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
 
 	if err := newRootCmd().Execute(); err != nil {
 		os.Exit(1)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,7 +88,14 @@ func TestMarvelHomeFlagStopsAtTheDoubleDash(t *testing.T) {
 }
 
 func TestDaemonDefaultsFollowTheFlagBecauseItIsAppliedFirst(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "mh")
+	// A short root: t.TempDir carries the test's name, which here would push
+	// the control socket past the unix socket limit the flag now enforces.
+	dir, err := os.MkdirTemp("", "mh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	root := filepath.Join(dir, "mh")
 	t.Setenv(paths.HomeEnv, "")
 	if err := applyMarvelHomeFlag([]string{"marvel", "--marvel-home", root, "daemon"}); err != nil {
 		t.Fatal(err)
