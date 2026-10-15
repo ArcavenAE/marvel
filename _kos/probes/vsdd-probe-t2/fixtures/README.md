@@ -40,7 +40,7 @@ tests assert these numbers, not what the reader computes. Tokens are
 - opus, orch main: 14 x 4 + 2350 x 5 + 3400 x 0.20 + 90 x 20 = 14286 millionths = $0.014286.
 - sonnet, a1 + a2 + branch: 13 x 2 + 1700 x 2.50 + 100 x 4 + 2700 x 0.10 + 145 x 10 = 6396 millionths = $0.006396.
 - Transcripts: $0.020682. Seat orch: 14286 + (8 x 2 + 1300 x 2.50 + 2200 x 0.10 + 105 x 10) = 14286 + 4536 = $0.018822. Branch seat: $0.001860.
-- OTEL `auto_mode_classifier` (sonnet; a placeholder source name): 50 x 2 + 12 x 10 = $0.000220. Total with it: $0.020902.
+- OTEL `auto_mode_classifier` (sonnet; a placeholder source name): 50 x 2 + 40 x 2.50 + 12 x 10 = 100 + 100 + 120 = $0.000320, the 40 creation tokens at the 5-minute rate. Total with it: $0.021002.
 
 ## OTEL file
 

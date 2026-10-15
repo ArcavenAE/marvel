@@ -117,7 +117,9 @@ class LedgerFixture(unittest.TestCase):
         self.assertEqual(self.out["version_mismatch"], [])
 
 
-class LedgerEdges(unittest.TestCase):
+class RunBuilder:
+    """Writes a one-seat run into a temp directory."""
+
     def write_run(self, d, records, extra=None):
         with open(os.path.join(d, "t.jsonl"), "w") as f:
             for r in records:
@@ -132,6 +134,8 @@ class LedgerEdges(unittest.TestCase):
                 "requestId": "r" + mid,
                 "message": {"id": mid, "model": "claude-opus-5-5", "content": [], "usage": usage}}
 
+
+class LedgerEdges(RunBuilder, unittest.TestCase):
     def test_duplicates_with_different_usage_are_counted_not_hidden(self):
         with tempfile.TemporaryDirectory() as d:
             u1 = {"input_tokens": 1, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 5, "output_tokens": 1}
@@ -150,6 +154,15 @@ class LedgerEdges(unittest.TestCase):
             self.assertEqual(out["totals"]["write_5m"], 70)
             self.assertEqual(out["unsplit_writes"], ["m1"])
 
+    def test_a_split_that_does_not_add_up_is_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            u = {"input_tokens": 1, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 0, "output_tokens": 1,
+                 "cache_creation": {"ephemeral_5m_input_tokens": 30, "ephemeral_1h_input_tokens": 20}}
+            self.write_run(d, [self.rec("m1", "2026-10-15T10:00:00Z", u)])
+            out = ledger.read_run(d)
+            self.assertEqual(out["unsplit_writes"], ["m1"])
+            self.assertEqual((out["totals"]["write_5m"], out["totals"]["write_1h"]), (80, 20))
+
     def test_a_version_off_the_pin_is_reported(self):
         with tempfile.TemporaryDirectory() as d:
             u = {"input_tokens": 1, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 5, "output_tokens": 1,
@@ -165,6 +178,85 @@ class LedgerEdges(unittest.TestCase):
             os.remove(os.path.join(d, "t.jsonl"))
             with self.assertRaises(FileNotFoundError):
                 ledger.read_run(d)
+
+
+class LedgerBoundaries(RunBuilder, unittest.TestCase):
+    """Each case sits on one edge of a rule, so a rule that slips by one reads wrong."""
+
+    def usage(self, w5=0, rd=0, i=1, out=1):
+        return {"input_tokens": i, "cache_creation_input_tokens": w5, "cache_read_input_tokens": rd,
+                "output_tokens": out, "cache_creation": {"ephemeral_5m_input_tokens": w5, "ephemeral_1h_input_tokens": 0}}
+
+    def test_a_long_gap_with_a_small_write_is_not_a_death(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write_run(d, [self.rec("m1", "2026-10-15T10:00:00Z", self.usage(w5=100, rd=1000)),
+                               self.rec("m2", "2026-10-15T10:20:00Z", self.usage(w5=100, rd=0))])
+            self.assertEqual(ledger.read_run(d)["cache_deaths"], [])
+
+    def test_a_write_of_exactly_half_the_prior_prompt_is_a_death(self):
+        with tempfile.TemporaryDirectory() as d:
+            # prior prompt = 1 + 0 + 999 = 1000 (input + read + write); the write is 500
+            self.write_run(d, [self.rec("m1", "2026-10-15T10:00:00Z", self.usage(w5=100, rd=899)),
+                               self.rec("m2", "2026-10-15T10:20:00Z", self.usage(w5=500, rd=0))])
+            self.assertEqual([x["message_id"] for x in ledger.read_run(d)["cache_deaths"]], ["m2"])
+
+    def test_a_big_write_inside_the_ttl_is_not_a_death(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write_run(d, [self.rec("m1", "2026-10-15T10:00:00Z", self.usage(w5=100, rd=900)),
+                               self.rec("m2", "2026-10-15T10:04:59Z", self.usage(w5=900, rd=0))])
+            self.assertEqual(ledger.read_run(d)["cache_deaths"], [])
+
+    def test_a_request_at_the_phase_end_belongs_to_the_next_phase(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write_run(d, [self.rec("m1", "2026-10-15T10:10:00Z", self.usage(rd=5))],
+                           {"phases": [{"phase": "a", "from": "2026-10-15T10:00:00Z", "to": "2026-10-15T10:10:00Z"},
+                                       {"phase": "b", "from": "2026-10-15T10:10:00Z", "to": "2026-10-15T10:20:00Z"}]})
+            self.assertEqual(list(ledger.read_run(d)["by_phase"]), ["b"])
+
+    def test_a_wave_window_includes_both_of_its_ends(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write_run(d, [self.rec("m1", "2026-10-15T10:00:00Z", self.usage(rd=5)),
+                               self.rec("m2", "2026-10-15T10:01:00Z", self.usage(rd=5))],
+                           {"waves": [{"wave": "w", "first_dispatch": "2026-10-15T10:00:00Z",
+                                       "last_terminal": "2026-10-15T10:01:00Z"}]})
+            self.assertEqual(ledger.read_run(d)["hub_wait"]["waves"]["w"]["requests"], 2)
+
+    def test_an_error_row_that_wrote_is_not_a_cold_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = self.rec("m1", "2026-10-15T10:00:00Z", self.usage(w5=50))
+            bad["isApiErrorMessage"] = True
+            self.write_run(d, [bad])
+            out = ledger.read_run(d)
+            self.assertEqual(out["cold_starts"], [])
+            self.assertEqual(out["undetermined"], [])
+
+    def test_a_turn_with_await_and_another_tool_is_not_await_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            mixed = self.rec("m1", "2026-10-15T10:00:00Z", self.usage(rd=5))
+            mixed["message"]["content"] = [{"type": "tool_use", "name": "await", "input": {}},
+                                           {"type": "tool_use", "name": "Read", "input": {}}]
+            self.write_run(d, [mixed], {"await_tools": ["await"]})
+            self.assertEqual(ledger.read_run(d)["hub_wait"]["await_only_turns"]["requests"], 0)
+
+    def test_a_bash_call_matching_the_await_pattern_counts_as_await(self):
+        with tempfile.TemporaryDirectory() as d:
+            sh = self.rec("m1", "2026-10-15T10:00:00Z", self.usage(rd=5))
+            sh["message"]["content"] = [{"type": "tool_use", "name": "Bash", "input": {"command": "shim await key-1"}}]
+            self.write_run(d, [sh], {"await_pattern": r"shim await\b"})
+            self.assertEqual(ledger.read_run(d)["hub_wait"]["await_only_turns"]["requests"], 1)
+
+    def test_a_warm_spawn_that_starts_inside_a_siblings_first_request_is_not_a_cold_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "t", "subagents"))
+            for stem, start, resp, rd, w in (("agent-a", "10:00:00", "10:00:10", 500, 10), ("agent-b", "10:00:05", "10:00:12", 500, 10)):
+                recs = [{"type": "user", "timestamp": "2026-10-15T%sZ" % start, "isSidechain": True},
+                        self.rec("m_" + stem, "2026-10-15T%sZ" % resp, self.usage(w5=w, rd=rd))]
+                with open(os.path.join(d, "t", "subagents", stem + ".jsonl"), "w") as f:
+                    f.write("".join(json.dumps(r) + "\n" for r in recs))
+                with open(os.path.join(d, "t", "subagents", stem + ".meta.json"), "w") as f:
+                    json.dump({"agentType": "x"}, f)
+            self.write_run(d, [])
+            self.assertEqual(ledger.read_run(d)["concurrent_cold_writes"], [])
 
 
 class LedgerCli(unittest.TestCase):

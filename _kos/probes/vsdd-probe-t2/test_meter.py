@@ -71,13 +71,13 @@ class OtelRows(unittest.TestCase):
     def test_otel_only_source_is_priced_as_its_own_row(self):
         rows = meter.otel_rows(self.events, self.table, self.source_map)
         cl = rows["only_in_otel"]["auto_mode_classifier"]
-        self.assertEqual(cl["tokens"], {"input": 50, "creation": 0, "read": 0, "output": 12})
-        self.assertEqual(cl["usd"], D("0.000220"))
+        self.assertEqual(cl["tokens"], {"input": 50, "creation": 40, "read": 0, "output": 12})
+        self.assertEqual(cl["usd"], D("0.000320"))
 
     def test_the_run_total_carries_the_classifier_row(self):
         total = meter.total_with_otel_only(self.led, self.events, self.table, self.source_map)
-        self.assertEqual(total["usd"], D("0.020902"))
-        self.assertEqual(total["rows"]["auto_mode_classifier"], D("0.000220"))
+        self.assertEqual(total["usd"], D("0.021002"))
+        self.assertEqual(total["rows"]["auto_mode_classifier"], D("0.000320"))
 
     def test_reconcile_passes_within_one_percent_per_class(self):
         r = meter.reconcile(self.led, self.events, self.source_map, pct=1.0)
@@ -118,7 +118,7 @@ class MeterCli(unittest.TestCase):
         p = subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "meter.py"), "cost", RUN, "--otel", OTEL],
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(json.loads(p.stdout)["total_usd"], "0.020902")
+        self.assertEqual(json.loads(p.stdout)["total_usd"], "0.021002")
 
 
 if __name__ == "__main__":
