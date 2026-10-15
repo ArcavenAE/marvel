@@ -2562,6 +2562,7 @@ same crash-loop backoff roles get, reloads its authorization when teams
 change, and holds new sessions while it is down. A cluster with
 'bus.managed: false' only hands sessions the configured URL.`,
 	}
+	var requireLeaf bool
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "Show the broker: pid, listener, readiness, hub leaf link",
@@ -2579,9 +2580,16 @@ change, and holds new sessions while it is down. A cluster with
 				return fmt.Errorf("decode bus status: %w", err)
 			}
 			printBusStatus(os.Stdout, st)
+			if requireLeaf {
+				if ok, why := leafRequirement(st, time.Now()); !ok {
+					return requireLeafError(why)
+				}
+			}
 			return nil
 		},
 	}
+	status.Flags().BoolVar(&requireLeaf, "require-leaf", false,
+		"exit nonzero unless a hub is configured and the leaf is attached and up on a current reading, saying why")
 	cmd.AddCommand(status)
 
 	leafToggle := func(method string) func(*cobra.Command, []string) error {
@@ -2656,6 +2664,7 @@ func printBusStatus(w io.Writer, st bus.Status) {
 		leaf += " for " + st.LeafFor
 	}
 	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\n", ready, leaf)
+	_, _ = fmt.Fprint(w, leafSourceRows(st))
 	if s := st.Structure; s != nil {
 		// The structural reading (aae-orc-vy6k7): what ready is made of
 		// beyond the listener, so a "no" above has its reason right here.
