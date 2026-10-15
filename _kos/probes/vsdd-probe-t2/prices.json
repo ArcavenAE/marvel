@@ -1,0 +1,14 @@
+{
+  "frozen": "before the pilot, brief section 11",
+  "source": "platform.claude.com/docs/en/about-claude/pricing",
+  "read_on": "2026-10-14",
+  "unit": "USD per million tokens",
+  "match": [
+    ["claude-opus-5-5", "opus-5.5"],
+    ["claude-sonnet-5-5", "sonnet-5.5"]
+  ],
+  "models": {
+    "opus-5.5": {"input": "4", "write_5m": "5", "write_1h": "8", "read": "0.20", "output": "20"},
+    "sonnet-5.5": {"input": "2", "write_5m": "2.50", "write_1h": "4", "read": "0.10", "output": "10"}
+  }
+}

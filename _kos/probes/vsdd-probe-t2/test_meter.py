@@ -43,7 +43,7 @@ class MeterFixture(unittest.TestCase):
         self.assertEqual(self.cost["transcript_usd"], D("0.020682"))
 
     def test_cost_by_seat_and_role(self):
-        self.assertEqual(self.cost["by_seat"]["orch"]["usd"], D("0.014286"))
+        self.assertEqual(self.cost["by_seat"]["orch"]["usd"], D("0.018822"))
         self.assertEqual(self.cost["by_seat"]["r1-c1-w1-g1-a1"]["usd"], D("0.001860"))
         self.assertEqual(self.cost["by_role"]["vsdd-implementer"]["usd"], D("0.006396"))
 
@@ -107,15 +107,15 @@ class OtelRows(unittest.TestCase):
 
 class SmokeCheckIsStubbed(unittest.TestCase):
     def test_the_smoke_run_check_says_it_waits_on_the_host_card(self):
-        p = subprocess.run([sys.executable, "-I", os.path.join(HERE, "meter.py"), "reconcile-smoke"],
+        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "meter.py"), "reconcile-smoke"],
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 3)
-        self.assertIn("vsdd-c6-host", p.stderr)
+        self.assertIn("R3", p.stderr)
 
 
 class MeterCli(unittest.TestCase):
     def test_cli_prints_the_cost_json(self):
-        p = subprocess.run([sys.executable, "-I", os.path.join(HERE, "meter.py"), "cost", RUN, "--otel", OTEL],
+        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "meter.py"), "cost", RUN, "--otel", OTEL],
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(json.loads(p.stdout)["total_usd"], "0.020902")

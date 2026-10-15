@@ -32,7 +32,7 @@ class LedgerFixture(unittest.TestCase):
         self.assertEqual(self.out["requests"], 13)
 
     def test_streaming_copy_is_dropped_by_message_id(self):
-        orch = self.out["by_seat"]["orch"]
+        orch = self.out["by_spawn"]["orch"]
         self.assertEqual(orch["requests"], 6)
         self.assertEqual(orch["tokens"], cls(14, 2350, 0, 3400, 90))
         self.assertEqual(self.out["dedupe"]["duplicates_dropped"], 1)
@@ -49,6 +49,9 @@ class LedgerFixture(unittest.TestCase):
 
     def test_by_seat_by_role_by_phase(self):
         seat = self.out["by_seat"]
+        # a seat's total carries its own subagents: orch main 6 requests + a1 + a2
+        self.assertEqual(seat["orch"]["tokens"], cls(22, 3650, 0, 5600, 195))
+        self.assertEqual(seat["orch"]["requests"], 10)
         self.assertEqual(seat["r1-c1-w1-g1-a1"]["tokens"], cls(5, 400, 100, 500, 40))
         role = self.out["by_role"]
         self.assertEqual(role["vsdd-orchestrator"]["tokens"], cls(14, 2350, 0, 3400, 90))
@@ -166,7 +169,7 @@ class LedgerEdges(unittest.TestCase):
 
 class LedgerCli(unittest.TestCase):
     def test_cli_prints_the_same_json(self):
-        p = subprocess.run([sys.executable, "-I", os.path.join(HERE, "ledger.py"), RUN],
+        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "ledger.py"), RUN],
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(json.loads(p.stdout)["totals"], cls(27, 4050, 100, 6100, 235))
