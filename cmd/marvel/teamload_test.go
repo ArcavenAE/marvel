@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -75,11 +77,60 @@ func TestRenderTeamLoadSeparatesNoReadingFromZero(t *testing.T) {
 	}
 }
 
-// A row that was never stamped prints dashes, not a stale mark.
+// tableRows splits a rendered table into its cells, one slice per line.
+func tableRows(out string) [][]string {
+	var rows [][]string
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		rows = append(rows, regexp.MustCompile(`\s{2,}`).Split(strings.TrimSpace(line), -1))
+	}
+	return rows
+}
+
+// A row that was never stamped is still listed, with a dash in each derived
+// cell: the team does not vanish, and it does not read as stale.
 func TestRenderTeamLoadNeverObservedPrintsDashes(t *testing.T) {
 	out := renderRows(t, loadAt, loadRow(func(r *api.TeamLoad) { r.ObservedAt, r.ValidUntil = time.Time{}, time.Time{} }))
-	if strings.Contains(out, "?") || strings.Contains(out, "62%") {
-		t.Errorf("a never-observed row printed a reading or a stale mark:\n%s", out)
+	rows := tableRows(out)
+	if len(rows) != 2 {
+		t.Fatalf("want a header and the team's row, got:\n%s", out)
+	}
+	want := []string{"ws", "squad", "-", "-", "-"}
+	if !reflect.DeepEqual(rows[1], want) {
+		t.Errorf("row = %q, want %q", rows[1], want)
+	}
+}
+
+// LIMITED prints the team's limited seats, not another count: two teams with
+// different running and limited numbers each show their own.
+func TestRenderTeamLoadLimitedCellIsTheLimitedCount(t *testing.T) {
+	out := renderRows(t, loadAt,
+		loadRow(nil),
+		loadRow(func(r *api.TeamLoad) { r.Team, r.Declared, r.Running, r.Limited = "other", 9, 8, 3 }))
+	rows := tableRows(out)
+	if len(rows) != 3 {
+		t.Fatalf("table:\n%s", out)
+	}
+	if rows[1][4] != "1" || rows[2][4] != "3" {
+		t.Errorf("LIMITED cells = %q and %q, want 1 and 3 (running is 5 and 8)", rows[1][4], rows[2][4])
+	}
+}
+
+// The command asks the daemon for team-load and prints what comes back: the
+// send path, run against a canned daemon that answers only that resource.
+func TestGetTeamsLoadReadsTheDaemonsRows(t *testing.T) {
+	now := time.Now().UTC()
+	row := loadRow(func(r *api.TeamLoad) { r.ObservedAt, r.ValidUntil = now, now.Add(api.TeamLoadValidity) })
+	requests := cannedDaemon(t, map[string]any{"team-load": []api.TeamLoad{row}})
+	out, err := runGet(t, "teams", "--load")
+	if err != nil {
+		t.Fatalf("get teams --load: %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("requests = %d, want one", got)
+	}
+	rows := tableRows(out)
+	if len(rows) != 2 || !reflect.DeepEqual(rows[1], []string{"ws", "squad", "5/7", "62% (4 of 5)", "1"}) {
+		t.Errorf("output:\n%s", out)
 	}
 }
 
