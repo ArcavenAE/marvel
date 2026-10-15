@@ -186,11 +186,11 @@ HELD. It needs the harness plan's D1 (sandbox) and D3 (trial credentials, a spen
 | D | goose posture projection with the pre-K1 refusal stub (exit 78) as shared runtime code: `GOOSE_MODE`, the seeded `permission.yaml`, and the five refusal reasons | A, C |
 | D2 | move goose posture refusals from the stub to the bootstrap refusal path | K1, D |
 | E2 | generic: the reap reads a bounded, credential-scanned pane tail before it kills a dead headless pane, for every harness | none |
-| F | adopt `docs/adapter-kit-checklist.md` as the adapter kit | none |
+| F | adopt `docs/adapter-kit-checklist.md` as the adapter kit. Done: adopted by operator ruling 2026-10-15 (section 11) | none |
 | G | amend `docs/design/seat-bootstrap.md` rows :770 and :771 and the matrix goose line to the source. Row :770 becomes "fails closed per call; the run continues and exits 0". This covers the goose and gemini-cli parts of K9 | none |
 | H | `marvel goose-ctx`: a read-only, schema-pinned `sessions.db` reader with a level-and-window heartbeat | A, C |
-| I | gemini-cli adapter v1 against the checklist | the harness plan's T7 probe, F, D |
-| J | pi adapter v1 against the checklist | the harness plan's T6 probe, F |
+| I | gemini-cli adapter v1 against the checklist | the harness plan's T7 probe, D (F done 2026-10-15) |
+| J | pi adapter v1 against the checklist | the harness plan's T6 probe (F done 2026-10-15) |
 | K | an `auto`-posture goose seat launches only inside the D1 sandbox | harness-plan decisions D1 and D2, and the sandbox build |
 
 There is no ticket E: the goose-specific reason store folded into C. Not tracked in bd: the pin re-check is the dated recommendation in section 7. An upstream ask that goose emit per-request `Usage` in stream-json would be a GitHub issue after A, under the fleet's upstream claim gate.
