@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -21,8 +22,13 @@ func afterUpgrade(res upgrade.Result, reexecDaemon bool, reexec func() error, w 
 		return nil
 	}
 	if err := reexec(); err != nil {
+		var check *reexecCheckError
+		if errors.As(err, &check) {
+			// The exec happened and printed its measured result; only the leaf
+			// is not up.
+			return fmt.Errorf("binary upgraded and daemon re-executed, but %w", err)
+		}
 		return fmt.Errorf("binary upgraded, but daemon re-exec failed: %w", err)
 	}
-	_, _ = fmt.Fprintln(w, "running daemon re-executing in place; agents keep running")
 	return nil
 }

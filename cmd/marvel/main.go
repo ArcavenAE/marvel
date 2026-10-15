@@ -481,6 +481,8 @@ and adopt in one step, use 'marvel upgrade --daemon'.`,
 				return err
 			}
 			req, sent := reexecRequest()
+			obs := newReexecObserver()
+			before, _ := obs.startedAt()
 			resp, err := reexecSend(req)
 			if err != nil {
 				return err
@@ -491,8 +493,7 @@ and adopt in one step, use 'marvel upgrade --daemon'.`,
 			if note := reexecNote(resp, sent); note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
-			fmt.Println("marvel daemon re-executing in place; agents keep running")
-			return nil
+			return checkAfterReexec(cmd.OutOrStdout(), before, reexecHandoffOutcome(resp), obs)
 		},
 	}
 }
@@ -1918,16 +1919,31 @@ between them. A runtime with no reader reads unknown.`,
 }
 
 func versionCmd() *cobra.Command {
-	return &cobra.Command{
+	var capabilities, asJSON bool
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print marvel version and channel",
 		Run: func(cmd *cobra.Command, args []string) {
+			if capabilities {
+				// Local only: no daemon is dialed. The departing daemon asks the
+				// binary it is about to exec whether it can read the credential
+				// handoff (aae-orc-4h9xp).
+				if asJSON {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "{\"reexec_handoff\":%d}\n", daemon.ReexecHandoffFormat)
+				} else {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reexec_handoff: %d\n", daemon.ReexecHandoffFormat)
+				}
+				return
+			}
 			versionReport(cmd.OutOrStdout(), thisBuild(),
 				func() (*daemon.BuildInfo, error) {
 					return boundedQuery(versionQueryTimeout, queryDaemonBuild)
 				})
 		},
 	}
+	cmd.Flags().BoolVar(&capabilities, "capabilities", false, "print what this binary can do for a daemon that execs into it, and exit (local; no daemon is asked)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "with --capabilities, print one JSON object")
+	return cmd
 }
 
 // runUpgrade is the install step of marvel upgrade. A variable so a test can
@@ -1975,6 +1991,8 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 					return err
 				}
 				req, sent := reexecRequest()
+				obs := newReexecObserver()
+				before, _ := obs.startedAt()
 				resp, err := reexecSend(req)
 				if err != nil {
 					return fmt.Errorf("sending daemon re-exec: %w", err)
@@ -1985,7 +2003,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				if note := reexecNote(resp, sent); note != "" {
 					fmt.Fprintln(os.Stderr, note)
 				}
-				return nil
+				return checkAfterReexec(cmd.OutOrStdout(), before, reexecHandoffOutcome(resp), obs)
 			}, cmd.OutOrStdout())
 		},
 	}
@@ -2521,6 +2539,13 @@ the acts that destroy that.`,
 			if !teardown {
 				if keepBus {
 					fmt.Println("marvel daemon detaching, agents keep running, bus left up for the next daemon")
+					var result daemon.StopResult
+					if len(resp.Result) > 0 {
+						_ = json.Unmarshal(resp.Result, &result)
+					}
+					if note := stopKeepBusNotice(result.TransientCredentials); note != "" {
+						fmt.Fprintln(os.Stderr, note)
+					}
 				} else {
 					fmt.Println("marvel daemon detaching, agents keep running")
 				}
@@ -2562,6 +2587,7 @@ same crash-loop backoff roles get, reloads its authorization when teams
 change, and holds new sessions while it is down. A cluster with
 'bus.managed: false' only hands sessions the configured URL.`,
 	}
+	var requireLeaf bool
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "Show the broker: pid, listener, readiness, hub leaf link",
@@ -2579,9 +2605,16 @@ change, and holds new sessions while it is down. A cluster with
 				return fmt.Errorf("decode bus status: %w", err)
 			}
 			printBusStatus(os.Stdout, st)
+			if requireLeaf {
+				if ok, why := leafRequirement(st, time.Now()); !ok {
+					return requireLeafError(why)
+				}
+			}
 			return nil
 		},
 	}
+	status.Flags().BoolVar(&requireLeaf, "require-leaf", false,
+		"exit nonzero unless a hub is configured and the leaf is attached and up on a current reading, saying why")
 	cmd.AddCommand(status)
 
 	leafToggle := func(method string) func(*cobra.Command, []string) error {
@@ -2656,6 +2689,7 @@ func printBusStatus(w io.Writer, st bus.Status) {
 		leaf += " for " + st.LeafFor
 	}
 	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\n", ready, leaf)
+	_, _ = fmt.Fprint(w, leafSourceRows(st))
 	if s := st.Structure; s != nil {
 		// The structural reading (aae-orc-vy6k7): what ready is made of
 		// beyond the listener, so a "no" above has its reason right here.

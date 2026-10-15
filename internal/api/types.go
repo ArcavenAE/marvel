@@ -4,6 +4,7 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/asof"
@@ -1020,9 +1021,16 @@ const (
 	CredentialNATSNKeySeed CredentialKind = "nats-nkey-seed"
 )
 
+// CredentialKinds lists every credential kind marvel can hold. A test over
+// this list fails until each new kind has a written carry decision in the
+// daemon's reexec handoff (aae-orc-4h9xp).
+func CredentialKinds() []CredentialKind {
+	return []CredentialKind{CredentialNATSNKeySeed}
+}
+
 // ValidCredentialKind reports whether k is a known credential kind.
 func ValidCredentialKind(k CredentialKind) bool {
-	return k == CredentialNATSNKeySeed
+	return slices.Contains(CredentialKinds(), k)
 }
 
 // Credential is a bus credential the daemon holds for a broker or agent to

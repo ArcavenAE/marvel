@@ -344,6 +344,13 @@ const (
 	KindBusLeafUp         Kind = "bus.leaf.up"
 	KindBusLeafDown       Kind = "bus.leaf.down"
 	KindBusLeafUnenrolled Kind = "bus.leaf.unenrolled"
+	// KindBusLeafDropped reports a hub leaf credential that did not survive a
+	// daemon change: the running broker was started with a leaf seed and this
+	// daemon's store holds none, or holds a different one. The link is gone or
+	// will not be the one the broker has until the operator pushes the seed
+	// again. Severity error; the message names the cause and the command. It
+	// never carries the seed or a prefix of it (aae-orc-4h9xp).
+	KindBusLeafDropped Kind = "bus.leaf.dropped"
 	// KindBusGlobalRoleUnadmitted reports a stored role whose manifest declares
 	// a global role but whose name the cluster's config no longer admits
 	// (global_roles on the bus entry). The role holds no global tier until it
@@ -487,6 +494,7 @@ var allKinds = []Kind{
 	KindBusLeafUp,
 	KindBusLeafDown,
 	KindBusLeafUnenrolled,
+	KindBusLeafDropped,
 	KindBusGlobalRoleUnadmitted,
 	KindBusPidfileStale,
 	KindBusPidfileUnproven,
@@ -529,14 +537,16 @@ func IsKnownKind(name string) bool {
 	return false
 }
 
-// Severity mirrors the kubernetes Warning/Normal distinction. Lets
-// operators filter `marvel events --severity warning` for the things
-// that need attention.
+// Severity mirrors the kubernetes Warning/Normal distinction, with one level
+// above it for an event that names a loss the operator must act on. Lets
+// operators filter `marvel events --severity warning` for the things that need
+// attention; an error is at least a warning, so that filter shows it too.
 type Severity string
 
 const (
 	SeverityInfo    Severity = "info"
 	SeverityWarning Severity = "warning"
+	SeverityError   Severity = "error"
 )
 
 // Event is one structured state-transition record.
@@ -678,7 +688,8 @@ func (r *Ring) Emit(ev Event) {
 
 // Filter selects events to include in Snapshot results. Empty fields
 // match anything; set fields must match exactly. For MinSeverity,
-// SeverityWarning matches only warnings; the zero value matches all.
+// SeverityWarning matches warnings and errors, SeverityError matches only
+// errors; the zero value matches all.
 type Filter struct {
 	Workspace   string
 	Team        string
@@ -757,7 +768,10 @@ func matches(ev Event, f Filter) bool {
 	if f.Kind != "" && f.Kind != ev.Kind {
 		return false
 	}
-	if f.MinSeverity == SeverityWarning && ev.Severity != SeverityWarning {
+	if f.MinSeverity == SeverityWarning && ev.Severity != SeverityWarning && ev.Severity != SeverityError {
+		return false
+	}
+	if f.MinSeverity == SeverityError && ev.Severity != SeverityError {
 		return false
 	}
 	if f.SinceSeq > 0 && ev.Seq <= f.SinceSeq {

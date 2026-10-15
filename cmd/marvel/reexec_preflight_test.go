@@ -9,7 +9,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/procargs"
 	"github.com/arcavenae/marvel/internal/upgrade"
@@ -51,7 +53,10 @@ func newRig(t *testing.T, argv ...string) *rig {
 		b, _ := json.Marshal(map[string]string{"status": "reexec", "binary": "x"})
 		return &daemon.Response{Result: b}, nil
 	}
-	t.Cleanup(func() { preflightQuery, daemonArgs, reexecSend = pq, pa, ps })
+	// The check after the exec reads a daemon; these tests have none to read.
+	po := newReexecObserver
+	newReexecObserver = func() reexecObserver { return noHubObserver() }
+	t.Cleanup(func() { preflightQuery, daemonArgs, reexecSend, newReexecObserver = pq, pa, ps, po })
 	return r
 }
 
@@ -241,5 +246,17 @@ func TestPreflightReadsArgumentsWithTheProcessReader(t *testing.T) {
 	}
 	if wired, err := daemonArgs(os.Getpid()); err != nil || !slices.Equal(wired, got) {
 		t.Fatalf("the pre-flight reads %q (%v), want this process's %q", wired, err, got)
+	}
+}
+
+// noHubObserver answers every question at once: the daemon restarted and no hub
+// is configured, so the check passes without waiting.
+func noHubObserver() reexecObserver {
+	calls := 0
+	return reexecObserver{
+		// The first answer is the old image; every later one is a new start.
+		startedAt: func() (time.Time, error) { calls++; return time.Unix(int64(calls), 0), nil },
+		leaf:      func() (bus.Status, error) { return bus.Status{Managed: true, Leaf: "n/a"}, nil },
+		now:       time.Now, sleep: func(time.Duration) {}, wait: time.Second, every: time.Millisecond,
 	}
 }
