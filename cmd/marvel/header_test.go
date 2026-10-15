@@ -15,6 +15,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
@@ -376,5 +377,19 @@ func TestCollectHeaderReportsATransportError(t *testing.T) {
 	}
 	if out := renderHeader(h, headerNow); !strings.Contains(out, "no status (") || strings.Contains(out, "no status (-)") {
 		t.Errorf("the header should name why there is no status:\n%s", out)
+	}
+}
+
+// A TMPDIR too long for a unix socket must not stop the header tests: the
+// socket they serve is made under a short directory of its own.
+func TestHeaderSocketSurvivesALongTMPDIR(t *testing.T) {
+	long := filepath.Join(shorttmp.Dir(t), strings.Repeat("d", 100))
+	if err := os.MkdirAll(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", long)
+	sock := headerSocket(t, func(daemon.Request) daemon.Response { return daemon.Response{} })
+	if len(sock) > paths.MaxUnixSocketPath {
+		t.Errorf("socket path is %d bytes, over the %d-byte limit", len(sock), paths.MaxUnixSocketPath)
 	}
 }

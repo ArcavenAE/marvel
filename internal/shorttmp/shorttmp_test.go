@@ -11,16 +11,17 @@ import (
 	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
-// socketFor is the control socket a test would resolve for a root under dir.
+// socketFor is the control socket a test would resolve for the longest root
+// name the tests use ("flag") under dir.
 func socketFor(dir string) string {
-	return filepath.Join(dir, "mh", "run", "marvel.sock")
+	return filepath.Join(dir, "flag", "run", "marvel.sock")
 }
 
 // base makes a short directory to stand in as TMPDIR, outside t.TempDir whose
 // length is the thing under test.
 func base(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "mvb")
+	dir, err := os.MkdirTemp("/tmp", "tb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,5 +86,15 @@ func TestEachCallGetsItsOwnDirectory(t *testing.T) {
 	a, b := shorttmp.Dir(t), shorttmp.Dir(t)
 	if a == b {
 		t.Errorf("two calls returned %s", a)
+	}
+}
+
+// internal/daemon's reexec tests make /tmp/mv<digits> directories. A killed run
+// leaves them behind, so a sweep of leftovers must not take this package's
+// directories for them, nor the reverse.
+func TestTheNameDoesNotShareAPrefixWithTheDaemonTests(t *testing.T) {
+	got := filepath.Base(shorttmp.Dir(t))
+	if strings.HasPrefix(got, "mv") {
+		t.Errorf("Dir() made %q, whose name starts with the daemon tests' \"mv\"", got)
 	}
 }
