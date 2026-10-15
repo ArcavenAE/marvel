@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -308,5 +309,108 @@ func TestRetryRevokesKeepsATokenItCannotRevokeYet(t *testing.T) {
 	}
 	if live := m.Live(); len(live) != 0 {
 		t.Errorf("live tokens = %v, want none", live)
+	}
+}
+
+// armedGate holds an Issue only after arm is called, so a test can let one
+// seat's tokens through and stop the next seat's ask inside the driver.
+type armedGate struct {
+	Driver
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newArmedGate(d Driver) *armedGate {
+	return &armedGate{Driver: d, entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *armedGate) Issue(ctx context.Context, r Request) (Token, error) {
+	if g.armed.CompareAndSwap(true, false) {
+		close(g.entered)
+		<-g.release
+	}
+	return g.Driver.Issue(ctx, r)
+}
+
+// A retry pass decides a key's seat is gone and then revokes. A seat that
+// takes the same name in between holds tokens the pass must not touch.
+func TestRetryRevokesLeavesTheTokenOfASeatThatTookTheNameMeanwhile(t *testing.T) {
+	t.Parallel()
+
+	const key = "ws/t/r-g1-0"
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	b := New(f, multiAuth{})
+	old, err := b.Issue(context.Background(), key, "t"+key)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	f.setFail(true)
+	if err := b.RevokeSession(context.Background(), key); err == nil {
+		t.Fatal("RevokeSession with a failing driver returned nil")
+	}
+	f.setFail(false)
+
+	var fresh Token
+	exists := func(string) bool {
+		// A new seat takes the name and is issued a token before this answer lands.
+		tok, ierr := b.Issue(context.Background(), key, "t"+key)
+		if ierr != nil {
+			t.Errorf("the new seat's Issue: %v", ierr)
+		}
+		fresh = tok
+		return false
+	}
+	if err := b.RetryRevokes(context.Background(), exists); err != nil {
+		t.Fatalf("RetryRevokes: %v", err)
+	}
+
+	live := m.Live()
+	if len(live) != 1 || live[0] != fresh.ID {
+		t.Errorf("live tokens = %v, want only the new seat's %s (the old seat's %s revoked)", live, fresh.ID, old.ID)
+	}
+}
+
+// The same race with the new seat's ask still inside the driver: the pass
+// must not count as a revoke of that seat, or its ask is refused.
+func TestRetryRevokesDoesNotRefuseAnAskInFlightForTheSameName(t *testing.T) {
+	t.Parallel()
+
+	const key = "ws/t/r-g1-0"
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	g := newArmedGate(f)
+	b := New(g, multiAuth{})
+	if _, err := b.Issue(context.Background(), key, "t"+key); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	f.setFail(true)
+	if err := b.RevokeSession(context.Background(), key); err == nil {
+		t.Fatal("RevokeSession with a failing driver returned nil")
+	}
+	f.setFail(false)
+
+	res := make(chan issueResult, 1)
+	exists := func(string) bool {
+		g.armed.Store(true)
+		go func() {
+			tok, err := b.Issue(context.Background(), key, "t"+key)
+			res <- issueResult{tok, err}
+		}()
+		waitFor(t, g.entered, "the new seat's ask to be inside the driver")
+		return false
+	}
+	if err := b.RetryRevokes(context.Background(), exists); err != nil {
+		t.Fatalf("RetryRevokes: %v", err)
+	}
+	close(g.release)
+
+	r := <-res
+	if r.err != nil {
+		t.Fatalf("the new seat's ask during a retry pass = %v, want it issued", r.err)
+	}
+	if live := m.Live(); len(live) != 1 || live[0] != r.tok.ID {
+		t.Errorf("live tokens = %v, want only the new seat's %s", live, r.tok.ID)
 	}
 }

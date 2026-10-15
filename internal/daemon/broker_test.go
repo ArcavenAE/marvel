@@ -331,3 +331,35 @@ func TestRunBrokerRetryRetriesOnATick(t *testing.T) {
 		t.Errorf("live tokens after the loop ran = %v, want none", live)
 	}
 }
+
+// Start must run the retry loop. The loop is tested directly above; this pins
+// the line that starts it, which no other test reaches.
+func TestStartRunsTheBrokerRetryLoop(t *testing.T) {
+	d := newHandlerDaemon(t)
+	m := broker.NewMock(15*time.Minute, time.Now)
+	fd := &flakyRevokeDriver{Driver: m}
+	d.UseBrokerDriver(fd, "/opt/marvel/credential-helper")
+	key, token := registerSession(t, d, "agent-0", true)
+	if resp := d.handleBrokerToken(context.Background(), brokerParams(t, key, token)); resp.Error != "" {
+		t.Fatalf("broker.token: %s", resp.Error)
+	}
+	fd.down.Store(true)
+	if err := d.sessMgr.Delete(key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	fd.down.Store(false)
+
+	sock := testSocket(t, "brokerretry")
+	t.Cleanup(func() { d.Stop() })
+	if err := d.Start(sock); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * ReconcileInterval)
+	for len(m.Live()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens %v after %v of a running daemon, want the retry loop to have revoked them", live, 5*ReconcileInterval)
+	}
+}
