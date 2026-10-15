@@ -1,6 +1,6 @@
 # Probe brief: vsdd-factory as a marvel team, one session per parallel branch
 
-**Status:** proposed. Nothing in this brief has run.
+**Status:** proposed; the operator ruled its open decisions on 2026-10-15, except the probe host. Nothing in this brief has run.
 **Question:** `_kos/nodes/frontier/question-vsdd-factory-as-marvel-team.yaml`
 **Idea:** `_kos/ideas/vsdd-factory-as-marvel-team-pack.md`
 **Origin:** the operator's idea, worked by a twelve-seat design party on 2026-10-14. Every cite below was checked by one command during that party.
@@ -23,17 +23,25 @@
 
 **The contrast is separate sessions, not parallelism.** Arm A already fans branches out concurrently, as subagents of one session. Arm B gives each branch its own session: its own process, conversation prefix and cache TTL class, drawing on the same account.
 
-## 0.1 Open operator rulings
+## 0.1 Operator rulings
 
-Five decisions in this brief are recommendations until the operator rules on them. Each site that depends on one names it here. Nothing below runs on a recommendation alone. No step on either track spends on models before R1 and R3 are ruled: M3 is track M's first model spend, and B2 is track B's.
+The operator ruled on 2026-10-15. One ruling is still open: R3, the probe host. No step on either track spends on models before R3 is ruled: M3 is track M's first model spend, and B2 is track B's.
 
-| ruling | the recommendation | gates |
+| ruling | ruled | gates |
 |---|---|---|
-| R1. Pilot spend | spend the pilot ceiling only (the smoke runs, arm B's live tests and entry drill, the seed and three pilot runs, s11); the series is a separate go at M6 | M3 and B2, each track's first model spend; B3 follows B2 |
-| R2. The decision metric | one primary, cost per accepted story, with every axis reported (s9.3); the recorded alternative is a verdict per axis | M1, which freezes it into the protocol |
-| R3. The probe host | a host with no live seats, whose signing key signs unattended (S15) | M3 and B2, since the live tests and the drill run on the probe host |
+| R1. Spend | the full ceiling (s11). The pilot card (M6) still reports, and every stop rule in s8.5 still binds | M3 and B2, each track's first model spend; B3 follows B2 |
+| R2. The decision metric | a separate verdict per axis (s9.3, s9.4), not one primary | M1, which freezes it into the protocol |
+| R3. The probe host | **open.** The candidates are two named fleet hosts. The host must keep the account quiet (s6, inter-run gap) and sign unattended (S15) | M3 and B2, since the live tests and the drill run on the probe host |
 | R4. The permission mode | `auto`, the same in both arms, with classifier requests metered (s11) | M1 |
-| R5. The marvel CLI surface | the flags and verb proposed in s4 | B1 |
+| R5. The marvel CLI surface | the flags and verb in s4, behind an experimental flag | B1 |
+
+The operator also ruled:
+
+- **Smallest effect:** a 20% gap in cost per accepted story is the smallest worth acting on (s8.5).
+- **The ledger reader and cost meter** (s10, s11) are probe-local scripts kept beside this brief, not critic code.
+- **The test project and suite** may be written by any free seat that meets s9.1's authorship rule.
+- **The comparison script** (s9.4) is its own work item, frozen before M1.
+- **aae-orc-17ki** compares rc.22 with rc.25 on this rig, after this probe (s13).
 
 ## 1. Order of work and gates
 
@@ -48,7 +56,7 @@ Track M (measurement) and track B (the arm B build) start together and join at s
 | M4. Seed (s12) | M2, M3 | Phase 2 snapshot at a sha, its wave widths recorded; exit check S8 (resume) | (a), if the seed cannot meet s12 after two revisions of the brief. A brief revision returns the probe to M2; the suite is re-frozen before the next seed. |
 | M4b. Suite mapping | M4 | scenarios tagged with the seed's story ids, or with the brief's features if S8 failed (s12), and frozen; the seed snapshot, or the test project's start commit, fails every scenario | none |
 | M5. Pilot | M3b, M4b; prices frozen; token ceiling set | 3 arm A runs: noise floor per axis, serial estimate per wave | (b), by s8.5's blind stop |
-| M6. Pilot card | M5 | spend; computed n (reported only); the spread with its 80% and 95% intervals; per-run cost and accepted stories, naming any run with zero accepted; the serial estimate beside rate-limit retries in the node; blocks per weekly window the quota allows, and the projected series end date | none; going on is the operator's call |
+| M6. Pilot card | M5 | spend; computed n (reported only); the spread with its 80% and 95% intervals; per-run cost and accepted stories, naming any run with zero accepted; the serial estimate beside rate-limit retries in the node; blocks per weekly window the quota allows, and the projected series end date | none; R1 approved the full ceiling, so the series goes on unless a stop rule fires |
 | B1. marvel PR (s4) | R5 ruled | merged and tested | none |
 | B2. Patch and shim (s3, s4) | B1; R1 and R3 ruled | arm B pack at a sha | none |
 | B3. Entry drill (s7) | B2 | D1 to D5 pass | none; a failure is a defect to fix |
@@ -134,7 +142,7 @@ Models stay at their frontmatter values. Phases 1, 2 and 4 to 7 run in the orche
 
 ## 4. Arm B, build
 
-**The marvel PR.** Today `marvel run` sets no mode, no prompt and no environment (`internal/daemon/daemon.go:2111-2116`; `cmd/marvel/main.go:1597-1602`), names the session by the clock (`daemon.go:2129`), and returns at once. The proposed surface below stays a proposal until R5 is ruled. The PR would add:
+**The marvel PR.** Today `marvel run` sets no mode, no prompt and no environment (`internal/daemon/daemon.go:2111-2116`; `cmd/marvel/main.go:1597-1602`), names the session by the clock (`daemon.go:2129`), and returns at once. R5 ruled the surface below behind an experimental flag: each new flag and the `wait` verb are refused unless the flag is on, and the shim turns it on for its own calls. The PR adds:
 
 - `--mode headless` and `--prompt-file <f>`, copied into the runtime. The claude adapter already refuses headless without a prompt (`internal/runtime/claude.go:102`), and adds stream-json output (`:119`).
 - `--env KEY=VALUE`, repeatable, copied into `Runtime.Env`.
@@ -227,7 +235,7 @@ A session without hook events is a fidelity failure, never a data point. A `read
 
 ## 6. Fairness profile
 
-The harness facts held identical in both arms. They are pinned in the protocol file and read back from every run; a run whose read-back disagrees is flagged, counted in the primary analysis, and left out of a sensitivity analysis. A "server gate" is a vendor-side flag that can change without a client release.
+The harness facts held identical in both arms. They are pinned in the protocol file and read back from every run; a run whose read-back disagrees is flagged, counted in the main analysis, and left out of a sensitivity analysis. A "server gate" is a vendor-side flag that can change without a client release.
 
 | fact | pin | read-back | pass |
 |---|---|---|---|
@@ -247,7 +255,7 @@ The harness facts held identical in both arms. They are pinned in the protocol f
 
 **Why the TTL is pinned.** On the host used during design, at defaults, main threads write 1-hour cache entries and subagents write 5-minute ones. A branch seat is a main thread; the same work in arm A is a subagent. So at defaults, the harness would decide part of the cache result.
 
-The 5-minute pin penalizes main threads, and arm B has more of them. So the base cell's cache result is a lower bound for arm B under subscription defaults. A defaults cell of one block, one run per arm, with both variables unset and recorded, runs after the base series closes. It is reported beside the finding and never enters the primary.
+The 5-minute pin penalizes main threads, and arm B has more of them. So the base cell's cache result is a lower bound for arm B under subscription defaults. A defaults cell of one block, one run per arm, with both variables unset and recorded, runs after the base series closes. It is reported beside the finding and never enters the verdicts.
 
 ## 7. Invariants and the entry drill
 
@@ -293,9 +301,9 @@ Committed beside this brief before the pilot. Every run's marker records its sha
    - the analysis seed and resample count.
 3. The test project sha, the seed snapshot sha, and the acceptance suite's hash. The suite itself is published after the series closes.
 4. The accepted story (s9).
-5. The primary metric and its smallest effect of interest (the smallest gap the operator would act on). Each secondary gets its own smallest effect.
+5. The axes (s9.3), each with its own smallest effect of interest (the smallest gap the operator would act on). For cost per accepted story it is 20%, as ruled; the protocol file states the others before it is frozen.
 6. Sections 8.2 to 8.6.
-7. Exclusions: none. A canary hit counts the run as zero accepted. A sensitivity analysis without that run sits beside the primary. Its cost stays in.
+7. Exclusions: none. A canary hit counts the run as zero accepted. A sensitivity analysis without that run sits beside each axis. Its cost stays in.
 
 **8.2 Pilot and ceiling.**
 - **The pilot:** three arm A runs from the seed. It sets the noise floor and the intraclass correlation (ICC), meaning how alike scenario results are within one run, reported with its interval; the ICC informs the pilot card, never the ceiling. The pilot is not part of the comparison.
@@ -314,7 +322,7 @@ Committed beside this brief before the pilot. Every run's marker records its sha
 **8.5 Intent-to-treat and stop rules.**
 - **Intent-to-treat:** every started series run counts, stalls, crashes, timeouts and limit stops included, at its cost. The fidelity run and the drill sit outside the statistics.
 - **Fidelity stop:** the node's fidelity checklist fails. Close (a).
-- **Blind stop:** 0.86 times the pilot's spread of the log primary exceeds ln(1 + the smallest effect), for example ln 1.3 = 0.262 at 30%. 0.86 is 1.31 (t at 6 degrees of freedom, 2.447, times the square root of 2 over the square root of 7) times 0.659, the lower 80% bound of a spread from 2 degrees of freedom (the square root of 2 over 4.605), so the stop fires only when even a generous reading is blind. Close (b). If any pilot run has zero accepted, (b) does not fire: the card reports the spread of log cost per run, names the run, and the operator decides. A secondary that is blind on its own is reported, not closed.
+- **Blind stop:** 0.86 times the pilot's spread of log cost per accepted story exceeds ln(1 + its smallest effect): ln 1.2 = 0.182 at the ruled 20%, so it fires above a spread of about 0.21. 0.86 is 1.31 (t at 6 degrees of freedom, 2.447, times the square root of 2 over the square root of 7) times 0.659, the lower 80% bound of a spread from 2 degrees of freedom (the square root of 2 over 4.605), so the stop fires only when even a generous reading is blind. Close (b). If any pilot run has zero accepted, (b) does not fire: the card reports the spread of log cost per run, names the run, and the operator decides. Another axis that is blind on its own gets the verdict "blind" for that axis and does not stop the probe; the stop is tied to cost because spend is what it saves.
 - **Drift stop:** the harness build, the pack hash, the marvel commit, or a recorded server gate changes inside a series. The series is void from that block. Prices come only from the frozen table.
 - **Budget stop:** at a block boundary, spend reaches section 11's ceiling. The series pauses, and an operator card carrying spend only goes up. If the operator ends the series, the report states the count reached and its power, and it is not close (d).
 - **Ceiling reached:** close (c) or (d).
@@ -324,14 +332,14 @@ Committed beside this brief before the pilot. Every run's marker records its sha
 ## 9. Judge and metrics
 
 **9.1 The probe acceptance suite.**
-- **What it is:** executable black-box tests on the test project's public interface, run by the probe operator. It is not an LLM. The factory's holdout-evaluator is an LLM role inside each arm (`agents/holdout-evaluator.md`, `model: opus`).
+- **What it is:** executable black-box tests on the test project's public interface, run by a scoring seat on a host that is not the probe host. It is not an LLM. The factory's holdout-evaluator is an LLM role inside each arm (`agents/holdout-evaluator.md`, `model: opus`).
 - **Size:** at least 30 scenarios, three or more per story, each tagged with one story id.
-- **Authorship:** a seat that runs neither arm writes it, separate from the factory's own holdouts, against the brief at M2. After the seed (M4), the author receives only the seed's story ids, titles and wave assignments, never story bodies or acceptance criteria, and adds a story tag to each scenario (M4b). The M2 to M4b diff must touch tags only, and is published with the finding. The suite is stored outside every arm's worktree, and no arm run, the seed run included, has a read path to it.
+- **Authorship:** any free seat may write it (ruled), provided it is a seat that runs neither arm. It writes it separate from the factory's own holdouts, against the brief at M2. After the seed (M4), the author receives only the seed's story ids, titles and wave assignments, never story bodies or acceptance criteria, and adds a story tag to each scenario (M4b). The M2 to M4b diff must touch tags only, and is published with the finding. The suite is stored outside every arm's worktree, and no arm run, the seed run included, has a read path to it. So it is never kept in a public repository, nor in any repository the probe host's GitHub login can read, and its files never reach the probe host's disk. Where it is kept is an operator ruling; until then it lives in a local repository with no remote, on a host that is not the probe host.
 - **Controls before the freeze:**
   - the Phase 2 seed snapshot fails every scenario, or, if S8 failed, the test project's start commit does;
   - the author's reference solution passes every one;
   - a scenario that varies across three runs on the reference is fixed or removed.
-- **When it runs:** after verified completion, on a clean checkout of the run's final commit.
+- **When it runs:** after verified completion, on the scoring host, against a clean checkout of the run's final commit.
 
 **9.2 The canary.**
 - **The token:** a random 32-hex token, placed in a comment in every suite file.
@@ -339,9 +347,9 @@ Committed beside this brief before the pilot. Every run's marker records its sha
 - **The detector check, in the smoke runs of both arms and the fidelity run:** a second token placed in a file the arm must read; the search must find it.
 - **On a hit:** the run counts as zero accepted.
 
-**9.3 Metrics.**
-- **Primary** (this brief's recommendation, ruled as R2 before M1 freezes the protocol): API-equivalent cost per accepted story (per accepted feature when S8 fails, s12), as a ratio of sums over the series (total cost over total accepted stories), so a run with zero accepted still counts. Cost covers every request class, classifier and compaction requests included (s11).
-- **Secondaries, each with its interval and the n that would resolve it:**
+**9.3 Metrics.** Each axis gets its own verdict (R2). Each is stated with its interval, its smallest effect of interest, and the n that would resolve it.
+- **Cost:** API-equivalent cost per accepted story (per accepted feature when S8 fails, s12), as a ratio of sums over the series (total cost over total accepted stories), so a run with zero accepted still counts. Cost covers every request class, classifier and compaction requests included (s11). The blind stop (s8.5) reads this axis.
+- **The other axes:**
   - wall clock (s8.6), and wall clock net of throttle time;
   - throughput: accepted stories per hour of wall clock;
   - cache: read and write tokens by TTL class per accepted story, with read share beside them;
@@ -352,20 +360,21 @@ Committed beside this brief before the pilot. Every run's marker records its sha
   - every axis per phase and per wave width.
 
 **9.4 Analysis.**
-- **The estimate:** arm B over arm A, cost per accepted story. The interval: the delta method on the log of the ratio of sums, blocked by pair, with the bootstrap over pairs as a sensitivity (at seven pairs, a percentile bootstrap has only 1,716 distinct resamples and under-covers). If both arms' totals are zero, no comparison exists: the finding reports the counts and closes (a), not comparable on this test project. If one arm's total is zero, no ratio is computed; the finding reports per-arm cost and accepted counts and closes (c) against that arm.
-- **Sensitivities beside the primary:**
-  - the primary with the hub wait row (s10, output 8) removed from both arms. A gap that vanishes without it is a finding about the wait design, not about separate sessions;
-  - the primary on first-attempt acceptance only.
-- **The verdict:**
-  - (b) per s8.5's blind stop, decided at the pilot;
+- **The estimate,** for each axis: arm B over arm A. The interval: the delta method on the log of the ratio of sums, blocked by pair, with the bootstrap over pairs as a sensitivity (at seven pairs, a percentile bootstrap has only 1,716 distinct resamples and under-covers). For cost: if both arms' totals are zero, no comparison exists: the finding reports the counts and closes (a), not comparable on this test project. If one arm's total is zero, no ratio is computed; the finding reports per-arm cost and accepted counts and closes (c) against that arm.
+- **Sensitivities beside the cost axis:**
+  - cost with the hub wait row (s10, output 8) removed from both arms. A gap that vanishes without it is a finding about the wait design, not about separate sessions;
+  - cost on first-attempt acceptance only.
+- **The verdict, per axis:**
+  - (b) per s8.5's blind stop, decided at the pilot, for cost; "blind" for any other axis that is;
   - (c) when the interval excludes 1; reported as past the smallest effect when its near end is, and otherwise as a gap below the smallest effect;
   - (d) when it includes 1, stating the n that would resolve it. (d) is never written for a series in which any run's widest wave is under 2, because arm B changes nothing in such a run; that series closes (a), with the widths listed.
-- **A claim on a secondary** is Holm-adjusted, meaning corrected for testing several axes.
-- **Recorded dissent:** two of the twelve design seats recommended a verdict per axis rather than one primary. Every axis is reported with its interval and the n that would resolve it, so that reading stays available.
+- **Every axis's verdict** is Holm-adjusted, meaning corrected for testing several axes.
+- **The script** that computes these, with a check of the interval's real coverage at seven pairs, is written and frozen before M1, so the analysis is pre-registered.
+- **Recorded dissent:** ten of the twelve design seats recommended one primary number, cost per accepted story, with the other axes reported. The operator ruled a verdict per axis (R2). The cost axis comes first in the finding, so that reading stays available.
 
 ## 10. Cache ledger
 
-A reader that turns each run's transcripts into per-request cache records, then sums them. It and the cost meter (s11) are built for this probe. The critic run registry (aae-orc-hp96) can ingest these runs later, and is not a dependency. It reads the same files in both arms, reports tokens only, and leaves pricing to s11.
+A reader that turns each run's transcripts into per-request cache records, then sums them. It and the cost meter (s11) are probe-local scripts, kept beside this brief, as ruled; no critic code is written for them. The critic run registry (aae-orc-hp96) can ingest these runs later, and is not a dependency. It reads the same files in both arms, reports tokens only, and leaves pricing to s11.
 
 **Inputs.** For every session in the run, from the harness transcript directory:
 - the main transcript;
@@ -425,7 +434,7 @@ The smoke run reads which full model ids the factory's `sonnet` and `opus` alias
 
 **Budget (inferred; the pilot replaces it).** About 385M read, 14.6M 5-minute write and 1M output tokens per full run gives $85 (all Sonnet 5.5) to $170 (all Opus 5.5). The seed lowers series runs, which start at Phase 3.
 
-**Ceiling:** 3 pilot and 14 series runs, plus the seed, fidelity, reference and drill runs, about 21 full-run equivalents; 3 spares for voided blocks and seed revisions; and the defaults block's 2 runs at the 1-hour write rate. That is about 26 full-run equivalents: $2,254 (all Sonnet 5.5) to $4,508 (all Opus 5.5), from 24 runs at $85 and $170 plus the defaults block's 2 runs at $107 and $214, an upper bound since series runs start at Phase 3. Each voided block or seed revision draws on the spares, and the pilot card reports the spares left.
+**Ceiling, approved by R1:** 3 pilot and 14 series runs, plus the seed, fidelity, reference and drill runs, about 21 full-run equivalents; 3 spares for voided blocks and seed revisions; and the defaults block's 2 runs at the 1-hour write rate. That is about 26 full-run equivalents: $2,254 (all Sonnet 5.5) to $4,508 (all Opus 5.5), from 24 runs at $85 and $170 plus the defaults block's 2 runs at $107 and $214, an upper bound since series runs start at Phase 3. Each voided block or seed revision draws on the spares, and the pilot card reports the spares left.
 
 Before the pilot, the pilot ceiling is the smoke runs, arm B's live tests and entry drill, the seed and 3 runs, priced at the all-Opus figure ($680 for the seed and 3 runs), and re-priced once the smoke, live-test and drill counts are in the protocol file. The ceiling is re-stated before the first block from the pilot's median for arm A and the fidelity run for arm B, with cache deaths per run (s10, output 5) shown for each. Reaching it pauses the series for an operator card (s8.5).
 
@@ -439,7 +448,7 @@ Before the pilot, the pilot ceiling is the smoke runs, arm B's live tests and en
 
 **Where the arms differ.** Only greenfield's one parallel node, in Phase 3 (`greenfield.lobster:627-1002`). Every axis is recorded per phase. Phases 4 to 7 are controls: a gap there is a fidelity defect. Phases 1 and 2 run once, in the seed.
 
-**The seed.** Wave width is an output of Phase 2, so a brief can only invite it. One arm A run goes through Phase 2 and stops at the Phase 3 entry: its answer file answers phase-2-human-approval (`greenfield.lobster:538`) with "approve, then stop", and the snapshot is taken after phase-2-state-backup (`:530`). Its repository, `.factory/` state and wave schedule are snapshotted at a sha. Every pilot and series run in both arms starts from that seed (smoke S8). If the seed misses a requirement below, the brief is revised (back to M2) and the seed re-run, and every discarded seed is recorded with its widths. If S8 fails, each run starts from the brief, the width each run got is reported as a covariate, the suite maps to the brief's features, and the primary becomes cost per accepted feature. A run on this path whose widest wave is under 2 is reported, and bars a (d) close (s9.4).
+**The seed.** Wave width is an output of Phase 2, so a brief can only invite it. One arm A run goes through Phase 2 and stops at the Phase 3 entry: its answer file answers phase-2-human-approval (`greenfield.lobster:538`) with "approve, then stop", and the snapshot is taken after phase-2-state-backup (`:530`). Its repository, `.factory/` state and wave schedule are snapshotted at a sha. Every pilot and series run in both arms starts from that seed (smoke S8). If the seed misses a requirement below, the brief is revised (back to M2) and the seed re-run, and every discarded seed is recorded with its widths. If S8 fails, each run starts from the brief, the width each run got is reported as a covariate, the suite maps to the brief's features, and the cost axis becomes cost per accepted feature. A run on this path whose widest wave is under 2 is reported, and bars a (d) close (s9.4).
 
 **The seed's wave schedule must have:**
 - at least two waves;
@@ -458,4 +467,4 @@ Before the pilot, the pilot ceiling is the smoke runs, arm B's live tests and en
 - a marvel workflow primitive;
 - per-role model choice;
 - dark-factory;
-- the rc.22 to rc.24 comparison (aae-orc-17ki), which can reuse this rig, meter and protocol, and measures its own noise floor.
+- the rc.22 to rc.25 comparison (aae-orc-17ki, re-scoped by the operator on 2026-10-15), which runs after this probe on its rig, meter and protocol, and measures its own noise floor.
