@@ -1625,6 +1625,9 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
+	case "team-load":
+		// The rows the last evaluation tick computed; `get teams --load`.
+		result = d.teamCtrl.TeamLoad()
 	case "workspaces", "workspace":
 		result = d.store.ListWorkspaces()
 	case "endpoints", "endpoint":

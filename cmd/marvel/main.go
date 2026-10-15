@@ -1030,7 +1030,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns, output string
-	var noTrunc, header bool
+	var noTrunc, header, load bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
@@ -1056,6 +1056,13 @@ not token flow. A value from the token stream carries no mark. On a terminal
 one legend line under the header says so when a mark is on screen; piped
 output keeps the mark and drops the legend. A - means never measured.
 
+--load (get teams only) prints one row per team: SEATS running of declared,
+ACTIVE% as the mean over the seats that have a reading with how many that is
+("62% (4 of 5)"), and LIMITED seats. It reads the daemon you reach, one cluster.
+A row follows the sessions cells' three states: a value while fresh, ? once the
+daemon stopped computing it, - when it never did. A team with no seat that has a
+reading prints - for ACTIVE%, never 0%. Diagnostic only: nothing gates on it.
+
 -o json|yaml (get team and get workspace only) prints two labelled sections.
 desired is the store's record after scale and similar edits; it is not the file
 that was applied, and no round trip to that file is promised. observed is the
@@ -1064,6 +1071,19 @@ show as (redacted) in both.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
+			if load {
+				switch {
+				case args[0] != "teams" && args[0] != "team":
+					return fmt.Errorf("--load applies to get teams only")
+				case cmd.Flags().Changed("output"):
+					return fmt.Errorf("--load and -o cannot be combined")
+				case watching:
+					return fmt.Errorf("--load and --watch cannot be combined")
+				case columns != "":
+					return fmt.Errorf("--load and --columns cannot be combined")
+				}
+				return getTeamLoad()
+			}
 			if cmd.Flags().Changed("output") {
 				if watching {
 					return fmt.Errorf("-o and --watch cannot be combined")
@@ -1098,6 +1118,7 @@ show as (redacted) in both.`,
 			return getResources(args[0], cols, headerText, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
+	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
 	f.NoOptDefVal = ""
