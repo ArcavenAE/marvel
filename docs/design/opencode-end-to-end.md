@@ -2,6 +2,7 @@
 
 - **Date:** 2026-10-10. Code read at marvel main `493de32`.
 - **Status:** design for the operator. Section 7 carries the decisions. No ticket is filed from it yet (harness-plan decision D8).
+- **Rulings:** C-A, C-B and where the first write run happens are ruled; section 7a records them (2026-10-15).
 - **Author:** the architect seat, team arcaven.
 - **Builds on:** `docs/design/seat-bootstrap.md` r10 (the `Bootstrapper` contract and the parked state, section 5b), `internal/runtime/opencode.go`, `internal/runtime/opencode/mapping.md`, and a scratch probe of opencode 1.18.15 on a local model (T4, 2026-10-10; its decisive output is in appendix A).
 - **Method:** a four-round party (opencode, marvel adapter, containment, builder view and fleet operations seats), with a forced vote in the last round. Every item passed 5-0, with no dissent. The party record is kept in a gitignored working tree on one fleet host and is not published; this file is the result.
@@ -75,7 +76,7 @@ Run `opencode debug agent build` and `opencode debug agent general` with the sea
 
 ## 5. The first write task
 
-- **Where:** headless, in a container (decision C-A).
+- **Where:** headless. Ruled 2026-10-15 (section 7a): the first run is on the host, in a throwaway folder; a container is required before any run against a real repository or with a provider key. The rest of this section describes the container run; section 7a lists what differs on the host.
 - **The image:** opencode 1.18.15 with its npm plugin baked in at build. Egress is closed except one named route to a host-side local model, and an egress log is kept.
 - **The environment:** built from empty. No credential is in the box.
 - **The wrapper:** marvel has no container launch path (fact 12), and tmux `-e` sets env on the wrapper process, not inside the container. So a container wrapper passes the permission env and the `MARVEL_*` names through by name, bind-mounts the workdir and one empty canary dir outside it (and nothing else), and keeps the stream FIFO and the stdin redirect on the host side.
@@ -152,6 +153,28 @@ Each recommendation is valid until 2026-10-24 or the operator's ruling, whicheve
    **Recommendation: (a)** for the first run.
 3. **C-C, for information.** The architect amends seat-bootstrap r10 in a docs PR. The verify reads `debug agent` instead of `debug config`, and the `permission` row becomes the deny-first block with no `ask` surviving. It files no K rows, which stay gated on rulings 13 and 14.
 4. **C-D, the parked corporate opencode reviewer.** If it is still unanswered, hold it until its prompt has been captured (T12), so the one live opencode park pattern is not lost to a hand answer. **Recommendation: hold.**
+
+## 7a. Rulings
+
+Recorded 2026-10-15. The operator's words are quoted where they were relayed.
+
+1. **C-B, the model:** option (a), a local model with no key or credential in the run.
+2. **C-A, a sandbox for opencode:** option (b), opencode ruled on its own terms rather than under harness-plan D1 and D2.
+3. **Where the first write run happens:** "staged". In full: the first run is on the host, in a throwaway folder; the container is required before any real repo or provider key.
+
+What follows from ruling 3, without a further ruling:
+
+- T13 no longer waits on T10 (the image) or T15 (the wrapper) for the first run. Both stay as the work that must land before a run against a real repository or with a provider key.
+- On the host, these parts of section 5 have no container behind them:
+  - The rules in the permission block are enforced inside opencode's own process. A write outside the throwaway folder is stopped by those rules and by nothing else.
+  - The negative trial's canary dir is a host directory outside the throwaway folder, read by the same lstat walk. A write to any other host path is outside what the checker sees.
+  - There is no closed egress and no egress log. The model is reached at the host's own address.
+  - The environment is not built from empty unless the run starts from an empty one.
+
+Recommendations for the first run, not ruled, valid until 2026-10-22; the architect seat re-checks them then:
+
+- Start the run from an empty environment with a scratch home (`env -i HOME=<scratch> PATH=$PATH`), so opencode's config, data and plugin install land in scratch and not in the operator's home.
+- T8 (the checker) lands without its egress-log input for the first run, and reads the log once T10 exists. Its edge on T10 then stays only for the container runs.
 
 ## Appendix A. T4 output cited above
 
