@@ -1433,10 +1433,22 @@ func (m *Manager) retireInstance(key string) (bool, runTail, error) {
 
 // sessionEnded tells SessionEnded, when set, that a session's process is gone
 // or being killed. It runs before the kill so a refused kill still revokes.
+//
+// The row stays Running until the kill settles, so it is marked Ending first:
+// a seat that asks for a credential in that window is refused, instead of
+// being issued one after its tokens were revoked.
 func (m *Manager) sessionEnded(key string) {
-	if m.SessionEnded != nil {
-		m.SessionEnded(key)
+	if m.SessionEnded == nil {
+		return
 	}
+	err := m.store.UpdateSession(key, func(live *api.Session) error {
+		live.Ending = true
+		return nil
+	})
+	if err != nil && !errors.Is(err, api.ErrNotFound) {
+		log.Printf("warning: session %s: mark ending: %v", key, err)
+	}
+	m.SessionEnded(key)
 }
 
 // detachInstance retires the stream of a session whose pane already

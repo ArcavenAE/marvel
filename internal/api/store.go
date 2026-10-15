@@ -936,7 +936,8 @@ func (s *Store) UpdateSessionMetrics(key string, m SessionMetrics) {
 // hash is refused, not admitted, because that exemption exists so a live
 // fleet survives an upgrade and a credential broker has no such fleet to
 // protect. And a session that is not running is refused, so a crashed or
-// failed record cannot be used to mint a credential.
+// failed record cannot be used to mint a credential. A session marked Ending
+// is refused too: its end has been reported and its row has not left yet.
 func (s *Store) AuthenticateLiveSession(key, token string) (Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -944,7 +945,7 @@ func (s *Store) AuthenticateLiveSession(key, token string) (Session, error) {
 	if !ok {
 		return Session{}, fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
-	if sess.State != SessionRunning || sess.HeartbeatTokenHash == "" {
+	if sess.State != SessionRunning || sess.Ending || sess.HeartbeatTokenHash == "" {
 		return Session{}, fmt.Errorf("session %s: %w", key, ErrHeartbeatUnauthorized)
 	}
 	if _, err := authenticateHeartbeat(sess, token); err != nil {
