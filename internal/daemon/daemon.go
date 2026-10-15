@@ -3315,6 +3315,9 @@ func (d *Daemon) attachServices(socketPath string) error {
 	if cl == nil {
 		return nil
 	}
+	// The first segment of every seat URI, set before any service is attached
+	// so a named cluster with no bus still names its seats.
+	d.sessMgr.SeatCluster = cl.Name
 	if verr := config.ValidateServices(cl); verr != nil {
 		log.Printf("services: cluster %s has an invalid services list, nothing attached: %v", cl.Name, verr)
 		return nil

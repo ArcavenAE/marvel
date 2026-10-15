@@ -47,6 +47,9 @@ type Manager struct {
 	// team's credential for the session environment. Set by daemon.Start
 	// from the cluster's bus section; nil when the cluster has none.
 	Bus BusEnv
+	// SeatCluster is the first segment of the seat URI (aae-orc-2pss4), the
+	// daemon's own cluster entry name, set at bus attach. Empty means no URI.
+	SeatCluster string
 	// Events receives structured state-transition events. Nil is safe
 	// (all emission sites use events.Emit which no-ops on nil) so tests
 	// and callers that don't care about the event stream don't need to
@@ -1068,6 +1071,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+		Cluster:    m.SeatCluster,
 		TokenFile:  tokenFile,
 		Events:     m.Events,
 	}
