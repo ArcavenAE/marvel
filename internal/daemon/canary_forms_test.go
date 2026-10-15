@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,17 +34,39 @@ func writeFile(t *testing.T, root, rel, body string) {
 	}
 }
 
-// seedLeaks names each surface that carries the seed in a form the canary
-// recognises. aae-orc-4h9xp review: the first canary looked for the raw string
-// only, so a hex or byte-list copy in a log, or a raw copy in a file nobody
-// read, passed it.
+// seedForms are the encodings a copy of the seed can take in a log or a file:
+// raw, hex in both cases, base64 in the standard and URL alphabets with and
+// without padding, and the byte values as a list joined three ways.
+func seedForms(seed string) []string {
+	forms := []string{
+		seed,
+		hexOf(seed),
+		strings.ToUpper(hexOf(seed)),
+		b64Of(seed),
+		base64.RawStdEncoding.EncodeToString([]byte(seed)),
+		base64.URLEncoding.EncodeToString([]byte(seed)),
+		b64URLOf(seed),
+	}
+	for _, sep := range []string{" ", ",", ", "} {
+		forms = append(forms, byteList(seed, sep, "", ""))
+	}
+	return forms
+}
+
+// seedLeaks names each surface that carries the seed in any of those forms.
+// aae-orc-4h9xp review: the first canary looked for the raw string only, so a
+// hex or byte-list copy in a log, or a raw copy in a file nobody read, passed.
 func seedLeaks(surfaces map[string]string, seed string) []string {
 	var hit []string
 	for name, text := range surfaces {
-		if strings.Contains(text, seed) {
-			hit = append(hit, name)
+		for _, form := range seedForms(seed) {
+			if strings.Contains(text, form) {
+				hit = append(hit, name)
+				break
+			}
 		}
 	}
+	sort.Strings(hit)
 	return hit
 }
 

@@ -148,8 +148,9 @@ func TestACarriedLeafSeedSurvivesAReexecWithTheBrokerUntouched(t *testing.T) {
 		t.Errorf("a put of the same seed after the adopt restarted the broker: %+v, want pid %d", again, pid)
 	}
 
-	// The canary: the seed's bytes are in no log, event, sidecar, status,
-	// credential read, conf, environment value or file the daemons wrote.
+	// The canary: the seed's bytes, raw or encoded as hex, base64 or a byte
+	// list, are in no log, event, sidecar, status, credential read, conf,
+	// environment value or file the daemons wrote.
 	root := filepath.Dir(filepath.Dir(dir))
 	surfaces := map[string]string{
 		"the log":                  logs.String(),
@@ -158,6 +159,9 @@ func TestACarriedLeafSeedSurvivesAReexecWithTheBrokerUntouched(t *testing.T) {
 		"the successor's events":   eventsText(d2.events.Snapshot(events.Filter{}, 0)),
 		"the sidecar and the pids": readAllFiles(t, filepath.Join(root, "run")),
 		"the conf and its state":   readAllFiles(t, dir),
+		// Every file under the layout, whatever its directory: a copy written
+		// where no other line of this test looks is found here.
+		"the files under the layout": readAllFiles(t, root),
 	}
 	for _, method := range []string{"bus.status", "credential.list"} {
 		resp := d2.dispatchAs(Request{Method: method}, localCaller())
@@ -172,10 +176,8 @@ func TestACarriedLeafSeedSurvivesAReexecWithTheBrokerUntouched(t *testing.T) {
 		t.Errorf("credential.get gave no answer to search (%q), so its check would be empty", resp.Error)
 	}
 	surfaces["credential.get"] = string(resp.Result) + resp.Error
-	for name, text := range surfaces {
-		if strings.Contains(text, seed) {
-			t.Errorf("%s carries the seed's bytes", name)
-		}
+	for _, name := range seedLeaks(surfaces, seed) {
+		t.Errorf("%s carries the seed's bytes, raw or encoded", name)
 	}
 }
 
