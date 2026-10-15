@@ -48,8 +48,8 @@ So the per-team arithmetic is local to the cluster that owns the team. What is c
 Only each cluster's summary crosses. No pane content, no per-tick samples and no ask text.
 
 - **The record:** one value per cluster, holding the cluster name, marvel version, `observed_at`, `valid_until`, and the per-team rows from section 2.
-- **Where it lands, if D1 is ruled (a) or (d):** a key-value bucket on the hub, with one key per cluster. D1 is not ruled; this line and the next describe the recommended transport, not a ruled one. A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
-- **How it gets there, under the same condition:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
+- **Where it lands:** a key-value bucket on the hub, with one key per cluster. D1 is ruled (a) for the first release, with (d)'s signing later (section 6). A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
+- **How it gets there:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
 - **Cadence:** every 60 s, with `valid_until` at `observed_at` + 180 s, and a bucket max age of 1 h (decision D4, ruled (a)). ACTIVE% is a 15-minute share, so one minute of lag moves it little. A record is stale once a third publish is late: two missed, and the third later than 180 s. Clock skew between the publishing host and the reader moves that edge by the skew.
 - **Size:** about 100 bytes per team plus the agent names. Well under one message for any fleet today.
 
@@ -62,7 +62,7 @@ The three-state grammar applies per cluster, and every team row inherits its clu
 - **never seen:** a cluster in the expected set with no key. Its teams cannot be listed, so the table prints one line for the cluster, `cluster-b  -  no load published`.
 - **The header** says how many answered: `clusters: 2 of 3 fresh, 1 stale`. Who is in the expected set is decision D3.
 - **Ledger cells** carry their own as-of: the merged ledger's pass time. With no merged ledger (before A2, or with no reader), they print `-`. While a broker's reader is down, they print `?`. The ledger lists reader downtime under its gaps, and the view repeats that line.
-- **A stale claim is only claimed when every cluster is fresh.** A claim is stale when no fresh cluster lists the seat it names. If any cluster in the set is stale or never seen, the claim count prints `?` with the reason, because the missing seat may be on the cluster that did not answer. This guard exists because one claim held by a seat that no longer exists is the specimen #601 names.
+- **A stale claim is only claimed when every cluster is fresh.** A claim is stale when no fresh cluster lists the seat it names. If any cluster in the set is stale or never seen, the claim count prints `?` with the reason, because the missing seat may be on the cluster that did not answer. This guard exists because one claim held by a seat that no longer exists is the specimen #601 names. Ruled 2026-10-15, every cluster with a pinned key must also be fresh (section 6, the stale-claim guard), because a deleted entry can drop a cluster from the expected set.
 - **Every load key is unauthenticated.** Under the D2 ruling, any seat holding the global tier can write any cluster's key, so a key's cluster name is the writer's claim, not a proof. When the view reads hub keys, its header says so on every render: `load keys are unauthenticated: any global-tier seat can write them`. It never prints a key as verified.
 - **No hub at all:** the view falls back to the local cluster, with the header `clusters: local only (no hub)`. Marvel without the global tier, or without director, still prints the local rows (component independence).
 
@@ -191,11 +191,11 @@ Flat tickets with dependency edges, each with red tests first:
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
 Items 3 and 4 are the first release under the D1 ruling: the plain hub bucket, with the unauthenticated-keys line. Items 9 to 11 are the later signing release.
 
-3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1, and on the D1 ruling. D4 is ruled (a): put every 60 s, `valid_until` at `observed_at` + 180 s, bucket max age 1 h.
+3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1. D4 is ruled (a): put every 60 s, `valid_until` at `observed_at` + 180 s, bucket max age 1 h.
 4. CLI: read every cluster's key, apply section 4's states, the header and the unauthenticated-keys line, with the expected set from D3 (c). Depends on 2 and 3.
 5. CLI: join the merged ledger's rollup by team key (open, unacked, blocked, oldest open), with `global:` keys on the cluster line. Depends on 2 and on director's A2.
 6. CLI: the waiting-on-operator cell, read from director's new rollup field (D6 (a)). Depends on 5 and 8.
-7. CLI: the optional bd claim join with the all-fresh guard (D5 (a)): every cluster in the expected set and every pinned cluster fresh, or `?` with the reason (ruled 2026-10-15). Depends on 4, and on 10 for the pinned set. Which release it ships in is the open question in section 6.
+7. CLI: the optional bd claim join with the all-fresh guard (D5 (a)): every cluster in the expected set and every pinned cluster fresh, or `?` with the reason (ruled 2026-10-15). Depends on 4. Whether it also depends on 10 (the pinned set) is the open question in section 6: yes under (a) or (b), no under (c). The edge is filed once the operator answers.
 8. director: the rollup field for D6 (a), open asks per asker key whose owner is director. A director change; no marvel dependency.
 
 The signing release:
