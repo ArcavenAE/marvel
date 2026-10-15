@@ -363,3 +363,27 @@ func TestStartRunsTheBrokerRetryLoop(t *testing.T) {
 		t.Errorf("live tokens %v after %v of a running daemon, want the retry loop to have revoked them", live, 5*ReconcileInterval)
 	}
 }
+
+// A seat whose row is Crashed, Failed or Succeeded is not running, and the
+// tokens kept for it are to be retried, not held back until their TTL.
+func TestBrokerRetryPassRevokesTokensOfASeatWhoseRowIsNotRunning(t *testing.T) {
+	d := newHandlerDaemon(t)
+	m := broker.NewMock(15*time.Minute, time.Now)
+	fd := &flakyRevokeDriver{Driver: m}
+	d.UseBrokerDriver(fd, "/opt/marvel/credential-helper")
+	key, token := registerSession(t, d, "agent-0", true)
+	if resp := d.handleBrokerToken(context.Background(), brokerParams(t, key, token)); resp.Error != "" {
+		t.Fatalf("broker.token: %s", resp.Error)
+	}
+	fd.down.Store(true)
+	d.sessMgr.SessionEnded(key)
+	if err := d.store.UpdateSession(key, func(s *api.Session) error { s.State = api.SessionCrashed; return nil }); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	fd.down.Store(false)
+
+	d.retryBrokerRevokes(context.Background())
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens = %v, want none: the seat's row is Crashed, so the pass should have retried", live)
+	}
+}

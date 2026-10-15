@@ -49,6 +49,19 @@ func issueAsync(b *Broker) <-chan issueResult {
 	return out
 }
 
+// await returns an ask's result, failing the test if it never arrives, so a
+// regression that strands an ask cannot hang the run.
+func await(t *testing.T, ch <-chan issueResult) issueResult {
+	t.Helper()
+	select {
+	case r := <-ch:
+		return r
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for an ask to finish")
+		return issueResult{}
+	}
+}
+
 func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 	t.Helper()
 	select {
@@ -75,7 +88,7 @@ func TestIssueRevokesATokenWhoseSeatEndedWhileTheDriverWasIssuing(t *testing.T) 
 	}
 	close(g.release)
 
-	r := <-res
+	r := await(t, res)
 	if !errors.Is(r.err, ErrUnauthorized) {
 		t.Errorf("Issue after the seat ended = %v, want ErrUnauthorized", r.err)
 	}
@@ -104,7 +117,7 @@ func TestIssueThatBeganAfterTheRevokeIsNotRefused(t *testing.T) {
 		t.Fatalf("Issue that began after the revoke: %v", err)
 	}
 	close(g.release)
-	<-first
+	await(t, first)
 
 	if live := m.Live(); len(live) != 1 || live[0] != later.ID {
 		t.Errorf("live tokens = %v, want only the later ask's %s", live, later.ID)
@@ -162,7 +175,7 @@ func TestIssueKeepsATokenItCouldNotRevokeForTheNextRevoke(t *testing.T) {
 	}
 	f.setFail(true)
 	close(g.release)
-	if r := <-res; !errors.Is(r.err, ErrUnauthorized) {
+	if r := await(t, res); !errors.Is(r.err, ErrUnauthorized) {
 		t.Fatalf("Issue after the seat ended = %v, want ErrUnauthorized", r.err)
 	}
 
@@ -218,7 +231,7 @@ func TestSelfRevokeErrorCarriesNoTokenValue(t *testing.T) {
 	f.setFail(true)
 	close(g.release)
 
-	r := <-res
+	r := await(t, res)
 	if !errors.Is(r.err, ErrUnauthorized) || !errors.Is(r.err, errIdpRefused) {
 		t.Fatalf("Issue error = %v, want ErrUnauthorized with the driver's error reachable", r.err)
 	}
@@ -406,7 +419,7 @@ func TestRetryRevokesDoesNotRefuseAnAskInFlightForTheSameName(t *testing.T) {
 	}
 	close(g.release)
 
-	r := <-res
+	r := await(t, res)
 	if r.err != nil {
 		t.Fatalf("the new seat's ask during a retry pass = %v, want it issued", r.err)
 	}
