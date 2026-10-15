@@ -482,8 +482,10 @@ The daemon reads its client config once, at start, and there is no reload
 verb (marvel#514). A hub block added to a running daemon's config is not
 seen: `marvel bus leaf connect` answers that the daemon's start-time config
 declares no hub, and names the fix. If that happens, `marvel daemon reexec`
-re-reads the config, and the leaf seed has to be pushed again afterwards,
-because a reexec drops it (marvel#339).
+re-reads the config. A reexec carries the leaf seed across in memory when the
+new binary can read the handoff (see "Under mise: reexec from the new binary");
+check the result with `marvel bus status --require-leaf`, and push the seed
+again only if it says the leaf is not up.
 
 The seed does not have to live on the cluster. The hub operator can push it
 from the hub's host, over the cluster's `mrvl://` listener, once that host is
@@ -493,8 +495,8 @@ enrolled (see SSH key management):
 marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
 ```
 
-So the cluster holds no copy, and after every daemon stop, start or reexec
-the push comes from the hub's side.
+So the cluster holds no copy, and after every daemon stop or start, and after
+a reexec whose target could not carry it, the push comes from the hub's side.
 
 Check the cluster name before you push. While marvel#502 is open, an unknown
 `--cluster` name only warns and then acts on the local daemon, so a typo
@@ -532,10 +534,12 @@ is a literal IP), the sequence two clusters ran on 2026-10-04 is:
 1. Change the hub URL in the client config.
 2. Restart the daemon so it re-reads the config, which it reads once, at start.
    `marvel daemon reexec` does this and keeps the agents running.
-3. From the hub's side, push `bus/leaf` again.
+3. Run `marvel bus status --require-leaf`. If it exits nonzero, push `bus/leaf`
+   again from the hub's side and run it once more.
 
-Step 3 is needed because of marvel#339: a restart or reexec drops the leaf seed, and
-until it is pushed again the cluster runs local-only. A hostname that still
+Step 3 is a check first because a reexec now carries the leaf seed (marvel#339),
+while a stop and start does not: until the seed is pushed again after a plain
+restart, the cluster runs local-only. A hostname that still
 resolves may make these steps unnecessary, but the record is mixed (one leaf
 followed, one kept a stale lookup and did not; see marvel#575), so do not
 count on it.
@@ -768,6 +772,41 @@ with the stop and start path above, and the daemon keeps serving. A remote
 daemon is not checked, because its pid is on another host; the client says so
 before it sends, and the arguments of that daemon are worth checking by hand.
 
+#### The hub leaf across a reexec
+
+The daemon holds credentials such as the hub leaf seed in memory only, and a
+reexec replaces the process image. So before the exec the daemon asks its target
+binary whether it can read a credential handoff (`marvel version --capabilities
+--json`, which answers locally and never dials a daemon). If it can, the daemon
+writes the credentials to a pipe, passes the pipe's descriptor number in
+`MARVEL_REEXEC_HANDOFF_FD` and nothing else, and the new daemon reads and closes
+it before it opens anything else. The seed is never written to disk, to an
+environment value, to a log or to an event. If the target cannot read the
+handoff, or the payload is over 12 KiB, or the pipe fails, nothing is carried;
+the daemon logs `dropped N` with the reason, and the reexec goes ahead.
+
+The broker's identity file records a fingerprint of the leaf seed the broker was
+started with, never the seed. A new daemon that adopts a broker holding a leaf
+seed its own store does not hold raises `bus.leaf.dropped` at error severity,
+naming the cause it can see (`handoff unread`, `seed differs from the broker's`,
+or `unknown`) and the command that fixes it. `marvel bus status` shows
+`leaf-src: dropped-on-adopt` for that case, and a warning row with
+`leaf-src: unknown` for a broker whose identity file predates the record.
+
+After the exec, `daemon reexec` and `upgrade --daemon` read the leaf for up to
+90 seconds and print what they measured. A cluster with no hub passes and says
+so. A cluster with a hub whose leaf is not up on a current reading exits
+nonzero, prints how long it waited, the cause, the line `not carried: ...` when
+the old daemon declined or could not hand the credentials over, and the one
+command that puts the seed back. For a script:
+
+```sh
+marvel --cluster <name> bus status --require-leaf   # exit 0 only when a hub is configured, the leaf is attached and up
+```
+
+It exits nonzero with one of: `no hub`, `detached by operator`, `dropped on
+adopt`, `not enrolled`, `down` or `unknown` (a reading older than two polls).
+
 Two cases still re-execute the daemon's own path, the way reexec always has: a
 remote daemon (`--cluster` over `mrvl://`, where a path on your host means
 nothing), and a daemon older than this change, which ignores the path and says
@@ -783,8 +822,15 @@ The new daemon adopts the running sessions and the broker. On the third
 cluster's bring-up (aae-orc#461) that path took one second between the stop
 and the start, adopted all four sessions and the running broker, and the
 daemon then reported the new version. Start it from the same working
-directory and with the same flags as before. Then push the leaf seed again,
-because the new daemon starts without it (see "Connecting to a shared hub").
+directory and with the same flags as before. A stop and start does not carry
+credentials, and `stop --keep-bus` says so before it detaches. Then put the leaf
+seed back and check it, in the form a script runs (name the seed source, never
+print it; see "Connecting to a shared hub"):
+
+```sh
+marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
+marvel --cluster <name> bus status --require-leaf
+```
 
 ## Monitoring
 
