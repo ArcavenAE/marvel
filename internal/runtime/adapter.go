@@ -46,6 +46,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/seaturi"
 )
 
@@ -552,6 +553,12 @@ func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
+		// The layout root rides beside the socket, so a marvel command the
+		// seat runs resolves its config and keys against the daemon's root.
+		// Only a root other than the default is handed on.
+		if h := paths.NonDefaultHome(); h != "" {
+			env[paths.HomeEnv] = h
+		}
 		// The socket is what makes a heartbeat possible, so the token
 		// travels with it and a session that cannot reach the daemon
 		// carries no secret. This is enforcement locus 1: marvel

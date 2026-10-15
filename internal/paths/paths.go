@@ -59,8 +59,12 @@ type Layout struct {
 	Home string
 }
 
-// Default returns the layout rooted at $HOME/.marvel.
+// Default returns the layout rooted at $MARVEL_HOME when that is set and not
+// empty, and at $HOME/.marvel otherwise. Unset, it is what it always was.
 func Default() (Layout, error) {
+	if v := os.Getenv(HomeEnv); v != "" {
+		return ParseHome(v, HomeEnv)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Layout{}, fmt.Errorf("cannot determine home directory: %w", err)

@@ -116,9 +116,15 @@ filesystem, and unix sockets do not work on NFS homes at all. That is
 what the environment override in Decision 3 is for, and it is why the
 override ships in the same change rather than later.
 
-There is no `MARVEL_HOME`. `paths.WithHome` is test-only. Whether to add
-one is deliberately left open; the override in Decision 3 solves the
-immediate need without introducing a second way to relocate everything.
+Amendment, 2026-10-14: there is now a `MARVEL_HOME`, and a
+`--marvel-home` flag that sets it. This document left the question open
+("whether to add one"), and the operator ruled on it on 2026-10-14
+(aae-orc-7t7d, marvel#883): one variable and one flag that move the whole
+layout root, replacing the five per-daemon flags and `MARVEL_TMUX_SOCKET` as
+the way to run a second daemon on a host. The unit of isolation is still the
+layout; the root is now a thing an operator can name. The override in
+Decision 3 is unchanged and still outranks the root for the socket. The
+shape is in `docs/design/marvel-home.md`.
 
 ## Decision 2: the socket resolves to `RunDir()/marvel.sock`
 

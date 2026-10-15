@@ -1477,6 +1477,11 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath
+		// Same rule as the adapter path: the layout root, when it is not the
+		// default, rides beside the socket.
+		if h := paths.NonDefaultHome(); h != "" {
+			envs[paths.HomeEnv] = h
+		}
 		switch {
 		case m.byFile(sess):
 			// Same rule as the adapter path: a file, or no token.
