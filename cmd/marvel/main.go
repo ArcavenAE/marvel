@@ -1918,16 +1918,31 @@ between them. A runtime with no reader reads unknown.`,
 }
 
 func versionCmd() *cobra.Command {
-	return &cobra.Command{
+	var capabilities, asJSON bool
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print marvel version and channel",
 		Run: func(cmd *cobra.Command, args []string) {
+			if capabilities {
+				// Local only: no daemon is dialed. The departing daemon asks the
+				// binary it is about to exec whether it can read the credential
+				// handoff (aae-orc-4h9xp).
+				if asJSON {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "{\"reexec_handoff\":%d}\n", daemon.ReexecHandoffFormat)
+				} else {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reexec_handoff: %d\n", daemon.ReexecHandoffFormat)
+				}
+				return
+			}
 			versionReport(cmd.OutOrStdout(), thisBuild(),
 				func() (*daemon.BuildInfo, error) {
 					return boundedQuery(versionQueryTimeout, queryDaemonBuild)
 				})
 		},
 	}
+	cmd.Flags().BoolVar(&capabilities, "capabilities", false, "print what this binary can do for a daemon that execs into it, and exit (local; no daemon is asked)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "with --capabilities, print one JSON object")
+	return cmd
 }
 
 // runUpgrade is the install step of marvel upgrade. A variable so a test can

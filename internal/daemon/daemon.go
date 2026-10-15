@@ -243,6 +243,18 @@ type Daemon struct {
 	// override it to assert the pre-exec contract without actually
 	// handing the process over.
 	reexec func(argv0 string, argv []string, envv []string) error
+	// handoffProbe asks the exec target whether it can read the credential
+	// handoff (reexec_handoff.go); nil probes the target binary itself.
+	// handoffMu guards pendingHandoff (prepared by handleReexec so the response
+	// can name the outcome) and lastHandoff (the attempt a reexec ran, which
+	// shutdown reads to avoid calling a carried credential dropped).
+	handoffProbe   func(exe string) error
+	handoffMu      sync.Mutex
+	pendingHandoff *reexecHandoff
+	lastHandoff    *reexecHandoff
+	// leafLossCause is why this daemon may start without a leaf credential its
+	// broker holds, as far as it can see ("handoff unread"); empty otherwise.
+	leafLossCause string
 }
 
 // Options configures optional daemon behavior. Zero value disables
@@ -302,6 +314,10 @@ func New() (*Daemon, error) {
 
 // NewWithOptions creates a new daemon with the given options.
 func NewWithOptions(opts Options) (*Daemon, error) {
+	// First, before any other descriptor is opened and before any child is
+	// spawned: the credentials a departing daemon carried across its reexec
+	// (reexec_handoff.go). They go into the store below, before attachBus.
+	carried, handoff := receiveReexecHandoff()
 	// Before anything is exec'd: a daemon started from a Claude Code session
 	// carries that session's messaging credential and identity, and reexec,
 	// services and tmux would otherwise pass them on (aae-orc#418).
@@ -321,6 +337,22 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	log.Printf("marvel daemon %s", opts.Build.Describe(os.Getpid()))
 
 	store := api.NewStore()
+	leafLossCause := ""
+	switch handoff.State {
+	case handoffRead:
+		for i := range carried {
+			if cerr := store.CreateCredential(&carried[i]); cerr != nil {
+				log.Printf("reexec handoff: could not restore credential %q: %v", carried[i].Name, cerr)
+			}
+			for j := range carried[i].Value {
+				carried[i].Value[j] = 0
+			}
+		}
+		log.Printf("reexec handoff: received %d transient credential(s)", len(carried))
+	case handoffUnread:
+		leafLossCause = causeUnreadText
+		log.Printf("reexec handoff: %s: %v; the transient credentials are not restored, push them again", causeUnreadText, handoff.Err)
+	}
 	if opts.StateBolt != "" {
 		if oerr := store.OpenBoltWithOptions(opts.StateBolt, api.BoltOptions{LegacyCwd: opts.LegacyCwd}); oerr != nil {
 			return nil, fmt.Errorf("open state bolt at %s: %w", opts.StateBolt, oerr)
@@ -437,6 +469,8 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		accounts:  api.NewAccountReadings(),
 		orphans:   newOrphanRegistry(),
 		reexec:    syscall.Exec,
+
+		leafLossCause: leafLossCause,
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
@@ -777,9 +811,21 @@ func (d *Daemon) ReexecTo(exe string) error {
 	// serving without touching a pane. Its own doc names this as the first
 	// half of self-update. The broker stays up too: the successor adopts it
 	// by pidfile and listener, and the agents' shims never see a drop.
+	//
+	// The credential handoff is prepared first (reexec_handoff.go): handleReexec
+	// has usually done it already so its response could name the outcome. It
+	// asks the target before it creates anything, and every path that cannot
+	// carry says so in the log (aae-orc-4h9xp).
+	h := d.takeHandoff()
+	if h == nil {
+		h = d.prepareHandoff(exe)
+	}
+	d.handoffMu.Lock()
+	d.lastHandoff = h
+	d.handoffMu.Unlock()
 	d.keepBus = true
 	d.Detach()
-	return d.reexec(exe, os.Args, os.Environ())
+	return d.execWithHandoff(exe, h)
 }
 
 // selfExecPath resolves the path to the running marvel binary for
@@ -806,7 +852,7 @@ func (d *Daemon) shutdown(teardown bool) {
 	// teardown drops them (brief 9 S4). The successor starts empty and cannot
 	// know what was lost, so name it here, in the departing process that still
 	// holds them. The log line is durable; the event serves a live watcher.
-	if n := len(d.store.ListCredentials()); n > 0 {
+	if n := len(d.store.ListCredentials()) - d.handoffCarriedCount(); n > 0 {
 		msg := fmt.Sprintf("%d transient credential(s) dropped; push them again once the daemon is back", n)
 		events.Emit(d.events, events.Event{
 			Kind:     events.KindCredentialTransientDropped,
@@ -2853,6 +2899,11 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
 			Message:  msg,
 		})
 	}
+	// Prepare the credential handoff here, so the response can say whether the
+	// credentials will travel (carried), cannot (declined, over-cap, failed)
+	// or are none. The prepared handoff waits for ReexecTo.
+	h := d.prepareHandoff(exe)
+	d.setPendingHandoff(h)
 	// Re-exec off the request goroutine so this response reaches the
 	// client before the process image is replaced, mirroring handleStop.
 	go func() {
@@ -2862,7 +2913,7 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
 			os.Exit(1)
 		}
 	}()
-	return respond(map[string]string{"status": "reexec", "binary": exe})
+	return respond(map[string]string{"status": "reexec", "binary": exe, "handoff": h.Outcome()})
 }
 
 // DialOptions controls how the client connects to a marvel daemon.
@@ -3385,6 +3436,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return serr
 	}
 	mgr.Events = d.events
+	sup.SetLeafLossCause(d.leafLossCause)
 	d.bus = mgr
 	d.sessMgr.Bus = mgr
 	// Render before start so the child reads a current conf; wire the

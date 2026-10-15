@@ -23,7 +23,7 @@ import (
 // departing daemon carries its transient credentials to the successor across
 // syscall.Exec through a pipe, in memory only. Every credential here is a dummy.
 
-const canary = "SUACANARYCANARYCANARYCANARYCANARYCANARYCANARYCANARYCANARYCANARY"
+const handoffCanary = "SUACANARYCANARYCANARYCANARYCANARYCANARYCANARYCANARYCANARYCANARY"
 
 func dummyCred(name, value string) api.Credential {
 	return api.Credential{
@@ -250,7 +250,7 @@ func scriptTarget(t *testing.T, body string) string {
 
 func TestACarriedReexecPassesOneFDNumberAndNeverTheSeed(t *testing.T) {
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	d.handoffProbe = capableTarget
 	var r reexecSeam
 	d.seamReexec(&r)
@@ -265,11 +265,11 @@ func TestACarriedReexecPassesOneFDNumberAndNeverTheSeed(t *testing.T) {
 	}
 	fd := fdFromEnv(t, r.envv)
 	for _, kv := range r.envv {
-		if strings.Contains(kv, canary) {
+		if strings.Contains(kv, handoffCanary) {
 			t.Errorf("envv carries the seed: %q", kv)
 		}
 	}
-	if strings.Contains(logs.String(), canary) {
+	if strings.Contains(logs.String(), handoffCanary) {
 		t.Error("the log carries the seed")
 	}
 	if !strings.Contains(logs.String(), "carried 1") {
@@ -286,7 +286,7 @@ func TestACarriedReexecPassesOneFDNumberAndNeverTheSeed(t *testing.T) {
 	if got.State != handoffRead {
 		t.Fatalf("read state = %v (%v), want ok", got.State, got.Err)
 	}
-	if len(creds) != 1 || creds[0].Name != "bus/leaf" || string(creds[0].Value) != canary {
+	if len(creds) != 1 || creds[0].Name != "bus/leaf" || string(creds[0].Value) != handoffCanary {
 		t.Errorf("received %+v, want the one credential that was put", creds)
 	}
 	if !isClosed(fd) {
@@ -300,7 +300,7 @@ func TestACarriedReexecPassesOneFDNumberAndNeverTheSeed(t *testing.T) {
 
 func TestADeclinedHandoffCreatesNothingAndSaysWhy(t *testing.T) {
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	d.handoffProbe = func(string) error { return errors.New("exit status 1") }
 	var r reexecSeam
 	d.seamReexec(&r)
@@ -358,7 +358,7 @@ func TestNothingToCarryMeansNoProbeAndNoPipe(t *testing.T) {
 
 func TestAnExecErrorClosesAndZeroesBothEnds(t *testing.T) {
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	d.handoffProbe = capableTarget
 	r := reexecSeam{err: errors.New("exec: permission denied")}
 	d.seamReexec(&r)
@@ -377,7 +377,7 @@ func TestAnExecErrorClosesAndZeroesBothEnds(t *testing.T) {
 
 func TestThePayloadBufferIsZeroedOnceItIsWritten(t *testing.T) {
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	d.handoffProbe = capableTarget
 	h := d.prepareHandoff("/bin/marvel-target")
 	defer h.abort()
@@ -391,7 +391,7 @@ func TestThePayloadBufferIsZeroedOnceItIsWritten(t *testing.T) {
 
 func TestADoubleReexecHandsOnlyTheFreshFDNumber(t *testing.T) {
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	d.handoffProbe = capableTarget
 	var r reexecSeam
 	d.seamReexec(&r)
@@ -426,7 +426,7 @@ func TestADoubleReexecHandsOnlyTheFreshFDNumber(t *testing.T) {
 		t.Error("the second hop passed on the stale variable instead of its own descriptor")
 	}
 	t.Setenv(handoffEnvVar, strconv.Itoa(second))
-	if creds, got := receiveReexecHandoff(); got.State != handoffRead || len(creds) != 1 || string(creds[0].Value) != canary {
+	if creds, got := receiveReexecHandoff(); got.State != handoffRead || len(creds) != 1 || string(creds[0].Value) != handoffCanary {
 		t.Errorf("hop two read: %v %v %+v", got.State, got.Err, creds)
 	}
 }
@@ -512,8 +512,8 @@ func TestTheReexecResponseNamesTheHandoffBeforeTheExec(t *testing.T) {
 		setup func(d *Daemon)
 		want  string
 	}{
-		{"carried", func(d *Daemon) { putDummy(t, d, "bus/leaf", canary); d.handoffProbe = capableTarget }, "carried"},
-		{"declined", func(d *Daemon) { putDummy(t, d, "bus/leaf", canary); d.handoffProbe = func(string) error { return errors.New("no") } }, "declined"},
+		{"carried", func(d *Daemon) { putDummy(t, d, "bus/leaf", handoffCanary); d.handoffProbe = capableTarget }, "carried"},
+		{"declined", func(d *Daemon) { putDummy(t, d, "bus/leaf", handoffCanary); d.handoffProbe = func(string) error { return errors.New("no") } }, "declined"},
 		{"over cap", func(d *Daemon) {
 			putDummy(t, d, "bus/leaf", strings.Repeat("x", handoffCap+1))
 			d.handoffProbe = capableTarget
@@ -560,7 +560,7 @@ func TestACarriedHandoffRaisesNoDroppedEventButADeclinedOneDoes(t *testing.T) {
 		return len(d.events.Snapshot(events.Filter{Kind: events.KindCredentialTransientDropped}, 0))
 	}
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	d.handoffProbe = capableTarget
 	var r reexecSeam
 	d.seamReexec(&r)
@@ -573,7 +573,7 @@ func TestACarriedHandoffRaisesNoDroppedEventButADeclinedOneDoes(t *testing.T) {
 	}
 
 	d2 := newHandlerDaemon(t)
-	putDummy(t, d2, "bus/leaf", canary)
+	putDummy(t, d2, "bus/leaf", handoffCanary)
 	d2.handoffProbe = func(string) error { return errors.New("no") }
 	var r2 reexecSeam
 	d2.seamReexec(&r2)
@@ -587,13 +587,13 @@ func TestACarriedHandoffRaisesNoDroppedEventButADeclinedOneDoes(t *testing.T) {
 
 func TestStopAndTeardownStillSayDropped(t *testing.T) {
 	d := newHandlerDaemon(t)
-	putDummy(t, d, "bus/leaf", canary)
+	putDummy(t, d, "bus/leaf", handoffCanary)
 	logs := captureLog(t)
 	d.Detach()
 	if !strings.Contains(logs.String(), "1 transient credential(s) dropped") {
 		t.Errorf("a plain detach must keep saying dropped:\n%s", logs.String())
 	}
-	if strings.Contains(logs.String(), canary) {
+	if strings.Contains(logs.String(), handoffCanary) {
 		t.Error("the log carries the seed")
 	}
 }
