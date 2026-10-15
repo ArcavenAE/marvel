@@ -35,6 +35,12 @@ const (
 	// tmux would start the pane in $HOME without an error, so marvel refuses
 	// first. Emitted once per change, not once per reconcile tick.
 	KindSessionPlacementRefused Kind = "session.placement-refused"
+	// KindSessionContainerRefused records a spawn marvel refused because the
+	// seat's placement resolved to container and it cannot run in one: the
+	// role names no container_image, or no container runtime (docker or
+	// podman) is on PATH. Nothing starts on the host instead.
+	// Emitted once per change, not once per reconcile tick.
+	KindSessionContainerRefused Kind = "session.container-refused"
 	// KindSessionInjectRefused records an inject the daemon would not type:
 	// the composer reader found the pane in a state where a keystroke is
 	// dangerous, or a clear was asked for where none is safe. Nothing was sent.
@@ -396,6 +402,7 @@ var allKinds = []Kind{
 	KindPlacementLegacyStamped,
 	KindSessionInjected,
 	KindSessionPlacementRefused,
+	KindSessionContainerRefused,
 	KindSessionInjectRefused,
 	KindSessionInjectUnconfirmed,
 	KindSessionCreated,

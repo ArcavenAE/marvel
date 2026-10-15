@@ -184,11 +184,11 @@ type Daemon struct {
 	// with the applied teams (brief 10, aae-orc-e9g8i). Nil when this
 	// daemon's cluster has no managed bus section.
 	bus *bus.Manager
-	// busSup supervises the managed broker as a child of this daemon; nil when
+	// lifecycle drives the managed broker as a child of this daemon; nil when
 	// the cluster has no managed bus. keepBus asks shutdown to leave it running
 	// for the next daemon to adopt (reexec, `marvel stop --keep-bus`).
-	busSup  *bus.Supervisor
-	keepBus bool
+	lifecycle service.Lifecycle
+	keepBus   bool
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -843,9 +843,7 @@ func (d *Daemon) shutdown(teardown bool) {
 	// handing over (reexec, --keep-bus). Teardown always takes it down.
 	// After wg.Wait so no reconcile tick can spawn against a bus that is
 	// on its way out.
-	if d.busSup != nil {
-		d.busSup.Stop(d.keepBus && !teardown)
-	}
+	d.stopBus(teardown)
 
 	// Flush before releasing the file handle: on the detach path the
 	// records written here are exactly what the next start adopts from.
@@ -3315,6 +3313,9 @@ func (d *Daemon) attachServices(socketPath string) error {
 	if cl == nil {
 		return nil
 	}
+	// The first segment of every seat URI, set before any service is attached
+	// so a named cluster with no bus still names its seats.
+	d.sessMgr.SeatCluster = cl.Name
 	if verr := config.ValidateServices(cl); verr != nil {
 		log.Printf("services: cluster %s has an invalid services list, nothing attached: %v", cl.Name, verr)
 		return nil
@@ -3400,7 +3401,8 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return []string{bus.LeafSeedEnv + "=" + string(seed)}
 	}
 	d.regenerateBus("start")
-	mgr.Reloader = sup
+	lc := bus.NewLifecycle(sup)
+	mgr.Reloader = lc
 	// The moment after the listener answers and before any session may
 	// spawn belongs to provisioning: a bare broker strands the shim
 	// (finding-166). Runs as the admin identity, idempotent, and a failure
@@ -3416,10 +3418,10 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		events.Emit(d.events, events.Event{Kind: events.KindBusProvisioned, Severity: events.SeverityInfo, Message: msg})
 		return nil
 	}
-	if err := sup.Start(context.Background()); err != nil {
+	if err := lc.Start(context.Background()); err != nil {
 		return err
 	}
-	d.busSup = sup
+	d.lifecycle = lc
 	d.teamCtrl.BusGate = func() (bool, string) {
 		if sup.Ready() {
 			return true, ""
@@ -3449,8 +3451,8 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 func (d *Daemon) busStatus() (bus.Status, bool) {
 	var st bus.Status
 	switch {
-	case d.busSup != nil:
-		st = d.busSup.Status()
+	case d.lifecycle != nil:
+		st = d.lifecycleStatus()
 	case d.sessMgr.Bus != nil:
 		st = bus.Status{Managed: false, URL: d.sessMgr.Bus.URL(), Leaf: "n/a"}
 		if a, ok := d.sessMgr.Bus.(bus.Adopted); ok {
@@ -3461,6 +3463,21 @@ func (d *Daemon) busStatus() (bus.Status, bool) {
 		return bus.Status{}, false
 	}
 	return st, true
+}
+
+// busDetail is the one bus-typed read the daemon keeps on the lifecycle: the
+// status detail the RPC serves, until it moves behind the interface.
+type busDetail interface{ BusStatus() bus.Status }
+
+// lifecycleStatus is the RPC status for the attached lifecycle: the provider's
+// own detail when it offers one, else the plain status mapped onto the fields
+// every provider has.
+func (d *Daemon) lifecycleStatus() bus.Status {
+	if bd, ok := d.lifecycle.(busDetail); ok {
+		return bd.BusStatus()
+	}
+	st := d.lifecycle.Status()
+	return bus.Status{Managed: true, Ready: st.Ready, PID: st.PID, Restarts: st.Restarts}
 }
 
 // handleBusStatus serves `marvel bus status`: the supervised broker when
@@ -3545,16 +3562,25 @@ func (d *Daemon) emitBusRender(reason string, changed bool, err error) {
 	}
 }
 
+// stopBus ends the broker's supervision. The child outlives the daemon only
+// when the daemon is handing over (reexec, --keep-bus); teardown always takes
+// it down.
+func (d *Daemon) stopBus(teardown bool) {
+	if d.lifecycle != nil {
+		d.lifecycle.Stop(d.keepBus && !teardown)
+	}
+}
+
 // restartBus restarts the supervised broker so a change that only a new
 // process can pick up (the leaf seed in its environment) takes effect. A
 // failure is logged and surfaced as bus.crashed-shaped warning text on the
 // ring; the controller's hold covers the gap until the next successful
 // start.
 func (d *Daemon) restartBus(reason string) {
-	if d.busSup == nil {
+	if d.lifecycle == nil {
 		return
 	}
-	if err := d.busSup.Restart(reason); err != nil {
+	if err := d.lifecycle.Restart(reason); err != nil {
 		msg := fmt.Sprintf("bus restart (%s) failed: %v", reason, err)
 		events.Emit(d.events, events.Event{Kind: events.KindBusCrashed, Severity: events.SeverityWarning, Message: msg})
 		log.Printf("%s: %s", events.KindBusCrashed, msg)
@@ -3572,7 +3598,7 @@ func (d *Daemon) enrollLeafSeed() {
 	if d.bus == nil {
 		return
 	}
-	if d.busSup != nil && d.leafSeedNeedsRestart() {
+	if d.lifecycle != nil && d.leafSeedNeedsRestart() {
 		// The running broker cannot resolve the current seed on a reload (it
 		// booted unenrolled, or its environment carries a different seed than
 		// the one now stored). Render without reloading, then restart so the
@@ -3602,14 +3628,19 @@ func (d *Daemon) enrollLeafSeed() {
 // whose environment carries a different seed than the one now stored (a
 // rotation), cannot resolve the current seed on SIGHUP.
 func (d *Daemon) leafSeedNeedsRestart() bool {
-	if !d.busSup.LeafSeedInEnv() {
+	ef, ok := d.lifecycle.(service.EnvFingerprinter)
+	if !ok {
+		return false // a provider that cannot report a fingerprint is left to a reload
+	}
+	fp, set := ef.EnvFingerprint(bus.LeafSeedKey)
+	if !set {
 		return true
 	}
 	seed, err := d.store.RevealCredentialValue(busLeafCredential)
 	if err != nil {
 		return false // nothing to compare against; a reload is the safe default
 	}
-	return bus.SeedFingerprint(seed) != d.busSup.LeafSeedFingerprint()
+	return bus.SeedFingerprint(seed) != fp
 }
 
 // handleBusLeafConnect and handleBusLeafDisconnect toggle the leaf link on a
@@ -3626,7 +3657,7 @@ func (d *Daemon) handleBusLeafDisconnect() Response {
 }
 
 func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
-	if d.bus == nil || d.busSup == nil {
+	if d.bus == nil || d.lifecycle == nil {
 		return Response{Error: "no managed bus is configured for this cluster; connect and disconnect apply to a marvel-supervised broker"}
 	}
 	if d.bus.Bus().HubURL == "" {
@@ -3647,7 +3678,7 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
 		events.Emit(d.events, events.Event{Kind: events.KindBusReloaded, Severity: events.SeverityInfo, Message: msg})
 		log.Printf("%s: %s", events.KindBusReloaded, msg)
 	}
-	return respond(d.busSup.Status())
+	return respond(d.lifecycleStatus())
 }
 
 // injectOrigin says who sent an inject: the transport the daemon itself saw,

@@ -36,6 +36,8 @@ type Manager struct {
 	refused   map[string]*refusal
 	// Clock is the time source for refusal bookkeeping; nil means time.Now.
 	Clock func() time.Time
+	// LookPath finds the container runtime CLI; nil means exec.LookPath.
+	LookPath func(string) (string, error)
 
 	store      *api.Store
 	driver     *tmux.Driver
@@ -45,6 +47,9 @@ type Manager struct {
 	// team's credential for the session environment. Set by daemon.Start
 	// from the cluster's bus section; nil when the cluster has none.
 	Bus BusEnv
+	// SeatCluster is the first segment of the seat URI (aae-orc-2pss4), the
+	// daemon's own cluster entry name, set at bus attach. Empty means no URI.
+	SeatCluster string
 	// Events receives structured state-transition events. Nil is safe
 	// (all emission sites use events.Emit which no-ops on nil) so tests
 	// and callers that don't care about the event stream don't need to
@@ -655,6 +660,10 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err := m.checkWorkDir(sess); err != nil {
 		return err
 	}
+	image, inContainer, err := m.containerPlacement(sess)
+	if err != nil {
+		return err
+	}
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
@@ -719,6 +728,17 @@ func (m *Manager) Create(sess *api.Session) error {
 	// see. Recorded for every session, overlay or not, so a default-mode
 	// session reads as ambient rather than as unclassified.
 	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+
+	// A seat placed in a container runs its prepared command under the runtime.
+	// This wraps whatever planLaunch built, the direct fallbacks included, so no
+	// branch of it can start the seat on the host.
+	if inContainer {
+		if err := m.wrapInContainer(sess, &plan, image); err != nil {
+			_ = m.store.DeleteSession(sess.Key())
+			m.teardownViews(sess.Key())
+			return fmt.Errorf("create session %s: %w", sess.Key(), err)
+		}
+	}
 
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
@@ -828,26 +848,31 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 			why = "does not exist"
 		}
 	}
-	now := m.now()
 	msg := fmt.Sprintf("not started: the directory %s for %s/%s %s; tmux would start it in $HOME", sess.WorkDir, sess.Team, sess.Role, why)
+	m.noteRefusal(sess, key, RefusalDirectory, events.KindSessionPlacementRefused, sess.WorkDir, msg)
+	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
+}
+
+// noteRefusal keeps the standing record of a refused role and reports it. The
+// reconcile loop retries every tick, so the refusal is reported when it starts
+// and then at a low cadence for as long as it lasts: the log at most every
+// refusalLogEvery, the event every refusalEmitEvery (so it cannot roll off the
+// ring unseen). describe reads the standing record. The caller holds refusedMu.
+// A change of reason or directory starts a new record.
+func (m *Manager) noteRefusal(sess *api.Session, key, reason string, kind events.Kind, workDir, msg string) {
+	now := m.now()
 	r := m.refused[key]
-	if r == nil || r.WorkDir != sess.WorkDir {
+	if r == nil || r.Reason != reason || r.WorkDir != workDir {
 		if m.refused == nil {
 			m.refused = map[string]*refusal{}
 		}
 		r = &refusal{PlacementRefusal: PlacementRefusal{
 			Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role,
-			WorkDir: sess.WorkDir, Since: now,
+			Reason: reason, WorkDir: workDir, Since: now,
 		}}
 		m.refused[key] = r
-	} else {
-		r.Message = msg
 	}
 	r.Message = msg
-	// The reconcile loop retries every tick, so the refusal is reported when it
-	// starts and then at a low cadence for as long as it lasts: the log at most
-	// every refusalLogEvery, the event every refusalEmitEvery (so it cannot roll
-	// off the ring unseen). describe reads the standing record.
 	if r.lastLog.IsZero() || now.Sub(r.lastLog) >= refusalLogEvery {
 		r.lastLog = now
 		log.Printf("session %s: %s", sess.Key(), msg)
@@ -855,7 +880,7 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 	if r.lastEmit.IsZero() || now.Sub(r.lastEmit) >= refusalEmitEvery {
 		r.lastEmit = now
 		events.Emit(m.Events, events.Event{
-			Kind:      events.KindSessionPlacementRefused,
+			Kind:      kind,
 			Severity:  events.SeverityWarning,
 			Workspace: sess.Workspace,
 			Team:      sess.Team,
@@ -864,7 +889,6 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 			Message:   msg,
 		})
 	}
-	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
 }
 
 // launchPlan is what one session needs to come up: the shell command,
@@ -1047,6 +1071,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+		Cluster:    m.SeatCluster,
 		TokenFile:  tokenFile,
 		Events:     m.Events,
 	}
@@ -1872,10 +1897,20 @@ var ErrPlacementRefused = errors.New("placement refused")
 // directory.
 type PlacementRefusal struct {
 	Workspace, Team, Role string
-	WorkDir               string
-	Message               string
-	Since                 time.Time
+	// Reason is what the spawn is refused for: RefusalDirectory,
+	// RefusalContainerImage or RefusalContainerRuntime.
+	Reason  string
+	WorkDir string
+	Message string
+	Since   time.Time
 }
+
+// The reasons a spawn is refused for its placement.
+const (
+	RefusalDirectory        = "directory"
+	RefusalContainerImage   = "container image"
+	RefusalContainerRuntime = "container runtime"
+)
 
 // refusal is the standing record of one refused role, with when it was last
 // logged and emitted.
@@ -1914,7 +1949,9 @@ func (m *Manager) PlacementRefusals() []PlacementRefusal {
 func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	m.refusedMu.Lock()
 	defer m.refusedMu.Unlock()
-	delete(m.refused, workspace+"/"+team+"/"+role)
+	key := workspace + "/" + team + "/" + role
+	delete(m.refused, key)
+	delete(m.refused, key+containerRefusalSuffix)
 }
 
 func (m *Manager) now() time.Time {

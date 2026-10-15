@@ -55,15 +55,15 @@ func TestCodexPrepareHeadlessRedirectsToSink(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 	for _, want := range []string{
-		"codex exec --json", "--skip-git-repo-check",
-		"< /dev/null", "> /tmp/streams/cx.jsonl",
+		"codex 'exec' '--json'", "'--skip-git-repo-check'",
+		"< '/dev/null'", "> '/tmp/streams/cx.jsonl'",
 	} {
 		if !strings.Contains(result.Command, want) {
 			t.Errorf("command missing %q: %s", want, result.Command)
 		}
 	}
 	// The prompt is positional and must precede the redirections.
-	if !strings.Contains(result.Command, "'say ok' < /dev/null > ") {
+	if !strings.Contains(result.Command, "'say ok' < '/dev/null' > ") {
 		t.Errorf("prompt not positioned before the redirects: %s", result.Command)
 	}
 	if result.Stream == nil || result.Stream.Format != StreamFormatCodexJSON {
@@ -79,7 +79,7 @@ func TestCodexPrepareHeadlessWithoutSinkStillClosesStdin(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 	// Even unobserved, stdin must be closed or codex hangs on the pane tty.
-	if !strings.Contains(result.Command, "< /dev/null") {
+	if !strings.Contains(result.Command, "< '/dev/null'") {
 		t.Errorf("headless codex must close stdin: %s", result.Command)
 	}
 	if strings.Contains(result.Command, ">") {
@@ -110,7 +110,7 @@ func TestCodexPrepareInteractiveIsPlain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if result.Command != "codex --model gpt-5" {
+	if result.Command != "codex '--model' 'gpt-5'" {
 		t.Errorf("interactive command = %q, want plain codex invocation", result.Command)
 	}
 	if result.Stream != nil {
@@ -140,14 +140,14 @@ func TestOpenCodePrepareHeadlessRedirectsToSink(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 	for _, want := range []string{
-		"opencode run --format json",
-		"< /dev/null", "> /tmp/streams/oc.json",
+		"opencode 'run' '--format' 'json'",
+		"< '/dev/null'", "> '/tmp/streams/oc.json'",
 	} {
 		if !strings.Contains(result.Command, want) {
 			t.Errorf("command missing %q: %s", want, result.Command)
 		}
 	}
-	if !strings.Contains(result.Command, "'say ok' < /dev/null > ") {
+	if !strings.Contains(result.Command, "'say ok' < '/dev/null' > ") {
 		t.Errorf("prompt not positioned before the redirects: %s", result.Command)
 	}
 	if result.Stream == nil || result.Stream.Format != StreamFormatOpenCodeJSON {

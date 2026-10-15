@@ -127,7 +127,7 @@ func TestClaudeAddsNoPromptToShellText(t *testing.T) {
 		if strings.Contains(result.Command, "--setting-sources") || result.SettingSources != "" {
 			t.Errorf("%q: marvel added setting-sources to shell text: %q, sources %q", command, result.Command, result.SettingSources)
 		}
-		if !strings.Contains(result.Command, "--permission-mode plan") {
+		if !strings.Contains(result.Command, qw("--permission-mode plan")) {
 			t.Errorf("%q: the rest of the launch changed: %s", command, result.Command)
 		}
 	}
@@ -189,7 +189,7 @@ func TestClaudeAddsNoPromptWhenAFlagIsQuoted(t *testing.T) {
 			if strings.Count(result.Command, "--setting-sources") > 1 {
 				t.Errorf("%s %s: --setting-sources appears twice: %s", flag, name, result.Command)
 			}
-			if !strings.Contains(result.Command, "--permission-mode plan") {
+			if !strings.Contains(result.Command, qw("--permission-mode plan")) {
 				t.Errorf("%s %s: the rest of the launch changed: %s", flag, name, result.Command)
 			}
 		}
@@ -212,7 +212,7 @@ func TestClaudeKeepsDeclaredSourcesOnShellText(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Prepare(%q): %v", command, err)
 		}
-		if !strings.HasSuffix(result.Command, " --setting-sources project") || result.SettingSources != "project" {
+		if !strings.HasSuffix(result.Command, " '--setting-sources' 'project'") || result.SettingSources != "project" {
 			t.Errorf("%q: the declared sources were not passed last: %q, sources %q", command, result.Command, result.SettingSources)
 		}
 		if strings.Contains(result.Command, "You are squad-worker-g1-0") {
@@ -232,7 +232,7 @@ func TestClaudeKeepsDeclaredSourcesOnShellText(t *testing.T) {
 func TestClaudeSourcesOnReadableCommandsAreUnchanged(t *testing.T) {
 	t.Parallel()
 	result := prepareClaude(t, "claude", nil)
-	if result.SettingSources != "user,project,local" || strings.Count(result.Command, "--setting-sources user,project,local") != 1 {
+	if result.SettingSources != "user,project,local" || strings.Count(result.Command, qw("--setting-sources user,project,local")) != 1 {
 		t.Errorf("plain claude: %q, sources %q, want user,project,local injected", result.Command, result.SettingSources)
 	}
 	result = prepareClaude(t, "claude --setting-sources user", nil)
@@ -255,7 +255,7 @@ func TestClaudeSourcesLineClaimsOnlyWhatMarvelDid(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Prepare(%q): %v", command, err)
 		}
-		if !strings.HasSuffix(result.Command, " --setting-sources project") || result.SettingSources != "project" {
+		if !strings.HasSuffix(result.Command, " '--setting-sources' 'project'") || result.SettingSources != "project" {
 			t.Errorf("%q: the flag was not appended: %q, sources %q", command, result.Command, result.SettingSources)
 		}
 		want := "role worker: command is shell text; marvel appended --setting-sources project from the manifest; whether claude receives it depends on the command"
@@ -282,7 +282,7 @@ func TestClaudeReadableCommandWithDeclaredSourcesLogsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(result.Command, " --setting-sources project,local") || result.SettingSources != "project,local" {
+	if !strings.HasSuffix(result.Command, " '--setting-sources' 'project,local'") || result.SettingSources != "project,local" {
 		t.Errorf("readable command: %q, sources %q, want the declaration appended", result.Command, result.SettingSources)
 	}
 	if len(lines) != 0 {
@@ -303,7 +303,7 @@ func TestClaudeSourcesLineNamesEveryDeclaredSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(result.Command, " --setting-sources project,local") || result.SettingSources != "project,local" {
+	if !strings.HasSuffix(result.Command, " '--setting-sources' 'project,local'") || result.SettingSources != "project,local" {
 		t.Errorf("the flag was not appended whole: %q, sources %q", result.Command, result.SettingSources)
 	}
 	want := "role worker: command is shell text; marvel appended --setting-sources project,local from the manifest; whether claude receives it depends on the command"
