@@ -51,6 +51,10 @@ func (d *Daemon) handleBrokerToken(ctx context.Context, params json.RawMessage) 
 	}
 	tok, err := d.broker.Issue(ctx, p.SessionKey, p.SessionToken)
 	if err != nil {
+		if errors.Is(err, broker.ErrRevokeFailed) {
+			// The refusal below hides a live credential: say so, by id and never by value.
+			log.Printf("warning: session %s: %v", p.SessionKey, err)
+		}
 		if errors.Is(err, broker.ErrUnauthorized) {
 			return Response{Error: broker.ErrUnauthorized.Error()}
 		}

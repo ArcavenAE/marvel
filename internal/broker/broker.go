@@ -68,6 +68,11 @@ var (
 	// ErrClaimShapeUndecided is returned by the generic-oidc driver until the
 	// claim shape it signs is ruled.
 	ErrClaimShapeUndecided = errors.New("broker: generic-oidc claim shape is not decided")
+	// ErrRevokeFailed is joined to the refusal of an ask whose seat ended
+	// mid-ask when the token the driver had just issued could not be revoked.
+	// The broker keeps the token for the seat's next revoke; a caller should
+	// say so, because its own refusal hides a live credential.
+	ErrRevokeFailed = errors.New("broker: could not revoke a token issued to a seat that ended")
 )
 
 // Broker issues tokens to authenticated seats and revokes them when the seat
@@ -143,7 +148,12 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 		b.mu.Unlock()
 		// The caller's context may be what ended the ask; the revoke must not be.
 		if rerr := b.driver.Revoke(context.WithoutCancel(ctx), tok); rerr != nil {
-			return Token{}, fmt.Errorf("%w: seat ended during the ask; revoke %s: %w", ErrUnauthorized, tok.ID, rerr)
+			// Nothing else knows this token. Put it back, so that the next
+			// revoke for the seat retries it.
+			b.mu.Lock()
+			b.issued[sessionKey] = append(b.issued[sessionKey], tok)
+			b.mu.Unlock()
+			return Token{}, fmt.Errorf("%w: %w: token %s: %w", ErrUnauthorized, ErrRevokeFailed, tok.ID, rerr)
 		}
 		return Token{}, ErrUnauthorized
 	}
