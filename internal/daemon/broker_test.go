@@ -141,3 +141,28 @@ func TestUseBrokerDriverPointsSeatsAtTheHelper(t *testing.T) {
 		t.Fatalf("CredentialHelper = %q, want the path UseBrokerDriver was given", d.sessMgr.CredentialHelper)
 	}
 }
+
+// A seat that asks in the window between its end being reported and its row
+// leaving the store is still alive and still holds its heartbeat token. The
+// broker must refuse it, or the token it is given outlives the seat.
+func TestBrokerRefusesATokenAskMadeWhileTheSeatIsBeingDeleted(t *testing.T) {
+	d, m := brokerDaemon(t)
+	key, token := registerSession(t, d, "agent-0", true)
+
+	revoke := d.sessMgr.SessionEnded
+	var window Response
+	d.sessMgr.SessionEnded = func(k string) {
+		revoke(k)
+		window = d.handleBrokerToken(context.Background(), brokerParams(t, k, token))
+	}
+
+	if err := d.sessMgr.Delete(key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if window.Error == "" {
+		t.Error("broker.token inside the delete window was answered, want a refusal")
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens after the delete = %v, want none", live)
+	}
+}
