@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -164,5 +165,50 @@ func TestBrokerRefusesATokenAskMadeWhileTheSeatIsBeingDeleted(t *testing.T) {
 	}
 	if live := m.Live(); len(live) != 0 {
 		t.Errorf("live tokens after the delete = %v, want none", live)
+	}
+}
+
+// endingDriver reports the seat's end from inside Issue, as a delete that
+// lands mid-ask would, and fails every Revoke.
+type endingDriver struct {
+	broker.Driver
+	onIssue func()
+}
+
+func (e *endingDriver) Issue(ctx context.Context, r broker.Request) (broker.Token, error) {
+	tok, err := e.Driver.Issue(ctx, r)
+	if e.onIssue != nil {
+		e.onIssue()
+	}
+	return tok, err
+}
+
+func (e *endingDriver) Revoke(context.Context, broker.Token) error { return errors.New("idp down") }
+
+// A refused ask whose token could not be revoked is the one case where the
+// daemon's refusal hides a live credential, so the daemon must say so.
+func TestBrokerTokenLogsATokenItCouldNotRevokeAfterTheSeatEnded(t *testing.T) {
+	d := newHandlerDaemon(t)
+	m := broker.NewMock(15*time.Minute, time.Now)
+	ed := &endingDriver{Driver: m}
+	d.UseBrokerDriver(ed, "/opt/marvel/credential-helper")
+	key, token := registerSession(t, d, "agent-0", true)
+	ed.onIssue = func() { d.sessMgr.SessionEnded(key) }
+	logs := captureLog(t)
+
+	resp := d.handleBrokerToken(context.Background(), brokerParams(t, key, token))
+	if resp.Error == "" {
+		t.Fatal("broker.token for a seat that ended mid-ask was answered, want a refusal")
+	}
+	live := m.Live()
+	if len(live) != 1 {
+		t.Fatalf("live tokens = %v, want the one that could not be revoked", live)
+	}
+	out := logs.String()
+	if !strings.Contains(out, key) || !strings.Contains(out, "revoke") {
+		t.Errorf("log = %q, want a warning naming the session and the failed revoke", out)
+	}
+	if strings.Contains(out, "mock.") {
+		t.Errorf("log carries a token value: %q", out)
 	}
 }

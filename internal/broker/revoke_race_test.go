@@ -112,3 +112,56 @@ func TestIssueThatBeganAfterTheRevokeIsNotRefused(t *testing.T) {
 		t.Errorf("live tokens after the second revoke = %v, want none", live)
 	}
 }
+
+// failingRevokeDriver fails Revoke while fail is set.
+type failingRevokeDriver struct {
+	Driver
+	mu   sync.Mutex
+	fail bool
+}
+
+func (f *failingRevokeDriver) setFail(v bool) {
+	f.mu.Lock()
+	f.fail = v
+	f.mu.Unlock()
+}
+
+func (f *failingRevokeDriver) Revoke(ctx context.Context, t Token) error {
+	f.mu.Lock()
+	fail := f.fail
+	f.mu.Unlock()
+	if fail {
+		return errors.New("idp down")
+	}
+	return f.Driver.Revoke(ctx, t)
+}
+
+// A token that could not be revoked when its ask was refused must stay on the
+// broker's books, so that the next revoke for the seat retries it.
+func TestIssueKeepsATokenItCouldNotRevokeForTheNextRevoke(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	g := newGateDriver(f)
+	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+
+	res := issueAsync(b, "ws/t/r-g1-0", "hb")
+	waitFor(t, g.entered, "the driver to start issuing")
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	f.setFail(true)
+	close(g.release)
+	if r := <-res; !errors.Is(r.err, ErrUnauthorized) {
+		t.Fatalf("Issue after the seat ended = %v, want ErrUnauthorized", r.err)
+	}
+
+	f.setFail(false)
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("second RevokeSession: %v", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens after the second revoke = %v, want none: the failed self-revoke was forgotten", live)
+	}
+}

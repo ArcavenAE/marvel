@@ -28,6 +28,11 @@ func TestAuthenticateLiveSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	endingKey, endingToken := mintedSession(t, s, "agent-ending")
+	if err := s.UpdateSession(endingKey, func(l *Session) error { l.Ending = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+
 	cases := []struct {
 		name       string
 		key, token string
@@ -39,6 +44,7 @@ func TestAuthenticateLiveSession(t *testing.T) {
 		{"no hash on the record", legacy.Key(), "", ErrHeartbeatUnauthorized},
 		{"a token for a record with no hash", legacy.Key(), selfToken, ErrHeartbeatUnauthorized},
 		{"a session that is not running", crashedKey, crashedToken, ErrHeartbeatUnauthorized},
+		{"a running session whose end was reported", endingKey, endingToken, ErrHeartbeatUnauthorized},
 		{"an unknown session", "ws/nobody", selfToken, ErrNotFound},
 	}
 	for _, c := range cases {
