@@ -32,6 +32,10 @@ type Controller struct {
 	// ringMu (not mu: the readers must not wait for a reconcile pass).
 	ringMu sync.Mutex
 	rings  map[string]*TickRing
+	// load is the per-team load rows the last evaluation tick computed, under
+	// loadMu.
+	loadMu sync.Mutex
+	load   []api.TeamLoad
 	// clusterWindow is the operator's watchdog.window, under ringMu.
 	clusterWindow time.Duration
 
