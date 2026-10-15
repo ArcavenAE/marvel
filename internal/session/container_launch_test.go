@@ -436,3 +436,93 @@ func TestALocalhostPlacementNeedsNoRuntimeInThePlacementDecision(t *testing.T) {
 		t.Errorf("%d refusals for a localhost placement", n)
 	}
 }
+
+// A workspace switched from container to an explicit localhost placement runs
+// its seats on the host, so the standing refusal it left behind must go: the
+// placement decision clears it, whichever cause it recorded.
+func TestSwitchingToLocalhostClearsTheStandingContainerRefusal(t *testing.T) {
+	for name, tc := range map[string]struct {
+		role   api.Role
+		noRT   bool
+		reason string
+	}{
+		"image":   {role: api.Role{Name: "seat", Replicas: 1}, reason: RefusalContainerImage},
+		"runtime": {role: api.Role{Name: "seat", Replicas: 1, ContainerImage: "img:1"}, noRT: true, reason: RefusalContainerRuntime},
+	} {
+		r := newContainerRig(t, "test-ctr-switch-"+name, api.PlacementContainer, tc.role)
+		if tc.noRT {
+			r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+		}
+		if _, _, err := r.mgr.containerPlacement(r.session("sleep")); !errors.Is(err, ErrPlacementRefused) {
+			t.Fatalf("%s: before the switch: %v, want a placement refusal", name, err)
+		}
+		if got := r.mgr.PlacementRefusals(); len(got) != 1 || got[0].Reason != tc.reason {
+			t.Fatalf("%s: standing refusals = %+v, want one with reason %q", name, got, tc.reason)
+		}
+		if err := r.store.UpdateWorkspace(r.ws, func(w *api.Workspace) error {
+			w.Placement = api.PlacementLocalhost
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		image, isContainer, err := r.mgr.containerPlacement(r.session("sleep"))
+		if err != nil || isContainer || image != "" {
+			t.Errorf("%s: on localhost: %q, %v, %v; want empty, false, nil", name, image, isContainer, err)
+		}
+		if got := r.mgr.PlacementRefusals(); len(got) != 0 {
+			t.Errorf("%s: standing refusals after the switch to localhost = %+v, want none", name, got)
+		}
+	}
+}
+
+// One role can be refused for the image and then, once it has one, for the
+// runtime. The two causes share a key, so a change of cause must start a new
+// record: the reason and the time it began move, and the change is reported
+// once. The same cause standing on the next tick adds nothing.
+func TestAChangeOfRefusalCauseStartsANewRecordAndOneEvent(t *testing.T) {
+	r := newContainerRig(t, "test-ctr-transition", api.PlacementContainer, api.Role{Name: "seat", Replicas: 1})
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	r.mgr.Clock = func() time.Time { return now }
+
+	if _, _, err := r.mgr.containerPlacement(r.session("sleep")); !errors.Is(err, ErrPlacementRefused) {
+		t.Fatalf("with no image: %v, want a placement refusal", err)
+	}
+	if got := r.mgr.PlacementRefusals(); len(got) != 1 || got[0].Reason != RefusalContainerImage || !got[0].Since.Equal(now) {
+		t.Fatalf("standing refusals = %+v, want one for the image since %v", got, now)
+	}
+	if n := len(r.refusals()); n != 1 {
+		t.Fatalf("%d events after the image refusal, want 1", n)
+	}
+
+	// The role gains an image and the host has no runtime: a different cause.
+	if err := r.store.UpdateTeam("test-ctr-transition/squad", func(tm *api.Team) error {
+		tm.Roles[0].ContainerImage = "img:1"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	later := now.Add(time.Minute)
+	r.mgr.Clock = func() time.Time { return later }
+	if _, _, err := r.mgr.containerPlacement(r.session("sleep")); !errors.Is(err, ErrPlacementRefused) {
+		t.Fatalf("with an image and no runtime: %v, want a placement refusal", err)
+	}
+	got := r.mgr.PlacementRefusals()
+	if len(got) != 1 || got[0].Reason != RefusalContainerRuntime || !got[0].Since.Equal(later) {
+		t.Fatalf("standing refusals = %+v, want one for the runtime since %v", got, later)
+	}
+	events := r.refusals()
+	if len(events) != 2 || !strings.Contains(events[1].Message, "no container runtime") {
+		t.Fatalf("events = %+v, want the image event then one that names the missing runtime", events)
+	}
+
+	// Same cause on the next tick: no new event, and the record keeps its start.
+	r.mgr.Clock = func() time.Time { return later.Add(time.Minute) }
+	_, _, _ = r.mgr.containerPlacement(r.session("sleep"))
+	if n := len(r.refusals()); n != 2 {
+		t.Errorf("%d events after a repeat of the same cause, want 2", n)
+	}
+	if got := r.mgr.PlacementRefusals(); len(got) != 1 || !got[0].Since.Equal(later) {
+		t.Errorf("standing refusals after a repeat = %+v, want the start kept at %v", got, later)
+	}
+}

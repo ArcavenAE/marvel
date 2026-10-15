@@ -37,7 +37,8 @@ const (
 	KindSessionPlacementRefused Kind = "session.placement-refused"
 	// KindSessionContainerRefused records a spawn marvel refused because the
 	// seat's placement resolved to container and it cannot run in one: the
-	// role names no container_image. Nothing starts on the host instead.
+	// role names no container_image, or no container runtime (docker or
+	// podman) is on PATH. Nothing starts on the host instead.
 	// Emitted once per change, not once per reconcile tick.
 	KindSessionContainerRefused Kind = "session.container-refused"
 	// KindSessionInjectRefused records an inject the daemon would not type:
