@@ -807,6 +807,31 @@ marvel --cluster <name> bus status --require-leaf   # exit 0 only when a hub is 
 It exits nonzero with one of: `no hub`, `detached by operator`, `dropped on
 adopt`, `not enrolled`, `down` or `unknown` (a reading older than two polls).
 
+A downgrade across this change needs the bus stopped first. The broker's
+identity file is now schema 2, and a binary older than this change reads only
+schema 1: it treats the file as stale, removes the pidfile and the file, finds
+the broker still answering on its port, and refuses to start with "port held,
+child unproven". The broker keeps running with no pidfile, and neither that
+binary nor a later upgrade can adopt it. So before a downgrade, by `daemon
+reexec` or by `upgrade --daemon`, stop the daemon and the broker together:
+
+```sh
+marvel --cluster <name> stop      # no --keep-bus: the broker stops with the daemon
+```
+
+If a broker was stranded anyway, stop that one process by its pid and nothing
+else. Find the pid from the port the cluster's `bus.listen` names, read its
+command line to confirm it is the broker, then signal that pid:
+
+```sh
+pid="$(lsof -nP -iTCP:<port> -sTCP:LISTEN -t)"
+ps -p "$pid" -o command=          # expect nats-server with the cluster's own conf path
+kill -TERM "$pid"                 # only when the line above is that broker
+```
+
+Then start the daemon; it renders a fresh broker. Do not use `pkill` or any
+match on the name: other clusters on the host run the same binary.
+
 Two cases still re-execute the daemon's own path, the way reexec always has: a
 remote daemon (`--cluster` over `mrvl://`, where a path on your host means
 nothing), and a daemon older than this change, which ignores the path and says
