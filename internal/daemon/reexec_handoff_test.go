@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -112,13 +113,32 @@ func (d *Daemon) seamReexec(r *reexecSeam) {
 
 func capableTarget(string) error { return nil }
 
-func captureLog(t *testing.T) *bytes.Buffer {
+func captureLog(t *testing.T) *lockedBuffer {
 	t.Helper()
-	var b bytes.Buffer
+	b := &lockedBuffer{}
 	prev := log.Writer()
-	log.SetOutput(&b)
+	log.SetOutput(b)
 	t.Cleanup(func() { log.SetOutput(prev) })
-	return &b
+	return b
+}
+
+// lockedBuffer is a log sink a test can read while a goroutine it started is
+// still logging. log serializes its own writes, but not a read of the buffer.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // --- the carry table ---------------------------------------------------------
