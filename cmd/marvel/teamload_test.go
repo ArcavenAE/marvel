@@ -104,7 +104,7 @@ func TestGetLoadFlagRefusals(t *testing.T) {
 		"sessions":    {[]string{"sessions", "--load"}, "--load applies to get teams only"},
 		"workspaces":  {[]string{"workspaces", "--load"}, "--load applies to get teams only"},
 		"with output": {[]string{"teams", "--load", "-o", "json"}, "--load and -o cannot be combined"},
-		"with watch":  {[]string{"teams", "--load", "--watch"}, "--load and --watch cannot be combined"},
+		"with watch":  {[]string{"teams", "--load", "--watch=2"}, "--load and --watch cannot be combined"},
 		"with column": {[]string{"teams", "--load", "--columns", "name"}, "--load and --columns cannot be combined"},
 	}
 	for name, c := range cases {

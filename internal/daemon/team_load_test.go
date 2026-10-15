@@ -11,6 +11,8 @@ import (
 func TestGetTeamLoadServesTheTickRows(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
+	// The apply tick spawned the seat after it evaluated; the next tick sees it.
+	d.teamCtrl.ReconcileOnce()
 
 	resp := d.handleGet(mustMarshal(t, map[string]string{"resource_type": "team-load"}))
 	if resp.Error != "" {
