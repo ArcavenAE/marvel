@@ -117,7 +117,15 @@ func TestTheOnlyProcessTheDaemonStartsIsTheProbeWithItsPinnedArguments(t *testin
 // at package level. The inventory above counts calls to exec.Command*, and an
 // &exec.Cmd{Path: ...} builds a process without one (aae-orc-4h9xp review).
 func execCmdLiterals(p pkgFiles) []string {
-	return nil
+	var out []string
+	p.each(func(file string, n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if ok && lit.Type != nil && isSel(lit.Type, "exec", "Cmd") {
+			out = append(out, file+": exec.Cmd literal at "+p.fset.Position(lit.Pos()).String())
+		}
+		return true
+	})
+	return out
 }
 
 func TestAnExecCmdLiteralIsCountedLikeACall(t *testing.T) {
