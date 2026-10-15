@@ -712,6 +712,14 @@ func (d *Daemon) Start(socketPath string) error {
 		d.RunLimits(ctx, ReconcileInterval)
 	}()
 
+	// Tokens whose revoke failed when their seat ended are retried on a tick;
+	// the seat's end is reported only once.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunBrokerRetry(ctx, ReconcileInterval)
+	}()
+
 	// Start the process sampler. Sibling of the reconcile loop rather
 	// than a step inside it: sampling reads the process table and takes
 	// no part in reconciliation, so it should not be able to slow a

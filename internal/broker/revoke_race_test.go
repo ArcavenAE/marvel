@@ -38,10 +38,11 @@ type issueResult struct {
 	err error
 }
 
-func issueAsync(b *Broker, key, token string) <-chan issueResult {
+// issueAsync asks for a token for the one seat these tests use.
+func issueAsync(b *Broker) <-chan issueResult {
 	out := make(chan issueResult, 1)
 	go func() {
-		tok, err := b.Issue(context.Background(), key, token)
+		tok, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
 		out <- issueResult{tok, err}
 	}()
 	return out
@@ -66,7 +67,7 @@ func TestIssueRevokesATokenWhoseSeatEndedWhileTheDriverWasIssuing(t *testing.T) 
 	g := newGateDriver(m)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 
-	res := issueAsync(b, "ws/t/r-g1-0", "hb")
+	res := issueAsync(b)
 	waitFor(t, g.entered, "the driver to start issuing")
 	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
 		t.Fatalf("RevokeSession: %v", err)
@@ -91,7 +92,7 @@ func TestIssueThatBeganAfterTheRevokeIsNotRefused(t *testing.T) {
 	g := newGateDriver(m)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 
-	first := issueAsync(b, "ws/t/r-g1-0", "hb")
+	first := issueAsync(b)
 	waitFor(t, g.entered, "the first ask to be in the driver")
 	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
 		t.Fatalf("RevokeSession: %v", err)
@@ -153,7 +154,7 @@ func TestIssueKeepsATokenItCouldNotRevokeForTheNextRevoke(t *testing.T) {
 	g := newGateDriver(f)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 
-	res := issueAsync(b, "ws/t/r-g1-0", "hb")
+	res := issueAsync(b)
 	waitFor(t, g.entered, "the driver to start issuing")
 	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
 		t.Fatalf("RevokeSession: %v", err)
@@ -208,7 +209,7 @@ func TestSelfRevokeErrorCarriesNoTokenValue(t *testing.T) {
 	g := newGateDriver(f)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 
-	res := issueAsync(b, "ws/t/r-g1-0", "hb")
+	res := issueAsync(b)
 	waitFor(t, g.entered, "the driver to start issuing")
 	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
 		t.Fatalf("RevokeSession: %v", err)

@@ -173,7 +173,8 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 		// The caller's context may be what ended the ask; the revoke must not be.
 		if rerr := b.driver.Revoke(context.WithoutCancel(ctx), tok); rerr != nil {
 			// Nothing else knows this token. Put it back, so that the next
-			// revoke for the seat retries it.
+			// revoke for the seat, or the daemon's retry pass once the seat's
+			// row is gone, retries it.
 			b.mu.Lock()
 			b.issued[sessionKey] = append(b.issued[sessionKey], tok)
 			b.mu.Unlock()
@@ -210,6 +211,33 @@ func (b *Broker) RevokeSession(ctx context.Context, sessionKey string) error {
 		b.mu.Lock()
 		b.issued[sessionKey] = append(failed, b.issued[sessionKey]...)
 		b.mu.Unlock()
+	}
+	return errors.Join(errs...)
+}
+
+// RetryRevokes revokes the kept tokens of every session key for which exists
+// reports no session. A revoke that failed when a seat ended leaves its tokens
+// kept, and once the seat's row is dropped nothing else reports the key again.
+// Tokens that still fail stay kept for the next pass. It touches no key that
+// has a session, and holds no lock while it calls exists or the driver.
+func (b *Broker) RetryRevokes(ctx context.Context, exists func(sessionKey string) bool) error {
+	b.mu.Lock()
+	keys := make([]string, 0, len(b.issued))
+	for k, toks := range b.issued {
+		if len(toks) > 0 {
+			keys = append(keys, k)
+		}
+	}
+	b.mu.Unlock()
+	sort.Strings(keys)
+	var errs []error
+	for _, k := range keys {
+		if exists(k) {
+			continue
+		}
+		if err := b.RevokeSession(ctx, k); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

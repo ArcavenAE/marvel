@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/broker"
@@ -35,6 +36,39 @@ func (d *Daemon) UseBrokerDriver(drv broker.Driver, helper string) {
 		if err := b.RevokeSession(context.Background(), key); err != nil {
 			log.Printf("warning: session %s: revoke broker tokens: %v", key, err)
 		}
+	}
+}
+
+// RunBrokerRetry retries, on a tick, the broker tokens of seats that are gone
+// and whose revoke failed. A seat's end is reported once, so without this a
+// token the provider would not revoke at that moment stays live until its TTL.
+// The kept tokens are in memory only: a restart forgets them.
+func (d *Daemon) RunBrokerRetry(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.retryBrokerRevokes(ctx)
+		}
+	}
+}
+
+// retryBrokerRevokes is one pass of RunBrokerRetry. A daemon with no broker
+// has nothing to retry.
+func (d *Daemon) retryBrokerRevokes(ctx context.Context) {
+	b := d.broker
+	if b == nil {
+		return
+	}
+	exists := func(key string) bool {
+		_, err := d.store.GetSession(key)
+		return err == nil
+	}
+	if err := b.RetryRevokes(ctx, exists); err != nil {
+		log.Printf("warning: retry revoke of broker tokens: %v", err)
 	}
 }
 

@@ -301,3 +301,33 @@ func TestBrokerRetryPassRevokesTokensOfSeatsThatAreGone(t *testing.T) {
 		t.Errorf("live tokens after the provider recovered = %v, want only the live seat's", live)
 	}
 }
+
+// The retry pass runs on its own tick, not only when a test calls it.
+func TestRunBrokerRetryRetriesOnATick(t *testing.T) {
+	d := newHandlerDaemon(t)
+	m := broker.NewMock(15*time.Minute, time.Now)
+	fd := &flakyRevokeDriver{Driver: m}
+	d.UseBrokerDriver(fd, "/opt/marvel/credential-helper")
+	key, token := registerSession(t, d, "agent-0", true)
+	if resp := d.handleBrokerToken(context.Background(), brokerParams(t, key, token)); resp.Error != "" {
+		t.Fatalf("broker.token: %s", resp.Error)
+	}
+	fd.down.Store(true)
+	if err := d.sessMgr.Delete(key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	fd.down.Store(false)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { d.RunBrokerRetry(ctx, 10*time.Millisecond); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(m.Live()) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens after the loop ran = %v, want none", live)
+	}
+}
