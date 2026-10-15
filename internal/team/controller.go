@@ -918,6 +918,12 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 		if _, ok := known[sess.Role]; ok {
 			continue
 		}
+		// A session made by marvel run carries no generation. It belongs to
+		// the operator, not to the manifest, so a role the manifest does not
+		// declare is no reason to drain it.
+		if sess.Generation == 0 {
+			continue
+		}
 		if err := c.sessMgr.Delete(sess.Key()); err != nil {
 			log.Printf("reconcile: delete orphaned session %s (role %s removed): %v", sess.Key(), sess.Role, err)
 			continue

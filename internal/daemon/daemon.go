@@ -2126,7 +2126,19 @@ type runParams struct {
 	// the caller's cwd. WorkDirDefault says the caller did not name it.
 	WorkDir        string `json:"workdir,omitempty"`
 	WorkDirDefault bool   `json:"workdir_default,omitempty"`
+	// Mode is "headless" or empty (interactive). Prompt is the request a
+	// headless run carries. Env is merged over the constructed environment.
+	// Name fixes the session name, so the key is predictable; empty keeps the
+	// clock-derived name.
+	Mode   string            `json:"mode,omitempty"`
+	Prompt string            `json:"prompt,omitempty"`
+	Env    map[string]string `json:"env,omitempty"`
+	Name   string            `json:"name,omitempty"`
 }
+
+// runNamePattern is the shape a --name may take: one path element that cannot
+// read as a flag, so the key stays workspace/name.
+var runNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func (d *Daemon) handleRun(params json.RawMessage) Response {
 	var p runParams
@@ -2142,6 +2154,21 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	}
 	if p.Role == "" {
 		p.Role = "adhoc"
+	}
+
+	mode := api.RuntimeModeInteractive
+	switch p.Mode {
+	case "":
+	case string(api.RuntimeModeHeadless):
+		mode = api.RuntimeModeHeadless
+		if p.Prompt == "" {
+			return Response{Error: "headless run needs a prompt"}
+		}
+	default:
+		return Response{Error: fmt.Sprintf("unknown run mode %q (want headless)", p.Mode)}
+	}
+	if p.Name != "" && !runNamePattern.MatchString(p.Name) {
+		return Response{Error: fmt.Sprintf("invalid session name %q (letters, digits, dot, dash and underscore; no leading dash)", p.Name)}
 	}
 
 	// Placement is checked before anything is created, so a refused run leaves no
@@ -2160,6 +2187,9 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		Command: p.RuntimeCommand,
 		Args:    p.RuntimeArgs,
 		Script:  p.Script,
+		Mode:    mode,
+		Prompt:  p.Prompt,
+		Env:     p.Env,
 	}
 
 	// An ad-hoc run bypasses the controller entirely, so a controller-only
@@ -2172,8 +2202,12 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 		}
 	}
 
+	name := p.Name
+	if name == "" {
+		name = fmt.Sprintf("run-%d", time.Now().UTC().UnixMilli())
+	}
 	sess := &api.Session{
-		Name:      fmt.Sprintf("run-%d", time.Now().UTC().UnixMilli()),
+		Name:      name,
 		Workspace: p.Workspace,
 		Team:      p.Team,
 		Role:      p.Role,
