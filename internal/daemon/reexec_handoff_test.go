@@ -206,7 +206,9 @@ func TestHandoffRefusesAKindItDoesNotKnowOnTheWayIn(t *testing.T) {
 
 func TestProbeAcceptsATargetThatSaysItCanReadTheHandoff(t *testing.T) {
 	exe := scriptTarget(t, `echo '{"reexec_handoff":1}'`)
-	if err := probeReexecTarget(exe, 2*time.Second); err != nil {
+	// Production allows 2s; this positive case is given room, since a loaded race
+	// build can take longer than that to start a shell script.
+	if err := probeReexecTarget(exe, 30*time.Second); err != nil {
 		t.Errorf("a capable target was declined: %v", err)
 	}
 }
