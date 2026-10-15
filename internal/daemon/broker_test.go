@@ -3,8 +3,9 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,21 +170,36 @@ func TestBrokerRefusesATokenAskMadeWhileTheSeatIsBeingDeleted(t *testing.T) {
 }
 
 // endingDriver reports the seat's end from inside Issue, as a delete that
-// lands mid-ask would, and fails every Revoke.
+// lands mid-ask would, and fails every Revoke with an error that echoes the
+// bearer value, as an identity provider's error body can.
 type endingDriver struct {
 	broker.Driver
 	onIssue func()
+
+	mu    sync.Mutex
+	value string
 }
 
 func (e *endingDriver) Issue(ctx context.Context, r broker.Request) (broker.Token, error) {
 	tok, err := e.Driver.Issue(ctx, r)
+	e.mu.Lock()
+	e.value = tok.Value
+	e.mu.Unlock()
 	if e.onIssue != nil {
 		e.onIssue()
 	}
 	return tok, err
 }
 
-func (e *endingDriver) Revoke(context.Context, broker.Token) error { return errors.New("idp down") }
+func (e *endingDriver) Revoke(_ context.Context, t broker.Token) error {
+	return fmt.Errorf("idp refused revoke of bearer %s", t.Value)
+}
+
+func (e *endingDriver) lastValue() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.value
+}
 
 // A refused ask whose token could not be revoked is the one case where the
 // daemon's refusal hides a live credential, so the daemon must say so.
@@ -208,7 +224,30 @@ func TestBrokerTokenLogsATokenItCouldNotRevokeAfterTheSeatEnded(t *testing.T) {
 	if !strings.Contains(out, key) || !strings.Contains(out, "revoke") {
 		t.Errorf("log = %q, want a warning naming the session and the failed revoke", out)
 	}
-	if strings.Contains(out, "mock.") {
-		t.Errorf("log carries a token value: %q", out)
+	if v := ed.lastValue(); v == "" || strings.Contains(out, v) {
+		t.Errorf("log carries the token value %q: %q", v, out)
+	}
+}
+
+// The warning for a failed revoke at the end of a seat logs what the driver
+// said, which can echo the bearer value.
+func TestBrokerRevokeWarningCarriesNoTokenValue(t *testing.T) {
+	d := newHandlerDaemon(t)
+	ed := &endingDriver{Driver: broker.NewMock(15*time.Minute, time.Now)}
+	d.UseBrokerDriver(ed, "/opt/marvel/credential-helper")
+	key, token := registerSession(t, d, "agent-0", true)
+	if resp := d.handleBrokerToken(context.Background(), brokerParams(t, key, token)); resp.Error != "" {
+		t.Fatalf("broker.token: %s", resp.Error)
+	}
+	logs := captureLog(t)
+
+	d.sessMgr.SessionEnded(key)
+
+	out := logs.String()
+	if !strings.Contains(out, "revoke") {
+		t.Fatalf("log = %q, want a warning for the failed revoke", out)
+	}
+	if v := ed.lastValue(); v == "" || strings.Contains(out, v) {
+		t.Errorf("log carries the token value %q: %q", v, out)
 	}
 }

@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -113,7 +115,12 @@ func TestIssueThatBeganAfterTheRevokeIsNotRefused(t *testing.T) {
 	}
 }
 
-// failingRevokeDriver fails Revoke while fail is set.
+// errIdpRefused is the cause a failing driver wraps, so a test can tell the
+// original error survives whatever the broker does to its text.
+var errIdpRefused = errors.New("idp refused the revoke")
+
+// failingRevokeDriver fails Revoke while fail is set, with an error that
+// echoes the bearer value as an identity provider's error body can.
 type failingRevokeDriver struct {
 	Driver
 	mu   sync.Mutex
@@ -131,7 +138,7 @@ func (f *failingRevokeDriver) Revoke(ctx context.Context, t Token) error {
 	fail := f.fail
 	f.mu.Unlock()
 	if fail {
-		return errors.New("idp down")
+		return fmt.Errorf("%w: bearer %s", errIdpRefused, t.Value)
 	}
 	return f.Driver.Revoke(ctx, t)
 }
@@ -163,5 +170,84 @@ func TestIssueKeepsATokenItCouldNotRevokeForTheNextRevoke(t *testing.T) {
 	}
 	if live := m.Live(); len(live) != 0 {
 		t.Errorf("live tokens after the second revoke = %v, want none: the failed self-revoke was forgotten", live)
+	}
+}
+
+// A driver's revoke error can echo the request, bearer value included. The
+// broker's errors are logged by callers, so none may carry the value, and the
+// original must stay reachable with errors.Is.
+func TestRevokeErrorsCarryNoTokenValue(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	b := New(f, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+	tok, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	f.setFail(true)
+
+	err = b.RevokeSession(context.Background(), "ws/t/r-g1-0")
+	if err == nil {
+		t.Fatal("RevokeSession with a failing driver returned nil")
+	}
+	if strings.Contains(err.Error(), tok.Value) {
+		t.Errorf("RevokeSession error carries the token value: %q", err)
+	}
+	if !errors.Is(err, errIdpRefused) {
+		t.Errorf("RevokeSession error = %v, want the driver's error still reachable with errors.Is", err)
+	}
+}
+
+func TestSelfRevokeErrorCarriesNoTokenValue(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	g := newGateDriver(f)
+	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+
+	res := issueAsync(b, "ws/t/r-g1-0", "hb")
+	waitFor(t, g.entered, "the driver to start issuing")
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	f.setFail(true)
+	close(g.release)
+
+	r := <-res
+	if !errors.Is(r.err, ErrUnauthorized) || !errors.Is(r.err, errIdpRefused) {
+		t.Fatalf("Issue error = %v, want ErrUnauthorized with the driver's error reachable", r.err)
+	}
+	for _, id := range m.Live() {
+		if strings.Contains(r.err.Error(), "mock."+id) {
+			t.Errorf("Issue error carries the token value: %q", r.err)
+		}
+	}
+}
+
+// A revoke that fails must not make the broker forget the token: the next
+// revoke for the seat retries it.
+func TestRevokeSessionKeepsATokenWhoseRevokeFailed(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	b := New(f, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+	if _, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	f.setFail(true)
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err == nil {
+		t.Fatal("RevokeSession with a failing driver returned nil")
+	}
+	f.setFail(false)
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("second RevokeSession: %v", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens after the retry = %v, want none: the failed revoke was forgotten", live)
 	}
 }
