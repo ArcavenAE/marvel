@@ -114,6 +114,14 @@ type Supervisor struct {
 	// compares this to the currently stored seed to tell rotation from an
 	// identical re-put.
 	leafSeedFP string
+	// leafStateKnown is false for an adopted broker whose sidecar predates
+	// the leaf_seed_fp field (schema 1): it then cannot be said whether the
+	// broker holds a leaf seed. True for a broker this process spawned.
+	leafStateKnown bool
+	// leafLossCause is what the daemon knows about why it starts without a
+	// leaf credential the broker holds (see SetLeafLossCause). Empty reads as
+	// "unknown".
+	leafLossCause string
 	cancel     context.CancelFunc
 	watchDone  chan struct{}
 
@@ -171,6 +179,12 @@ type Status struct {
 	// Set only with an up or down reading.
 	LeafObservedAt string `json:"leaf_observed_at,omitempty"`
 	LeafValidUntil string `json:"leaf_valid_until,omitempty"`
+	// LeafSource says where the broker's leaf credential stands, with a hub
+	// configured: "store" (this daemon's store holds a seed), "dropped-on-adopt"
+	// (the adopted broker was started with a seed and the store holds none), or
+	// "unknown" (an adopted broker whose sidecar predates the record). Empty
+	// when no hub is configured or no leaf seed was ever involved.
+	LeafSource string `json:"leaf_source,omitempty"`
 	// Structure is the structural-health reading on a managed broker
 	// (provisioned, authorized, tls, what is missing); nil before the first
 	// reading and on an adopted or external bus, where marvel holds no
@@ -277,6 +291,12 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	case pidStateProven:
 		if s.listenerAnswers(time.Second) {
 			s.pid, s.adopted, s.child = v.pid, true, v.child
+			// What the broker was spawned with, from the sidecar the spawning
+			// daemon wrote: not from this daemon's store, which a reexec or a
+			// restart leaves empty, and not by a re-write of the sidecar.
+			s.leafStateKnown = v.rec.leafStateKnown()
+			s.leafSeedFP = v.rec.LeafSeedFP
+			s.leafSeedInEnv = v.rec.LeafSeedFP != ""
 			log.Printf("bus: adopted running nats-server pid %d on %s", v.pid, s.mgr.bus.Listen)
 			// The broker still holds the passwords the previous daemon minted;
 			// this daemon has just rendered fresh ones. Reload before anything
@@ -375,7 +395,7 @@ func (s *Supervisor) classifyPidfile() pidVerdict {
 		}
 		return pidVerdict{pid: pid, kind: pidStateStale, reason: reason}
 	}
-	return pidVerdict{pid: pid, kind: pidStateProven, child: c}
+	return pidVerdict{pid: pid, kind: pidStateProven, child: c, rec: rec}
 }
 
 // becomeReady waits for the listener, runs AfterReady, marks ready, and
@@ -400,6 +420,9 @@ func (s *Supervisor) becomeReady(ctx context.Context, how string) error {
 	s.emit(events.KindBusStarted, events.SeverityInfo, fmt.Sprintf("nats-server %s: pid %d on %s, domain %s", how, s.pid, s.mgr.bus.Listen, s.mgr.Domain()))
 	if s.mgr.bus.HubURL != "" && !s.mgr.leafEnrolled() {
 		s.emit(events.KindBusLeafUnenrolled, events.SeverityWarning, fmt.Sprintf("hub %s is configured but no %s credential is in the store; running local-only until one is pushed", s.mgr.bus.HubURL, "bus/leaf"))
+	}
+	if how == "adopted" {
+		s.reportLeafOnAdopt()
 	}
 	// Hand the child to the watcher here, under the lock the caller holds,
 	// rather than letting it read s.cmd later: a Stop that lands first would
@@ -454,7 +477,13 @@ func (s *Supervisor) spawnLocked() error {
 			spawned = c
 			err = os.MkdirAll(filepath.Dir(s.pidFile), 0o700)
 			if err == nil {
-				err = writeIdentity(sidecarPath(s.pidFile), c.Pid(), c.Identity(), s.now())
+				// The leaf seed's fingerprint is read from the environment
+				// this child was given, never from the store (aae-orc-4h9xp).
+				fp := ""
+				if v, ok := envValue(cmd.Env, LeafSeedEnv); ok {
+					fp = SeedFingerprint([]byte(v))
+				}
+				err = writeIdentityLeaf(sidecarPath(s.pidFile), c.Pid(), c.Identity(), s.now(), fp)
 			}
 			if err != nil {
 				_ = os.Remove(sidecarPath(s.pidFile))
@@ -473,6 +502,7 @@ func (s *Supervisor) spawnLocked() error {
 	// later rotation (a different seed value) is distinguished from an
 	// identical re-put.
 	s.leafSeedInEnv = hasEnv(child.Env, LeafSeedEnv)
+	s.leafStateKnown = true
 	if v, ok := envValue(child.Env, LeafSeedEnv); ok {
 		s.leafSeedFP = SeedFingerprint([]byte(v))
 	} else {
@@ -864,6 +894,62 @@ func (s *Supervisor) LeafSeedFingerprint() string {
 	return s.leafSeedFP
 }
 
+// SetLeafLossCause records what this daemon knows about why a leaf credential
+// the broker holds is missing from its store, for the event Start raises on an
+// adopt. A successor that never received a handoff cannot tell a declined
+// handoff from a plain restart, so the cause it can name is what it observed:
+// "handoff unread" when the handoff was announced and could not be read.
+// Empty reads as "unknown".
+func (s *Supervisor) SetLeafLossCause(cause string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leafLossCause = cause
+}
+
+// leafSourceLocked is Status.LeafSource. Caller holds s.mu.
+func (s *Supervisor) leafSourceLocked() string {
+	switch {
+	case s.mgr.bus.HubURL == "":
+		return ""
+	case s.adopted && !s.leafStateKnown:
+		return "unknown"
+	case s.mgr.leafEnrolled():
+		return "store"
+	case s.leafSeedFP != "":
+		return "dropped-on-adopt"
+	}
+	return ""
+}
+
+// reportLeafOnAdopt raises bus.leaf.dropped when the broker this daemon just
+// adopted holds a leaf seed this daemon's store does not, or holds a different
+// one. The adopt's SIGHUP has already re-read the conf, and a conf rendered
+// from an empty store carries no leafnodes block, so the hub link is gone. It
+// names the cause and the command, never the seed. Caller holds s.mu.
+func (s *Supervisor) reportLeafOnAdopt() {
+	if s.mgr.bus.HubURL == "" || !s.leafStateKnown || s.leafSeedFP == "" {
+		return
+	}
+	cause := ""
+	switch {
+	case !s.mgr.leafEnrolled():
+		cause = s.leafLossCause
+		if cause == "" {
+			cause = "unknown"
+		}
+	case s.Env != nil:
+		if v, ok := envValue(s.Env(), LeafSeedEnv); ok && SeedFingerprint([]byte(v)) != s.leafSeedFP {
+			cause = "seed differs from the broker's"
+		}
+	}
+	if cause == "" {
+		return
+	}
+	s.emit(events.KindBusLeafDropped, events.SeverityError, fmt.Sprintf(
+		"the hub leaf credential is not carried over: the adopted broker pid %d was started with a leaf seed and this daemon's store does not hold that one (cause: %s); the link to %s is not up until the seed is pushed again: marvel credential put bus/leaf --value-file <seed-file>",
+		s.pid, cause, s.mgr.bus.HubURL))
+}
+
 // Status snapshots the broker for `marvel bus status`.
 func (s *Supervisor) Status() Status {
 	s.mu.Lock()
@@ -899,6 +985,7 @@ func (s *Supervisor) Status() Status {
 	default:
 		st.Leaf = "down"
 	}
+	st.LeafSource = s.leafSourceLocked()
 	if (st.Leaf == "up" || st.Leaf == "down") && !s.leafSince.IsZero() {
 		st.LeafSince = s.leafSince.Format(time.RFC3339)
 		st.LeafFor = leafDuration(s.now().Sub(s.leafSince))
@@ -1018,6 +1105,7 @@ func (s *Supervisor) emit(kind events.Kind, sev events.Severity, msg string) {
 
 // pidVerdict is what a pidfile proved at start.
 type pidVerdict struct {
+	rec    identityRecord // the sidecar, set for a proven verdict
 	pid    int
 	kind   string // none, proven, stale or legacy
 	reason string // for stale: dead, start, exe, argv, sidecar-pid or sidecar
