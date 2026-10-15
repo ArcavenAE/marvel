@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import Decimal as D
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -109,6 +110,14 @@ class RefusesUnreadableInput(Case):
         self.append("branch.jsonl", "not json\n{{{\n")
         self.assert_refused(self.cost(), "bad_lines")
 
+    def test_a_missing_otel_file_is_refused_not_a_traceback(self):
+        os.remove(self.otel)
+        self.assert_refused(self.cost(), "unreadable_input")
+
+    def test_a_missing_transcript_is_refused_not_a_traceback(self):
+        os.remove(os.path.join(self.run_dir, "branch.jsonl"))
+        self.assert_refused(self.cost(), "unreadable_input")
+
     def test_an_otel_file_cut_mid_line(self):
         with open(self.otel, "a") as f:
             f.write('{"event": "api_request", "query_sou')
@@ -182,8 +191,8 @@ class StatesWhatItAssumes(Case):
         p = self.cost()
         row = json.loads(p.stdout)["otel_only"]["auto_mode_classifier"]
         self.assertEqual(row["tokens"]["creation"], 40)
-        self.assertEqual(row["usd"], "0.000320")
-        self.assertEqual(row["usd_if_creation_was_1h"], "0.000380")
+        self.assertEqual(D(row["usd"]), D("0.000320"))
+        self.assertEqual(D(row["usd_if_creation_was_1h"]), D("0.000380"))
 
     def test_unsplit_writes_are_named_as_an_underprice_for_the_defaults_cell(self):
         u = {"input_tokens": 1, "cache_creation_input_tokens": 70, "cache_read_input_tokens": 0, "output_tokens": 1}

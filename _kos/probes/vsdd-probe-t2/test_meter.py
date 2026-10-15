@@ -114,11 +114,12 @@ class SmokeCheckIsStubbed(unittest.TestCase):
 
 
 class MeterCli(unittest.TestCase):
-    def test_cli_prints_the_cost_json(self):
+    def test_the_fixture_has_an_unmeasured_supervisor_so_cost_refuses_it(self):
         p = subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "meter.py"), "cost", RUN, "--otel", OTEL],
                            capture_output=True, text=True)
-        self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(json.loads(p.stdout)["total_usd"], "0.021002")
+        self.assertEqual(p.returncode, 4, p.stderr)
+        self.assertIn("unmeasured_seat: sup", p.stderr)
+        self.assertEqual(p.stdout.strip(), "")
 
 
 if __name__ == "__main__":

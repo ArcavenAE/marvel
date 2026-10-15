@@ -23,6 +23,33 @@ python3 -I -B _kos/probes/vsdd-probe-t2/meter.py cost RUN_DIR --otel OTEL.jsonl
 python3 -I -B _kos/probes/vsdd-probe-t2/meter.py reconcile RUN_DIR --otel OTEL.jsonl
 ```
 
+## Fail closed
+
+`meter.py cost` prices a run only when it has read all of it. Otherwise it
+prints no cost, writes each cause to stderr as `refused: <cause>: <detail>`
+and exits 4 (3 is the smoke stub; `reconcile` exits 1 on a failed
+comparison). The causes:
+
+| cause | when |
+|---|---|
+| `no_requests` | no transcript request was read |
+| `unmeasured_seat` | any seat has `transcript: null` |
+| `seat_no_requests` | a measured seat has no requests |
+| `bad_lines` | any transcript line was not JSON (any at all, so a cut file never prices) |
+| `bad_otel` | an OTEL line was not JSON |
+| `no_otel_events` | the OTEL file has no `api_request` event |
+| `unpriced_model` | a transcript or OTEL model has no price in `prices.json` |
+| `undeclared_otel_source` | an OTEL source is in neither `source_map` group nor `otel_only` |
+| `reconcile_failed` | transcript and OTEL totals differ by more than `--pct` (default 1) in any class, or both sides are empty |
+| `unreadable_input` | a named file is missing or `run.json` is not JSON |
+
+A misnamed main-thread source lands under `undeclared_otel_source` and
+`reconcile_failed`, not in the total. `cost` also prints what it assumed:
+unsplit writes at the 5-minute rate (an underprice in the defaults cell),
+OTEL-only creation tokens at the 5-minute rate with a per-row
+`usd_if_creation_was_1h` beside it, and that the 1-hour pin is checked on
+transcript writes only.
+
 ## run.json
 
 ```json
@@ -37,7 +64,8 @@ python3 -I -B _kos/probes/vsdd-probe-t2/meter.py reconcile RUN_DIR --otel OTEL.j
   ],
   "phases": [{"phase": "p3", "from": "<RFC3339>", "to": "<RFC3339>"}],
   "waves": [{"wave": "c1-w1", "first_dispatch": "<RFC3339>", "last_terminal": "<RFC3339>"}],
-  "source_map": {"main": ["<OTEL query_source>"], "subagent": ["<OTEL query_source>"]}
+  "source_map": {"main": ["<OTEL query_source>"], "subagent": ["<OTEL query_source>"]},
+  "otel_only": ["<OTEL query_source with no transcript, such as the permission classifier>"]
 }
 ```
 

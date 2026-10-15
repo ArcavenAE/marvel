@@ -220,6 +220,7 @@ def read_run(run_dir, ceiling=None):
                   "one_hour_records": [{"message_id": q["id"], "spawn": q["spawn"], "write_1h": q["tokens"]["write_1h"]}
                                        for q in sorted(allreqs, key=lambda q: q["ts"]) if q["tokens"]["write_1h"] > 0]}
     out["unsplit_writes"] = [q["id"] for q in allreqs if q["unsplit"]]
+    out["unsplit_write_tokens"] = sum(q["write"] for q in allreqs if q["unsplit"])
 
     def undetermined(q):
         return q["write"] == 0 and q["tokens"]["read"] == 0
