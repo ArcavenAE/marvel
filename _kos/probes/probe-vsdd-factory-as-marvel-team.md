@@ -332,14 +332,14 @@ Committed beside this brief before the pilot. Every run's marker records its sha
 ## 9. Judge and metrics
 
 **9.1 The probe acceptance suite.**
-- **What it is:** executable black-box tests on the test project's public interface, run by the probe operator. It is not an LLM. The factory's holdout-evaluator is an LLM role inside each arm (`agents/holdout-evaluator.md`, `model: opus`).
+- **What it is:** executable black-box tests on the test project's public interface, run by a scoring seat on a host that is not the probe host. It is not an LLM. The factory's holdout-evaluator is an LLM role inside each arm (`agents/holdout-evaluator.md`, `model: opus`).
 - **Size:** at least 30 scenarios, three or more per story, each tagged with one story id.
-- **Authorship:** any free seat may write it (ruled), provided it is a seat that runs neither arm. It writes it separate from the factory's own holdouts, against the brief at M2. After the seed (M4), the author receives only the seed's story ids, titles and wave assignments, never story bodies or acceptance criteria, and adds a story tag to each scenario (M4b). The M2 to M4b diff must touch tags only, and is published with the finding. The suite is stored outside every arm's worktree, and no arm run, the seed run included, has a read path to it.
+- **Authorship:** any free seat may write it (ruled), provided it is a seat that runs neither arm. It writes it separate from the factory's own holdouts, against the brief at M2. After the seed (M4), the author receives only the seed's story ids, titles and wave assignments, never story bodies or acceptance criteria, and adds a story tag to each scenario (M4b). The M2 to M4b diff must touch tags only, and is published with the finding. The suite is stored outside every arm's worktree, and no arm run, the seed run included, has a read path to it. So it is never kept in a public repository, nor in any repository the probe host's GitHub login can read, and its files never reach the probe host's disk. Where it is kept is an operator ruling; until then it lives in a local repository with no remote, on a host that is not the probe host.
 - **Controls before the freeze:**
   - the Phase 2 seed snapshot fails every scenario, or, if S8 failed, the test project's start commit does;
   - the author's reference solution passes every one;
   - a scenario that varies across three runs on the reference is fixed or removed.
-- **When it runs:** after verified completion, on a clean checkout of the run's final commit.
+- **When it runs:** after verified completion, on the scoring host, against a clean checkout of the run's final commit.
 
 **9.2 The canary.**
 - **The token:** a random 32-hex token, placed in a comment in every suite file.
