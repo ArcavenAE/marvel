@@ -70,8 +70,9 @@ content: |
   (a) not comparable: arm B cannot reproduce a named step, listed, or
       neither arm accepts a story on the test project, or a run's widest wave
       is under 2;
-  (b) instrument blind: even a generous reading of the noise floor is wider
-      than the pre-registered smallest effect;
+  (b) instrument blind: even a generous reading of the noise floor of cost
+      per accepted story is wider than its pre-registered smallest effect
+      (20%, ruled 2026-10-15);
   (c) a comparison with stated power;
   (d) not distinguishable at the pre-registered ceiling.
   The answer holds for the pinned commit, seed sha and its wave widths, test
@@ -109,6 +110,13 @@ content: |
 
   UPSTREAM. The answer is evidence for vsdd-factory#410's `replatform`
   disposition. It does not decide it.
+
+  RULINGS (operator, 2026-10-15). Spend: the full ceiling, with every stop
+  rule kept. Verdict: one per axis, Holm-adjusted, cost first. Smallest
+  effect for cost: 20%. Permission mode: auto in both arms, classifier
+  requests metered. marvel surface: behind an experimental flag. Reader and
+  meter: probe-local scripts, not critic code. Suite author: any free seat
+  outside both arms. Open: the probe host.
 
   Valid until 2027-04-14, or until the next harness change to subagent forking,
   cache TTL defaults or agent teams, whichever comes first; the architect role
