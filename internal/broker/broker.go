@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -74,6 +75,29 @@ var (
 	// say so, because its own refusal hides a live credential.
 	ErrRevokeFailed = errors.New("broker: could not revoke a token issued to a seat that ended")
 )
+
+// scrubbedError hides a token's value in an error a driver returned about it.
+// A driver's error can echo the request, bearer value included, and callers
+// log what the broker returns. The original stays reachable with errors.Is
+// and errors.As.
+type scrubbedError struct {
+	err   error
+	value string
+}
+
+func (e *scrubbedError) Error() string {
+	return strings.ReplaceAll(e.err.Error(), e.value, "[token value withheld]")
+}
+
+func (e *scrubbedError) Unwrap() error { return e.err }
+
+// scrub wraps err so its text cannot carry t's value.
+func scrub(t Token, err error) error {
+	if err == nil || t.Value == "" {
+		return err
+	}
+	return &scrubbedError{err: err, value: t.Value}
+}
 
 // Broker issues tokens to authenticated seats and revokes them when the seat
 // ends.
@@ -153,7 +177,7 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 			b.mu.Lock()
 			b.issued[sessionKey] = append(b.issued[sessionKey], tok)
 			b.mu.Unlock()
-			return Token{}, fmt.Errorf("%w: %w: token %s: %w", ErrUnauthorized, ErrRevokeFailed, tok.ID, rerr)
+			return Token{}, fmt.Errorf("%w: %w: token %s: %w", ErrUnauthorized, ErrRevokeFailed, tok.ID, scrub(tok, rerr))
 		}
 		return Token{}, ErrUnauthorized
 	}
@@ -173,10 +197,19 @@ func (b *Broker) RevokeSession(ctx context.Context, sessionKey string) error {
 	}
 	b.mu.Unlock()
 	var errs []error
+	var failed []Token
 	for _, t := range toks {
 		if err := b.driver.Revoke(ctx, t); err != nil {
-			errs = append(errs, fmt.Errorf("revoke %s: %w", t.ID, err))
+			errs = append(errs, fmt.Errorf("revoke %s: %w", t.ID, scrub(t, err)))
+			failed = append(failed, t)
 		}
+	}
+	if len(failed) > 0 {
+		// A token the driver would not revoke is still live. Keep it for the
+		// next revoke for this seat.
+		b.mu.Lock()
+		b.issued[sessionKey] = append(failed, b.issued[sessionKey]...)
+		b.mu.Unlock()
 	}
 	return errors.Join(errs...)
 }
