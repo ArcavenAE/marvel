@@ -15,6 +15,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 var headerNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
@@ -326,7 +327,7 @@ func captureStderr(t *testing.T, fn func()) string {
 // already warns, so the warning must reach stderr once for the whole command.
 func TestHeaderDoesNotRepeatTheDaemonHomeWarning(t *testing.T) {
 	resolveFixture(t, false)
-	t.Setenv("MARVEL_HOME", t.TempDir())
+	t.Setenv("MARVEL_HOME", shorttmp.Dir(t))
 	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
 		resp := daemon.Response{DaemonHome: "/elsewhere/other-marvel"}
 		switch req.Method {

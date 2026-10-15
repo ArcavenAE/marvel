@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 // Not parallel: these set HOME and MARVEL_HOME.
 
 func TestConfigIsReadFromTheMarvelHomeRoot(t *testing.T) {
 	user := t.TempDir()
-	root := filepath.Join(t.TempDir(), "mh")
+	root := filepath.Join(shorttmp.Dir(t), "mh")
 	t.Setenv("HOME", user)
 	t.Setenv(paths.HomeEnv, root)
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -40,7 +41,7 @@ func TestConfigIsReadFromTheMarvelHomeRoot(t *testing.T) {
 
 func TestSaveWritesTheConfigUnderTheMarvelHomeRoot(t *testing.T) {
 	user := t.TempDir()
-	root := filepath.Join(t.TempDir(), "mh")
+	root := filepath.Join(shorttmp.Dir(t), "mh")
 	t.Setenv("HOME", user)
 	t.Setenv(paths.HomeEnv, root)
 
@@ -69,7 +70,7 @@ func TestConfigPathUnsetIsTheDefaultLayout(t *testing.T) {
 }
 
 func TestTheDefaultSocketIsUnderTheMarvelHomeRoot(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "mh")
+	root := filepath.Join(shorttmp.Dir(t), "mh")
 	t.Setenv(SocketEnv, "")
 	t.Setenv(paths.HomeEnv, root)
 	if got, want := ResolveSocket(), filepath.Join(root, "run", "marvel.sock"); got != want {
@@ -82,7 +83,7 @@ func TestTheDefaultSocketIsUnderTheMarvelHomeRoot(t *testing.T) {
 func TestMarvelHomeDoesNotMoveAClusterEntrysTilde(t *testing.T) {
 	user := t.TempDir()
 	t.Setenv("HOME", user)
-	t.Setenv(paths.HomeEnv, filepath.Join(t.TempDir(), "mh"))
+	t.Setenv(paths.HomeEnv, filepath.Join(shorttmp.Dir(t), "mh"))
 	if got, want := cleanPath("~/sockets/m.sock"), filepath.Join(user, "sockets", "m.sock"); got != want {
 		t.Errorf("cleanPath(~/sockets/m.sock) = %q, want %q", got, want)
 	}

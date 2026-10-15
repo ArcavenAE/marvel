@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 // The flag is applied before the command tree is built, because the daemon
@@ -15,7 +16,7 @@ import (
 // function writes is restored, and so none of them is parallel.
 
 func TestMarvelHomeFlagSetsTheRoot(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "mh")
+	root := filepath.Join(shorttmp.Dir(t), "mh")
 	for _, args := range [][]string{
 		{"marvel", "--marvel-home", root, "get", "sessions"},
 		{"marvel", "--marvel-home=" + root, "get", "sessions"},
@@ -33,8 +34,8 @@ func TestMarvelHomeFlagSetsTheRoot(t *testing.T) {
 }
 
 func TestMarvelHomeFlagBeatsTheVariable(t *testing.T) {
-	flagRoot := filepath.Join(t.TempDir(), "flag")
-	envRoot := filepath.Join(t.TempDir(), "env")
+	flagRoot := filepath.Join(shorttmp.Dir(t), "flag")
+	envRoot := filepath.Join(shorttmp.Dir(t), "env")
 	t.Setenv(paths.HomeEnv, envRoot)
 	if err := applyMarvelHomeFlag([]string{"marvel", "--marvel-home", flagRoot, "version"}); err != nil {
 		t.Fatal(err)
@@ -45,7 +46,7 @@ func TestMarvelHomeFlagBeatsTheVariable(t *testing.T) {
 }
 
 func TestNoFlagLeavesTheVariableAlone(t *testing.T) {
-	envRoot := filepath.Join(t.TempDir(), "env")
+	envRoot := filepath.Join(shorttmp.Dir(t), "env")
 	t.Setenv(paths.HomeEnv, envRoot)
 	if err := applyMarvelHomeFlag([]string{"marvel", "get", "sessions"}); err != nil {
 		t.Fatal(err)
@@ -209,7 +210,7 @@ func TestCobraAndThePreParseSeeTheSameValue(t *testing.T) {
 // clears one that is already set: not when the flag is absent, not when the
 // flag is refused, and not by leaving an empty value where there was none.
 func TestPreParseNeverClearsAnAlreadySetVariable(t *testing.T) {
-	envRoot := filepath.Join(t.TempDir(), "env")
+	envRoot := filepath.Join(shorttmp.Dir(t), "env")
 	t.Setenv(paths.HomeEnv, envRoot)
 	for name, args := range map[string][]string{
 		"no flag":         {"marvel", "get", "sessions"},
