@@ -251,3 +251,61 @@ func TestRevokeSessionKeepsATokenWhoseRevokeFailed(t *testing.T) {
 		t.Errorf("live tokens after the retry = %v, want none: the failed revoke was forgotten", live)
 	}
 }
+
+// Once a seat's row is gone nothing reports that key again, so a token whose
+// revoke failed needs a pass that retries keys with no session.
+func TestRetryRevokesRetriesTheKeysOfSeatsThatAreGone(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	b := New(f, multiAuth{})
+	for _, key := range []string{"ws/t/gone-g1-0", "ws/t/here-g1-0"} {
+		if _, err := b.Issue(context.Background(), key, "t"+key); err != nil {
+			t.Fatalf("Issue %s: %v", key, err)
+		}
+	}
+	f.setFail(true)
+	if err := b.RevokeSession(context.Background(), "ws/t/gone-g1-0"); err == nil {
+		t.Fatal("RevokeSession with a failing driver returned nil")
+	}
+	f.setFail(false)
+
+	exists := func(key string) bool { return key == "ws/t/here-g1-0" }
+	if err := b.RetryRevokes(context.Background(), exists); err != nil {
+		t.Fatalf("RetryRevokes: %v", err)
+	}
+	if live := m.Live(); len(live) != 1 {
+		t.Fatalf("live tokens after the pass = %v, want only the seat that still exists", live)
+	}
+	if err := b.RetryRevokes(context.Background(), exists); err != nil {
+		t.Fatalf("second RetryRevokes: %v", err)
+	}
+	if live := m.Live(); len(live) != 1 {
+		t.Errorf("live tokens after a second pass = %v, want the existing seat's token left alone", live)
+	}
+}
+
+// A pass that fails again keeps the token for the next pass.
+func TestRetryRevokesKeepsATokenItCannotRevokeYet(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	b := New(f, multiAuth{})
+	if _, err := b.Issue(context.Background(), "ws/t/gone-g1-0", "tws/t/gone-g1-0"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	f.setFail(true)
+	none := func(string) bool { return false }
+	if err := b.RetryRevokes(context.Background(), none); err == nil {
+		t.Fatal("RetryRevokes with a failing driver returned nil")
+	}
+	f.setFail(false)
+	if err := b.RetryRevokes(context.Background(), none); err != nil {
+		t.Fatalf("RetryRevokes after the driver recovered: %v", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens = %v, want none", live)
+	}
+}

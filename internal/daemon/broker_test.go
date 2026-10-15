@@ -3,9 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -249,5 +251,53 @@ func TestBrokerRevokeWarningCarriesNoTokenValue(t *testing.T) {
 	}
 	if v := ed.lastValue(); v == "" || strings.Contains(out, v) {
 		t.Errorf("log carries the token value %q: %q", v, out)
+	}
+}
+
+// flakyRevokeDriver fails Revoke while down is set.
+type flakyRevokeDriver struct {
+	broker.Driver
+	down atomic.Bool
+}
+
+func (f *flakyRevokeDriver) Revoke(ctx context.Context, t broker.Token) error {
+	if f.down.Load() {
+		return errors.New("idp down")
+	}
+	return f.Driver.Revoke(ctx, t)
+}
+
+// A seat deleted while the provider was down is not reported again, so the
+// daemon retries its tokens on a tick, and leaves a live seat's tokens alone.
+func TestBrokerRetryPassRevokesTokensOfSeatsThatAreGone(t *testing.T) {
+	d := newHandlerDaemon(t)
+	m := broker.NewMock(15*time.Minute, time.Now)
+	fd := &flakyRevokeDriver{Driver: m}
+	d.UseBrokerDriver(fd, "/opt/marvel/credential-helper")
+	goneKey, goneToken := registerSession(t, d, "agent-0", true)
+	hereKey, hereToken := registerSession(t, d, "agent-1", true)
+	for _, c := range []struct{ key, token string }{{goneKey, goneToken}, {hereKey, hereToken}} {
+		if resp := d.handleBrokerToken(context.Background(), brokerParams(t, c.key, c.token)); resp.Error != "" {
+			t.Fatalf("broker.token: %s", resp.Error)
+		}
+	}
+
+	fd.down.Store(true)
+	if err := d.sessMgr.Delete(goneKey); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if live := m.Live(); len(live) != 2 {
+		t.Fatalf("live tokens with the provider down = %v, want both", live)
+	}
+
+	d.retryBrokerRevokes(context.Background())
+	if live := m.Live(); len(live) != 2 {
+		t.Fatalf("live tokens after a pass with the provider still down = %v, want both", live)
+	}
+
+	fd.down.Store(false)
+	d.retryBrokerRevokes(context.Background())
+	if live := m.Live(); len(live) != 1 {
+		t.Errorf("live tokens after the provider recovered = %v, want only the live seat's", live)
 	}
 }
