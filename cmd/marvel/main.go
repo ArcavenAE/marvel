@@ -481,6 +481,8 @@ and adopt in one step, use 'marvel upgrade --daemon'.`,
 				return err
 			}
 			req, sent := reexecRequest()
+			obs := newReexecObserver()
+			before, _ := obs.startedAt()
 			resp, err := reexecSend(req)
 			if err != nil {
 				return err
@@ -491,8 +493,7 @@ and adopt in one step, use 'marvel upgrade --daemon'.`,
 			if note := reexecNote(resp, sent); note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
-			fmt.Println("marvel daemon re-executing in place; agents keep running")
-			return nil
+			return checkAfterReexec(cmd.OutOrStdout(), before, reexecHandoffOutcome(resp), obs)
 		},
 	}
 }
@@ -1990,6 +1991,8 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 					return err
 				}
 				req, sent := reexecRequest()
+				obs := newReexecObserver()
+				before, _ := obs.startedAt()
 				resp, err := reexecSend(req)
 				if err != nil {
 					return fmt.Errorf("sending daemon re-exec: %w", err)
@@ -2000,7 +2003,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				if note := reexecNote(resp, sent); note != "" {
 					fmt.Fprintln(os.Stderr, note)
 				}
-				return nil
+				return checkAfterReexec(cmd.OutOrStdout(), before, reexecHandoffOutcome(resp), obs)
 			}, cmd.OutOrStdout())
 		},
 	}
