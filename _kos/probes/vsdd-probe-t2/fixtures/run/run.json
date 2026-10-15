@@ -2,6 +2,7 @@
   "pinned_version": "2.1.283",
   "sharing_ceiling": 1000,
   "await_tools": ["await"],
+  "otel_only": ["auto_mode_classifier"],
   "seats": [
     {"name": "orch", "kind": "orchestrator", "role": "vsdd-orchestrator", "transcript": "orch.jsonl"},
     {"name": "r1-c1-w1-g1-a1", "kind": "branch", "role": "vsdd-implementer", "transcript": "branch.jsonl"},
