@@ -2762,6 +2762,11 @@ type StopResult struct {
 	// Teardown deletes recorded sessions and kills recorded workspaces'
 	// tmux sessions, so anything in here survives it.
 	Unowned []string `json:"unowned,omitempty"`
+	// TransientCredentials is how many in-memory credentials this daemon holds,
+	// which a detach drops (a reexec carries them; a stop does not). A pointer,
+	// so a zero is present and an older daemon's answer, which has no field, is
+	// not mistaken for it. Never a value (aae-orc-4h9xp).
+	TransientCredentials *int `json:"transient_credentials,omitempty"`
 }
 
 // stopReport builds the response for a stop request, surveying what a
@@ -2781,6 +2786,8 @@ type StopResult struct {
 // shutdown goroutine ends the process. See ArcavenAE/marvel#92.
 func (d *Daemon) stopReport(teardown bool, mode string) Response {
 	res := StopResult{Status: "stopping", Mode: mode}
+	held := len(d.store.ListCredentials())
+	res.TransientCredentials = &held
 	if teardown {
 		found, err := d.sessMgr.UnrecordedTmuxState()
 		if err != nil {

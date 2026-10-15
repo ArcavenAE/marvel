@@ -2539,6 +2539,13 @@ the acts that destroy that.`,
 			if !teardown {
 				if keepBus {
 					fmt.Println("marvel daemon detaching, agents keep running, bus left up for the next daemon")
+					var result daemon.StopResult
+					if len(resp.Result) > 0 {
+						_ = json.Unmarshal(resp.Result, &result)
+					}
+					if note := stopKeepBusNotice(result.TransientCredentials); note != "" {
+						fmt.Fprintln(os.Stderr, note)
+					}
 				} else {
 					fmt.Println("marvel daemon detaching, agents keep running")
 				}

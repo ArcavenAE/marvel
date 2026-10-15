@@ -57,3 +57,18 @@ func leafSourceRows(st bus.Status) string {
 func requireLeafError(why string) error {
 	return fmt.Errorf("--require-leaf: the hub leaf is not up (%s)", why)
 }
+
+// stopKeepBusNotice says what `marvel stop --keep-bus` costs: a detach keeps
+// the broker but drops the daemon's in-memory credentials, so a leafed cluster
+// is off the hub until the seed is pushed again. held is the daemon's own count;
+// nil means an older daemon that does not report one. It never refuses the stop:
+// stop --keep-bus is the documented recovery path.
+func stopKeepBusNotice(held *int) string {
+	switch {
+	case held == nil:
+		return "note: any transient credentials the daemon holds will be dropped (they live in memory only); after the next daemon starts, push the leaf credential again: " + repushCommand
+	case *held == 0:
+		return ""
+	}
+	return fmt.Sprintf("note: %d transient credential(s) will be dropped (they live in memory only); after the next daemon starts, push the leaf credential again: %s", *held, repushCommand)
+}
