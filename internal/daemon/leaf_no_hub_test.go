@@ -15,7 +15,7 @@ func TestLeafToggleWithoutAHubExplainsTheStartTimeConfig(t *testing.T) {
 	for _, method := range []string{"bus.leaf.connect", "bus.leaf.disconnect"} {
 		d := newHandlerDaemon(t)
 		attachTestBus(t, d, "")
-		d.busSup = new(bus.Supervisor) // the handler answers before it uses the broker
+		d.lifecycle = bus.NewLifecycle(new(bus.Supervisor)) // the handler answers before it uses the broker
 
 		resp := d.dispatchAs(Request{Method: method}, localCaller())
 		if resp.Error == "" {
