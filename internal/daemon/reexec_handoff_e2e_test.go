@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nkeys"
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/events"
@@ -158,13 +161,17 @@ func TestACarriedLeafSeedSurvivesAReexecWithTheBrokerUntouched(t *testing.T) {
 	}
 	for _, method := range []string{"bus.status", "credential.list"} {
 		resp := d2.dispatchAs(Request{Method: method}, localCaller())
+		if resp.Error != "" || len(resp.Result) == 0 {
+			t.Errorf("%s gave no answer to search (%q), so its check would be empty", method, resp.Error)
+		}
 		surfaces[method] = string(resp.Result) + resp.Error
 	}
 	get, _ := json.Marshal(map[string]string{"name": busLeafCredential})
-	for _, method := range []string{"credential.get", "credential.describe"} {
-		resp := d2.dispatchAs(Request{Method: method, Params: get}, localCaller())
-		surfaces[method] = string(resp.Result) + resp.Error
+	resp := d2.dispatchAs(Request{Method: "credential.get", Params: get}, localCaller())
+	if resp.Error != "" || len(resp.Result) == 0 {
+		t.Errorf("credential.get gave no answer to search (%q), so its check would be empty", resp.Error)
 	}
+	surfaces["credential.get"] = string(resp.Result) + resp.Error
 	for name, text := range surfaces {
 		if strings.Contains(text, seed) {
 			t.Errorf("%s carries the seed's bytes", name)
@@ -286,5 +293,57 @@ func TestAChildSpawnedBetweenPrepareAndExecInheritsNoHandoffDescriptor(t *testin
 	}
 	if !open(h.rfd) {
 		t.Errorf("the probe cannot see descriptor %d even after close-on-exec is cleared; the check proves nothing", h.rfd)
+	}
+}
+
+// The cause the successor can name reaches the supervisor through attachBus,
+// the path production takes: an announced handoff that cannot be read.
+func TestAttachBusHandsTheUnreadCauseToTheSupervisor(t *testing.T) {
+	if _, err := exec.LookPath("nats-server"); err != nil {
+		t.Skip("nats-server not on PATH")
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	d1 := newHandlerDaemon(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MARVEL_SOCKET", "")
+	sock := filepath.Join(home, ".marvel", "run", "marvel.sock")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := "clusters:\n  - name: c1\n    socket: " + sock + "\n    bus:\n      managed: true\n      listen: 127.0.0.1:" +
+		strconv.Itoa(port) + "\n      hub:\n        url: nats-leaf://127.0.0.1:1\ncurrent_cluster: c1\n"
+	if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kp, _ := nkeys.CreateUser()
+	seed, _ := kp.Seed()
+	putDummy(t, d1, busLeafCredential, string(seed))
+	if err := d1.attachServices(sock); err != nil {
+		t.Fatal(err)
+	}
+	d1.keepBus = true
+	d1.stopBus(false)
+
+	// The successor was told to read a handoff and cannot.
+	t.Setenv(handoffEnvVar, "407")
+	d2, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// attachServices starts the broker, which adopts the one d1 left.
+	if err := d2.attachServices(sock); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d2.stopBus(true) })
+	evs := d2.events.Snapshot(events.Filter{Kind: events.KindBusLeafDropped}, 0)
+	if len(evs) != 1 || !strings.Contains(evs[0].Message, "handoff unread") {
+		t.Fatalf("bus.leaf.dropped events = %+v, want one that names the cause %q", evs, "handoff unread")
 	}
 }
