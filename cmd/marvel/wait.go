@@ -21,6 +21,9 @@ const (
 	waitCrashed   = 2
 	waitTimeout   = 3
 	waitUnknown   = 4
+	// waitDaemonError is a daemon the client cannot reach or one that answers
+	// with an error. It says nothing about the session, so it is not waitFailed.
+	waitDaemonError = 5
 )
 
 // exitError carries a process exit code out of a command. main exits with

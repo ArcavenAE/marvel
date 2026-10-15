@@ -262,3 +262,47 @@ func TestWaitIsRefusedWithoutExperimental(t *testing.T) {
 		t.Errorf("%d requests reached the daemon, want 0", n)
 	}
 }
+
+// A daemon the client cannot reach, or one that answers with an error, says
+// nothing about the session. wait must not report that as exit 1, which means
+// the session failed: a caller that retries a failed session would start a
+// second one while the first is still running. It gets its own code, 5.
+func TestWaitReportsAnUnreachableDaemonAsExit5NotFailed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	oldSocket, oldCluster, oldGiven := socketPath, clusterName, clusterFlagGiven
+	socketPath, clusterName, clusterFlagGiven = "", "", false
+	t.Cleanup(func() { socketPath, clusterName, clusterFlagGiven = oldSocket, oldCluster, oldGiven })
+	t.Setenv(config.SocketEnv, filepath.Join(home, "none.sock"))
+	err := execRoot(t, "wait", "--experimental", "default/n", "--timeout", "200ms", "--poll", "10ms")
+	var ee *exitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("error = %v, want an exit code", err)
+	}
+	if ee.Code != waitDaemonError {
+		t.Errorf("exit code = %d, want %d", ee.Code, waitDaemonError)
+	}
+}
+
+func TestWaitReportsADaemonErrorAsExit5NotFailed(t *testing.T) {
+	scriptedDaemon(t, func(daemon.Request) daemon.Response {
+		return daemon.Response{Error: "bolt: database not open"}
+	})
+	if got := waitCode(t, "--experimental", "default/n", "--timeout", "200ms", "--poll", "10ms"); got != waitDaemonError {
+		t.Errorf("exit code = %d, want %d", got, waitDaemonError)
+	}
+}
+
+// The five codes are distinct, and exit 1 is only for a session that failed.
+func TestWaitExitCodesAreDistinct(t *testing.T) {
+	seen := map[int]bool{}
+	for _, c := range []int{waitSucceeded, waitFailed, waitCrashed, waitTimeout, waitUnknown, waitDaemonError} {
+		if seen[c] {
+			t.Errorf("exit code %d is used twice", c)
+		}
+		seen[c] = true
+	}
+	if waitDaemonError != 5 {
+		t.Errorf("waitDaemonError = %d, want 5", waitDaemonError)
+	}
+}
