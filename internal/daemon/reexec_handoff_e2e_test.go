@@ -191,7 +191,7 @@ func eventsText(evs []events.Event) string {
 
 func TestAnUnawareSuccessorFiresTheDroppedSignalAndStatusSaysSo(t *testing.T) {
 	d1 := newHandlerDaemon(t)
-	_, dir := startTestLeafBroker(t, d1, "nats-leaf://127.0.0.1:1", true)
+	_, dir := startTestLeafBroker(t, d1, "nats-leaf://127.0.0.1:2", true)
 	// The seam skips the read: nothing is carried to a successor that never asks.
 	d1.handoffProbe = func(string) error { return os.ErrPermission }
 	var r reexecSeam

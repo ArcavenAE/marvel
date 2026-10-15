@@ -122,8 +122,8 @@ type Supervisor struct {
 	// leaf credential the broker holds (see SetLeafLossCause). Empty reads as
 	// "unknown".
 	leafLossCause string
-	cancel     context.CancelFunc
-	watchDone  chan struct{}
+	cancel        context.CancelFunc
+	watchDone     chan struct{}
 
 	// Structural health (aae-orc-vy6k7). structure is the last definite
 	// reading; structureKnown says one exists; problems is the last

@@ -161,7 +161,10 @@ func TestPostCheckSaysWhenTheHandoffWasDeclinedOnItsOwnLine(t *testing.T) {
 func TestPostCheckIsBoundedWhenTheSuccessorNeverReports(t *testing.T) {
 	w := newWorld()
 	w.restarted = func(time.Duration) bool { return false } // the old daemon never goes away
-	w.leaf = func(time.Duration, time.Time) bus.Status { t.Error("a reading was taken from the daemon that has not restarted"); return bus.Status{} }
+	w.leaf = func(time.Duration, time.Time) bus.Status {
+		t.Error("a reading was taken from the daemon that has not restarted")
+		return bus.Status{}
+	}
 	out, err := run(t, w, "carried")
 	if err == nil {
 		t.Fatal("a successor that never reported passed")

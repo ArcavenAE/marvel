@@ -143,7 +143,9 @@ func checkAfterReexec(w io.Writer, before time.Time, handoff string, o reexecObs
 }
 
 // seconds prints a wait in whole seconds, the unit the bound is stated in.
-func seconds(d time.Duration) string { return fmt.Sprintf("%ds", int(d.Round(time.Second)/time.Second)) }
+func seconds(d time.Duration) string {
+	return fmt.Sprintf("%ds", int(d.Round(time.Second)/time.Second))
+}
 
 // readOnce reads the successor once. answered is false until the daemon answers
 // as a new process; why is "" for a leaf that is up on a current reading.

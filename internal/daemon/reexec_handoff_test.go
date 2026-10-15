@@ -434,7 +434,7 @@ func TestADoubleReexecHandsOnlyTheFreshFDNumber(t *testing.T) {
 // --- the receiving side (1.5) ------------------------------------------------
 
 func TestNoVariableReadsAsAbsentAndTouchesNothing(t *testing.T) {
-	os.Unsetenv(handoffEnvVar)
+	_ = os.Unsetenv(handoffEnvVar)
 	before := openFDs(t)
 	creds, got := receiveReexecHandoff()
 	if got.State != handoffAbsent || creds != nil {
@@ -493,7 +493,7 @@ func TestAHandoffThatCannotBeReadIsUnreadAndNeverPartial(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		t.Setenv(handoffEnvVar, strconv.Itoa(int(f.Fd())))
 		if _, got := receiveReexecHandoff(); got.State != handoffUnread {
 			t.Errorf("state = %v, want unread", got.State)
@@ -513,7 +513,10 @@ func TestTheReexecResponseNamesTheHandoffBeforeTheExec(t *testing.T) {
 		want  string
 	}{
 		{"carried", func(d *Daemon) { putDummy(t, d, "bus/leaf", handoffCanary); d.handoffProbe = capableTarget }, "carried"},
-		{"declined", func(d *Daemon) { putDummy(t, d, "bus/leaf", handoffCanary); d.handoffProbe = func(string) error { return errors.New("no") } }, "declined"},
+		{"declined", func(d *Daemon) {
+			putDummy(t, d, "bus/leaf", handoffCanary)
+			d.handoffProbe = func(string) error { return errors.New("no") }
+		}, "declined"},
 		{"over cap", func(d *Daemon) {
 			putDummy(t, d, "bus/leaf", strings.Repeat("x", handoffCap+1))
 			d.handoffProbe = capableTarget

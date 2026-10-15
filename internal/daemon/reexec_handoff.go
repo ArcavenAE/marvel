@@ -66,11 +66,11 @@ var carryTable = map[api.CredentialKind]bool{
 // Outcomes of the departing side's attempt, as the reexec response reports
 // them before the exec.
 const (
-	handoffNone     = "none"      // nothing to carry
-	handoffCarried  = "carried"   // written to the pipe; the exec will pass it on
-	handoffDeclined = "declined"  // the target cannot read the handoff
-	handoffOverCap  = "over-cap"  // the payload would not fit
-	handoffFailed   = "failed"    // a pipe or write error
+	handoffNone     = "none"     // nothing to carry
+	handoffCarried  = "carried"  // written to the pipe; the exec will pass it on
+	handoffDeclined = "declined" // the target cannot read the handoff
+	handoffOverCap  = "over-cap" // the payload would not fit
+	handoffFailed   = "failed"   // a pipe or write error
 	reasonDeclined  = "target cannot read the handoff"
 	reasonOverCap   = "payload over cap"
 	reasonFailed    = "handoff failed"
