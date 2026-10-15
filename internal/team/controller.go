@@ -1444,6 +1444,7 @@ func (c *Controller) evaluateHealth() {
 	// Every running session's tick goes into its activity ring, before any
 	// early return below, so the ring counts every evaluation.
 	ringed := make(map[string]bool, len(sessions))
+	defer func() { c.refreshTeamLoad(now) }()
 	defer func() { c.dropRingsExcept(ringed) }()
 
 	for _, sess := range sessions {

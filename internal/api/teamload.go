@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // TeamLoadValidity is how long a team's load row stays fresh after the tick
 // that computed it. The row moves every reconcile tick, so one much older than
@@ -36,5 +39,35 @@ type TeamLoad struct {
 // RollTeamLoad computes one team's row from its sessions, which must carry the
 // ActiveTicks stamp. Sessions of other teams are ignored.
 func RollTeamLoad(t Team, sessions []Session, now time.Time) TeamLoad {
-	return TeamLoad{}
+	row := TeamLoad{
+		Workspace:  t.Workspace,
+		Team:       t.Name,
+		ObservedAt: now,
+		ValidUntil: now.Add(TeamLoadValidity),
+	}
+	for _, r := range t.Roles {
+		row.Declared += r.Replicas
+	}
+	var sum float64
+	for _, s := range sessions {
+		if s.Workspace != t.Workspace || s.Team != t.Name || s.State != SessionRunning {
+			continue
+		}
+		row.Running++
+		row.Agents = append(row.Agents, s.Name)
+		if s.Condition == ConditionLimited {
+			row.Limited++
+		}
+		// The same gate the ACTIVE% cell uses: a seat with no activity channel,
+		// or a ring that has not watched the whole window, has no reading.
+		if tk := s.ActiveTicks; tk.Observable && tk.Full && tk.Total > 0 {
+			sum += 100 * float64(tk.Active) / float64(tk.Total)
+			row.ActiveMeasured++
+		}
+	}
+	if row.ActiveMeasured > 0 {
+		row.ActiveMeanPct = sum / float64(row.ActiveMeasured)
+	}
+	sort.Strings(row.Agents)
+	return row
 }
