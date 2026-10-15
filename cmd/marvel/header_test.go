@@ -249,12 +249,7 @@ func headerSessions() []api.Session {
 // socket and returns its path.
 func headerSocket(t *testing.T, handler func(daemon.Request) daemon.Response) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "hs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "s.sock")
+	socket := filepath.Join(shorttmp.Dir(t), "s.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
