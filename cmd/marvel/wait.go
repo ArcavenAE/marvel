@@ -13,7 +13,7 @@ import (
 	"github.com/arcavenae/marvel/internal/daemon"
 )
 
-// Exit codes of `marvel wait`. A refusal or a daemon error is not one of them:
+// Exit codes of `marvel wait`. A refusal or a bad argument is not one of them:
 // those are an ordinary error and exit 1 through main.
 const (
 	waitSucceeded = 0
@@ -101,7 +101,9 @@ func waitCmd() *cobra.Command {
 		Long: `Wait for a session to reach a terminal state, reading its stored state.
 
 Exit codes: 0 succeeded, 1 failed, 2 crashed, 3 timeout (still running),
-4 unknown key. Any other error, such as no daemon, also exits 1.`,
+4 unknown key, 5 the daemon could not be reached or answered with an error
+(the session's state is not known; a caller should treat it as still pending).
+A refused flag or a bad argument exits 1.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireExperimental(experimental, "marvel wait"); err != nil {
@@ -112,7 +114,8 @@ Exit codes: 0 succeeded, 1 failed, 2 crashed, 3 timeout (still running),
 			}
 			state, code, err := waitForSession(args[0], timeout, poll)
 			if err != nil {
-				return err
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "unavailable")
+				return &exitError{Code: waitDaemonError, Msg: fmt.Sprintf("session/%s: %v", args[0], err)}
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), state)
 			if code == waitSucceeded {
