@@ -1,6 +1,6 @@
 # Adapter kit checklist: what a new harness walks before it reaches the feature matrix
 
-A harness gets a marvel adapter only after a builder can tick every line below, or record why a line does not apply. Each line is a check, not a goal: it names what has to be shown, and where. The lines came out of the goose adapter v1 design (`docs/design/goose-adapter-v1.md`). They were walked against a second harness, gemini-cli, so that they do not fit only goose. Proposed 2026-10-10; it becomes the kit once the operator rules on the design.
+A harness gets a marvel adapter only after a builder can tick every line below, or record why a line does not apply. Each line is a check, not a goal: it names what has to be shown, and where. The lines came out of the goose adapter v1 design (`docs/design/goose-adapter-v1.md`). They were walked against a second harness, gemini-cli, so that they do not fit only goose. Proposed 2026-10-10. Adopted as the adapter kit by operator ruling on 2026-10-15, relayed by director: a new harness adapter walks these lines, and a builder cites them as the bar.
 
 Lines that are not met yet still go into the adapter doc, with the reason. A `no` with its reason is a valid answer, and so is `UNCHECKED` with the probe that will settle it. A silent gap is not.
 

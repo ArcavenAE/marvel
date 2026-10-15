@@ -3,7 +3,7 @@
 - **Status:** proposed, 2026-10-10. Nothing here is built. The tickets in section 10 are listed, not filed: filing waits on the harness plan's decision D8.
 - **Author seat:** architect, team arcaven, as chair of a four-round design party. The seats were goose, adapter, telemetry, containment and a second harness (gemini-cli). Round 4 was a forced vote and every item carried; the reason store carried 3-2, with the dissent in section 9.
 - **Pins:** marvel main 493de32; goose v1.54.0 at cd643d2 (released 2026-10-08), read in source through the GitHub API on 2026-10-10. Nothing was installed or run.
-- **Companion:** `docs/adapter-kit-checklist.md`, the lines any new harness walks.
+- **Companion:** `docs/adapter-kit-checklist.md`, the lines any new harness walks. Adopted as the adapter kit, 2026-10-15 (section 11).
 
 ## 1. Why, and what v1 is
 
@@ -203,6 +203,7 @@ There is no ticket E: the goose-specific reason store folded into C. Not tracked
 - D8, filing the tickets above.
 - K6's `unattended` role field, which the posture rules read.
 - Ruled 2026-10-10: a goose seat reads the operator's own goose keyring entry, with a broker-minted key as the future option (section 6).
+- Ruled 2026-10-15, relayed by director: the operator adopted `docs/adapter-kit-checklist.md` as the adapter kit (ticket F).
 - Acceptance that the refusal stub reruns under backoff, at no spend, until K8.
 
 ## 12. Second harness, in one table
