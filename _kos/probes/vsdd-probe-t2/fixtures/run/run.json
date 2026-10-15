@@ -1,0 +1,18 @@
+{
+  "pinned_version": "2.1.283",
+  "sharing_ceiling": 1000,
+  "await_tools": ["await"],
+  "seats": [
+    {"name": "orch", "kind": "orchestrator", "role": "vsdd-orchestrator", "transcript": "orch.jsonl"},
+    {"name": "r1-c1-w1-g1-a1", "kind": "branch", "role": "vsdd-implementer", "transcript": "branch.jsonl"},
+    {"name": "sup", "kind": "supervisor", "role": "supervisor", "transcript": null}
+  ],
+  "phases": [
+    {"phase": "p3", "from": "2026-10-15T10:00:00Z", "to": "2026-10-15T10:10:00Z"},
+    {"phase": "p4", "from": "2026-10-15T10:10:00Z", "to": "2026-10-15T10:30:00Z"}
+  ],
+  "waves": [
+    {"wave": "c1-w1", "first_dispatch": "2026-10-15T10:00:30Z", "last_terminal": "2026-10-15T10:02:30Z"}
+  ],
+  "source_map": {"main": ["repl_main_thread"], "subagent": ["agent"]}
+}
