@@ -80,6 +80,11 @@ var (
 // A driver's error can echo the request, bearer value included, and callers
 // log what the broker returns. The original stays reachable with errors.Is
 // and errors.As.
+//
+// Only the exact value is replaced. A driver that echoes the value base64
+// encoded, cut to a prefix or case-folded is not caught. If a provider is
+// ever seen doing that, the fallback is to log the token id and the error
+// type instead of the driver's text.
 type scrubbedError struct {
 	err   error
 	value string
@@ -197,6 +202,12 @@ func (b *Broker) RevokeSession(ctx context.Context, sessionKey string) error {
 		a.revokes++
 	}
 	b.mu.Unlock()
+	return b.revokeKept(ctx, sessionKey, toks)
+}
+
+// revokeKept revokes toks, tokens already taken off the books for the key, and
+// puts back the ones the driver would not revoke so a later pass retries them.
+func (b *Broker) revokeKept(ctx context.Context, sessionKey string, toks []Token) error {
 	var errs []error
 	var failed []Token
 	for _, t := range toks {
@@ -215,27 +226,62 @@ func (b *Broker) RevokeSession(ctx context.Context, sessionKey string) error {
 	return errors.Join(errs...)
 }
 
+// takeKept takes the tokens with the given ids off the books for the key and
+// returns them. A token issued since the ids were read is left alone.
+func (b *Broker) takeKept(sessionKey string, ids map[string]bool) []Token {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var taken, left []Token
+	for _, t := range b.issued[sessionKey] {
+		if ids[t.ID] {
+			taken = append(taken, t)
+		} else {
+			left = append(left, t)
+		}
+	}
+	if len(left) == 0 {
+		delete(b.issued, sessionKey)
+	} else {
+		b.issued[sessionKey] = left
+	}
+	return taken
+}
+
 // RetryRevokes revokes the kept tokens of every session key for which exists
 // reports no session. A revoke that failed when a seat ended leaves its tokens
 // kept, and once the seat's row is dropped nothing else reports the key again.
-// Tokens that still fail stay kept for the next pass. It touches no key that
-// has a session, and holds no lock while it calls exists or the driver.
+// Tokens that still fail stay kept for the next pass.
+//
+// Names are reused after a drop, so a seat can take a key between the moment
+// exists answers and the revoke. The pass therefore reads the kept token ids
+// first, asks exists with no lock held, and revokes only those ids: a token
+// issued afterwards belongs to the new seat and is left alone, and the pass
+// does not count as a revoke of an ask that is in flight for the key.
 func (b *Broker) RetryRevokes(ctx context.Context, exists func(sessionKey string) bool) error {
 	b.mu.Lock()
-	keys := make([]string, 0, len(b.issued))
+	kept := make(map[string]map[string]bool, len(b.issued))
 	for k, toks := range b.issued {
-		if len(toks) > 0 {
-			keys = append(keys, k)
+		if len(toks) == 0 {
+			continue
 		}
+		ids := make(map[string]bool, len(toks))
+		for _, t := range toks {
+			ids[t.ID] = true
+		}
+		kept[k] = ids
 	}
 	b.mu.Unlock()
+	keys := make([]string, 0, len(kept))
+	for k := range kept {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	var errs []error
 	for _, k := range keys {
 		if exists(k) {
 			continue
 		}
-		if err := b.RevokeSession(ctx, k); err != nil {
+		if err := b.revokeKept(ctx, k, b.takeKept(k, kept[k])); err != nil {
 			errs = append(errs, err)
 		}
 	}
