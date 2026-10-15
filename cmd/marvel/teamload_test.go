@@ -2,13 +2,19 @@ package main
 
 import (
 	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemon"
 )
 
 var loadAt = time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC)
@@ -168,5 +174,86 @@ func TestGetLoadFlagRefusals(t *testing.T) {
 				t.Errorf("err = %v, want it to contain %q", err, c.want)
 			}
 		})
+	}
+}
+
+// errorDaemon answers every request with an error and records the method it
+// was asked, the way a daemon that predates the team-load resource answers.
+func errorDaemon(t *testing.T, msg string) (method func() string) {
+	t.Helper()
+	home, err := os.MkdirTemp("", "mg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
+	oldSocket, oldCluster, oldGiven := socketPath, clusterName, clusterFlagGiven
+	socketPath, clusterName, clusterFlagGiven = "", "", false
+	t.Cleanup(func() { socketPath, clusterName, clusterFlagGiven = oldSocket, oldCluster, oldGiven })
+	sock := filepath.Join(home, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var (
+		mu  sync.Mutex
+		got string
+		wg  sync.WaitGroup
+	)
+	t.Cleanup(func() { _ = ln.Close(); wg.Wait() })
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			var req daemon.Request
+			if err := json.NewDecoder(c).Decode(&req); err == nil {
+				mu.Lock()
+				got = req.Method
+				mu.Unlock()
+			}
+			_ = json.NewEncoder(c).Encode(daemon.Response{Error: msg})
+			_ = c.Close()
+		}
+	}()
+	t.Setenv(config.SocketEnv, sock)
+	return func() string { mu.Lock(); defer mu.Unlock(); return got }
+}
+
+// A daemon that does not know the resource, the normal state after a CLI
+// upgrade and before a daemon restart, makes the command fail with the
+// daemon's words. It never prints "no teams" and exits zero.
+func TestGetTeamsLoadSurfacesTheDaemonsError(t *testing.T) {
+	const msg = "unknown resource type: team-load"
+	method := errorDaemon(t, msg)
+	out, err := runGet(t, "teams", "--load")
+	if err == nil || !strings.Contains(err.Error(), msg) {
+		t.Fatalf("err = %v, want one carrying %q", err, msg)
+	}
+	if strings.Contains(out, "no teams") {
+		t.Errorf("printed %q after an error", out)
+	}
+	if got := method(); got != "get" {
+		t.Errorf("request method = %q, want get", got)
+	}
+}
+
+// No daemon listening: the command fails, and prints no table.
+func TestGetTeamsLoadFailsWithNoDaemon(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	oldSocket, oldCluster, oldGiven := socketPath, clusterName, clusterFlagGiven
+	socketPath, clusterName, clusterFlagGiven = "", "", false
+	t.Cleanup(func() { socketPath, clusterName, clusterFlagGiven = oldSocket, oldCluster, oldGiven })
+	t.Setenv(config.SocketEnv, filepath.Join(home, "none.sock"))
+	out, err := runGet(t, "teams", "--load")
+	if err == nil {
+		t.Fatalf("no daemon listening, but get teams --load returned nil; output %q", out)
+	}
+	if strings.Contains(out, "no teams") || strings.Contains(out, "WORKSPACE") {
+		t.Errorf("printed a table with no daemon: %q", out)
 	}
 }
