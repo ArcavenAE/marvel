@@ -215,6 +215,16 @@ content: |
   from the limit reading or the harness refusal. See also
   question-fleet-pause-resume for a deliberate pause.
 
+  HARVEST 2026-10-14 (finding-marvel-so6h). An idle interactive claude seat
+  has no event that says it took a turn, so the statusline is the candidate
+  turn signal. Measured once (one seat, one host, 31 samples over 30
+  minutes): its cost and context % stayed flat while `observed_at` advanced
+  on every sample. Stale paint is not ruled out, and no turn ran, so whether
+  the figures move on every turn is still unmeasured. The operator ruled
+  watcher decision 2 "statusline" (report-only, never restarts, rings or
+  routes). The same window showed #801's symptom live: LAST-ACTIVE 6 to 8 s
+  and ACTIVE% 100 on the idle seat.
+
 edges:
   - target: elem-agentic-resource-matrix
     type: supports

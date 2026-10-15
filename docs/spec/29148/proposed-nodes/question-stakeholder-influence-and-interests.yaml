@@ -1,0 +1,16 @@
+id: question-stakeholder-influence-and-interests
+type: question
+confidence: frontier
+title: "What are the influence and key interests of marvel's stakeholder groups?"
+content: |
+  The brief names three groups (individuals on major harnesses, individuals
+  who want to work at scale, and teams) but records no influence or key
+  interests for any of them (Q-003, partly answered). Rows STREQ-020 to
+  STREQ-025 and section 2 cannot weight the groups until this is answered.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - brs-review@hash:eddc89399e3a63a5ed9c57a1503a1f4893591a8a
+    - brs@hash:e110b9e867fef114947f10604af5ae0aeb52e317

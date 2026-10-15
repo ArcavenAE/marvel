@@ -1,0 +1,137 @@
+id: question-vsdd-factory-as-marvel-team
+type: question
+confidence: frontier
+title: "Does running each parallel branch of a pinned vsdd-factory release as its own marvel session, instead of as subagents of one session, change cost, cache reuse or time per accepted deliverable?"
+tags:
+  - marvel
+  - vsdd-factory
+  - packs
+  - measurement
+content: |
+  The operator's idea (_kos/ideas/vsdd-factory-as-marvel-team-pack.md): run a
+  vsdd-factory release as a marvel team, and measure it against the same
+  release in one session for "cost, cache amortization, throughput, speed and
+  other factors". A 12-seat design party worked it on 2026-10-14; the probe
+  brief is _kos/probes/probe-vsdd-factory-as-marvel-team.md.
+
+  THE CONTRAST IS SEPARATE SESSIONS, NOT PARALLELISM. The factory already runs
+  in parallel inside one session. Greenfield fans out story groups in its one
+  `type: parallel` node (rc.25 commit 51023185,
+  plugins/vsdd-factory/workflows/greenfield.lobster:652-654), and Claude Code
+  2.1.299 runs subagents concurrently (the brief pins the cap at 20). Arm B
+  changes one thing:
+  each branch runs as its own headless marvel session, with its own process,
+  conversation prefix and cache TTL class, drawing on the same account.
+
+  ARMS.
+  - Arm A: rc.25, commit 51023185, in one session, as it ships.
+  - Arm B: a derived pack, byte-identical to rc.25 except one published patch
+    to two orchestrator files and an added shim. Each `type: parallel` branch
+    runs as one headless marvel session. Inside it, each step is still its own
+    subagent.
+
+  ACCEPTED DELIVERABLE. A story whose scenarios in the probe acceptance suite
+  all pass. The suite is executable, authored outside both arms, frozen at a
+  sha before the pilot, has at least 30 scenarios, and is separate from the
+  factory's own holdouts. Its author sees the seed's story ids, titles and
+  waves, never story bodies. If the seed cannot be resumed (the brief's S8
+  check), runs start from the brief instead, and the deliverable becomes an
+  accepted feature.
+
+  SUB-QUESTIONS, closed in order.
+  1. FIDELITY: is arm B the same factory? It is checked from transcripts:
+     - the step trace;
+     - the hook log;
+     - full model ids, and model escalations, per arm;
+     - MCP servers;
+     - subagent dispatch counts and re-dispatches per story;
+     - one pack hash per arm, with the bound pack read back by readlink;
+     - the approval steps fired;
+     - one session id per branch, and at most one live session per story;
+     - no branch seat runs Pipeline Resume or dispatches another seat;
+     - compaction events per session;
+     - zero human interventions;
+     - a canary leak test in both arms;
+     - zero duplicate executions, checked per run from the step trace and the
+       marvel session list;
+     - zero branch-seat tool writes outside its own story paths, with each
+       session's hook writes attributed as their own writer and lost updates
+       to shared .factory/ files counted.
+  2. NOISE FLOOR: the spread of three arm A pilot runs from one frozen Phase 2
+     seed (from the brief, on the S8-failure path), per axis and per phase,
+     with its interval.
+  3. COMPARISON: per accepted deliverable, on cost, cache reuse, wall clock
+     and throughput, recorded per phase. Arm B changes only Phase 3
+     (greenfield.lobster:627-1002); a gap in another phase is a fidelity
+     defect. The hub's wait cost is its own row, so a gap made by the wait
+     design is not read as a property of separate sessions.
+
+  WHAT CLOSES IT. Four outcomes, each an answer:
+  (a) not comparable: arm B cannot reproduce a named step, listed, or
+      neither arm accepts a story on the test project, or a run's widest wave
+      is under 2;
+  (b) instrument blind: even a generous reading of the noise floor of cost
+      per accepted story is wider than its pre-registered smallest effect
+      (20%, ruled 2026-10-15);
+  (c) a comparison with stated power;
+  (d) not distinguishable at the pre-registered ceiling.
+  The answer holds for the pinned commit, seed sha and its wave widths, test
+  sha, harness build and host, and claims nothing past them.
+
+  FALSE CLOSES TO REFUSE:
+  - a comparison before fidelity closes;
+  - stopping early, or a metric or threshold changed after run one;
+  - failed or limit-stopped runs dropped (every started run counts);
+  - a canary hit kept in the quality score;
+  - harness, pack, marvel commit or server-gate drift inside a series, or any
+    price other than the frozen table;
+  - fewer adversary passes read as a cost win;
+  - a retry policy or the hub's polling read as a session effect;
+  - a branch that fell back to an in-session subagent;
+  - "equal" written for a gap inside the noise floor;
+  - a not-distinguishable close on a series in which any run's widest wave is
+    under 2 (such a series closes not comparable);
+  - any close stated past its one seed.
+
+  KNOWN GAPS (2026-10-14, marvel 0e6dd4d).
+  - `marvel run` starts no headless seat, takes no prompt or environment, and
+    does not wait (internal/daemon/daemon.go:2111-2116). Arm B needs
+    `run --mode headless --prompt-file --env --name` and a wait on store
+    state.
+  - The factory's CAS push loses a concurrent write that lands before its
+    fetch, and exits 0 (bin/factory-cas-push.sh:92-126, reproduced). Its
+    lock holder is shared by every seat on a host. So in arm B, branch seats
+    write only their own stories' .factory/cycles/ paths, and only the
+    orchestrator writes STATE.md or the factory-artifacts branch.
+  - marvel Policy projection fails open (internal/session/projection.go:22-23),
+    so the write rule is checked on disk, not enforced by a Policy.
+  - marvel has no ordering primitive; the unchanged lobster files and the
+    orchestrator keep that job.
+
+  UPSTREAM. The answer is evidence for vsdd-factory#410's `replatform`
+  disposition. It does not decide it.
+
+  RULINGS (operator, 2026-10-15). Spend: the full ceiling, with every stop
+  rule kept. Verdict: one per axis, Holm-adjusted, cost first. Smallest
+  effect for cost: 20%. Permission mode: auto in both arms, classifier
+  requests metered. marvel surface: behind an experimental flag. Reader and
+  meter: probe-local scripts, not critic code. Suite author: any free seat
+  outside both arms. Open: the probe host.
+
+  Valid until 2027-04-14, or until the next harness change to subagent forking,
+  cache TTL defaults or agent teams, whichever comes first; the architect role
+  re-checks it then.
+edges:
+  - target: question-session-state-observation
+    type: derives
+    note: "the shim's wait is a completion reading; this node needs store state, not the lossy event ring"
+  - target: question-role-tools-field-projection
+    type: supports
+    note: "per-seat tool scoping for branch seats (aae-orc-ofs4l); the probe informs its enforcement half"
+  - target: aae-orc::question-agent-arena-evaluation
+    type: derives
+    note: "a first arena case: a holdout outside the arms (A2) and paired run-level statistics (A4) for one factory"
+provenance:
+  created_by: agent
+  created_at: "2026-10-14"
+  discovered_from: _kos/ideas/vsdd-factory-as-marvel-team-pack.md

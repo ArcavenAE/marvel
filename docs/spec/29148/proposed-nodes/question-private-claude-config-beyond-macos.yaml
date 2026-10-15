@@ -1,0 +1,17 @@
+id: question-private-claude-config-beyond-macos
+type: question
+confidence: frontier
+title: "Does the ruling against a private claude config directory per seat hold on Linux or in a container?"
+content: |
+  The operator's verdict widens the ruling beyond macOS, but the graveyard
+  node is macOS-only and finding-063 says the Linux or container case is open
+  and needs its own run (Q-009). STREQ-OPS-004 is measured on macOS only until
+  that run is made, or the node and finding are harvested to match the
+  verdict.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - grv-private-claude-config-home-macos@hash:5029b413cdab6042ac414099809ae407958cb31e
+    - finding-063@hash:0aaf8a996d653042b851e097b9b252cfc5da9734

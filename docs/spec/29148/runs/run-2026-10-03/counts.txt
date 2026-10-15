@@ -1,0 +1,18 @@
+run: run-2026-10-03
+review: docs/spec/29148/brs-review.md (ratified 2026-10-05), counted after it was filled in, as its line 15 requires
+
+counts at the run (runs/run-2026-10-03/brs.pre-polish.md): 38 claims, 7 open questions
+counts after the operator's review (brs.md): 46 claims, 10 open questions
+
+verdicts over the 46 rows: accept 33, accept-reworded 3, correct 2, reject 0, add 8
+correction count: 10 (correct 2 + reject 0 + add 8)
+accept-reworded is listed and not counted, per brs-review.md:15
+
+method, run from docs/spec/29148:
+  verdicts:  grep -E '^\| C-[0-9]+ \|' brs-review.md | awk -F'|' '{gsub(/ /,"",$4); n[$4]++} END{for (k in n) print k, n[k]}'
+  claims:    grep -cE '^- \*\*C-[0-9]+\*\*' brs.md runs/run-2026-10-03/brs.pre-polish.md
+  questions: grep -cE '^- \*\*Q-[0-9]+\*\*' brs.md runs/run-2026-10-03/brs.pre-polish.md
+
+run time and deduped tokens are recorded in tokens.txt, not repeated as new figures:
+  wall: 159 s, pauses: 0 s, active: 159 s (run.yaml run_start to run_end)
+  tokens, all models: input 22, output 20251, cache_read 2981298, cache_creation 73073 (11 distinct message ids)

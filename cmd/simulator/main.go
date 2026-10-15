@@ -78,7 +78,7 @@ func main() {
 		// From the environment rather than a flag: an argv is readable
 		// from the process table by every agent on the host, and the
 		// token is what separates them.
-		token := os.Getenv(api.HeartbeatTokenEnv)
+		token := api.HeartbeatTokenFromEnv()
 		engine.OnHeartbeat = func(pct float64) error {
 			// The simulator does not know a model name, so it sends none
 			// and any prior reading stands. Built through the shared

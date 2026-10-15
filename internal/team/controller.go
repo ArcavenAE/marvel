@@ -32,6 +32,10 @@ type Controller struct {
 	// ringMu (not mu: the readers must not wait for a reconcile pass).
 	ringMu sync.Mutex
 	rings  map[string]*TickRing
+	// load is the per-team load rows the last evaluation tick computed, under
+	// loadMu.
+	loadMu sync.Mutex
+	load   []api.TeamLoad
 	// clusterWindow is the operator's watchdog.window, under ringMu.
 	clusterWindow time.Duration
 
@@ -914,6 +918,12 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 		if _, ok := known[sess.Role]; ok {
 			continue
 		}
+		// A session made by marvel run carries no generation. It belongs to
+		// the operator, not to the manifest, so a role the manifest does not
+		// declare is no reason to drain it.
+		if sess.Generation == 0 {
+			continue
+		}
 		if err := c.sessMgr.Delete(sess.Key()); err != nil {
 			log.Printf("reconcile: delete orphaned session %s (role %s removed): %v", sess.Key(), sess.Role, err)
 			continue
@@ -1440,6 +1450,7 @@ func (c *Controller) evaluateHealth() {
 	// Every running session's tick goes into its activity ring, before any
 	// early return below, so the ring counts every evaluation.
 	ringed := make(map[string]bool, len(sessions))
+	defer func() { c.refreshTeamLoad(now) }()
 	defer func() { c.dropRingsExcept(ringed) }()
 
 	for _, sess := range sessions {

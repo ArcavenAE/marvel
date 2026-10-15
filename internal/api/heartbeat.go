@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // HeartbeatTokenEnv is the environment variable adapters inject the
@@ -15,6 +16,31 @@ import (
 // flag: an argv is readable from the process table, and every agent on
 // the host can list it.
 const HeartbeatTokenEnv = "MARVEL_HEARTBEAT_TOKEN"
+
+// HeartbeatTokenFileEnv names a file holding the session's heartbeat token. A
+// launch sets it in place of HeartbeatTokenEnv for a harness that may publish
+// its own environment (finding-033 section 7b). The path alone confers
+// nothing to a reader of the environment who cannot read the file.
+const HeartbeatTokenFileEnv = "MARVEL_HEARTBEAT_TOKEN_FILE"
+
+// HeartbeatTokenFromEnv returns the session's heartbeat token: the contents of
+// the file HeartbeatTokenFileEnv names when it is set, otherwise the variable.
+// A launch sets one delivery or the other, so both set means a stale variable
+// inherited from a parent, and the file marvel wrote for this seat wins. A
+// named file that cannot be read gives an empty token, never the variable,
+// which the daemon treats as no token presented. Every forwarder reads
+// through it, so none can honor one delivery and miss the other.
+func HeartbeatTokenFromEnv() string {
+	path := os.Getenv(HeartbeatTokenFileEnv)
+	if path == "" {
+		return os.Getenv(HeartbeatTokenEnv)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(string(b), "\r\n")
+}
 
 // ErrHeartbeatUnauthorized is returned when a heartbeat presents no token
 // or the wrong one for the session it claims.
@@ -135,7 +161,7 @@ type HeartbeatRequest struct {
 // forget to pass; there is nothing here to omit. Tests and any caller
 // holding a token by other means use NewHeartbeatRequestWithToken.
 func NewHeartbeatRequest(sessionKey string, contextPercent float64, model string) HeartbeatRequest {
-	return NewHeartbeatRequestWithToken(sessionKey, os.Getenv(HeartbeatTokenEnv), contextPercent, model)
+	return NewHeartbeatRequestWithToken(sessionKey, HeartbeatTokenFromEnv(), contextPercent, model)
 }
 
 // NewHeartbeatRequestWithToken is NewHeartbeatRequest with the token

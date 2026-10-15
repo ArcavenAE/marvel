@@ -76,6 +76,10 @@ type ManifestWorkspace struct {
 	// A pointer, so an absent key (leave the stored list alone) differs from an
 	// empty list (revoke it); omitempty on a plain slice would lose that.
 	TrustedFolders *[]string `toml:"trusted_folders,omitempty" yaml:"trusted_folders,omitempty"`
+	// Placement is where the workspace's sessions run: "localhost" or
+	// "container". Absent or empty means the manifest names none, so the
+	// harness's recommendation and then localhost decide (ResolvePlacement).
+	Placement string `toml:"placement,omitempty" yaml:"placement,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
@@ -135,6 +139,10 @@ type ManifestRole struct {
 	// WorkDir is where this role's sessions run. Relative values resolve
 	// against workspace.root only.
 	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	// ContainerImage is the image this role's seats run in when the workspace's
+	// placement resolves to container. Required then: a container seat with no
+	// image is refused, never given a default.
+	ContainerImage string `toml:"container_image,omitempty" yaml:"container_image,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -376,6 +384,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	if m.Workspace.Name == "" {
 		return nil, fmt.Errorf("parse manifest: workspace.name is required")
 	}
+	if err := Placement(m.Workspace.Placement).check("parse manifest: workspace.placement"); err != nil {
+		return nil, err
+	}
 	policyNames := make(map[string]bool, len(m.Policies))
 	for i, p := range m.Policies {
 		if p.Name == "" {
@@ -424,6 +435,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// would silently project nothing, so reject it here.
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
+			}
+			if r.ContainerImage != "" && !ValidContainerImage(r.ContainerImage) {
+				return nil, fmt.Errorf("parse manifest: team %q role %q: container_image %q is not a plain image reference", t.Name, r.Name, r.ContainerImage)
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
@@ -856,7 +870,7 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, CreatedAt: now}
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), CreatedAt: now}
 	if m.Workspace.TrustedFolders != nil {
 		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
 	}
@@ -866,7 +880,7 @@ func (m *Manifest) Apply(store *Store) error {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil || m.Workspace.Placement != "" {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
 				if m.Workspace.Root != "" {
 					live.Root = m.Workspace.Root
@@ -875,6 +889,11 @@ func (m *Manifest) Apply(store *Store) error {
 				// list revokes it, and an absent key leaves it alone.
 				if m.Workspace.TrustedFolders != nil {
 					live.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
+				}
+				// A named placement replaces the stored one; an absent key
+				// leaves it alone.
+				if m.Workspace.Placement != "" {
+					live.Placement = Placement(m.Workspace.Placement)
 				}
 				return nil
 			}); err != nil {
@@ -938,6 +957,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
+				ContainerImage:       mr.ContainerImage,
 				SettingsSources:      mr.SettingsSources,
 			}
 			if mr.RestartPolicy != "" {

@@ -1,0 +1,5 @@
+PASS sections: the StRS headings are present and in order
+PASS rows: 35 rows, each with the table's cells, a unique id, a status and an owner
+PASS trace: every row traces back, and every id resolves
+PASS traceability: section 5.1 matches the trace-back column
+PASS nodes: 12 proposed nodes, each well formed and listed

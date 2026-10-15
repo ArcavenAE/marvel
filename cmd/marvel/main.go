@@ -184,6 +184,10 @@ func bindRootFlags(root *cobra.Command) {
 		"explicit daemon address (overrides --cluster)")
 	root.PersistentFlags().StringVarP(&identityPath, "identity", "i", "",
 		"private key file for SSH auth (overrides cluster identity)")
+	// The value is read by applyMarvelHomeFlag in main, before this tree is
+	// built; the flag is declared here so cobra accepts and documents it.
+	root.PersistentFlags().String("marvel-home", "",
+		"marvel's state root, an absolute path (default ~/.marvel); sets $"+paths.HomeEnv+", and the flag wins over the variable")
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		clusterFlagGiven = cmd.Flags().Changed("cluster")
 	}
@@ -194,7 +198,16 @@ func main() {
 	//   ./marvel shift test/squad  # replace all workers
 	os.Args = stripComments(os.Args)
 
+	if err := applyMarvelHomeFlag(os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+
 	if err := newRootCmd().Execute(); err != nil {
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.Code)
+		}
 		os.Exit(1)
 	}
 }
@@ -226,6 +239,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())
 	root.AddCommand(convergeCmd())
+	root.AddCommand(waitCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
@@ -481,6 +495,8 @@ and adopt in one step, use 'marvel upgrade --daemon'.`,
 				return err
 			}
 			req, sent := reexecRequest()
+			obs := newReexecObserver()
+			before, _ := obs.startedAt()
 			resp, err := reexecSend(req)
 			if err != nil {
 				return err
@@ -491,8 +507,7 @@ and adopt in one step, use 'marvel upgrade --daemon'.`,
 			if note := reexecNote(resp, sent); note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
-			fmt.Println("marvel daemon re-executing in place; agents keep running")
-			return nil
+			return checkAfterReexec(cmd.OutOrStdout(), before, reexecHandoffOutcome(resp), obs)
 		},
 	}
 }
@@ -1029,7 +1044,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns, output string
-	var noTrunc, header bool
+	var noTrunc, header, load bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
@@ -1055,6 +1070,13 @@ not token flow. A value from the token stream carries no mark. On a terminal
 one legend line under the header says so when a mark is on screen; piped
 output keeps the mark and drops the legend. A - means never measured.
 
+--load (get teams only) prints one row per team: SEATS running of declared,
+ACTIVE% as the mean over the seats that have a reading with how many that is
+("62% (4 of 5)"), and LIMITED seats. It reads the daemon you reach, one cluster.
+A row follows the sessions cells' three states: a value while fresh, ? once the
+daemon stopped computing it, - when it never did. A team with no seat that has a
+reading prints - for ACTIVE%, never 0%. Diagnostic only: nothing gates on it.
+
 -o json|yaml (get team and get workspace only) prints two labelled sections.
 desired is the store's record after scale and similar edits; it is not the file
 that was applied, and no round trip to that file is promised. observed is the
@@ -1063,6 +1085,19 @@ show as (redacted) in both.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
+			if load {
+				switch {
+				case args[0] != "teams" && args[0] != "team":
+					return fmt.Errorf("--load applies to get teams only")
+				case cmd.Flags().Changed("output"):
+					return fmt.Errorf("--load and -o cannot be combined")
+				case watching:
+					return fmt.Errorf("--load and --watch cannot be combined")
+				case columns != "":
+					return fmt.Errorf("--load and --columns cannot be combined")
+				}
+				return getTeamLoad()
+			}
 			if cmd.Flags().Changed("output") {
 				if watching {
 					return fmt.Errorf("-o and --watch cannot be combined")
@@ -1097,6 +1132,7 @@ show as (redacted) in both.`,
 			return getResources(args[0], cols, headerText, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
+	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
 	f.NoOptDefVal = ""
@@ -1561,11 +1597,33 @@ func convergeCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var workspace, team, role, script, workdir string
+	var mode, promptFile, name string
+	var envs []string
+	var experimental bool
 	cmd := &cobra.Command{
 		Use:   "run <command> [args...]",
 		Short: "Run a one-off agent session",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, f := range []string{"mode", "prompt-file", "env", "name"} {
+				if cmd.Flags().Changed(f) {
+					if err := requireExperimental(experimental, "--"+f); err != nil {
+						return err
+					}
+				}
+			}
+			envMap, err := parseRunEnv(envs)
+			if err != nil {
+				return err
+			}
+			var prompt string
+			if promptFile != "" {
+				b, rerr := os.ReadFile(promptFile)
+				if rerr != nil {
+					return fmt.Errorf("read --prompt-file: %w", rerr)
+				}
+				prompt = string(b)
+			}
 			dir, isDefault, err := runWorkdir(workdir, cmd.Flags().Changed("workdir"), os.Getwd)
 			if err != nil {
 				return err
@@ -1579,6 +1637,10 @@ func runCmd() *cobra.Command {
 				"script":          script,
 				"workdir":         dir,
 				"workdir_default": isDefault,
+				"mode":            mode,
+				"prompt":          prompt,
+				"env":             envMap,
+				"name":            name,
 			})
 			resp, err := send(daemon.Request{
 				Method: "run",
@@ -1599,7 +1661,29 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&team, "team", "adhoc", "team name")
 	cmd.Flags().StringVar(&role, "role", "adhoc", "role name")
 	cmd.Flags().StringVar(&script, "script", "", "Lua script path")
+	cmd.Flags().StringVar(&mode, "mode", "", "launch mode: headless (experimental)")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "file holding the prompt a headless run carries (experimental)")
+	cmd.Flags().StringArrayVar(&envs, "env", nil, "KEY=VALUE for the session environment, repeatable (experimental)")
+	cmd.Flags().StringVar(&name, "name", "", "session name, so the key is workspace/name; a reused name is refused (experimental)")
+	cmd.Flags().BoolVar(&experimental, "experimental", false, "allow the experimental flags above")
 	return cmd
+}
+
+// parseRunEnv turns repeated --env KEY=VALUE into a map. The value is
+// everything after the first =.
+func parseRunEnv(envs []string) (map[string]string, error) {
+	if len(envs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(envs))
+	for _, e := range envs {
+		k, v, ok := strings.Cut(e, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("--env %q: want KEY=VALUE", e)
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 func killCmd() *cobra.Command {
@@ -1918,16 +2002,31 @@ between them. A runtime with no reader reads unknown.`,
 }
 
 func versionCmd() *cobra.Command {
-	return &cobra.Command{
+	var capabilities, asJSON bool
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print marvel version and channel",
 		Run: func(cmd *cobra.Command, args []string) {
+			if capabilities {
+				// Local only: no daemon is dialed. The departing daemon asks the
+				// binary it is about to exec whether it can read the credential
+				// handoff (aae-orc-4h9xp).
+				if asJSON {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "{\"reexec_handoff\":%d}\n", daemon.ReexecHandoffFormat)
+				} else {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reexec_handoff: %d\n", daemon.ReexecHandoffFormat)
+				}
+				return
+			}
 			versionReport(cmd.OutOrStdout(), thisBuild(),
 				func() (*daemon.BuildInfo, error) {
 					return boundedQuery(versionQueryTimeout, queryDaemonBuild)
 				})
 		},
 	}
+	cmd.Flags().BoolVar(&capabilities, "capabilities", false, "print what this binary can do for a daemon that execs into it, and exit (local; no daemon is asked)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "with --capabilities, print one JSON object")
+	return cmd
 }
 
 // runUpgrade is the install step of marvel upgrade. A variable so a test can
@@ -1975,6 +2074,8 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 					return err
 				}
 				req, sent := reexecRequest()
+				obs := newReexecObserver()
+				before, _ := obs.startedAt()
 				resp, err := reexecSend(req)
 				if err != nil {
 					return fmt.Errorf("sending daemon re-exec: %w", err)
@@ -1985,7 +2086,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 				if note := reexecNote(resp, sent); note != "" {
 					fmt.Fprintln(os.Stderr, note)
 				}
-				return nil
+				return checkAfterReexec(cmd.OutOrStdout(), before, reexecHandoffOutcome(resp), obs)
 			}, cmd.OutOrStdout())
 		},
 	}
@@ -2113,6 +2214,7 @@ or ~/.ssh/ keys.`,
 	addCluster.Flags().StringVar(&addIdentity, "identity", "", "private key file to use for SSH auth on this cluster")
 	addCluster.Flags().BoolVar(&addIdentityDefault, "no-default-identity", false, "do not auto-attach ~/.marvel/keys/client_ed25519")
 	cmd.AddCommand(addCluster)
+	cmd.AddCommand(repointCmd())
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "remove-cluster <name>",
@@ -2520,6 +2622,13 @@ the acts that destroy that.`,
 			if !teardown {
 				if keepBus {
 					fmt.Println("marvel daemon detaching, agents keep running, bus left up for the next daemon")
+					var result daemon.StopResult
+					if len(resp.Result) > 0 {
+						_ = json.Unmarshal(resp.Result, &result)
+					}
+					if note := stopKeepBusNotice(result.TransientCredentials); note != "" {
+						fmt.Fprintln(os.Stderr, note)
+					}
 				} else {
 					fmt.Println("marvel daemon detaching, agents keep running")
 				}
@@ -2561,6 +2670,7 @@ same crash-loop backoff roles get, reloads its authorization when teams
 change, and holds new sessions while it is down. A cluster with
 'bus.managed: false' only hands sessions the configured URL.`,
 	}
+	var requireLeaf bool
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "Show the broker: pid, listener, readiness, hub leaf link",
@@ -2578,9 +2688,16 @@ change, and holds new sessions while it is down. A cluster with
 				return fmt.Errorf("decode bus status: %w", err)
 			}
 			printBusStatus(os.Stdout, st)
+			if requireLeaf {
+				if ok, why := leafRequirement(st, time.Now()); !ok {
+					return requireLeafError(why)
+				}
+			}
 			return nil
 		},
 	}
+	status.Flags().BoolVar(&requireLeaf, "require-leaf", false,
+		"exit nonzero unless a hub is configured and the leaf is attached and up on a current reading, saying why")
 	cmd.AddCommand(status)
 
 	leafToggle := func(method string) func(*cobra.Command, []string) error {
@@ -2655,6 +2772,7 @@ func printBusStatus(w io.Writer, st bus.Status) {
 		leaf += " for " + st.LeafFor
 	}
 	_, _ = fmt.Fprintf(w, "managed:  true\nready:    %s\nleaf:     %s\n", ready, leaf)
+	_, _ = fmt.Fprint(w, leafSourceRows(st))
 	if s := st.Structure; s != nil {
 		// The structural reading (aae-orc-vy6k7): what ready is made of
 		// beyond the listener, so a "no" above has its reason right here.

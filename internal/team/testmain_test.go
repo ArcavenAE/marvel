@@ -8,23 +8,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/homeguard"
 	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 )
 
 // See internal/tmux/testmain_test.go for the rationale.
 func TestMain(m *testing.M) {
 	if _, err := exec.LookPath("tmux"); err != nil {
-		os.Exit(m.Run())
+		os.Exit(homeguard.Run(m))
 	}
 	// A binary that panicked, timed out or was killed never reached
 	// killTestServer; stop the servers it left behind.
 	tmuxtest.SweepDead()
 	socket := fmt.Sprintf("marvel-test-team-%d", os.Getpid())
-	if err := os.Setenv("MARVEL_TMUX_SOCKET", socket); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set MARVEL_TMUX_SOCKET: %v\n", err)
-		os.Exit(1)
-	}
-	code := m.Run()
+	code := homeguard.RunWith(m, func() error { return os.Setenv("MARVEL_TMUX_SOCKET", socket) })
 	killTestServer(socket)
 	os.Exit(code)
 }

@@ -1,0 +1,17 @@
+id: question-gateway-service-classification
+type: question
+confidence: frontier
+title: "Is Gateway the right classification for switchboard, director and the external API, and which other services belong in the set?"
+content: |
+  The operator says Gateway is probably not the right classification and names
+  candidate services: vault (credential and secrets manager), bd/dolt (tasks),
+  nats (agent bus and communications), litellm (router), PAIR (backend), and
+  more (Q-008). STREQ-018 has no pass condition until the classification and
+  the set are decided.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - question-gateway-external-api@hash:b590b25b5709a99460ab8bf5fe6d476de68e7bac
+    - brs-review@hash:eddc89399e3a63a5ed9c57a1503a1f4893591a8a

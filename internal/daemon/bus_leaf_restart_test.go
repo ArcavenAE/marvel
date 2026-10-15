@@ -90,7 +90,7 @@ func startTestLeafBroker(t *testing.T, d *Daemon, hub string, preEnroll bool) (*
 	if err := sup.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	d.busSup = sup
+	d.lifecycle = bus.NewLifecycle(sup)
 	t.Cleanup(func() { sup.Stop(false) })
 	return sup, dir
 }

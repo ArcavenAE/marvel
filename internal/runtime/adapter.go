@@ -39,12 +39,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/seaturi"
 )
 
 // LaunchContext holds the information an adapter needs to construct the
@@ -55,6 +58,13 @@ type LaunchContext struct {
 	Team       *api.Team
 	Workspace  *api.Workspace
 	SocketPath string
+	// Cluster is the first segment of the seat URI (aae-orc-2pss4): the daemon's
+	// own cluster entry name.
+	Cluster string
+	// TokenFile is the file holding this launch's heartbeat token, set by the
+	// session manager for an adapter that implements TokenFileCapable. Empty
+	// means the token travels in the environment.
+	TokenFile string
 	// Events receives an event an adapter's seed step records, such as the
 	// folder trust a codex seat was given. Nil is safe.
 	Events events.Emitter
@@ -228,6 +238,16 @@ type SessionIDAssigner interface {
 	AssignsSessionID(ctx *LaunchContext) bool
 }
 
+// TokenFileCapable is implemented by an adapter whose harness may publish its
+// own environment, as a Crush server started with CRUSH_CLIENT_SERVER=1 does
+// (finding-033 section 7b). The session manager then writes the heartbeat
+// token to a private file and the launch carries the file's path instead of
+// the token. An adapter that does not implement it, or returns false, keeps
+// the token in the environment.
+type TokenFileCapable interface {
+	DeliversTokenByFile() bool
+}
+
 // StatuslineFeeder is the optional half of the projection contract. An
 // adapter implements it when its harness can express marvel's context
 // feed as keys in its own settings schema, and the session manager asks
@@ -385,6 +405,12 @@ func (r *Registry) Resolve(runtimeName string) Adapter {
 
 // baseEnv returns the environment variables common to all adapters: the
 // values marvel constructs, then the role's declared env merged over them.
+// seatURIEnv carries the full seat URI to the harness (the director shim reads it).
+const seatURIEnv = "MARVEL_SEAT_URI"
+
+// logSeat is where the adapter reports a seat-URI mint decision.
+var logSeat = log.Printf
+
 func baseEnv(ctx *LaunchContext) map[string]string {
 	return mergeRoleEnv(ctx, constructedEnv(ctx))
 }
@@ -394,7 +420,83 @@ func baseEnv(ctx *LaunchContext) map[string]string {
 // set of names is also a contract: a harness that does not pass its
 // environment on to its tool children (codex, for MCP servers) has to be
 // told which names to forward, and this is that list.
+// seatURI is the seat's slot URI, cut by seaturi from the fleet and cluster the
+// daemon read, the session's workspace, team and role, and the replica index.
+// The slot carries no generation, so the value is the same across a shift. It
+// reports false, and logs one line saying why, when there is no
+// cluster name or the builder rejects the string: no URI is minted and nothing is
+// defaulted (aae-orc-2pss4). legacy is only named in the log line. The same
+// string is BEADS_ACTOR and MARVEL_SEAT_URI.
+func seatURI(ctx *LaunchContext, legacy string, quiet bool) (string, bool) {
+	logSeat := logSeat
+	if quiet {
+		logSeat = func(string, ...any) {}
+	}
+	if ctx.Cluster == "" {
+		logSeat("session %s: no seat URI minted, BEADS_ACTOR stays %s: the daemon has no cluster entry name", ctx.Session.Name, legacy)
+		return "", false
+	}
+	index, err := replicaIndex(ctx)
+	if err != nil {
+		logSeat("session %s: no seat URI minted, BEADS_ACTOR stays %s: %v", ctx.Session.Name, legacy, err)
+		return "", false
+	}
+	uri, err := seaturi.Build(seaturi.Seat{
+		Cluster: ctx.Cluster, Workspace: ctx.Workspace.Name,
+		Team: ctx.Team.Name, Role: ctx.Role.Name, Index: index,
+	})
+	if err != nil {
+		logSeat("session %s: no seat URI minted, BEADS_ACTOR stays %s: %v", ctx.Session.Name, legacy, err)
+		return "", false
+	}
+	return uri, true
+}
+
+// replicaIndex reads the index off a session name of the form
+// <team>-<role>-g<generation>-<index>. A name of any other shape, such as a
+// held replica, is not a slot and has no index.
+func replicaIndex(ctx *LaunchContext) (int, error) {
+	prefix := ctx.Team.Name + "-" + ctx.Role.Name + "-g"
+	rest, ok := strings.CutPrefix(ctx.Session.Name, prefix)
+	if !ok {
+		return 0, fmt.Errorf("session name %q does not start with %q", ctx.Session.Name, prefix)
+	}
+	gen, idx, ok := strings.Cut(rest, "-")
+	if !ok || !allDigits(gen) || !allDigits(idx) {
+		return 0, fmt.Errorf("session name %q is not <team>-<role>-g<generation>-<index>", ctx.Session.Name)
+	}
+	n, err := strconv.Atoi(idx)
+	if err != nil {
+		return 0, fmt.Errorf("session name %q: index: %w", ctx.Session.Name, err)
+	}
+	return n, nil
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func constructedEnv(ctx *LaunchContext) map[string]string {
+	return constructedEnvQuiet(ctx, false)
+}
+
+// constructedEnvQuiet is constructedEnv with the seat-URI refusal line
+// optionally suppressed, for a caller that only reads the variable names while
+// the launch itself reports the refusal.
+func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
+	actor := "marvel/" + ctx.Workspace.Name + "/" + ctx.Session.Name
+	uri, haveURI := seatURI(ctx, actor, quiet)
+	if haveURI {
+		actor = uri
+	}
 	env := map[string]string{
 		"MARVEL_SESSION":   ctx.Session.Name,
 		"MARVEL_ROLE":      ctx.Role.Name,
@@ -423,11 +525,14 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 		// surface, that sets its own value after baseEnv returns wins.
 		// The rig column is deliberately not set here; its semantics
 		// are gated on the bd HEAD survey (aae-orc-usohe).
-		"BEADS_ACTOR": "marvel/" + ctx.Workspace.Name + "/" + ctx.Session.Name,
+		"BEADS_ACTOR": actor,
 	}
 	// A successor's lineage (marvel#437, design D5 item 4). Set only when it
 	// has a value, so absence tells a first spawn from a successor whose
 	// predecessor wrote nothing.
+	if haveURI {
+		env[seatURIEnv] = uri
+	}
 	if ctx.Session.Predecessor != "" {
 		env[api.PredecessorEnv] = ctx.Session.Predecessor
 	}
@@ -455,12 +560,25 @@ func constructedEnv(ctx *LaunchContext) map[string]string {
 	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
+		// The layout root rides beside the socket, so a marvel command the
+		// seat runs resolves its config and keys against the daemon's root.
+		// Only a root other than the default is handed on.
+		if h := paths.NonDefaultHome(); h != "" {
+			env[paths.HomeEnv] = h
+		}
 		// The socket is what makes a heartbeat possible, so the token
 		// travels with it and a session that cannot reach the daemon
 		// carries no secret. This is enforcement locus 1: marvel
 		// constructs the environment, and what the agent can prove about
 		// itself is what marvel put there.
-		if ctx.Session.HeartbeatToken != "" {
+		//
+		// A harness that may publish its own environment gets the path of a
+		// file instead (TokenFile), so the secret is not in what it
+		// publishes.
+		switch {
+		case ctx.TokenFile != "":
+			env[api.HeartbeatTokenFileEnv] = ctx.TokenFile
+		case ctx.Session.HeartbeatToken != "":
 			env[api.HeartbeatTokenEnv] = ctx.Session.HeartbeatToken
 		}
 	}
@@ -527,6 +645,7 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 var roleEnvRefusedKeys = []string{
 	api.HeartbeatTokenEnv,
 	api.CredentialHelperEnv,
+	api.HeartbeatTokenFileEnv,
 	"DIRECTOR_NATS_USER",
 	"DIRECTOR_NATS_PASS",
 }
@@ -552,37 +671,10 @@ func buildCommand(binary string, args []string) string {
 	return cmd
 }
 
-// shellQuote wraps an argument in single quotes if it contains spaces or
-// shell metacharacters. Empty strings become ”.
+// shellQuote wraps an argument in single quotes unconditionally, escaping
+// embedded single quotes. An empty string becomes a pair of quotes.
 func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, c := range s {
-		if c == ' ' || c == '\'' || c == '"' || c == '\\' || c == '$' ||
-			c == '`' || c == '!' || c == '&' || c == '|' || c == ';' ||
-			c == '(' || c == ')' || c == '{' || c == '}' || c == '<' ||
-			c == '>' || c == '*' || c == '?' || c == '[' || c == ']' ||
-			c == '#' || c == '~' {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	// Single-quote the string, escaping embedded single quotes.
-	result := "'"
-	for _, c := range s {
-		if c == '\'' {
-			result += `'\''`
-		} else {
-			result += string(c)
-		}
-	}
-	result += "'"
-	return result
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // settingsProjectionPath is the per-session projected settings file for

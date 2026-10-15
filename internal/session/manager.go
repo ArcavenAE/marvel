@@ -36,6 +36,8 @@ type Manager struct {
 	refused   map[string]*refusal
 	// Clock is the time source for refusal bookkeeping; nil means time.Now.
 	Clock func() time.Time
+	// LookPath finds the container runtime CLI; nil means exec.LookPath.
+	LookPath func(string) (string, error)
 
 	store      *api.Store
 	driver     *tmux.Driver
@@ -45,6 +47,9 @@ type Manager struct {
 	// team's credential for the session environment. Set by daemon.Start
 	// from the cluster's bus section; nil when the cluster has none.
 	Bus BusEnv
+	// SeatCluster is the first segment of the seat URI (aae-orc-2pss4), the
+	// daemon's own cluster entry name, set at bus attach. Empty means no URI.
+	SeatCluster string
 	// Events receives structured state-transition events. Nil is safe
 	// (all emission sites use events.Emit which no-ops on nil) so tests
 	// and callers that don't care about the event stream don't need to
@@ -65,6 +70,8 @@ type Manager struct {
 	// The pipes carry no content at rest, so nothing here needs to survive
 	// a restart; NewFIFO replaces a leftover pipe rather than failing on it.
 	StreamDir string
+	// TokenDir holds the per-session heartbeat token files.
+	TokenDir string
 	// ProjectionDir holds the per-session projected policy settings files
 	// (finding-024's contract half). Defaults to a per-layout temp
 	// directory (see daemonTempDir). The path must survive a restart even
@@ -115,6 +122,86 @@ type Manager struct {
 	paneStatus func(paneID string) (tmux.PaneStatus, error)
 }
 
+// byFile reports whether this session's runtime asks for its heartbeat token
+// by file.
+func (m *Manager) byFile(sess *api.Session) bool {
+	c, ok := m.adapters.Resolve(sess.Runtime.Name).(runtime.TokenFileCapable)
+	return ok && c.DeliversTokenByFile()
+}
+
+// tokenFilePath names the session's token file under TokenDir. The name is a
+// digest of the key, so two keys cannot collapse to one file and the key's own
+// characters never reach the filesystem.
+func (m *Manager) tokenFilePath(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(m.TokenDir, hex.EncodeToString(sum[:16])+".token")
+}
+
+// writeTokenFile writes the session's token for a by-file launch: the
+// directory at mode 0700, the file at 0600, replaced by rename so a reader
+// never sees half a token. A session with no token has no file and no error.
+func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
+	if sess.HeartbeatToken == "" {
+		return "", nil
+	}
+	if m.TokenDir == "" {
+		return "", errors.New("no token directory")
+	}
+	if err := os.MkdirAll(m.TokenDir, 0o700); err != nil {
+		return "", fmt.Errorf("create token dir: %w", err)
+	}
+	// The default directory sits under the shared temp directory, where
+	// another account could have made it first. Unlike a harness home there
+	// is no safe fallback location for a secret, so a directory that is not a
+	// private directory of this user is refused (compare harnessHomeBase).
+	fi, err := os.Lstat(m.TokenDir)
+	if err != nil {
+		return "", fmt.Errorf("stat token dir: %w", err)
+	}
+	if !fi.IsDir() || fi.Mode().Perm() != 0o700 || !ownedByMe(fi) {
+		return "", fmt.Errorf("token dir %s is not a private directory of this user (mode %v)", m.TokenDir, fi.Mode())
+	}
+	path := m.tokenFilePath(sess.Key())
+	tmp, err := os.CreateTemp(m.TokenDir, ".token-*")
+	if err != nil {
+		return "", fmt.Errorf("create token file: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("chmod token file: %w", err)
+	}
+	if _, err := tmp.WriteString(sess.HeartbeatToken); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("write token file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close token file: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return "", fmt.Errorf("place token file: %w", err)
+	}
+	return path, nil
+}
+
+// removeTokenFile removes the session's token file. Best effort: a missing
+// file is not an error.
+func (m *Manager) removeTokenFile(key string) {
+	if m.TokenDir == "" {
+		return
+	}
+	if err := os.Remove(m.tokenFilePath(key)); err != nil && !os.IsNotExist(err) {
+		log.Printf("warning: remove token file for %s: %v", key, err)
+	}
+}
+
+func defaultTokenDir() string {
+	if dir := os.Getenv("MARVEL_TOKEN_DIR"); dir != "" {
+		return dir
+	}
+	return daemonTempDir("marvel-tokens")
+}
+
 // NewManager creates a session manager with the default runtime adapter registry.
 func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 	m := &Manager{
@@ -122,6 +209,7 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		driver:            driver,
 		adapters:          runtime.NewRegistry(),
 		StreamDir:         defaultStreamDir(),
+		TokenDir:          defaultTokenDir(),
 		ProjectionDir:     defaultProjectionDir(),
 		HarnessHomeDir:    defaultHarnessHomeDir(),
 		BackendOverlayDir: defaultBackendOverlayDir(),
@@ -579,6 +667,10 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err := m.checkWorkDir(sess); err != nil {
 		return err
 	}
+	image, inContainer, err := m.containerPlacement(sess)
+	if err != nil {
+		return err
+	}
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
@@ -643,6 +735,17 @@ func (m *Manager) Create(sess *api.Session) error {
 	// see. Recorded for every session, overlay or not, so a default-mode
 	// session reads as ambient rather than as unclassified.
 	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+
+	// A seat placed in a container runs its prepared command under the runtime.
+	// This wraps whatever planLaunch built, the direct fallbacks included, so no
+	// branch of it can start the seat on the host.
+	if inContainer {
+		if err := m.wrapInContainer(sess, &plan, image); err != nil {
+			_ = m.store.DeleteSession(sess.Key())
+			m.teardownViews(sess.Key())
+			return fmt.Errorf("create session %s: %w", sess.Key(), err)
+		}
+	}
 
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
@@ -752,26 +855,31 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 			why = "does not exist"
 		}
 	}
-	now := m.now()
 	msg := fmt.Sprintf("not started: the directory %s for %s/%s %s; tmux would start it in $HOME", sess.WorkDir, sess.Team, sess.Role, why)
+	m.noteRefusal(sess, key, RefusalDirectory, events.KindSessionPlacementRefused, sess.WorkDir, msg)
+	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
+}
+
+// noteRefusal keeps the standing record of a refused role and reports it. The
+// reconcile loop retries every tick, so the refusal is reported when it starts
+// and then at a low cadence for as long as it lasts: the log at most every
+// refusalLogEvery, the event every refusalEmitEvery (so it cannot roll off the
+// ring unseen). describe reads the standing record. The caller holds refusedMu.
+// A change of reason or directory starts a new record.
+func (m *Manager) noteRefusal(sess *api.Session, key, reason string, kind events.Kind, workDir, msg string) {
+	now := m.now()
 	r := m.refused[key]
-	if r == nil || r.WorkDir != sess.WorkDir {
+	if r == nil || r.Reason != reason || r.WorkDir != workDir {
 		if m.refused == nil {
 			m.refused = map[string]*refusal{}
 		}
 		r = &refusal{PlacementRefusal: PlacementRefusal{
 			Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role,
-			WorkDir: sess.WorkDir, Since: now,
+			Reason: reason, WorkDir: workDir, Since: now,
 		}}
 		m.refused[key] = r
-	} else {
-		r.Message = msg
 	}
 	r.Message = msg
-	// The reconcile loop retries every tick, so the refusal is reported when it
-	// starts and then at a low cadence for as long as it lasts: the log at most
-	// every refusalLogEvery, the event every refusalEmitEvery (so it cannot roll
-	// off the ring unseen). describe reads the standing record.
 	if r.lastLog.IsZero() || now.Sub(r.lastLog) >= refusalLogEvery {
 		r.lastLog = now
 		log.Printf("session %s: %s", sess.Key(), msg)
@@ -779,7 +887,7 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 	if r.lastEmit.IsZero() || now.Sub(r.lastEmit) >= refusalEmitEvery {
 		r.lastEmit = now
 		events.Emit(m.Events, events.Event{
-			Kind:      events.KindSessionPlacementRefused,
+			Kind:      kind,
 			Severity:  events.SeverityWarning,
 			Workspace: sess.Workspace,
 			Team:      sess.Team,
@@ -788,7 +896,6 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 			Message:   msg,
 		})
 	}
-	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
 }
 
 // launchPlan is what one session needs to come up: the shell command,
@@ -953,12 +1060,26 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 
 	adapter := m.adapters.Resolve(sess.Runtime.Name)
+	// A harness that may publish its environment gets the token by file.
+	// When the file cannot be written the launch carries no token at all:
+	// falling back to the environment would hand the secret to the very
+	// harness the file was meant to keep it from.
+	byFile := m.byFile(sess)
+	var tokenFile string
+	if byFile {
+		var terr error
+		if tokenFile, terr = m.writeTokenFile(sess); terr != nil {
+			log.Printf("session %s: token file: %v; launching without a heartbeat token", sess.Key(), terr)
+		}
+	}
 	lctx := &runtime.LaunchContext{
 		Session:    sess,
 		Role:       role,
 		Team:       &team,
 		Workspace:  &ws,
 		SocketPath: m.SocketPath,
+		Cluster:    m.SeatCluster,
+		TokenFile:  tokenFile,
 		Events:     m.Events,
 	}
 	if m.Views != nil {
@@ -1008,6 +1129,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 
 	plan := launchPlan{command: result.Command, env: result.Env}
+	if byFile && tokenFile == "" {
+		delete(plan.env, api.HeartbeatTokenEnv)
+	}
 	sess.SettingSources = result.SettingSources
 	sess.SettingSourcesDelivery = result.SettingSourcesDelivery
 	switch {
@@ -1371,7 +1495,20 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 	}
 	if m.SocketPath != "" {
 		envs["MARVEL_SOCKET"] = m.SocketPath
-		if sess.HeartbeatToken != "" {
+		// Same rule as the adapter path: the layout root, when it is not the
+		// default, rides beside the socket.
+		if h := paths.NonDefaultHome(); h != "" {
+			envs[paths.HomeEnv] = h
+		}
+		switch {
+		case m.byFile(sess):
+			// Same rule as the adapter path: a file, or no token.
+			if path, err := m.writeTokenFile(sess); err != nil {
+				log.Printf("session %s: token file: %v; launching without a heartbeat token", sess.Key(), err)
+			} else if path != "" {
+				envs[api.HeartbeatTokenFileEnv] = path
+			}
+		case sess.HeartbeatToken != "":
 			envs[api.HeartbeatTokenEnv] = sess.HeartbeatToken
 		}
 	}
@@ -1476,6 +1613,7 @@ func (m *Manager) dropSession(sess api.Session, message string) error {
 	// session). Best-effort; a missing file is not an error.
 	m.sweepBackendOverlay(sess)
 	m.teardownViews(key)
+	m.removeTokenFile(key)
 
 	log.Printf("session %s deleted", key)
 	events.Emit(m.Events, events.Event{
@@ -1777,10 +1915,20 @@ var ErrPlacementRefused = errors.New("placement refused")
 // directory.
 type PlacementRefusal struct {
 	Workspace, Team, Role string
-	WorkDir               string
-	Message               string
-	Since                 time.Time
+	// Reason is what the spawn is refused for: RefusalDirectory,
+	// RefusalContainerImage or RefusalContainerRuntime.
+	Reason  string
+	WorkDir string
+	Message string
+	Since   time.Time
 }
+
+// The reasons a spawn is refused for its placement.
+const (
+	RefusalDirectory        = "directory"
+	RefusalContainerImage   = "container image"
+	RefusalContainerRuntime = "container runtime"
+)
 
 // refusal is the standing record of one refused role, with when it was last
 // logged and emitted.
@@ -1819,7 +1967,9 @@ func (m *Manager) PlacementRefusals() []PlacementRefusal {
 func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	m.refusedMu.Lock()
 	defer m.refusedMu.Unlock()
-	delete(m.refused, workspace+"/"+team+"/"+role)
+	key := workspace + "/" + team + "/" + role
+	delete(m.refused, key)
+	delete(m.refused, key+containerRefusalSuffix)
 }
 
 func (m *Manager) now() time.Time {

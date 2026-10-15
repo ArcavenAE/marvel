@@ -22,9 +22,10 @@ This table is derived from the registry by a test, so it cannot drift. A new ada
 | StatuslineFeeder | yes | no | no | yes | no | no |
 | ComposerCapable | yes | yes | yes | no | no | no |
 | ForegroundRule | yes | no | no | no | no | no |
+| SandboxRecommender | no | no | no | no | no | no |
 <!-- adapter-capabilities:end -->
 
-What each interface means: `StreamCapable` reads a headless harness's structured output (`internal/runtime/stream.go:52`). `SessionIDAssigner` pins the harness session id (`internal/runtime/adapter.go:219`). `SessionHomeAssigner` gives the session a private state home (`internal/runtime/adapter.go:193`). `StatuslineFeeder` builds the statusline command that feeds context readings (`internal/runtime/adapter.go:237`). `ComposerCapable` declares how the prompt composer takes input (`internal/runtime/adapter.go:321`). `ForegroundRule` says which pane command is the harness (`internal/runtime/adapter.go:631`).
+What each interface means: `StreamCapable` reads a headless harness's structured output (`internal/runtime/stream.go:52`). `SessionIDAssigner` pins the harness session id (`internal/runtime/adapter.go:219`). `SessionHomeAssigner` gives the session a private state home (`internal/runtime/adapter.go:193`). `StatuslineFeeder` builds the statusline command that feeds context readings (`internal/runtime/adapter.go:237`). `ComposerCapable` declares how the prompt composer takes input (`internal/runtime/adapter.go:321`). `ForegroundRule` says which pane command is the harness (`internal/runtime/adapter.go:631`). `SandboxRecommender` says the harness recommends a container (`internal/runtime/sandbox.go:16`). A harness with no adapter of its own, pi and mini-swe-agent today, is declared in `sandboxRecommendedHarnesses` (`internal/runtime/sandbox.go:26`) and not in this table, so its row here reads `no` until it gets an adapter.
 
 ## Shift change
 

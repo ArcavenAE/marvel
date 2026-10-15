@@ -1,0 +1,15 @@
+id: question-handoff-quality-measure
+type: question
+confidence: frontier
+title: "What measures a handoff good enough to replace a working seat?"
+content: |
+  Whether automatic shifts may be turned on depends on whether a handoff is
+  good enough to replace a working seat (C-023), but the records carry no
+  measure of good enough. STREQ-016 has no pass condition until one is given.
+provenance:
+  created_by: spectacle.reverse-prd
+  session: 9b948f8e-a64e-43f7-87d7-401e0816204a
+  created_at: 2026-10-13T21:37:08Z
+  derived_from:
+    - question-auto-shift-handoff-quality@hash:90182c7895e4c752b62711d406f9a1cb26029a46
+    - question-shift-triggers@hash:9e2d2a4bc2688ca704661120e607eadb089ca61c
