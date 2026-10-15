@@ -195,6 +195,10 @@ func main() {
 	os.Args = stripComments(os.Args)
 
 	if err := newRootCmd().Execute(); err != nil {
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.Code)
+		}
 		os.Exit(1)
 	}
 }
@@ -226,6 +230,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())
 	root.AddCommand(convergeCmd())
+	root.AddCommand(waitCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(killCmd())
 	root.AddCommand(shiftCmd())
@@ -1583,11 +1588,33 @@ func convergeCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var workspace, team, role, script, workdir string
+	var mode, promptFile, name string
+	var envs []string
+	var experimental bool
 	cmd := &cobra.Command{
 		Use:   "run <command> [args...]",
 		Short: "Run a one-off agent session",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, f := range []string{"mode", "prompt-file", "env", "name"} {
+				if cmd.Flags().Changed(f) {
+					if err := requireExperimental(experimental, "--"+f); err != nil {
+						return err
+					}
+				}
+			}
+			envMap, err := parseRunEnv(envs)
+			if err != nil {
+				return err
+			}
+			var prompt string
+			if promptFile != "" {
+				b, rerr := os.ReadFile(promptFile)
+				if rerr != nil {
+					return fmt.Errorf("read --prompt-file: %w", rerr)
+				}
+				prompt = string(b)
+			}
 			dir, isDefault, err := runWorkdir(workdir, cmd.Flags().Changed("workdir"), os.Getwd)
 			if err != nil {
 				return err
@@ -1601,6 +1628,10 @@ func runCmd() *cobra.Command {
 				"script":          script,
 				"workdir":         dir,
 				"workdir_default": isDefault,
+				"mode":            mode,
+				"prompt":          prompt,
+				"env":             envMap,
+				"name":            name,
 			})
 			resp, err := send(daemon.Request{
 				Method: "run",
@@ -1621,7 +1652,29 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&team, "team", "adhoc", "team name")
 	cmd.Flags().StringVar(&role, "role", "adhoc", "role name")
 	cmd.Flags().StringVar(&script, "script", "", "Lua script path")
+	cmd.Flags().StringVar(&mode, "mode", "", "launch mode: headless (experimental)")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "file holding the prompt a headless run carries (experimental)")
+	cmd.Flags().StringArrayVar(&envs, "env", nil, "KEY=VALUE for the session environment, repeatable (experimental)")
+	cmd.Flags().StringVar(&name, "name", "", "session name, so the key is workspace/name; a reused name is refused (experimental)")
+	cmd.Flags().BoolVar(&experimental, "experimental", false, "allow the experimental flags above")
 	return cmd
+}
+
+// parseRunEnv turns repeated --env KEY=VALUE into a map. The value is
+// everything after the first =.
+func parseRunEnv(envs []string) (map[string]string, error) {
+	if len(envs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(envs))
+	for _, e := range envs {
+		k, v, ok := strings.Cut(e, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("--env %q: want KEY=VALUE", e)
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 func killCmd() *cobra.Command {
