@@ -1,6 +1,6 @@
 # goose adapter v1: design brief
 
-- **Status:** proposed, 2026-10-10. Nothing here is built. The tickets in section 10 are listed, not filed: filing waits on the harness plan's decision D8.
+- **Status:** proposed, 2026-10-10. Nothing here is built. The tickets in section 10 were filed in bd on 2026-10-14.
 - **Author seat:** architect, team arcaven, as chair of a four-round design party. The seats were goose, adapter, telemetry, containment and a second harness (gemini-cli). Round 4 was a forced vote and every item carried; the reason store carried 3-2, with the dissent in section 9.
 - **Pins:** marvel main 493de32; goose v1.54.0 at cd643d2 (released 2026-10-08), read in source through the GitHub API on 2026-10-10. Nothing was installed or run.
 - **Companion:** `docs/adapter-kit-checklist.md`, the lines any new harness walks. Adopted as the adapter kit, 2026-10-15 (section 11).
@@ -176,7 +176,7 @@ HELD. It needs the harness plan's D1 (sandbox) and D3 (trial credentials, a spen
 
 **Dissent on the reason store** (the adapter and containment seats): one generic reap capture would cover every headless harness, and it would leave stderr in the pane, the operator's window. A stderr file in the session home is one more place a key can land while goose#12413 is open. The adopted design keeps their two safeguards, a size cap and a credential-shape scan before storage, and E2 stays on the board with no blocker.
 
-## 10. Tickets (proposed, flat, with edges; not filed until D8)
+## 10. Tickets (flat, with edges; filed 2026-10-14)
 
 | ref | title | blocked by |
 |---|---|---|
@@ -200,7 +200,7 @@ There is no ticket E: the goose-specific reason store folded into C. Not tracked
 ## 11. Rulings needed
 
 - D1, the sandbox; D3, trial credentials, spend cap and host, asked once for this probe and the gemini-cli T7 probe. Pin dates: goose v1.54.0 to 2026-10-24; gemini-cli v0.63.0 at 5738466 to 2026-10-17.
-- D8, filing the tickets above.
+- D8, filing the tickets above: filed 2026-10-14 (section 10).
 - K6's `unattended` role field, which the posture rules read.
 - Ruled 2026-10-10: a goose seat reads the operator's own goose keyring entry, with a broker-minted key as the future option (section 6).
 - Ruled 2026-10-15, relayed by director: the operator adopted `docs/adapter-kit-checklist.md` as the adapter kit (ticket F).
