@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -207,11 +208,8 @@ func decodeHandoff(buf []byte) ([]api.Credential, error) {
 func probeReexecTarget(exe string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, "version", "--capabilities", "--json")
-	cmd.Env = []string{}
 	var out bytes.Buffer
-	cmd.Stdout = &limitedWriter{w: &out, left: 4096}
-	cmd.WaitDelay = 100 * time.Millisecond
+	cmd := probeCommand(ctx, exe, &out)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("probe %s: %w", exe, err)
 	}
@@ -225,8 +223,21 @@ func probeReexecTarget(exe string, timeout time.Duration) error {
 	return nil
 }
 
+// probeCommand is the one place the daemon package starts a process, pinned by
+// the guard in limitwiring_exec_test.go: argv0 is the exe the reexec already
+// resolved, the arguments are fixed, the environment is an empty slice (a nil
+// Env would hand the target the daemon's own), stdin is nil, no descriptor is
+// passed (the pipe does not exist yet), and stdout is read through a small cap.
+func probeCommand(ctx context.Context, exe string, out io.Writer) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, exe, "version", "--capabilities", "--json")
+	cmd.Env = []string{}
+	cmd.Stdout = &limitedWriter{w: out, left: 4096}
+	cmd.WaitDelay = 100 * time.Millisecond
+	return cmd
+}
+
 type limitedWriter struct {
-	w    *bytes.Buffer
+	w    io.Writer
 	left int
 }
 
@@ -236,7 +247,9 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 		p = p[:l.left]
 	}
 	l.left -= len(p)
-	l.w.Write(p)
+	if _, err := l.w.Write(p); err != nil {
+		return 0, err
+	}
 	return n, nil
 }
 
