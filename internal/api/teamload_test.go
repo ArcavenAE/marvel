@@ -95,3 +95,28 @@ func TestRollTeamLoadCountsLimitedAndStampsValidity(t *testing.T) {
 		t.Errorf("observed %v valid until %v, want %v and +%v", got.ObservedAt, got.ValidUntil, loadNow, TeamLoadValidity)
 	}
 }
+
+// Two teams can share a name across workspaces; a row counts its own
+// workspace's seats only.
+func TestRollTeamLoadIgnoresSameNamedTeamsInOtherWorkspaces(t *testing.T) {
+	mine := loadSeat("squad-lead-g1-0", "lead", SessionRunning, readTicks(50, 100))
+	theirs := loadSeat("squad-lead-g1-0", "lead", SessionRunning, readTicks(100, 100))
+	theirs.Workspace = "elsewhere"
+	got := RollTeamLoad(loadTeam(), []Session{mine, theirs}, loadNow)
+	if got.Running != 1 || len(got.Agents) != 1 || got.ActiveMeasured != 1 || got.ActiveMeanPct != 50 {
+		t.Errorf("row = %+v, want only the ws/squad seat: 1 running, mean 50 over 1", got)
+	}
+}
+
+// A running seat that is not limited is not counted as limited, whatever its
+// neighbours read.
+func TestRollTeamLoadLimitedCountsOnlyLimitedSeats(t *testing.T) {
+	limited := loadSeat("squad-lead-g1-0", "lead", SessionRunning, ActiveTicks{})
+	limited.Condition = ConditionLimited
+	free1 := loadSeat("squad-worker-g1-0", "worker", SessionRunning, ActiveTicks{})
+	free2 := loadSeat("squad-worker-g1-1", "worker", SessionRunning, ActiveTicks{})
+	got := RollTeamLoad(loadTeam(), []Session{limited, free1, free2}, loadNow)
+	if got.Running != 3 || got.Limited != 1 {
+		t.Errorf("running %d limited %d, want 3 and 1", got.Running, got.Limited)
+	}
+}
