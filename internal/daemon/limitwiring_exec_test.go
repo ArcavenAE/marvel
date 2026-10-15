@@ -113,6 +113,30 @@ func TestTheOnlyProcessTheDaemonStartsIsTheProbeWithItsPinnedArguments(t *testin
 	}
 }
 
+// execCmdLiterals lists every exec.Cmd struct literal in p, in any function or
+// at package level. The inventory above counts calls to exec.Command*, and an
+// &exec.Cmd{Path: ...} builds a process without one (aae-orc-4h9xp review).
+func execCmdLiterals(p pkgFiles) []string {
+	return nil
+}
+
+func TestAnExecCmdLiteralIsCountedLikeACall(t *testing.T) {
+	t.Parallel()
+	const src = "package daemon\n\nimport \"os/exec\"\n\nfunc probeCommand() *exec.Cmd { return &exec.Cmd{Path: \"x\"} }\n\nvar plain = exec.Cmd{}\n"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, execAllowedFile, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := execCmdLiterals(pkgFiles{fset: fset, files: map[string]*ast.File{execAllowedFile: f}})
+	if len(got) != 2 {
+		t.Errorf("exec.Cmd literals found = %v, want the pointer literal and the value literal", got)
+	}
+	if real := execCmdLiterals(parseDaemon(t)); len(real) != 0 {
+		t.Errorf("the daemon package builds a process from a struct literal: %v", real)
+	}
+}
+
 func exprText(e ast.Expr) string {
 	switch v := e.(type) {
 	case *ast.Ident:
