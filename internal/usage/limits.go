@@ -272,9 +272,10 @@ func DefaultTable() Table {
 		// again lands on 245480, runs 5% pessimistic, and fires shifts
 		// early.
 		//
-		// Headless codex exec has no such feed: its exec-stream samples
-		// are cumulative and produce no level at all (see profiles.go),
-		// so its CTX% renders "-".
+		// The codex exec stream gives no level: its samples are cumulative
+		// (see profiles.go), so the stream alone leaves CTX% at "-".
+		// Whether the seeded hooks fire under exec is unchecked
+		// (docs/design/unresolved-window-context-pressure.md).
 
 		// opencode: EMPTY, and equally not self-filling. No window
 		// measurement exists for any opencode model, and opencode declares

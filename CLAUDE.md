@@ -186,9 +186,11 @@ Scope and limits:
   interactive shape (window plus feed).
 - Only sessions on a resolved window are metered. An interactive codex seat is
   metered through its seeded hooks (`marvel codex-ctx`), which send the level
-  and the window from codex's own record. Headless `codex exec` reports a
-  running total rather than a per-request level, so that role stays
-  operator-shifted. opencode declares no window, so a role on it stays
+  and the window from codex's own record. The headless `codex exec` stream
+  reports a running total and gives no level; whether the seeded hooks fire
+  under `exec` is unchecked
+  (`docs/design/unresolved-window-context-pressure.md`). opencode declares
+  no window, so a role on it stays
   operator-shifted unless the operator sets `runtime.context_window` to supply
   a denominator. See `internal/usage/doc.go` and `aae-orc-dc1j` (interactive
   sessions).
