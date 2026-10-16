@@ -51,3 +51,27 @@ func TestWaitHonoursTheScheduleItIsGiven(t *testing.T) {
 		}
 	}
 }
+
+// The table the role crash loop and the bus supervisor were each held to
+// before they shared this package, for n from -3 to 60.
+func TestRestartMatchesThePinnedSchedule(t *testing.T) {
+	t.Parallel()
+	for n := -3; n <= 60; n++ {
+		var want time.Duration
+		switch {
+		case n <= 1:
+			want = 30 * time.Second
+		case n == 2:
+			want = time.Minute
+		case n == 3:
+			want = 2 * time.Minute
+		case n == 4:
+			want = 4 * time.Minute
+		default:
+			want = 5 * time.Minute
+		}
+		if got := Restart.Wait(n); got != want {
+			t.Errorf("Restart.Wait(%d) = %s, want %s", n, got, want)
+		}
+	}
+}

@@ -3,6 +3,8 @@ package team
 import (
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/backoff"
 )
 
 // pinnedRestartWait is the restart wait both crash loops are meant to share:
@@ -23,11 +25,11 @@ func pinnedRestartWait(n int) time.Duration {
 	}
 }
 
-func TestComputeBackoffMatchesThePinnedSchedule(t *testing.T) {
+func TestRestartWaitMatchesThePinnedSchedule(t *testing.T) {
 	t.Parallel()
 	for n := -3; n <= 60; n++ {
-		if got, want := computeBackoff(n), pinnedRestartWait(n); got != want {
-			t.Errorf("computeBackoff(%d) = %s, want %s", n, got, want)
+		if got, want := backoff.Restart.Wait(n), pinnedRestartWait(n); got != want {
+			t.Errorf("backoff.Restart.Wait(%d) = %s, want %s", n, got, want)
 		}
 	}
 }
