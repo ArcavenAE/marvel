@@ -32,8 +32,9 @@ stands in the way. It can, with two blockers, and no candidate tool is a drop-in
    existing stores, not a graph database marvel operates
    (`docs/design/service-provider/01-brief-prd.md:126-129`).
 4. Field state on 2026-10-16:
-   - SCIP indexers are batch tools only, and SCIP moved to open governance
-     (scip v0.10.0, 2026-09-03):
+   - each SCIP indexer runs once and writes index.scip (scip README;
+     finding-kos-ndz7). SCIP moved to open governance (2026-03-25 blog); scip
+     v0.10.0 released 2026-09-03:
      https://sourcegraph.com/blog/the-future-of-scip and
      https://github.com/scip-code;
    - tree-sitter MCP servers, code-review-graph the closest fit, offer health,
