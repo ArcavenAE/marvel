@@ -830,10 +830,13 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	sess.SessionContext = reading
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
 	// A producer that reads the harness's own output total (the codex hook)
-	// supplies it here. It rides the same field the accountant writes, so the
-	// TOUT cell reads one place; a beat that carries none leaves the held
-	// value, and a seat that never had one stays nil.
-	if r.OutputTokens != nil {
+	// supplies it here, and the TOUT cell reads the one field. The accountant
+	// owns the slice once it has metered a request: it writes SpendOut and
+	// SpendPromptTokens together, and a hook beat writes only SpendOut. So the
+	// beat writes it only while SpendPromptTokens is nil, and a metered seat
+	// keeps the accountant's total and the rate computed over it. A beat that
+	// carries none leaves the held value, and a seat that never had one stays nil.
+	if r.OutputTokens != nil && sess.SpendPromptTokens == nil {
 		sess.SpendOut = copyInt(r.OutputTokens)
 	}
 	sess.LastHeartbeat = time.Now().UTC()
