@@ -124,10 +124,20 @@ const (
 	// DefaultTTL is how long a token lives unless a driver is told otherwise.
 	// A token is short-lived on purpose: its TTL bounds every gap in revocation.
 	DefaultTTL = 5 * time.Minute
+	// MinTTL is the shortest a token may live. The seat's helper asks again at
+	// about two thirds of a token's life and, with the daemon's socket absent,
+	// retries for up to 90 s before it exits nonzero; it never prints a stale
+	// token. A token shorter than this could expire before the helper can get
+	// its replacement.
+	MinTTL = 3 * time.Minute
 	// MaxTTL is the longest a token may live. The broker refuses, and revokes,
 	// a token a driver issues that outlives it.
 	MaxTTL = 15 * time.Minute
 )
+
+// ErrTTLTooShort is returned when a driver issues a token that lives less than
+// MinTTL. The broker revokes the token it was given.
+var ErrTTLTooShort = errors.New("broker: the driver issued a token that expires before a helper can replace it")
 
 // ErrTTLTooLong is returned when a driver issues a token with no expiry or one
 // beyond MaxTTL. The broker revokes the token it was given.

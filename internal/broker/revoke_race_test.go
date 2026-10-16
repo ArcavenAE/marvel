@@ -77,7 +77,7 @@ func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 func TestIssueRevokesATokenWhoseSeatEndedWhileTheDriverWasIssuing(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	g := newGateDriver(m)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 
@@ -102,7 +102,7 @@ func TestIssueRevokesATokenWhoseSeatEndedWhileTheDriverWasIssuing(t *testing.T) 
 func TestIssueThatBeganAfterTheRevokeIsNotRefused(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	g := newGateDriver(m)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 
@@ -163,7 +163,7 @@ func (f *failingRevokeDriver) Revoke(ctx context.Context, t Token) error {
 func TestIssueKeepsATokenItCouldNotRevokeForTheNextRevoke(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	g := newGateDriver(f)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
@@ -194,7 +194,7 @@ func TestIssueKeepsATokenItCouldNotRevokeForTheNextRevoke(t *testing.T) {
 func TestRevokeErrorsCarryNoTokenValue(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	b := New(f, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 	tok, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
@@ -218,7 +218,7 @@ func TestRevokeErrorsCarryNoTokenValue(t *testing.T) {
 func TestSelfRevokeErrorCarriesNoTokenValue(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	g := newGateDriver(f)
 	b := New(g, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
@@ -247,7 +247,7 @@ func TestSelfRevokeErrorCarriesNoTokenValue(t *testing.T) {
 func TestRevokeSessionKeepsATokenWhoseRevokeFailed(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	b := New(f, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 	if _, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb"); err != nil {
@@ -272,7 +272,7 @@ func TestRevokeSessionKeepsATokenWhoseRevokeFailed(t *testing.T) {
 func TestRetryRevokesRetriesTheKeysOfSeatsThatAreGone(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	b := New(f, multiAuth{})
 	for _, key := range []string{"ws/t/gone-g1-0", "ws/t/here-g1-0"} {
@@ -305,7 +305,7 @@ func TestRetryRevokesRetriesTheKeysOfSeatsThatAreGone(t *testing.T) {
 func TestRetryRevokesKeepsATokenItCannotRevokeYet(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	b := New(f, multiAuth{})
 	if _, err := b.Issue(context.Background(), "ws/t/gone-g1-0", "tws/t/gone-g1-0"); err != nil {
@@ -352,7 +352,7 @@ func TestRetryRevokesLeavesTheTokenOfASeatThatTookTheNameMeanwhile(t *testing.T)
 	t.Parallel()
 
 	const key = "ws/t/r-g1-0"
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	b := New(f, multiAuth{})
 	old, err := b.Issue(context.Background(), key, "t"+key)
@@ -391,7 +391,7 @@ func TestRetryRevokesDoesNotRefuseAnAskInFlightForTheSameName(t *testing.T) {
 	t.Parallel()
 
 	const key = "ws/t/r-g1-0"
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	f := &failingRevokeDriver{Driver: m}
 	g := newArmedGate(f)
 	b := New(g, multiAuth{})
@@ -444,7 +444,7 @@ func (a aliasAuth) Authenticate(_, token string) (Identity, error) {
 func TestIssueRecordsTheTokenUnderTheAuthenticatedSession(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	b := New(m, aliasAuth{canonical: "ws/t/r-g1-0"})
 	if _, err := b.Issue(context.Background(), "WS/T/R-G1-0", "hb"); err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -463,7 +463,7 @@ func TestIssueRecordsTheTokenUnderTheAuthenticatedSession(t *testing.T) {
 func TestIssueTypedUnderAnAliasIsRefusedWhenTheAuthenticatedSessionEnds(t *testing.T) {
 	t.Parallel()
 
-	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	m := NewMock(15*time.Minute, time.Now)
 	g := newGateDriver(m)
 	b := New(g, aliasAuth{canonical: "ws/t/r-g1-0"})
 
@@ -569,5 +569,32 @@ func TestIssueKeepsAnOverlongTokenItCouldNotRevoke(t *testing.T) {
 	}
 	if live := m.Live(); len(live) != 0 {
 		t.Errorf("live tokens after the next revoke = %v, want none", live)
+	}
+}
+
+// The seat's helper asks again at about two thirds of a token's life, so a
+// token that lives less than MinTTL could expire before its replacement.
+func TestIssueRefusesAndRevokesATokenShorterThanTheFloor(t *testing.T) {
+	t.Parallel()
+
+	b, m := ttlBroker(MinTTL - time.Second)
+	_, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
+	if !errors.Is(err, ErrTTLTooShort) {
+		t.Fatalf("Issue = %v, want ErrTTLTooShort", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens = %v, want none: the broker kept a token it refused", live)
+	}
+}
+
+func TestIssueAcceptsATokenAtTheFloor(t *testing.T) {
+	t.Parallel()
+
+	b, m := ttlBroker(MinTTL)
+	if _, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb"); err != nil {
+		t.Errorf("Issue with a %v token = %v, want it issued", MinTTL, err)
+	}
+	if live := m.Live(); len(live) != 1 {
+		t.Errorf("live tokens = %v, want one", live)
 	}
 }

@@ -48,7 +48,7 @@ func (d *recordingDriver) Issue(_ context.Context, r Request) (Token, error) {
 	d.issued = append(d.issued, r)
 	d.lastReq = r
 	id := fmt.Sprintf("t%d", d.nextID)
-	return Token{ID: id, Value: "v-" + id, Expires: t0.Add(DefaultTTL)}, nil
+	return Token{ID: id, Value: "v-" + id, Expires: time.Now().Add(DefaultTTL)}, nil
 }
 
 func (d *recordingDriver) Revoke(_ context.Context, t Token) error {
@@ -238,7 +238,7 @@ func TestGenericOIDCHoldsTheKeyNameAndSignsNothingYet(t *testing.T) {
 func TestNoKeyMaterialInBrokerOrDriverState(t *testing.T) {
 	secret := []byte("host-keystore-private-bytes")
 	s := &secretSigner{secret: secret}
-	m := NewMock(time.Minute, func() time.Time { return t0 })
+	m := NewMock(DefaultTTL, time.Now)
 	b := newBroker(m)
 	tok, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
 	if err != nil {
