@@ -221,6 +221,14 @@ const (
 	stopGrace             = 5 * time.Second
 )
 
+// restartBackoffMax is the cap of the restart schedule, kept for the
+// supervisor's own table test.
+var restartBackoffMax = backoff.Restart.Max
+
+// computeBackoff is the restart wait before restart n: backoff.Restart.Wait.
+// The supervisor's table test calls it by this name.
+func computeBackoff(n int) time.Duration { return backoff.Restart.Wait(n) }
+
 // NewSupervisor resolves the nats-server binary and prepares a supervisor
 // for the manager's broker. An absent binary is an error the daemon should
 // refuse to start over, naming the runtime dependency, the tmux posture.
