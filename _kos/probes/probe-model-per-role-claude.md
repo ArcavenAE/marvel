@@ -46,7 +46,7 @@ not repeat it.
   `ANTHROPIC_MODEL` is neither, so `runtime.env.ANTHROPIC_MODEL` also
   reaches the pane.
 - **marvel reads a model from args, not env.** `usage.ModelFromArgs`
-  (`internal/usage/limits.go:392-406`) scans `-m`, `--model`, `--model=`
+  (`internal/usage/limits.go:395-409`) scans `-m`, `--model`, `--model=`
   and `-m=` for the context-window resolver when the stream names no model.
   Its comment: "Marvel injects no model flag, so this reads what the
   operator wrote." Nothing reads `ANTHROPIC_MODEL`.
@@ -299,7 +299,7 @@ No candidate errored, so there is no error text to record.
 - **What ContextModel proves, per role.** ContextModel is the harness's
   report only partly. At launch, `Bind` resolves with no stream model,
   so ContextModel is the `--model` arg echoed back unchanged
-  (`internal/usage/limits.go:546-549`). When the harness sends its
+  (`internal/usage/limits.go:549-552`). When the harness sends its
   `system/init` line, `observeStart` overwrites it with the init model
   (`internal/usage/accountant.go:290-317`, shown by `describe` via
   `:774`). The served `message.model` never replaces it, because a
@@ -327,7 +327,7 @@ No candidate errored, so there is no error text to record.
 ### Notes (non-blocking)
 
 - **Alias-table mismatch.** marvel's alias table maps `sonnet` to
-  `claude-sonnet-5` (`internal/usage/limits.go:336`), but the harness
+  `claude-sonnet-5` (`internal/usage/limits.go:339`), but the harness
   resolved `sonnet` to `claude-sonnet-5-5`. Before init arrives, and for
   any harness that never names a model, a role launched with
   `--model sonnet` is keyed to the wrong model for its context-window

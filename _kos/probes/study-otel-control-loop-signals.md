@@ -40,7 +40,7 @@ Three claims in the ticket, re-checked against the tree:
    second back-pressure path. And `internal/usage/accountant.go:73-77`
    states the seam this study was asked to sketch: "Every method is safe for
    concurrent use, so a future OTEL receiver goroutine can share one
-   accountant with N per-session drain goroutines." `internal/usage/doc.go:96-104`
+   accountant with N per-session drain goroutines." `internal/usage/doc.go:101-109`
    adds that an OTEL feed "adds a sibling constructor and one caller, and
    changes nothing in the fold." The subscription seam exists; it is the
    accountant, not the ring.
@@ -159,7 +159,7 @@ heartbeat RPC ──> store.UpdateSessionHeartbeat ──> store (LastHeartbeat,
    too many to infer from shape: `types.go:274-287`.)
 3. **If harness OTEL is ever consumed, it enters as a feed into the
    accountant**, through the sibling constructor to `sampleFromEvent`
-   (`sample.go:109`; `doc.go:96-104`), on the same `Coords`, writing the same
+   (`sample.go:109`; `doc.go:101-109`), on the same `Coords`, writing the same
    store fields through the same `Sink` (`accountant.go:66-68`), and stamping
    a new `ContextSourceKind` value so provenance stays declared. Transitions
    it produces reach the ring through the same `events.Emitter` the

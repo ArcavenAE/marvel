@@ -40,7 +40,7 @@ ContextModel is the harness's report only from the init line onward:
 
 1. **At launch it echoes the arg.** `Bind` resolves with no stream model, so
    `ResolveGraded` falls back to `ModelFromArgs`, which returns the `--model`
-   value verbatim with no alias resolution (`internal/usage/limits.go:546-549`).
+   value verbatim with no alias resolution (`internal/usage/limits.go:549-552`).
 2. **The init line overwrites it.** The claude parser takes `model` from
    `system/init` and emits `session.started`
    (`internal/runtime/claudecode/parser.go:150-178`). `observeStart`
@@ -63,7 +63,7 @@ None of these was the probe's subject. Each is recorded here so it is not
 lost; whether each gets a ticket is a separate call.
 
 1. **The alias table is behind the harness.** `aliases` maps `sonnet` to
-   `claude-sonnet-5` (`internal/usage/limits.go:336`, "bumped 2026-08-30"),
+   `claude-sonnet-5` (`internal/usage/limits.go:339`, "bumped 2026-08-30"),
    but the harness resolved `sonnet` to `claude-sonnet-5-5`. Until init
    arrives, and for any harness that never names a model, a role launched
    with `--model sonnet` is keyed to the wrong model for its window lookup.
@@ -77,7 +77,7 @@ lost; whether each gets a ticket is a separate call.
    The blank is narrower than "every Sonnet 5.5 role", and I checked why:
    claude declares `contextWindow` on its terminal result line
    (`parser.go:430`), which the stream rung takes and the resolver then
-   learns for later sessions on the same daemon (`limits.go:551-576`,
+   learns for later sessions on the same daemon (`limits.go:554-579`,
    held in an in-memory map, `:468`); and an interactive session gets the
    statusline's `context_window_size` through the feed rung
    (`cmd/marvel/ctxforward.go:192`). So the blank covers a headless session

@@ -25,7 +25,7 @@ assumed, but a fixed headroom and stale readings break it in other ways.
   Measured on live seats: window 258400, which is 272000 x 0.95, an
   effective window and not a compaction point. One reading was six days old
   and still rendered as 15%. The model table carries no codex entry, on
-  purpose (`internal/usage/limits.go:242-283`).
+  purpose (`internal/usage/limits.go:242-286`).
 - **Codex, headless.** Whether the hooks fire under `exec` is not checked.
 - **opencode.** There is no window in either mode unless the manifest
   declares `context_window`. Headless parses per-request occupancy;
