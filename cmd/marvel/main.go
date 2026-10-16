@@ -1063,7 +1063,11 @@ ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It
 says "not quiet", not busy: a seat in a long tool call can read low. It is a -
 until the daemon has watched for the whole 15 minutes, and for a seat with no
-activity channel.
+activity channel. A seat whose channel is declared but has never reported shows a - too,
+and is left out of the --load mean.
+
+TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
+no such stream, so both show a - for it. That is the expected shape, not a broken feed.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,

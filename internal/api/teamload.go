@@ -59,8 +59,9 @@ func RollTeamLoad(t Team, sessions []Session, now time.Time) TeamLoad {
 			row.Limited++
 		}
 		// The same gate the ACTIVE% cell uses: a seat with no activity channel,
-		// or a ring that has not watched the whole window, has no reading.
-		if tk := s.ActiveTicks; tk.Observable && tk.Full && tk.Total > 0 {
+		// one that has never reported, or a ring that has not watched the whole
+		// window, has no reading.
+		if tk := s.ActiveTicks; tk.Observable && tk.Full && tk.Total > 0 && !s.ContextAt.IsZero() {
 			sum += 100 * float64(tk.Active) / float64(tk.Total)
 			row.ActiveMeasured++
 		}

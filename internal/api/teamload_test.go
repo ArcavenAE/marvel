@@ -7,7 +7,9 @@ import (
 )
 
 func loadSeat(name, role string, state SessionState, ticks ActiveTicks) Session {
-	return Session{Name: name, Workspace: "ws", Team: "squad", Role: role, State: state, ActiveTicks: ticks}
+	s := Session{Name: name, Workspace: "ws", Team: "squad", Role: role, State: state, ActiveTicks: ticks}
+	s.ContextAt = ticks.At
+	return s
 }
 
 func readTicks(active, total int) ActiveTicks {
@@ -64,6 +66,21 @@ func TestRollTeamLoadMeansOnlyMeasuredSeats(t *testing.T) {
 	}
 	if got.Running != 4 {
 		t.Errorf("running = %d, want the four running seats counted whatever they report", got.Running)
+	}
+}
+
+// A seat whose feed is declared but has never reported has a full ring of quiet
+// ticks and a zero ContextAt. That is no reading, not a measured 0%, so it stays
+// out of the mean and the measured count (marvel#925). A seat that reported once
+// still counts.
+func TestRollTeamLoadLeavesOutASeatThatNeverReported(t *testing.T) {
+	never := loadSeat("squad-worker-g1-0", "worker", SessionRunning, readTicks(0, 100))
+	never.ContextAt = time.Time{}
+	reported := loadSeat("squad-worker-g1-1", "worker", SessionRunning, readTicks(50, 100))
+	reported.ContextAt = readTicks(50, 100).At
+	got := RollTeamLoad(loadTeam(), []Session{never, reported}, loadNow)
+	if got.ActiveMeasured != 1 || got.ActiveMeanPct != 50 {
+		t.Errorf("mean %v over %d seats, want 50 over 1: a never-reported seat is not a 0%% reading", got.ActiveMeanPct, got.ActiveMeasured)
 	}
 }
 
