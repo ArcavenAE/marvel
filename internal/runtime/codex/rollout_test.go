@@ -399,3 +399,71 @@ func TestNewestSampleDropsThePartialHead(t *testing.T) {
 		t.Error("a headless buffer with no newline yielded a sample")
 	}
 }
+
+// totalOutputLine builds a token_count record whose total_token_usage carries
+// the given usage body verbatim, so a test can vary the output total alone.
+func totalOutputLine(total string) string {
+	return `{"timestamp":"2026-08-08T20:22:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{` +
+		total +
+		`"last_token_usage":{"input_tokens":14105,"cached_input_tokens":11008,"output_tokens":76,"reasoning_output_tokens":32,"total_tokens":14181},` +
+		`"model_context_window":258400}}}`
+}
+
+// The output total rides the same record as the level. A record that declares
+// no total leaves it nil: unset is not zero (marvel#927).
+func TestSampleFromLineCarriesTheOutputTotal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		line string
+		want *int
+	}{
+		{
+			name: "a declared total is carried",
+			line: totalOutputLine(`"total_token_usage":{"input_tokens":28110,"output_tokens":4321,"reasoning_output_tokens":99,"total_tokens":32431},`),
+			want: intp(4321),
+		},
+		{
+			name: "no total_token_usage object stays nil",
+			line: totalOutputLine(``),
+			want: nil,
+		},
+		{
+			name: "a total without an output_tokens key stays nil",
+			line: totalOutputLine(`"total_token_usage":{"input_tokens":28110,"total_tokens":28110},`),
+			want: nil,
+		},
+		{
+			name: "a null total stays nil",
+			line: totalOutputLine(`"total_token_usage":null,`),
+			want: nil,
+		},
+		{
+			name: "a declared zero is a declared zero",
+			line: totalOutputLine(`"total_token_usage":{"input_tokens":28110,"output_tokens":0,"total_tokens":28110},`),
+			want: intp(0),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := sampleFromLine([]byte(tt.line))
+			if !ok {
+				t.Fatal("sampleFromLine rejected a usable sample")
+			}
+			if got.Level != 14105 {
+				t.Errorf("Level = %d, want 14105: the total must not change the level", got.Level)
+			}
+			switch {
+			case tt.want == nil && got.OutputTotal != nil:
+				t.Errorf("OutputTotal = %d, want nil", *got.OutputTotal)
+			case tt.want != nil && got.OutputTotal == nil:
+				t.Errorf("OutputTotal = nil, want %d", *tt.want)
+			case tt.want != nil && *got.OutputTotal != *tt.want:
+				t.Errorf("OutputTotal = %d, want %d", *got.OutputTotal, *tt.want)
+			}
+		})
+	}
+}
+
+func intp(v int) *int { return &v }

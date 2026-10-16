@@ -5,7 +5,8 @@ package main
 // prints "0", which is not the same thing.
 //
 // The count is the accountant's sum since the process this daemon spawned
-// began. A session adopted after a daemon restart has no drain, and the bolt
+// began, or, for an interactive codex seat, the output total its hook reads from
+// the rollout (marvel#927). A session adopted after a daemon restart has no drain, and the bolt
 // load clears accountant-sourced readings (internal/api/bolt.go, the rehydrate
 // path), so it is not observed and reads "-" for the rest of its life. If
 // adoption ever reattaches a drain partway through a session, the count would

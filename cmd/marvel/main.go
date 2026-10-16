@@ -1071,7 +1071,9 @@ marvel does not reopen, so it reads - until the seat is relaunched. A heartbeat-
 keeps its last reading across a restart.
 
 TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
-no such stream, so both show a - for it. That is the expected shape, not a broken feed.
+no such stream, so both show a - for it, with one exception: an interactive codex seat
+fills TOUT from the output total in its rollout, and RATE stays a -. That is the
+expected shape, not a broken feed.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,

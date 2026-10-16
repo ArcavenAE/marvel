@@ -198,3 +198,73 @@ func TestADroppingTotalStampsAndKeepsTheLowerValue(t *testing.T) {
 		t.Errorf("a dropping total left the stamp at %v", lower.TotalsChangedAt)
 	}
 }
+
+func intPtr(v int) *int { return &v }
+
+// A codex hook beat can carry the rollout's output total. It lands on the
+// session's SpendOut, which is what the TOUT cell reads (marvel#927).
+func TestHeartbeatStoresTheOutputTotal(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	got := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 10, OutputTokens: intPtr(4321)})
+	if got.SpendOut == nil || *got.SpendOut != 4321 {
+		t.Fatalf("SpendOut = %v, want 4321", got.SpendOut)
+	}
+
+	wire, err := json.Marshal(HeartbeatRequest{OutputTokens: intPtr(4321)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back HeartbeatRequest
+	if err := json.Unmarshal(wire, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.OutputTokens == nil || *back.OutputTokens != 4321 {
+		t.Errorf("round trip lost the output total: %s", wire)
+	}
+}
+
+// A beat that carries no output total keeps what the session holds, and one
+// never carried stays nil and never reads as zero.
+func TestOutputTotalKeptAcrossBeatsAndNeverZero(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	none := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 10})
+	if none.SpendOut != nil {
+		t.Fatalf("SpendOut = %d after a beat with no total, want nil", *none.SpendOut)
+	}
+
+	beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 11, OutputTokens: intPtr(500)})
+	later := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 12})
+	if later.SpendOut == nil || *later.SpendOut != 500 {
+		t.Errorf("SpendOut = %v after a beat with no total, want the 500 already held", later.SpendOut)
+	}
+
+	up := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 13, OutputTokens: intPtr(900)})
+	if up.SpendOut == nil || *up.SpendOut != 900 {
+		t.Errorf("SpendOut = %v, want the newer total 900", up.SpendOut)
+	}
+}
+
+// The total is copied in, so a caller that reuses its pointer cannot move the
+// stored value afterwards.
+func TestOutputTotalIsCopiedIn(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	v := 700
+	beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 10, OutputTokens: &v})
+	v = 1
+	got, err := s.GetSession(gradedSessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SpendOut == nil || *got.SpendOut != 700 {
+		t.Errorf("SpendOut = %v after the caller changed its value, want 700", got.SpendOut)
+	}
+}

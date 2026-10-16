@@ -829,6 +829,13 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	spendOut, spendPrompt, outRate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
 	sess.SessionContext = reading
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
+	// A producer that reads the harness's own output total (the codex hook)
+	// supplies it here. It rides the same field the accountant writes, so the
+	// TOUT cell reads one place; a beat that carries none leaves the held
+	// value, and a seat that never had one stays nil.
+	if r.OutputTokens != nil {
+		sess.SpendOut = copyInt(r.OutputTokens)
+	}
 	sess.LastHeartbeat = time.Now().UTC()
 	recordTotals(sess, r, dropped)
 	// A cooperative reporter that knows its model names it (the
