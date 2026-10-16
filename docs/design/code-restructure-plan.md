@@ -280,8 +280,8 @@ locally alike: `dialMRVL`, `dialSSH`, `dialSSHTunnel`, `dialSSHDirect`,
 code no test reaches. M1-0 is written against the old code and merges as its
 own PR at the base of the chain, so 1a to 1c each prove themselves against it:
 - start the daemon's `StartMRVL` listener on `127.0.0.1:0` (the pattern at
-  `status_test.go:43`) and add a scratch key with
-  `SSHServer.AddAuthorizedKey`;
+  `status_test.go:43`) and add a scratch key with the
+  package-level `AddAuthorizedKey` (`sshserver.go:241`), under a scratch `HOME`;
 - call `SendRequestWith` for `version` over `mrvl://u@127.0.0.1:<port>` and
   over `ssh://u@127.0.0.1:<port>` (no path, which takes `dialSSHDirect`),
   with `DialOptions{Identity: <scratch key>}`;
@@ -297,9 +297,11 @@ untested, and each Move 1 PR body says so.
 **Tests that prove it:**
 - M1-0 passes before and after each PR.
 - The full suite passes on each PR, proved as the section 3 rule above says.
-- No assertion changes. The test diff is the `isSSH` test moving, the two
-  `limitwiring` inventories, the 34 client calls qualified in 1b, and the
-  mechanical qualification in 1c.
+- No assertion changes. The test diff is: in 1a, the tests that move with the
+  client (the `isSSH` test and the marvel-home pin test into `daemonrpc`, with
+  the new `daemonrpc` dependency and home-guard tests) and the two
+  `limitwiring` inventories; in 1b, the 34 client calls qualified; in 1c, the
+  mechanical qualification.
 - The existing round trips in `events_watch_test.go` (`get` and an
   `events.watch` stream against a started daemon) now cross the package
   line over a unix socket; M1-0 covers the remote transports.
@@ -499,15 +501,17 @@ test landed before it, because both copies are already table-tested.
   D1 (`role_users_test.go:303`, `supervisor_identity_test.go:574`,
   `supervisor_test.go:105` and `:368`); if wanted, it comes back as its own
   decision under section 5.
-- Delete the bus copy of `TestComputeBackoffMatchesRoleSchedule`, which would
-  otherwise compare the function with itself. This is a test edit, named in
-  the PR. Keeping `computeBackoff` as a one-line wrapper over
-  `backoff.Restart.Wait` instead would edit nothing; either is acceptable.
+- `TestComputeBackoffMatchesRoleSchedule` stays byte-identical. The bus
+  package keeps `computeBackoff` as a one-line forwarder to
+  `backoff.Restart.Wait`, so the test still compiles and still checks the
+  bus schedule. Deleting it would be a test edit outside D1's grant.
 
 **PR M2-0, after 2a and before 2b: characterization tests of the bus crash
 path.** `internal/bus` is at 90.8%, but what it does not cover is exactly what
-Move 2 hands to `Process`. `onCrash` is at 70.0%, and everything after the
-backoff wait is uncovered (`supervisor.go:644-652`). Also uncovered:
+Move 2 hands to `Process`. `onCrash` is at 70.0% (14 of 20 statements). After the
+backoff wait, the respawn and the return to ready are reached; the stop during
+the wait (`supervisor.go:645`), the failed respawn and its retry goroutine
+(`:648-650`) and the failed return to ready (`:653`) are not. Also uncovered:
 `terminate`'s grace <= 0 branch and its failed SIGKILL (`:706`, `:715`),
 `becomeReady`'s listener timeout and `AfterReady` error (`:404`, `:408`),
 `Restart`'s failed respawn (`:689`), and `Start`'s failed SIGHUP to an
@@ -686,8 +690,9 @@ Outside the chains, and blocking no move: T-ssh, the `ssh://` tunnel test
 server, ideally before 1c; reading the process table without exec'ing `ps`,
 so the tmux-backed packages pass under `sandbox-exec`; the seed-env test
 reading the child environment through `kern.procargs2` on darwin; and the
-`internal/team` tests' order dependence (17 failures under the sandbox
-become 40 when the failing ones are skipped).
+`internal/team` tests' order dependence (under the sandbox, skipping the
+failing tests makes others fail, because the skipped tests set up the shared
+tmux server the others use).
 
 ## 7. Round-1 review, finding by finding
 
@@ -703,7 +708,7 @@ anything changed. All of them held, and none was rejected.
 | S2, shared names | `DefaultMRVLPort`, `listenNetwork` and `isMRVL` move; `busLeafCredential` stays; the `:1172` text changes |
 | S3, aliases for a caller that cannot exist | Aliases removed in PR 1b; the former R2 is dropped |
 | S4, the test-time claim and the test diff | Section 1 states the real gain; PR 1b names the 34 calls |
-| S5, the backoff's package and shape | `internal/backoff.Schedule`; the self-comparing test is deleted, and named as a test edit |
+| S5, the backoff's package and shape | `internal/backoff.Schedule`. Revision 6: the bus test stays byte-identical, with `computeBackoff` kept as a forwarder, because deleting it is outside D1's grant |
 | S6, event attribution | `bus.unavailable` stays in `bushold.go`; the kinds are re-counted after #799; the golden sequence covers a structural miss and an unenrolled hub |
 | S7, stale #799 facts and MS-8(a) | #799 at `92f4376` with V11 (b) in it; Move 2 placed after MS-8's interface |
 | S8, nats-server policy in the generic loop | SIGHUP-on-adopt goes to `Adopted`; the signal-0 rule is not built |
