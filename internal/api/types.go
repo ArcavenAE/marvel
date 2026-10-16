@@ -249,7 +249,16 @@ type Session struct {
 	PaneID        string       `toml:"-"`
 	PID           int          `toml:"-"`
 	LastHeartbeat time.Time    `toml:"-"`
-	HealthState   HealthState  `toml:"-"`
+	// CostTotalUSD and APIDurationMS are the statusline feed's running totals
+	// for this session, and TotalsChangedAt is when either last moved. They sit
+	// outside SessionContext on purpose: that block is replaced whole by each
+	// CTX% producer, and these have one producer, the statusline heartbeat, so
+	// nothing needs carrying across a replace. Nil is never reported, not zero.
+	// Nothing reads them yet (marvel#801).
+	CostTotalUSD    *float64    `json:"cost_total_usd,omitempty" toml:"-"`
+	APIDurationMS   *int64      `json:"api_duration_ms,omitempty" toml:"-"`
+	TotalsChangedAt time.Time   `json:"totals_changed_at,omitempty" toml:"-"`
+	HealthState     HealthState `toml:"-"`
 	// ActivityState is the restart-neutral staleness advisory (aae-orc-9box).
 	// Recomputed every evaluateHealth tick from ContextAt/CreatedAt against
 	// the role's ActivityTimeout; orthogonal to HealthState and never read

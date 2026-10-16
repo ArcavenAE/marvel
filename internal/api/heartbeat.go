@@ -151,6 +151,13 @@ type HeartbeatRequest struct {
 	// It was the producer half of a seam whose consumer did not exist
 	// (finding-023); aae-orc-38yr built the consumer.
 	ContextWindow int `json:"context_window,omitempty"`
+	// CostTotalUSD and APIDurationMS are the harness's running totals for the
+	// session, as the statusline feed reports them: the dollar cost so far and
+	// the time spent in API calls so far. Nil is "the payload declared none",
+	// never a declared zero, so a feed that omits them leaves what the session
+	// already holds. They are totals, not per-beat increments, and not tokens.
+	CostTotalUSD  *float64 `json:"cost_total_usd,omitempty"`
+	APIDurationMS *int64   `json:"api_duration_ms,omitempty"`
 }
 
 // NewHeartbeatRequest builds a heartbeat, reading the session token from

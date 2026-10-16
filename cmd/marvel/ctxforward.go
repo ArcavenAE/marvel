@@ -406,6 +406,24 @@ func renderForward(raw []byte) (line string, pct float64, model string, tokens i
 	return line, pct, p.Model.DisplayName, tokens, p.ContextWindow.ContextWindowSize, true
 }
 
+// statuslineTotals reads the harness's running cost and API-time totals from a
+// statusline payload. An absent field is nil, never a declared zero, so a feed
+// that does not carry one leaves what the daemon already holds. The cost total
+// is also parsed into statuslinePayload for the printed line; this reads the
+// two as presence-aware values for the heartbeat.
+func statuslineTotals(raw []byte) (costUSD *float64, apiMS *int64) {
+	var p struct {
+		Cost struct {
+			TotalCostUSD       *float64 `json:"total_cost_usd"`
+			TotalAPIDurationMS *int64   `json:"total_api_duration_ms"`
+		} `json:"cost"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, nil
+	}
+	return p.Cost.TotalCostUSD, p.Cost.TotalAPIDurationMS
+}
+
 func orUnknown(s string) string {
 	if s == "" {
 		return "agent"
@@ -472,6 +490,9 @@ func newCtxForwardCmd() *cobra.Command {
 			if window > 0 {
 				p.ContextWindow = window
 			}
+			// The running totals ride the same beat. They are presence-aware,
+			// so a payload without them leaves what the daemon holds.
+			p.CostTotalUSD, p.APIDurationMS = statuslineTotals(raw)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemonrpc.SendRequest(socket, daemonrpc.Request{
