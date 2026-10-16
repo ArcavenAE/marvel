@@ -62,6 +62,32 @@ func TestAutoShiftFiresOnContextRemainder(t *testing.T) {
 	}
 }
 
+// A role's seats carry the generation of the last shift that covered the role,
+// not the team's counter, so the pressure trigger must look at the role's live
+// seats at any generation (marvel#924, the class of #451 on the other trigger).
+func TestAutoShiftFiresOnSeatAtAnOlderGeneration(t *testing.T) {
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	createTeamFixture(t, store, "test-autoshift-oldgen", "squad", []api.Role{shiftTriggerRole()})
+	// The seat is at generation 1, over the remainder, on a team at 4.
+	seedContext(t, store, "test-autoshift-oldgen", "squad", 900_000, 1_000_000)
+	if err := store.UpdateTeam("test-autoshift-oldgen/squad", func(live *api.Team) error {
+		live.Generation = 4
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	team, _ := store.GetTeam("test-autoshift-oldgen/squad")
+	ctrl.evaluateShiftTriggers(&team)
+
+	got, _ := store.GetTeam("test-autoshift-oldgen/squad")
+	if got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("shift phase = %q, want %q: the seat is at generation 1 on a team at 4", got.Shift.Phase, api.ShiftLaunching)
+	}
+}
+
 func TestAutoShiftHoldsBelowRemainder(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
