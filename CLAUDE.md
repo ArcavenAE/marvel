@@ -205,7 +205,7 @@ Scope and limits:
 
 **Max age** (`{ on = "max-age", max_age = "8h" }`, floor 15m) is the backstop
 for a seat context pressure cannot meter or one wedged at a prompt. It never
-shifts a seat by itself. Past `max_age` and quiet for `quiet_for` (default 2m),
+shifts a seat by itself. Past `max_age` and quiet for `quiet_for` (default 5m, read from the cost and API-time change stamp where the seat has one, else the context feed; marvel#936),
 or past `max_age + max_defer` (default 30m) however busy, marvel types a
 handoff request into the pane (`team.shift-handoff-requested`). When the file
 the role declares in `handoff` (with `{session}` for the session name) ends in

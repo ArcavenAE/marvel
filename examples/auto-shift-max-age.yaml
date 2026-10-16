@@ -7,7 +7,8 @@
 #
 # Max age never shifts a seat by itself (docs/design/shift-trigger-list.md D5):
 #
-# 1. Once a seat is past max_age and quiet for quiet_for (no context update),
+# 1. Once a seat is past max_age and quiet for quiet_for (no cost or API-time change, else no context
+#    update),
 #    or past max_age + max_defer however busy, marvel types into its pane
 #    "shift: max age reached; write your handoff now" (with the handoff path,
 #    marker and window appended when the role declares a handoff, after marvel
@@ -22,7 +23,7 @@
 # The successor starts with MARVEL_PREDECESSOR (the old seat's key) and, when
 # a request was made, MARVEL_HANDOFF_REQUESTED_AT (RFC 3339, UTC).
 #
-# Defaults: quiet_for 2m, max_defer 30m, handoff_window 5m. max_age has a
+# Defaults: quiet_for 5m, max_defer 30m, handoff_window 5m. max_age has a
 # floor of 15m. A max-age condition on a headless role is refused at apply.
 # Keys this marvel does not know (action, all, a nested any) are refused too.
 #
