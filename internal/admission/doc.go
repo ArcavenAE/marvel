@@ -90,10 +90,12 @@
 //     counters are unavailable on darwin, and metrics are deliberately not
 //     persisted.
 //
-// Per-provider rate-limit accounting is not excluded pending work: it is
-// unachievable. Marvel cannot see a provider, because auth delegates to
-// the harness and marvel stores no credentials. The enforceable boundary
-// is workspace/team.
+// Per-provider rate-limit accounting is not a gate here. Marvel does read
+// each account's usage windows through the harness, with no credentials
+// (claude from the statusline rate_limits, codex from its hook), and sets
+// an advisory "limited" condition per account (internal/daemon/limits.go).
+// That condition restarts, kills and shifts nothing, and admission does
+// not gate on it. The enforceable boundary is workspace/team.
 //
 // # Standing warning
 //

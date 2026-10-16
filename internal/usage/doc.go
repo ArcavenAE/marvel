@@ -76,11 +76,16 @@
 //
 // # Scope
 //
-// Headless only. All three stream-capable adapters gate stream support
-// on api.RuntimeModeHeadless, so an interactive session produces no
-// adapter events and its CTX% stays absent. That gap is tracked
-// separately (question-interactive-context-pressure); native harness
-// OTEL is the first plausible path to it.
+// Headless only, for the stream path. All three stream-capable adapters
+// gate stream support on api.RuntimeModeHeadless, so an interactive
+// session produces no adapter events here. Its CTX% reaches the daemon by
+// heartbeat instead, which carries the level and the window
+// (internal/api/heartbeat.go). Two producers feed it: the statusline
+// feed through marvel ctx-forward (context_feed = "statusline") and the
+// codex hook through marvel codex-ctx. An interactive harness with
+// neither stays absent. That gap is tracked separately
+// (question-interactive-context-pressure); native harness OTEL is the
+// first plausible path to it.
 //
 // Crush and Gemini CLI are out of scope, and for Crush the earlier
 // reason recorded here was measured false. Crush v0.88.1 publishes a

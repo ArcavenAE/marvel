@@ -262,17 +262,19 @@ func DefaultTable() Table {
 		//
 		// The rung this belongs on is not the table. Codex declares the
 		// window beside the level in its own record, so the resolution
-		// should come from that feed, not from a shipped constant.
-		// Whoever wires it: read model_context_window from the same
-		// record as the level, and do NOT multiply by
-		// effective_context_window_percent. The declared number is
-		// already the effective one; multiplying again lands on 245480,
-		// runs 5% pessimistic, and fires shifts early.
+		// comes from that feed, not from a shipped constant. The feed
+		// exists for interactive seats: marvel codex-ctx reads
+		// model_context_window from the same record as the level
+		// (internal/runtime/codex/rollout.go) and sends both by heartbeat
+		// (cmd/marvel/codexctx.go). It does not multiply by
+		// effective_context_window_percent, and nothing should: the
+		// declared number is already the effective one, and multiplying
+		// again lands on 245480, runs 5% pessimistic, and fires shifts
+		// early.
 		//
-		// Until that feed exists, codex CTX% renders "-" (its exec-stream
-		// samples are cumulative and produce no level at all; see
-		// profiles.go) and an operator's runtime.context_window is the
-		// only denominator.
+		// Headless codex exec has no such feed: its exec-stream samples
+		// are cumulative and produce no level at all (see profiles.go),
+		// so its CTX% renders "-".
 
 		// opencode: EMPTY, and equally not self-filling. No window
 		// measurement exists for any opencode model, and opencode declares
