@@ -4,6 +4,7 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/asof"
@@ -610,10 +611,14 @@ type Role struct {
 	Replicas        int      `toml:"replicas"`
 	// WorkDir is where this role's sessions run; empty means the team's
 	// workdir, then the workspace root. Absolute once applied.
-	WorkDir       string        `toml:"workdir,omitempty"`
-	Runtime       Runtime       `toml:"runtime"`
-	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
-	Permissions   string        `toml:"permissions,omitempty"`
+	WorkDir string `toml:"workdir,omitempty"`
+	// ContainerImage is the image a seat of this role runs in when its placement
+	// resolves to container. Empty means none: such a seat is refused, and no
+	// default image is ever substituted.
+	ContainerImage string        `toml:"container_image,omitempty"`
+	Runtime        Runtime       `toml:"runtime"`
+	RestartPolicy  RestartPolicy `toml:"restart_policy,omitempty"`
+	Permissions    string        `toml:"permissions,omitempty"`
 	// DangerousPermissions, when true, causes adapters that support it to
 	// append --dangerously-skip-permissions (or equivalent) to the spawned
 	// agent. Intended for autonomous marvel-managed teams where no
@@ -1016,9 +1021,16 @@ const (
 	CredentialNATSNKeySeed CredentialKind = "nats-nkey-seed"
 )
 
+// CredentialKinds lists every credential kind marvel can hold. A test over
+// this list fails until each new kind has a written carry decision in the
+// daemon's reexec handoff (aae-orc-4h9xp).
+func CredentialKinds() []CredentialKind {
+	return []CredentialKind{CredentialNATSNKeySeed}
+}
+
 // ValidCredentialKind reports whether k is a known credential kind.
 func ValidCredentialKind(k CredentialKind) bool {
-	return k == CredentialNATSNKeySeed
+	return slices.Contains(CredentialKinds(), k)
 }
 
 // Credential is a bus credential the daemon holds for a broker or agent to

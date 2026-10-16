@@ -43,7 +43,7 @@ func TestClaudeSettingSourcesDefaults(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: Prepare: %v", tc.name, err)
 		}
-		if !strings.Contains(result.Command, "--setting-sources "+tc.want) || strings.Count(result.Command, "--setting-sources") != 1 {
+		if !strings.Contains(result.Command, qw("--setting-sources "+tc.want)) || strings.Count(result.Command, "--setting-sources") != 1 {
 			t.Errorf("%s: command %q, want exactly one --setting-sources %s", tc.name, result.Command, tc.want)
 		}
 		if result.SettingSources != tc.want {
@@ -93,7 +93,7 @@ func TestClaudeSettingSourcesOnAHeadlessRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if !strings.Contains(result.Command, "--setting-sources user") {
+	if !strings.Contains(result.Command, "'--setting-sources' 'user") {
 		t.Errorf("headless command %q, want --setting-sources user", result.Command)
 	}
 }

@@ -807,16 +807,17 @@ func cleanPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// configPath returns ~/.marvel/config.yaml.
+// configPath returns config.yaml in the layout root: ~/.marvel, or the root
+// MARVEL_HOME names.
 func configPath() (string, error) {
-	home, err := os.UserHomeDir()
+	layout, err := paths.Default()
 	if err != nil {
-		return "", fmt.Errorf("cannot determine home directory: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".marvel", "config.yaml"), nil
+	return layout.Config(), nil
 }
 
-// Load reads the config from ~/.marvel/config.yaml.
+// Load reads the config from config.yaml in the layout root.
 // Returns a default config if the file doesn't exist.
 func Load() (*Config, error) {
 	path, err := configPath()
@@ -887,7 +888,7 @@ func (c *Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Save writes the config to ~/.marvel/config.yaml.
+// Save writes the config to config.yaml in the layout root.
 func Save(cfg *Config) error {
 	path, err := configPath()
 	if err != nil {

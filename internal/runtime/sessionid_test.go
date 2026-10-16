@@ -68,7 +68,7 @@ func TestClaudePrepareInjectsAssignedSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if !strings.Contains(result.Command, "--session-id 11111111-2222-4333-8444-555555555555") {
+	if !strings.Contains(result.Command, qw("--session-id 11111111-2222-4333-8444-555555555555")) {
 		t.Errorf("command should carry the assigned session id, got: %s", result.Command)
 	}
 	if n := strings.Count(result.Command, "--session-id"); n != 1 {
@@ -108,7 +108,7 @@ func TestClaudePrepareHeadlessAlsoCarriesAssignedID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if !strings.Contains(result.Command, "--session-id 11111111-2222-4333-8444-555555555555") {
+	if !strings.Contains(result.Command, qw("--session-id 11111111-2222-4333-8444-555555555555")) {
 		t.Errorf("headless launches write a transcript too and should be named, got: %s", result.Command)
 	}
 	// The prompt is the positional argument and must stay last.

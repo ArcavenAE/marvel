@@ -1,9 +1,9 @@
 # goose adapter v1: design brief
 
-- **Status:** proposed, 2026-10-10. Nothing here is built. The tickets in section 10 are listed, not filed: filing waits on the harness plan's decision D8.
+- **Status:** proposed, 2026-10-10. Nothing here is built. The tickets in section 10 were filed in bd on 2026-10-14.
 - **Author seat:** architect, team arcaven, as chair of a four-round design party. The seats were goose, adapter, telemetry, containment and a second harness (gemini-cli). Round 4 was a forced vote and every item carried; the reason store carried 3-2, with the dissent in section 9.
 - **Pins:** marvel main 493de32; goose v1.54.0 at cd643d2 (released 2026-10-08), read in source through the GitHub API on 2026-10-10. Nothing was installed or run.
-- **Companion:** `docs/adapter-kit-checklist.md`, the lines any new harness walks.
+- **Companion:** `docs/adapter-kit-checklist.md`, the lines any new harness walks. Adopted as the adapter kit, 2026-10-15 (section 11).
 
 ## 1. Why, and what v1 is
 
@@ -176,7 +176,7 @@ HELD. It needs the harness plan's D1 (sandbox) and D3 (trial credentials, a spen
 
 **Dissent on the reason store** (the adapter and containment seats): one generic reap capture would cover every headless harness, and it would leave stderr in the pane, the operator's window. A stderr file in the session home is one more place a key can land while goose#12413 is open. The adopted design keeps their two safeguards, a size cap and a credential-shape scan before storage, and E2 stays on the board with no blocker.
 
-## 10. Tickets (proposed, flat, with edges; not filed until D8)
+## 10. Tickets (flat, with edges; filed 2026-10-14)
 
 | ref | title | blocked by |
 |---|---|---|
@@ -186,11 +186,11 @@ HELD. It needs the harness plan's D1 (sandbox) and D3 (trial credentials, a spen
 | D | goose posture projection with the pre-K1 refusal stub (exit 78) as shared runtime code: `GOOSE_MODE`, the seeded `permission.yaml`, and the five refusal reasons | A, C |
 | D2 | move goose posture refusals from the stub to the bootstrap refusal path | K1, D |
 | E2 | generic: the reap reads a bounded, credential-scanned pane tail before it kills a dead headless pane, for every harness | none |
-| F | adopt `docs/adapter-kit-checklist.md` as the adapter kit | none |
+| F | adopt `docs/adapter-kit-checklist.md` as the adapter kit. Done: adopted by operator ruling 2026-10-15 (section 11) | none |
 | G | amend `docs/design/seat-bootstrap.md` rows :770 and :771 and the matrix goose line to the source. Row :770 becomes "fails closed per call; the run continues and exits 0". This covers the goose and gemini-cli parts of K9 | none |
 | H | `marvel goose-ctx`: a read-only, schema-pinned `sessions.db` reader with a level-and-window heartbeat | A, C |
-| I | gemini-cli adapter v1 against the checklist | the harness plan's T7 probe, F, D |
-| J | pi adapter v1 against the checklist | the harness plan's T6 probe, F |
+| I | gemini-cli adapter v1 against the checklist | the harness plan's T7 probe, D (F done 2026-10-15) |
+| J | pi adapter v1 against the checklist | the harness plan's T6 probe (F done 2026-10-15) |
 | K | an `auto`-posture goose seat launches only inside the D1 sandbox | harness-plan decisions D1 and D2, and the sandbox build |
 
 There is no ticket E: the goose-specific reason store folded into C. Not tracked in bd: the pin re-check is the dated recommendation in section 7. An upstream ask that goose emit per-request `Usage` in stream-json would be a GitHub issue after A, under the fleet's upstream claim gate.
@@ -200,9 +200,10 @@ There is no ticket E: the goose-specific reason store folded into C. Not tracked
 ## 11. Rulings needed
 
 - D1, the sandbox; D3, trial credentials, spend cap and host, asked once for this probe and the gemini-cli T7 probe. Pin dates: goose v1.54.0 to 2026-10-24; gemini-cli v0.63.0 at 5738466 to 2026-10-17.
-- D8, filing the tickets above.
+- D8, filing the tickets above: filed 2026-10-14 (section 10).
 - K6's `unattended` role field, which the posture rules read.
 - Ruled 2026-10-10: a goose seat reads the operator's own goose keyring entry, with a broker-minted key as the future option (section 6).
+- Ruled 2026-10-15, relayed by director: the operator adopted `docs/adapter-kit-checklist.md` as the adapter kit (ticket F).
 - Acceptance that the refusal stub reruns under backoff, at no spend, until K8.
 
 ## 12. Second harness, in one table

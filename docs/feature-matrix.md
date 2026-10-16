@@ -130,7 +130,7 @@ Evidence:
 
 ## Not adapted
 
-These have no adapter in `internal/runtime`, so marvel runs them as `generic`, with no launch flags, no context reading and no projection. "Not adapted" is a statement about code, not about whether the harness works in a tmux pane.
+These have no adapter in `internal/runtime`, so marvel runs them as `generic`, with no launch flags, no context reading and no projection. "Not adapted" is a statement about code, not about whether the harness works in a tmux pane. A new adapter walks the [adapter kit checklist](adapter-kit-checklist.md) before it gets a column here.
 
 - **crush.** No adapter exists. A comment lists what one would need, including `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` (`internal/runtime/adapter.go:6-19`). Measured: finding-020 and finding-033.
 - **goose, gemini-cli.** Surveyed for a context channel, no adapter (`_kos/probes/probe-interactive-ctx-remainder-sweep.md:365`, `_kos/probes/probe-interactive-ctx-remainder-sweep.md:687`; gemini-cli telemetry in finding-008).

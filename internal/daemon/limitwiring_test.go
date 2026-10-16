@@ -697,16 +697,11 @@ func TestNoNewRouteIntoTheDaemonsOwnSocket(t *testing.T) {
 			t.Errorf("inventoried %q: %d uses, now %d", k, n, gotDial[k])
 		}
 	}
-	p.each(func(file string, n ast.Node) bool {
-		if imp, ok := n.(*ast.ImportSpec); ok {
-			path, _ := strconv.Unquote(imp.Path.Value)
-			switch path {
-			case "os/exec", "net/http", "net/rpc":
-				t.Errorf("%s imports %s; the daemon package opens no other route to a socket or a process", file, path)
-			}
-		}
-		return true
-	})
+	// The import ban lives in execImportViolations (limitwiring_exec_test.go),
+	// with its one pinned exception: os/exec in reexec_handoff.go.
+	for _, v := range execImportViolations(p) {
+		t.Error(v)
+	}
 }
 
 // notifyHandoffUses lists every mention of notifyHandoff in the package other

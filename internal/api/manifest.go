@@ -139,6 +139,10 @@ type ManifestRole struct {
 	// WorkDir is where this role's sessions run. Relative values resolve
 	// against workspace.root only.
 	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	// ContainerImage is the image this role's seats run in when the workspace's
+	// placement resolves to container. Required then: a container seat with no
+	// image is refused, never given a default.
+	ContainerImage string `toml:"container_image,omitempty" yaml:"container_image,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -431,6 +435,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// would silently project nothing, so reject it here.
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
+			}
+			if r.ContainerImage != "" && !ValidContainerImage(r.ContainerImage) {
+				return nil, fmt.Errorf("parse manifest: team %q role %q: container_image %q is not a plain image reference", t.Name, r.Name, r.ContainerImage)
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
@@ -950,6 +957,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
+				ContainerImage:       mr.ContainerImage,
 				SettingsSources:      mr.SettingsSources,
 			}
 			if mr.RestartPolicy != "" {

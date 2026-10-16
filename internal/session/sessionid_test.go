@@ -79,7 +79,7 @@ func TestPlanLaunchRecordsTheIDItPutOnTheCommandLine(t *testing.T) {
 	if sess.HarnessSessionID == "" {
 		t.Fatal("a claude launch should have been assigned a session id")
 	}
-	if !strings.Contains(plan.command, "--session-id "+sess.HarnessSessionID) {
+	if !strings.Contains(plan.command, qw("--session-id "+sess.HarnessSessionID)) {
 		t.Errorf("command should carry the recorded id %q, got: %s",
 			sess.HarnessSessionID, plan.command)
 	}
@@ -134,7 +134,7 @@ func TestPlanLaunchRecordsTheSettingSources(t *testing.T) {
 
 	claude := sessionFor("reviewer", "claude")
 	plan := mgr.planLaunch(claude)
-	if !strings.Contains(plan.command, "--setting-sources user,project,local") {
+	if !strings.Contains(plan.command, qw("--setting-sources user,project,local")) {
 		t.Fatalf("command %q, want --setting-sources user,project,local", plan.command)
 	}
 	if claude.SettingSources != "user,project,local" {
@@ -223,4 +223,13 @@ func TestCreateStoresTheSettingSourcesDelivery(t *testing.T) {
 	if stored.SettingSources != "user,project,local" || stored.SettingSourcesDelivery != api.SettingSourcesArgv {
 		t.Errorf("stored sources %q delivery %q, want user,project,local and argv", stored.SettingSources, stored.SettingSourcesDelivery)
 	}
+}
+
+// qw quotes each space-separated word the way directCommand does.
+func qw(words string) string {
+	parts := strings.Split(words, " ")
+	for i, p := range parts {
+		parts[i] = shellQuote(p)
+	}
+	return strings.Join(parts, " ")
 }

@@ -84,7 +84,7 @@ func TestIdentityRecordReadRefusesWhatIsNotOurs(t *testing.T) {
 	for name, body := range map[string]string{
 		"corrupt":          "{not json",
 		"empty":            "",
-		"another schema":   `{"schema":2,"pid":7,"start":"a","exe":"b","argv":["c"]}`,
+		"another schema":   `{"schema":3,"pid":7,"start":"a","exe":"b","argv":["c"]}`,
 		"no schema":        `{"pid":7,"start":"a","exe":"b","argv":["c"]}`,
 		"a trailing value": `{"schema":1,"pid":7,"start":"a","exe":"b","argv":["c"]} {"x":1}`,
 	} {

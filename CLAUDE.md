@@ -59,8 +59,19 @@ one redirects something:
   fleet's panes. This is the worst of them.
 - `MARVEL_BACKEND_OVERLAY_DIR` points it at another overlay directory
   (`internal/session/manager.go:183`).
+- `MARVEL_HOME` moves the whole layout root (config, keys, log, state, the
+  default socket, the bus store, the tmux server name), so a hand-run daemon
+  or client that inherits a seat's value works inside the fleet's root. A seat
+  of a daemon running under a non-default root carries it.
 
 Unsetting the whole prefix covers these and any added later.
+
+To run a throwaway daemon, name its root instead of overriding `HOME`:
+`MARVEL_HOME=/tmp/mh-x marvel daemon` (or `marvel --marvel-home /tmp/mh-x
+daemon`) gives it its own socket, state, log, pid file, tmux server and bus
+store, with `HOME` and the toolchain caches left alone. The root must be an
+absolute path short enough for its `run/marvel.sock` to fit in a unix socket
+path. See `docs/design/marvel-home.md`.
 
 Confirm before the first real request. The home-mismatch warning prints
 only after a request has run, so make the first call read-only (`$D` is
@@ -311,6 +322,13 @@ A spawn whose resolved workdir is missing or is not a directory is refused, with
 `session.placement-refused` event naming the team, role and path (once per change,
 not per tick), because tmux itself would start the pane in `$HOME` without an error.
 A session is placed from its team's applied anchor, never from the workspace's live root.
+A session whose placement resolves to `container` (the workspace's `placement`, then the
+harness's recommendation, then localhost) runs its prepared command under the detected
+container runtime (docker, then podman) with its role's `container_image`. A role with no
+image is refused with a `session.container-refused` event, never given a default image;
+with no runtime on PATH it is refused the same way (reason `container runtime`), and an
+explicit `placement = "localhost"` still runs on the host. No path starts a container-placed
+seat on the host (`internal/session/container_launch.go`).
 **Stop:** send SIGTERM → wait grace period → SIGKILL → destroy pane.
 **Restart:** mark failed, delete the session, let the reconciler respawn it
 on a later tick. Names are `<team>-<role>-g<generation>-<index>` and the

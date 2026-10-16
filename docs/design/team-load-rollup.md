@@ -1,6 +1,6 @@
 # The per-team load rollup across clusters
 
-Proposal, 2026-10-08. Ruled in part (section 6): D2, D3, D5 and D6 on 2026-10-08, D4 and the D3 amendment question on 2026-10-09. D1 is not ruled; the transport in sections 3 and 7 is the recommended one, conditional on it.
+Proposal, 2026-10-08. Ruled in part (section 6): D2, D3, D5 and D6 on 2026-10-08, D4 and the D3 amendment question on 2026-10-09, D1 and the stale-claim guard on 2026-10-15. D1 is ruled plain bucket now, signing in a later release (section 6).
 
 - Author: the architect seat, team arcaven.
 - Issue: #601. Builds on `docs/design/get-sessions-output.md`, which judged this rollup a separate design (its section 6).
@@ -48,8 +48,8 @@ So the per-team arithmetic is local to the cluster that owns the team. What is c
 Only each cluster's summary crosses. No pane content, no per-tick samples and no ask text.
 
 - **The record:** one value per cluster, holding the cluster name, marvel version, `observed_at`, `valid_until`, and the per-team rows from section 2.
-- **Where it lands, if D1 is ruled (a) or (d):** a key-value bucket on the hub, with one key per cluster. D1 is not ruled; this line and the next describe the recommended transport, not a ruled one. A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
-- **How it gets there, under the same condition:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
+- **Where it lands:** a key-value bucket on the hub, with one key per cluster. D1 is ruled (a) for the first release, with (d)'s signing later (section 6). A bucket keeps the last value, so a reader started late sees every cluster at once, and no subscriber has to be up when a cluster publishes.
+- **How it gets there:** the daemon puts through its own broker as `marvel_admin`, over the leaf, into the hub's JetStream domain, the route team users already take for `$JS.global.API.>`. That needs no hub credential for the daemon. INFERRED: that route is granted to team users and not measured for `marvel_admin`; a red test in plan item 3 settles it. Write access is unchanged by the D2 ruling, so any seat holding the global tier can write any cluster's key (section 4).
 - **Cadence:** every 60 s, with `valid_until` at `observed_at` + 180 s, and a bucket max age of 1 h (decision D4, ruled (a)). ACTIVE% is a 15-minute share, so one minute of lag moves it little. A record is stale once a third publish is late: two missed, and the third later than 180 s. Clock skew between the publishing host and the reader moves that edge by the skew.
 - **Size:** about 100 bytes per team plus the agent names. Well under one message for any fleet today.
 
@@ -62,7 +62,7 @@ The three-state grammar applies per cluster, and every team row inherits its clu
 - **never seen:** a cluster in the expected set with no key. Its teams cannot be listed, so the table prints one line for the cluster, `cluster-b  -  no load published`.
 - **The header** says how many answered: `clusters: 2 of 3 fresh, 1 stale`. Who is in the expected set is decision D3.
 - **Ledger cells** carry their own as-of: the merged ledger's pass time. With no merged ledger (before A2, or with no reader), they print `-`. While a broker's reader is down, they print `?`. The ledger lists reader downtime under its gaps, and the view repeats that line.
-- **A stale claim is only claimed when every cluster is fresh.** A claim is stale when no fresh cluster lists the seat it names. If any cluster in the set is stale or never seen, the claim count prints `?` with the reason, because the missing seat may be on the cluster that did not answer. This guard exists because one claim held by a seat that no longer exists is the specimen #601 names.
+- **A stale claim is only claimed when every cluster is fresh.** A claim is stale when no fresh cluster lists the seat it names. If any cluster in the set is stale or never seen, the claim count prints `?` with the reason, because the missing seat may be on the cluster that did not answer. This guard exists because one claim held by a seat that no longer exists is the specimen #601 names. Ruled 2026-10-15, every cluster with a pinned key must also be fresh (section 6, the stale-claim guard), because a deleted entry can drop a cluster from the expected set.
 - **Every load key is unauthenticated.** Under the D2 ruling, any seat holding the global tier can write any cluster's key, so a key's cluster name is the writer's claim, not a proof. When the view reads hub keys, its header says so on every render: `load keys are unauthenticated: any global-tier seat can write them`. It never prints a key as verified.
 - **No hub at all:** the view falls back to the local cluster, with the header `clusters: local only (no hub)`. Marvel without the global tier, or without director, still prints the local rows (component independence).
 
@@ -86,6 +86,20 @@ Each has options, a recommendation and an expiry. Nothing here is built before t
 Recommended at first: (a), as #601 asks. (b) is a valid interim for the operator's own laptop, with no grant needed.
 
 **Status, 2026-10-09:** not ruled. The operator asked for a simulation of (a), (b) and (c) by two bmad agents first, hosted by another architect seat. That simulation reported on 2026-10-08 and voted for (d), which this table did not have before; its record is not committed. The architect's recommendation is now (d), as revised below. Director has put D1 to the operator.
+
+**Ruling, relayed by director on 2026-10-15:** plain bucket now, signing in a later release. The option as put to the operator: "Plain bucket now, signing in a later release. Readers migrate twice." This is against the recommendation of (d). So the first release is (a): the view reads the plain bucket and prints the unauthenticated-keys line (section 4) on every render. A later release adds (d)'s signing, pin step and verify, with the three conditions under "D1, re-checked" below. Section 7 splits the transport items by release.
+
+**Stale-claim guard, ruled the same day:** yes. The option as put to the operator: "Item 7 also requires every pinned cluster to be fresh; otherwise it prints '?' with the reason. The '2 of 3 fresh' header stays as you ruled." So a claim is counted as stale only when every cluster in the D3 (c) expected set is fresh and every cluster with a pinned key is fresh. The expected set and the header do not change. The guard exists because a seat that deletes a cluster's entry in both the load bucket and `GLOBAL_PRESENCE` drops that cluster from the expected set, and its seats' claims would then read as stale.
+
+**Open, for the operator: the guard before pins exist.** No cluster has a pinned key until the signing release ships the pin step, so in the first release the pinned-cluster half of the guard checks nothing, and a deleted entry can still produce a false stale count. Options:
+
+| | option | gives | costs |
+|---|---|---|---|
+| a | item 7 ships with the signing release; until then the stale-claim cell prints `-` | no false stale count is ever printed | the claim column waits for the second release |
+| b | the pin step (item 10) ships in the first release, ahead of signing, so the pinned set exists early | the guard works from the first release | a pin step readers run before it verifies anything |
+| c | item 7 ships in the first release with the expected-set guard only | the column appears at once | the false count the ruling was meant to prevent, until pins ship |
+
+Recommended: (a). It prints no number the ruling would call false, and it adds nothing to the first release. This recommendation is valid until 2026-10-22; the architect seat re-checks it then.
 
 **D2. What stops a seat or a cluster from writing another cluster's load?**
 
@@ -167,7 +181,7 @@ Recommended: (a). It adds no ask class or role. Until it lands, the cell prints 
 2. pinning a cluster's public key is a local command that does not dial the cluster;
 3. a valid signed record can be replayed until its `valid_until`, at most 180 s; the view states that bound and keeps no reader state to prevent it. A key with no pin or a bad signature prints as unverified, and the cluster still counts as expected under D3 (c).
 
-This recommendation is valid until 2026-10-23, or until D1 is ruled, whichever comes first; the architect re-checks it then. D1 is not ruled, and section 7's transport items are conditional on it.
+This recommendation is valid until 2026-10-23, or until D1 is ruled, whichever comes first; the architect re-checks it then. D1 was ruled on 2026-10-15 (above): (d) is deferred to a later release, and its three conditions carry into section 7's items 9 to 11.
 
 ## 7. The plan, once ruled
 
@@ -175,11 +189,17 @@ Flat tickets with dependency edges, each with red tests first:
 
 1. daemon: compute per-team rows on the reconcile tick (seats, ACTIVE% mean with count, `limited`, agent names). Local only; no transport.
 2. CLI: `get teams --load` for the local cluster, with the as-of grammar. Depends on 1.
-Items 3 and 4 are written for D1 (a) or (d), the hub bucket. They are not filed until D1 is ruled; if D1 is ruled (b) or (c), they are rewritten for that transport, and item 7 follows whichever item 4 results. Under (d), item 3 also signs the record and item 4 verifies it.
+Items 3 and 4 are the first release under the D1 ruling: the plain hub bucket, with the unauthenticated-keys line. Items 9 to 11 are the later signing release.
 
-3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1, and on the D1 ruling. D4 is ruled (a): put every 60 s, `valid_until` at `observed_at` + 180 s, bucket max age 1 h.
+3. daemon: put the record into the hub bucket over the leaf on D4's cadence, with an own-key-accepted red test against a scratch hub and a scratch leaf. Depends on 1. D4 is ruled (a): put every 60 s, `valid_until` at `observed_at` + 180 s, bucket max age 1 h.
 4. CLI: read every cluster's key, apply section 4's states, the header and the unauthenticated-keys line, with the expected set from D3 (c). Depends on 2 and 3.
 5. CLI: join the merged ledger's rollup by team key (open, unacked, blocked, oldest open), with `global:` keys on the cluster line. Depends on 2 and on director's A2.
 6. CLI: the waiting-on-operator cell, read from director's new rollup field (D6 (a)). Depends on 5 and 8.
-7. CLI: the optional bd claim join with the all-fresh guard (D5 (a)). Depends on 4.
+7. CLI: the optional bd claim join with the all-fresh guard (D5 (a)): every cluster in the expected set and every pinned cluster fresh, or `?` with the reason (ruled 2026-10-15). Depends on 4. Whether it also depends on 10 (the pinned set) is the open question in section 6: yes under (a) or (b), no under (c). The edge is filed once the operator answers.
 8. director: the rollup field for D6 (a), open asks per asker key whose owner is director. A director change; no marvel dependency.
+
+The signing release:
+
+9. daemon: a signing key per cluster, minted and held by the daemon (issuance under ADR-009: only marvel readers rely on it), and item 3's put signs each record. Red tests: a record changed after signing fails to verify; a record signed by another cluster's key fails. Depends on 3.
+10. CLI: a local pin command that records a cluster's public-key fingerprint in `marvel config`, obtained out of band, without dialing the cluster (condition 2). No dependency.
+11. CLI: item 4's reader verifies each record against its pin; judges freshness by the hub's arrival time, not the signed `observed_at` alone (condition 1); states the 180 s replay bound (condition 3); and prints a key with no pin, no signature or a bad signature as unverified, still counted as expected under D3 (c). The unauthenticated-keys line stays for any unverified key. Item 9 adds the signature without changing the record's existing fields, so a first-release reader still reads a signed record as a plain one; that is a requirement on item 9, not a measured property. Depends on 4, 9 and 10.
