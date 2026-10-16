@@ -40,16 +40,16 @@ ContextModel is the harness's report only from the init line onward:
 
 1. **At launch it echoes the arg.** `Bind` resolves with no stream model, so
    `ResolveGraded` falls back to `ModelFromArgs`, which returns the `--model`
-   value verbatim with no alias resolution (`internal/usage/limits.go:549-552`).
+   value verbatim with no alias resolution (`internal/usage/limits.go:554-557`).
 2. **The init line overwrites it.** The claude parser takes `model` from
    `system/init` and emits `session.started`
    (`internal/runtime/claudecode/parser.go:150-178`). `observeStart`
    re-resolves with that as the stream model and sets `rawModel`
-   (`internal/usage/accountant.go:290-317`), which `describe` shows as
+   (`internal/usage/accountant.go:333-360`), which `describe` shows as
    ContextModel (`:774`).
 3. **The served model never replaces it.** The parser captures each
    response's `message.model` (`parser.go:238`), but the accountant adopts a
-   sample's model only when none is set (`accountant.go:396`).
+   sample's model only when none is set (`accountant.go:440`).
 
 So for a claude session ContextModel is the declared model. The alias role
 is the one row where ContextModel alone proves the harness wrote it,
@@ -63,7 +63,7 @@ None of these was the probe's subject. Each is recorded here so it is not
 lost; whether each gets a ticket is a separate call.
 
 1. **The alias table is behind the harness.** `aliases` maps `sonnet` to
-   `claude-sonnet-5` (`internal/usage/limits.go:339`, "bumped 2026-08-30"),
+   `claude-sonnet-5` (`internal/usage/limits.go:342`, "bumped 2026-08-30"),
    but the harness resolved `sonnet` to `claude-sonnet-5-5`. Until init
    arrives, and for any harness that never names a model, a role launched
    with `--model sonnet` is keyed to the wrong model for its window lookup.
@@ -73,11 +73,11 @@ lost; whether each gets a ticket is a separate call.
    table and alias rungs both miss (`:590-622`). The reviewer's ring read
    shows `context.limit-unresolved ... no window resolved for model
    "claude-sonnet-5-5"; CTX% stays blank` for both 5-5 sessions and none for
-   `claude-sonnet-5` (emitted at `internal/usage/accountant.go:274-284`).
+   `claude-sonnet-5` (emitted at `internal/usage/accountant.go:317-327`).
    The blank is narrower than "every Sonnet 5.5 role", and I checked why:
    claude declares `contextWindow` on its terminal result line
    (`parser.go:430`), which the stream rung takes and the resolver then
-   learns for later sessions on the same daemon (`limits.go:554-579`,
+   learns for later sessions on the same daemon (`limits.go:559-584`,
    held in an in-memory map, `:468`); and an interactive session gets the
    statusline's `context_window_size` through the feed rung
    (`cmd/marvel/ctxforward.go:192`). So the blank covers a headless session

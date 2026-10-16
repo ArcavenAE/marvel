@@ -177,7 +177,7 @@ than claimed.
 
 The accountant infers compaction from a downward step with a hysteresis
 that its own source marks as reasoned rather than measured. The comment at
-`internal/usage/accountant.go:14-31` says so in as many words: the bound was
+`internal/usage/accountant.go:16-33` says so in as many words: the bound was
 "chosen to be un-fireable by ordinary variation rather than calibrated: no
 live compaction was crossed on any harness". The constants are
 `defaultHysteresisTokens = 2048` and `defaultHysteresisFraction = 0.10`, and

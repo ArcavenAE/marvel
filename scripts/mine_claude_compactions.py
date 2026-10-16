@@ -53,7 +53,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 
-# marvel's shipped defaults, internal/usage/accountant.go:28-31.
+# marvel's shipped defaults, internal/usage/accountant.go:30-33.
 HYST_TOKENS = 2048
 HYST_FRACTION = 0.10
 

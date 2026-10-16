@@ -39,7 +39,7 @@ says which part is left.
 | Address resolution order | `cmd/marvel/main.go:87-120` | `--socket`, then `MARVEL_SOCKET`, then `--cluster`. When the design was written, an unknown cluster warned and dialed the local socket (#586, #502); #618 changed that to a refusal, so this row is superseded by section 9, "Later rulings on P2b (#618)" |
 | The bus status already has a domain and a leaf state | `internal/bus/supervisor.go:119`, `:124-127` | `Domain`; `Leaf` is up, down, detached, unenrolled, n/a, or unknown ("not polled yet"). No probe age |
 | "Leaf up" means a leafnode count above zero | `internal/bus/supervisor.go:721` | `up := body.Leafnodes > 0`; it does not mean the expected subjects are carried |
-| Token spend exists but is not on the wire | `internal/usage/reader.go:28`, `internal/usage/accountant.go:708`, `internal/session/manager.go:1123` | `usage.Spend`; `SessionSpend` has one caller; `api.Session` carries no spend field |
+| Token spend exists but is not on the wire | `internal/usage/reader.go:28`, `internal/usage/accountant.go:752`, `internal/session/manager.go:1123` | `usage.Spend`; `SessionSpend` has one caller; `api.Session` carries no spend field |
 | No token rate | `internal/usage/accountant.go` | cumulative sums and sample times only |
 | The watchdog visits only quiet seats | `internal/daemon/watchdog.go:122-126` | a session is skipped unless `now - ContextAt` exceeds the window; it also starts no loop while the pattern set is empty (#598) |
 | Marvel does not see bus sends | (no source) | the nearest per-seat activity signal is `ContextAt` (`internal/team/controller.go:1497-1522`) |
