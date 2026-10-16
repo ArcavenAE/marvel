@@ -346,6 +346,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.repaintSettled d.driver.Repaint":                    true,
 		"*Daemon.notifyHandoff d.driver.SendKeys":                    true,
 		"*Daemon.startWatchdog d.driver.PaneForeground":              true,
+		"*Daemon.handleDaemonStatus d.driver.Socket":                 true, // read-only: the name, never a pane
 		"*Daemon.startWatchdog d.driver.CapturePaneJoined":           true,
 		"preflightRefusal driver.CapturePaneJoined":                  true,
 		"bareDigitRefusal driver.CapturePaneEscapes":                 true,
