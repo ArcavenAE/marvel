@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/arcavenae/marvel/internal/asof"
 	"github.com/arcavenae/marvel/internal/events"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
+	"github.com/arcavenae/marvel/internal/runtime/opencode"
 )
 
 // Default compaction-detection hysteresis.
@@ -96,6 +98,10 @@ type Accountant struct {
 
 	hystAbs  int
 	hystFrac float64
+
+	// opencodeModelsPath is where Bind reads opencode's model catalog; see
+	// OpenCodeModelsPath. Empty means no catalog.
+	opencodeModelsPath string
 }
 
 var _ Reader = (*Accountant)(nil)
@@ -143,6 +149,8 @@ func New(sink Sink, limits *Resolver, opts ...Option) *Accountant {
 		hystAbs:  defaultHysteresisTokens,
 		hystFrac: defaultHysteresisFraction,
 	}
+	home, _ := os.UserHomeDir()
+	a.opencodeModelsPath = OpenCodeModelsPath(os.Getenv, home)
 	for _, o := range opts {
 		o(a)
 	}
@@ -166,7 +174,12 @@ type sessionState struct {
 	primaryModel  string
 	args          []string
 	manifestLimit int
-	redirection   api.BackendRedirection
+	// catalogLimit is a window read once at Bind from the harness's own model
+	// catalog (opencode), 0 when none. Observe may not do file I/O, so the
+	// read happens at Bind and the value rides every later resolution as
+	// Request.FeedLimit.
+	catalogLimit int
+	redirection  api.BackendRedirection
 
 	limit    int
 	limitSrc LimitSource
@@ -232,11 +245,13 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		return
 	}
 	prof, _ := profileFor(b.Harness)
+	catalogLimit := a.catalogLimit(b)
 	limit, src, model := a.limits.Resolve(Request{
 		Harness:       b.Harness,
 		StreamModel:   b.Model,
 		RuntimeArgs:   b.Args,
 		ManifestLimit: b.Window,
+		FeedLimit:     catalogLimit,
 		Redirection:   b.Redirection,
 	})
 
@@ -252,10 +267,38 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		primaryModel:  IdentityKey(model),
 		args:          b.Args,
 		manifestLimit: b.Window,
+		catalogLimit:  catalogLimit,
 		redirection:   b.Redirection,
 		limit:         limit,
 		limitSrc:      src,
 	}
+}
+
+// catalogLimit reads the window for a launch from the harness's own model
+// catalog, for the one harness that keeps one (opencode) and only when the
+// operator set no runtime.context_window: the manifest wins, so a read it
+// would outrank is skipped. Any failure returns 0, which leaves the window
+// unresolved; see OpenCodeWindow. It does file I/O, so it is called from Bind
+// and never from Observe.
+func (a *Accountant) catalogLimit(b Bind) int {
+	if b.Harness != opencode.Harness || b.Window > 0 {
+		return 0
+	}
+	model := b.Model
+	if model == "" {
+		model = ModelFromArgs(b.Args)
+	}
+	w, err := OpenCodeWindow(a.opencodeModelsPath, model)
+	if err != nil {
+		a.mu.Lock()
+		first := a.warnOnceLocked("opencode-models:" + model)
+		a.mu.Unlock()
+		if first {
+			log.Printf("context window: opencode %q left unresolved: %v", model, err)
+		}
+		return 0
+	}
+	return w
 }
 
 // Observe folds one adapter event and writes the resulting reading
@@ -327,7 +370,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 
 	a.mu.Lock()
 	st := a.stateLocked(c, ev.Harness, prof)
-	args, manifest, redirection := st.args, st.manifestLimit, st.redirection
+	args, manifest, catalogLimit, redirection := st.args, st.manifestLimit, st.catalogLimit, st.redirection
 	a.mu.Unlock()
 
 	limit, src, model := a.limits.Resolve(Request{
@@ -335,6 +378,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 		StreamModel:   d.Model,
 		RuntimeArgs:   args,
 		ManifestLimit: manifest,
+		FeedLimit:     catalogLimit,
 		Redirection:   redirection,
 	})
 

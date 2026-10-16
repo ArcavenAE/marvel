@@ -1,0 +1,19 @@
+{
+  "opencode": {
+    "id": "opencode",
+    "name": "OpenCode Zen",
+    "models": {
+      "claude-haiku-4-5": {"id": "claude-haiku-4-5", "limit": {"context": 200000, "output": 64000}},
+      "no-limit-model": {"id": "no-limit-model"},
+      "zero-limit-model": {"id": "zero-limit-model", "limit": {"context": 0, "output": 1000}},
+      "fractional-model": {"id": "fractional-model", "limit": {"context": 1000.5, "output": 1000}}
+    }
+  },
+  "openrouter": {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "models": {
+      "anthropic/claude-sonnet-4": {"id": "anthropic/claude-sonnet-4", "limit": {"context": 1000000, "output": 64000}}
+    }
+  }
+}
