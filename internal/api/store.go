@@ -815,7 +815,13 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 			reading.ContextCompactions++
 		}
 	}
+	// The spend slice belongs to the usage accountant, and a heartbeat carries
+	// none, so the replace must not take it along: a seat with a token stream
+	// and a statusline feed would flip between its total and "-" on every beat
+	// (marvel#779). A heartbeat-only seat has none to carry and stays nil.
+	spendOut, spendPrompt, outRate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
 	sess.SessionContext = reading
+	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
 	sess.LastHeartbeat = time.Now().UTC()
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any
