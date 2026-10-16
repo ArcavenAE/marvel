@@ -6,12 +6,13 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
-// MethodVersion is the read-only RPC that reports the running daemon's build.
-// It answers from the daemon's own memory and never touches the state store,
-// which this process holds under an exclusive bbolt lock.
-const MethodVersion = "version"
+// MethodVersion names the version RPC; its definition and contract are in
+// daemonrpc.
+const MethodVersion = daemonrpc.MethodVersion
 
 // Build names a marvel build. Commit is a revision the version confirms, and it
 // keeps the meaning it had when the version report first shipped: a client that

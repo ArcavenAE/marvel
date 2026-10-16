@@ -544,16 +544,20 @@ func keysOf(m map[string]bool) []string {
 func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	t.Parallel()
 	want := map[string]map[string]int{
-		"handleInjectAs":  {"*Daemon.dispatchAs": 1},
-		"dispatchAs":      {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
-		"dispatch":        {},
-		"handleRWCAs":     {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
-		"handleRWC":       {},
-		"handleConn":      {"*Daemon.Start": 1},
-		"SendRequest":     {},
-		"SendRequestWith": {"SendRequest": 1},
-		"WatchEventsWith": {},
-		"dialDaemonWith":  {"SendRequestWith": 1, "WatchEventsWith": 1},
+		"handleInjectAs": {"*Daemon.dispatchAs": 1},
+		"dispatchAs":     {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
+		"dispatch":       {},
+		"handleRWCAs":    {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
+		"handleRWC":      {},
+		"handleConn":     {"*Daemon.Start": 1},
+		// The client moved to internal/daemonrpc, which carries its own inventory
+		// of the same entry points and of every dial. What stays here is the
+		// forwarder for each, one call each, which the rewrite of the callers
+		// deletes (docs/design/code-restructure-plan.md, PR 1b). A caller in this
+		// package would add a second call and fail this entry.
+		"SendRequest":     {"SendRequest": 1},
+		"SendRequestWith": {"SendRequestWith": 1},
+		"WatchEventsWith": {"WatchEventsWith": 1},
 		// Two functions in other packages that type literal text plus Enter into a
 		// pane: the max-age sender the controller holds, and a runtime instance's
 		// Inject. The daemon package calls neither.
@@ -661,19 +665,13 @@ func isDeclName(p pkgFiles, n ast.Node) bool {
 }
 
 // A connection into the daemon's own socket, or a pipe into its handlers, is a
-// way to send it an inject request. The only dials in the package are the
-// client's (dialDaemonWith, to the daemon the CLI names), the SSH client's two,
-// and the dial to the user's SSH agent; net.Pipe and the Dialer type are not
-// used at all, and the process may not spawn commands or open HTTP or RPC
-// connections.
+// way to send it an inject request. The dials were the client's, and the client
+// now lives in internal/daemonrpc, whose own copy of this inventory pins them
+// there. This package has none: no dial, no net.Pipe, no Dialer type, and the
+// process may not spawn commands or open HTTP or RPC connections.
 func TestNoNewRouteIntoTheDaemonsOwnSocket(t *testing.T) {
 	t.Parallel()
-	wantDial := map[string]int{
-		"net.Dial in dialDaemonWith":    2,
-		"net.Dial in sshAuthMethodsFor": 1,
-		"ssh.Dial in dialSSHDirect":     1,
-		"ssh.Dial in dialSSHTunnel":     1,
-	}
+	wantDial := map[string]int{}
 	gotDial := map[string]int{}
 	p := parseDaemon(t)
 	p.eachFunc(func(file, fun string, n ast.Node) bool {

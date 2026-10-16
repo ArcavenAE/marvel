@@ -23,9 +23,12 @@ import (
 // trip it. A structural check, so it may gate (diagnostic-not-gate.md).
 
 const (
-	modulePath   = "github.com/arcavenae/marvel"
-	daemonPath   = modulePath + "/internal/daemon"
-	allowedWrite = "respond"
+	modulePath = "github.com/arcavenae/marvel"
+	daemonPath = modulePath + "/internal/daemon"
+	// Response is defined in daemonrpc and aliased here, so the type this guard
+	// matches is daemonrpc's; daemon.Response resolves to it through Unalias.
+	daemonrpcPath = modulePath + "/internal/daemonrpc"
+	allowedWrite  = "respond"
 )
 
 func moduleRoot(t *testing.T) string {
@@ -46,7 +49,8 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// isResponse reports whether t is daemon.Response or a pointer to it.
+// isResponse reports whether t is the Response type (daemonrpc.Response, which
+// daemon.Response aliases) or a pointer to it.
 func isResponse(t types.Type) bool {
 	if t == nil {
 		return false
@@ -59,7 +63,7 @@ func isResponse(t types.Type) bool {
 	if !ok || n.Obj().Pkg() == nil {
 		return false
 	}
-	return n.Obj().Name() == "Response" && n.Obj().Pkg().Path() == daemonPath
+	return n.Obj().Name() == "Response" && n.Obj().Pkg().Path() == daemonrpcPath
 }
 
 // resultOfResponse reports whether sel names Response.Result, directly or
@@ -192,7 +196,7 @@ func packageFiles(t *testing.T, fset *token.FileSet, dir string) []*ast.File {
 func importsDaemon(files []*ast.File) bool {
 	for _, f := range files {
 		for _, im := range f.Imports {
-			if strings.Trim(im.Path.Value, `"`) == daemonPath {
+			if p := strings.Trim(im.Path.Value, `"`); p == daemonPath || p == daemonrpcPath {
 				return true
 			}
 		}
@@ -232,7 +236,7 @@ func TestOnlyRespondSetsResponseResult(t *testing.T) {
 		if rel != "." {
 			pkgPath += "/" + filepath.ToSlash(rel)
 		}
-		if len(files) == 0 || (pkgPath != daemonPath && !importsDaemon(files)) {
+		if len(files) == 0 || (pkgPath != daemonPath && pkgPath != daemonrpcPath && !importsDaemon(files)) {
 			continue
 		}
 		checked++
@@ -310,6 +314,26 @@ func assign(r *daemon.Response) { r.Result = nil }
 		}
 		if len(bad) != 3 {
 			t.Errorf("caught %d of 3 planted writes from another package: %v", len(bad), bad)
+		}
+	})
+
+	t.Run("from another package through daemonrpc", func(t *testing.T) {
+		files := []*ast.File{planted("scratch_rpc.go", `package other
+
+import "github.com/arcavenae/marvel/internal/daemonrpc"
+
+func keyed() daemonrpc.Response { return daemonrpc.Response{Result: nil} }
+func assign(r *daemonrpc.Response) { r.Result = nil }
+`)}
+		bad, err := responseWrites(fset, modulePath+"/scratch/other", files, imp, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bad) != 2 {
+			t.Errorf("caught %d of 2 planted writes through daemonrpc: %v", len(bad), bad)
+		}
+		if !importsDaemon(files) {
+			t.Errorf("a package that imports only daemonrpc is not scanned")
 		}
 	})
 
