@@ -197,8 +197,16 @@ func TestMockTokensDiffer(t *testing.T) {
 
 // secretSigner stands in for the host keystore. Its key bytes exist only here.
 type secretSigner struct {
-	secret []byte
-	signed int
+	secret    []byte
+	signed    int
+	described []string
+	info      KeyInfo
+	descErr   error
+}
+
+func (s *secretSigner) Describe(_ context.Context, keyName string) (KeyInfo, error) {
+	s.described = append(s.described, keyName)
+	return s.info, s.descErr
 }
 
 func (s *secretSigner) Sign(_ context.Context, _ string, _ []byte) ([]byte, error) {
@@ -242,5 +250,48 @@ func TestNoKeyMaterialInBrokerOrDriverState(t *testing.T) {
 		if strings.Contains(dump, needle) {
 			t.Fatalf("state carries key material %q", needle)
 		}
+	}
+}
+
+// The keystore seam carries a read-only Describe beside Sign: the algorithm,
+// the key id and the public key of the named key, so a driver can build a
+// client assertion's header and publish the key. Never the private bytes.
+func TestGenericOIDCDescribesItsKeyThroughTheKeystore(t *testing.T) {
+	s := &secretSigner{
+		secret: []byte("host-keystore-private-bytes"),
+		info:   KeyInfo{Algorithm: "ES256", KeyID: "kid-1", PublicKey: []byte("public-half")},
+	}
+	g := NewGenericOIDC("ai-agents-key", s)
+
+	got, err := g.Key(context.Background())
+	if err != nil {
+		t.Fatalf("Key: %v", err)
+	}
+	if got.Algorithm != "ES256" || got.KeyID != "kid-1" || string(got.PublicKey) != "public-half" {
+		t.Errorf("Key = %+v, want the keystore's description", got)
+	}
+	if len(s.described) != 1 || s.described[0] != "ai-agents-key" {
+		t.Errorf("keystore asked to describe %v, want the driver's key name once", s.described)
+	}
+	if s.signed != 0 {
+		t.Errorf("describing a key asked the keystore to sign %d times", s.signed)
+	}
+	dump := fmt.Sprintf("%+v %#v %+v", got, got, g)
+	if strings.Contains(dump, string(s.secret)) {
+		t.Errorf("key description or driver state carries the private bytes: %q", dump)
+	}
+}
+
+func TestGenericOIDCKeyReportsAKeystoreFailure(t *testing.T) {
+	errKeystore := errors.New("keystore locked")
+	s := &secretSigner{descErr: errKeystore}
+	g := NewGenericOIDC("ai-agents-key", s)
+
+	got, err := g.Key(context.Background())
+	if !errors.Is(err, errKeystore) {
+		t.Fatalf("Key err = %v, want the keystore's error", err)
+	}
+	if got.Algorithm != "" || got.KeyID != "" || got.PublicKey != nil {
+		t.Errorf("Key returned %+v with an error, want the zero value", got)
 	}
 }

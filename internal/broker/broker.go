@@ -25,6 +25,18 @@ import (
 // key of this name. The key never crosses the interface.
 type Signer interface {
 	Sign(ctx context.Context, keyName string, input []byte) ([]byte, error)
+	// Describe reports the public facts about the key of this name: what a
+	// driver needs to build a client assertion's header and to publish the key.
+	// It never returns private bytes, and it lists and creates nothing.
+	Describe(ctx context.Context, keyName string) (KeyInfo, error)
+}
+
+// KeyInfo is what a keystore says about a key it holds. PublicKey is the
+// public half only.
+type KeyInfo struct {
+	Algorithm string
+	KeyID     string
+	PublicKey []byte
 }
 
 // Request names the seat a token is for. The identity a provider trusts is the
@@ -372,6 +384,13 @@ func NewGenericOIDC(keyName string, s Signer) *GenericOIDC {
 
 // Name is the driver's registered name.
 func (g *GenericOIDC) Name() string { return "generic-oidc" }
+
+// Key asks the keystore to describe the key this driver names.
+func (g *GenericOIDC) Key(context.Context) (KeyInfo, error) {
+	return KeyInfo{}, errKeyNotBuilt
+}
+
+var errKeyNotBuilt = errors.New("broker: key description is not built")
 
 // Issue is not built until the claim shape is ruled.
 func (g *GenericOIDC) Issue(context.Context, Request) (Token, error) {
