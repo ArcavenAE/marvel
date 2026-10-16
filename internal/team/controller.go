@@ -2112,14 +2112,16 @@ func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bo
 	return true
 }
 
-// firstSessionOverRemainder returns the first live current-generation session
-// of role whose resolved-window occupancy has crossed the headroom remainder,
-// with its token count and window. ok is false when none has (none over the
-// remainder, or none on a resolved window with a fresh reading). A reading
-// older than api.DefaultQuietWindow, the cluster's default quiet window, does
-// not count.
+// firstSessionOverRemainder returns the first live session of role, at any
+// generation, whose resolved-window occupancy has crossed the headroom
+// remainder, with its token count and window. A role's seats carry the
+// generation of the last shift that covered the role, not the team's counter,
+// so a team-generation filter hides them (marvel#451, #924). ok is false when
+// none has (none over the remainder, or none on a resolved window with a fresh
+// reading). A reading older than api.DefaultQuietWindow, the cluster's default
+// quiet window, does not count.
 func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role, headroom int) (sessionKey string, tokens, limit int, ok bool) {
-	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	live := aliveSessions(c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name))
 	now := c.nowUTC()
 	for i := range live {
 		s := &live[i]
