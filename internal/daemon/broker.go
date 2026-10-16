@@ -65,8 +65,10 @@ func (d *Daemon) retryBrokerRevokes(ctx context.Context) {
 	}
 	// A key is held back only while a Running row has it. A Crashed, Failed or
 	// Succeeded row is not a seat to protect, and the tokens kept for it are
-	// retried now, not at their TTL. The pass revokes only ids it read before
-	// asking, so a seat that takes the name meanwhile is not touched.
+	// retried now, not at their TTL. For those rows this is the first revoke,
+	// not a retry, and a row in backoff or marked Failed by the health loop can
+	// still have a live pane. The pass revokes only ids it read before asking,
+	// so a seat that takes the name meanwhile is not touched.
 	exists := func(key string) bool {
 		sess, err := d.store.GetSession(key)
 		return err == nil && sess.State == api.SessionRunning

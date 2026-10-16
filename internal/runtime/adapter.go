@@ -638,6 +638,10 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 }
 
 // roleEnvRefusedKeys are the constructed variables a role may never override.
+// A role cannot point its seat at another credential helper: the pointer picks
+// the program that receives a bearer token. Narrowing a seat's token, if a role
+// needs it, is a scope the daemon's helper passes in the request, not a
+// different pointer.
 // Each one is a credential marvel or the broker checks to decide whether a
 // session is who it says it is, which is why the answer is refusal rather than
 // a warning: there is no legitimate manifest reason to set one, and the
