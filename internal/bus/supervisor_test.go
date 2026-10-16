@@ -20,6 +20,19 @@ import (
 	"github.com/arcavenae/marvel/internal/events"
 )
 
+func TestComputeBackoffMatchesRoleSchedule(t *testing.T) {
+	t.Parallel()
+	want := []time.Duration{30 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 5 * time.Minute, 5 * time.Minute}
+	for n, w := range want {
+		if got := computeBackoff(n); got != w {
+			t.Errorf("computeBackoff(%d) = %s, want %s", n, got, w)
+		}
+	}
+	if got := computeBackoff(60); got != restartBackoffMax {
+		t.Errorf("computeBackoff(60) = %s, want cap %s (shift overflow)", got, restartBackoffMax)
+	}
+}
+
 // freePort asks the kernel for a free loopback port and releases it; the
 // broker binds it a moment later. Racy in theory, fine for a local test.
 //
