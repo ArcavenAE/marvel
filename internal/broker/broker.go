@@ -27,8 +27,12 @@ type Signer interface {
 	Sign(ctx context.Context, keyName string, input []byte) ([]byte, error)
 }
 
-// Request names the seat a token is for. A driver puts these in the token's
-// downstream session name and its identifier, not in the identity itself.
+// Request names the seat a token is for. The identity a provider trusts is the
+// cluster's broker, never a seat. A driver puts Team and Role in the token as
+// claims a provider policy can match, and Session only in the downstream
+// session name and identifier, for audit. The seat is the authenticated one:
+// the broker fills Session from the identity it checked, not from the key the
+// caller typed.
 type Request struct {
 	Team    string
 	Role    string
@@ -168,12 +172,23 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 	if err != nil {
 		return Token{}, err
 	}
-	tok, err := b.driver.Issue(ctx, Request{Team: id.Team, Role: id.Role, Session: id.Session})
+	// The record hangs off the identity the broker checked, not the key the
+	// caller typed. The two are the same exact lookup today; if they ever
+	// differ, a revoke for the authenticated session must be seen by this ask
+	// as well, so it is registered under that key too.
+	sess := id.Session
+	var a2 *asks
+	var revokes2 int
+	if sess != sessionKey {
+		a2, revokes2 = b.begin(sess)
+		defer b.finish(sess, a2)
+	}
+	tok, err := b.driver.Issue(ctx, Request{Team: id.Team, Role: id.Role, Session: sess})
 	if err != nil {
 		return Token{}, fmt.Errorf("broker: %s driver: %w", b.driver.Name(), err)
 	}
 	b.mu.Lock()
-	if a.revokes != revokesAtStart {
+	if a.revokes != revokesAtStart || (a2 != nil && a2.revokes != revokes2) {
 		b.mu.Unlock()
 		// The caller's context may be what ended the ask; the revoke must not be.
 		if rerr := b.driver.Revoke(context.WithoutCancel(ctx), tok); rerr != nil {
@@ -181,13 +196,13 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 			// revoke for the seat, or the daemon's retry pass once the seat's
 			// row is gone, retries it.
 			b.mu.Lock()
-			b.issued[sessionKey] = append(b.issued[sessionKey], tok)
+			b.issued[sess] = append(b.issued[sess], tok)
 			b.mu.Unlock()
 			return Token{}, fmt.Errorf("%w: %w: token %s: %w", ErrUnauthorized, ErrRevokeFailed, tok.ID, scrub(tok, rerr))
 		}
 		return Token{}, ErrUnauthorized
 	}
-	b.issued[sessionKey] = append(b.issued[sessionKey], tok)
+	b.issued[sess] = append(b.issued[sess], tok)
 	b.mu.Unlock()
 	return tok, nil
 }
