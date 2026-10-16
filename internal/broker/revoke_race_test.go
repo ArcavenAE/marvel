@@ -457,3 +457,31 @@ func TestIssueRecordsTheTokenUnderTheAuthenticatedSession(t *testing.T) {
 		t.Errorf("live tokens after the seat ended = %v, want none: the token was filed under the typed key", live)
 	}
 }
+
+// An ask typed under an alias is still ended by a revoke for the session the
+// broker authenticated it as.
+func TestIssueTypedUnderAnAliasIsRefusedWhenTheAuthenticatedSessionEnds(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	g := newGateDriver(m)
+	b := New(g, aliasAuth{canonical: "ws/t/r-g1-0"})
+
+	res := make(chan issueResult, 1)
+	go func() {
+		tok, err := b.Issue(context.Background(), "WS/T/R-G1-0", "hb")
+		res <- issueResult{tok, err}
+	}()
+	waitFor(t, g.entered, "the driver to start issuing")
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	close(g.release)
+
+	if r := await(t, res); !errors.Is(r.err, ErrUnauthorized) {
+		t.Errorf("Issue = %v, want ErrUnauthorized", r.err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens = %v, want none", live)
+	}
+}
