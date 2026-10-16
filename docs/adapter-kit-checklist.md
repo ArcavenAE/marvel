@@ -36,7 +36,7 @@ Lines that are not met yet still go into the adapter doc, with the reason. A `no
 
 ## Context
 
-15. The adapter names the producer that stamps `ContextAt`. A seat whose only signal is spend reads quiet (`internal/api/store.go:853-860`), and the matrix says so.
+15. The adapter names the producer that stamps `ContextAt`. A seat whose only signal is spend reads quiet (`internal/api/store.go:859-866`), and the matrix says so.
 16. A harness-owned database or session file the adapter reads is opened read-only, with its schema version pinned. An unknown version is refused. When the store holds rows for several launches or sub-sessions, the row is selected by a bound known at launch (start time, session type, no parent), not by recency alone.
 17. If the harness has a window env, it is projected from `runtime.context_window`.
 23. The channel that carries the per-request level (stream, store, hook or OTEL) is shown in source at the tag. If there is none, the matrix cell is `no`.
