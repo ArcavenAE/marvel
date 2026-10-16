@@ -78,7 +78,7 @@ The other shape, where the daemon sends the facts it knows over RPC, was rejecte
 - the exec itself fails after the detach (`daemon.go:2955-2958`): exec the prior binary before exiting;
 - the successor fails at start (`New` returns an error): the departing daemon passes the prior binary's path in the environment, and a successor that cannot start execs it, with a marker so this happens at most once.
 
-Both need a prior binary that still exists, which is section 5. If it does not exist, or the fallback also fails, the behavior is today's: log, exit, and say which command starts a daemon to adopt the panes.
+Both need a prior binary that still exists, which is section 5. Neither helps once a one-way store migration has committed, because the prior binary refuses the newer store (`bolt.go:134-137`); that case is section 4's. If it does not exist, or the fallback also fails, the behavior is today's: log, exit, and say which command starts a daemon to adopt the panes.
 
 **No automatic rollback on a health finding.** When the successor starts but a health check fails (fewer adopted panes, the leaf down, a degraded session), the CLI reports it with the one command that rolls back, and a person decides. Two rules settle this, so it is not put up as a decision: automation proposes and does not judge (ADR-007), and nothing executes on a clock or on silence. So finding-062's "fall back automatically if no confirmation arrives in a bounded window" is dropped. The restarts above are kept, because a daemon that cannot start is not a judgment call.
 
@@ -111,7 +111,7 @@ This is finding-062 item 5 as written, plus the record. It is a builder ticket a
 | Pair | Rule |
 |---|---|
 | CLI against daemon | Either may be newer. The daemon keeps each RPC method and field for at least one release after its replacement ships. The CLI warns on every verb when the builds differ (item 3's remainder), not only in `marvel version` |
-| A verb the daemon does not support | The CLI reads the daemon's capabilities (the `version --capabilities` answer that #896 added) and refuses with the missing capability named, never a raw RPC error |
+| A verb the daemon does not support | The CLI should refuse with the missing capability named, never a raw RPC error. No daemon-side capability answer exists yet: `version --capabilities` (#896) is local, dials no daemon, and reports only the binary's reexec handoff format, which a departing daemon reads from its successor (`cmd/marvel/main.go:2009-2027`). This needs new work, for example a capability list on the daemon's `version` RPC |
 | Daemon downgrade | Not by reexec, which refuses a downgrade (`reexec_target.go:161-163`). A downgrade is a stop and a fresh start of the older binary, and is safe only where that binary reads every record the newer one wrote: the store schema (`bolt.go:134-137`) and the broker identity record (`internal/bus/identity.go:16-23`) |
 | Daemon and the director shim | Out of marvel's scope. The shim is director's and has its own contract (`docs/design/shim-heartbeat-feed.md`) |
 | Daemon and nats-server | The broker version is pinned (`mise.toml`); the daemon reports the version it started. The broker's own activation is designed in `docs/design/bus-as-service.md` section 5 and is not repeated here |
@@ -167,8 +167,9 @@ Each is flat, one PR, with its dependency edges:
 6. Post-reexec health check: build, adopted panes, sessions (section 3). No edges.
 7. One-time fallback to the prior binary on exec failure and on start failure (section 3). Depends on 2.
 8. Migration rehearsal in the report, and guided rollback steps (section 4). Depends on 3, and on Z1.
-9. The skew table in the admin guide, with the capability refusal on the CLI (section 6). No edges.
-10. A cluster rollout runbook in the order Z2 sets (section 6). Depends on 4 and 6, and on Z2.
+9. The skew table in the admin guide (section 6). No edges.
+10. A capability list on the daemon's `version` RPC, and the CLI refusal that names a missing capability (section 6). No edges.
+11. A cluster rollout runbook in the order Z2 sets (section 6). Depends on 4 and 6, and on Z2.
 
 finding-062 items 4 (mise in `marvel upgrade`) and 9 (placement on activation) stay with their existing issues, #756 and #636.
 
