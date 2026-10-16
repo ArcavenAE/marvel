@@ -215,24 +215,32 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 	if err != nil {
 		return Token{}, fmt.Errorf("broker: %s driver: %w", b.driver.Name(), err)
 	}
+	if tok.Expires.IsZero() || tok.Expires.After(b.now().Add(MaxTTL)) {
+		return Token{}, b.refuse(ctx, sess, tok, ErrTTLTooLong)
+	}
 	b.mu.Lock()
 	if a.revokes != revokesAtStart || (a2 != nil && a2.revokes != revokes2) {
 		b.mu.Unlock()
-		// The caller's context may be what ended the ask; the revoke must not be.
-		if rerr := b.driver.Revoke(context.WithoutCancel(ctx), tok); rerr != nil {
-			// Nothing else knows this token. Put it back, so that the next
-			// revoke for the seat, or the daemon's retry pass once the seat's
-			// row is gone, retries it.
-			b.mu.Lock()
-			b.issued[sess] = append(b.issued[sess], tok)
-			b.mu.Unlock()
-			return Token{}, fmt.Errorf("%w: %w: token %s: %w", ErrUnauthorized, ErrRevokeFailed, tok.ID, scrub(tok, rerr))
-		}
-		return Token{}, ErrUnauthorized
+		return Token{}, b.refuse(ctx, sess, tok, ErrUnauthorized)
 	}
 	b.issued[sess] = append(b.issued[sess], tok)
 	b.mu.Unlock()
 	return tok, nil
+}
+
+// refuse revokes a token the broker will not hand out and returns cause. If
+// the revoke fails the token is kept under the session, so the next revoke or
+// the daemon's retry pass takes it, and the error says so. The caller's
+// context may be what ended the ask; the revoke must not be.
+func (b *Broker) refuse(ctx context.Context, sess string, tok Token, cause error) error {
+	rerr := b.driver.Revoke(context.WithoutCancel(ctx), tok)
+	if rerr == nil {
+		return cause
+	}
+	b.mu.Lock()
+	b.issued[sess] = append(b.issued[sess], tok)
+	b.mu.Unlock()
+	return fmt.Errorf("%w: %w: token %s: %w", cause, ErrRevokeFailed, tok.ID, scrub(tok, rerr))
 }
 
 // RevokeSession revokes every token issued to the seat. It revokes the rest

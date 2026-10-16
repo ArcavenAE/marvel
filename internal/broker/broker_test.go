@@ -48,7 +48,7 @@ func (d *recordingDriver) Issue(_ context.Context, r Request) (Token, error) {
 	d.issued = append(d.issued, r)
 	d.lastReq = r
 	id := fmt.Sprintf("t%d", d.nextID)
-	return Token{ID: id, Value: "v-" + id}, nil
+	return Token{ID: id, Value: "v-" + id, Expires: t0.Add(DefaultTTL)}, nil
 }
 
 func (d *recordingDriver) Revoke(_ context.Context, t Token) error {

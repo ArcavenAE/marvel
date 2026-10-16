@@ -556,11 +556,11 @@ func TestIssueKeepsAnOverlongTokenItCouldNotRevoke(t *testing.T) {
 	b := New(f, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
 	b.now = func() time.Time { return t0 }
 
-	tok, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
+	_, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
 	if !errors.Is(err, ErrTTLTooLong) || !errors.Is(err, ErrRevokeFailed) {
 		t.Fatalf("Issue = %v, want ErrTTLTooLong and ErrRevokeFailed", err)
 	}
-	if strings.Contains(err.Error(), tok.Value) {
+	if strings.Contains(err.Error(), "mock.") {
 		t.Errorf("error carries the token value: %q", err)
 	}
 	f.setFail(false)
