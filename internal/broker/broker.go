@@ -128,7 +128,9 @@ const (
 	// about two thirds of a token's life and, with the daemon's socket absent,
 	// retries for up to 90 s before it exits nonzero; it never prints a stale
 	// token. A token shorter than this could expire before the helper can get
-	// its replacement.
+	// its replacement. The floor is judged from the moment the driver was
+	// asked, not from its return, so a driver that stamps a token and then
+	// stalls can hand one out with just under MinTTL left.
 	MinTTL = 3 * time.Minute
 	// MaxTTL is the longest a token may live. The broker refuses, and revokes,
 	// a token a driver issues that outlives it.
