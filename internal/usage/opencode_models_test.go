@@ -1,12 +1,16 @@
 package usage
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/runtime/claudecode"
 	"github.com/arcavenae/marvel/internal/runtime/opencode"
 )
 
@@ -64,6 +68,67 @@ func TestOpenCodeWindow(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("OpenCodeWindow = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenCodeWindowRefusesAPathThatIsNotAPlainCatalogFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const model = "opencode/claude-haiku-4-5"
+
+	fifo := filepath.Join(dir, "fifo.json")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	link := filepath.Join(dir, "link.json")
+	abs, err := filepath.Abs(opencodeFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(abs, link); err != nil {
+		t.Fatal(err)
+	}
+	huge := filepath.Join(dir, "huge.json")
+	// A valid catalog padded with blanks past the cap: without the cap it
+	// parses and returns 200000, so only the cap makes this a refusal.
+	good, err := os.ReadFile(opencodeFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := append(good, bytes.Repeat([]byte(" "), maxOpenCodeCatalogBytes+1-len(good))...)
+	if err := os.WriteFile(huge, padded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pastInt32 := filepath.Join(dir, "int32.json")
+	if err := os.WriteFile(pastInt32, []byte(`{"opencode":{"models":{"claude-haiku-4-5":{"limit":{"context":3000000000}}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, path := range map[string]string{
+		"a FIFO":                  fifo,
+		"a symlink to a real one": link,
+		"a file over the cap":     huge,
+		"a limit past int32":      pastInt32,
+		"a directory":             dir,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			done := make(chan struct{})
+			var got int
+			var gotErr error
+			go func() {
+				defer close(done)
+				got, gotErr = OpenCodeWindow(path, model)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("OpenCodeWindow blocked; a FIFO at the catalog path must be refused without opening it")
+			}
+			if gotErr == nil || got != 0 {
+				t.Errorf("OpenCodeWindow = %d, %v; want 0 and an error", got, gotErr)
 			}
 		})
 	}
@@ -180,15 +245,24 @@ func TestOpenCodeCatalogFailureLeavesTheWindowUnresolved(t *testing.T) {
 	}
 }
 
+// A claude seat resolves nothing from an empty table and writes a reading
+// with no window, so a catalog hit on it is visible. Without the opencode
+// guard in catalogLimit this test fails: the seat would take 200000 from the
+// catalog through its -m argument. (A codex seat writes no reading when its
+// window is unresolved, so it cannot show this.)
 func TestOpenCodeCatalogIsNotReadForOtherHarnesses(t *testing.T) {
 	t.Parallel()
 	a, sink, _ := newTestAccountant(t, Table{})
 	a.opencodeModelsPath = opencodeFixture
 
-	a.Bind(testCoords, Bind{Harness: "codex", Args: []string{"-m", "opencode/claude-haiku-4-5"}, Redirection: api.BackendDefault})
-	a.Observe(testCoords, turnEvent("codex", additive(20_000, 0, 0)))
+	a.Bind(testCoords, Bind{Harness: claudecode.Harness, Args: []string{"-m", "opencode/claude-haiku-4-5"}, Redirection: api.BackendDefault})
+	a.Observe(testCoords, turnEvent(claudecode.Harness, additive(20_000, 0, 0)))
 
-	if got, ok := sink.get(testCoords.AgentID); ok && got.ContextLimit != 0 {
-		t.Errorf("a codex session took limit %d from the opencode catalog", got.ContextLimit)
+	got, ok := sink.get(testCoords.AgentID)
+	if !ok {
+		t.Fatal("a claude seat wrote no reading, so this test cannot see a catalog hit; fix the test")
+	}
+	if got.ContextLimit != 0 || got.ContextLimitSource != string(LimitUnresolved) {
+		t.Errorf("a claude seat took limit %d from %q; the opencode catalog is for opencode seats only", got.ContextLimit, got.ContextLimitSource)
 	}
 }

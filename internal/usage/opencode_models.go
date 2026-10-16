@@ -4,11 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// maxOpenCodeCatalogBytes caps how much of the catalog is read. The file on
+// the host that built this is about 5.4 MB, so the cap leaves room for growth
+// and still stops a file that is not a catalog from being read into memory.
+const maxOpenCodeCatalogBytes = 32 << 20
 
 // OpenCodeModelsPath returns where opencode keeps its model catalog:
 // <cache>/opencode/models.json, with <cache> the absolute XDG_CACHE_HOME or
@@ -52,6 +59,14 @@ type openCodeCatalog map[string]struct {
 //
 // The catalog file is the harness's own record and is read, never written: this
 // package takes no lock on it and does not refresh it.
+//
+// The path must be a regular file of at most maxOpenCodeCatalogBytes, not a
+// symlink. Bind calls this while the controller holds its lock, so a FIFO at
+// the path would hold a plain open forever and stall reconcile. The file is
+// checked with Lstat, opened non-blocking without following links, and the
+// open file must be the file that was checked, as handoffComplete does in
+// internal/team. A path that fails any of these is an error, and the window
+// stays unresolved.
 func OpenCodeWindow(path, providerModel string) (int, error) {
 	provider, model, ok := strings.Cut(providerModel, "/")
 	if !ok || provider == "" || model == "" {
@@ -60,7 +75,7 @@ func OpenCodeWindow(path, providerModel string) (int, error) {
 	if path == "" {
 		return 0, errors.New("no opencode model catalog path")
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := readCatalogFile(path)
 	if err != nil {
 		return 0, fmt.Errorf("read opencode model catalog: %w", err)
 	}
@@ -77,4 +92,39 @@ func OpenCodeWindow(path, providerModel string) (int, error) {
 		return 0, fmt.Errorf("opencode model catalog gives %s/%s no usable limit.context (%v)", provider, model, c)
 	}
 	return int(c), nil
+}
+
+// readCatalogFile reads a regular, non-symlink file no larger than
+// maxOpenCodeCatalogBytes, without ever blocking on a FIFO or device.
+func readCatalogFile(path string) ([]byte, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if before.Size() > maxOpenCodeCatalogBytes {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d byte cap", path, before.Size(), maxOpenCodeCatalogBytes)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return nil, fmt.Errorf("%s changed between the check and the open", path)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxOpenCodeCatalogBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxOpenCodeCatalogBytes {
+		return nil, fmt.Errorf("%s grew past the %d byte cap while being read", path, maxOpenCodeCatalogBytes)
+	}
+	return raw, nil
 }
