@@ -77,9 +77,13 @@ type LaunchContext struct {
 	// it does today. User and password are the team credential the daemon
 	// minted into the broker's authorization file; per-session users are a
 	// follow-on on the same seam.
-	BusURL      string
-	BusUser     string
-	BusPassword string
+	BusURL string
+	// CredentialHelper is the path of the helper a seat runs to get a
+	// short-lived token from the credential broker. Empty when the cluster
+	// runs no broker. It is a pointer: no token rides in the environment.
+	CredentialHelper string
+	BusUser          string
+	BusPassword      string
 	// GlobalRole is the global role the role holds on this cluster, resolved
 	// by config.ResolvedGlobalRole through the bus provider: "supervisor", or
 	// empty for none. It rides to the seat as DIRECTOR_GLOBAL_ROLE.
@@ -551,6 +555,9 @@ func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
 			env["DIRECTOR_GLOBAL_ROLE"] = ctx.GlobalRole
 		}
 	}
+	if ctx.CredentialHelper != "" {
+		env[api.CredentialHelperEnv] = ctx.CredentialHelper
+	}
 	if ctx.SocketPath != "" {
 		env["MARVEL_SOCKET"] = ctx.SocketPath
 		// The layout root rides beside the socket, so a marvel command the
@@ -631,12 +638,17 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 }
 
 // roleEnvRefusedKeys are the constructed variables a role may never override.
+// A role cannot point its seat at another credential helper: the pointer picks
+// the program that receives a bearer token. Narrowing a seat's token, if a role
+// needs it, is a scope the daemon's helper passes in the request, not a
+// different pointer.
 // Each one is a credential marvel or the broker checks to decide whether a
 // session is who it says it is, which is why the answer is refusal rather than
 // a warning: there is no legitimate manifest reason to set one, and the
 // failure it enables is silent.
 var roleEnvRefusedKeys = []string{
 	api.HeartbeatTokenEnv,
+	api.CredentialHelperEnv,
 	api.HeartbeatTokenFileEnv,
 	"DIRECTOR_NATS_USER",
 	"DIRECTOR_NATS_PASS",

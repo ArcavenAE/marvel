@@ -860,6 +860,23 @@ func TestBaseEnvCarriesTheViewPathOnceTheViewExists(t *testing.T) {
 	}
 }
 
+func TestBaseEnvCarriesTheCredentialHelperPointerOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	if _, ok := baseEnv(ctx)[api.CredentialHelperEnv]; ok {
+		t.Errorf("%s set for a cluster with no broker", api.CredentialHelperEnv)
+	}
+
+	ctx = testContext()
+	ctx.CredentialHelper = "/opt/marvel/credential-helper"
+	ctx.Role.Runtime.Env = map[string]string{api.CredentialHelperEnv: "/tmp/forged-helper"}
+	env := baseEnv(ctx)
+	if got := env[api.CredentialHelperEnv]; got != "/opt/marvel/credential-helper" {
+		t.Errorf("%s = %q, want marvel's pointer: a role must not point its seat at another helper", api.CredentialHelperEnv, got)
+	}
+}
+
 // A harness that may publish its environment gets the token by file: the
 // variable that names the file is in the environment, the token is not.
 func TestBaseEnvWithATokenFileCarriesThePathAndNotTheToken(t *testing.T) {
