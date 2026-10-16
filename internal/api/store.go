@@ -822,10 +822,11 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// producer's own drops (marvel#630). A beat with no numerator cannot show a
 	// drop.
 	dropped := reading.ContextTokens > 0 && CompactionDropped(sess.ContextTokens, reading.ContextTokens)
-	// The spend slice belongs to the usage accountant, and a heartbeat carries
-	// none, so the replace must not take it along: a seat with a token stream
-	// and a statusline feed would flip between its total and "-" on every beat
-	// (marvel#779). A heartbeat-only seat has none to carry and stays nil.
+	// The spend slice belongs to the usage accountant, and a heartbeat reading
+	// carries none of it (a hook's output total is applied below), so the replace
+	// must not take it along: a seat with a token stream and a statusline feed
+	// would flip between its total and "-" on every beat (marvel#779). A
+	// heartbeat-only seat stays nil.
 	spendOut, spendPrompt, outRate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
 	sess.SessionContext = reading
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
