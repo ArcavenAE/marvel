@@ -1,6 +1,6 @@
 # Code restructure plan: two package moves and a sequencing rule
 
-- **Status:** Proposal, 2026-10-10, revision 5. It is for review. It changes
+- **Status:** Proposal, 2026-10-10, revision 6 (2026-10-16). It is for review. It changes
   no code, and no ticket is filed from it until it has been reviewed.
 - **Ruling it implements:** the operator chose (b) plus (d) from
   finding-marvel-4m2m section 6, on 2026-10-09:
@@ -13,8 +13,9 @@
 - **Revisions:** revision 2 answered review round 1 (at `6abc0af`), and
   revision 3 answered round 2 (at `9d13728`), and revision 4 answers the
   formal review of revision 3 and records D1's ruling, and revision 5 answers
-  the review of revision 4. Sections 7 to 10 list each finding and what
-  changed for it.
+  the review of revision 4. Revision 6 adds the characterization tests a
+  coverage review found the moves need, and corrects PR 1b and 1c's counts.
+  Sections 7 to 11 list each finding and what changed for it.
 - **Author seat:** architect, team arcaven.
 - **Code read at:** marvel `76a7db9` (the squash of #799). `daemon.go`,
   `team/controller.go`, `services-list.md` and
@@ -72,6 +73,8 @@ At `76a7db9`. The Move 1 facts read the same at `2329fa1`, because `daemon.go` i
   `internal/daemon` use them at `76a7db9`: 14 non-test and 13 test files, all
   in `cmd/marvel`, `cmd/simulator` and `internal/simulator`
   (`grep -rlE '\bdaemon\.(Request|Response|EventsBatch|DialOptions|Method[A-Z]\w*|ErrWatchUnsupported|SendRequest|SendRequestWith|WatchEventsWith|DefaultMRVLPort)\b'`).
+  At PR 1b's base (`35ded6c`) the count is 34, 17 non-test and 17 test,
+  recounted by the 1b builder with a `go/parser` scan.
 
   `cmd/marvel` keeps importing the daemon package either way, because
   `marvel daemon` runs the server from it (`NewWithOptions`, `Daemon`,
@@ -110,8 +113,10 @@ At `76a7db9`. The Move 1 facts read the same at `2329fa1`, because `daemon.go` i
     `bus/supervisor.go:210-219`, with the same 30 s and 5 min constants
     (`controller.go:149-150`, `supervisor.go:195-196`).
   - The bus injects its schedule as a `backoff` field (`supervisor.go:60`).
-  - `TestComputeBackoffMatchesRoleSchedule` (`supervisor_test.go:23`) pins
-    the two schedules against each other.
+  - `TestComputeBackoffMatchesRoleSchedule` (`supervisor_test.go:23`) is
+    a table against the bus copy; the team copy has its own table
+    (`controller_test.go:1107`); no test compares them. Neither table covers
+    a negative `n`.
 - **The adopt path, as #799 left it.** `Start` (`supervisor.go:268-312`)
   classifies the pidfile (`classifyPidfile`, `:355`, reading the identity
   record from `identity.go`) and then takes one of five branches:
@@ -188,6 +193,20 @@ PRs, merged in order under `stacked-pr-merge-order.md`, and each PR leaves
 main building and green. A rollback reverts PRs in reverse order, never one
 from the middle of a stack.
 
+**The proof of unchanged behavior, for any PR in `internal/daemon`,
+`internal/team`, `internal/session` or `internal/tmux`:**
+- Link a green Linux CI run at the PR head. That is the proof.
+- Add a sandboxed run for every other package the PR touches.
+- A before-and-after comparison of failure lists under a darwin sandbox may
+  be reported, labelled detection, not proof. `sandbox-exec` cannot exec
+  `ps`, which production code execs in four places (`tmux/absence.go:65`,
+  `tmux/driver.go:1018`, `tmux/tmuxtest/sweep.go:29`,
+  `procstat/read_darwin.go:18`), so those four packages fail there for a
+  reason unrelated to the PR.
+- A per-function coverage comparison may go in the PR body as a diagnostic,
+  never as a failing check. A function at 0% before and after passes such a
+  comparison, and coverage under a sandbox is a lower bound.
+
 ### Move 1: the client into `internal/daemonrpc`
 
 **What moves:**
@@ -226,9 +245,13 @@ format and its client, and the server consumes the types.
   internal packages, so any growth is visible.
 
 **PR 1b: every user outside the package.**
-- Rewrite all 27 files outside `internal/daemon` that name a moved
+- Rewrite every file outside `internal/daemon` that names a moved
   identifier (section 2), not only the seven client callers, with the same
-  `gofmt -r` rewrites 1c uses. The PR body lists the 27 files.
+  `gofmt -r` rewrites 1c uses: 34 at 1b's base (`35ded6c`), 17 non-test and
+  17 test, where the plan first counted 27. The PR body lists the files.
+- Qualify the 34 client calls inside `internal/daemon`'s own tests that used
+  the forwarders (`SendRequest` 30, `SendRequestWith` 2, `WatchEventsWith`
+  2, in five files).
 - Delete the forwarders. The type aliases stay until 1c, so a file 1b
   missed still builds, and 1c's build is the check that none was missed.
 
@@ -238,21 +261,48 @@ aliases, every use of the wire types inside `internal/daemon` needs a
 - non-test files: `Request` 9, `Response` 154, `Method*` 10, `EventsBatch` 7,
   `DialOptions` 2, so about 182 uses outside the moved block;
 - test files: `Request` 85, `Response` 70, `EventsBatch` 5, `DialOptions` 4,
-  `Method*` 3, `ErrWatchUnsupported` 2, so 169 uses, including the 34 client
-  calls.
+  `Method*` 3, `ErrWatchUnsupported` 2, so 169 uses at `76a7db9`. The 34
+  client calls among them are qualified in 1b, which leaves 135 for 1c. The
+  1c builder recounts at 1c's base in its PR body.
 
 The rewrite is mechanical, with `gofmt -r` per identifier (for example
 `gofmt -r 'Response -> daemonrpc.Response'`), and is reviewed as a mechanical
 diff, with the counts in the PR body. This is the idiomatic end state: type
 aliases exist to carry a move, not to stay.
 
+**PR M1-0, before 1a: a characterization test of the remote client.** The
+remote half of the client is at 0.0% coverage at `ac67c07`, on Linux CI and
+locally alike: `dialMRVL`, `dialSSH`, `dialSSHTunnel`, `dialSSHDirect`,
+`sshClientConfig`, and the session-conn and tunnel-conn methods
+(`dialDaemonWith` is at 53.3%). On the server side `handleConnection` is at
+13.3% and `authorizeKey` at 0.0%. No test dials a daemon over `mrvl://` or
+`ssh://`, and `events_watch_test.go` uses a unix socket. So Move 1 would move
+code no test reaches. M1-0 is written against the old code and merges as its
+own PR at the base of the chain, so 1a to 1c each prove themselves against it:
+- start the daemon's `StartMRVL` listener on `127.0.0.1:0` (the pattern at
+  `status_test.go:43`) and add a scratch key with
+  `SSHServer.AddAuthorizedKey`;
+- call `SendRequestWith` for `version` over `mrvl://u@127.0.0.1:<port>` and
+  over `ssh://u@127.0.0.1:<port>` (no path, which takes `dialSSHDirect`),
+  with `DialOptions{Identity: <scratch key>}`;
+- also an unauthorized key, a refused port, and the host-key first-use write
+  landing in the scratch `HOME`. No tmux.
+
+Not covered by M1-0: `dialSSHTunnel` and `sshWrappedConn`, the
+`ssh://host/path` form through a remote sshd to a unix socket. Testing them
+needs an in-process `x/crypto/ssh` server that serves streamlocal forwarding,
+which is its own work item (T-ssh, section 6). Move 1 still moves that code
+untested, and each Move 1 PR body says so.
+
 **Tests that prove it:**
-- The full suite passes on each PR.
+- M1-0 passes before and after each PR.
+- The full suite passes on each PR, proved as the section 3 rule above says.
 - No assertion changes. The test diff is the `isSSH` test moving, the two
-  `limitwiring` inventories, and the mechanical qualification in 1c.
+  `limitwiring` inventories, the 34 client calls qualified in 1b, and the
+  mechanical qualification in 1c.
 - The existing round trips in `events_watch_test.go` (`get` and an
   `events.watch` stream against a started daemon) now cross the package
-  line. They are the wire check.
+  line over a unix socket; M1-0 covers the remote transports.
 
 **Rollback:**
 - Revert 1c, then 1b, then 1a.
@@ -438,17 +488,49 @@ The team controller and `Process` each take `backoff.Restart`, and the bus
 tests pass a short `Schedule` through `New`. A session restart is not a
 `Process`: the two share the schedule, not the lifecycle.
 
-**PR 2a: `internal/backoff`.** It is independent of 2b to 2d.
-- Add the package with the table test from
-  `TestComputeBackoffMatchesRoleSchedule`.
-- Point both call sites at it, and change the bus `backoff` field's type to
-  `backoff.Schedule`.
-- Delete the bus copy of that test, which would otherwise compare the
-  function with itself. This is a test edit, named in the PR.
+**PR 2a: `internal/backoff`.** It is independent of 2b to 2d, and needs no
+test landed before it, because both copies are already table-tested.
+- First commit, against the old copies: one table test asserting the bus
+  copy, the team copy and then `backoff.Restart.Wait` for `n` from -3 to 60,
+  with `n <= 1` giving 30 s, named as today's behavior.
+- Then add the package, and point both call sites at it. The bus `backoff`
+  field stays a `func(int) time.Duration`, assigned `backoff.Restart.Wait`.
+  Changing its type to `backoff.Schedule` would edit four test lines outside
+  D1 (`role_users_test.go:303`, `supervisor_identity_test.go:574`,
+  `supervisor_test.go:105` and `:368`); if wanted, it comes back as its own
+  decision under section 5.
+- Delete the bus copy of `TestComputeBackoffMatchesRoleSchedule`, which would
+  otherwise compare the function with itself. This is a test edit, named in
+  the PR. Keeping `computeBackoff` as a one-line wrapper over
+  `backoff.Restart.Wait` instead would edit nothing; either is acceptable.
+
+**PR M2-0, after 2a and before 2b: characterization tests of the bus crash
+path.** `internal/bus` is at 90.8%, but what it does not cover is exactly what
+Move 2 hands to `Process`. `onCrash` is at 70.0%, and everything after the
+backoff wait is uncovered (`supervisor.go:644-652`). Also uncovered:
+`terminate`'s grace <= 0 branch and its failed SIGKILL (`:706`, `:715`),
+`becomeReady`'s listener timeout and `AfterReady` error (`:404`, `:408`),
+`Restart`'s failed respawn (`:689`), and `Start`'s failed SIGHUP to an
+adopted child (`:305`). M2-0 is written against the old `bus.Supervisor`,
+with the existing `s.backoff` injection (200 ms) and nats-server:
+- crash, respawn and ready;
+- a stop during the wait;
+- a failed respawn, its retry, then ready;
+- terminate with grace <= 0, and with a failed SIGKILL;
+- `becomeReady`'s listener timeout and its `AfterReady` error.
+
+Each asserts the ordered `bus.*` kinds. `bus.crashed` is pinned by kind,
+severity and a `restart #n` pattern, not by its full text. No fix to the
+message lands before Move 2.
+
+**PR M2-1, before 2b: CI fails the Linux job when any `internal/bus` test
+skips.** nats-server is installed there, so a skip means the proof did not
+run. This is a structural check ("did the test run"), not a vital sign.
 
 **PR 2b: `Driver`, `New` and `Process`, with their tests.** Nothing calls
 them yet. The golden event list (below) is recorded in this PR against the
-old code.
+old code, from M2-0's scenarios as well as the parity sequence. `Process`
+takes the restart count under its own lock.
 
 **PR 2c: `bus.Supervisor` becomes a driver.** The supervisor test edits D1
 allows happen here.
@@ -484,7 +566,12 @@ allows happen here.
 **Tests that prove it, in `internal/bus`:**
 - every supervisor test passes, edited only as D1 allows;
 - the seed test also asserts that `BEADS_DOLT_PASSWORD` and
-  `MARVEL_HEARTBEAT_TOKEN` are absent from the broker's environment;
+  `MARVEL_HEARTBEAT_TOKEN` are absent from the broker's environment. Its
+  proof is the Linux CI run, linked in 2b and 2c, where
+  `TestBrokerEnvironmentExcludesOperatorSecrets` passed rather than skipped:
+  it reads the child environment through `ps -E`, so it skips under a darwin
+  sandbox;
+- M2-0 passes before and after 2b, 2c and 2d;
 - **event parity:** one scripted sequence yields the same `bus.*` kinds in
   the same order before and after. The sequence is: a stale pidfile, an
   unproven port, a fresh start, a structural miss, a hub with no leaf
@@ -508,10 +595,10 @@ allows happen here.
 
 ## 4. Order, and the workflow rule
 
-1. Move 1 (PRs 1a, 1b, 1c). It is independent of everything open, and it can
-   start now.
-2. PR 2a, at any time. It touches only the two backoff sites.
-3. MS-8's lifecycle interface (R0), then PRs 2b to 2d.
+1. Move 1 (M1-0, then PRs 1a, 1b, 1c). It is independent of everything open.
+2. PR 2a, at any time. It touches only the two backoff sites and their tests.
+3. M2-0 (after 2a) and M2-1, then MS-8's lifecycle interface (R0), then PRs
+   2b to 2d.
 
 Move 1 and Move 2 touch different packages, so their stacks may be open at
 the same time.
@@ -578,15 +665,29 @@ land as its own ticket, with the edges shown.
 | id | work | depends on |
 |---|---|---|
 | R0 | MS-8's lifecycle interface in `internal/service` (filed from MS-8, not from this plan; listed so the edge can be drawn) | none |
-| R1 | Move 1, PR 1a | none |
+| P1 | M1-0: the `mrvl://` and `ssh://` direct round-trip characterization test | none |
+| R1 | Move 1, PR 1a | P1 |
 | R2 | Move 1, PR 1b | R1 |
 | R3 | Move 1, PR 1c | R2 |
 | R4 | `internal/backoff` (PR 2a) | none |
-| R5 | `Driver`, `New`, `Process` and their tests, and the golden event list (PR 2b) | R0 |
+| P2 | M2-0: the bus crash-path characterization tests and golden `bus.*` scenarios | R4 |
+| P3 | M2-1: CI fails the Linux job when an `internal/bus` test skips | none |
+| R5 | `Driver`, `New`, `Process` and their tests, and the golden event list (PR 2b) | R0, P2, P3 |
 | R6 | bus as a driver, and the dead code removed (PRs 2c, 2d) | R5 |
 
 `aae-orc-oo62t` is the existing ticket for R5 and R6. Its REMAINING note would
 point here, rather than a new ticket being filed beside it.
+
+PR 1b recounts its file list at its own base: the plan counted 27 at
+`76a7db9`, and #908's head (`35ded6c`) has 34.
+
+Outside the chains, and blocking no move: T-ssh, the `ssh://` tunnel test
+(`dialSSHTunnel`, `sshWrappedConn`) against an in-process `x/crypto/ssh`
+server, ideally before 1c; reading the process table without exec'ing `ps`,
+so the tmux-backed packages pass under `sandbox-exec`; the seed-env test
+reading the child environment through `kern.procargs2` on darwin; and the
+`internal/team` tests' order dependence (17 failures under the sandbox
+become 40 when the failing ones are skipped).
 
 ## 7. Round-1 review, finding by finding
 
@@ -655,3 +756,25 @@ Each item was checked at `76a7db9` before anything changed. All of them held.
 | a possible sixth edit: the driver's wedged branch and a test call `s.terminate` | Option 1: `terminate` stays a driver method over a shared `workload.Terminate`, so the test still reaches it and the edits stay at five. Section 5 adds the method-call count, which shows no other lifecycle method the tests call leaves `bus.Supervisor` |
 | non-blocking: which `Reload` reading is kept | The readiness tests pin it: a read started before the respawn is dropped, and one started after it is kept |
 
+## 11. Coverage review (2026-10-16), item by item
+
+A review of whether the moves carry tests for the code they move, measured at
+`ac67c07` and cross-checked against Linux CI at the same commit. Its six
+seats voted every item.
+
+| item | what changed |
+|---|---|
+| Move 1 moves the remote client, which no test reaches | M1-0 as its own PR before 1a (section 3); the T-ssh gap named |
+| Move 2 hands over the bus crash path, which no test reaches | M2-0 after 2a and before 2b; the golden list comes from its scenarios |
+| A skipped bus test reads as a pass | M2-1 before 2b (decided 3.25 to 3.00; the minority would have kept both CI changes outside the restructure, because the linked Linux run already covers the one skip that matters) |
+| The sentence that the bus test pins the two backoff schedules against each other was false | Corrected in section 2 |
+| R4 | Needs no test landed first: the pin is 2a's first commit, and the bus field stays a func (section 3) |
+| How "unchanged" is proven where a darwin sandbox cannot run the tmux packages | The linked Linux CI rule (section 3) |
+| PR 1b and 1c's counts | 1b: 34 files at `35ded6c` and the 34 in-package client calls; 1c: 135 uses at `76a7db9` |
+
+One risk stays open, and it is a decision for the operator, not part of this
+plan: CI runs the full suite on Linux only, and macOS runs only
+`./internal/view/...` (`ci.yml:105`, `:127`), while darwin is a release
+target. A darwin-only break in the ssh client, the `ps` readers or the
+supervisor can merge with every check green. Whether a macOS run of the
+touched packages must land before Move 1 and Move 2 is with the operator.
