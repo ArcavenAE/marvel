@@ -120,11 +120,26 @@ func scrub(t Token, err error) error {
 	return &scrubbedError{err: err, value: t.Value}
 }
 
+const (
+	// DefaultTTL is how long a token lives unless a driver is told otherwise.
+	// A token is short-lived on purpose: its TTL bounds every gap in revocation.
+	DefaultTTL = 5 * time.Minute
+	// MaxTTL is the longest a token may live. The broker refuses, and revokes,
+	// a token a driver issues that outlives it.
+	MaxTTL = 15 * time.Minute
+)
+
+// ErrTTLTooLong is returned when a driver issues a token with no expiry or one
+// beyond MaxTTL. The broker revokes the token it was given.
+var ErrTTLTooLong = errors.New("broker: the driver issued a token that outlives the ceiling")
+
 // Broker issues tokens to authenticated seats and revokes them when the seat
-// ends.
+// ends. A seat's helper asks again when a token expires; the daemon pushes no
+// replacement into the seat.
 type Broker struct {
 	driver Driver
 	auth   SessionAuth
+	now    func() time.Time
 
 	mu       sync.Mutex
 	issued   map[string][]Token // by session key
@@ -144,6 +159,7 @@ func New(d Driver, a SessionAuth) *Broker {
 	return &Broker{
 		driver:   d,
 		auth:     a,
+		now:      time.Now,
 		issued:   make(map[string][]Token),
 		inflight: make(map[string]*asks),
 	}

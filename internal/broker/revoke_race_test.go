@@ -485,3 +485,89 @@ func TestIssueTypedUnderAnAliasIsRefusedWhenTheAuthenticatedSessionEnds(t *testi
 		t.Errorf("live tokens = %v, want none", live)
 	}
 }
+
+func ttlBroker(ttl time.Duration) (*Broker, *Mock) {
+	m := NewMock(ttl, func() time.Time { return t0 })
+	b := New(m, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+	b.now = func() time.Time { return t0 }
+	return b, m
+}
+
+// Tokens are short-lived: the broker refuses, and revokes, one that outlives
+// the ceiling, whatever the driver says.
+func TestIssueRefusesAndRevokesATokenThatOutlivesTheCeiling(t *testing.T) {
+	t.Parallel()
+
+	b, m := ttlBroker(MaxTTL + time.Second)
+	_, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
+	if !errors.Is(err, ErrTTLTooLong) {
+		t.Fatalf("Issue = %v, want ErrTTLTooLong", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens = %v, want none: the broker kept a token it refused", live)
+	}
+}
+
+func TestIssueAcceptsATokenAtOrUnderTheCeiling(t *testing.T) {
+	t.Parallel()
+
+	for _, ttl := range []time.Duration{DefaultTTL, MaxTTL} {
+		b, m := ttlBroker(ttl)
+		if _, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb"); err != nil {
+			t.Errorf("Issue with a %v token = %v, want it issued", ttl, err)
+		}
+		if live := m.Live(); len(live) != 1 {
+			t.Errorf("live tokens with a %v ttl = %v, want one", ttl, live)
+		}
+	}
+}
+
+// A token with no expiry is unbounded, so it is refused too.
+func TestIssueRefusesATokenWithNoExpiry(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(time.Minute, func() time.Time { return t0 })
+	b := New(noExpiry{m}, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+	if _, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb"); !errors.Is(err, ErrTTLTooLong) {
+		t.Fatalf("Issue = %v, want ErrTTLTooLong", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens = %v, want none", live)
+	}
+}
+
+// noExpiry strips the expiry from what the wrapped driver issues.
+type noExpiry struct{ Driver }
+
+func (n noExpiry) Issue(ctx context.Context, r Request) (Token, error) {
+	tok, err := n.Driver.Issue(ctx, r)
+	tok.Expires = time.Time{}
+	return tok, err
+}
+
+// A refused token whose revoke fails is kept for the next revoke, like any
+// other token the broker could not revoke.
+func TestIssueKeepsAnOverlongTokenItCouldNotRevoke(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(MaxTTL+time.Hour, func() time.Time { return t0 })
+	f := &failingRevokeDriver{Driver: m}
+	f.setFail(true)
+	b := New(f, fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+	b.now = func() time.Time { return t0 }
+
+	tok, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb")
+	if !errors.Is(err, ErrTTLTooLong) || !errors.Is(err, ErrRevokeFailed) {
+		t.Fatalf("Issue = %v, want ErrTTLTooLong and ErrRevokeFailed", err)
+	}
+	if strings.Contains(err.Error(), tok.Value) {
+		t.Errorf("error carries the token value: %q", err)
+	}
+	f.setFail(false)
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens after the next revoke = %v, want none", live)
+	}
+}
