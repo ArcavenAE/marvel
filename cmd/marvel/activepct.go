@@ -15,11 +15,13 @@ const activePctValidity = 30 * time.Second
 
 // activePctAsOf is the ACTIVE% reading as an as-of cell: the share of the last
 // fifteen minutes of ticks that found the seat not quiet. It is empty (a dash)
-// unless the seat has an activity channel and the ring has watched the whole
-// window, so a restart or a seat marvel cannot observe never reads 0%.
+// unless the seat has an activity channel that has reported at least once and
+// the ring has watched the whole window, so a restart or a seat marvel cannot
+// observe never reads 0%. A declared channel that has never reported leaves
+// ContextAt zero and every tick quiet, which is no reading either.
 func activePctAsOf(s api.Session, _ time.Time) asof.Cell[float64] {
 	t := s.ActiveTicks
-	if !t.Observable || !t.Full || t.Total <= 0 || t.At.IsZero() {
+	if !t.Observable || !t.Full || t.Total <= 0 || t.At.IsZero() || s.ContextAt.IsZero() {
 		return asof.Cell[float64]{}
 	}
 	return asof.Cell[float64]{

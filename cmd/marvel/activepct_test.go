@@ -65,6 +65,22 @@ func TestActivePctDashAfterDaemonRestart(t *testing.T) {
 	}
 }
 
+// A seat whose feed is declared but has never reported has a zero ContextAt, and
+// a full ring of quiet ticks. That is no reading, so the cell is a dash and not a
+// 0% a reader takes for a measured idle seat (marvel#925). A seat that reported
+// once still renders its share.
+func TestActivePctDashForASeatThatNeverReported(t *testing.T) {
+	never := ticked(0, 450, api.ContextSourceAccountant, time.Second)
+	never.ContextAt = time.Time{}
+	if got := activePctCell(never, lastActiveNow); got != "-" {
+		t.Errorf("a never-reported seat: cell = %q, want -", got)
+	}
+	reported := ticked(0, 450, api.ContextSourceAccountant, time.Second)
+	if got := activePctCell(reported, lastActiveNow); got == "-" {
+		t.Errorf("a seat that reported once: cell = %q, want its share", got)
+	}
+}
+
 // A seat marvel has no activity channel for reads a dash, not a zero.
 func TestActivePctDashWithoutActivityChannel(t *testing.T) {
 	s := ticked(0, 450, api.ContextSourceNone, time.Second)
