@@ -549,14 +549,13 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 		"handleRWCAs":    {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
 		"handleRWC":      {},
 		"handleConn":     {"*Daemon.Start": 1},
-		// The client moved to internal/daemonrpc, which carries its own inventory
-		// of the same entry points and of every dial. What stays here is the
-		// forwarder for each, one call each, which the rewrite of the callers
-		// deletes (docs/design/code-restructure-plan.md, PR 1b). A caller in this
-		// package would add a second call and fail this entry.
-		"SendRequest":     {"SendRequest": 1},
-		"SendRequestWith": {"SendRequestWith": 1},
-		"WatchEventsWith": {"WatchEventsWith": 1},
+		// The client lives in internal/daemonrpc, which carries its own inventory
+		// of the same entry points and of every dial. Nothing in this package
+		// calls them (the tests that talk to a daemon are _test files, which this
+		// inventory does not parse).
+		"SendRequest":     {},
+		"SendRequestWith": {},
+		"WatchEventsWith": {},
 		// Two functions in other packages that type literal text plus Enter into a
 		// pane: the max-age sender the controller holds, and a runtime instance's
 		// Inject. The daemon package calls neither.

@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // The two notes travel with the output so a reader who only has the file knows
@@ -148,7 +148,7 @@ func checkGetOutput(resource, format string) error {
 // fetchGet reads one resource type through the daemon into out.
 func fetchGet(resourceType string, out any) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
-	resp, err := send(daemon.Request{Method: "get", Params: params})
+	resp, err := send(daemonrpc.Request{Method: "get", Params: params})
 	if err != nil {
 		return err
 	}

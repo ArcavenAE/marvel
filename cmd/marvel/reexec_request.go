@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // adoptsText is what 'marvel daemon reexec' does, said once for every place
@@ -25,8 +25,8 @@ func isLocalDaemonAddr(addr string) bool { return addr != "" && !strings.Contain
 // (marvel#592). Against a remote daemon, or when this binary's path cannot be
 // read, it sends none, and the daemon execs its own path as before. The second
 // result is the resolved path that was sent, or "".
-func reexecRequest() (daemon.Request, string) {
-	req := daemon.Request{Method: "reexec"}
+func reexecRequest() (daemonrpc.Request, string) {
+	req := daemonrpc.Request{Method: "reexec"}
 	addr, _, err := resolveDaemonAddr()
 	if err != nil || !isLocalDaemonAddr(addr) {
 		return req, ""
@@ -48,7 +48,7 @@ func reexecRequest() (daemon.Request, string) {
 
 // reexecNote says when the daemon did not exec the binary that was named: an
 // older daemon ignores exec_path and re-executes its own path.
-func reexecNote(resp *daemon.Response, sent string) string {
+func reexecNote(resp *daemonrpc.Response, sent string) string {
 	if sent == "" {
 		return ""
 	}

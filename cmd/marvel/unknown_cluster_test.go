@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // unknownClusterFixture gives the client a scratch home with one named
@@ -68,7 +68,7 @@ func TestUnknownClusterRefuses(t *testing.T) {
 	dialed := unknownClusterFixture(t)
 	clusterName = "remote-v"
 
-	_, err := send(daemon.Request{Method: "status"})
+	_, err := send(daemonrpc.Request{Method: "status"})
 	if err == nil {
 		t.Fatal("send succeeded against an unknown cluster, want a refusal")
 	}
@@ -93,7 +93,7 @@ func TestUnknownCurrentClusterRefuses(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	_, err := send(daemon.Request{Method: "status"})
+	_, err := send(daemonrpc.Request{Method: "status"})
 	if err == nil {
 		t.Fatal("send succeeded with an unknown current_cluster, want a refusal")
 	}
@@ -155,7 +155,7 @@ func TestUnreadableConfigWithClusterFlagRefuses(t *testing.T) {
 	}
 	clusterName = "nosuch"
 
-	_, err = send(daemon.Request{Method: "status"})
+	_, err = send(daemonrpc.Request{Method: "status"})
 	if err == nil {
 		t.Fatal("send succeeded with --cluster and an unreadable config, want a refusal")
 	}

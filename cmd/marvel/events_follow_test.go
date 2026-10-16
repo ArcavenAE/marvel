@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -18,7 +18,7 @@ import (
 // batches, then closes, the way a daemon that is shutting down would.
 // It speaks the wire shape only; the daemon side of the stream is
 // covered in internal/daemon.
-func serveWatchStream(t *testing.T, batches []daemon.EventsBatch) (sock string, gotReq <-chan daemon.Request) {
+func serveWatchStream(t *testing.T, batches []daemonrpc.EventsBatch) (sock string, gotReq <-chan daemonrpc.Request) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "mf")
 	if err != nil {
@@ -31,14 +31,14 @@ func serveWatchStream(t *testing.T, batches []daemon.EventsBatch) (sock string, 
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	reqCh := make(chan daemon.Request, 1)
+	reqCh := make(chan daemonrpc.Request, 1)
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		var req daemon.Request
+		var req daemonrpc.Request
 		if err := json.NewDecoder(conn).Decode(&req); err != nil {
 			return
 		}
@@ -46,7 +46,7 @@ func serveWatchStream(t *testing.T, batches []daemon.EventsBatch) (sock string, 
 		enc := json.NewEncoder(conn)
 		for _, b := range batches {
 			data, _ := json.Marshal(b)
-			if err := enc.Encode(daemon.Response{Result: data, DaemonHome: "/h"}); err != nil {
+			if err := enc.Encode(daemonrpc.Response{Result: data, DaemonHome: "/h"}); err != nil {
 				return
 			}
 		}
@@ -66,7 +66,7 @@ func TestFollowStreamRendersBatchesThroughPrintEventBatch(t *testing.T) {
 	live := []events.Event{
 		{Seq: 6, Timestamp: ts.Add(2 * time.Second), Kind: events.KindSessionCrashed, Severity: events.SeverityWarning, Workspace: "ws", Session: "ws/t-r-g1-0", Message: "exit 1"},
 	}
-	sock, gotReq := serveWatchStream(t, []daemon.EventsBatch{
+	sock, gotReq := serveWatchStream(t, []daemonrpc.EventsBatch{
 		{Events: backlog},
 		{}, // keepalive: prints nothing
 		{Events: live, Dropped: 3, ResumeFrom: 2},
@@ -98,8 +98,8 @@ func TestFollowStreamRendersBatchesThroughPrintEventBatch(t *testing.T) {
 		t.Fatalf("stream opened with cursor %d, want 3", seenSince)
 	}
 	req := <-gotReq
-	if req.Method != daemon.MethodEventsWatch {
-		t.Fatalf("request method %q, want %q", req.Method, daemon.MethodEventsWatch)
+	if req.Method != daemonrpc.MethodEventsWatch {
+		t.Fatalf("request method %q, want %q", req.Method, daemonrpc.MethodEventsWatch)
 	}
 	if !strings.Contains(string(req.Params), `"since_seq":3`) {
 		t.Fatalf("request params %s carry no cursor", req.Params)

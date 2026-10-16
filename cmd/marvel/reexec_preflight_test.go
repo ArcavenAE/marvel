@@ -13,6 +13,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/procargs"
 	"github.com/arcavenae/marvel/internal/upgrade"
 )
@@ -25,7 +26,7 @@ type rig struct {
 	queryErr error
 	argv     []string
 	argvErr  error
-	sent     []daemon.Request
+	sent     []daemonrpc.Request
 }
 
 func newRig(t *testing.T, argv ...string) *rig {
@@ -47,11 +48,11 @@ func newRig(t *testing.T, argv ...string) *rig {
 		}
 		return r.argv, r.argvErr
 	}
-	reexecSend = func(req daemon.Request) (*daemon.Response, error) {
+	reexecSend = func(req daemonrpc.Request) (*daemonrpc.Response, error) {
 		r.trace = append(r.trace, "send")
 		r.sent = append(r.sent, req)
 		b, _ := json.Marshal(map[string]string{"status": "reexec", "binary": "x"})
-		return &daemon.Response{Result: b}, nil
+		return &daemonrpc.Response{Result: b}, nil
 	}
 	// The check after the exec reads a daemon; these tests have none to read.
 	po := newReexecObserver

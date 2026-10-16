@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/spf13/cobra"
 )
 
@@ -474,7 +474,7 @@ func newCtxForwardCmd() *cobra.Command {
 			}
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
-			_, _ = daemon.SendRequest(socket, daemon.Request{
+			_, _ = daemonrpc.SendRequest(socket, daemonrpc.Request{
 				Method: "heartbeat",
 				Params: params,
 			})

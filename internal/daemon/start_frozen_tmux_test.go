@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // freezeTmux starts a tmux server on the driver's socket and stops it with
@@ -67,7 +68,7 @@ func send(t *testing.T, sock, method string, params any) *Response {
 	var err error
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		resp, err = SendRequestWith(sock, req, DialOptions{Timeout: time.Second})
+		resp, err = daemonrpc.SendRequestWith(sock, req, DialOptions{Timeout: time.Second})
 		if err == nil || time.Now().After(deadline) {
 			break
 		}

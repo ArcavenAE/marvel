@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // fakeDaemon answers every request with an empty response and records the
@@ -45,7 +45,7 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens fu
 			if err != nil {
 				return
 			}
-			var req daemon.Request
+			var req daemonrpc.Request
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				mu.Lock()
 				got = append(got, req.Method)
@@ -58,7 +58,7 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens fu
 				}
 				mu.Unlock()
 			}
-			_ = json.NewEncoder(c).Encode(daemon.Response{})
+			_ = json.NewEncoder(c).Encode(daemonrpc.Response{})
 			_ = c.Close()
 		}
 	}()

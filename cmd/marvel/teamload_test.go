@@ -14,7 +14,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 var loadAt = time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC)
@@ -209,13 +209,13 @@ func errorDaemon(t *testing.T, msg string) (method func() string) {
 			if err != nil {
 				return
 			}
-			var req daemon.Request
+			var req daemonrpc.Request
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				mu.Lock()
 				got = req.Method
 				mu.Unlock()
 			}
-			_ = json.NewEncoder(c).Encode(daemon.Response{Error: msg})
+			_ = json.NewEncoder(c).Encode(daemonrpc.Response{Error: msg})
 			_ = c.Close()
 		}
 	}()

@@ -7,7 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/spf13/cobra"
 )
 
@@ -61,7 +61,7 @@ it.`,
 			if err != nil {
 				return fmt.Errorf("encode request: %w", err)
 			}
-			resp, err := send(daemon.Request{Method: "backend.verify", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "backend.verify", Params: params})
 			if err != nil {
 				return err
 			}

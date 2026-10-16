@@ -9,14 +9,14 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/asof"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // getTeamLoad prints `get teams --load` for the cluster the CLI reaches
 // (docs/design/team-load-rollup.md, plan item 2). Local only.
 func getTeamLoad() error {
 	params, _ := json.Marshal(map[string]string{"resource_type": "team-load"})
-	resp, err := send(daemon.Request{Method: "get", Params: params})
+	resp, err := send(daemonrpc.Request{Method: "get", Params: params})
 	if err != nil {
 		return err
 	}

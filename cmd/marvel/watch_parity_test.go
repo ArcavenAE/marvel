@@ -13,6 +13,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // parityDaemon serves the sessions and a daemon.status whose cluster name
@@ -28,18 +29,18 @@ func parityDaemon(t *testing.T, cluster *atomic.Value) {
 			Runtime: api.Runtime{Name: "claude", Command: "/usr/local/bin/some-runtime"}, WorkDir: "/srv/work/a/rather/long/directory/name/here",
 		},
 	}
-	socket := fakeSocket(t, func(req daemon.Request) daemon.Response {
+	socket := fakeSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 		switch req.Method {
 		case "get":
 			data, _ := json.Marshal(sessions)
-			return daemon.Response{Result: data}
+			return daemonrpc.Response{Result: data}
 		case "daemon.status":
 			data, _ := json.Marshal(daemon.DaemonStatus{
 				Cluster: cluster.Load().(string), MRVL: daemon.MRVLStatus{State: daemon.MRVLOff},
 			})
-			return daemon.Response{Result: data}
+			return daemonrpc.Response{Result: data}
 		}
-		return daemon.Response{Error: "unexpected " + req.Method}
+		return daemonrpc.Response{Error: "unexpected " + req.Method}
 	})
 	t.Setenv(config.SocketEnv, socket)
 }
@@ -226,16 +227,16 @@ func TestWatchFrameCarriesTheLegendWhenAMarkIsVisible(t *testing.T) {
 			s := fitSession("agent-0")
 			s.ContextSource = tc.source
 			s.ContextAt = time.Now().Add(-time.Minute)
-			socket := fakeSocket(t, func(req daemon.Request) daemon.Response {
+			socket := fakeSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 				switch req.Method {
 				case "get":
 					data, _ := json.Marshal([]api.Session{s})
-					return daemon.Response{Result: data}
+					return daemonrpc.Response{Result: data}
 				case "daemon.status":
 					data, _ := json.Marshal(daemon.DaemonStatus{Cluster: "alpha", MRVL: daemon.MRVLStatus{State: daemon.MRVLOff}})
-					return daemon.Response{Result: data}
+					return daemonrpc.Response{Result: data}
 				}
-				return daemon.Response{Error: "unexpected " + req.Method}
+				return daemonrpc.Response{Error: "unexpected " + req.Method}
 			})
 			t.Setenv(config.SocketEnv, socket)
 			setWidth(t, 100)

@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	marvelotel "github.com/arcavenae/marvel/internal/otel"
 	"github.com/arcavenae/marvel/internal/simulator"
 )
@@ -85,7 +85,7 @@ func main() {
 			// constructor so this producer moves with the contract.
 			p := api.NewHeartbeatRequestWithToken(sessionKey, token, pct, "")
 			params, _ := json.Marshal(p)
-			resp, err := daemon.SendRequest(*socket, daemon.Request{
+			resp, err := daemonrpc.SendRequest(*socket, daemonrpc.Request{
 				Method: "heartbeat",
 				Params: params,
 			})

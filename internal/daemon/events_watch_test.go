@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -215,7 +216,7 @@ func TestWatchEventsWithOverUnixSocket(t *testing.T) {
 	stop := errors.New("enough")
 	var got []events.Event
 	var homes []string
-	err = WatchEventsWith(sock, json.RawMessage(`{"n":0}`), DialOptions{}, func(resp *Response, b EventsBatch) error {
+	err = daemonrpc.WatchEventsWith(sock, json.RawMessage(`{"n":0}`), DialOptions{}, func(resp *Response, b EventsBatch) error {
 		homes = append(homes, resp.DaemonHome)
 		got = append(got, b.Events...)
 		if len(got) == 1 {
@@ -262,7 +263,7 @@ func TestWatchEventsWithReportsUnsupportedDaemon(t *testing.T) {
 		_ = json.NewEncoder(conn).Encode(Response{Error: "unknown method: " + req.Method})
 	}()
 
-	err = WatchEventsWith(sock, nil, DialOptions{}, func(*Response, EventsBatch) error {
+	err = daemonrpc.WatchEventsWith(sock, nil, DialOptions{}, func(*Response, EventsBatch) error {
 		t.Fatal("fn called on an unsupported daemon")
 		return nil
 	})

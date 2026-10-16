@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func withSocket(t *testing.T, addr string) {
@@ -47,9 +48,9 @@ func TestReexecRequestSendsNoPathToARemoteDaemon(t *testing.T) {
 }
 
 func TestReexecNoteSaysWhenAnOlderDaemonKeptItsOwnPath(t *testing.T) {
-	resp := func(binary string) *daemon.Response {
+	resp := func(binary string) *daemonrpc.Response {
 		b, _ := json.Marshal(map[string]string{"status": "reexec", "binary": binary})
-		return &daemon.Response{Result: b}
+		return &daemonrpc.Response{Result: b}
 	}
 	if got := reexecNote(resp("/new/marvel"), "/new/marvel"); got != "" {
 		t.Errorf("the daemon exec'd the named binary, got note %q", got)

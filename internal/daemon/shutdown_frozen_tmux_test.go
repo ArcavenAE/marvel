@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // A daemon asked to detach while its tmux server is frozen must still exit:
@@ -49,7 +51,7 @@ name = "squad"
     command = "sleep"
     args = ["300"]
 `
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})
