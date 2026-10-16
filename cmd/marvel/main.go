@@ -1064,9 +1064,11 @@ not quiet, under the role's activity_timeout or the cluster quiet window. It
 says "not quiet", not busy: a seat in a long tool call can read low. It is a -
 until the daemon has watched for the whole 15 minutes, and for a seat with no
 activity channel. A seat that has not reported a context reading shows a - too, and is
-left out of the --load mean. Two cases: a headless codex exec seat, whose stream carries
-spend and no context reading, so it reads - while it works; and any seat after a daemon
-restart, until its next context reading.
+left out of the --load mean. Besides a seat whose feed has not fired yet, two working
+seats read - this way: a headless codex exec seat, whose stream carries spend and no
+context reading; and a headless seat the daemon adopted across a restart, whose stream
+marvel does not reopen, so it reads - until the seat is relaunched. A heartbeat-fed seat
+keeps its last reading across a restart.
 
 TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
 no such stream, so both show a - for it. That is the expected shape, not a broken feed.
