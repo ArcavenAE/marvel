@@ -1,0 +1,140 @@
+package api
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
+
+// The statusline feed reports the harness's running cost and API-time totals.
+// A heartbeat stores them and stamps when either last moved, so a later reader
+// can tell a seat that is spending from one that is only alive (marvel#801).
+// Nothing reads them yet; CTX%, ContextAt and LastHeartbeat are unchanged.
+
+func f64(v float64) *float64 { return &v }
+func i64(v int64) *int64     { return &v }
+
+func beatTotals(t *testing.T, s *Store, token string, r HeartbeatRequest) Session {
+	t.Helper()
+	r.SessionKey, r.SessionToken = gradedSessionKey, token
+	if _, err := s.UpdateSessionHeartbeat(r); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	got, err := s.GetSession(gradedSessionKey)
+	if err != nil {
+		t.Fatalf("session after a heartbeat: %v", err)
+	}
+	return got
+}
+
+// Totals arrive on the beat and are stored on the session, and the request
+// carries them over the wire the daemon decodes.
+func TestHeartbeatStoresTheTotals(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	got := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 10, CostTotalUSD: f64(1.25), APIDurationMS: i64(42000)})
+	if got.CostTotalUSD == nil || *got.CostTotalUSD != 1.25 || got.APIDurationMS == nil || *got.APIDurationMS != 42000 {
+		t.Fatalf("totals = %v and %v, want 1.25 and 42000", got.CostTotalUSD, got.APIDurationMS)
+	}
+	if got.TotalsChangedAt.IsZero() {
+		t.Error("TotalsChangedAt is zero after the totals first arrived, want a stamp")
+	}
+
+	wire, err := json.Marshal(HeartbeatRequest{CostTotalUSD: f64(1.25), APIDurationMS: i64(42000)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back HeartbeatRequest
+	if err := json.Unmarshal(wire, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.CostTotalUSD == nil || *back.CostTotalUSD != 1.25 || back.APIDurationMS == nil || *back.APIDurationMS != 42000 {
+		t.Errorf("round trip lost the totals: %s", wire)
+	}
+}
+
+// The stamp moves when either total moves and holds on an unchanged beat.
+func TestTotalsStampMovesOnAChangeAndHoldsOtherwise(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	first := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 10, CostTotalUSD: f64(1), APIDurationMS: i64(1000)})
+	time.Sleep(2 * time.Millisecond)
+
+	same := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 11, CostTotalUSD: f64(1), APIDurationMS: i64(1000)})
+	if !same.TotalsChangedAt.Equal(first.TotalsChangedAt) {
+		t.Errorf("an unchanged beat moved the stamp from %v to %v", first.TotalsChangedAt, same.TotalsChangedAt)
+	}
+	if !same.LastHeartbeat.After(first.LastHeartbeat) {
+		t.Error("setup: the unchanged beat should still advance LastHeartbeat")
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	cost := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 12, CostTotalUSD: f64(1.5), APIDurationMS: i64(1000)})
+	if !cost.TotalsChangedAt.After(same.TotalsChangedAt) {
+		t.Errorf("a cost change left the stamp at %v", cost.TotalsChangedAt)
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	ms := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 13, CostTotalUSD: f64(1.5), APIDurationMS: i64(2500)})
+	if !ms.TotalsChangedAt.After(cost.TotalsChangedAt) {
+		t.Errorf("an API-time change left the stamp at %v", ms.TotalsChangedAt)
+	}
+}
+
+// A beat where context drops is a compaction, which is an API call but not the
+// seat working, so it stores the new totals and does not stamp.
+func TestTotalsStampSkipsACompactionBeat(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	first := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 60, ContextTokens: 600_000, CostTotalUSD: f64(5), APIDurationMS: i64(90_000)})
+	time.Sleep(2 * time.Millisecond)
+
+	compacted := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 8, ContextTokens: 80_000, CostTotalUSD: f64(5.4), APIDurationMS: i64(97_000)})
+	if compacted.CostTotalUSD == nil || *compacted.CostTotalUSD != 5.4 || *compacted.APIDurationMS != 97_000 {
+		t.Errorf("a compaction beat stored cost %v and API time %v, want 5.4 and 97000", compacted.CostTotalUSD, compacted.APIDurationMS)
+	}
+	if !compacted.TotalsChangedAt.Equal(first.TotalsChangedAt) {
+		t.Errorf("a compaction beat moved the stamp from %v to %v", first.TotalsChangedAt, compacted.TotalsChangedAt)
+	}
+}
+
+// A later heartbeat that carries no totals keeps both, and a heartbeat that
+// never carried any leaves them unset, never a zero.
+func TestTotalsSurviveATotalsFreeBeatAndNeverDefaultToZero(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	bare := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 5})
+	if bare.CostTotalUSD != nil || bare.APIDurationMS != nil || !bare.TotalsChangedAt.IsZero() {
+		t.Fatalf("a totals-free seat holds cost %v, API time %v, stamp %v, want all unset", bare.CostTotalUSD, bare.APIDurationMS, bare.TotalsChangedAt)
+	}
+
+	with := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 6, CostTotalUSD: f64(2), APIDurationMS: i64(3000)})
+	after := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 7})
+	if after.CostTotalUSD == nil || *after.CostTotalUSD != 2 || after.APIDurationMS == nil || *after.APIDurationMS != 3000 {
+		t.Errorf("a totals-free beat left cost %v and API time %v, want 2 and 3000 kept", after.CostTotalUSD, after.APIDurationMS)
+	}
+	if !after.TotalsChangedAt.Equal(with.TotalsChangedAt) {
+		t.Errorf("a totals-free beat moved the stamp from %v to %v", with.TotalsChangedAt, after.TotalsChangedAt)
+	}
+}
+
+// A declared zero is a value: a fresh session's cost really is 0.00, and it is
+// not the same as a payload that said nothing.
+func TestADeclaredZeroTotalIsStored(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	got := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 1, CostTotalUSD: f64(0), APIDurationMS: i64(0)})
+	if got.CostTotalUSD == nil || got.APIDurationMS == nil {
+		t.Fatalf("a declared zero was dropped: cost %v, API time %v", got.CostTotalUSD, got.APIDurationMS)
+	}
+}

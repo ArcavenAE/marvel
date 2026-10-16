@@ -809,10 +809,12 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// producer has seen is carried forward by hand, and a drop from the
 	// previous heartbeat reading on this record is one more. A reading from
 	// another producer is not a prior occupancy to drop from (marvel#630).
+	compacted := false
 	if sess.ContextSource == ContextSourceHeartbeat {
 		reading.ContextCompactions = sess.ContextCompactions
 		if CompactionDropped(sess.ContextTokens, reading.ContextTokens) {
 			reading.ContextCompactions++
+			compacted = true
 		}
 	}
 	// The spend slice belongs to the usage accountant, and a heartbeat carries
@@ -823,6 +825,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	sess.SessionContext = reading
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
 	sess.LastHeartbeat = time.Now().UTC()
+	recordTotals(sess, r, compacted)
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any
 	// prior reading stands. ContextModel is promoted from the embedded
@@ -838,6 +841,31 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 		return "", err
 	}
 	return auth, nil
+}
+
+// recordTotals stores the statusline's running cost and API-time totals and
+// stamps TotalsChangedAt when either moves. A total the beat did not carry
+// stays as it was, and one never carried stays nil, so a feed that omits them
+// reads as never reported and not as zero. A total appearing for the first time
+// counts as a move. A beat where context dropped is a compaction, which is an
+// API call but not the seat working, so it stores the new totals and leaves the
+// stamp alone. CTX%, ContextAt and LastHeartbeat are not touched here
+// (marvel#801).
+func recordTotals(sess *Session, r HeartbeatRequest, compacted bool) {
+	moved := false
+	if r.CostTotalUSD != nil {
+		moved = moved || sess.CostTotalUSD == nil || *sess.CostTotalUSD != *r.CostTotalUSD
+		v := *r.CostTotalUSD
+		sess.CostTotalUSD = &v
+	}
+	if r.APIDurationMS != nil {
+		moved = moved || sess.APIDurationMS == nil || *sess.APIDurationMS != *r.APIDurationMS
+		v := *r.APIDurationMS
+		sess.APIDurationMS = &v
+	}
+	if moved && !compacted {
+		sess.TotalsChangedAt = sess.LastHeartbeat
+	}
 }
 
 // UpdateSessionContext records one context-window reading.

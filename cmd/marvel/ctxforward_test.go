@@ -438,3 +438,32 @@ func TestRenderForward(t *testing.T) {
 		})
 	}
 }
+
+// The statusline's running cost and API-time totals ride the heartbeat. An
+// absent field is nil, never a declared zero (marvel#801).
+func TestStatuslineTotals(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		payload  string
+		wantCost *float64
+		wantMS   *int64
+	}{
+		{"both", `{"cost":{"total_cost_usd":1.25,"total_api_duration_ms":42000}}`, ptrF(1.25), ptrI(42000)},
+		{"cost only", `{"cost":{"total_cost_usd":0.5}}`, ptrF(0.5), nil},
+		{"api time only", `{"cost":{"total_api_duration_ms":900}}`, nil, ptrI(900)},
+		{"declared zeros", `{"cost":{"total_cost_usd":0,"total_api_duration_ms":0}}`, ptrF(0), ptrI(0)},
+		{"no cost object", `{"model":{"display_name":"m"}}`, nil, nil},
+		{"unreadable", `not json`, nil, nil},
+	} {
+		cost, ms := statuslineTotals([]byte(tc.payload))
+		if (cost == nil) != (tc.wantCost == nil) || (cost != nil && *cost != *tc.wantCost) {
+			t.Errorf("%s: cost = %v, want %v", tc.name, cost, tc.wantCost)
+		}
+		if (ms == nil) != (tc.wantMS == nil) || (ms != nil && *ms != *tc.wantMS) {
+			t.Errorf("%s: api ms = %v, want %v", tc.name, ms, tc.wantMS)
+		}
+	}
+}
+
+func ptrF(v float64) *float64 { return &v }
+func ptrI(v int64) *int64     { return &v }
