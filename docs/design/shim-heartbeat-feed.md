@@ -18,7 +18,7 @@ seat, with the restart and crash-loop backoff that already make failure loud.
 ## 2. Today (checked on marvel main and director main)
 
 - **marvel's heartbeat RPC.** Method `heartbeat` on the daemon's Unix socket,
-  one JSON request per connection (`daemon.SendRequest`), params
+  one JSON request per connection (`daemonrpc.SendRequest`), params
   `api.HeartbeatRequest`: `session_key`, `session_token`,
   `context_percent`, and optional `model`, `context_tokens`,
   `context_window`. Three producers send it: `marvel ctx-forward` (the

@@ -3,10 +3,10 @@ package daemon
 import "github.com/arcavenae/marvel/internal/daemonrpc"
 
 // The wire format and the client live in internal/daemonrpc. The names below
-// carry the move: a type alias for each moved type and a one-line forwarder
-// for each moved type, so a caller that still says daemon.Request builds
-// unchanged. The client function forwarders went with the callers' rewrite (PR
-// 1b); the aliases go in PR 1c (docs/design/code-restructure-plan.md, Move 1).
+// carry the move: a type alias for each moved type and the one moved constant,
+// so a caller that still says daemon.Request builds unchanged. The client
+// function forwarders went with the callers' rewrite (PR 1b); the aliases go
+// in PR 1c (docs/design/code-restructure-plan.md, Move 1).
 
 type (
 	Request     = daemonrpc.Request
