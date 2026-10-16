@@ -15,6 +15,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
 )
@@ -147,11 +148,9 @@ type RoleHealth struct {
 	HealthySince time.Time
 }
 
-// Restart backoff configuration. Exponential with a 5-minute cap — the
+// Restart backoff is backoff.Restart: exponential with a 5-minute cap, the
 // defaults Skippy suggested in ArcavenAE/marvel#11.
 const (
-	restartBackoffInitial = 30 * time.Second
-	restartBackoffMax     = 5 * time.Minute
 	// restartCountDecayWindow is how long a role must run continuously
 	// healthy before its accumulated RestartCount decays back to zero
 	// (success-based decay, kubelet's model — a container that has run
@@ -180,19 +179,6 @@ func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
 		admissionHolds: make(map[string]string),
 		busHolds:       make(map[string]bool),
 	}
-}
-
-// computeBackoff returns the exponential backoff duration for the nth
-// restart (1-indexed): 30s, 60s, 2m, 4m, 5m, 5m, ...
-func computeBackoff(n int) time.Duration {
-	if n <= 1 {
-		return restartBackoffInitial
-	}
-	d := restartBackoffInitial << (n - 1)
-	if d <= 0 || d > restartBackoffMax { // guards against overflow too
-		return restartBackoffMax
-	}
-	return d
 }
 
 func (c *Controller) nowUTC() time.Time {
@@ -847,7 +833,7 @@ func (c *Controller) noteCrashAndBackoff(workspace, team, role string, maxRestar
 	now := c.nowUTC()
 	rh.RestartCount++
 	rh.LastRestartAt = now
-	nextBackoff := computeBackoff(rh.RestartCount + 1)
+	nextBackoff := backoff.Restart.Wait(rh.RestartCount + 1)
 	rh.BackoffUntil = now.Add(nextBackoff)
 	c.persistRoleHealth(roleKey, rh)
 	return true
@@ -1701,7 +1687,7 @@ type roleObs struct {
 //     the role is simply not visited, and its HealthySince stands. The window
 //     is therefore wall-clock, not consecutive-healthy-ticks; a role cannot ride
 //     an Unknown gap to a full window while actually failing, because a real
-//     crash-looper re-crashes within restartBackoffMax (5m) < the window (10m)
+//     crash-looper re-crashes within backoff.Restart.Max (5m) < the window (10m)
 //     and each crash resets the streak.
 //
 // A saturation or restart_policy=never freeze is deliberately never auto-thawed:
