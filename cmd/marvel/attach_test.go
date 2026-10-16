@@ -27,7 +27,7 @@ func deskRows(panes ...string) []api.Session {
 
 var (
 	localTarget  = attachTarget{Socket: "marvel-ab12cd34"}
-	remoteTarget = attachTarget{Socket: "marvel-ff00ff00", Remote: true, Host: "kinu.example"}
+	remoteTarget = attachTarget{Socket: "marvel-ff00ff00", Remote: true, Host: "box.example"}
 )
 
 // A local desk outside tmux runs the attach in place of the verb, with the
@@ -115,7 +115,7 @@ func TestPlanAttachRemoteAlwaysPrintsSSH(t *testing.T) {
 			if err != nil {
 				t.Fatalf("planAttach: %v", err)
 			}
-			want := []string{"ssh", "-t", "kinu.example", "tmux", "-L", "marvel-ff00ff00", "attach", "-t", "%23"}
+			want := []string{"ssh", "-t", "box.example", "tmux", "-L", "marvel-ff00ff00", "attach", "-t", "%23"}
 			if !reflect.DeepEqual(plan.Argv, want) || plan.Exec {
 				t.Errorf("TMUX=%q print=%v: plan = %+v, want print of %v", tmuxEnv, printOnly, plan, want)
 			}
@@ -126,7 +126,7 @@ func TestPlanAttachRemoteAlwaysPrintsSSH(t *testing.T) {
 // The remote branch is one function that says it is print-only, so a later
 // integration replaces one body.
 func TestRemoteAttachIsPrintOnly(t *testing.T) {
-	argv, printOnly := remoteAttach("23", "kinu.example", "marvel-ff00ff00")
+	argv, printOnly := remoteAttach("23", "box.example", "marvel-ff00ff00")
 	if !printOnly || argv[0] != "ssh" {
 		t.Errorf("remoteAttach = %v, %v, want an ssh command and printOnly", argv, printOnly)
 	}
@@ -280,5 +280,29 @@ func TestRunAttachDaemonWithoutSocketRefuses(t *testing.T) {
 	err := runAttach(&bytes.Buffer{}, "23", true, attachEnv{Getenv: noTmuxEnv, Exec: func([]string) error { return nil }})
 	if err == nil || !strings.Contains(err.Error(), "upgrade") {
 		t.Errorf("err = %v, want the upgrade line", err)
+	}
+}
+
+// The host comes out of the address the client resolved, without the mrvl
+// port (it is not an ssh port) and without a login name (marvel's user is
+// not necessarily the ssh one). A local unix socket is not remote.
+func TestAttachHost(t *testing.T) {
+	cases := []struct {
+		addr   string
+		host   string
+		remote bool
+	}{
+		{"/private/tmp/x/marvel.sock", "", false},
+		{"mrvl://box.example", "box.example", true},
+		{"mrvl://ops@box.example:6785", "box.example", true},
+		{"ssh://ops@box.example/home/ops/.marvel/run/marvel.sock", "box.example", true},
+		{"tcp://10.0.0.5:7000", "10.0.0.5", true},
+		{"10.0.0.5:7000", "10.0.0.5", true},
+	}
+	for _, c := range cases {
+		host, remote := attachHost(c.addr)
+		if host != c.host || remote != c.remote {
+			t.Errorf("attachHost(%q) = %q, %v, want %q, %v", c.addr, host, remote, c.host, c.remote)
+		}
 	}
 }
