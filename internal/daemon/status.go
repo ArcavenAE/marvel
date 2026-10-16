@@ -115,9 +115,7 @@ func (d *Daemon) handleDaemonStatus() Response {
 			st.MRVL = MRVLStatus{State: classifyBind(addr), Addr: addr.String()}
 		}
 	}
-	if d.driver != nil {
-		st.TmuxSocket = d.driver.Socket()
-	}
+	st.TmuxSocket = d.driver.Socket()
 	if b, ok := d.busStatus(); ok {
 		st.Bus = &b
 	}
