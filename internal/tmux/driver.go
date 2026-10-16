@@ -292,8 +292,14 @@ func (d *Driver) timeout() time.Duration {
 // Socket returns the tmux socket name the driver is scoped to. Used by
 // test teardown to kill the right server. A driver built by NewDriver
 // always has one; only a hand-built Driver literal can report empty,
-// which still means the shared default server.
-func (d *Driver) Socket() string { return d.socket }
+// which still means the shared default server. A nil Driver reports empty,
+// so a caller that may hold none needs no nil check of its own.
+func (d *Driver) Socket() string {
+	if d == nil {
+		return ""
+	}
+	return d.socket
+}
 
 // HasSession checks if a tmux session exists. It reports false when tmux did
 // not answer in time, which is not the same as the session being absent, so
