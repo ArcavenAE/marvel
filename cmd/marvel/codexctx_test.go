@@ -36,6 +36,12 @@ const (
 		`"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":13221},` +
 		`"model_context_window":258400}}}` + "\n"
 
+	// noTotalRecord is a usable sample whose info carries no
+	// total_token_usage at all.
+	noTotalRecord = `{"timestamp":"2026-08-08T20:22:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{` +
+		`"last_token_usage":{"input_tokens":129200,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":76,"reasoning_output_tokens":32,"total_tokens":129276},` +
+		`"model_context_window":258400}}}` + "\n"
+
 	noWindowRecord = `{"timestamp":"2026-08-08T20:22:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{` +
 		`"last_token_usage":{"input_tokens":129200,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":76,"reasoning_output_tokens":32,"total_tokens":129276}}}}` + "\n"
 )
@@ -51,6 +57,7 @@ func TestCodexReading(t *testing.T) {
 	sentinelOnly := writeRollout(t, sentinelRecord)
 	afterCompaction := writeRollout(t, sampleRecord+sentinelRecord)
 	windowless := writeRollout(t, noWindowRecord)
+	noTotal := writeRollout(t, noTotalRecord)
 	empty := writeRollout(t, "")
 	absent := filepath.Join(t.TempDir(), "never-written.jsonl")
 
@@ -62,6 +69,7 @@ func TestCodexReading(t *testing.T) {
 		wantModel  string
 		wantWin    int
 		wantTokens int
+		wantOut    *int
 	}{
 		{
 			name:       "a live rollout forwards the level over its own window",
@@ -71,6 +79,17 @@ func TestCodexReading(t *testing.T) {
 			wantModel:  "gpt-5.6-sol",
 			wantWin:    258400,
 			wantTokens: 129200,
+			wantOut:    intp(76),
+		},
+		{
+			name:       "a sample with no total forwards the level and no output total",
+			payload:    hookPayload(noTotal),
+			wantSend:   true,
+			wantPct:    50,
+			wantModel:  "gpt-5.6-sol",
+			wantWin:    258400,
+			wantTokens: 129200,
+			wantOut:    nil,
 		},
 		{
 			name: "the compaction sentinel does not become a zero reading",
@@ -82,6 +101,7 @@ func TestCodexReading(t *testing.T) {
 			wantModel:  "gpt-5.6-sol",
 			wantWin:    258400,
 			wantTokens: 129200,
+			wantOut:    intp(76),
 		},
 		{
 			name:     "a rollout carrying only a sentinel holds",
@@ -129,7 +149,7 @@ func TestCodexReading(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			pct, model, tokens, window, send := codexReading([]byte(tt.payload))
+			pct, model, tokens, window, out, send := codexReading([]byte(tt.payload))
 			if send != tt.wantSend {
 				t.Fatalf("send = %v, want %v (pct %v window %d)", send, tt.wantSend, pct, window)
 			}
@@ -137,7 +157,7 @@ func TestCodexReading(t *testing.T) {
 				t.Errorf("model = %q, want %q", model, tt.wantModel)
 			}
 			if !send {
-				if pct != 0 || window != 0 || tokens != 0 {
+				if pct != 0 || window != 0 || tokens != 0 || out != nil {
 					t.Errorf("held reading carried pct %v tokens %d window %d, want all zero", pct, tokens, window)
 				}
 				return
@@ -151,6 +171,14 @@ func TestCodexReading(t *testing.T) {
 			if tokens != tt.wantTokens {
 				t.Errorf("tokens = %d, want %d (the numerator, Reading.Level)", tokens, tt.wantTokens)
 			}
+			switch {
+			case tt.wantOut == nil && out != nil:
+				t.Errorf("output total = %d, want nil: a record with no total must not forward one", *out)
+			case tt.wantOut != nil && out == nil:
+				t.Errorf("output total = nil, want %d", *tt.wantOut)
+			case tt.wantOut != nil && *out != *tt.wantOut:
+				t.Errorf("output total = %d, want %d", *out, *tt.wantOut)
+			}
 		})
 	}
 }
@@ -163,7 +191,7 @@ func TestCodexReading(t *testing.T) {
 // most wrong.
 func TestCodexReadingIgnoresTheCumulativeTotal(t *testing.T) {
 	t.Parallel()
-	pct, _, _, _, send := codexReading([]byte(hookPayload(writeRollout(t, sampleRecord))))
+	pct, _, _, _, _, send := codexReading([]byte(hookPayload(writeRollout(t, sampleRecord))))
 	if !send {
 		t.Fatal("send = false, want a forwardable reading")
 	}
@@ -204,7 +232,7 @@ func TestCodexHeartbeatParamsCarriesTheSessionToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := codexHeartbeatParams("ws", "sess", tt.token, "gpt-5.6-sol", 94.0, 242696, 258400)
+			p := codexHeartbeatParams("ws", "sess", tt.token, "gpt-5.6-sol", 94.0, 242696, 258400, nil)
 
 			raw, err := json.Marshal(p)
 			if err != nil {
@@ -227,6 +255,46 @@ func TestCodexHeartbeatParamsCarriesTheSessionToken(t *testing.T) {
 			}
 			if got["context_window"] != float64(258400) {
 				t.Errorf("context_window = %v, want 258400", got["context_window"])
+			}
+		})
+	}
+}
+
+// The output total goes on the wire as output_tokens when the record had one,
+// and the key is absent when it had none, so the daemon can tell never
+// reported from zero (marvel#927).
+func TestCodexHeartbeatParamsCarriesTheOutputTotal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		out  *int
+		want any
+	}{
+		{name: "a total is forwarded", out: intp(76), want: float64(76)},
+		{name: "a declared zero is forwarded", out: intp(0), want: float64(0)},
+		{name: "no total omits the key", out: nil, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := codexHeartbeatParams("ws", "sess", "tok", "gpt-5.6-sol", 94.0, 242696, 258400, tt.out)
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatalf("marshal params: %v", err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("unmarshal params: %v", err)
+			}
+			v, present := got["output_tokens"]
+			if tt.want == nil {
+				if present {
+					t.Errorf("output_tokens present = %v, want the key absent (params: %s)", v, raw)
+				}
+				return
+			}
+			if v != tt.want {
+				t.Errorf("output_tokens = %v, want %v (params: %s)", v, tt.want, raw)
 			}
 		})
 	}

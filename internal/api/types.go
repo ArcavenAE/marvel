@@ -489,8 +489,8 @@ type SessionContext struct {
 	//
 	// nil means never metered, which is not the same as zero: a seat that
 	// reports only a heartbeat percentage has no token stream, and a cell
-	// that printed 0 for it would read as an idle seat. Only the
-	// accountant writes them, and only once it has folded a request.
+	// that printed 0 for it would read as an idle seat. The accountant
+	// writes both once it has folded a request; a codex hook beat writes SpendOut alone.
 	// Cumulative levels need no as-of stamp (docs/design/get-sessions-output.md,
 	// section 3).
 	SpendOut          *int

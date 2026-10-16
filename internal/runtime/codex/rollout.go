@@ -68,6 +68,16 @@ type Reading struct {
 	// the value did not parse. Advisory: it dates the reading, and
 	// nothing here branches on it.
 	TS time.Time
+	// OutputTotal is total_token_usage.output_tokens from the SAME record as
+	// Level: the session's cumulative output tokens so far. It is nil when the
+	// record declares no total, which is not the same as a total of zero.
+	//
+	// This is a count of what the model produced, and it is not an occupancy:
+	// it never feeds Level or Percent. Reasoning tokens are a subset of it
+	// (see rolloutUsage), so it needs no second term. Whether it resets at a
+	// turn boundary is unsettled (docs/feature-matrix.md, the Tout bullet), so
+	// a consumer reads it as the latest total codex wrote and no more.
+	OutputTotal *int
 }
 
 // Percent is occupancy against the declared window, clamped to 0-100.
@@ -239,15 +249,23 @@ type rolloutLine struct {
 
 // tokenCountInfo is the token_count payload's info object.
 //
-// TotalTokenUsage is declared and deliberately never read. It is the
-// trap this file exists to avoid: it sits beside last_token_usage with
-// the same field names, and it is a cumulative sum. Naming it here makes
-// its exclusion a decision on the page rather than a field someone
-// mistakes for missing.
+// TotalTokenUsage is never read for the level. It is the trap this file
+// exists to avoid: it sits beside last_token_usage with the same field
+// names, and it is a cumulative sum. Only its output_tokens is lifted, as
+// Reading.OutputTotal, because a cumulative output count is what a spend
+// column wants and it cannot be mistaken for occupancy once it is held in
+// a field of its own.
 type tokenCountInfo struct {
 	LastTokenUsage     *rolloutUsage `json:"last_token_usage"`
-	TotalTokenUsage    *rolloutUsage `json:"total_token_usage"`
+	TotalTokenUsage    *rolloutTotal `json:"total_token_usage"`
 	ModelContextWindow int           `json:"model_context_window"`
+}
+
+// rolloutTotal is the part of total_token_usage this reader keeps. The
+// pointer is the point: an object that omits output_tokens must read as no
+// total, where an int would read it as a total of zero.
+type rolloutTotal struct {
+	OutputTokens *int `json:"output_tokens"`
 }
 
 // rolloutUsage is one usage object. CachedInputTokens is parsed and not
@@ -308,6 +326,10 @@ func sampleFromLine(line []byte) (Reading, bool) {
 	out := Reading{
 		Level:  u.InputTokens,
 		Window: rec.Payload.Info.ModelContextWindow,
+	}
+	if t := rec.Payload.Info.TotalTokenUsage; t != nil && t.OutputTokens != nil {
+		v := *t.OutputTokens
+		out.OutputTotal = &v
 	}
 	if ts, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil {
 		out.TS = ts.UTC()

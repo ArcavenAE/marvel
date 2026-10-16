@@ -158,6 +158,14 @@ type HeartbeatRequest struct {
 	// already holds. They are totals, not per-beat increments, and not tokens.
 	CostTotalUSD  *float64 `json:"cost_total_usd,omitempty"`
 	APIDurationMS *int64   `json:"api_duration_ms,omitempty"`
+	// OutputTokens is the harness's cumulative output-token count for the
+	// session, as a producer that reads it from the harness's own record
+	// reports it (the codex hook, from the rollout). It is stored as the
+	// session's SpendOut, which the TOUT cell reads, unless the usage
+	// accountant has already metered the seat. Nil is "the payload
+	// declared none", never a declared zero: a beat without it leaves what
+	// the session already holds.
+	OutputTokens *int `json:"output_tokens,omitempty"`
 }
 
 // NewHeartbeatRequest builds a heartbeat, reading the session token from

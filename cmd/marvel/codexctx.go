@@ -74,19 +74,23 @@ type codexHookPayload struct {
 // monotone within a compaction generation; reporting zero is not, and
 // zero is what every one of these cases would otherwise produce.
 //
+// output is the session's cumulative output total from the same rollout
+// record, nil when that record declared none. It is forwarded so TOUT fills
+// for an interactive codex seat; the level and window do not depend on it.
+//
 // tokens is the NUMERATOR (codex's own occupancy, Reading.Level) and
 // window is the DENOMINATOR (Reading.Window); forwarding both lets the
 // daemon derive the percentage against the window it resolves rather than
 // take codex's own. See codexHeartbeatParams and aae-orc-38yr.
 //
 // Pure, so the decision table is testable without a daemon or a hook.
-func codexReading(raw []byte) (pct float64, model string, tokens int, window int, send bool) {
+func codexReading(raw []byte) (pct float64, model string, tokens int, window int, output *int, send bool) {
 	var p codexHookPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return 0, "", 0, 0, false
+		return 0, "", 0, 0, nil, false
 	}
 	if p.TranscriptPath == nil || *p.TranscriptPath == "" {
-		return 0, "", 0, 0, false
+		return 0, "", 0, 0, nil, false
 	}
 	reading, err := codex.ReadOccupancy(*p.TranscriptPath)
 	if err != nil {
@@ -95,11 +99,11 @@ func codexReading(raw []byte) (pct float64, model string, tokens int, window int
 		// a fault (a multi-megabyte tool-output record can sit between
 		// the newest sample and EOF); an unopenable path is a real
 		// fault; neither may become a zero.
-		return 0, "", 0, 0, false
+		return 0, "", 0, 0, nil, false
 	}
 	pct, ok := reading.Percent()
 	if !ok {
-		return 0, "", 0, 0, false
+		return 0, "", 0, 0, nil, false
 	}
 	// The model rides out only with a reading. A hold sends nothing at
 	// all, so returning an identity for a figure that will not be sent
@@ -107,7 +111,7 @@ func codexReading(raw []byte) (pct float64, model string, tokens int, window int
 	if p.Model != nil {
 		model = *p.Model
 	}
-	return pct, model, reading.Level, reading.Window, true
+	return pct, model, reading.Level, reading.Window, reading.OutputTotal, true
 }
 
 func newCodexCtxCmd() *cobra.Command {
@@ -120,7 +124,7 @@ func newCodexCtxCmd() *cobra.Command {
 			if err != nil {
 				return nil
 			}
-			pct, model, tokens, window, send := codexReading(raw)
+			pct, model, tokens, window, output, send := codexReading(raw)
 
 			socket := os.Getenv("MARVEL_SOCKET")
 			workspace := os.Getenv("MARVEL_WORKSPACE")
@@ -135,7 +139,7 @@ func newCodexCtxCmd() *cobra.Command {
 			if !send {
 				return nil
 			}
-			p := codexHeartbeatParams(workspace, session, api.HeartbeatTokenFromEnv(), model, pct, tokens, window)
+			p := codexHeartbeatParams(workspace, session, api.HeartbeatTokenFromEnv(), model, pct, tokens, window, output)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemonrpc.SendRequest(socket, daemonrpc.Request{
@@ -152,7 +156,7 @@ func newCodexCtxCmd() *cobra.Command {
 // standing up a daemon; the pair of keys below is exactly what the
 // merge of #170 and #168 got wrong, and an inline literal inside a
 // cobra closure is not reachable by any test that would have caught it.
-func codexHeartbeatParams(workspace, session, token, model string, pct float64, tokens, window int) api.HeartbeatRequest {
+func codexHeartbeatParams(workspace, session, token, model string, pct float64, tokens, window int, output *int) api.HeartbeatRequest {
 	// The token marvel minted for this session at spawn. Without it the
 	// daemon refuses the beat: authenticateHeartbeat fails open only when
 	// the record carries no hash, and Manager.Create now mints one before
@@ -192,6 +196,12 @@ func codexHeartbeatParams(workspace, session, token, model string, pct float64, 
 	}
 	if window > 0 {
 		p.ContextWindow = window
+	}
+	// Nil stays nil: a record with no total must not arrive as a total of
+	// zero, which TOUT would print as an idle seat.
+	if output != nil {
+		v := *output
+		p.OutputTokens = &v
 	}
 	return p
 }
