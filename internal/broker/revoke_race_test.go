@@ -598,3 +598,49 @@ func TestIssueAcceptsATokenAtTheFloor(t *testing.T) {
 		t.Errorf("live tokens = %v, want one", live)
 	}
 }
+
+// slowDriver moves the broker's clock on while it issues, as a driver that
+// stalls would.
+type slowDriver struct {
+	Driver
+	advance func()
+}
+
+func (s slowDriver) Issue(ctx context.Context, r Request) (Token, error) {
+	tok, err := s.Driver.Issue(ctx, r)
+	s.advance()
+	return tok, err
+}
+
+// The floor is judged from before the driver was asked. A driver that is slow
+// to return does not make an exact-floor token too short.
+func TestIssueJudgesTheFloorFromBeforeTheDriverWasAsked(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(MinTTL, func() time.Time { return t0 })
+	clock := t0
+	b := New(slowDriver{Driver: m, advance: func() { clock = clock.Add(2 * time.Minute) }},
+		fakeAuth{session: "ws/t/r-g1-0", token: "hb", id: Identity{Session: "ws/t/r-g1-0", Team: "t", Role: "r"}})
+	b.now = func() time.Time { return clock }
+
+	if _, err := b.Issue(context.Background(), "ws/t/r-g1-0", "hb"); err != nil {
+		t.Errorf("Issue of an exact-floor token from a slow driver = %v, want it issued", err)
+	}
+}
+
+// The driver is asked for the session the broker authenticated, not the key
+// the caller typed.
+func TestIssueAsksTheDriverForTheAuthenticatedSessionNotTheTypedKey(t *testing.T) {
+	t.Parallel()
+
+	d := &recordingDriver{}
+	b := New(d, aliasAuth{canonical: "ws/t/r-g1-0"})
+	if _, err := b.Issue(context.Background(), "WS/T/R-G1-0", "hb"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if got := d.lastReq; got.Session != "ws/t/r-g1-0" || got.Team != "t" || got.Role != "r" {
+		t.Errorf("driver asked for %+v, want the authenticated session ws/t/r-g1-0 with team t and role r", got)
+	}
+}
