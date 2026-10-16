@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/childproof"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/pidfile"
@@ -203,13 +204,12 @@ type StructureStatus struct {
 	Missing     []string `json:"missing,omitempty"`
 }
 
-// These mirror internal/team's crash-loop schedule for roles, so a broker
-// and a session that crash-loop read the same way to an operator.
+// A broker restarts on backoff.Restart, the schedule internal/team uses for
+// roles, so a broker and a session that crash-loop read the same way to an
+// operator.
 const (
-	restartBackoffInitial = 30 * time.Second
-	restartBackoffMax     = 5 * time.Minute
-	defaultDialTimeout    = 10 * time.Second
-	defaultLeafPoll       = 30 * time.Second
+	defaultDialTimeout = 10 * time.Second
+	defaultLeafPoll    = 30 * time.Second
 	// leafValidPolls is how many poll intervals a /leafz reading stays
 	// current. Two tolerates one missed poll before the reading reads as
 	// expired.
@@ -220,17 +220,6 @@ const (
 	defaultLeafDownRepeat = 30 * time.Minute
 	stopGrace             = 5 * time.Second
 )
-
-func computeBackoff(n int) time.Duration {
-	if n <= 1 {
-		return restartBackoffInitial
-	}
-	d := restartBackoffInitial << (n - 1)
-	if d <= 0 || d > restartBackoffMax {
-		return restartBackoffMax
-	}
-	return d
-}
 
 // NewSupervisor resolves the nats-server binary and prepares a supervisor
 // for the manager's broker. An absent binary is an error the daemon should
@@ -247,7 +236,7 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		pidFile:         filepath.Join(runDir, "nats-server.pid"),
 		logPath:         filepath.Join(logDir, "nats-server.log"),
 		ring:            ring,
-		backoff:         computeBackoff,
+		backoff:         backoff.Restart.Wait,
 		dialTimeout:     defaultDialTimeout,
 		leafPoll:        defaultLeafPoll,
 		leafRepeatEvery: defaultLeafDownRepeat,

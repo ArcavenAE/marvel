@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/tmux"
@@ -1104,7 +1105,7 @@ func TestRoleHealthSnapshotSurfacesHealthySince(t *testing.T) {
 	}
 }
 
-func TestComputeBackoff(t *testing.T) {
+func TestRoleRestartScheduleIsTheSharedOne(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		n    int
@@ -1119,8 +1120,8 @@ func TestComputeBackoff(t *testing.T) {
 		{20, 5 * time.Minute},
 	}
 	for _, tc := range cases {
-		if got := computeBackoff(tc.n); got != tc.want {
-			t.Errorf("computeBackoff(%d) = %s, want %s", tc.n, got, tc.want)
+		if got := backoff.Restart.Wait(tc.n); got != tc.want {
+			t.Errorf("backoff.Restart.Wait(%d) = %s, want %s", tc.n, got, tc.want)
 		}
 	}
 }
@@ -1256,7 +1257,7 @@ func TestReapChargesOneCrashPerRolePerTick(t *testing.T) {
 				if rh.RestartCount != 1 {
 					t.Errorf("role %s: expected 1 crash for the tick, got %d", role.Name, rh.RestartCount)
 				}
-				if want := clock.Now().Add(computeBackoff(2)); !rh.BackoffUntil.Equal(want) {
+				if want := clock.Now().Add(backoff.Restart.Wait(2)); !rh.BackoffUntil.Equal(want) {
 					t.Errorf("role %s: expected backoff until %s, got %s", role.Name, want, rh.BackoffUntil)
 				}
 			}
