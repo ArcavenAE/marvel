@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // daemonDescription is what `marvel describe daemon` prints. Address and
@@ -29,7 +30,7 @@ func describeDaemon(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	resp, err := send(daemon.Request{Method: "daemon.status"})
+	resp, err := send(daemonrpc.Request{Method: "daemon.status"})
 	if err != nil {
 		return err
 	}

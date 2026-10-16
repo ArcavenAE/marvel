@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/runtime/codex"
 )
 
@@ -91,15 +91,15 @@ func codexAccountWindows(raw []byte, now time.Time) ([]api.AccountWindow, time.T
 // token is the one marvel minted for the session at spawn, which the daemon
 // requires: a reading can mark every session of an account limited. It reports
 // false when there is nothing to send.
-func accountLimitsRequest(workspace, session, token string, windows []api.AccountWindow, observedAt time.Time) (daemon.Request, bool) {
+func accountLimitsRequest(workspace, session, token string, windows []api.AccountWindow, observedAt time.Time) (daemonrpc.Request, bool) {
 	if len(windows) == 0 {
-		return daemon.Request{}, false
+		return daemonrpc.Request{}, false
 	}
 	params, err := json.Marshal(api.AccountLimitsRequest{Session: workspace + "/" + session, SessionToken: token, Windows: windows, ObservedAt: observedAt})
 	if err != nil {
-		return daemon.Request{}, false
+		return daemonrpc.Request{}, false
 	}
-	return daemon.Request{Method: "account.limits", Params: params}, true
+	return daemonrpc.Request{Method: "account.limits", Params: params}, true
 }
 
 // accountLimitsTimeout bounds the whole exchange: a statusline or hook must
@@ -117,5 +117,5 @@ func sendAccountLimits(socket, workspace, session string, windows []api.AccountW
 	}
 	// The deadline is set after the dial, so it bounds the exchange and not the
 	// connect; connecting to the local socket does not block.
-	_, _ = daemon.SendRequestWith(socket, req, daemon.DialOptions{Timeout: accountLimitsTimeout})
+	_, _ = daemonrpc.SendRequestWith(socket, req, daemonrpc.DialOptions{Timeout: accountLimitsTimeout})
 }

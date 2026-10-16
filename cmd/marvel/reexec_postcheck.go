@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/bus"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // After the exec the CLI reads what the new daemon says about the hub leaf and
@@ -44,7 +44,7 @@ func liveReexecObserver() reexecObserver {
 		},
 		leaf: func() (bus.Status, error) {
 			var st bus.Status
-			resp, err := send(daemon.Request{Method: "bus.status"})
+			resp, err := send(daemonrpc.Request{Method: "bus.status"})
 			if err != nil {
 				return st, err
 			}
@@ -72,7 +72,7 @@ func (e *reexecCheckError) Error() string {
 // reexecHandoffOutcome reads the handoff field the daemon puts in its reexec
 // response (carried, declined, over-cap, failed or none). An older daemon sends
 // none, which reads as empty.
-func reexecHandoffOutcome(resp *daemon.Response) string {
+func reexecHandoffOutcome(resp *daemonrpc.Response) string {
 	var r struct {
 		Handoff string `json:"handoff"`
 	}

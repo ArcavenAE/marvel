@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // A daemon that accepts and never answers must not hang a best-effort sender
@@ -29,7 +31,7 @@ func TestSendRequestWithTimeoutReturns(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	_, err = SendRequestWith(sock, Request{Method: "account.limits"}, DialOptions{Timeout: 200 * time.Millisecond})
+	_, err = daemonrpc.SendRequestWith(sock, Request{Method: "account.limits"}, DialOptions{Timeout: 200 * time.Millisecond})
 	if err == nil {
 		t.Fatal("an unanswered request returned no error")
 	}

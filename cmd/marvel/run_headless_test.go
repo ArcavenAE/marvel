@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // scriptedDaemon answers each request with reply(req) and records what it was
 // sent. The socket is found the way a real client finds it, through the
 // environment, under a scratch HOME.
-func scriptedDaemon(t *testing.T, reply func(daemon.Request) daemon.Response) func() []daemon.Request {
+func scriptedDaemon(t *testing.T, reply func(daemonrpc.Request) daemonrpc.Response) func() []daemonrpc.Request {
 	t.Helper()
 	home, err := os.MkdirTemp("", "mg")
 	if err != nil {
@@ -37,7 +37,7 @@ func scriptedDaemon(t *testing.T, reply func(daemon.Request) daemon.Response) fu
 	}
 	var (
 		mu   sync.Mutex
-		got  []daemon.Request
+		got  []daemonrpc.Request
 		wg   sync.WaitGroup
 		done atomic.Bool
 	)
@@ -50,8 +50,8 @@ func scriptedDaemon(t *testing.T, reply func(daemon.Request) daemon.Response) fu
 			if err != nil {
 				return
 			}
-			var req daemon.Request
-			resp := daemon.Response{}
+			var req daemonrpc.Request
+			resp := daemonrpc.Response{}
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				mu.Lock()
 				got = append(got, req)
@@ -63,16 +63,16 @@ func scriptedDaemon(t *testing.T, reply func(daemon.Request) daemon.Response) fu
 		}
 	}()
 	t.Setenv(config.SocketEnv, sock)
-	return func() []daemon.Request {
+	return func() []daemonrpc.Request {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]daemon.Request(nil), got...)
+		return append([]daemonrpc.Request(nil), got...)
 	}
 }
 
-func runOK(daemon.Request) daemon.Response {
+func runOK(daemonrpc.Request) daemonrpc.Response {
 	r, _ := json.Marshal(map[string]string{"status": "created", "session_key": "default/n"})
-	return daemon.Response{Result: r}
+	return daemonrpc.Response{Result: r}
 }
 
 func execRoot(t *testing.T, args ...string) error {
@@ -173,18 +173,18 @@ func TestPlainRunNeedsNoExperimentalFlag(t *testing.T) {
 	}
 }
 
-func describing(states ...string) func(daemon.Request) daemon.Response {
+func describing(states ...string) func(daemonrpc.Request) daemonrpc.Response {
 	var i atomic.Int32
-	return func(req daemon.Request) daemon.Response {
+	return func(req daemonrpc.Request) daemonrpc.Response {
 		n := int(i.Add(1)) - 1
 		if n >= len(states) {
 			n = len(states) - 1
 		}
 		if states[n] == "unknown" {
-			return daemon.Response{Error: "session default/n: resource not found"}
+			return daemonrpc.Response{Error: "session default/n: resource not found"}
 		}
 		r, _ := json.Marshal(map[string]any{"Name": "n", "State": states[n]})
-		return daemon.Response{Result: r}
+		return daemonrpc.Response{Result: r}
 	}
 }
 
@@ -285,8 +285,8 @@ func TestWaitReportsAnUnreachableDaemonAsExit5NotFailed(t *testing.T) {
 }
 
 func TestWaitReportsADaemonErrorAsExit5NotFailed(t *testing.T) {
-	scriptedDaemon(t, func(daemon.Request) daemon.Response {
-		return daemon.Response{Error: "bolt: database not open"}
+	scriptedDaemon(t, func(daemonrpc.Request) daemonrpc.Response {
+		return daemonrpc.Response{Error: "bolt: database not open"}
 	})
 	if got := waitCode(t, "--experimental", "default/n", "--timeout", "200ms", "--poll", "10ms"); got != waitDaemonError {
 		t.Errorf("exit code = %d, want %d", got, waitDaemonError)

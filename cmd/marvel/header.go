@@ -14,6 +14,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // headerInfo is what the get sessions header is built from: the client's own
@@ -66,7 +67,7 @@ func collectHeader() headerInfo {
 	h.Address, h.Rung, h.ClientName = addr, rung, clientClusterName(rung)
 	// Not send(): its daemon-home warning would print here and again on the
 	// listing's own request, and the listing's is the one that stays.
-	resp, err := daemon.SendRequestWith(addr, daemon.Request{Method: "daemon.status"}, opts)
+	resp, err := daemonrpc.SendRequestWith(addr, daemonrpc.Request{Method: "daemon.status"}, opts)
 	switch {
 	case err != nil:
 		h.StatusErr = err.Error()

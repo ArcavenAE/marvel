@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // versionQueryTimeout bounds how long `marvel version` waits on a daemon. The
@@ -46,7 +47,7 @@ func boundedQuery(d time.Duration, q buildQuery) (*daemon.BuildInfo, error) {
 // queryDaemonBuild asks the running daemon, through the same path every other
 // command uses, which build it is.
 func queryDaemonBuild() (*daemon.BuildInfo, error) {
-	resp, err := send(daemon.Request{Method: daemon.MethodVersion})
+	resp, err := send(daemonrpc.Request{Method: daemonrpc.MethodVersion})
 	if err != nil {
 		return nil, err
 	}

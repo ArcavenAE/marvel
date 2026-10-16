@@ -12,7 +12,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func fitSession(name string) api.Session {
@@ -225,12 +225,12 @@ func TestFitSilentWithoutAWidth(t *testing.T) {
 func getSessionsAtWidth(t *testing.T, width int, args ...string) string {
 	t.Helper()
 	resolveFixture(t, false)
-	socket := fakeSocket(t, func(req daemon.Request) daemon.Response {
+	socket := fakeSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 		if req.Method == "get" {
 			data, _ := json.Marshal([]api.Session{fitSession("agent-0")})
-			return daemon.Response{Result: data}
+			return daemonrpc.Response{Result: data}
 		}
-		return daemon.Response{Error: "unexpected " + req.Method}
+		return daemonrpc.Response{Error: "unexpected " + req.Method}
 	})
 	t.Setenv(config.SocketEnv, socket)
 	old := terminalWidth

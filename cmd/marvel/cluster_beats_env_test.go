@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // countingSocket listens on a unix socket in dir and counts the
@@ -78,7 +78,7 @@ func TestExplicitClusterBeatsEnvSocket(t *testing.T) {
 	env, current, other := envClusterFixture(t)
 	clusterName = "other"
 
-	_, _ = send(daemon.Request{Method: "status"})
+	_, _ = send(daemonrpc.Request{Method: "status"})
 	if n := other.Load(); n == 0 {
 		t.Error("the named cluster was never dialed, want it reached")
 	}
@@ -96,7 +96,7 @@ func TestExplicitClusterTypoBesideEnvSocketRefuses(t *testing.T) {
 	env, current, other := envClusterFixture(t)
 	clusterName = "othr"
 
-	_, err := send(daemon.Request{Method: "status"})
+	_, err := send(daemonrpc.Request{Method: "status"})
 	if err == nil {
 		t.Fatal("send succeeded for an unknown cluster beside MARVEL_SOCKET, want a refusal")
 	}
@@ -113,7 +113,7 @@ func TestExplicitClusterTypoBesideEnvSocketRefuses(t *testing.T) {
 func TestEnvSocketAloneStillWins(t *testing.T) {
 	env, current, other := envClusterFixture(t)
 
-	_, _ = send(daemon.Request{Method: "status"})
+	_, _ = send(daemonrpc.Request{Method: "status"})
 	if n := env.Load(); n == 0 {
 		t.Error("MARVEL_SOCKET was never dialed, want it reached")
 	}
@@ -134,7 +134,7 @@ func TestEmptyClusterFlagRefuses(t *testing.T) {
 	root.AddCommand(&cobra.Command{
 		Use: "ping",
 		RunE: func(*cobra.Command, []string) error {
-			_, err := send(daemon.Request{Method: "status"})
+			_, err := send(daemonrpc.Request{Method: "status"})
 			return err
 		},
 	})
@@ -187,7 +187,7 @@ func TestBareClusterDoesNotReachTheEnvSocket(t *testing.T) {
 	}()
 	clusterName = "bare"
 
-	_, _ = send(daemon.Request{Method: "status"})
+	_, _ = send(daemonrpc.Request{Method: "status"})
 	if n := env.Load(); n != 0 {
 		t.Errorf("MARVEL_SOCKET was dialed %d time(s), want 0", n)
 	}

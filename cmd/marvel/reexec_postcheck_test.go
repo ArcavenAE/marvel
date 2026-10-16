@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/bus"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // Section 4 of the reexec credential handoff (aae-orc-4h9xp): after the exec
@@ -222,7 +222,7 @@ func TestPostCheckSurvivesTheDaemonNotAnsweringWhileItExecs(t *testing.T) {
 
 func TestTheHandoffOutcomeIsReadFromTheReexecResponse(t *testing.T) {
 	read := func(body string) string {
-		return reexecHandoffOutcome(&daemon.Response{Result: json.RawMessage(body)})
+		return reexecHandoffOutcome(&daemonrpc.Response{Result: json.RawMessage(body)})
 	}
 	if got := read(`{"status":"reexec","binary":"x","handoff":"declined"}`); got != "declined" {
 		t.Errorf("handoff = %q, want declined", got)

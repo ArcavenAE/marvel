@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -73,7 +73,7 @@ func (e *LuaEnv) sendRPC(method string, params any) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal params: %w", err)
 	}
-	resp, err := daemon.SendRequest(e.socketPath, daemon.Request{
+	resp, err := daemonrpc.SendRequest(e.socketPath, daemonrpc.Request{
 		Method: method,
 		Params: data,
 	})

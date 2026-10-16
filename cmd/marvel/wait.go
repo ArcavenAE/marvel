@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // Exit codes of `marvel wait`. A refusal or a bad argument is not one of them:
@@ -47,7 +47,7 @@ func requireExperimental(on bool, what string) error {
 // store does not hold is reported as found=false.
 func sessionState(key string) (state api.SessionState, found bool, err error) {
 	params, _ := json.Marshal(map[string]string{"resource_type": "session", "name": key})
-	resp, err := send(daemon.Request{Method: "describe", Params: params})
+	resp, err := send(daemonrpc.Request{Method: "describe", Params: params})
 	if err != nil {
 		return "", false, err
 	}

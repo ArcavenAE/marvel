@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func viewCmd() *cobra.Command {
@@ -22,7 +22,7 @@ declares when no name is given, without waiting for the refresh_every tick.
 The seat reads the new tree through the same path once the swap lands.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "view.refresh", Params: viewRefreshParams(args)})
+			resp, err := send(daemonrpc.Request{Method: "view.refresh", Params: viewRefreshParams(args)})
 			if err != nil {
 				return err
 			}

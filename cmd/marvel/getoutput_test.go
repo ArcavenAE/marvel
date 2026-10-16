@@ -14,7 +14,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func outputTeam() api.Team {
@@ -201,8 +201,8 @@ func cannedDaemon(t *testing.T, bodies map[string]any) *atomic.Int32 {
 				return
 			}
 			requests.Add(1)
-			var req daemon.Request
-			resp := daemon.Response{}
+			var req daemonrpc.Request
+			resp := daemonrpc.Response{}
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				var p struct {
 					ResourceType string `json:"resource_type"`

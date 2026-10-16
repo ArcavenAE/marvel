@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/procargs"
 )
 
@@ -15,7 +15,7 @@ import (
 var (
 	preflightQuery buildQuery = queryDaemonBuild
 	daemonArgs                = procargs.Read
-	reexecSend                = func(req daemon.Request) (*daemon.Response, error) { return send(req) }
+	reexecSend                = func(req daemonrpc.Request) (*daemonrpc.Response, error) { return send(req) }
 )
 
 // preflightReexec refuses, before the reexec request goes out, a daemon whose

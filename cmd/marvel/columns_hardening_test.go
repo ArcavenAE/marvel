@@ -11,7 +11,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // writeClientConfig puts raw bytes where config.Load reads them.
@@ -74,7 +74,7 @@ func TestColumnsFlagOverridesABrokenPreference(t *testing.T) {
 
 // fakeSocket serves every request through handler on a short-path unix
 // socket and returns its path.
-func fakeSocket(t *testing.T, handler func(daemon.Request) daemon.Response) string {
+func fakeSocket(t *testing.T, handler func(daemonrpc.Request) daemonrpc.Response) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "fs")
 	if err != nil {
@@ -93,7 +93,7 @@ func fakeSocket(t *testing.T, handler func(daemon.Request) daemon.Response) stri
 			if err != nil {
 				return
 			}
-			var req daemon.Request
+			var req daemonrpc.Request
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				_ = json.NewEncoder(c).Encode(handler(req))
 			}
@@ -119,9 +119,9 @@ func TestWatchRendersTheSelectedColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	live := fakeSocket(t, func(req daemon.Request) daemon.Response {
+	live := fakeSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 		data, _ := json.Marshal(watchFixtureSessions())
-		return daemon.Response{Result: data}
+		return daemonrpc.Response{Result: data}
 	})
 	t.Setenv(config.SocketEnv, live)
 	ws := newWatchState(cols)

@@ -14,6 +14,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // describeFakeDaemon answers daemon.status with the given record, anything
@@ -42,16 +43,16 @@ func describeFakeDaemon(t *testing.T, st daemon.DaemonStatus) (socket string, me
 			if err != nil {
 				return
 			}
-			var req daemon.Request
+			var req daemonrpc.Request
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				mu.Lock()
 				got = append(got, req.Method)
 				mu.Unlock()
 				if req.Method == "daemon.status" {
 					data, _ := json.Marshal(st)
-					_ = json.NewEncoder(c).Encode(daemon.Response{Result: data})
+					_ = json.NewEncoder(c).Encode(daemonrpc.Response{Result: data})
 				} else {
-					_ = json.NewEncoder(c).Encode(daemon.Response{Error: "unexpected method " + req.Method})
+					_ = json.NewEncoder(c).Encode(daemonrpc.Response{Error: "unexpected method " + req.Method})
 				}
 			}
 			_ = c.Close()
@@ -184,9 +185,9 @@ func TestDescribeDaemonReportsADaemonError(t *testing.T) {
 			if err != nil {
 				return
 			}
-			var req daemon.Request
+			var req daemonrpc.Request
 			_ = json.NewDecoder(c).Decode(&req)
-			_ = json.NewEncoder(c).Encode(daemon.Response{Error: "boom"})
+			_ = json.NewEncoder(c).Encode(daemonrpc.Response{Error: "boom"})
 			_ = c.Close()
 		}
 	}()
@@ -290,8 +291,8 @@ func TestJSONKeysWalksEmbeddedStructs(t *testing.T) {
 // with exit 0.
 func TestDescribeDaemonRefusesAStatusItCannotDecode(t *testing.T) {
 	resolveFixture(t, false)
-	socket := fakeSocket(t, func(daemon.Request) daemon.Response {
-		return daemon.Response{Result: json.RawMessage(`[1,2,3]`)}
+	socket := fakeSocket(t, func(daemonrpc.Request) daemonrpc.Response {
+		return daemonrpc.Response{Result: json.RawMessage(`[1,2,3]`)}
 	})
 	t.Setenv(config.SocketEnv, socket)
 

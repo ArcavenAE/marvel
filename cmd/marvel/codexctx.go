@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/runtime/codex"
 	"github.com/spf13/cobra"
 )
@@ -138,7 +138,7 @@ func newCodexCtxCmd() *cobra.Command {
 			p := codexHeartbeatParams(workspace, session, api.HeartbeatTokenFromEnv(), model, pct, tokens, window)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
-			_, _ = daemon.SendRequest(socket, daemon.Request{
+			_, _ = daemonrpc.SendRequest(socket, daemonrpc.Request{
 				Method: "heartbeat",
 				Params: params,
 			})

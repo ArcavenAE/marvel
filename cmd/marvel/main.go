@@ -23,6 +23,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
@@ -57,10 +58,10 @@ var (
 // two rungs so every fall-through branch below lands on the same answer; four
 // of them used to reach a hardcoded machine-global path instead. See
 // docs/design/daemon-isolation.md decision 3.
-func resolveDaemon() (string, daemon.DialOptions, error) {
+func resolveDaemon() (string, daemonrpc.DialOptions, error) {
 	addr, opts, err := resolveDaemonAddr()
 	if err != nil {
-		return "", daemon.DialOptions{}, err
+		return "", daemonrpc.DialOptions{}, err
 	}
 	if w := config.LegacySocketWarning(addr); w != "" {
 		fmt.Fprintln(os.Stderr, w)
@@ -81,28 +82,28 @@ const (
 
 // resolveDaemonAddr returns the daemon address and dial options. Callers
 // that need to know which step chose the address use resolveDaemonRung.
-func resolveDaemonAddr() (string, daemon.DialOptions, error) {
+func resolveDaemonAddr() (string, daemonrpc.DialOptions, error) {
 	addr, opts, _, err := resolveDaemonRung()
 	return addr, opts, err
 }
 
 // resolveDaemonRung resolves the daemon address and reports the rung that
 // chose it: flag, env, cluster or default.
-func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
+func resolveDaemonRung() (string, daemonrpc.DialOptions, resolveRung, error) {
 	if socketPath != "" {
-		return socketPath, daemon.DialOptions{Identity: identityPath}, rungFlag, nil
+		return socketPath, daemonrpc.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
 	// --cluster "" names no cluster, and reading it as absent would dial the
 	// daemon MARVEL_SOCKET names without a word, so it is refused (#586).
 	if clusterFlagGiven && clusterName == "" {
-		return "", daemon.DialOptions{}, rungDefault, errors.New("--cluster needs a cluster name; leave the flag off to use the default")
+		return "", daemonrpc.DialOptions{}, rungDefault, errors.New("--cluster needs a cluster name; leave the flag off to use the default")
 	}
 	// An explicit --cluster outranks MARVEL_SOCKET: every marvel seat has the
 	// variable set, so a command aimed at another cluster would otherwise
 	// run on the seat's own daemon without a word (#586). A cluster that is
 	// only the config's current_cluster does not count as explicit.
 	if env := os.Getenv(config.SocketEnv); env != "" && clusterName == "" {
-		return env, daemon.DialOptions{Identity: identityPath}, rungEnv, nil
+		return env, daemonrpc.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
@@ -110,9 +111,9 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 		// does not parse, and the default socket is not what the operator
 		// asked for (#502). Without --cluster the fallback is unchanged.
 		if clusterName != "" {
-			return "", daemon.DialOptions{}, rungDefault, fmt.Errorf("cluster %q: the client config is unreadable: %w", clusterName, err)
+			return "", daemonrpc.DialOptions{}, rungDefault, fmt.Errorf("cluster %q: the client config is unreadable: %w", clusterName, err)
 		}
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
+		return config.ResolveSocket(), daemonrpc.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	if err != nil {
 		// Another cluster's bad name does not stop this one from resolving.
@@ -126,10 +127,10 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 		// command on the wrong host (#502). The commands that define or
 		// configure a cluster (config add-cluster, use-cluster, ...) never
 		// reach this path; they take the name as an argument.
-		return "", daemon.DialOptions{}, rungDefault, err
+		return "", daemonrpc.DialOptions{}, rungDefault, err
 	}
 	if cl == nil {
-		return config.ResolveSocket(), daemon.DialOptions{Identity: identityPath}, rungDefault, nil
+		return config.ResolveSocket(), daemonrpc.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
 	addr := cl.Socket
 	if cl.Server != "" {
@@ -146,20 +147,20 @@ func resolveDaemonRung() (string, daemon.DialOptions, resolveRung, error) {
 	if id == "" {
 		id = cl.Identity
 	}
-	return addr, daemon.DialOptions{Identity: id}, rung, nil
+	return addr, daemonrpc.DialOptions{Identity: id}, rung, nil
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
 // threading through per-cluster dial options, and warns when the daemon
 // that answered is not rooted at the layout home this client resolved
 // against. All subcommands should use this instead of
-// daemon.SendRequest directly.
-func send(req daemon.Request) (*daemon.Response, error) {
+// daemonrpc.SendRequest directly.
+func send(req daemonrpc.Request) (*daemonrpc.Response, error) {
 	addr, opts, err := resolveDaemon()
 	if err != nil {
 		return nil, err
 	}
-	resp, err := daemon.SendRequestWith(addr, req, opts)
+	resp, err := daemonrpc.SendRequestWith(addr, req, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +533,7 @@ Examples:
   marvel --cluster desk daemon logs       # remote daemon via mrvl://`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]int{"n": n})
-			resp, err := send(daemon.Request{Method: "logs", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "logs", Params: params})
 			if err != nil {
 				return err
 			}
@@ -635,7 +636,7 @@ prints the catalog, and needs no daemon.`,
 				return raw
 			}
 			fetch := func(sinceSeq uint64) ([]events.Event, error) {
-				resp, err := send(daemon.Request{Method: "events", Params: buildParams(sinceSeq)})
+				resp, err := send(daemonrpc.Request{Method: "events", Params: buildParams(sinceSeq)})
 				if err != nil {
 					return nil, err
 				}
@@ -692,7 +693,7 @@ prints the catalog, and needs no daemon.`,
 			// to the one-second poll on the same cursor.
 			cursor := maxSeq(evs, 0)
 			err = followStream(cursor, buildParams, printBatch)
-			if !errors.Is(err, daemon.ErrWatchUnsupported) {
+			if !errors.Is(err, daemonrpc.ErrWatchUnsupported) {
 				return err
 			}
 			for {
@@ -758,7 +759,7 @@ func printEventBatch(w io.Writer, evs []events.Event, header bool) {
 }
 
 // followStream runs the live half of `marvel events --follow` over the
-// daemon's events.watch stream. It returns daemon.ErrWatchUnsupported
+// daemon's events.watch stream. It returns daemonrpc.ErrWatchUnsupported
 // untouched so the caller can fall back to polling, and any other error
 // as the reason the tail ended. A daemon-side overflow (this client fell
 // behind the ring) is reported once per gap on stderr; stdout carries
@@ -769,7 +770,7 @@ func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, print
 		return err
 	}
 	first := true
-	return daemon.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemon.Response, b daemon.EventsBatch) error {
+	return daemonrpc.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemonrpc.Response, b daemonrpc.EventsBatch) error {
 		if first {
 			first = false
 			// Same diagnostic send() prints for a request-response call.
@@ -859,7 +860,7 @@ func reapCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]bool{"confirm": confirm})
-			resp, err := send(daemon.Request{Method: "reap", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "reap", Params: params})
 			if err != nil {
 				return err
 			}
@@ -925,7 +926,7 @@ func orphansCmd() *cobra.Command {
 		Short: "List agents heartbeating against session keys this daemon owns with a stale token",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "orphans"})
+			resp, err := send(daemonrpc.Request{Method: "orphans"})
 			if err != nil {
 				return err
 			}
@@ -1013,7 +1014,7 @@ func workCmd() *cobra.Command {
 				p["workspace_root"] = root
 			}
 			params, _ := json.Marshal(p)
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "apply",
 				Params: params,
 			})
@@ -1156,7 +1157,7 @@ func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string, cols []sessionColumn, header string, fit fitOptions) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
-	resp, err := send(daemon.Request{
+	resp, err := send(daemonrpc.Request{
 		Method: "get",
 		Params: params,
 	})
@@ -1219,7 +1220,7 @@ generations, which this steady-state preview does not model.`,
 }
 
 func planConvergence(filter string) error {
-	resp, err := send(daemon.Request{Method: "plan"})
+	resp, err := send(daemonrpc.Request{Method: "plan"})
 	if err != nil {
 		return err
 	}
@@ -1322,7 +1323,7 @@ func describeCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "describe",
 				Params: params,
 			})
@@ -1384,7 +1385,7 @@ func credentialCmd() *cobra.Command {
 				"binding":  binding,
 				"value":    value,
 			})
-			resp, err := send(daemon.Request{Method: "credential.put", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "credential.put", Params: params})
 			if err != nil {
 				return err
 			}
@@ -1409,7 +1410,7 @@ func credentialCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]string{"name": args[0]})
 			if reveal {
-				resp, err := send(daemon.Request{Method: "credential.reveal", Params: params})
+				resp, err := send(daemonrpc.Request{Method: "credential.reveal", Params: params})
 				if err != nil {
 					return err
 				}
@@ -1427,7 +1428,7 @@ func credentialCmd() *cobra.Command {
 				_, err = os.Stdout.Write(rv.Value)
 				return err
 			}
-			resp, err := send(daemon.Request{Method: "credential.get", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "credential.get", Params: params})
 			if err != nil {
 				return err
 			}
@@ -1449,7 +1450,7 @@ func credentialCmd() *cobra.Command {
 		Short: "List credentials (metadata only)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "credential.list"})
+			resp, err := send(daemonrpc.Request{Method: "credential.list"})
 			if err != nil {
 				return err
 			}
@@ -1468,7 +1469,7 @@ func credentialCmd() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]string{"name": args[0]})
-			resp, err := send(daemon.Request{Method: "credential.delete", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "credential.delete", Params: params})
 			if err != nil {
 				return err
 			}
@@ -1494,7 +1495,7 @@ func deleteCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "delete",
 				Params: params,
 			})
@@ -1523,7 +1524,7 @@ func scaleCmd() *cobra.Command {
 				"role":     role,
 				"replicas": replicas,
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "scale",
 				Params: params,
 			})
@@ -1557,7 +1558,7 @@ func convergeCmd() *cobra.Command {
 				teamKey = args[0]
 			}
 			params, _ := json.Marshal(map[string]any{"team_key": teamKey})
-			resp, err := send(daemon.Request{Method: "converge", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "converge", Params: params})
 			if err != nil {
 				return err
 			}
@@ -1642,7 +1643,7 @@ func runCmd() *cobra.Command {
 				"env":             envMap,
 				"name":            name,
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "run",
 				Params: params,
 			})
@@ -1696,7 +1697,7 @@ func killCmd() *cobra.Command {
 				"resource_type": "session",
 				"name":          args[0],
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "delete",
 				Params: params,
 			})
@@ -1723,7 +1724,7 @@ func shiftCmd() *cobra.Command {
 				"team_key": args[0],
 				"role":     role,
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "shift",
 				Params: params,
 			})
@@ -1766,7 +1767,7 @@ restart_policy=never, short of deleting and re-applying the whole team.`,
 				"team_key": args[0],
 				"role":     role,
 			})
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "reset-health",
 				Params: params,
 			})
@@ -1846,7 +1847,7 @@ at an empty composer and have no reader that can see a draft yet.`,
 			var unconfirmed error
 			for _, step := range steps {
 				params, _ := json.Marshal(injectRequestParams(args[0], step))
-				resp, err := send(daemon.Request{
+				resp, err := send(daemonrpc.Request{
 					Method: "inject",
 					Params: params,
 				})
@@ -1961,7 +1962,7 @@ between them. A runtime with no reader reads unknown.`,
 				escapes: escapes, composer: composerState,
 			})
 			params, _ := json.Marshal(p)
-			resp, err := send(daemon.Request{
+			resp, err := send(daemonrpc.Request{
 				Method: "capture",
 				Params: params,
 			})
@@ -2549,7 +2550,7 @@ refuses and names the fingerprint.`,
 			if identityPath != "" {
 				opts.Identity = identityPath
 			}
-			resp, err := keysTrustSend(addr, daemon.Request{
+			resp, err := keysTrustSend(addr, daemonrpc.Request{
 				Method: "get",
 				Params: json.RawMessage(`{"resource_type":"workspaces"}`),
 			}, opts)
@@ -2571,13 +2572,13 @@ refuses and names the fingerprint.`,
 
 // keysTrustSend is the request keys trust makes; a test replaces it so the
 // command's dial options can be read without a network or a daemon.
-var keysTrustSend = daemon.SendRequestWith
+var keysTrustSend = daemonrpc.SendRequestWith
 
 // keysTrustDialOptions builds the dial options for keys trust. Only --yes lets
 // the dial record an unknown host key unasked; without it the dial uses the
 // prompt path, which shows the fingerprint and asks.
-func keysTrustDialOptions(identity string, yes bool) daemon.DialOptions {
-	return daemon.DialOptions{Identity: identity, TrustUnknownHost: yes}
+func keysTrustDialOptions(identity string, yes bool) daemonrpc.DialOptions {
+	return daemonrpc.DialOptions{Identity: identity, TrustUnknownHost: yes}
 }
 
 // nameArg returns " --name <name>" for the default help string when the
@@ -2612,7 +2613,7 @@ the acts that destroy that.`,
   marvel stop --teardown   # end every agent, then stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]bool{"teardown": teardown, "keep_bus": keepBus})
-			resp, err := send(daemon.Request{Method: "stop", Params: params})
+			resp, err := send(daemonrpc.Request{Method: "stop", Params: params})
 			if err != nil {
 				return err
 			}
@@ -2676,7 +2677,7 @@ change, and holds new sessions while it is down. A cluster with
 		Short: "Show the broker: pid, listener, readiness, hub leaf link",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: "bus.status"})
+			resp, err := send(daemonrpc.Request{Method: "bus.status"})
 			if err != nil {
 				return err
 			}
@@ -2702,7 +2703,7 @@ change, and holds new sessions while it is down. A cluster with
 
 	leafToggle := func(method string) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, args []string) error {
-			resp, err := send(daemon.Request{Method: method})
+			resp, err := send(daemonrpc.Request{Method: method})
 			if err != nil {
 				return err
 			}
@@ -2963,7 +2964,7 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 
 func fetchSessions() ([]api.Session, error) {
 	params, _ := json.Marshal(map[string]string{"resource_type": "sessions"})
-	resp, err := send(daemon.Request{
+	resp, err := send(daemonrpc.Request{
 		Method: "get",
 		Params: params,
 	})

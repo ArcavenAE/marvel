@@ -15,6 +15,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/shorttmp"
 )
@@ -181,16 +182,16 @@ func captureStdout(t *testing.T, fn func()) string {
 func getSessionsOutput(t *testing.T, tty bool, args ...string) string {
 	t.Helper()
 	resolveFixture(t, false)
-	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
+	socket := headerSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 		switch req.Method {
 		case "get":
 			data, _ := json.Marshal(headerSessions())
-			return daemon.Response{Result: data}
+			return daemonrpc.Response{Result: data}
 		case "daemon.status":
 			data, _ := json.Marshal(daemon.DaemonStatus{Cluster: "alpha", MRVL: daemon.MRVLStatus{State: daemon.MRVLOff}})
-			return daemon.Response{Result: data}
+			return daemonrpc.Response{Result: data}
 		}
-		return daemon.Response{Error: "unexpected " + req.Method}
+		return daemonrpc.Response{Error: "unexpected " + req.Method}
 	})
 	t.Setenv(config.SocketEnv, socket)
 	old := stdoutIsTTY
@@ -247,7 +248,7 @@ func headerSessions() []api.Session {
 
 // headerSocket serves every request through handler on a short-path unix
 // socket and returns its path.
-func headerSocket(t *testing.T, handler func(daemon.Request) daemon.Response) string {
+func headerSocket(t *testing.T, handler func(daemonrpc.Request) daemonrpc.Response) string {
 	t.Helper()
 	socket := filepath.Join(shorttmp.Dir(t), "s.sock")
 	ln, err := net.Listen("unix", socket)
@@ -261,7 +262,7 @@ func headerSocket(t *testing.T, handler func(daemon.Request) daemon.Response) st
 			if err != nil {
 				return
 			}
-			var req daemon.Request
+			var req daemonrpc.Request
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				_ = json.NewEncoder(c).Encode(handler(req))
 			}
@@ -275,12 +276,12 @@ func headerSocket(t *testing.T, handler func(daemon.Request) daemon.Response) st
 // header says it could not get a status and why.
 func TestGetSessionsSurvivesADaemonWithoutStatus(t *testing.T) {
 	resolveFixture(t, false)
-	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
+	socket := headerSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 		if req.Method == "get" {
 			data, _ := json.Marshal(headerSessions())
-			return daemon.Response{Result: data}
+			return daemonrpc.Response{Result: data}
 		}
-		return daemon.Response{Error: "unknown method: " + req.Method}
+		return daemonrpc.Response{Error: "unknown method: " + req.Method}
 	})
 	t.Setenv(config.SocketEnv, socket)
 
@@ -324,8 +325,8 @@ func captureStderr(t *testing.T, fn func()) string {
 func TestHeaderDoesNotRepeatTheDaemonHomeWarning(t *testing.T) {
 	resolveFixture(t, false)
 	t.Setenv("MARVEL_HOME", shorttmp.Dir(t))
-	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
-		resp := daemon.Response{DaemonHome: "/elsewhere/other-marvel"}
+	socket := headerSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
+		resp := daemonrpc.Response{DaemonHome: "/elsewhere/other-marvel"}
 		switch req.Method {
 		case "get":
 			resp.Result, _ = json.Marshal(headerSessions())
@@ -383,7 +384,7 @@ func TestHeaderSocketSurvivesALongTMPDIR(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("TMPDIR", long)
-	sock := headerSocket(t, func(daemon.Request) daemon.Response { return daemon.Response{} })
+	sock := headerSocket(t, func(daemonrpc.Request) daemonrpc.Response { return daemonrpc.Response{} })
 	if len(sock) > paths.MaxUnixSocketPath {
 		t.Errorf("socket path is %d bytes, over the %d-byte limit", len(sock), paths.MaxUnixSocketPath)
 	}

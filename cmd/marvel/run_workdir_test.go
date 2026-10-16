@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // inProj is a cwd of /work/proj.
@@ -118,12 +118,12 @@ func runParamsSeen(t *testing.T, args ...string) map[string]any {
 	t.Helper()
 	resolveFixture(t, false)
 	var seen map[string]any
-	socket := fakeSocket(t, func(req daemon.Request) daemon.Response {
+	socket := fakeSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
 		if req.Method != "run" {
-			return daemon.Response{Error: "unexpected " + req.Method}
+			return daemonrpc.Response{Error: "unexpected " + req.Method}
 		}
 		_ = json.Unmarshal(req.Params, &seen)
-		return daemon.Response{Result: json.RawMessage(`{"session_key":"ws/run-1"}`)}
+		return daemonrpc.Response{Result: json.RawMessage(`{"session_key":"ws/run-1"}`)}
 	})
 	t.Setenv(config.SocketEnv, socket)
 	cmd := runCmd()

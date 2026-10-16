@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/config"
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // keys trust asks before it records, and --yes is the scripted form for an
@@ -62,13 +62,13 @@ func TestKeysTrustCommandDialsWithTheOptionsFromTheHelper(t *testing.T) {
 		{[]string{"trust", "prod"}, false},
 		{[]string{"trust", "--yes", "prod"}, true},
 	} {
-		var got daemon.DialOptions
+		var got daemonrpc.DialOptions
 		var addr string
 		calls := 0
-		keysTrustSend = func(a string, _ daemon.Request, o daemon.DialOptions) (*daemon.Response, error) {
+		keysTrustSend = func(a string, _ daemonrpc.Request, o daemonrpc.DialOptions) (*daemonrpc.Response, error) {
 			calls++
 			addr, got = a, o
-			return &daemon.Response{}, nil
+			return &daemonrpc.Response{}, nil
 		}
 		cmd := keysCmd()
 		cmd.SetArgs(tc.args)

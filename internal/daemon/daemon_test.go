@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func skipIfNoTmux(t *testing.T) {
@@ -64,7 +65,7 @@ name = "squad"
     command = "sleep"
     args = ["300"]
 `
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})
@@ -79,7 +80,7 @@ name = "squad"
 	time.Sleep(500 * time.Millisecond)
 
 	// Get sessions
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -99,7 +100,7 @@ name = "squad"
 	}
 
 	// Get teams
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "teams"}),
 	})
@@ -115,7 +116,7 @@ name = "squad"
 	}
 
 	// Scale down with role
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "scale",
 		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/squad", "role": "worker", "replicas": 1}),
 	})
@@ -129,7 +130,7 @@ name = "squad"
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify scaled
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -144,7 +145,7 @@ name = "squad"
 	}
 
 	// Scale without role should error
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "scale",
 		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/squad", "replicas": 3}),
 	})
@@ -156,7 +157,7 @@ name = "squad"
 	}
 
 	// Heartbeat — send context pressure for a running session
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -179,7 +180,7 @@ name = "squad"
 		if gerr != nil {
 			t.Fatalf("get session %s: %v", sessionKey, gerr)
 		}
-		resp, err = SendRequest(sock, Request{
+		resp, err = daemonrpc.SendRequest(sock, Request{
 			Method: "heartbeat",
 			Params: mustMarshal(t, map[string]any{
 				"session_key":     sessionKey,
@@ -195,7 +196,7 @@ name = "squad"
 		}
 
 		// Verify via describe
-		resp, err = SendRequest(sock, Request{
+		resp, err = daemonrpc.SendRequest(sock, Request{
 			Method: "describe",
 			Params: mustMarshal(t, map[string]string{"resource_type": "session", "name": sessionKey}),
 		})
@@ -210,7 +211,7 @@ name = "squad"
 	}
 
 	// Run — create a one-off session
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "run",
 		Params: mustMarshal(t, map[string]any{
 			"workspace":       "test-daemon",
@@ -234,7 +235,7 @@ name = "squad"
 	}
 
 	// Shift — initiate a rolling shift
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "shift",
 		Params: mustMarshal(t, map[string]any{"team_key": "test-daemon/squad"}),
 	})
@@ -255,7 +256,7 @@ name = "squad"
 
 	// Scale during shift should work now (shift should be complete).
 	// But first, verify sessions exist with gen 2.
-	_, err = SendRequest(sock, Request{
+	_, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -264,7 +265,7 @@ name = "squad"
 	}
 
 	// Delete workspace
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "delete",
 		Params: mustMarshal(t, map[string]string{"resource_type": "workspace", "name": "test-daemon"}),
 	})
@@ -280,7 +281,7 @@ name = "squad"
 	// See ArcavenAE/marvel#15.
 	time.Sleep(500 * time.Millisecond)
 
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "teams"}),
 	})
@@ -295,7 +296,7 @@ name = "squad"
 		t.Fatalf("expected 0 teams after delete workspace, got %d", len(teamsAfter))
 	}
 
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -363,7 +364,7 @@ name = "squad"
     command = "sleep"
     args = ["300"]
 `
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})
@@ -374,7 +375,7 @@ name = "squad"
 	// Wait for reconciliation to create the session + pane.
 	time.Sleep(600 * time.Millisecond)
 
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -407,7 +408,7 @@ func TestHandleInjectCapture(t *testing.T) {
 	// stdin so the text sits in the tty buffer — capture-pane will
 	// still render it as input characters on the pane.
 	marker := "XXXX-INJECT-MARKER-" + t.Name()
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "inject",
 		Params: mustMarshal(t, map[string]any{
 			"session_key": sessionKey,
@@ -430,7 +431,7 @@ func TestHandleInjectCapture(t *testing.T) {
 	// tmux send-keys + capture is eventually-consistent; give it a beat.
 	time.Sleep(200 * time.Millisecond)
 
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "capture",
 		Params: mustMarshal(t, map[string]any{"session_key": sessionKey}),
 	})
@@ -454,7 +455,7 @@ func TestHandleInjectUnknownSession(t *testing.T) {
 	_, sock, teardown := startTestDaemon(t, "test-inject-err")
 	t.Cleanup(teardown)
 
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "inject",
 		Params: mustMarshal(t, map[string]any{
 			"session_key": "does-not-exist/nobody-0",
@@ -473,7 +474,7 @@ func TestHandleLogs(t *testing.T) {
 	_, sock, teardown := startTestDaemon(t, "test-logs")
 	t.Cleanup(teardown)
 
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "logs",
 		Params: mustMarshal(t, map[string]any{"n": 100}),
 	})
@@ -509,7 +510,7 @@ func TestHandleLogsDefaultN(t *testing.T) {
 	t.Cleanup(teardown)
 
 	// No params — should default to the full ring.
-	resp, err := SendRequest(sock, Request{Method: "logs"})
+	resp, err := daemonrpc.SendRequest(sock, Request{Method: "logs"})
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}
@@ -544,7 +545,7 @@ teams:
         runtime:
           command: no-such-binary-marvel-preflight-9xyz
 `
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})
@@ -559,7 +560,7 @@ teams:
 	}
 
 	// The rejected manifest must not have created any store state.
-	resp, err = SendRequest(sock, Request{
+	resp, err = daemonrpc.SendRequest(sock, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "workspaces"}),
 	})
@@ -592,7 +593,7 @@ func TestDaemonTCP(t *testing.T) {
 	actualAddr := d.listener.Addr().String()
 
 	// Send a request over TCP.
-	resp, err := SendRequest(actualAddr, Request{
+	resp, err := daemonrpc.SendRequest(actualAddr, Request{
 		Method: "get",
 		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
 	})
@@ -649,7 +650,7 @@ name = "squad"
 		_ = os.Remove(sock1)
 	})
 
-	resp, err := SendRequest(sock1, Request{
+	resp, err := daemonrpc.SendRequest(sock1, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})
@@ -755,7 +756,7 @@ name = "squad"
 		_ = os.Remove(sock)
 	})
 
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})
@@ -859,7 +860,7 @@ func TestReexecCheckpointsStateBeforeExec(t *testing.T) {
 		_ = os.Remove(sock)
 	})
 
-	resp, err := SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(reexecManifest(ws))}),
 	})
@@ -952,7 +953,7 @@ func TestReexecLeavesPanesForSuccessorToAdopt(t *testing.T) {
 		_ = os.Remove(sock1)
 	})
 
-	resp, err := SendRequest(sock1, Request{
+	resp, err := daemonrpc.SendRequest(sock1, Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(reexecManifest(ws))}),
 	})
