@@ -78,6 +78,18 @@ var _ = d.NewWithOptions
 	}
 }
 
+// A dot import of the daemon package would let a file name a moved identifier
+// with no selector, so the detector reports the import itself.
+func TestTheDetectorReportsADotImportOfTheDaemon(t *testing.T) {
+	const src = `package x
+import . "` + daemonImport + `"
+var _ = Request{}
+`
+	if got := movedThroughDaemon(t, "x.go", src); len(got) == 0 {
+		t.Errorf("a dot import of the daemon went unreported")
+	}
+}
+
 // After PR 1b no file outside internal/daemon reaches a moved name through the
 // daemon import. The aliases stay in internal/daemon until PR 1c, so a file that
 // 1b missed would still build; this is the check that none was missed.
