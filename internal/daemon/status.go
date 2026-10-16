@@ -41,6 +41,12 @@ type DaemonStatus struct {
 	Cluster string `json:"cluster,omitempty"`
 	// MRVL is the mrvl:// listener.
 	MRVL MRVLStatus `json:"mrvl"`
+	// TmuxSocket is the tmux server name the daemon's driver uses, the value
+	// of `tmux -L`. The daemon derives it from its own HOME or from
+	// MARVEL_TMUX_SOCKET, so a client that does not share that environment, a
+	// remote one included, cannot compute it. Absent when the daemon has no
+	// driver, and from a daemon older than this field.
+	TmuxSocket string `json:"tmux_socket,omitempty"`
 	// Bus is the same value bus.status returns, absent when the cluster has
 	// no bus.
 	Bus *bus.Status `json:"bus,omitempty"`
@@ -108,6 +114,9 @@ func (d *Daemon) handleDaemonStatus() Response {
 		if addr := srv.Addr(); addr != nil {
 			st.MRVL = MRVLStatus{State: classifyBind(addr), Addr: addr.String()}
 		}
+	}
+	if d.driver != nil {
+		st.TmuxSocket = d.driver.Socket()
 	}
 	if b, ok := d.busStatus(); ok {
 		st.Bus = &b
