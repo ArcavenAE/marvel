@@ -301,7 +301,7 @@ content: |
   detector it was mined to test passed. 63 of 63 labelled Claude
   compactions with a sample on each side were detected by the shipped
   hysteresis, zero false negatives, minimum margin 4.03x over the guard.
-  The comment at `accountant.go:16-33` calling the bound reasoned rather
+  The comment at `accountant.go:14-31` calling the bound reasoned rather
   than calibrated can be retired: it is calibrated now, against 63 events
   rather than one recovered geometry, with a regression fixture at
   `internal/usage/testdata/compaction_series_claudecode.json`.

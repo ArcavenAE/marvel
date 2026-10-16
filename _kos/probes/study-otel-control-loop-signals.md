@@ -37,7 +37,7 @@ Three claims in the ticket, re-checked against the tree:
    flattened line to the ring. The comment at `manager.go:733-740` records
    that a tee was considered and rejected, because the adapter channel
    back-pressures the harness on purpose and a second reader would add a
-   second back-pressure path. And `internal/usage/accountant.go:75-79`
+   second back-pressure path. And `internal/usage/accountant.go:73-77`
    states the seam this study was asked to sketch: "Every method is safe for
    concurrent use, so a future OTEL receiver goroutine can share one
    accountant with N per-session drain goroutines." `internal/usage/doc.go:101-109`
@@ -91,7 +91,7 @@ signal, at the inventory's evidence tier, and whether its TYPE fits.
 | 3 | crash and restart accounting | restart policy, backoff, readiness hold | derived from 1 and 2 | none (no) | role key | edge, per tick | **materialize; derived** |
 | 4 | activity recency (`ContextAt`) | `evaluateActivity` | any accountant sample or heartbeat | **yes, as a timestamp only.** Any per-session datapoint or log record with `session.id` proves the harness did work: `claude_code.api_request` (MEASURED), `codex.api_request` (BINARY) (type is irrelevant; only arrival time is read) | `session.id` or marvel's injected session key | per request; latest-wins | **materialize the timestamp; OTEL is a plausible third feed** |
 | 5 | occupancy level + window (CTX%) | none today; M4 later; CLI column | accountant per request (headless); heartbeat with numerator + window (interactive) | numerator per request on `claude_code.api_request` event (MEASURED); denominator on `codex.conversation_starts` (BINARY); every metric is a cumulative counter (no for metrics; yes for the two events, with the denominator caveats in the node corrections) | `session.id`, `model`, token classes, layout | per request; latest-wins, plus peak | **materialize; if OTEL ever feeds it, through the accountant's sibling constructor** |
-| 6 | cumulative team tokens | admission `max_tokens` | accountant `TeamSpend` (`accountant.go:770`) | `claude_code.token.usage` (counter, VERBATIM; attrs `type`, `model`), `codex.turn.token_usage` (histogram), `gemini_cli.token.usage` (yes: cumulative is the right shape; row 2 is the best-served row) | `session.id` plus marvel `workspace`, `team`, `role` resource attrs; `type`, `model` | export interval (Claude docs: 60 s metrics by default) versus per-request from the stream; sum per team | **materialize; OTEL type fits, and a lagging feed understates, which R3 makes sound** |
+| 6 | cumulative team tokens | admission `max_tokens` | accountant `TeamSpend` (`accountant.go:726`) | `claude_code.token.usage` (counter, VERBATIM; attrs `type`, `model`), `codex.turn.token_usage` (histogram), `gemini_cli.token.usage` (yes: cumulative is the right shape; row 2 is the best-served row) | `session.id` plus marvel `workspace`, `team`, `role` resource attrs; `type`, `model` | export interval (Claude docs: 60 s metrics by default) versus per-request from the stream; sum per team | **materialize; OTEL type fits, and a lagging feed understates, which R3 makes sound** |
 | 7 | process CPU / RSS / IO | operator display only | `procstat`, 5 s | none from harnesses; adapter `health.heartbeat` carries RSS for the simulator (n/a) | pid subtree | 5 s | **materialize as today; not OTEL** |
 | 8 | blocked-on-user (attention) | none today; Gap 1 | adapter `permission.requested` to the ring as warning | `claude_code.tool.blocked_on_user` (BINARY; counts or durations unknown) | `session.id` | unknown until characterized | **pass through; deferred behind the row-13 verdict** |
 | 9 | auth required | none today; shift-trigger candidate ("login failures") | adapter `auth.required` to the ring | none identified (`api_error` event is a guess) | session | edge | **pass through; ring line is enough** |
@@ -160,10 +160,10 @@ heartbeat RPC ──> store.UpdateSessionHeartbeat ──> store (LastHeartbeat,
 3. **If harness OTEL is ever consumed, it enters as a feed into the
    accountant**, through the sibling constructor to `sampleFromEvent`
    (`sample.go:109`; `doc.go:101-109`), on the same `Coords`, writing the same
-   store fields through the same `Sink` (`accountant.go:68-70`), and stamping
+   store fields through the same `Sink` (`accountant.go:66-68`), and stamping
    a new `ContextSourceKind` value so provenance stays declared. Transitions
    it produces reach the ring through the same `events.Emitter` the
-   accountant already holds (`accountant.go:91, 103`). One vocabulary
+   accountant already holds (`accountant.go:89, 103`). One vocabulary
    (`usage.Sample`), one consumer path (accountant to store to loop), one
    operator log.
 4. **The ring needs no subscription seam for OTEL.** The seam the topology

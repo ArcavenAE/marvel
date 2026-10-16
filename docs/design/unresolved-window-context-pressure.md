@@ -11,7 +11,7 @@ out. It fires when `ContextTokens > ContextLimit - HeadroomTokens`. The arm
 skips a seat whose window is unresolved (`ContextLimit <= 0`) with no event or
 advisory of its own (`internal/team/controller.go:2043-2055`). The usage
 accountant does emit `context.limit-unresolved` once per session when it
-measures tokens with no window (`internal/usage/accountant.go:331-335`), but
+measures tokens with no window (`internal/usage/accountant.go:288-292`), but
 only for stream-fed seats, and the event says nothing about an arm that will
 never fire. Today that
 is every opencode seat, in both modes. Codex is better off than its ticket
@@ -25,14 +25,12 @@ assumed, but a fixed headroom and stale readings break it in other ways.
   Measured on live seats: window 258400, which is 272000 x 0.95, an
   effective window and not a compaction point. One reading was six days old
   and still rendered as 15%. The model table carries no codex entry, on
-  purpose (`internal/usage/limits.go:242-289`).
+  purpose (`internal/usage/limits.go:242-286`).
 - **Codex, headless.** Whether the hooks fire under `exec` is not checked.
 - **opencode.** There is no window in either mode unless the manifest
-  declares `context_window` or the model catalog lists the launch model. Headless parses per-request occupancy;
-  interactive has capture-pane only. marvel has no opencode hook or feed.
-  It reads no opencode sqlite file; it does read opencode's model
-  catalog (`models.json`, `limit.context` per model, no credentials) at
-  launch when the manifest sets no window (marvel#922). opencode seats share the operator's opencode data
+  declares `context_window`. Headless parses per-request occupancy;
+  interactive has capture-pane only. marvel has no opencode hook, feed or
+  database reader. opencode seats share the operator's opencode data
   directory (`internal/runtime/opencode.go:53,71` pass the base env only).
   That directory holds `opencode.db` and no separate auth file (names only,
   nothing opened), which is consistent with credentials living in the same
@@ -43,7 +41,7 @@ assumed, but a fixed headroom and stale readings break it in other ways.
   runtime (feed, table) unchecked, and its 10-minute freshness bound would
   keep idle hook-fed seats from ever arming.
 - **Compactions are counted** (`ContextCompactions`,
-  `internal/usage/accountant.go:920`), and nothing under `internal/team`
+  `internal/usage/accountant.go:876`), and nothing under `internal/team`
   reads the count. The controller's stated aim is to shift before the harness
   compacts, because a post-compaction signal "would arrive one compaction too
   late" (`controller.go:1939`).

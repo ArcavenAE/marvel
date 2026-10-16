@@ -22,7 +22,7 @@ marvel understands neither:
 - `runtime.args = ["--model", "<id>"]` reaches claude verbatim
   (`internal/runtime/claude.go:99-100`). marvel's context-window resolver
   reads it back through `usage.ModelFromArgs`
-  (`internal/usage/limits.go:398-412`), but only by scanning a string list,
+  (`internal/usage/limits.go:395-409`), but only by scanning a string list,
   and the args are opaque to every other part of marvel.
 - `runtime.env.ANTHROPIC_MODEL` also reaches the pane
   (`internal/runtime/adapter.go:399-411`), but nothing in marvel reads it,
@@ -149,7 +149,7 @@ declared-against-observed comparison, not prevented.
 ## 5. Usage accounting reads the field
 
 `ResolveGraded` picks its model today as `StreamModel`, else
-`ModelFromArgs(req.RuntimeArgs)` (`internal/usage/limits.go:555-557`). The
+`ModelFromArgs(req.RuntimeArgs)` (`internal/usage/limits.go:550-552`). The
 order becomes:
 
 1. the stream's own model (unchanged; what the harness says it is running),

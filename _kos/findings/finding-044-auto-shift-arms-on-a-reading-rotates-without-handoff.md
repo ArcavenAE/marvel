@@ -17,7 +17,7 @@ and they arrive by different paths:
   resolves 1000000 on its own; any session resolves it from an explicit
   `runtime.context_window`.
 - `ContextTokens` is filled only for a session marvel has an activity channel
-  for: a headless stream (accountant.go:330), or the statusline feed
+  for: a headless stream (accountant.go:287), or the statusline feed
   (store.go:714), which an interactive session opts into with
   `runtime.context_feed = "statusline"`.
 

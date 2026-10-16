@@ -19,7 +19,7 @@ content: |
     spend slice, `api.SessionSpend` (`internal/api/types.go:1095`), holds
     output tokens, prompt tokens and the rate. It has no dollar field.
   - The usage accountant does sum dollars per session and per team
-    (`internal/usage/accountant.go:567-649`, `:865`), from `Sample.CostUSD`.
+    (`internal/usage/accountant.go:523-605`, `:865`), from `Sample.CostUSD`.
     Nothing projects that figure into a session row today.
   - The claude statusline prints a per-session dollar figure
     (`cmd/marvel/ctxforward.go:399`, from `cost.total_cost_usd`), but the
@@ -32,7 +32,7 @@ content: |
   seat is interactive (`Runtime.Mode` empty), fed by the statusline
   heartbeat (`ContextSource` heartbeat, `ContextRequests` 0), with
   `SpendOut` nil. Only the usage accountant writes those cells
-  (`internal/usage/accountant.go:349`, `:309`), and it reads a stream,
+  (`internal/usage/accountant.go:306`, `:309`), and it reads a stream,
   which only a headless seat has. The heartbeat request has no output-token
   field (`internal/api/heartbeat.go:92-127`). So the cells read "never
   metered", which is true, not a fault. It is not the #779 flip either: that

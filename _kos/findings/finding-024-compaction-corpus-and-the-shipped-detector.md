@@ -22,7 +22,7 @@ the smallest result here. Over 63 labelled Claude Code compactions with an
 occupancy sample on each side, `internal/usage/accountant.go`'s reasoned
 hysteresis fired on **63 of 63** with **zero false negatives**, and the
 tightest event cleared the guard by **4.03x**. The comment at
-accountant.go:16-33 says the bound was "chosen to be un-fireable by
+accountant.go:14-31 says the bound was "chosen to be un-fireable by
 ordinary variation rather than calibrated"; against this corpus that
 choice is now measured rather than reasoned, and the n-of-1 geometry it
 cites can be retired.
