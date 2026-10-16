@@ -221,12 +221,18 @@ func (b *Broker) Issue(ctx context.Context, sessionKey, heartbeatToken string) (
 		a2, revokes2 = b.begin(sess)
 		defer b.finish(sess, a2)
 	}
+	// The floor is judged from before the driver was asked, so a driver that
+	// issues exactly MinTTL is not refused for the milliseconds it took.
+	askedAt := b.now()
 	tok, err := b.driver.Issue(ctx, Request{Team: id.Team, Role: id.Role, Session: sess})
 	if err != nil {
 		return Token{}, fmt.Errorf("broker: %s driver: %w", b.driver.Name(), err)
 	}
 	if tok.Expires.IsZero() || tok.Expires.After(b.now().Add(MaxTTL)) {
 		return Token{}, b.refuse(ctx, sess, tok, ErrTTLTooLong)
+	}
+	if tok.Expires.Before(askedAt.Add(MinTTL)) {
+		return Token{}, b.refuse(ctx, sess, tok, ErrTTLTooShort)
 	}
 	b.mu.Lock()
 	if a.revokes != revokesAtStart || (a2 != nil && a2.revokes != revokes2) {
