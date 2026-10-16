@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -218,6 +219,16 @@ func TestListenerThatNeverAnswersFailsTheStart(t *testing.T) {
 	}
 	s.binary = script
 	s.dialTimeout = 300 * time.Millisecond
+	// The script becomes "sleep 30" after the supervisor recorded its
+	// identity, so Stop cannot prove it is the broker and leaves it. This test
+	// started it, so this test ends it.
+	var spawned atomic.Int64
+	register := s.onSpawn
+	s.onSpawn = func(pid int) {
+		spawned.Store(int64(pid))
+		register(pid)
+	}
+	t.Cleanup(func() { endSpawnedChild(t, int(spawned.Load())) })
 	err := s.Start(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "did not answer on") {
 		t.Fatalf("Start = %v, want the listener timeout", err)
@@ -228,6 +239,30 @@ func TestListenerThatNeverAnswersFailsTheStart(t *testing.T) {
 	if slices.Contains(lifecycleKinds(ring), events.KindBusStarted) {
 		t.Errorf("bus.started after a failed start: %v", lifecycleKinds(ring))
 	}
+}
+
+// endSpawnedChild ends a child this test's supervisor started and reaps it, so
+// no "sleep 30" outlives the test. It fails the test if the child is still
+// there after a few seconds.
+func endSpawnedChild(t *testing.T, pid int) {
+	t.Helper()
+	if pid == 0 {
+		return
+	}
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("TERM to the child it started, pid %d: %v", pid, err)
+		return
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var ws syscall.WaitStatus
+		got, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
+		if got == pid || errors.Is(err, syscall.ECHILD) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("the child it started, pid %d, is still running after TERM", pid)
 }
 
 func TestProvisioningErrorFailsTheStartAfterTheListenerIsUp(t *testing.T) {
@@ -255,6 +290,8 @@ type fakeBroker struct {
 	sent   []sentSignal
 	killOK bool
 	onTerm func(*fakeBroker)
+	// failSig makes a signal of this number fail, as a permission error would.
+	failSig syscall.Signal
 }
 
 func (f *fakeBroker) read(pid int) (childproof.Identity, error) {
@@ -270,7 +307,7 @@ func (f *fakeBroker) kill(pid int, sig syscall.Signal) error {
 	f.mu.Lock()
 	f.sent = append(f.sent, sentSignal{pid, sig})
 	onTerm := f.onTerm
-	ok := sig != syscall.SIGKILL || f.killOK
+	ok := (sig != syscall.SIGKILL || f.killOK) && (f.failSig == 0 || sig != f.failSig)
 	f.mu.Unlock()
 	if sig == syscall.SIGTERM && onTerm != nil {
 		onTerm(f)
@@ -339,5 +376,66 @@ func TestTerminateReportsAKillItCouldNotSend(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "not killing nats-server pid") {
 		t.Errorf("log = %q, want the failed kill reported", logs.String())
+	}
+}
+
+// The wait ends and the stop flag is already set, but the context is not
+// cancelled: the second guard is what keeps the respawn from happening. The
+// test holds the supervisor lock across the end of the wait, so the flag is set
+// before onCrash can take the lock.
+func TestWaitThatEndsWithStopSetSpawnsNothing(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	s.backoff = func(int) time.Duration { return 400 * time.Millisecond }
+	startedCrash(t, s)
+	waitUntil(t, "bus.crashed", func() bool { return slices.Contains(lifecycleKinds(ring), events.KindBusCrashed) })
+
+	s.mu.Lock()
+	s.stopping = true
+	time.Sleep(700 * time.Millisecond) // the wait ends while onCrash cannot take the lock
+	s.mu.Unlock()
+	time.Sleep(700 * time.Millisecond)
+
+	if st := s.Status(); st.Ready {
+		t.Errorf("status = %+v, want a broker that was not respawned", st)
+	}
+	if n := startedCount(ring); n != 1 {
+		t.Errorf("bus.started events = %d after the wait ended with the stop flag set, want the one from the first start: %v", n, lifecycleKinds(ring))
+	}
+}
+
+// A failed SIGHUP to an adopted broker is logged and the start goes on: the
+// adopted broker becomes the ready one.
+func TestAdoptedBrokerThatCannotBeSignalledIsStillAdopted(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	quiet(s)
+	f := &fakeBroker{t: t, failSig: syscall.SIGHUP}
+	p, err := childproof.NewForTest(f.read, f.kill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.prober = p
+	s.grace = 40 * time.Millisecond
+	pid := reapedPid(t)
+	f.id = brokerIdentity(s, "darwin:100.000000")
+	f.id.Pgid = pid
+	writePidfile(t, s, pid)
+	writeSidecar(t, s, pid, f.id)
+	standInListener(t, s)
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start = %v, want the failed SIGHUP to be logged and the adoption to go on", err)
+	}
+	if st := s.Status(); !st.Adopted || !st.Ready || st.PID != pid {
+		t.Errorf("status = %+v, want adopted, ready, pid %d", st, pid)
+	}
+	if !strings.Contains(logs.String(), "reload adopted nats-server pid") {
+		t.Errorf("log = %q, want the failed reload reported", logs.String())
+	}
+	started := eventsOfKind(ring, events.KindBusStarted)
+	if len(started) != 1 || !strings.Contains(started[0].Message, "adopted") {
+		t.Errorf("bus.started events = %+v, want one naming the adoption", started)
 	}
 }
