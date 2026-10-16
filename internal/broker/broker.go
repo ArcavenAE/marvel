@@ -385,12 +385,15 @@ func NewGenericOIDC(keyName string, s Signer) *GenericOIDC {
 // Name is the driver's registered name.
 func (g *GenericOIDC) Name() string { return "generic-oidc" }
 
-// Key asks the keystore to describe the key this driver names.
-func (g *GenericOIDC) Key(context.Context) (KeyInfo, error) {
-	return KeyInfo{}, errKeyNotBuilt
+// Key asks the keystore to describe the key this driver names. It is the
+// public description only, and asks the keystore nothing else.
+func (g *GenericOIDC) Key(ctx context.Context) (KeyInfo, error) {
+	info, err := g.signer.Describe(ctx, g.keyName)
+	if err != nil {
+		return KeyInfo{}, fmt.Errorf("broker: describe key %q: %w", g.keyName, err)
+	}
+	return info, nil
 }
-
-var errKeyNotBuilt = errors.New("broker: key description is not built")
 
 // Issue is not built until the claim shape is ruled.
 func (g *GenericOIDC) Issue(context.Context, Request) (Token, error) {
