@@ -809,14 +809,19 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// producer has seen is carried forward by hand, and a drop from the
 	// previous heartbeat reading on this record is one more. A reading from
 	// another producer is not a prior occupancy to drop from (marvel#630).
-	compacted := false
 	if sess.ContextSource == ContextSourceHeartbeat {
 		reading.ContextCompactions = sess.ContextCompactions
 		if CompactionDropped(sess.ContextTokens, reading.ContextTokens) {
 			reading.ContextCompactions++
-			compacted = true
 		}
 	}
+	// The totals stamp has its own drop test, which does not depend on who wrote
+	// the prior reading: a mixed seat's last writer can be the accountant, and a
+	// compaction on the next beat is still an API call and not the seat working.
+	// That is a different question from the count above, which stays one
+	// producer's own drops (marvel#630). A beat with no numerator cannot show a
+	// drop.
+	dropped := reading.ContextTokens > 0 && CompactionDropped(sess.ContextTokens, reading.ContextTokens)
 	// The spend slice belongs to the usage accountant, and a heartbeat carries
 	// none, so the replace must not take it along: a seat with a token stream
 	// and a statusline feed would flip between its total and "-" on every beat
@@ -825,7 +830,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	sess.SessionContext = reading
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
 	sess.LastHeartbeat = time.Now().UTC()
-	recordTotals(sess, r, compacted)
+	recordTotals(sess, r, dropped)
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any
 	// prior reading stands. ContextModel is promoted from the embedded
@@ -847,11 +852,14 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 // stamps TotalsChangedAt when either moves. A total the beat did not carry
 // stays as it was, and one never carried stays nil, so a feed that omits them
 // reads as never reported and not as zero. A total appearing for the first time
-// counts as a move. A beat where context dropped is a compaction, which is an
-// API call but not the seat working, so it stores the new totals and leaves the
-// stamp alone. CTX%, ContextAt and LastHeartbeat are not touched here
-// (marvel#801).
-func recordTotals(sess *Session, r HeartbeatRequest, compacted bool) {
+// counts as a move, and so does a total that goes down (a fresh harness session
+// under the same seat): it stamps and the lower value replaces the old one.
+// dropped says context fell on this beat against whatever reading came before,
+// from any producer. That is a compaction, which is an API call but not the seat
+// working, so the beat stores the new totals and leaves the stamp alone. The
+// compaction count is a separate rule and is not decided here. CTX%, ContextAt
+// and LastHeartbeat are not touched (marvel#801).
+func recordTotals(sess *Session, r HeartbeatRequest, dropped bool) {
 	moved := false
 	if r.CostTotalUSD != nil {
 		moved = moved || sess.CostTotalUSD == nil || *sess.CostTotalUSD != *r.CostTotalUSD
@@ -863,7 +871,7 @@ func recordTotals(sess *Session, r HeartbeatRequest, compacted bool) {
 		v := *r.APIDurationMS
 		sess.APIDurationMS = &v
 	}
-	if moved && !compacted {
+	if moved && !dropped {
 		sess.TotalsChangedAt = sess.LastHeartbeat
 	}
 }

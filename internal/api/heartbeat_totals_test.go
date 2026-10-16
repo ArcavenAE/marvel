@@ -138,3 +138,63 @@ func TestADeclaredZeroTotalIsStored(t *testing.T) {
 		t.Fatalf("a declared zero was dropped: cost %v, API time %v", got.CostTotalUSD, got.APIDurationMS)
 	}
 }
+
+// A mixed seat has a token stream and a statusline feed, so the accountant can
+// be the last writer before a beat. The stamp skips a compaction whoever wrote
+// the prior reading. The compaction COUNT is a different rule and does not
+// change: a drop from another producer's reading is not counted (marvel#630).
+func TestTotalsStampSkipsACompactionAfterAnAccountantWrite(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	first := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 60, ContextTokens: 600_000, CostTotalUSD: f64(5), APIDurationMS: i64(90_000)})
+	s.UpdateSessionContext(gradedSessionKey, SessionContext{ContextSource: ContextSourceAccountant, ContextTokens: 600_000})
+	time.Sleep(2 * time.Millisecond)
+
+	compacted := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 8, ContextTokens: 80_000, CostTotalUSD: f64(5.4), APIDurationMS: i64(97_000)})
+	if compacted.CostTotalUSD == nil || *compacted.CostTotalUSD != 5.4 {
+		t.Errorf("cost = %v after the compaction beat, want 5.4 stored", compacted.CostTotalUSD)
+	}
+	if !compacted.TotalsChangedAt.Equal(first.TotalsChangedAt) {
+		t.Errorf("a compaction after an accountant write moved the stamp from %v to %v", first.TotalsChangedAt, compacted.TotalsChangedAt)
+	}
+	if compacted.ContextCompactions != 0 {
+		t.Errorf("ContextCompactions = %d, want 0: a drop from another producer's reading is not counted", compacted.ContextCompactions)
+	}
+}
+
+// A beat that carries no numerator cannot show a drop, so it does not read as a
+// compaction: totals that move on it stamp.
+func TestTotalsStampMovesOnABeatWithNoNumerator(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	first := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 60, ContextTokens: 600_000, CostTotalUSD: f64(5), APIDurationMS: i64(90_000)})
+	time.Sleep(2 * time.Millisecond)
+
+	bare := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 61, CostTotalUSD: f64(5.2), APIDurationMS: i64(91_000)})
+	if !bare.TotalsChangedAt.After(first.TotalsChangedAt) {
+		t.Errorf("a percentage-only beat with moved totals left the stamp at %v", bare.TotalsChangedAt)
+	}
+}
+
+// A total that goes down is a move too, as when the harness starts a fresh
+// session under the same seat: it stamps, and the lower value replaces the old.
+func TestADroppingTotalStampsAndKeepsTheLowerValue(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	token := gradedSession(t, s, 0)
+
+	first := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 10, CostTotalUSD: f64(9), APIDurationMS: i64(500_000)})
+	time.Sleep(2 * time.Millisecond)
+
+	lower := beatTotals(t, s, token, HeartbeatRequest{ContextPercent: 11, CostTotalUSD: f64(0.4), APIDurationMS: i64(12_000)})
+	if lower.CostTotalUSD == nil || *lower.CostTotalUSD != 0.4 || lower.APIDurationMS == nil || *lower.APIDurationMS != 12_000 {
+		t.Errorf("totals = %v and %v after a drop, want 0.4 and 12000 kept", lower.CostTotalUSD, lower.APIDurationMS)
+	}
+	if !lower.TotalsChangedAt.After(first.TotalsChangedAt) {
+		t.Errorf("a dropping total left the stamp at %v", lower.TotalsChangedAt)
+	}
+}
