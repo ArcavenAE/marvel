@@ -280,10 +280,10 @@ func DefaultTable() Table {
 		// opencode: EMPTY, and equally not self-filling. No window
 		// measurement exists for any opencode model, and opencode declares
 		// none in its stream either. The window comes from opencode's model
-		// database (models.json, limit.context per model), which Bind reads
+		// catalog (models.json, limit.context per model), which Bind reads
 		// once for a launch with no runtime.context_window (OpenCodeWindow)
 		// and passes in as FeedLimit, so it ranks below the manifest. A
-		// missing or unreadable database leaves the window unresolved,
+		// missing or unreadable catalog leaves the window unresolved,
 		// never 0.
 	}
 }
@@ -436,7 +436,7 @@ type Request struct {
 	// than in the stream, 0 when none arrived. Resolves as LimitFromFeed,
 	// which ranks BELOW ManifestLimit; SampleLimit ranks above it. That is
 	// the deliberate asymmetry documented at limitLadder. For opencode it
-	// is the window Bind read from opencode's model database (see
+	// is the window Bind read from opencode's model catalog (see
 	// OpenCodeWindow), so its source label reads "feed".
 	FeedLimit int
 	// Redirection is the spawn-time backend verdict for this session (the

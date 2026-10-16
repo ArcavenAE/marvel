@@ -99,8 +99,8 @@ type Accountant struct {
 	hystAbs  int
 	hystFrac float64
 
-	// opencodeModelsPath is where Bind reads opencode's model database; see
-	// OpenCodeModelsPath. Empty means no database.
+	// opencodeModelsPath is where Bind reads opencode's model catalog; see
+	// OpenCodeModelsPath. Empty means no catalog.
 	opencodeModelsPath string
 }
 
@@ -174,12 +174,12 @@ type sessionState struct {
 	primaryModel  string
 	args          []string
 	manifestLimit int
-	// dbLimit is a window read once at Bind from the harness's own model
-	// database (opencode), 0 when none. Observe may not do file I/O, so the
+	// catalogLimit is a window read once at Bind from the harness's own model
+	// catalog (opencode), 0 when none. Observe may not do file I/O, so the
 	// read happens at Bind and the value rides every later resolution as
 	// Request.FeedLimit.
-	dbLimit     int
-	redirection api.BackendRedirection
+	catalogLimit int
+	redirection  api.BackendRedirection
 
 	limit    int
 	limitSrc LimitSource
@@ -245,13 +245,13 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		return
 	}
 	prof, _ := profileFor(b.Harness)
-	dbLimit := a.databaseLimit(b)
+	catalogLimit := a.catalogLimit(b)
 	limit, src, model := a.limits.Resolve(Request{
 		Harness:       b.Harness,
 		StreamModel:   b.Model,
 		RuntimeArgs:   b.Args,
 		ManifestLimit: b.Window,
-		FeedLimit:     dbLimit,
+		FeedLimit:     catalogLimit,
 		Redirection:   b.Redirection,
 	})
 
@@ -267,20 +267,20 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		primaryModel:  IdentityKey(model),
 		args:          b.Args,
 		manifestLimit: b.Window,
-		dbLimit:       dbLimit,
+		catalogLimit:  catalogLimit,
 		redirection:   b.Redirection,
 		limit:         limit,
 		limitSrc:      src,
 	}
 }
 
-// databaseLimit reads the window for a launch from the harness's own model
-// database, for the one harness that keeps one (opencode) and only when the
+// catalogLimit reads the window for a launch from the harness's own model
+// catalog, for the one harness that keeps one (opencode) and only when the
 // operator set no runtime.context_window: the manifest wins, so a read it
 // would outrank is skipped. Any failure returns 0, which leaves the window
 // unresolved; see OpenCodeWindow. It does file I/O, so it is called from Bind
 // and never from Observe.
-func (a *Accountant) databaseLimit(b Bind) int {
+func (a *Accountant) catalogLimit(b Bind) int {
 	if b.Harness != opencode.Harness || b.Window > 0 {
 		return 0
 	}
@@ -370,7 +370,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 
 	a.mu.Lock()
 	st := a.stateLocked(c, ev.Harness, prof)
-	args, manifest, dbLimit, redirection := st.args, st.manifestLimit, st.dbLimit, st.redirection
+	args, manifest, catalogLimit, redirection := st.args, st.manifestLimit, st.catalogLimit, st.redirection
 	a.mu.Unlock()
 
 	limit, src, model := a.limits.Resolve(Request{
@@ -378,7 +378,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 		StreamModel:   d.Model,
 		RuntimeArgs:   args,
 		ManifestLimit: manifest,
-		FeedLimit:     dbLimit,
+		FeedLimit:     catalogLimit,
 		Redirection:   redirection,
 	})
 

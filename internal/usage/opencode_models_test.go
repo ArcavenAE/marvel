@@ -104,7 +104,7 @@ func TestOpenCodeWindowErrorsAreNotFoundOrUnreadable(t *testing.T) {
 	}
 }
 
-// The tests below drive the Accountant, which is where the database is read
+// The tests below drive the Accountant, which is where the catalog is read
 // (once, at Bind: Observe may not do file I/O).
 
 func bindOpenCode(t *testing.T, a *Accountant, args []string, window int) {
@@ -112,7 +112,7 @@ func bindOpenCode(t *testing.T, a *Accountant, args []string, window int) {
 	a.Bind(testCoords, Bind{Harness: opencode.Harness, Args: args, Window: window, Redirection: api.BackendDefault})
 }
 
-func TestBindReadsOpenCodeDatabaseWhenNoManifestWindow(t *testing.T) {
+func TestBindReadsOpenCodeCatalogWhenNoManifestWindow(t *testing.T) {
 	t.Parallel()
 	a, sink, _ := newTestAccountant(t, Table{})
 	a.opencodeModelsPath = opencodeFixture
@@ -125,7 +125,7 @@ func TestBindReadsOpenCodeDatabaseWhenNoManifestWindow(t *testing.T) {
 		t.Fatal("no reading written")
 	}
 	if got.ContextLimit != 200_000 {
-		t.Errorf("limit = %d, want 200000 from the database", got.ContextLimit)
+		t.Errorf("limit = %d, want 200000 from the catalog", got.ContextLimit)
 	}
 	if got.ContextLimitSource != string(LimitFromFeed) {
 		t.Errorf("limit source = %q, want %q", got.ContextLimitSource, LimitFromFeed)
@@ -135,7 +135,7 @@ func TestBindReadsOpenCodeDatabaseWhenNoManifestWindow(t *testing.T) {
 	}
 }
 
-func TestOpenCodeManifestWindowBeatsTheDatabase(t *testing.T) {
+func TestOpenCodeManifestWindowBeatsTheCatalog(t *testing.T) {
 	t.Parallel()
 	a, sink, _ := newTestAccountant(t, Table{})
 	a.opencodeModelsPath = opencodeFixture
@@ -149,7 +149,7 @@ func TestOpenCodeManifestWindowBeatsTheDatabase(t *testing.T) {
 	}
 }
 
-func TestOpenCodeDatabaseFailureLeavesTheWindowUnresolved(t *testing.T) {
+func TestOpenCodeCatalogFailureLeavesTheWindowUnresolved(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.json")
@@ -180,7 +180,7 @@ func TestOpenCodeDatabaseFailureLeavesTheWindowUnresolved(t *testing.T) {
 	}
 }
 
-func TestOpenCodeDatabaseIsNotReadForOtherHarnesses(t *testing.T) {
+func TestOpenCodeCatalogIsNotReadForOtherHarnesses(t *testing.T) {
 	t.Parallel()
 	a, sink, _ := newTestAccountant(t, Table{})
 	a.opencodeModelsPath = opencodeFixture
@@ -189,6 +189,6 @@ func TestOpenCodeDatabaseIsNotReadForOtherHarnesses(t *testing.T) {
 	a.Observe(testCoords, turnEvent("codex", additive(20_000, 0, 0)))
 
 	if got, ok := sink.get(testCoords.AgentID); ok && got.ContextLimit != 0 {
-		t.Errorf("a codex session took limit %d from the opencode database", got.ContextLimit)
+		t.Errorf("a codex session took limit %d from the opencode catalog", got.ContextLimit)
 	}
 }
