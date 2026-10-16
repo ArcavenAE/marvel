@@ -184,11 +184,16 @@ Scope and limits:
   is ever read. Without it the reading stays 0 and the trigger never arms while
   looking configured (finding-044). `examples/auto-shift.toml` shows the full
   interactive shape (window plus feed).
-- Only sessions on a resolved window are metered. codex reports a session
-  total rather than a per-request level, and opencode declares no window, so a
-  role on either stays operator-shifted unless the operator sets
-  `runtime.context_window` to supply a denominator. See `internal/usage/doc.go`
-  and `aae-orc-dc1j` (interactive sessions).
+- Only sessions on a resolved window are metered. An interactive codex seat is
+  metered through its seeded hooks (`marvel codex-ctx`), which send the level
+  and the window from codex's own record. The headless `codex exec` stream
+  reports a running total and gives no level; whether the seeded hooks fire
+  under `exec` is unchecked
+  (`docs/design/unresolved-window-context-pressure.md`). opencode declares
+  no window, so a role on it stays
+  operator-shifted unless the operator sets `runtime.context_window` to supply
+  a denominator. See `internal/usage/doc.go` and `aae-orc-dc1j` (interactive
+  sessions).
 - Automatic initiations are capped fleet-wide per reconcile tick
   (`maxAutoShiftsPerTick`) so correlated pressure across roles does not burst
   the shared per-account rate limit at once (`aae-orc-hfc0`). Excess triggers

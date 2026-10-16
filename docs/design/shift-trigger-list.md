@@ -1,8 +1,8 @@
 # Automatic shift triggers as a list (context pressure, max age)
 
-- **Status:** design for review, 2026-10-02. No code lands until this is
-  reviewed. Tracks marvel#437; source idea #399
-  (`_kos/ideas/max-session-age.md`).
+- **Status:** implemented in #443 (dd63426). Written for review on
+  2026-10-02 and kept below as the record of why. Tracks marvel#437; source
+  idea #399 (`_kos/ideas/max-session-age.md`).
 - **Scope:** slice 1, a list of one or more conditions. AND and OR
   expressions are left room for, not built.
 
