@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 // The layout root has one selector, MARVEL_HOME, which the --marvel-home flag
@@ -11,7 +13,7 @@ import (
 
 func TestDefaultLayoutRootPrecedence(t *testing.T) {
 	user := t.TempDir()
-	root := filepath.Join(t.TempDir(), "mh")
+	root := filepath.Join(shorttmp.Dir(t), "mh")
 
 	cases := []struct {
 		name    string
@@ -101,7 +103,7 @@ func TestTwoRootsAreTwoTags(t *testing.T) {
 
 func TestNonDefaultHome(t *testing.T) {
 	user := t.TempDir()
-	root := filepath.Join(t.TempDir(), "mh")
+	root := filepath.Join(shorttmp.Dir(t), "mh")
 	t.Setenv("HOME", user)
 
 	t.Setenv(HomeEnv, "")

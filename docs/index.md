@@ -26,6 +26,8 @@ simulator, so it needs no model auth and costs no tokens.
 - [Feature matrix](feature-matrix.md). Which features work for which harness,
   with the evidence for each cell, and which ones need the bus, director or a
   hub.
+- [Adapter kit checklist](adapter-kit-checklist.md). The lines a new harness
+  walks, with evidence, before marvel gets an adapter for it.
 - [Demo](demo.md). A four-act walkthrough of health, loss, recovery, context
   pressure and budgets, with the manifests it uses.
 - [examples/](../examples/). A manifest per scenario, each in TOML and YAML,

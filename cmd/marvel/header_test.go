@@ -15,6 +15,8 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 var headerNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
@@ -247,12 +249,7 @@ func headerSessions() []api.Session {
 // socket and returns its path.
 func headerSocket(t *testing.T, handler func(daemon.Request) daemon.Response) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "hs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "s.sock")
+	socket := filepath.Join(shorttmp.Dir(t), "s.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -326,7 +323,7 @@ func captureStderr(t *testing.T, fn func()) string {
 // already warns, so the warning must reach stderr once for the whole command.
 func TestHeaderDoesNotRepeatTheDaemonHomeWarning(t *testing.T) {
 	resolveFixture(t, false)
-	t.Setenv("MARVEL_HOME", t.TempDir())
+	t.Setenv("MARVEL_HOME", shorttmp.Dir(t))
 	socket := headerSocket(t, func(req daemon.Request) daemon.Response {
 		resp := daemon.Response{DaemonHome: "/elsewhere/other-marvel"}
 		switch req.Method {
@@ -375,5 +372,19 @@ func TestCollectHeaderReportsATransportError(t *testing.T) {
 	}
 	if out := renderHeader(h, headerNow); !strings.Contains(out, "no status (") || strings.Contains(out, "no status (-)") {
 		t.Errorf("the header should name why there is no status:\n%s", out)
+	}
+}
+
+// A TMPDIR too long for a unix socket must not stop the header tests: the
+// socket they serve is made under a short directory of its own.
+func TestHeaderSocketSurvivesALongTMPDIR(t *testing.T) {
+	long := filepath.Join(shorttmp.Dir(t), strings.Repeat("d", 100))
+	if err := os.MkdirAll(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", long)
+	sock := headerSocket(t, func(daemon.Request) daemon.Response { return daemon.Response{} })
+	if len(sock) > paths.MaxUnixSocketPath {
+		t.Errorf("socket path is %d bytes, over the %d-byte limit", len(sock), paths.MaxUnixSocketPath)
 	}
 }
