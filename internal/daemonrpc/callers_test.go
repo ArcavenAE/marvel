@@ -28,6 +28,7 @@ var moved = map[string]bool{
 
 // movedThroughDaemon returns each selector in src that names a moved identifier
 // through the file's import of internal/daemon, whatever the import is called.
+// A dot import is reported as one hit, since it hides every moved name.
 func movedThroughDaemon(t *testing.T, filename string, src any) []string {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), filename, src, parser.SkipObjectResolution)
@@ -45,7 +46,10 @@ func movedThroughDaemon(t *testing.T, filename string, src any) []string {
 			local = imp.Name.Name
 		}
 	}
-	if local == "" || local == "_" || local == "." {
+	if local == "." {
+		return []string{". (dot import of the daemon)"}
+	}
+	if local == "" || local == "_" {
 		return nil
 	}
 	var hits []string
