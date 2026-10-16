@@ -427,3 +427,33 @@ func TestRetryRevokesDoesNotRefuseAnAskInFlightForTheSameName(t *testing.T) {
 		t.Errorf("live tokens = %v, want only the new seat's %s", live, r.tok.ID)
 	}
 }
+
+// aliasAuth admits a token for whatever key the caller typed and answers with
+// the session's canonical identity, as a lookup that is not exact would.
+type aliasAuth struct{ canonical string }
+
+func (a aliasAuth) Authenticate(_, token string) (Identity, error) {
+	if token != "hb" {
+		return Identity{}, ErrUnauthorized
+	}
+	return Identity{Session: a.canonical, Team: "t", Role: "r"}, nil
+}
+
+// The token record hangs off the identity the broker authenticated, so the
+// seat's end, which names the canonical key, revokes it.
+func TestIssueRecordsTheTokenUnderTheAuthenticatedSession(t *testing.T) {
+	t.Parallel()
+
+	m := NewMock(15*time.Minute, func() time.Time { return t0 })
+	b := New(m, aliasAuth{canonical: "ws/t/r-g1-0"})
+	if _, err := b.Issue(context.Background(), "WS/T/R-G1-0", "hb"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	if err := b.RevokeSession(context.Background(), "ws/t/r-g1-0"); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	if live := m.Live(); len(live) != 0 {
+		t.Errorf("live tokens after the seat ended = %v, want none: the token was filed under the typed key", live)
+	}
+}
