@@ -4,6 +4,9 @@ Status: design, voted by a 3-round party (ptdd), 2026-10-06. Proposal only:
 the rulings in section 6 are the operator's. Code references are pinned to
 marvel `409593c`.
 
+Amended 2026-10-16 (marvel#922): the window may also come from opencode's model
+catalog, below the manifest; D9's order is unchanged.
+
 ## 1. Why
 
 marvel's context-pressure shift arm replaces a seat before its context runs
@@ -28,9 +31,12 @@ assumed, but a fixed headroom and stale readings break it in other ways.
   purpose (`internal/usage/limits.go:242-286`).
 - **Codex, headless.** Whether the hooks fire under `exec` is not checked.
 - **opencode.** There is no window in either mode unless the manifest
-  declares `context_window`. Headless parses per-request occupancy;
-  interactive has capture-pane only. marvel has no opencode hook, feed or
-  database reader. opencode seats share the operator's opencode data
+  declares `context_window` or the model catalog lists the launch model.
+  Headless parses per-request occupancy;
+  interactive has capture-pane only. marvel has no opencode hook or feed.
+  It reads no opencode sqlite file; it does read opencode's model
+  catalog (`models.json`, `limit.context` per model, no credentials) at
+  launch when the manifest sets no window (marvel#922). opencode seats share the operator's opencode data
   directory (`internal/runtime/opencode.go:53,71` pass the base env only).
   That directory holds `opencode.db` and no separate auth file (names only,
   nothing opened), which is consistent with credentials living in the same
@@ -115,7 +121,8 @@ the raw payload (not to OTEL either).
   config entry, never installed with `opencode plugin` (which resolves npm
   and edits config), and it sends only D1 numbers. Until both probes pass,
   apply refuses a context-pressure arm on an opencode role, with an advisory
-  naming max-age.
+  naming max-age. Amended 2026-10-16 (marvel#922): the window may also come from opencode's model
+  catalog, below the manifest; D9's order is unchanged.
 - **D10. No `serve` channel.** marvel does not launch or use `opencode serve`
   for occupancy. If headless `opencode run` binds a listener, marvel sets a
   per-seat password (issuance under ADR-009). A password in the pane env is

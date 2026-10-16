@@ -1063,7 +1063,15 @@ ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It
 says "not quiet", not busy: a seat in a long tool call can read low. It is a -
 until the daemon has watched for the whole 15 minutes, and for a seat with no
-activity channel.
+activity channel. A seat that has not reported a context reading shows a - too, and is
+left out of the --load mean. Besides a seat whose feed has not fired yet, two working
+seats read - this way: a headless codex exec seat, whose stream carries spend and no
+context reading; and a headless seat the daemon adopted across a restart, whose stream
+marvel does not reopen, so it reads - until the seat is relaunched. A heartbeat-fed seat
+keeps its last reading across a restart.
+
+TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
+no such stream, so both show a - for it. That is the expected shape, not a broken feed.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
