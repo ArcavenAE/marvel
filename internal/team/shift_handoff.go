@@ -43,13 +43,15 @@ const (
 // A role's seats carry the generation of the last shift that covered the role,
 // not the team's counter, so a team-generation filter hides them (marvel#451).
 // Age runs from CreatedAt, so it survives a daemon restart and starts over on a
-// health restart, which creates a new session (D3). Activity is the context
-// feed timestamp the activity advisory reads, or spawn when there is none.
+// health restart, which creates a new session (D3). Activity is lastWorked:
+// the cost and API-time change stamp where there is one, else the context feed
+// timestamp the activity advisory reads, else spawn. The quiet stage waits for
+// a pause of cond.QuietFor, which defaults to five minutes (marvel#936).
 // Only running sessions count, so a finished headless run never ages out (D7).
 func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.ShiftCondition, now time.Time) (sess api.Session, age time.Duration, stage string, ok bool) {
 	quietFor := cond.QuietFor
 	if quietFor <= 0 {
-		quietFor = api.DefaultShiftQuietFor
+		quietFor = api.DefaultShiftAskPause
 	}
 	maxDefer := cond.MaxDefer
 	if maxDefer <= 0 {
@@ -63,18 +65,30 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 		if age < cond.MaxAge {
 			continue
 		}
-		lastActive := s.CreatedAt
-		if s.ContextAt.After(lastActive) {
-			lastActive = s.ContextAt
-		}
 		switch {
-		case now.Sub(lastActive) >= quietFor:
+		case now.Sub(lastWorked(s)) >= quietFor:
 			return s, age, ageStageQuiet, true
 		case age >= cond.MaxAge+maxDefer:
 			return s, age, ageStageHard, true
 		}
 	}
 	return api.Session{}, 0, "", false
+}
+
+// lastWorked is when the seat last did work, for the pause test. Where the seat
+// forwards cost and API-time totals it is the last move of either, because the
+// statusline beats on an idle seat and ContextAt moves with every beat
+// (marvel#936). A seat with no stamp keeps the context feed's time, and a seat
+// with neither counts from spawn.
+func lastWorked(s api.Session) time.Time {
+	at := s.CreatedAt
+	switch {
+	case s.TotalsChangedAt.After(at):
+		at = s.TotalsChangedAt
+	case s.TotalsChangedAt.IsZero() && s.ContextAt.After(at):
+		at = s.ContextAt
+	}
+	return at
 }
 
 // requestHandoff asks sess for its handoff and records the pending request on

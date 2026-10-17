@@ -118,7 +118,9 @@ marvel cannot see a turn boundary or a merge. What it can see is activity:
 the context feed timestamp (`ContextAt`) that the activity advisory already
 reads. So `max-age` fires in two stages:
 - **Quiet threshold:** once age passes `max_age`, fire on the first tick the
-  session has been quiet for `quiet_for` (default 2m: no context update).
+  session has been quiet for `quiet_for` (default 2m: no context update). Since
+  marvel#936 the default is 5m and quiet reads the cost and API-time change
+  stamp where the seat has one.
 - **Hard threshold:** fire regardless at `max_age + max_defer` (default 30m),
   because a wedged seat may never go quiet in the feed's sense, and a
   backstop that can be deferred forever is not one.

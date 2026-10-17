@@ -708,6 +708,7 @@ const ShiftTriggerMaxAge = "max-age"
 // Defaults and floor for the max-age trigger (design D4, D5; ruling 3).
 const (
 	DefaultShiftQuietFor      = 2 * time.Minute
+	DefaultShiftAskPause      = 5 * time.Minute
 	DefaultShiftMaxDefer      = 30 * time.Minute
 	DefaultShiftHandoffWindow = 5 * time.Minute
 	MinShiftMaxAge            = 15 * time.Minute
@@ -766,7 +767,7 @@ type ShiftCondition struct {
 	On             string
 	HeadroomTokens int
 	// MaxAge, QuietFor and MaxDefer apply to ShiftTriggerMaxAge. A zero
-	// QuietFor or MaxDefer means its default.
+	// QuietFor means DefaultShiftAskPause and a zero MaxDefer its default.
 	MaxAge   time.Duration
 	QuietFor time.Duration
 	MaxDefer time.Duration
