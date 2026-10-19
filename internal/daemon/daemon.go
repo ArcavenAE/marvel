@@ -1152,6 +1152,12 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleBusLeafConnect()
 	case "bus.leaf.disconnect":
 		return d.handleBusLeafDisconnect()
+	case "exposure.add":
+		return d.handleExposureAdd(req.Params, c)
+	case "exposure.end":
+		return d.handleExposureEnd(req.Params, c)
+	case "exposure.void":
+		return d.handleExposureVoid(req.Params, c)
 	case "credential.list":
 		return d.handleCredentialList()
 	case "credential.delete":
@@ -1398,6 +1404,13 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// registry: mode alone does not answer it, since a generic role can
 	// declare headless and still have no stream path.
 	if err := m.ValidateBudgets(d.sessMgr.CanStreamRole); err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	// Pre-flight: a writer role whose slot has read its function is refused
+	// here, before anything is stored, by the same gate every spawn path asks
+	// (marvel#945).
+	if err := m.CheckExposure(d.store); err != nil {
 		return Response{Error: err.Error()}
 	}
 

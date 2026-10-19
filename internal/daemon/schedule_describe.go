@@ -69,6 +69,7 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 			})
 		}
 	}
+	out.Conditions = append(out.Conditions, d.exposureConditions(t)...)
 	for _, role := range t.Roles {
 		if role.Schedule == nil {
 			continue

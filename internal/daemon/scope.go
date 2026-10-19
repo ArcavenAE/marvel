@@ -114,6 +114,9 @@ func localCaller() caller { return caller{scope: ScopeAdmin, local: true} }
 // the operator at the daemon's own socket (brief 9 S3).
 var localOnlyMethods = map[string]bool{
 	"credential.reveal": true,
+	// exposure.void releases a refusal, so it is the operator's, at the daemon's
+	// own socket (marvel#945).
+	"exposure.void": true,
 	// broker.token returns a bearer token, so like a revealed credential it
 	// never leaves through the mrvl:// tunnel.
 	"broker.token": true,

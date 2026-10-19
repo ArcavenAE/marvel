@@ -564,6 +564,8 @@ marvel daemon reexec                                 # re-exec the binary at its
 marvel events                                        # structured event ring (control-plane + agent.*)
 marvel capture <session-key>                         # capture a session's pane content
 marvel attach <desk>                                 # open a session's pane by its DESK number; --print shows the command
+marvel exposure add|end <workspace/team> <role> <fn>    # record that a slot read a function; a role with writes: [fn] is not started
+marvel exposure void <workspace/team> <role> <fn> --reason W   # operator-run, local socket: stop counting a wrong record, delete nothing
 marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (--key presses a key, text is literal)
 marvel config <add-cluster|repoint|list|current|use-cluster|remove-cluster>   # named-cluster config (repoint moves a cluster to a new address when its host key matches the recorded one)
 marvel keys <generate|show|list|trust|authorize|authorized|revoke|doctor>  # SSH client keys
