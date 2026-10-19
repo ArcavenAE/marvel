@@ -377,10 +377,21 @@ section 4 item 1, so the scratch `HOME` is the home the filter uses:
     was, and the test asserts that exact text, not only the absence of a
     name;
   - the too-long value is an absolute path under the scratch `HOME`, long
-    enough that its socket path is over the unix limit. It prints with the
-    quoted value and the trailing socket path both as `<home>`, and the
-    test asserts that neither the scratch `HOME`'s path nor any of its
-    directory names appears in the output.
+    enough that its socket path is over the 104-byte unix limit
+    (`internal/paths/paths.go:202`). The scratch `HOME` has one component
+    of 16 random hex digits, generated per run, and the too-long value
+    sits under it. The test asserts all three:
+    - the exit code is 1;
+    - stderr holds exactly the expected line, which keeps the ruled form,
+      source and value, with the value and the trailing socket path
+      filtered: `Error: --marvel-home="<home>": socket path is <N> bytes,
+      over the 104-byte limit for a unix socket: <home>`, with `<N>`
+      computed by the test from the value it built; for `MARVEL_HOME` the
+      same line with `MARVEL_HOME=` as the source;
+    - the 16-hex component appears nowhere in stdout or stderr. A random
+      component cannot match `<home>`, a word in the line, or a path
+      component the system put there, so the absence check can only pass
+      when the path was hidden.
 - **Under `marvel get sessions`, the flag only.** The three values given
   by `--marvel-home` print `ParseHome`'s ruled text unchanged, which is
   what marvel's own `internal/paths/home_test.go:58-64`, `:73` and `:77`
@@ -389,14 +400,16 @@ section 4 item 1, so the scratch `HOME` is the home the filter uses:
   because the resolver falls back to the default socket without a word
   (`main.go:108-116`). That silence is the case `plan` reads for itself.
 
-A known gap, not a blocker: the state directory's `Lstat` check and its
+The state directory's `Lstat` check and its
 `os.OpenRoot` are two calls, so a directory swapped for a symlink between
 them is opened. `OpenRoot` then confines every later operation to what it
 opened, so the swap cannot reach outside it. The ownership and mode
 check, though, ran on the directory that was there before the swap, not
-on the one opened. Repeating the check on the opened root (`root.Stat(".")`,
-which `os.Root` has had since Go 1.24) would close that gap; it is left as a
-note, and the builder may add it.
+on the one opened. `root.Stat(".")` alone does not restore "not a
+symlink", since it reports what was opened. The builder closes the gap by
+comparing the device and inode from the `Lstat` with those from
+`root.Stat(".")`: a mismatch means the directory changed in between, and
+the run goes unkeyed with `key refused (state directory)`.
 
 ## 4. Features specific to marvel, ranked
 
