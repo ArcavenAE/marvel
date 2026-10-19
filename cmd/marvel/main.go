@@ -3152,10 +3152,17 @@ func newSessionRow(s api.Session) sessionRow {
 	if workdir == "" {
 		workdir = "-"
 	}
+	tout, rate := toutCell(s.SpendOut), rateCell(s, rateClock())
+	if v, ok := costTout(s); ok {
+		tout = v
+	}
+	if v, ok := costRate(s, rateClock()); ok {
+		rate = v
+	}
 	return sessionRow{
 		workdir:    workdir,
-		tout:       toutCell(s.SpendOut),
-		rate:       rateCell(s, rateClock()),
+		tout:       tout,
+		rate:       rate,
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),
 		age:        ageCell(s, lastActiveClock()),
