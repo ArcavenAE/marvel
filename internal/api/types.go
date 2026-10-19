@@ -254,8 +254,17 @@ type Session struct {
 	// outside SessionContext on purpose: that block is replaced whole by each
 	// CTX% producer, and these have one producer, the statusline heartbeat, so
 	// nothing needs carrying across a replace. Nil is never reported, not zero.
-	// Nothing reads them yet (marvel#801).
-	CostTotalUSD    *float64    `json:"cost_total_usd,omitempty" toml:"-"`
+	// The TOUT and RATE cells read the cost total for a seat with no token
+	// stream; CostSamples is the ring RATE reads (cost_samples.go).
+	CostTotalUSD *float64     `json:"cost_total_usd,omitempty" toml:"-"`
+	CostSamples  []CostSample `json:"cost_samples,omitempty" toml:"-"`
+	// CostSeenAt is when a beat last carried the cost total, changed or not. A
+	// gap in it is what tells a silent feed from a flat run (cost_samples.go).
+	CostSeenAt time.Time `json:"cost_seen_at,omitempty" toml:"-"`
+	// CostGapAt is when the feed last came back after a silence longer than
+	// CostGapLimit, which a daemon restart is too. RATE reads ? while it is
+	// inside the window.
+	CostGapAt       time.Time   `json:"cost_gap_at,omitempty" toml:"-"`
 	APIDurationMS   *int64      `json:"api_duration_ms,omitempty" toml:"-"`
 	TotalsChangedAt time.Time   `json:"totals_changed_at,omitempty" toml:"-"`
 	HealthState     HealthState `toml:"-"`

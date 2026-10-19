@@ -139,6 +139,19 @@ TEAM stays reachable through `--columns` and `describe`.
 - **TOUT:** cumulative output tokens, quantized (`12k`, `1.4M`).
 - **RATE:** a decaying output-token rate (aae-orc-o16q2). It is computed
   in `Accountant.Observe` and drawn through the as-of cell.
+- **Dollar form (statusline seats).** A seat with no token stream and a
+  statusline feed shows the harness's running cost total as TOUT (`~$4.12`)
+  and its change per minute as RATE (`~$0.11/m`). The `~` marks an estimate:
+  Claude Code's list-price figure, not a bill. RATE reads a ring of stored
+  totals (`api.CostSample`, `internal/api/cost_samples.go`), one sample per 30
+  seconds at most and one hour deep, and takes the change since the sample at
+  the start of the quiet window. A total that goes down starts the ring over,
+  so RATE shows `-` until a window of readings exists and is never negative;
+  `?` once the feed has been silent past the window, or while a silence of
+  over three minutes is inside it (`CostGapLimit`; every beat stamps
+  `CostSeenAt`, so a silence tells itself apart from a flat run, and a daemon
+  restart reads the same way). A seat with a token
+  stream keeps the token cells (`cmd/marvel/cost.go`, marvel#801).
 - **No Tin column.** Raw input is not comparable across harnesses: codex's
   layout counts cached input inside input, while Claude's adds it
   separately. PROMPT (`PromptTokens`, normalized for layout) goes in

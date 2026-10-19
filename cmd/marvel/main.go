@@ -1072,9 +1072,17 @@ marvel does not reopen, so it reads - until the seat is relaunched. A heartbeat-
 keeps its last reading across a restart.
 
 TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
-no such stream, so both show a - for it, with one exception: an interactive codex seat
-fills TOUT from the output total in its rollout, and RATE stays a -. That is the
-expected shape, not a broken feed.
+no such stream, so both show a - for it, with two exceptions. An interactive codex seat
+fills TOUT from the output total in its rollout, and RATE stays a -. An interactive
+claude seat with a statusline feed shows Claude Code's own running cost total as TOUT
+(~$4.12) and its change per minute over the quiet window as RATE (~$0.11/m). The ~ marks
+an estimate: it is the harness's list-price figure, not a bill, and under a subscription it
+measures usage, not money. RATE shows a - until a full window of readings exists, which
+includes the first window after the total drops (a restart, /clear or a new session starts
+a fresh baseline), a ? once the feed has been silent past the window or while a silence of over three minutes (a stopped seat, a daemon restart) is inside it, and never a negative
+figure. A seat with a token stream keeps its token cells, so one seat never shows both
+units, and sorting by RATE orders token rates only (a dollar rate sorts below them). That is
+the expected shape, not a broken feed.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
@@ -3152,10 +3160,17 @@ func newSessionRow(s api.Session) sessionRow {
 	if workdir == "" {
 		workdir = "-"
 	}
+	tout, rate := toutCell(s.SpendOut), rateCell(s, rateClock())
+	if v, ok := costTout(s); ok {
+		tout = v
+	}
+	if v, ok := costRate(s, rateClock()); ok {
+		rate = v
+	}
 	return sessionRow{
 		workdir:    workdir,
-		tout:       toutCell(s.SpendOut),
-		rate:       rateCell(s, rateClock()),
+		tout:       tout,
+		rate:       rate,
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),
 		age:        ageCell(s, lastActiveClock()),
