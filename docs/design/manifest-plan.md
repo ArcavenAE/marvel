@@ -224,8 +224,11 @@ exactly:
 - **A home path** is an absolute path, after `filepath.Clean`, that is
   under the home of the process printing the line (`os.UserHomeDir`), or
   under `/Users/` or `/home/`. The daemon applies it to the lines it builds,
-  with the daemon user's home; the client applies it to the banner, with
-  the client's home. Neither rewrites the other's lines.
+  with the daemon user's home. The client applies it to **every line it
+  prints**, with the client's home: the banner, its own error lines, and the
+  text it relays from the daemon. Neither changes what the other sent; the
+  client's pass over relayed text only hides what the daemon's pass left,
+  such as a path under the client's home that is not under the daemon's.
 - **The exception: one program path per role.** The path `exec.LookPath`
   returns for the role's command on the daemon's PATH (section 4 item 4).
   When it is under the daemon user's home it is written with that home as
@@ -237,9 +240,24 @@ exactly:
   - `args` are never printed, since they can name paths. The line prints
     their count (`args: 2`).
 - **Every other home path is hidden** as `<home:XXXXXXXX>`, the first eight
-  hex digits of the SHA-256 of the cleaned path. The same path prints the
-  same token, so a before and after can still be compared, and no directory
-  name prints. This covers a passing check as well as a failing one.
+  hex digits of HMAC-SHA-256 of the cleaned path, keyed with a per-host
+  random key. The key is a 32-byte file in the printing process's own marvel
+  layout (`<MARVEL_HOME>/state/redact.key`, mode 0600), created on first use
+  and never printed. marvel mints it and can replace it without anyone else,
+  so it is issuance under SOUL section 3, not custody. The same path prints
+  the same token within one host's output, so a before and after can still
+  be compared, and no directory name prints. This covers a passing check as
+  well as a failing one.
+  - **What the token protects, and what it does not.** An unkeyed hash
+    would let a reader confirm a guessed path: with a known user name and a
+    usual layout, a few hundred candidates such as `/Users/<name>/work/<repo>`
+    are enough, and eight hex digits make a false match rare. The key stops
+    that for anyone without it. It does not stop a reader who holds the key
+    file, and tokens from two hosts, or from a daemon and a client that run
+    as different users, are not comparable.
+  - If the key cannot be read or created, the line prints `<home>` with no
+    token, and the banner says `redaction: unkeyed, tokens omitted`. A path
+    is never printed in full for want of a key.
 
 What that means for each line that can carry a path:
 
@@ -251,6 +269,9 @@ What that means for each line that can carry a path:
 | workdir, passing | `core workdir <home:5e6f7a8b> exists; daemon uid can enter and write` |
 | workdir or trusted folder, failing | names the check and the token, not the path: `core workdir <home:5e6f7a8b>: does not exist` |
 | refusal text from a pre-flight | the same rule, applied to the text the daemon returns before it is printed |
+| client: config read error | `config.Load` wraps `os.ReadFile`'s error as `read config: open <path>: <reason>` (`internal/config/config.go:828-833`), so a config that exists but cannot be read names its path. Printed as `read config: open <home:XXXXXXXX>: permission denied`. A parse error (`parse config: ...`, `:837-838`) names no file and prints as it is |
+| client: dial error | `connect to daemon at <addr> (<network>): <err>` (`internal/daemonrpc/client.go:191`) prints the resolved address. A unix socket under a home prints as `connect to daemon at <home:XXXXXXXX> (unix): ...`, the same token as the banner's `socket=`. A TCP address carries no path and prints as it is |
+| client: `ErrInvalidClusterName` warning, unknown-cluster refusal | name a cluster and a byte, never a path (`config.go:863`, `:869`, `:962`); printed as they are, and still passed through the rule |
 
 A path not under any home (`/srv/work`, `/opt/homebrew/bin/codex`) prints as
 it is, as in the worked case above.
@@ -287,7 +308,8 @@ second by most seats.
      daemon with NO warning. `plan` refuses here too, and prints the config
      error. A missing config file is not a failure: `config.Load` returns
      the defaults for it (`internal/config/config.go:830-831`), so this
-     refusal bites only on a config file that exists and does not parse.
+     refusal bites only on a config file that exists and cannot be read or
+     does not parse.
      An `ErrInvalidClusterName` (another cluster's bad name) stays a
      warning, as it is for every verb (`main.go:118-120`).
 
@@ -302,8 +324,14 @@ second by most seats.
    `MARVEL_SOCKET` set or not. On `--socket` it refuses before reading
    anything.
 
-   Both refusals, and the `current_cluster` one, mean `plan` did not run, so
-   they exit 1, "could not evaluate" (section 6), never 3.
+   Every refusal in this item means `plan` did not run, so each exits 1,
+   "could not evaluate" (section 6), never 3. That is five: `--socket`; an
+   empty `--cluster ""` (`main.go:98-99`); a config that cannot be read or
+   does not parse; the
+   `MARVEL_SOCKET` beside `current_cluster` case; and an unknown cluster,
+   named by `--cluster` or by `current_cluster`, which `GetCluster` refuses
+   with `unknown cluster "<name>" (run 'marvel config list' to see available
+   clusters)` (`internal/config/config.go:962`, `main.go:122-130`).
 
    **How tests reach a daemon.** Every `plan` test builds the child's
    environment from nothing and never inherits the caller's: a seat carries
@@ -320,20 +348,37 @@ second by most seats.
      default rung;
    - no other `MARVEL_*` key.
 
+   Two scratch daemons run, each counting the requests it receives: **A**,
+   the seat's own, at the socket `MARVEL_SOCKET` names, and **B**, the
+   cluster's, at the socket a config cluster entry names. Every case asserts
+   both counts, so a case that dials the wrong daemon fails even when its
+   exit code is right.
+
    The cases, each with its exit code:
 
    | case | `MARVEL_SOCKET` | config under the scratch `MARVEL_HOME` | expect |
    |---|---|---|---|
-   | positive control | the scratch daemon | missing | runs against the scratch daemon, exit 0 |
-   | env rung, unreadable config | the scratch daemon | present, does not parse | refuses, prints the config error, exit 1, dials nothing |
-   | default rung, unreadable config | unset | present, does not parse | refuses, exit 1, dials nothing |
-   | env rung, `current_cluster` set | the scratch daemon | names a cluster | refuses, exit 1 |
-   | `--socket` | unset | missing | refuses, exit 1 |
+   | case | flags | `MARVEL_SOCKET` | config under the scratch `MARVEL_HOME` | expect |
+   |---|---|---|---|---|
+   | positive control | none | A | missing | runs against A, banner `(MARVEL_SOCKET)`, exit 0; A 1+, B 0 |
+   | env rung, unreadable config | none | A | present, does not parse | refuses, prints the config error, exit 1; A 0, B 0 |
+   | default rung, unreadable config | none | unset | present, does not parse | refuses, exit 1, the text names `parse config:`; A 0, B 0 |
+   | env rung, `current_cluster` set | none | A | `current_cluster: b`, cluster `b` at B | refuses, exit 1, dials nothing; A 0, B 0 |
+   | explicit cluster outranks the env | `--cluster b` | A | cluster `b` at B | runs against B, banner `(cluster b)`, exit 0; A 0, B 1+ |
+   | cluster rung from the config | none | unset | `current_cluster: b`, cluster `b` at B | runs against B, banner `(cluster b)`, exit 0; A 0, B 1+ |
+   | cluster with no address | `--cluster c` | A | cluster `c` with no socket or server | dials the layout default under the scratch `MARVEL_HOME`, never A; banner `(layout default)`. With no daemon there, the dial error prints the token form of that socket, exit 1; A 0, B 0 |
+   | unknown cluster, from the flag | `--cluster z` | A | clusters `b` only | refuses with the `unknown cluster "z"` text, exit 1; A 0, B 0 |
+   | unknown cluster, from the config | none | unset | `current_cluster: z`, clusters `b` only | refuses with the `unknown cluster "z"` text, exit 1; A 0, B 0 |
+   | empty cluster flag | `--cluster ""` | A | cluster `b` at B | refuses with `--cluster needs a cluster name`, exit 1; A 0, B 0 |
+   | `--socket` | `--socket <A>` | unset | missing | refuses, exit 1; A 0, B 0 |
+   | unreadable config file, not a parse error | none | unset | present, mode 0000 | refuses, the text is `read config: open <home:XXXXXXXX>: permission denied` with no directory name, exit 1; A 0, B 0 |
 
-   "Dials nothing" is checked by the scratch daemon's request count, which
-   stays 0. The default-rung case has no daemon at the default socket, so a
-   refusal that failed to fire shows as a dial error instead of exit 1's
-   refusal text, and the test reads the text, not only the code.
+   "Dials nothing" is A's and B's request counts, both 0. A refusal is also
+   read by its text, not only its code: each refusal row names the text it
+   must print, so a refusal that failed to fire, and then failed to dial,
+   cannot pass as exit 1. The scratch `MARVEL_HOME` is under the scratch
+   `HOME`, so its layout default and its config are home paths, and the
+   last row and the no-address row check that the client hides them.
 2. **Gross adds, gross kills, and the net the gate sees, with a kill
    list.** The admission gate sees one net `want` per team and admits
    `want <= 0` (`internal/admission/admission.go:277-279`). So a manifest that lowers one role and raises another can
