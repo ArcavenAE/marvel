@@ -159,6 +159,7 @@ marvel delete <resource> <key>                       # delete a session, team, o
 
 # Session interaction
 marvel capture <session-key>                         # capture a session's pane content
+# a plain capture drops dim text and says so on stderr; it reads the pane twice, so a pane that changes between the reads can give a stray notice or miss one
 marvel capture -e <session-key>                      # keep escape sequences, so dim text (a composer suggestion) can be told from a typed draft
 marvel capture --composer <session-key>              # report on stderr whether the composer is empty, holds text or is mid-turn; types nothing
 marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (executive privilege)

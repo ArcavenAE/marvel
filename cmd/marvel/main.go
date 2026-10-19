@@ -1989,7 +1989,10 @@ between them. A runtime with no reader reads unknown.
 
 A plain capture drops dim text's attribute. When it did, it writes one line to
 stderr ("capture: dim text removed; ...") and leaves stdout as it was; -e and
---composer carry no such line, since they already answer the question.`,
+--composer carry no such line, since they already answer the question. The line
+comes from a second read of the pane taken straight after the plain one, so a
+pane that changed between the two reads can give a line with no dim text in
+what you got, or miss one. Treat it as a hint to ask with -e, not as a verdict.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := captureRequest(args[0], captureOpts{

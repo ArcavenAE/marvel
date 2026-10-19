@@ -16,6 +16,14 @@ var otherCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-ln-z]`)
 // capture of that pane loses no text. Used by a plain capture to say it dropped
 // the one attribute that separates a composer suggestion from a typed draft
 // (marvel#941).
+//
+// It reads SGR and nothing else, so it errs toward a notice nobody needed.
+// Measured on this function: dim set around only a shift-out/shift-in pair
+// (SO, SI), an OSC 8 hyperlink opener and closer, or a colon-form SGR such as
+// "4:3" reads as dim text, because those bytes are not stripped as non-text. tmux
+// 3.7c capture with escapes emits the first two. A dim written in colon form
+// ("2:3") is not read as SGR at all and is missed. A stray notice costs one
+// stderr line; stdout is never affected.
 func HasDim(capture string) bool {
 	capture = otherCSI.ReplaceAllString(capture, "")
 	dim, at := false, 0

@@ -16,6 +16,8 @@ func TestHasDim(t *testing.T) {
 		{"bold and colour only", "\x1b[1mbold\x1b[0m \x1b[38;5;2mgreen\x1b[0m", false},
 		{"a 2 inside a 256-colour selector is a colour", "\x1b[38;5;2mgreen\x1b[0m", false},
 		{"a 2 inside a truecolour selector is not dim", "\x1b[38;2;2;2;2mrgb\x1b[0m", false},
+		{"a 2 inside a 256-colour background selector is a colour", "\x1b[48;5;2mbg\x1b[0m", false},
+		{"an empty SGR resets dim before the text", "\x1b[2m\x1b[mtext", false},
 		{"dim ended by 22 before the text", "\x1b[2m\x1b[22mtext", false},
 		{"dim reset by 0 before the text", "\x1b[2m\x1b[0mtext", false},
 		{"dim set and reset around nothing visible", "\x1b[2m   \x1b[0m", false},

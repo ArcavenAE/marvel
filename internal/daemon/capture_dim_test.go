@@ -16,13 +16,19 @@ func TestPlainCaptureReportsDroppedDimText(t *testing.T) {
 	if plain["dim_removed"] != "true" {
 		t.Errorf("a plain capture of a dim line carries dim_removed = %q, want true", plain["dim_removed"])
 	}
-	if strings.Contains(plain["content"], "\x1b") || !strings.Contains(plain["content"], "dim suggestion") {
-		t.Errorf("a plain capture's content changed: %q", plain["content"])
+	// The bytes a plain capture printed before this change, measured on the same
+	// seat: the dim line without its attribute, the next line, and the blank rows
+	// of the 24-row pane. The notice is beside them and never in them.
+	if want := "dim suggestion\nseat ready\n" + strings.Repeat("\n", 22); plain["content"] != want {
+		t.Errorf("a plain capture's bytes changed:\n got %q\nwant %q", plain["content"], want)
 	}
 
 	ranged := captureWith(t, d, map[string]any{"session_key": key, "start": 0, "end": 4})
 	if ranged["dim_removed"] != "true" {
 		t.Errorf("a ranged plain capture carries dim_removed = %q, want true", ranged["dim_removed"])
+	}
+	if want := "dim suggestion\nseat ready\n\n\n\n"; ranged["content"] != want {
+		t.Errorf("a ranged plain capture's bytes changed:\n got %q\nwant %q", ranged["content"], want)
 	}
 
 	// Asking for the attributes, or for the composer state, already says it.

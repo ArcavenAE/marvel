@@ -2604,8 +2604,11 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 	// A plain capture drops the dim attribute, and with it the one thing that
 	// tells a composer suggestion from a typed draft. Say so, so the caller can
 	// ask for the attributes (marvel#941). It is a second read of the same span,
-	// and a failure of it never fails the capture. -e and --composer already
-	// answer the question, so they carry no notice.
+	// and a failure of it never fails the capture. The two reads are not one
+	// capture, so a pane that changes between them can give a notice for text the
+	// plain read does not show, or miss one; the notice is a hint, and -e is the
+	// answer. -e and --composer already answer the question, so they carry no
+	// notice.
 	if !p.Escapes && !p.Composer {
 		var raw string
 		var rerr error
