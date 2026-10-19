@@ -84,6 +84,8 @@ var allBuckets = [][]byte{
 	bucketRoleHealth,
 	bucketScheduleStatus,
 	bucketDutyReadiness,
+	bucketExposure,
+	bucketExposureSeal,
 	bucketMeta,
 }
 
@@ -325,7 +327,11 @@ func (s *Store) rehydrate() error {
 			return err
 		}
 		// Seat readiness
-		return s.rehydrateDuties(tx)
+		if err := s.rehydrateDuties(tx); err != nil {
+			return err
+		}
+		// Slot exposure records
+		return s.rehydrateExposures(tx)
 	})
 }
 

@@ -88,6 +88,12 @@ type Controller struct {
 	// busHolds latches the roles currently held for the bus, so a standing
 	// outage announces itself once per role rather than once per tick.
 	busHolds map[string]bool
+	// exposureHolds latches the roles held for an exposure, once per transition.
+	exposureHolds map[string]bool
+
+	// Exposures is where the exposure gate reads what a slot has read. Nil
+	// means the store. A role with no Writes never reads it (marvel#945).
+	Exposures ExposureSource
 
 	// ShiftTimeout bounds how long a single shift may run before the
 	// reconciler declares it stuck and aborts it. Zero uses
@@ -178,6 +184,7 @@ func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
 		roleHealth:     make(map[string]*RoleHealth),
 		admissionHolds: make(map[string]string),
 		busHolds:       make(map[string]bool),
+		exposureHolds:  make(map[string]bool),
 	}
 }
 
@@ -1044,6 +1051,9 @@ const (
 	// under backoff, or not yet started. Spawning would hand a session a
 	// NATS_URL nothing answers on.
 	HoldBus HoldReason = "bus_unavailable"
+	// HoldExposure means the role writes a function its slot has read, or the
+	// record of what the slot has read could not be consulted (marvel#945).
+	HoldExposure HoldReason = "exposure"
 	// HoldSchedule means the role is on a schedule and its firing record
 	// allows no spawn now: no firing is due yet, the firing settled, a
 	// retry is backing off, or on_failure froze the schedule. Without it a
@@ -1095,6 +1105,8 @@ type RolePlan struct {
 	admission admissionIntent
 	// bus is the bus-gate intent: hold, clear, or leave the latch alone.
 	bus busIntent
+	// exposure is the exposure-gate intent, the same shape.
+	exposure exposureIntent
 }
 
 // admissionOp is the admission bookkeeping applyRolePlan performs for a role.
@@ -1172,12 +1184,31 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	if actual >= desired || !t.Budget.Declared() || t.Shift.Phase != api.ShiftNone {
 		plan.admission = admissionIntent{op: admissionClear}
 	}
+	// An exposure hold, like an admission hold, describes a refusal still
+	// happening: a satisfied role is not refused, so its latch drops.
+	if actual >= desired {
+		plan.exposure = exposureClear
+	}
 
 	switch {
 	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:
-		// The bus gate comes first: a broker outage is not the role's fault,
+		// The exposure gate runs before every other: a role that writes a
+		// function its slot has read must not start, whatever else holds or
+		// admits it, and the record it reads survives the row deletes that a
+		// restart, a crash respawn and a shift drain make (marvel#945). A hold,
+		// not a crash: nothing is charged to the role.
+		if held, reason := c.exposureVerdict(t, role); held {
+			plan.Action = RoleHold
+			plan.Hold = HoldExposure
+			plan.HoldDetail = reason
+			plan.exposure = exposureHold
+			return plan
+		}
+		plan.exposure = exposureClear
+
+		// The bus gate comes next: a broker outage is not the role's fault,
 		// so it neither charges a crash nor reaches admission. The hold is
 		// recorded on the plan; applyRolePlan latches and announces it.
 		if c.BusGate != nil {
@@ -1300,6 +1331,14 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		c.latchBusHold(t, plan.Role, plan.HoldDetail)
 	}
 
+	switch plan.exposure {
+	case exposureNoop:
+	case exposureClear:
+		c.clearExposureHold(t, plan.Role)
+	case exposureHold:
+		c.latchExposureHold(t, plan.Role, plan.HoldDetail)
+	}
+
 	switch plan.admission.op {
 	case admissionNoop:
 		// Gate not reached this tick (e.g. a role cooling down in backoff);
@@ -1356,7 +1395,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				break
 			}
 			// A refused placement is reported, at a low rate, by the manager.
-			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) {
+			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
@@ -2288,6 +2327,16 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	}
 
 	if len(live) < desired {
+		// A writer whose slot has read its function launches no successor:
+		// this path creates sessions itself and reconcile never plans the
+		// shifting role, so the planner's gate does not reach it. The shift
+		// stays in launching and says so once (marvel#945).
+		if held, reason := c.exposureVerdict(t, role); held {
+			c.latchExposureHold(t, role.Name, reason)
+			return
+		}
+		c.clearExposureHold(t, role.Name)
+
 		// Each successor is paired with one of the seats shiftDrain will
 		// retire, oldest first, the order it retires them in. Selected the
 		// way shiftDrain selects them: outside this shift's generation, not
@@ -2322,7 +2371,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				return
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
-				if !errors.Is(err, session.ErrPlacementRefused) {
+				if !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) {
 					log.Printf("shift: create session %s: %v", name, err)
 				}
 				return
