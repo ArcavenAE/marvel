@@ -102,7 +102,7 @@ security add-generic-password -s marvel.agent-vault -a owner \
 security add-generic-password -s marvel.agent-vault -a <credential-name> \
   -T "" -T <marvel> -U "$K" -w
 security set-generic-password-partition-list -s marvel.agent-vault \
-  -a <account> -S <partition-list> "$K"     # once per item; prompts for the keychain password
+  -a <account> -S <partition-list> "$K"     # once per item; never -k (see below)
 security dump-keychain -a "$K"              # access lists only; never -d, which prints data
 ```
 
@@ -119,10 +119,15 @@ What each part is for:
 - **The partition list** is a second part of each item's access control
   that limits access by the reading program's code signature
   (`set-generic-password-partition-list`). Changing it needs the keychain
-  password, which `security` prompts for. `<partition-list>` is the value
-  that admits marvel's signature and nothing else. Which value that is
-  depends on how the marvel release is signed, so step 1 reads it from the
-  scratch items and the setup fills it in from there.
+  password (`security(1)`). Never pass it with `-k`: that puts the keychain
+  password in argv, and the man page marks the flag deprecated.
+  `<partition-list>` is the value that admits marvel's signature and nothing
+  else. Which value that is depends on how the marvel release is signed, so
+  step 1 reads it from the scratch items, and the setup fills it in from
+  there. The only command that reads it is `security dump-keychain -a`,
+  which prints access lists and no data. `find-generic-password -g` or `-w`
+  and `dump-keychain -d` print the secret, and are never used to read the
+  value.
 - **`dump-keychain -a`** prints each item's access list, never its data. The
   setup ends by reading it: each item must list marvel and only marvel, with
   the partition list just set. Anything else is a STOP, and the items are
@@ -134,7 +139,12 @@ first:
   a positional argument; if it stops there, the trailing `-w` is lost, and
   the setup names the keychain another way;
 - how to get a random master password and owner credential into the prompt
-  without the clipboard (whether a trailing `-w` reads from a pipe).
+  without the clipboard (whether a trailing `-w` reads from a pipe);
+- whether `set-generic-password-partition-list` prompts for the keychain
+  password when `-k` is left out. The man page says only that the password
+  must be presented. If it does not prompt, the setup stops at that line,
+  no real item is created, and the step is redesigned before step 2 (never
+  by adding `-k`).
 
 **After a marvel upgrade, re-trust.** `<marvel>` is the resolved binary
 (not the brew link), so its path and its signature change with each
@@ -150,10 +160,16 @@ from a login terminal on that host:
    access list.
 2. `security set-generic-password-partition-list ...` for each item, as in
    the setup, with the new release's value.
-3. `security dump-keychain -a "$K"`: each item lists the new marvel only.
-   An entry for an old path stays harmless, because no binary is there, but
-   it can be removed with `security dump-keychain -i "$K"` (interactive
-   access-list editing).
+3. `security dump-keychain -i "$K"` (interactive access-list editing):
+   remove each item's entry for the old binary's path.
+4. `security dump-keychain -a "$K"`: each item lists the new marvel only,
+   with the new partition list. Anything else is a STOP.
+
+The old entry is removed, not left. An empty path is not what keeps an old
+entry harmless: the Homebrew prefix is writable by the operator's own user,
+so a binary can appear at an old path. What guards the item is the code
+signature check in its access list and partition list, and removing the
+entry keeps that check the only way in.
 
 That Always Allow adds the new binary, and that the prompt appears from a
 login terminal, are inferred, and step 1 measures both (M10). If they fail,
@@ -234,8 +250,10 @@ rotated:
 The database is still ciphertext under the master password, so losing the
 `owner` item alone exposes nothing:
 1. stop the service;
-2. write a new random `owner` item (the setup's `add-generic-password` line
-   for `owner`, with `-U`);
+2. write a new random `owner` item with the setup's three lines for
+   `owner`: the `add-generic-password` line (with `-T ""`, `-T <marvel>`
+   and `-U`), its `set-generic-password-partition-list` line, and the
+   `dump-keychain -a` check, which must show marvel alone;
 3. delete agent-vault's home directory, since its owner can no longer be
    logged in as;
 4. start the service; it registers the new owner and loads the keys again.
@@ -243,6 +261,15 @@ The database is still ciphertext under the master password, so losing the
    one.
 If the old `owner` value may have leaked (rather than been lost), this is
 the compromised-database recovery above instead, provider keys first.
+
+**Failed states are visible without the ring.** The ring is in memory and
+starts empty with each daemon (section 7), so an event alone is not the
+record. `service.owner-mismatch`, `service.owner-login-failed` and
+`service.keychain-unreadable` each leave the service in state `failed`,
+held in the service's store record, with the reason and the time.
+`marvel get services` prints the state, and `marvel describe service`
+prints the reason, the time and the recovery to follow. It stays failed
+until the operator acts; nothing retries it.
 
 ## 6. The signed release and its analytics key
 
@@ -292,18 +319,31 @@ enforcing it is the agent sandbox tool's job, not this design's.
 cannot be refreshed, so a seat that outlives its session loses egress
 mid-run. So:
 
-- marvel records each seat's session expiry beside the binding;
-- 24 hours before expiry it emits `egress.session-expiring` on the event
-  ring, naming the workspace, team, role, session and expiry time. The lead
-  is the class config key `session_expiry_lead`, default 24 hours, so a seat
-  whose supervisor checks once a day still gets a turn to act;
-- the route is the one marvel's other supervisor-facing events use, such as
-  `team.shift-handoff-missing`: the ring, read with `marvel events` and
-  `marvel events --follow`, and the expiry shown by `describe session`.
-  marvel does not shift or restart the seat itself; that stays the
-  supervisor's call, as for max age;
-- at expiry it emits `egress.session-expired` once. If nobody acted, the
-  seat's next proxied request gets a 407. That blocks the request; it does
+- marvel records each seat's session expiry in the binding's store record,
+  so it survives a daemon restart or reexec. That record is the durable
+  signal. `marvel describe session` prints the expiry, and `marvel get
+  sessions` marks a seat inside the lead with `(egress expiring)` beside its
+  health, and an expired one with `(egress expired)`;
+- the lead is the class config key `session_expiry_lead`, default 24 hours.
+  It must be shorter than the session length (`session_length`, at most 7
+  days). A lead equal to or longer than the session would mark every seat
+  as expiring from spawn, so the config is refused at load with a message
+  naming both values;
+- marvel also emits `egress.session-expiring` on entering the lead and
+  `egress.session-expired` at expiry, naming the workspace, team, role,
+  session and expiry time. These are notices only. On main the ring is the
+  only emitter besides a discard (`internal/events/events.go`, `Ring`), an
+  in-memory buffer of 2000 events built fresh at each daemon start
+  (`:639`; `internal/daemon/daemon.go:328`). So an event can be evicted
+  before a once-a-day reader sees it, or lost on a restart. No push to
+  supervisors exists;
+- so a supervisor learns of an expiring seat by polling: `marvel get
+  sessions` in its own sweep, where the mark shows until the seat is
+  shifted. A push (a bus message to the team's supervisor) is a later item,
+  not this design's, and the mark stays the record when it comes;
+- marvel does not shift or restart the seat itself; that stays the
+  supervisor's call, as for max age. If nobody acts, the seat's next
+  proxied request after expiry gets a 407. That blocks the request; it does
   not leak anything, and the seat's own error says why.
 
 **Seat end:** marvel deletes the seat's agent, and its token returns 407
@@ -339,11 +379,12 @@ test (below).
 - moving a managed service out of marvel's supervision, the tripwire
   `internal/service/service.go:34-35` already records.
 
-The keychain one is checked by a test in build item 3: it fails if any
+The keychain one is backed by a test in build item 3: it fails if any
 non-test marvel package calls a keychain write (`SecItemAdd`,
 `SecItemUpdate`, `SecItemDelete`, or `security` with `add-`, `delete-` or
-`set-`), so a write path cannot land without the test being changed in the
-same review.
+`set-`). It is a source scan, so it is a review aid, not a guarantee: a call
+built from parts or wrapped under another name passes it. The review rule
+above is what holds.
 
 ## 10. Order of work
 
@@ -381,10 +422,14 @@ Measured, each with a positive control:
   and answers.
 - **M9 Environment residual.** A scratch child started with a value in its
   environment, then unset: does `ps -E` still show it?
-  The seat's own proxy token is in its environment by design
-  (`HTTPS_PROXY`), so `ps -E` can read it as the same user. That is
-  accepted: the token is issuance marvel can revoke (section 7, seat end),
-  not a provider key, so it is inside the amended ADR-009.
+  Every seat's proxy token is in its environment by design
+  (`HTTPS_PROXY`), so `ps -E` run as the operator reads all of them, and
+  with them any process running as the operator can use every seat's
+  egress, not one seat's. That is accepted, for two reasons: a token is
+  issuance marvel can revoke (section 7, seat end), not a provider key, so
+  no key leaves agent-vault and the amended ADR-009 holds; and it is the
+  same-user residual that section 11 names for the keychain, applied to the
+  tokens, which the agent sandbox tool is meant to close.
 - **M10 Keychain trust.** After the setup lines, `dump-keychain -a` lists
   only marvel on each item, and `security find-generic-password` from a
   plain terminal is prompted, not answered. Then, with a second build of
@@ -407,12 +452,15 @@ in order):
 4. the agent-vault driver and the class and provider registration: install
    check of the signed release, start steps 1 to 5 with the owner check and
    its two events, health, `Delivers: [api-key]`, the telemetry constant,
-   check and warning, `service.keychain-unreadable`, `marvel get services`,
+   check and warning, `service.keychain-unreadable`, the `failed` state with
+   reason and time in the service's store record, `marvel get services`,
    `marvel describe service`, and `marvel service check` for the re-trust
    step (reads only);
 5. the Binding: per-seat agent create, seat environment with
-   `no_proxy_hosts`, session expiry record, `egress.session-expiring` at
-   `session_expiry_lead` and `egress.session-expired`, revoke at seat end.
+   `no_proxy_hosts`, the session expiry in the binding's store record, the
+   `(egress expiring)` and `(egress expired)` marks in `get sessions` and
+   the expiry in `describe session`, the refusal of a lead not shorter than
+   `session_length`, the two notice events, and revoke at seat end.
 
 **Step 4. First live seat:** a builder seat with a provider API key, per the
 ruling. Use the lowest-scope key the vendor offers, with a spend limit at the
