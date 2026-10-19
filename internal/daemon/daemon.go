@@ -2601,6 +2601,23 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		out["repaint"] = repaint
 		out["repaint_target"] = target
 	}
+	// A plain capture drops the dim attribute, and with it the one thing that
+	// tells a composer suggestion from a typed draft. Say so, so the caller can
+	// ask for the attributes (marvel#941). It is a second read of the same span,
+	// and a failure of it never fails the capture. -e and --composer already
+	// answer the question, so they carry no notice.
+	if !p.Escapes && !p.Composer {
+		var raw string
+		var rerr error
+		if ranged {
+			raw, rerr = d.driver.CapturePaneRangeEscapes(sess.PaneID, start, end)
+		} else {
+			raw, rerr = d.driver.CapturePaneEscapes(sess.PaneID)
+		}
+		if rerr == nil && composer.HasDim(raw) {
+			out["dim_removed"] = "true"
+		}
+	}
 	if p.Composer {
 		// The state is read from a capture in the reader's mode. When the content
 		// is that same capture (an unranged read in the same mode), content and

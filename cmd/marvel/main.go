@@ -1938,6 +1938,11 @@ func writeCaptureNotes(w io.Writer, result map[string]string) {
 		}
 		_, _ = fmt.Fprintf(w, "composer: %s\n", state)
 	}
+	// The daemon sets this only for a plain capture. stdout is unchanged; this
+	// is the one line that says what the plain form dropped (marvel#941).
+	if result["dim_removed"] == "true" {
+		_, _ = fmt.Fprintln(w, "capture: dim text removed; use -e or --composer to tell a suggestion from a draft")
+	}
 }
 
 func captureCmd() *cobra.Command {
@@ -1980,7 +1985,11 @@ that one nudge. The state is read from a capture in the reader's mode (escapes
 for claude). With --escapes the content is that same capture, so content and
 state cannot disagree. Without --escapes on claude the plain content is a
 second capture taken straight after, and the two can differ if the pane changed
-between them. A runtime with no reader reads unknown.`,
+between them. A runtime with no reader reads unknown.
+
+A plain capture drops dim text's attribute. When it did, it writes one line to
+stderr ("capture: dim text removed; ...") and leaves stdout as it was; -e and
+--composer carry no such line, since they already answer the question.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := captureRequest(args[0], captureOpts{

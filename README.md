@@ -159,6 +159,8 @@ marvel delete <resource> <key>                       # delete a session, team, o
 
 # Session interaction
 marvel capture <session-key>                         # capture a session's pane content
+marvel capture -e <session-key>                      # keep escape sequences, so dim text (a composer suggestion) can be told from a typed draft
+marvel capture --composer <session-key>              # report on stderr whether the composer is empty, holds text or is mid-turn; types nothing
 marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (executive privilege)
 
 # Remote daemons (named clusters)
