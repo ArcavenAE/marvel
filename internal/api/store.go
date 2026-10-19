@@ -42,6 +42,10 @@ type Store struct {
 	duties      map[string]*DutyRecord
 	dutySeq     uint64
 	dutyOrphans []string // rows found at load with no session; see purgeOrphanDuties
+	// exposures are the slot exposure records and exposureSeq the highest Seq
+	// assigned. Nothing deletes from them. See exposure.go (marvel#945).
+	exposures   map[string]*ExposureRecord
+	exposureSeq uint64
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by
@@ -103,6 +107,7 @@ func NewStore() *Store {
 
 		scheduleStatus: make(map[string]*ScheduleStatus),
 		duties:         make(map[string]*DutyRecord),
+		exposures:      make(map[string]*ExposureRecord),
 	}
 }
 

@@ -88,6 +88,8 @@ type Controller struct {
 	// busHolds latches the roles currently held for the bus, so a standing
 	// outage announces itself once per role rather than once per tick.
 	busHolds map[string]bool
+	// exposureHolds latches the roles held for an exposure, once per transition.
+	exposureHolds map[string]bool
 
 	// Exposures is where the exposure gate reads what a slot has read. Nil
 	// means the store. A role with no Writes never reads it (marvel#945).
@@ -182,6 +184,7 @@ func NewController(store *api.Store, sessMgr *session.Manager) *Controller {
 		roleHealth:     make(map[string]*RoleHealth),
 		admissionHolds: make(map[string]string),
 		busHolds:       make(map[string]bool),
+		exposureHolds:  make(map[string]bool),
 	}
 }
 
@@ -1102,6 +1105,8 @@ type RolePlan struct {
 	admission admissionIntent
 	// bus is the bus-gate intent: hold, clear, or leave the latch alone.
 	bus busIntent
+	// exposure is the exposure-gate intent, the same shape.
+	exposure exposureIntent
 }
 
 // admissionOp is the admission bookkeeping applyRolePlan performs for a role.
@@ -1179,12 +1184,31 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	if actual >= desired || !t.Budget.Declared() || t.Shift.Phase != api.ShiftNone {
 		plan.admission = admissionIntent{op: admissionClear}
 	}
+	// An exposure hold, like an admission hold, describes a refusal still
+	// happening: a satisfied role is not refused, so its latch drops.
+	if actual >= desired {
+		plan.exposure = exposureClear
+	}
 
 	switch {
 	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:
-		// The bus gate comes first: a broker outage is not the role's fault,
+		// The exposure gate runs before every other: a role that writes a
+		// function its slot has read must not start, whatever else holds or
+		// admits it, and the record it reads survives the row deletes that a
+		// restart, a crash respawn and a shift drain make (marvel#945). A hold,
+		// not a crash: nothing is charged to the role.
+		if held, reason := c.exposureVerdict(t, role); held {
+			plan.Action = RoleHold
+			plan.Hold = HoldExposure
+			plan.HoldDetail = reason
+			plan.exposure = exposureHold
+			return plan
+		}
+		plan.exposure = exposureClear
+
+		// The bus gate comes next: a broker outage is not the role's fault,
 		// so it neither charges a crash nor reaches admission. The hold is
 		// recorded on the plan; applyRolePlan latches and announces it.
 		if c.BusGate != nil {
@@ -1305,6 +1329,14 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		c.clearBusHold(t, plan.Role)
 	case busHold:
 		c.latchBusHold(t, plan.Role, plan.HoldDetail)
+	}
+
+	switch plan.exposure {
+	case exposureNoop:
+	case exposureClear:
+		c.clearExposureHold(t, plan.Role)
+	case exposureHold:
+		c.latchExposureHold(t, plan.Role, plan.HoldDetail)
 	}
 
 	switch plan.admission.op {
