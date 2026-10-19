@@ -270,7 +270,31 @@ exactly:
       - a creator that crashes before the link leaves only a temp file,
         never a short key. The next creator removes temp files older than
         one minute (by `lstat`, never following a link) and makes its own;
-      - after a successful link, the creator removes its temp name.
+      - after a successful link, the creator `fsync`s the directory, so the
+        link survives a crash, and then removes its temp name.
+      - **Temp names** are exactly `redact.key.tmp-` plus 16 hex digits.
+        The sweep removes only names of that exact form, so it never
+        touches another file. A name that already exists (`EEXIST` on the
+        temp open) is retried with a new random name, at most three times,
+        then the run goes unkeyed.
+      - **`ENOENT` on the link** means another run's sweep removed this
+        temp file, which happens only when this creator stalled for over a
+        minute. The creator starts over once, from a new temp file; a second
+        failure goes unkeyed.
+      - **A crash after the link and before the temp is removed** leaves the
+        key with two links, the second a temp name. The reader accepts a
+        link count above one only when every other link is a temp name in
+        the same directory with the same device and inode (checked with
+        `lstat` on each temp-form name), and removes those names. Any other
+        extra link is refused.
+    - **The state directory is not followed.** The key's directory is
+      opened with `os.OpenRoot` (Go 1.24, and marvel's go.mod names 1.26),
+      which refuses a path that leaves the directory through a symlink. The
+      directory itself is checked with `Lstat` before it is opened: it must
+      be a directory, not a symlink, owned by the reading uid, with no group
+      or other write bit. Every create, link, sweep and read above goes
+      through that root. A symlinked `state/` goes unkeyed, with
+      `key refused (state directory)` in the banner.
     - **Checked on every read, on the open file.** The reader opens the key
       with `O_RDONLY|O_NOFOLLOW`, so a symlink at the key's name fails to
       open, and checks the opened file with `Fstat`, not a separate `Stat`
@@ -284,7 +308,14 @@ exactly:
       a 0644 key, a key owned by another uid (a unit test on the `Fstat` result, since a test cannot `chown` without root), and a leftover temp file older
       than one minute. The first four are refused with their check named;
       the last is removed and a new key created. Two creators started
-      together end with one key, which both read.
+      together end with one key, which both read. Also:
+      - a temp file younger than one minute is kept by the sweep;
+      - a creator whose temp file is removed before its link (the `ENOENT`
+        path, made by removing it from the test between write and link)
+        starts over once and ends with one whole key;
+      - a key with a second link under a temp-form name is accepted and the
+        temp name removed; a second link under any other name is refused;
+      - a symlinked `state/` goes unkeyed.
     - **Never emitted.** The key's bytes are never logged, never put in an
       event, a bus message, a describe output or an error, and never passed
       to a child process. Only the derived 8-hex tokens leave the process.
@@ -310,12 +341,42 @@ What that means for each line that can carry a path:
 | client: config read error | `config.Load` wraps `os.ReadFile`'s error as `read config: open <path>: <reason>` (`internal/config/config.go:828-833`), so a config that exists but cannot be read names its path. Printed as `read config: open <home:XXXXXXXX>: permission denied`. A parse error (`parse config: ...`, `:837-838`) names no file and prints as it is |
 | client: dial error | `connect to daemon at <addr> (<network>): <err>` (`internal/daemonrpc/client.go:191`) prints the resolved address. A unix socket under a home prints as `connect to daemon at <home:XXXXXXXX> (unix): ...`, the same token as the banner's `socket=`. A TCP address carries no path and prints as it is |
 | cobra's own error print and usage text | today the root command sets neither `SilenceErrors` nor `SilenceUsage` (`cmd/marvel/main.go:207-213`), so cobra prints `Error: <err>` and the usage text itself, outside any filter. The `plan` command sets both on itself, which cobra honours for the command that ran. Which command ran is cobra's own resolution, so `--cluster plan` or `--cluster b plan` cannot make another verb look like `plan`, or `plan` look like another. `plan` then prints its error through the client filter, one line, and on a usage error prints `run 'marvel plan --help' for usage` instead of the usage text. Other verbs keep cobra's print |
-| `--marvel-home` or `MARVEL_HOME` error | `paths.ParseHome` embeds the raw value as `<source>="<value>"` (`internal/paths/home.go:30`, `:34`). The `:30` error fires only for a value that is not absolute, such as `~/<name>` (zsh leaves a `~` after `=` unexpanded) or a relative path, which the home-path rule, written for absolute paths, would not hide. So the value is never printed: `ParseHome` names the source and the check, `--marvel-home is not an absolute path` and `--marvel-home: the socket path it implies is too long`. The flag's print in `applyMarvelHomeFlag` (`cmd/marvel/marvel_home.go:25`, printed at `main.go:202-205`) runs before cobra has resolved a command, so this change applies to every verb, not only `plan`; no test of argv decides it. The cost is one error text changed for every verb, and the operator can still see the value they typed in their own shell |
+| `--marvel-home` or `MARVEL_HOME` error, under `plan` only | `ParseHome`'s text stays as ruled in the marvel-home design ("names the source and the value", `docs/design/marvel-home.md:21-22`), and every other verb prints it unchanged. Under `plan`, the line goes through plan's filter like every other line `plan` prints. It carries a path in two places: the quoted value, `<source>="<value>"` (`internal/paths/home.go:30`, `:34`), and, for the `:34` error, the socket path again at the end through `%w` (`CheckSocketPath`, `internal/paths/paths.go:230-232`). The filter's absolute-path pass hides both when they are home paths. A value that is not absolute (`~/<name>`, which zsh leaves unexpanded after `=`, or a relative path) is outside the absolute-path rule, so the filter also rewrites a quoted value after `--marvel-home=` or `MARVEL_HOME=` that does not start with `/` as `"<not absolute>"`. The filter's key lives in the layout this error failed to name, so these lines use the unkeyed `<home>` form. Where each one reaches `plan` is in the next paragraph |
 | a panic trace | not covered, and left so on purpose: a Go panic prints the goroutine stack with source file paths, and marvel is built without `-trimpath`, so a trace can carry the build host's home. A panic is a defect, not output the plan promises; the build flag is a separate change |
 | client: `ErrInvalidClusterName` warning, unknown-cluster refusal | name a cluster and a byte, never a path (`config.go:863`, `:869`, `:962`); printed as they are, and still passed through the rule |
 
 A path not under any home (`/srv/work`, `/opt/homebrew/bin/codex`) prints as
 it is, as in the worked case above.
+
+**Where a marvel-home error reaches `plan`.** Three places, against main
+5c48e09:
+- **The flag, before cobra runs.** `applyMarvelHomeFlag` runs at
+  `main.go:202`, before `Execute`, and prints `Error: <err>` itself. To
+  bring it under plan's filter, main keeps that error instead of printing
+  it at once and resolves the command with the root command's own `Find`.
+  `Execute` resolves commands with `Find` when `TraverseChildren` is unset,
+  and marvel sets it nowhere, so the two agree. That means `--cluster plan`
+  and `--cluster b plan` resolve as cobra resolves them, not by argv
+  position. If the resolved command is `plan`, the error prints through
+  plan's filter. Otherwise, or if `Find` fails, it prints exactly as today,
+  byte for byte, and exits 1 as today.
+- **`MARVEL_HOME`, in `plan` itself.** `plan` calls `paths.Default()` before
+  it resolves a daemon, and a `ParseHome` error there refuses, exit 1
+  (section 6), printed through the filter. This is the error the resolver
+  would otherwise not surface on its own.
+- **The callers that drop the error.** `main.go:301` (the daemon flags'
+  default paths, set for every verb) and `main.go:826` (`openRotatingLog`,
+  daemon only) discard it with `_`. They print nothing, so there is
+  nothing to filter, and `plan` does not rely on them: it reads the error
+  itself in the step above.
+
+Tests: under `plan`, `--marvel-home=~/x`, `--marvel-home=rel` and an
+absolute home value too long for a socket each print with no directory
+name, the last with both the value and the trailing socket path hidden.
+`MARVEL_HOME` set to each of the three gives the same. The same three under
+`marvel get sessions` print `ParseHome`'s ruled text unchanged, which is
+what marvel's own `internal/paths/home_test.go:58-64`, `:73` and `:77`
+already check.
 
 ## 4. Features specific to marvel, ranked
 
