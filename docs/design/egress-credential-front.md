@@ -202,7 +202,7 @@ environment gets:
   through the proxy.
 
 The CA never enters the System keychain. A seat can unset the proxy;
-enforcing it is curtain's job, not this design's.
+enforcing it is the agent sandbox tool's job, not this design's.
 
 **The seat token is a scoped session of up to 7 days.** A pane's environment
 cannot be refreshed, so a seat that outlives its session loses egress
