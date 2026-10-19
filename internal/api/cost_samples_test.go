@@ -75,7 +75,7 @@ func TestRecordCostSampleKeepsOneAnchorAndHonorsTheCap(t *testing.T) {
 	var s Session
 	recordCostSample(&s, 1, costT0)
 	recordCostSample(&s, 2, costT0.Add(10*time.Minute))
-	recordCostSample(&s, 3, costT0.Add(CostSampleKeep+5*time.Minute))
+	recordCostSample(&s, 3, costT0.Add(CostSampleKeep+15*time.Minute))
 	if got := costRing(s); !sameFloats(got, []float64{2, 3}) {
 		t.Fatalf("after the keep age the ring is %v, want [2 3] (one anchor, then the new)", got)
 	}

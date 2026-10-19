@@ -21,4 +21,30 @@ const (
 	costSampleCap     = 128
 )
 
-func recordCostSample(sess *Session, usd float64, at time.Time) {}
+// recordCostSample adds the total seen at at. A total below the last one is a
+// reset (a restart, /clear, a new harness session under the same seat): the
+// ring starts again from this value, so no change is ever read across the
+// drop. An unchanged total stores nothing.
+func recordCostSample(sess *Session, usd float64, at time.Time) {
+	n := len(sess.CostSamples)
+	switch {
+	case n == 0 || usd < sess.CostSamples[n-1].USD:
+		sess.CostSamples = []CostSample{{At: at, USD: usd}}
+		return
+	case usd == sess.CostSamples[n-1].USD:
+		return
+	case at.Sub(sess.CostSamples[n-1].At) < costSampleSpacing:
+		sess.CostSamples[n-1].USD = usd
+	default:
+		sess.CostSamples = append(sess.CostSamples, CostSample{At: at, USD: usd})
+	}
+	cutoff := at.Add(-CostSampleKeep)
+	drop := 0
+	for drop+1 < len(sess.CostSamples) && !sess.CostSamples[drop+1].At.After(cutoff) {
+		drop++
+	}
+	if over := len(sess.CostSamples) - drop - costSampleCap; over > 0 {
+		drop += over
+	}
+	sess.CostSamples = append([]CostSample(nil), sess.CostSamples[drop:]...)
+}
