@@ -142,9 +142,11 @@ first:
   without the clipboard (whether a trailing `-w` reads from a pipe);
 - whether `set-generic-password-partition-list` prompts for the keychain
   password when `-k` is left out. The man page says only that the password
-  must be presented. If it does not prompt, the setup stops at that line,
-  no real item is created, and the step is redesigned before step 2 (never
-  by adding `-k`).
+  must be presented. If it does not prompt, the operator sees `security`
+  return with an error, or return without asking; either way the setup's
+  `dump-keychain -a` check then shows the partition list unset, which is a
+  STOP. No real item is created, and the step is redesigned before step 2
+  (never by adding `-k`).
 
 **After a marvel upgrade, re-trust.** `<marvel>` is the resolved binary
 (not the brew link), so its path and its signature change with each
@@ -266,7 +268,13 @@ the compromised-database recovery above instead, provider keys first.
 starts empty with each daemon (section 7), so an event alone is not the
 record. `service.owner-mismatch`, `service.owner-login-failed` and
 `service.keychain-unreadable` each leave the service in state `failed`,
-held in the service's store record, with the reason and the time.
+held in the service's store record, with the reason and the time. No such
+record exists on main: the store's buckets are workspaces, teams,
+sessions, endpoints, policies, role health, schedule status and meta
+(`internal/api/bolt.go:50-61`). Build item 4 adds a persisted bucket for
+service records, and build item 5 one for bindings, which carries each
+seat's expiry. Both follow the schedule-status precedent at `:57-59`:
+`OpenBolt` creates a missing bucket, so an older database opens unchanged.
 `marvel get services` prints the state, and `marvel describe service`
 prints the reason, the time and the recovery to follow. It stays failed
 until the operator acts; nothing retries it.
@@ -321,9 +329,22 @@ mid-run. So:
 
 - marvel records each seat's session expiry in the binding's store record,
   so it survives a daemon restart or reexec. That record is the durable
-  signal. `marvel describe session` prints the expiry, and `marvel get
-  sessions` marks a seat inside the lead with `(egress expiring)` beside its
-  health, and an expired one with `(egress expired)`;
+  signal. `marvel describe session` prints the expiry. `marvel get
+  sessions` shows it in a new last column, EGRESS: `-` for a seat with no
+  binding, `ok` before the lead, `expiring` inside it, `expired` after;
+- the EGRESS value is computed at display time from the stored expiry and
+  the current time. It is never stored, so it cannot go stale across a
+  restart;
+- it is its own column, not a HEALTH suffix. HEALTH's grammar on main is
+  one base word, then `(stalled)`, then at most one of `(logged-out)` or
+  `(parked: <reason>)` (`cmd/marvel/main.go:3100-3121`). A parked reason is
+  free text that runs to the last `)`, so a suffix after it would be read
+  into the reason, and director's dashboard reads HEALTH by exactly that
+  grammar and refuses anything after it (director
+  `sim/design/ops-dashboard.md`, the HEALTH grammar at :118-120). The
+  column goes last, so a reader that takes the existing columns by position
+  keeps their places. The dashboard's column grammar still has to learn the
+  new column: a follow-up on director, filed when build item 5 is routed;
 - the lead is the class config key `session_expiry_lead`, default 24 hours.
   It must be shorter than the session length (`session_length`, at most 7
   days). A lead equal to or longer than the session would mark every seat
@@ -457,9 +478,9 @@ in order):
    `marvel describe service`, and `marvel service check` for the re-trust
    step (reads only);
 5. the Binding: per-seat agent create, seat environment with
-   `no_proxy_hosts`, the session expiry in the binding's store record, the
-   `(egress expiring)` and `(egress expired)` marks in `get sessions` and
-   the expiry in `describe session`, the refusal of a lead not shorter than
+   `no_proxy_hosts`, the bindings bucket with each session's expiry, the
+   EGRESS column in `get sessions` (computed at display), the expiry in
+   `describe session`, the refusal of a lead not shorter than
    `session_length`, the two notice events, and revoke at seat end.
 
 **Step 4. First live seat:** a builder seat with a provider API key, per the
