@@ -248,6 +248,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(viewCmd())
 	root.AddCommand(injectCmd())
 	root.AddCommand(captureCmd())
+	root.AddCommand(attachCmd())
 	root.AddCommand(versionCmd())
 	root.AddCommand(upgradeCmd())
 	root.AddCommand(keysCmd())
