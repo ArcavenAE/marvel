@@ -259,14 +259,32 @@ exactly:
     token, and the banner says `redaction: unkeyed, tokens omitted`. A path
     is never printed in full for want of a key.
   - **How the key is handled.**
-    - **Created exclusively.** 32 bytes from `crypto/rand`, written with
-      `O_CREATE|O_EXCL`, mode 0600, so two processes starting at once cannot
-      both write it: the loser reads the winner's key.
-    - **Checked on every read.** A key that is not a regular file, is not
+    - **Created whole, then linked into place.** The creator writes 32
+      bytes from `crypto/rand` to a temp file in the same directory, opened
+      with `O_CREATE|O_EXCL|O_NOFOLLOW` and mode 0600 under a random name,
+      calls `fsync`, and then `link`s it to `redact.key`. `link` fails with
+      `EEXIST` when a key is already there, so the key name only ever points
+      at a whole file:
+      - a race loser gets `EEXIST`, removes its own temp file, and reads the
+        winner's key, which was complete before it was linked;
+      - a creator that crashes before the link leaves only a temp file,
+        never a short key. The next creator removes temp files older than
+        one minute (by `lstat`, never following a link) and makes its own;
+      - after a successful link, the creator removes its temp name.
+    - **Checked on every read, on the open file.** The reader opens the key
+      with `O_RDONLY|O_NOFOLLOW`, so a symlink at the key's name fails to
+      open, and checks the opened file with `Fstat`, not a separate `Stat`
+      of the path that a swap could change in between. The key is refused,
+      never repaired or overwritten, when it is not a regular file, is not
       owned by the reading uid, has any group or other permission bit, or
-      is not exactly 32 bytes is refused, never repaired or overwritten. The
-      line then uses the unkeyed form, and the banner says `redaction:
-      unkeyed, key refused (<check>)`, naming the check and not the path.
+      is not exactly 32 bytes; then exactly 32 bytes are read. The line then
+      uses the unkeyed form, and the banner says `redaction: unkeyed, key
+      refused (<check>)`, naming the check and not the path.
+    - **Tests for the key:** a symlink at the key's name, a 31-byte key,
+      a 0644 key, a key owned by another uid (a unit test on the `Fstat` result, since a test cannot `chown` without root), and a leftover temp file older
+      than one minute. The first four are refused with their check named;
+      the last is removed and a new key created. Two creators started
+      together end with one key, which both read.
     - **Never emitted.** The key's bytes are never logged, never put in an
       event, a bus message, a describe output or an error, and never passed
       to a child process. Only the derived 8-hex tokens leave the process.
@@ -291,8 +309,8 @@ What that means for each line that can carry a path:
 | refusal text from a pre-flight | the same rule, applied to the text the daemon returns before it is printed |
 | client: config read error | `config.Load` wraps `os.ReadFile`'s error as `read config: open <path>: <reason>` (`internal/config/config.go:828-833`), so a config that exists but cannot be read names its path. Printed as `read config: open <home:XXXXXXXX>: permission denied`. A parse error (`parse config: ...`, `:837-838`) names no file and prints as it is |
 | client: dial error | `connect to daemon at <addr> (<network>): <err>` (`internal/daemonrpc/client.go:191`) prints the resolved address. A unix socket under a home prints as `connect to daemon at <home:XXXXXXXX> (unix): ...`, the same token as the banner's `socket=`. A TCP address carries no path and prints as it is |
-| cobra's own error print and usage text | today the root command sets neither `SilenceErrors` nor `SilenceUsage` (`cmd/marvel/main.go:207-213`), so cobra prints `Error: <err>` and the usage text itself, outside any filter. The `plan` command sets both on itself, which cobra honours for the command that ran. `plan` then prints its error through the client filter, one line, and on a usage error prints `run 'marvel plan --help' for usage` instead of the usage text. Other verbs keep cobra's print |
-| `--marvel-home` flag error | `applyMarvelHomeFlag` runs before cobra and prints `Error: <err>` itself (`main.go:202-205`); the error embeds the value as `<source>="<value>"` (`internal/paths/home.go:30`, `:34`). When the command line names `plan`, that print goes through the client filter, so `--marvel-home="<home:XXXXXXXX>" is not an absolute path`. The filter's key lives in the layout the flag failed to name, so this line uses the unkeyed form, `<home>`, with no token |
+| cobra's own error print and usage text | today the root command sets neither `SilenceErrors` nor `SilenceUsage` (`cmd/marvel/main.go:207-213`), so cobra prints `Error: <err>` and the usage text itself, outside any filter. The `plan` command sets both on itself, which cobra honours for the command that ran. Which command ran is cobra's own resolution, so `--cluster plan` or `--cluster b plan` cannot make another verb look like `plan`, or `plan` look like another. `plan` then prints its error through the client filter, one line, and on a usage error prints `run 'marvel plan --help' for usage` instead of the usage text. Other verbs keep cobra's print |
+| `--marvel-home` or `MARVEL_HOME` error | `paths.ParseHome` embeds the raw value as `<source>="<value>"` (`internal/paths/home.go:30`, `:34`). The `:30` error fires only for a value that is not absolute, such as `~/<name>` (zsh leaves a `~` after `=` unexpanded) or a relative path, which the home-path rule, written for absolute paths, would not hide. So the value is never printed: `ParseHome` names the source and the check, `--marvel-home is not an absolute path` and `--marvel-home: the socket path it implies is too long`. The flag's print in `applyMarvelHomeFlag` (`cmd/marvel/marvel_home.go:25`, printed at `main.go:202-205`) runs before cobra has resolved a command, so this change applies to every verb, not only `plan`; no test of argv decides it. The cost is one error text changed for every verb, and the operator can still see the value they typed in their own shell |
 | a panic trace | not covered, and left so on purpose: a Go panic prints the goroutine stack with source file paths, and marvel is built without `-trimpath`, so a trace can carry the build host's home. A panic is a defect, not output the plan promises; the build flag is a separate change |
 | client: `ErrInvalidClusterName` warning, unknown-cluster refusal | name a cluster and a byte, never a path (`config.go:863`, `:869`, `:962`); printed as they are, and still passed through the rule |
 
