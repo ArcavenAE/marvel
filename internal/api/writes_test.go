@@ -44,6 +44,8 @@ func TestWritesRefusals(t *testing.T) {
 	cases := []struct{ name, toml, yaml, want string }{
 		{"an empty entry", `writes = ["parse", " "]`, `writes: [parse, " "]`, "empty"},
 		{"a duplicate", `writes = ["parse", "parse"]`, `writes: [parse, parse]`, "twice"},
+		{"a duplicate in another case", `writes = ["parse", "Parse"]`, `writes: [parse, Parse]`, "twice"},
+		{"a duplicate past edge space", `writes = ["parse", "parse "]`, `writes: [parse, "parse "]`, "twice"},
 	}
 	for _, tc := range cases {
 		for format, src := range map[string]string{"toml": settingsTOML(tc.toml), "yaml": settingsYAML(tc.yaml)} {
@@ -52,5 +54,23 @@ func TestWritesRefusals(t *testing.T) {
 				t.Errorf("%s/%s: error %v, want it to name writes and %q", tc.name, format, err, tc.want)
 			}
 		}
+	}
+}
+
+// TestWritesAreStoredNormalized: " Parse" is the function parse, so the stored
+// role carries the one spelling the gate compares.
+func TestWritesAreStoredNormalized(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifestBytes([]byte(settingsTOML(`writes = [" Parse", "EMIT "]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatal(err)
+	}
+	team, _ := store.GetTeam("ss/squad")
+	if got := strings.Join(team.Roles[0].Writes, ","); got != "parse,emit" {
+		t.Errorf("stored writes = %q, want parse,emit", got)
 	}
 }

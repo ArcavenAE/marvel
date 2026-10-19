@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func exposureFixture(function string) ExposureRecord {
@@ -126,5 +128,74 @@ func TestRecordExposureRefusesAnIncompleteRecord(t *testing.T) {
 	}
 	if got, _ := s.ExposuresForSlot("ws", "ops", "writer"); len(got) != 0 {
 		t.Errorf("a refused record was stored: %+v", got)
+	}
+}
+
+// TestExposureFunctionNamesAreNormalized: a name differs from another only in
+// case or edge space is the same function, so the record, the lookup and the
+// declaration all key on one spelling (marvel#945 review).
+func TestExposureFunctionNamesAreNormalized(t *testing.T) {
+	s := NewStore()
+	rec, err := s.RecordExposure(exposureFixture("  Parse "))
+	if err != nil || rec.Function != "parse" {
+		t.Fatalf("recorded %q (%v), want the normalized name parse", rec.Function, err)
+	}
+	if n, err := s.EndExposure("ws", "ops", "writer", "PARSE ", time.Now()); err != nil || n != 1 {
+		t.Errorf("EndExposure by another spelling = %d, %v, want 1", n, err)
+	}
+	if _, err := s.RecordExposure(exposureFixture("   ")); err == nil {
+		t.Error("a name that is only space was accepted")
+	}
+
+	role := &Role{Name: "writer", Writes: []string{" PARSE"}}
+	held, _ := ExposureVerdict(s, "ws", "ops", role)
+	if !held {
+		t.Error("a role declaring \" PARSE\" was admitted over a record for parse")
+	}
+}
+
+// TestExposureBucketGoneFailsClosed: a bucket that held records and is gone is
+// the deletion this design exists to survive. A reopened store must refuse to
+// read as an empty one, so a role that writes is held, not admitted.
+func TestExposureBucketGoneFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s1.RecordExposure(exposureFixture("parse")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error { return tx.DeleteBucket(bucketExposure) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	if _, err := s2.ExposuresForSlot("ws", "ops", "writer"); err == nil {
+		t.Error("a store whose exposure bucket is gone read as empty, want an error")
+	}
+	held, _ := ExposureVerdict(s2, "ws", "ops", &Role{Name: "writer", Writes: []string{"parse"}})
+	if !held {
+		t.Error("a role that writes was admitted over a lost bucket")
+	}
+
+	// A store that never held a record has nothing to lose.
+	s3 := NewStore()
+	if _, err := s3.ExposuresForSlot("ws", "ops", "writer"); err != nil {
+		t.Errorf("a fresh store refused to read: %v", err)
 	}
 }

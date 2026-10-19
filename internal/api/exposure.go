@@ -139,3 +139,13 @@ func (s *Store) rehydrateExposures(tx *bolt.Tx) error {
 		return nil
 	})
 }
+
+// ExposureReader is where the gate reads what a slot has read.
+type ExposureReader interface {
+	ExposuresForSlot(workspace, team, role string) ([]ExposureRecord, error)
+}
+
+// ExposureVerdict reports whether a role that writes functions must be held.
+func ExposureVerdict(src ExposureReader, workspace, team string, role *Role) (held bool, reason string) {
+	return false, ""
+}

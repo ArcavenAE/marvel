@@ -8,6 +8,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/session"
 )
 
 // The exposure gate holds a role that writes a function its slot has read
@@ -194,5 +195,56 @@ func TestExposureHoldAnnouncesOncePerTransition(t *testing.T) {
 	}
 	if _, charged := ctrl.roleHealth[exposureWS+"/ops/writer"]; charged {
 		t.Error("an exposure hold charged the role's crash record")
+	}
+}
+
+// TestShiftLaunchRefusesAWriterWhoseSlotHasRead: shiftLaunch creates the
+// successors itself, and reconcile never plans the shifting role, so the gate in
+// planRole does not cover it. The real launch must create no successor, hold the
+// shift in launching, and say so once.
+func TestShiftLaunchRefusesAWriterWhoseSlotHasRead(t *testing.T) {
+	role := exposureWriter()
+	store, ctrl, team := exposureEnv(t, role)
+	seedWriterRow(t, store, "writer-0", 1, api.SessionRunning, "")
+	if err := store.UpdateTeam(team.Key(), func(live *api.Team) error {
+		live.Generation = 2
+		live.Shift = api.ShiftState{Phase: api.ShiftLaunching, Roles: []string{"writer"}, OldGeneration: 1}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.GetTeam(team.Key())
+	team = &got
+
+	ctrl.mu.Lock()
+	for tick := 0; tick < 2; tick++ {
+		ctrl.shiftLaunch(team, &role)
+	}
+	ctrl.mu.Unlock()
+	if rows := store.ListSessionsByTeamRoleGeneration(exposureWS, "ops", "writer", 2); len(rows) != 0 {
+		t.Errorf("shiftLaunch created %d successor rows for a writer whose slot has read, want none", len(rows))
+	}
+	if team.Shift.Phase != api.ShiftLaunching {
+		t.Errorf("shift phase = %s, want launching: nothing was launched", team.Shift.Phase)
+	}
+	if n := countKind(ctrl.Events.(*events.Ring), events.KindExposureRefused); n != 1 {
+		t.Errorf("exposure.refused emitted %d times over 2 ticks, want 1", n)
+	}
+}
+
+// TestSessionCreateRefusesAWriterWhoseSlotHasRead: every spawn ends in
+// Manager.Create, so the refusal sits there too, for the paths that do not go
+// through a plan. No row is left behind.
+func TestSessionCreateRefusesAWriterWhoseSlotHasRead(t *testing.T) {
+	role := exposureWriter()
+	store, ctrl, _ := exposureEnv(t, role)
+
+	sess := &api.Session{Name: "writer-9", Workspace: exposureWS, Team: "ops", Role: "writer", Runtime: role.Runtime}
+	err := ctrl.sessMgr.Create(sess)
+	if !errors.Is(err, session.ErrExposureRefused) {
+		t.Fatalf("Create = %v, want an error wrapping ErrExposureRefused", err)
+	}
+	if _, gerr := store.GetSession(sess.Key()); gerr == nil {
+		t.Error("a refused Create left a session row")
 	}
 }

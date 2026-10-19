@@ -1923,6 +1923,10 @@ type BusEnv interface {
 // any other spawn failure.
 var ErrPlacementRefused = errors.New("placement refused")
 
+// ErrExposureRefused is wrapped by the error Create returns when the role the
+// session is for writes a function its slot has read (marvel#945).
+var ErrExposureRefused = errors.New("exposure refused")
+
 // PlacementRefusal is one role whose spawn is currently refused for its
 // directory.
 type PlacementRefusal struct {
