@@ -83,7 +83,7 @@ an older runtime than their role's (`:1519`, `behindCount` in `spec.go:47`).
 | A command with inline args passes the pre-flight. | marvel#517, closed; `validateCommand` now splits on spaces and tabs (`manifest.go:756-794`) and marks shell text it does not parse with an advisory | section 7 step 1 is done; section 8's first defect is fixed. |
 | An unknown `--cluster`, or `--cluster` with an unreadable config, is refused for every verb; an explicit `--cluster` outranks `MARVEL_SOCKET`. | marvel#502 and #586, closed; `resolveDaemonRung`, `cmd/marvel/main.go:92-151` | most of section 4 item 1 and of section 10 item 4 is now how every verb behaves. What remains is in section 10. |
 | The client reports which rung chose the daemon: flag, env, cluster or default. | `resolveRung`, `main.go:77-80` | the banner prints the rung; no new resolution code is needed. |
-| A typed exit code exists. | `exitError{Code, Msg}`, `cmd/marvel/wait.go:31`; `main.go:208-212` exits with its code | section 6's mapping cost is smaller: whichever numbering is ruled, `plan` can return an `exitError` per outcome instead of adding a new mechanism. The numbering itself is still open (section 10 item 1). |
+| A typed exit code exists. | `exitError{Code, Msg}`, `cmd/marvel/wait.go:31`; `main.go:208-212` exits with its code | section 6's mapping cost is smaller: whichever numbering is ruled, `plan` can return an `exitError` per outcome instead of adding a new mechanism. The numbering is ruled: section 6 (section 10 item 1). |
 | Codex folder trust has a judge with no side effect. | `resolveCodexTrust`, `internal/runtime/codex_trust.go:28`, reads the filesystem and runs `git` through `GitMainRoot` but records nothing; `codexFolderTrust` (:52) wraps it and records an event | the plan can report each codex seat's trust by calling the judge, never the wrapper, the same split as `admission.Check` and `admitGrowth`. Claude trust (SB-4M) stays NOT EVALUATED. |
 | `behind` is counted at apply. | marvel#416, closed; `spec.go:47` | section 4 item 8 reuses `behindCount`'s rule; it is no longer the architect's guess. |
 
@@ -236,14 +236,20 @@ second by most seats.
 
    The client resolves its daemon by four rungs (`resolveDaemonRung`,
    `cmd/marvel/main.go:92-151`; flag, env, cluster, default at :77-80), and
-   the party voted on two cases. What is still open is in section 10, item 4:
-   - `--socket` (`:93-95`) is the operator naming a socket outright. The
-     proposal is to print "socket given by flag" in the banner, not to
-     refuse.
+   the party voted on two cases. The operator ruled the other two on
+   2026-10-19 (section 10, item 4):
+   - `--socket` (`:93-95`) is the operator naming a socket outright. `plan`
+     refuses when `--socket` is given, and says why. The cost, accepted in
+     the ruling: `plan` cannot preview against a daemon reached only by
+     `--socket`. A test of `plan` reaches its scratch daemon with
+     `MARVEL_SOCKET` under a scratch `HOME`, where no config names a
+     `current_cluster`, so the override refusal above does not fire.
    - A `config.Load` failure with `--cluster` is now refused for every verb
      (`:108-117`). Without `--cluster` it still falls back to the local
-     daemon with NO warning. The proposal is to print "config unreadable,
-     local daemon" in the banner.
+     daemon with NO warning. `plan` refuses here too, and prints the config
+     error. A missing config file is not a failure: `config.Load` returns
+     the defaults for it (`internal/config/config.go:830-831`), so this
+     refusal bites only on a config file that exists and does not parse.
 2. **Gross adds, gross kills, and the net the gate sees, with a kill
    list.** The admission gate sees one net `want` per team and admits
    `want <= 0` (`internal/admission/admission.go:277-279`). So a manifest that lowers one role and raises another can
@@ -310,7 +316,7 @@ second by most seats.
   and live session ids of the teams the manifest names, plus the daemon's
   start time), so drift is visible. It does not bind the apply.
 
-## 6. Exit codes (OPEN: ruling (a), section 10)
+## 6. Exit codes (ruled 2026-10-19, section 10)
 
 The vote split (section 9).
 
@@ -321,25 +327,29 @@ Agreed:
   unreachable daemon, a daemon without `plan_manifest`, and a pre-flight
   that errored.
 
-Default, OPEN until ruled. It rests on the 3-2 vote that refusal and "could
-not evaluate" get distinct codes; the numbering itself tied 2-1-2, so the
-numbers below are a choice, not a vote. The flag follows its 3-2 vote:
+Ruled by the operator on 2026-10-19. It keeps the 3-2 vote that refusal and
+"could not evaluate" get distinct codes; the numbering, which tied 2-1-2, is
+the operator's. The flag follows its 3-2 vote:
 - 0: evaluated, no refusal;
-- 1: apply would refuse;
-- 3: could not evaluate;
+- 1: could not evaluate;
+- 3: apply would refuse;
 - 2: changes exist, returned only under `--detailed-exitcode`.
+
+Why 1 for "could not evaluate": marvel already exits 1 on any error it does
+not classify. A failure path the builder misses therefore falls through to
+1, which here is the true reading, instead of reading as "your manifest
+would be refused".
 
 Under the flag, 0 also means no changes. Without it, `marvel plan -f m &&
 marvel work m` keeps working.
 
-The cost of this default: an error from `root.Execute` exits 1 unless it is
-an `exitError`, which exits with its own code (`cmd/marvel/main.go:207-212`,
-`exitError` in `wait.go:31`, used by `marvel wait`). A dial failure, an
-unreachable daemon or a mistyped flag would therefore exit 1 and read as
-"apply would refuse", unless `plan` wraps every failure to evaluate in an
-`exitError` with code 3. The mechanism exists; the work is to wrap each
-failure path in `plan`, and to test that none escapes as a bare error. The
-1-for-both option (refusal and failure both exit 1) avoids that work.
+The cost of this numbering: an error from `root.Execute` exits 1 unless it
+is an `exitError`, which exits with its own code (`cmd/marvel/main.go:207-212`,
+`exitError` in `wait.go:31`, used by `marvel wait`). `plan` returns an
+`exitError` with code 3 for each refusal apply would return, and a test
+checks that every refusal in section 2 item 4 exits 3. A dial failure, an
+unreachable daemon or a mistyped flag needs no wrapping: it exits 1, which
+is "could not evaluate".
 
 ## 7. Edits, in order (none made by this PR)
 
@@ -433,30 +443,35 @@ Five seats voted in the last round. A seat could abstain on an item
 outside its expertise, and an abstention counts as no vote, so some
 tallies (3-1, 4-0, 2-2) sum to four.
 
-1. **(a) OPEN. Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
+1. **(a) RULED 2026-10-19. Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
    (2 seats), 0/2/1-error/3-refusal (1), 0/2/1-refusal/3-not-evaluated (2).
    - On the underlying question, refusal and "could not evaluate" get
      distinct codes, 3-2.
    - On whether exit 2 is the default, `--detailed-exitcode` wins 3-2. The
      minority's reason: a forgotten flag reads "changes" as 0.
-   - Default: section 6, with its cost (every error exits 1 today).
-2. **(b) OPEN. Home paths in output (V4), split 2-2.**
+   - Ruled: 0 evaluated, 1 could not evaluate, 3 apply would refuse, 2 under
+     `--detailed-exitcode`. Section 6 carries it.
+2. **(b) RULED 2026-10-19: (y). Home paths in output (V4), split 2-2.**
    - (x) Collapse the home prefix to `~` for display. This shows which
      binary resolved, for every role.
    - (y) Redact home paths except the one resolved binary path per role.
      This keeps another user's directory names out of CI logs.
 
    The redaction design (`describe-redaction.md`, #421) covers values, not
-   paths. Default: (y), the stricter one, until #421 rules on paths.
+   paths. Ruled: (y). The resolved binary path is written with `~`. When a
+   workdir or trusted-folder check fails, the line names the check, not the
+   path.
 3. **Recorded dissent (V2).** The finops seat: without any figure the plan
    shows counts and nothing about cost, and operators will invent their own
    number. Reopen when `usage.Baseline` exists.
-4. **OPEN, not voted: the other two wrong-daemon paths** (section 4, item
-   1). Narrowed at f1fe67f: a `config.Load` failure with `--cluster` is now
-   refused for every verb (#502). What is left to rule: put `--socket` in
-   the banner, and with no `--cluster` print "config unreadable, local
-   daemon" in the banner rather than refuse. The party voted only on the
-   unknown cluster and the `MARVEL_SOCKET` override.
+4. **RULED 2026-10-19, not voted: the other two wrong-daemon paths**
+   (section 4, item 1). Narrowed at f1fe67f: a `config.Load` failure with
+   `--cluster` is now refused for every verb (#502). The party voted only on
+   the unknown cluster and the `MARVEL_SOCKET` override. The operator ruled
+   both remaining paths refuse: `plan` refuses when `--socket` is given, and
+   refuses on an unreadable config with no `--cluster`, printing the config
+   error. Both differ from the proposal this section carried (print a line
+   in the banner and run).
 
 ## 11. Prior art weighed
 
