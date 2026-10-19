@@ -92,9 +92,10 @@ func (d *Daemon) handleExposureEnd(params json.RawMessage, c caller) Response {
 	return respond(map[string]any{"count": n})
 }
 
-// handleExposureVoid is the operator's way out of a wrong record. It is served
-// only on the local socket, needs a reason, appends voided_at and the reason and
-// deletes nothing, and says so on the event ring as a warning.
+// handleExposureVoid is the way out of a wrong record. It is served only on the
+// local socket, which any seat on the host can reach, so it is not limited to
+// the operator. It needs a reason, appends voided_at and the reason and deletes
+// nothing, and says so on the event ring as a warning.
 func (d *Daemon) handleExposureVoid(params json.RawMessage, c caller) Response {
 	p, err := decodeExposureParams(params)
 	if err != nil {

@@ -88,7 +88,7 @@ type ExposureRecord struct {
 	EndedAt time.Time `json:"ended_at,omitzero"`
 	// Seq orders the records and keeps two readings of one function apart.
 	Seq uint64 `json:"seq"`
-	// VoidedAt and VoidReason are set by an operator when a record was wrong.
+	// VoidedAt and VoidReason are set by a void when a record was wrong.
 	// A voided record stays in the store and under the seal; the gate stops
 	// counting it. Nothing is ever deleted.
 	VoidedAt   time.Time `json:"voided_at,omitzero"`
@@ -153,8 +153,8 @@ func (s *Store) EndExposure(workspace, team, role, function string, at time.Time
 }
 
 // VoidExposure marks a slot's records for a function as voided, with a reason,
-// and returns how many it marked. It is the operator's way out of a record
-// that was wrong: the record stays in the store and under the seal, the gate
+// and returns how many it marked. It is the way out of a record that was
+// wrong: the record stays in the store and under the seal, the gate
 // stops counting it, and nothing is deleted. A void needs a reason; a function
 // the slot has no record for is ErrNotFound; records already voided mark none.
 func (s *Store) VoidExposure(workspace, team, role, function, reason string, at time.Time) (int, error) {
@@ -265,7 +265,7 @@ var errExposureLost = errors.New("exposure records do not match their seal (a re
 // persisted has landed. It digests the bytes as stored, not the decoded
 // record, so a field this binary does not know is under the seal.
 func sealOfRaw(recs map[string][]byte, key string, with []byte) exposureSeal {
-	keys := make([]string, 0, len(recs)+1)
+	var keys []string
 	for k := range recs {
 		if k != key {
 			keys = append(keys, k)

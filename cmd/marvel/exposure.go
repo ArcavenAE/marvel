@@ -28,8 +28,9 @@ ad-hoc run all see it.
   marvel exposure void <workspace/team> <role> <function> --reason WHY
 
 end marks a reading as ended; the refusal still counts it. void is the way out
-of a wrong record: operator-run on the local socket only, it appends a reason
-and the gate stops counting the record. Nothing is ever deleted.`,
+of a wrong record: it is served on the local socket only (any seat on the
+host can reach it), it appends a reason, and the gate stops counting the
+record. Nothing is ever deleted.`,
 	}
 
 	var paths []string

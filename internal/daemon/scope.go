@@ -114,8 +114,11 @@ func localCaller() caller { return caller{scope: ScopeAdmin, local: true} }
 // the operator at the daemon's own socket (brief 9 S3).
 var localOnlyMethods = map[string]bool{
 	"credential.reveal": true,
-	// exposure.void releases a refusal, so it is the operator's, at the daemon's
-	// own socket (marvel#945).
+	// exposure.void releases a refusal, so it is served only on the daemon's own
+	// socket and never through the tunnel (marvel#945). That checks where the
+	// caller is, not who: every seat on the host holds that socket, so today any
+	// local seat can void. Limiting it to the operator needs a principal check
+	// that does not exist yet.
 	"exposure.void": true,
 	// broker.token returns a bearer token, so like a revealed credential it
 	// never leaves through the mrvl:// tunnel.
