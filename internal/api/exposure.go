@@ -88,6 +88,23 @@ type ExposureRecord struct {
 	EndedAt time.Time `json:"ended_at,omitzero"`
 	// Seq orders the records and keeps two readings of one function apart.
 	Seq uint64 `json:"seq"`
+	// VoidedAt and VoidReason are set by an operator when a record was wrong.
+	// A voided record stays in the store and under the seal; the gate stops
+	// counting it. Nothing is ever deleted.
+	VoidedAt   time.Time `json:"voided_at,omitzero"`
+	VoidReason string    `json:"void_reason,omitempty"`
+}
+
+// VoidExposure marks a slot's records for a function as voided. Stub in the red
+// commit.
+func (s *Store) VoidExposure(workspace, team, role, function, reason string, at time.Time) (int, error) {
+	return 0, nil
+}
+
+// sealOfRaw is the seal over the stored bytes of the records, with one entry
+// replaced. Stub in the red commit.
+func sealOfRaw(recs map[string][]byte, key string, with []byte) exposureSeal {
+	return exposureSeal{}
 }
 
 func exposureSlot(workspace, team, role string) string {

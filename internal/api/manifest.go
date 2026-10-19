@@ -1089,6 +1089,12 @@ func searchString(s, substr string) bool {
 // marvel passes them as given and does not interpret the files they name.
 var settingsSourceNames = map[string]bool{"user": true, "project": true, "local": true}
 
+// CheckExposure refuses a manifest that would cast a role whose slot has read a
+// function the role writes. Stub in the red commit.
+func (m *Manifest) CheckExposure(src ExposureReader) error {
+	return nil
+}
+
 // validateWrites refuses a writes list the exposure gate could not match: an
 // empty name matches nothing, and a name twice, in any case or with edge space,
 // says the author lost track.
