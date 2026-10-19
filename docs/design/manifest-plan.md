@@ -17,22 +17,75 @@ Design for review. No code lands until this doc is reviewed.
   orc's `_bmad-output/party-mode/marvel-dry-run-2026-10-03/`.
 - Checked against marvel `origin/main` 03dd483; the cited lines are
   unchanged at 889e49a.
+- Refreshed 2026-10-19 against `origin/main` f1fe67f, after the operator ruled
+  that this design is built without a second party. Every line cite below
+  points at f1fe67f, except the first defect in section 8, which is kept as
+  found at 03dd483 and says so. What changed underneath the design, and what
+  that changes here, is in section 1a.
 
 ## 1. The problem, verified
 
 | Premise | Where | Result |
 |---|---|---|
-| `marvel plan` previews only teams the daemon already holds | `cmd/marvel/main.go:998-1035`; the `plan` RPC takes no params (`internal/daemon/daemon.go:991-992`, `handlePlan()`) | true; teams mid-shift are omitted |
-| The plan/apply split exists inside the controller | `internal/team/controller.go` around :960-1330 (`RolePlan`, `HoldDetail`, `plan.Delete`); aae-orc-nf0w and aae-orc-nrk1, both closed | true: the seam this design reuses |
-| `marvel work` has no preview | `apply` params are `manifest_data` and `workspace_root` only (`daemon.go:1186-1195`); no dry-run, diff, preview, validate or check flag under `cmd/marvel` | true |
+| `marvel plan` previews only teams the daemon already holds | `cmd/marvel/main.go:1207-1231`; the `plan` RPC takes no params (`internal/daemon/daemon.go:1176-1177`, `handlePlan()` at :1600) | true; teams mid-shift are omitted |
+| The plan/apply split exists inside the controller | `internal/team/controller.go` around :1062-1400 (`RolePlan` :1062, `HoldDetail` :1086, `plan.Delete` :1271, `PlanConvergence` :1395); aae-orc-nf0w and aae-orc-nrk1, both closed | true: the seam this design reuses |
+| `marvel work` has no preview | `apply` params are `manifest_data` and `workspace_root` only (`daemon.go:1341-1349`); no dry-run, diff, preview, validate or check flag under `cmd/marvel` | true |
 | Handing `plan` a manifest misleads | #334 (open): "no teams to plan", exit 0 | true |
 | The workaround is itself an apply | load at `replicas: 0`, then plan: it stores the manifest, and the plan shows desired 0 and spawn 0 | true; it also skips admission, since a request that adds nothing is never refused (`internal/admission/admission.go:277-280`) |
 
-What `handleApply` runs today, in order, before it commits (`daemon.go:1197-1300`):
-parse; `ValidateWorkDirs` (placement); `ValidateRuntimes` (the command
-resolves); `ValidateBudgets`; `ValidateTeamNames` (marvel#319); admission per
-team (`admitGrowth`); advisories; then `m.Apply(d.store)`, the posture write,
-`Reproject`, `regenerateBus` and `ReconcileOnce`.
+What `handleApply` runs today, in order, before it commits
+(`daemon.go:1351-1445`, f1fe67f). Nine of the fifteen steps can refuse the
+apply; the other six only add advisories.
+
+1. parse (`:1357`): **refuses** a manifest that does not parse;
+2. `ScheduleHistoryCap` (`:1366`): **refuses** a schedule history above the
+   cluster's cap (`d.scheduleHistoryMax`, from the daemon's config);
+
+   Between steps 2 and 3, `workspace_root` from the request replaces the
+   manifest's root (`:1370-1372`). That is a transform, not a check, and
+   `evaluate` applies it the same way.
+3. `ValidateWorkDirs` (`:1375`): **refuses** a workdir it cannot place, and
+   otherwise adds advisories;
+4. `ValidateTrustedFolders` (`:1379`): **refuses** a listed folder that does
+   not exist or is not the top of a main git checkout (marvel#684);
+5. `LegacyPlacementNotes(d.store)` (`:1382`): advisories;
+6. `TrustedFolderNotes(d.store)` (`:1383`): an advisory when this apply
+   replaces the workspace's stored list;
+7. `ValidateRuntimes` (`:1389`): **refuses** a command that does not
+   resolve, and now also returns advisories;
+8. `ValidateBudgets(d.sessMgr.CanStreamRole)` (`:1400`): **refuses** a
+   declared budget dimension no role can report;
+9. `refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus)` (`:1406`, defined at
+   `:3467`): **refuses** a role that declares the global tier on a cluster
+   whose bus config does not admit its name;
+10. `ValidateTeamNames(d.store.ListTeams())` (`:1412`, marvel#319):
+    **refuses** a name clash;
+11. admission per team (`admitGrowth`, `:1435`): **refuses** growth over a
+    budget;
+12. `ContextFeedAdvisories(d.sessMgr.CanFeedContextRole)` (`:1440`);
+13. `DSTAcknowledgements(now)` (`:1441-1442`), with `now` read once at
+    `:1441`;
+14. `ScheduleAdvisories(now)` (`:1443`);
+15. `ShiftHeadroomAdvisories` (`:1444`).
+
+Then it commits: `m.Apply(d.store)` (`:1446`), the posture write, `Reproject`
+(`:1499`), `regenerateBus` (`:1503`) and `ReconcileOnce` (`:1506`). The result
+now also carries `behind`, the count of the applied teams' sessions still on
+an older runtime than their role's (`:1519`, `behindCount` in `spec.go:47`).
+
+## 1a. What changed between 03dd483 and f1fe67f
+
+| Change | Where | What it changes here |
+|---|---|---|
+| Six pre-commit steps were added or widened since 03dd483: items 2, 4, 6, 7, 9 and 15 above. Three of them refuse (2, 4 and 9). Steps 5, 12, 13 and 14 were already there at 03dd483 (`daemon.go:1222`, `:1271`, `:1273`, `:1274`) and the first version of this design missed them. | `daemon.go:1366-1444` | `evaluate` runs all fifteen (section 2, item 5). A plan that skips a refusing step says ok where apply refuses; one that skips an advisory step hides a line apply would print. |
+| Step 9 reads the bus config the daemon loaded, not the store. | `refuseUnadmittedGlobalRoles(m, b session.BusEnv)`, `daemon.go:3467` at f1fe67f, `:3487` on main 69461c4 | `evaluate` takes the bus env as an input beside the store snapshot. It only reads it: the function has no side effect, and with no bus it refuses nothing. |
+| Step 4 runs `git` (5 second timeout) under each listed folder. | `internal/api/trusted_folders.go:120-158`, `gitTimeout` :26 | it writes nothing, so it stays in the plan; a slow filesystem makes the plan slow, not wrong. |
+| A command with inline args passes the pre-flight. | marvel#517, closed; `validateCommand` now splits on spaces and tabs (`manifest.go:756-794`) and marks shell text it does not parse with an advisory | section 7 step 1 is done; section 8's first defect is fixed. |
+| An unknown `--cluster`, or `--cluster` with an unreadable config, is refused for every verb; an explicit `--cluster` outranks `MARVEL_SOCKET`. | marvel#502 and #586, closed; `resolveDaemonRung`, `cmd/marvel/main.go:92-151` | most of section 4 item 1 and of section 10 item 4 is now how every verb behaves. What remains is in section 10. |
+| The client reports which rung chose the daemon: flag, env, cluster or default. | `resolveRung`, `main.go:77-80` | the banner prints the rung; no new resolution code is needed. |
+| A typed exit code exists. | `exitError{Code, Msg}`, `cmd/marvel/wait.go:31`; `main.go:208-212` exits with its code | section 6's mapping cost is smaller: whichever numbering is ruled, `plan` can return an `exitError` per outcome instead of adding a new mechanism. The numbering is ruled: section 6 (section 10 item 1). |
+| Codex folder trust has a judge with no side effect. | `resolveCodexTrust`, `internal/runtime/codex_trust.go:28`, reads the filesystem and runs `git` through `GitMainRoot` but records nothing; `codexFolderTrust` (:52) wraps it and records an event | the plan can report each codex seat's trust by calling the judge, never the wrapper, the same split as `admission.Check` and `admitGrowth`. Claude trust (SB-4M) stays NOT EVALUATED. |
+| `behind` is counted at apply. | marvel#416, closed; `spec.go:47` | section 4 item 8 reuses `behindCount`'s rule; it is no longer the architect's guess. |
 
 ## 2. The decided shape
 
@@ -48,7 +101,7 @@ All five seats agreed on each point in this section by the final round.
    for real. With a separate verb, dropping a word cannot turn a preview
    into an apply.
 3. **A new daemon method, `plan_manifest`,** taking the same params as
-   `apply`. An older daemon answers "unknown method" (`daemon.go:993-994`),
+   `apply`. An older daemon answers "unknown method" (`daemon.go:1178-1179`),
    so the new client fails closed. The two alternatives fail open:
    - a `dry_run` field on `apply` is dropped by an older daemon, which then
      applies (`applyParams` is a plain `json.Unmarshal`;
@@ -58,24 +111,52 @@ All five seats agreed on each point in this section by the final round.
 4. **It computes in the daemon.** Every pre-flight answers against the
    daemon's host and store:
    - binaries are resolved with `exec.LookPath` on the daemon's PATH
-     (`internal/api/manifest.go:646`);
+     (`internal/api/manifest.go:790`);
    - workdirs are checked with `os.Stat` and `EvalSymlinks` on the daemon's
-     host (`internal/api/workdir.go:62-90`);
+     host (`internal/api/workdir.go:62-92`, `checkWorkDir` :123-144);
+   - trusted folders are checked with `os.Stat`, `EvalSymlinks` and `git` on
+     the daemon's host (`trusted_folders.go:120`);
+   - the global-role admission is read from the bus config the daemon loaded;
+   - the schedule history cap and the two adapter predicates are the
+     daemon's own;
    - the name clash and admission are read from the store.
 
    A client-side plan would answer for the wrong machine. The client sends
    the bytes and the resolved `workspace_root`, as `marvel work` does, and
    renders the result.
 5. **One evaluation, three callers.** `handleApply` is split three ways:
-   - a pure `evaluate(manifest, store snapshot)` that runs every pre-flight
-     and computes the plan;
+   - a side-effect free `evaluate` that runs every pre-commit step in
+     section 1, all fifteen, in apply's order, plus the `workspace_root`
+     transform, and computes the plan. Side-effect free, not pure: it writes
+     nothing, emits nothing and logs nothing, but it reads the daemon host's
+     filesystem, PATH and git (steps 3, 4 and 7), so the same input can give a
+     different answer a second later. Its inputs, each passed in so a test can
+     supply them without a live daemon:
+     - the manifest and the request's `workspace_root`;
+     - the store, read only through its read methods (`GetWorkspace`,
+       `ListTeams`, `ListSessionsByTeam`, and the `*Store` that steps 5 and 6
+       take). "Snapshot" in this design means exactly that: each read returns
+       value copies (`internal/api/store.go`), but the reads are not one
+       frozen view, so two reads can straddle a reconcile tick. The plan's
+       digest (section 5) records what was read;
+     - the bus env (step 9);
+     - the schedule history cap (step 2);
+     - the predicates `CanStreamRole` (step 8) and `CanFeedContextRole`
+       (step 12);
+     - `now`, read once, for steps 13 and 14;
+     - the usage accountant's team spend, which the admission snapshot of
+       step 11 reads (`AdmissionSnapshot`, `internal/daemon/admission.go:21`,
+       `d.usage.TeamSpend` at `:33`).
+
+     A step added to apply later is added to `evaluate`, not beside it,
+     since apply calls `evaluate`;
    - `apply`, which calls `evaluate`, then logs, emits events and commits;
    - `plan_manifest`, which calls `evaluate` and returns the plan.
 
    Two existing pieces need care:
    - **Admission:** `admitGrowth` logs and emits `KindAdmissionRefused` /
-     `KindAdmissionUnmeasured` (`internal/daemon/admission.go:60-88`), so
-     the plan calls the pure `admission.Check` it wraps (`:64`).
+     `KindAdmissionUnmeasured` (`internal/daemon/admission.go:61-98`), so
+     the plan calls the pure `admission.Check` it wraps (`:65`).
      Otherwise every preview would write refusals into the event stream.
    - **Workdirs:** `ValidateWorkDirs` mutates its receiver (it rewrites the
      root through symlinks, or drops it), so `evaluate` runs it on a parsed
@@ -89,7 +170,8 @@ All five seats agreed on each point in this section by the final round.
 
    seat-bootstrap's SB-4M trust step (marvel#490, design) needs a
    check-only mode before a plan can report it. Until then the plan prints
-   that step as "not evaluated".
+   that step as "not evaluated". Codex trust is the exception: its judge
+   already has no side effect (section 1a).
 
 ## 3. What it prints
 
@@ -133,6 +215,202 @@ NOT EVALUATED
 3 spawns, 1 kill, 0 refusals
 ```
 
+### Home paths in the output (ruling (y), 2026-10-19)
+
+The plan's output reaches CI logs and pasted messages, so it shows no
+directory names under anyone's home, with one exception per role. The rule,
+exactly:
+
+- **A home path** is an absolute path, after `filepath.Clean`, that is
+  under the home of the process printing the line (`os.UserHomeDir`), or
+  under `/Users/` or `/home/`. The daemon applies it to the lines it builds,
+  with the daemon user's home. The client applies it to **every line it
+  prints**, with the client's home: the banner, its own error lines, and the
+  text it relays from the daemon. Neither changes what the other sent; the
+  client's pass over relayed text only hides what the daemon's pass left,
+  such as a path under the client's home that is not under the daemon's.
+- **The exception: one program path per role.** The path `exec.LookPath`
+  returns for the role's command on the daemon's PATH (section 4 item 4).
+  When it is under the daemon user's home it is written with that home as
+  `~` (`~/.local/bin/claude`). Under `/Users/` or `/home/` but not the
+  daemon's home, it is hidden like any other.
+  - A wrapper script is the program: its own path is the exception, and
+    nothing it execs is printed (section 4 item 5, "harness not
+    inspectable").
+  - `args` are never printed, since they can name paths. The line prints
+    their count (`args: 2`).
+- **Every other home path is hidden** as `<home:XXXXXXXX>`, the first eight
+  hex digits of HMAC-SHA-256 of the cleaned path, keyed with a per-host
+  random key. The key is a 32-byte file in the printing process's own marvel
+  layout (`<MARVEL_HOME>/state/redact.key`, mode 0600), created on first use
+  and never printed. marvel mints it and can replace it without anyone else,
+  so it is issuance under SOUL section 3, not custody. The same path prints
+  the same token within one host's output, so a before and after can still
+  be compared, and no directory name prints. This covers a passing check as
+  well as a failing one.
+  - **What the token protects, and what it does not.** An unkeyed hash
+    would let a reader confirm a guessed path: with a known user name and a
+    usual layout, a few hundred candidates such as `/Users/<name>/work/<repo>`
+    are enough, and eight hex digits make a false match rare. The key stops
+    that for anyone without it. It does not stop a reader who holds the key
+    file, and tokens from two hosts, or from a daemon and a client that run
+    as different users, are not comparable.
+  - If the key cannot be read or created, the line prints `<home>` with no
+    token, and the banner says `redaction: unkeyed, tokens omitted`. A path
+    is never printed in full for want of a key.
+  - **How the key is handled.**
+    - **Created whole, then linked into place.** The creator writes 32
+      bytes from `crypto/rand` to a temp file in the same directory, opened
+      with `O_CREATE|O_EXCL|O_NOFOLLOW` and mode 0600 under a random name,
+      calls `fsync`, and then `link`s it to `redact.key`. `link` fails with
+      `EEXIST` when a key is already there, so the key name only ever points
+      at a whole file:
+      - a race loser gets `EEXIST`, removes its own temp file, and reads the
+        winner's key, which was complete before it was linked;
+      - a creator that crashes before the link leaves only a temp file,
+        never a short key. The next creator removes temp files older than
+        one minute (by `lstat`, never following a link) and makes its own;
+      - after a successful link, the creator `fsync`s the directory, so the
+        link survives a crash, and then removes its temp name.
+      - **Temp names** are exactly `redact.key.tmp-` plus 16 hex digits.
+        The sweep removes only names of that exact form, so it never
+        touches another file. A name that already exists (`EEXIST` on the
+        temp open) is retried with a new random name, at most three times,
+        then the run goes unkeyed.
+      - **`ENOENT` on the link** means another run's sweep removed this
+        temp file, which happens only when this creator stalled for over a
+        minute. The creator starts over once, from a new temp file; a second
+        failure goes unkeyed.
+      - **A crash after the link and before the temp is removed** leaves the
+        key with two links, the second a temp name. The reader accepts a
+        link count above one only when every other link is a temp name in
+        the same directory with the same device and inode (checked with
+        `lstat` on each temp-form name), and removes those names. Any other
+        extra link is refused.
+    - **The state directory is not followed.** The key's directory is
+      opened with `os.OpenRoot` (Go 1.24, and marvel's go.mod names 1.26),
+      which refuses a path that leaves the directory through a symlink. The
+      directory itself is checked with `Lstat` before it is opened: it must
+      be a directory, not a symlink, owned by the reading uid, with no group
+      or other write bit. Every create, link, sweep and read above goes
+      through that root. A symlinked `state/` goes unkeyed, with
+      `key refused (state directory)` in the banner.
+    - **Checked on every read, on the open file.** The reader opens the key
+      with `O_RDONLY|O_NOFOLLOW`, so a symlink at the key's name fails to
+      open, and checks the opened file with `Fstat`, not a separate `Stat`
+      of the path that a swap could change in between. The key is refused,
+      never repaired or overwritten, when it is not a regular file, is not
+      owned by the reading uid, has any group or other permission bit, or
+      is not exactly 32 bytes; then exactly 32 bytes are read. The line then
+      uses the unkeyed form, and the banner says `redaction: unkeyed, key
+      refused (<check>)`, naming the check and not the path.
+    - **Tests for the key:** a symlink at the key's name, a 31-byte key,
+      a 0644 key, a key owned by another uid (a unit test on the `Fstat` result, since a test cannot `chown` without root), and a leftover temp file older
+      than one minute. The first four are refused with their check named;
+      the last is removed and a new key created. Two creators started
+      together end with one key, which both read. Also:
+      - a temp file younger than one minute is kept by the sweep;
+      - a creator whose temp file is removed before its link (the `ENOENT`
+        path, made by removing it from the test between write and link)
+        starts over once and ends with one whole key;
+      - a key with a second link under a temp-form name is accepted and the
+        temp name removed; a second link under any other name is refused;
+      - a symlinked `state/` goes unkeyed.
+    - **Never emitted.** The key's bytes are never logged, never put in an
+      event, a bus message, a describe output or an error, and never passed
+      to a child process. Only the derived 8-hex tokens leave the process.
+    - **Announced when made.** The run that creates the key prints one
+      banner line, `redaction: new key, tokens from earlier runs on this host
+      no longer match`.
+    - **Rotation.** Deleting the file and letting the next run create one
+      is the rotation; marvel has no rotate verb. A new key changes every
+      token, so a token from before the rotation cannot be compared with one
+      after it, and the banner line above says so. Nothing else depends on
+      the key.
+
+What that means for each line that can carry a path:
+
+| line | when its path is a home path |
+|---|---|
+| banner `socket=` | `socket=unix:<home:XXXXXXXX>`, with the rung that chose it (`(MARVEL_SOCKET)`, `(cluster <name>)`, `(layout default)`). The cluster, host, uid, pid and start time already identify the daemon. |
+| `workspace.root A -> B` | both sides hidden: `workspace.root <home:1b2c3d4e> -> <home:1b2c3d4e> (no symlink change)` |
+| command resolution | the exception above |
+| workdir, passing | `core workdir <home:5e6f7a8b> exists; daemon uid can enter and write` |
+| workdir or trusted folder, failing | names the check and the token, not the path: `core workdir <home:5e6f7a8b>: does not exist` |
+| refusal text from a pre-flight | the same rule, applied to the text the daemon returns before it is printed |
+| client: config read error | `config.Load` wraps `os.ReadFile`'s error as `read config: open <path>: <reason>` (`internal/config/config.go:828-833`), so a config that exists but cannot be read names its path. Printed as `read config: open <home:XXXXXXXX>: permission denied`. A parse error (`parse config: ...`, `:837-838`) names no file and prints as it is |
+| client: dial error | `connect to daemon at <addr> (<network>): <err>` (`internal/daemonrpc/client.go:191`) prints the resolved address. A unix socket under a home prints as `connect to daemon at <home:XXXXXXXX> (unix): ...`, the same token as the banner's `socket=`. A TCP address carries no path and prints as it is |
+| cobra's own error print and usage text | today the root command sets neither `SilenceErrors` nor `SilenceUsage` (`cmd/marvel/main.go:207-213`), so cobra prints `Error: <err>` and the usage text itself, outside any filter. The `plan` command sets both on itself, which cobra honours for the command that ran. Which command ran is cobra's own resolution, so `--cluster plan` or `--cluster b plan` cannot make another verb look like `plan`, or `plan` look like another. `plan` then prints its error through the client filter, one line, and on a usage error prints `run 'marvel plan --help' for usage` instead of the usage text. Other verbs keep cobra's print |
+| `--marvel-home` or `MARVEL_HOME` error, under `plan` only | `ParseHome`'s text stays as ruled in the marvel-home design ("names the source and the value", `docs/design/marvel-home.md:21-22`), and every other verb prints it unchanged. Under `plan`, the line goes through plan's filter like every other line `plan` prints. It carries a path in two places: the quoted value, `<source>="<value>"` (`internal/paths/home.go:30`, `:34`), and, for the `:34` error, the socket path again at the end through `%w` (`CheckSocketPath`, `internal/paths/paths.go:230-232`). The filter's absolute-path pass hides both when they are home paths. A value that is not absolute (`~/<name>`, which zsh leaves unexpanded after `=`, or a relative path) is outside the absolute-path rule, so the filter also rewrites a quoted value after `--marvel-home=` or `MARVEL_HOME=` that does not start with `/` as `"<not absolute>"`. The filter's key lives in the layout this error failed to name, so these lines use the unkeyed `<home>` form. Where each one reaches `plan` is in the next paragraph |
+| a panic trace | not covered, and left so on purpose: a Go panic prints the goroutine stack with source file paths, and marvel is built without `-trimpath`, so a trace can carry the build host's home. A panic is a defect, not output the plan promises; the build flag is a separate change |
+| client: `ErrInvalidClusterName` warning, unknown-cluster refusal | name a cluster and a byte, never a path (`config.go:863`, `:869`, `:962`); printed as they are, and still passed through the rule |
+
+A path not under any home (`/srv/work`, `/opt/homebrew/bin/codex`) prints as
+it is, as in the worked case above.
+
+**Where a marvel-home error reaches `plan`.** Three places, against main
+5c48e09:
+- **The flag, before cobra runs.** `applyMarvelHomeFlag` runs at
+  `main.go:202`, before `Execute`, and prints `Error: <err>` itself. To
+  bring it under plan's filter, main keeps that error instead of printing
+  it at once and resolves the command with the root command's own `Find`.
+  `Execute` resolves commands with `Find` when `TraverseChildren` is unset,
+  and marvel sets it nowhere, so the two agree. That means `--cluster plan`
+  and `--cluster b plan` resolve as cobra resolves them, not by argv
+  position. If the resolved command is `plan`, the error prints through
+  plan's filter. Otherwise, or if `Find` fails, it prints exactly as today,
+  byte for byte, and exits 1 as today.
+- **`MARVEL_HOME`, in `plan` itself.** `plan` calls `paths.Default()` before
+  it resolves a daemon, and a `ParseHome` error there refuses, exit 1
+  (section 6), printed through the filter. This is the error the resolver
+  would otherwise not surface on its own.
+- **The callers that drop the error.** `main.go:301` (the daemon flags'
+  default paths, set for every verb) and `main.go:826` (`openRotatingLog`,
+  daemon only) discard it with `_`. They print nothing, so there is
+  nothing to filter, and `plan` does not rely on them: it reads the error
+  itself in the step above.
+
+Tests, each run with the child environment built from nothing as in
+section 4 item 1, so the scratch `HOME` is the home the filter uses:
+- **Under `plan`, three values, by the flag and by `MARVEL_HOME`:**
+  - `~/x` and `rel` each print exactly `"<not absolute>"` where the value
+    was, and the test asserts that exact text, not only the absence of a
+    name;
+  - the too-long value is an absolute path under the scratch `HOME`, long
+    enough that its socket path is over the 104-byte unix limit
+    (`internal/paths/paths.go:202`). The scratch `HOME` has one component
+    of 16 random hex digits, generated per run, and the too-long value
+    sits under it. The test asserts all three:
+    - the exit code is 1;
+    - stderr holds exactly the expected line, which keeps the ruled form,
+      source and value, with the value and the trailing socket path
+      filtered: `Error: --marvel-home="<home>": socket path is <N> bytes,
+      over the 104-byte limit for a unix socket: <home>`, with `<N>`
+      computed by the test from the value it built; for `MARVEL_HOME` the
+      same line with `MARVEL_HOME=` as the source;
+    - the 16-hex component appears nowhere in stdout or stderr. A random
+      component cannot match `<home>`, a word in the line, or a path
+      component the system put there, so the absence check can only pass
+      when the path was hidden.
+- **Under `marvel get sessions`, the flag only.** The three values given
+  by `--marvel-home` print `ParseHome`'s ruled text unchanged, which is
+  what marvel's own `internal/paths/home_test.go:58-64`, `:73` and `:77`
+  check. `MARVEL_HOME` is left out of this half: under any verb but `plan`,
+  a bad `MARVEL_HOME` with no cluster configured is not printed at all,
+  because the resolver falls back to the default socket without a word
+  (`main.go:108-116`). That silence is the case `plan` reads for itself.
+
+The state directory's `Lstat` check and its
+`os.OpenRoot` are two calls, so a directory swapped for a symlink between
+them is opened. `OpenRoot` then confines every later operation to what it
+opened, so the swap cannot reach outside it. The ownership and mode
+check, though, ran on the directory that was there before the swap, not
+on the one opened. `root.Stat(".")` alone does not restore "not a
+symlink", since it reports what was opened. The builder closes the gap by
+comparing the device and inode from the `Lstat` with those from
+`root.Stat(".")`: a mismatch means the directory changed in between, and
+the run goes unkeyed with `key refused (state directory)`.
+
 ## 4. Features specific to marvel, ranked
 
 The party's final rankings, merged; the first three were ranked first or
@@ -144,27 +422,112 @@ second by most seats.
    - the host and uid;
    - the daemon's pid and start time.
 
-   `plan` hard-fails on an unknown `--cluster` (today every verb warns and
-   falls back to the local daemon, `cmd/marvel/main.go:77-85`, #502). It
-   also refuses when `MARVEL_SOCKET` overrides a named cluster (5-0). A
-   clean "0 changes" from the wrong daemon reads as a green light for the
-   right one.
+   An unknown `--cluster` is refused, as every verb now refuses it (#502,
+   `cmd/marvel/main.go:121-131`). `plan` also refuses when `MARVEL_SOCKET`
+   picks the daemon while the config's `current_cluster` names a cluster
+   (5-0): an explicit `--cluster` already outranks the variable (#586,
+   `:101-107`), but `current_cluster` does not, so that case still dials
+   the seat's own daemon. A clean "0 changes" from the wrong daemon reads as
+   a green light for the right one.
 
-   The client resolves its daemon four ways (`resolveDaemonAddr`,
-   `cmd/marvel/main.go:64-90`), and the party voted on two of them. The
-   other two are open (section 10, item 4):
-   - `--socket` (`:65-67`) is the operator naming a socket outright. The
-     proposal is to print "socket given by flag" in the banner, not to
-     refuse.
-   - A `config.Load` failure (`:71-73`) falls back to the local daemon with
-     NO warning. The proposal is to refuse when `--cluster` was given, and
-     otherwise print "config unreadable, local daemon" in the banner.
+   The client resolves its daemon by four rungs (`resolveDaemonRung`,
+   `cmd/marvel/main.go:92-151`; flag, env, cluster, default at :77-80), and
+   the party voted on two cases. The operator ruled the other two on
+   2026-10-19 (section 10, item 4):
+   - `--socket` (`:93-95`) is the operator naming a socket outright. `plan`
+     refuses when `--socket` is given, and says why. The cost, accepted in
+     the ruling: `plan` cannot preview against a daemon reached only by
+     `--socket`.
+   - A `config.Load` failure with `--cluster` is now refused for every verb
+     (`:108-117`). Without `--cluster` it still falls back to the local
+     daemon with NO warning. `plan` refuses here too, and prints the config
+     error. A missing config file is not a failure: `config.Load` returns
+     the defaults for it (`internal/config/config.go:830-831`), so this
+     refusal bites only on a config file that exists and cannot be read or
+     does not parse.
+     An `ErrInvalidClusterName` (another cluster's bad name) stays a
+     warning, as it is for every verb (`main.go:118-120`).
+
+   **`plan` reads the config itself, on every rung but `--socket`.** With
+   `MARVEL_SOCKET` set and no `--cluster`, `resolveDaemonRung` returns at
+   `main.go:105-107`, before `config.Load` at `:108`. Every seat has the
+   variable set (`:101-104`), so if `plan` relied on the resolver, the
+   unreadable-config refusal could never fire from a seat. And `plan` needs
+   the config on that rung anyway: the `current_cluster` refusal above reads
+   it. So `plan` calls `config.Load` before it dials, whatever rung chose the
+   socket. A load error that is not `ErrInvalidClusterName` refuses, with
+   `MARVEL_SOCKET` set or not. On `--socket` it refuses before reading
+   anything.
+
+   Every refusal in this item means `plan` did not run, so each exits 1,
+   "could not evaluate" (section 6), never 3. That is five: `--socket`; an
+   empty `--cluster ""` (`main.go:98-99`); a config that cannot be read or
+   does not parse; the
+   `MARVEL_SOCKET` beside `current_cluster` case; and an unknown cluster,
+   named by `--cluster` or by `current_cluster`, which `GetCluster` refuses
+   with `unknown cluster "<name>" (run 'marvel config list' to see available
+   clusters)` (`internal/config/config.go:962`, `main.go:122-130`).
+
+   **How tests reach a daemon.** Every `plan` test builds the child's
+   environment from nothing and never inherits the caller's: a seat carries
+   `MARVEL_SOCKET`, `MARVEL_HOME` and the other `MARVEL_*` keys that point
+   at the live fleet. `MARVEL_HOME` outranks `HOME` for the whole layout
+   (`internal/paths/paths.go:62-68`), so a scratch `HOME` alone leaves the
+   config and the default socket wherever `MARVEL_HOME` names. Each test
+   sets:
+   - `HOME` to a scratch directory, and `MARVEL_HOME` to a scratch root
+     under it (short enough for `run/marvel.sock` to fit a unix socket
+     path);
+   - `MARVEL_SOCKET` per case: set to the scratch daemon's socket for the
+     cases that run, unset for the cases that check a refusal on the
+     default rung;
+   - no other `MARVEL_*` key.
+
+   Two scratch daemons run, each counting the requests it receives: **A**,
+   the seat's own, at the socket `MARVEL_SOCKET` names, and **B**, the
+   cluster's, at the socket a config cluster entry names. Every case asserts
+   both counts, so a case that dials the wrong daemon fails even when its
+   exit code is right.
+
+   The cases, each with its exit code:
+
+   | case | flags | `MARVEL_SOCKET` | config under the scratch `MARVEL_HOME` | expect |
+   |---|---|---|---|---|
+   | positive control | none | A | missing | runs against A, banner `(MARVEL_SOCKET)`, exit 0; A 1+, B 0 |
+   | env rung, unreadable config | none | A | present, does not parse | refuses, prints the config error, exit 1; A 0, B 0 |
+   | default rung, unreadable config | none | unset | present, does not parse | refuses, exit 1, the text names `parse config:`; A 0, B 0 |
+   | env rung, `current_cluster` set | none | A | `current_cluster: b`, cluster `b` at B | refuses, exit 1, dials nothing; A 0, B 0 |
+   | explicit cluster outranks the env | `--cluster b` | A | cluster `b` at B | runs against B, banner `(cluster b)`, exit 0; A 0, B 1+ |
+   | cluster rung from the config | none | unset | `current_cluster: b`, cluster `b` at B | runs against B, banner `(cluster b)`, exit 0; A 0, B 1+ |
+   | cluster with no address | `--cluster c` | A | cluster `c` with no socket or server | dials the layout default under the scratch `MARVEL_HOME`, never A; banner `(layout default)`. With no daemon there, the dial error prints the token form of that socket, exit 1; A 0, B 0 |
+   | unknown cluster, from the flag | `--cluster z` | A | clusters `b` only | refuses with the `unknown cluster "z"` text, exit 1; A 0, B 0 |
+   | unknown cluster, from the config | none | unset | `current_cluster: z`, clusters `b` only | refuses with the `unknown cluster "z"` text, exit 1; A 0, B 0 |
+   | empty cluster flag | `--cluster ""` | A | cluster `b` at B | refuses with `--cluster needs a cluster name`, exit 1; A 0, B 0 |
+   | `--socket` | `--socket <A>` | unset | missing | refuses, exit 1; A 0, B 0 |
+   | cluster flag, unreadable config | `--cluster b` | A | present, does not parse | refuses with `cluster "b": the client config is unreadable: parse config: ...` (`main.go:113-114`), exit 1; A 0, B 0 |
+   | another cluster's bad name | none | unset | `current_cluster: b`, cluster `b` at B, and a second cluster whose name has a byte outside the token class | prints the `ErrInvalidClusterName` warning once on stderr, then runs against B, banner `(cluster b)`, exit 0; A 0, B 1+ |
+   | plain default rung | none | unset | present, no `current_cluster` | resolves the scratch layout default (`main.go:132-133`), banner `(layout default)`. A third scratch daemon **D** listens there: runs against D, exit 0; A 0, B 0, D 1+ |
+   | a server address | none | unset | `current_cluster: s`, cluster `s` with `socket` at B and `server: tcp://127.0.0.1:<port>` | the server outranks the socket (`main.go:136-138`): dials the TCP listener **C** on a random localhost port, banner `socket=tcp:127.0.0.1:<port> (cluster s)`; C counts 1 accepted connection, B 0. C is a bare listener that accepts and closes, so the run then ends in the dial or protocol error, exit 1 |
+   | unreadable config file, not a parse error | none | unset | present, mode 0000 | refuses, the text is `read config: open <home:XXXXXXXX>: permission denied` with no directory name, exit 1; A 0, B 0 |
+
+   The `mrvl://` and `ssh://` server forms are not in this table: both need
+   an SSH server and keys, which a localhost-only test with a scratch home
+   does not have. They go through the same `cl.Server` branch as the TCP
+   row, so the row checks that the server outranks the socket; the transport
+   each scheme opens is `daemonrpc`'s own tested code.
+
+   "Dials nothing" is A's and B's request counts, both 0. A refusal is also
+   read by its text, not only its code: each refusal row names the text it
+   must print, so a refusal that failed to fire, and then failed to dial,
+   cannot pass as exit 1. The scratch `MARVEL_HOME` is under the scratch
+   `HOME`, so its layout default and its config are home paths, and the
+   last row and the no-address row check that the client hides them.
 2. **Gross adds, gross kills, and the net the gate sees, with a kill
    list.** The admission gate sees one net `want` per team and admits
-   `want <= 0` (`internal/admission/admission.go:277-280`). So a manifest that lowers one role and raises another can
+   `want <= 0` (`internal/admission/admission.go:277-279`). So a manifest that lowers one role and raises another can
    pass the gate while it still kills seats. The plan names each kill
    candidate. The controller already picks them, oldest first, as a pure
-   function of the store (`controller.go:1216-1232`, the #348 fix). The
+   function of the store (`controller.go:1261-1278`, the #348 fix). The
    plan labels the candidate "may change", and marks the in-flight turn
    "not evaluated" (a kill loses it whole, orc finding-207). Neither kubectl
    nor terraform destroys a conversation.
@@ -172,12 +535,19 @@ second by most seats.
    `admission.Check`, and prints "admitted because it adds nothing" where
    that is the reason. Cumulative token clauses print "cost of this change
    not knowable": pricing growth needs a usage baseline that is not built
-   (`internal/usage/reader.go:86-100`).
+   (`internal/usage/reader.go:86-100`, still marked NOT IMPLEMENTED at
+   f1fe67f).
 4. **Daemon-host verdicts per seat:**
    - the root, visible or dropped. Today an absolute root the daemon cannot
-     see is dropped with one log line and the apply places nothing
-     (`workdir.go:68-74`); the plan promotes that to a finding;
-   - each command resolved to an absolute path on the daemon's PATH;
+     see is refused, unless no relative workdir depends on it
+     (`rootIsClientOnly`, `workdir.go:99`); then it is dropped with an
+     advisory and the apply places nothing (`workdir.go:67-73`). The plan
+     promotes that advisory to a finding;
+   - each command resolved to an absolute path on the daemon's PATH. The
+     path printed is what `exec.LookPath` returns on the daemon's PATH, the
+     same call the validator makes (`internal/api/manifest.go:790`), not
+     the path after `EvalSymlinks`: it names what the daemon will exec, and
+     a Homebrew or mise link would otherwise print its versioned target;
    - the workdir checked for enter and write as the daemon's uid.
 5. **First-launch preconditions per adapter:**
    - claude: setting sources and, once SB-4M exists, trust for the realpath;
@@ -198,8 +568,10 @@ second by most seats.
    names are required.
 8. **Becoming behind** (architect's addition, not voted). A manifest that
    changes a role's runtime leaves its live sessions on the old copy until
-   they respawn (`drift-view.md` section 2, #416). The plan lists them as
-   "becomes behind", because apply does not restart them.
+   they respawn (`drift-view.md` section 2, #416, closed). The plan lists
+   them as "becomes behind", because apply does not restart them. Apply now
+   returns the count after the fact (`behindCount`, `spec.go:47`); the plan
+   computes the same rule before it, and names the sessions.
 
 ## 5. What the plan must never claim
 
@@ -220,7 +592,7 @@ second by most seats.
   and live session ids of the teams the manifest names, plus the daemon's
   start time), so drift is visible. It does not bind the apply.
 
-## 6. Exit codes (OPEN: ruling (a), section 10)
+## 6. Exit codes (ruled 2026-10-19, section 10)
 
 The vote split (section 9).
 
@@ -231,33 +603,56 @@ Agreed:
   unreachable daemon, a daemon without `plan_manifest`, and a pre-flight
   that errored.
 
-Default, OPEN until ruled. It rests on the 3-2 vote that refusal and "could
-not evaluate" get distinct codes; the numbering itself tied 2-1-2, so the
-numbers below are a choice, not a vote. The flag follows its 3-2 vote:
+Ruled by the operator on 2026-10-19. It keeps the 3-2 vote that refusal and
+"could not evaluate" get distinct codes; the numbering, which tied 2-1-2, is
+the operator's. The flag follows its 3-2 vote:
 - 0: evaluated, no refusal;
-- 1: apply would refuse;
-- 3: could not evaluate;
+- 1: could not evaluate;
+- 3: apply would refuse;
 - 2: changes exist, returned only under `--detailed-exitcode`.
+
+Why 1 for "could not evaluate": marvel already exits 1 on any error it does
+not classify. A failure path the builder misses therefore falls through to
+1, which here is the true reading, instead of reading as "your manifest
+would be refused".
+
+Exit codes are per verb. `marvel wait` already uses 3, for a timeout,
+beside 0 succeeded, 1 failed, 2 crashed, 4 unknown and 5 daemon error
+(`cmd/marvel/wait.go:18-26`). `plan` never returns wait's codes, and wait
+never returns plan's, so neither verb's 3 can be read as the other's. A
+script that runs both reads each exit code against the verb it just ran,
+which is how `wait`'s codes are documented today.
 
 Under the flag, 0 also means no changes. Without it, `marvel plan -f m &&
 marvel work m` keeps working.
 
-The cost of this default: today every error exits 1
-(`cmd/marvel/main.go:169-170`, `os.Exit(1)` on any error from
-`root.Execute`). A dial failure, an unreachable daemon or a mistyped flag
-would therefore exit 1 and read as "apply would refuse", unless `plan` maps
-its own exits and returns 3 for every failure to evaluate. The mapping is
-work this default adds; the 1-for-both option (refusal and failure both
-exit 1) avoids that work.
+The cost of this numbering: an error from `root.Execute` exits 1 unless it
+is an `exitError`, which exits with its own code (`cmd/marvel/main.go:207-212`,
+`exitError` in `wait.go:31`, used by `marvel wait`). `plan` returns an
+`exitError` with code 3 for each refusal apply would return, and a test
+checks that each of the nine refusing steps in section 1 (1, 2, 3, 4, 7, 8,
+9, 10 and 11, one fixture each, as section 7 step 2 lists them) exits 3. A dial failure, an
+unreachable daemon or a mistyped flag needs no wrapping: it exits 1, which
+is "could not evaluate".
 
 ## 7. Edits, in order (none made by this PR)
 
 1. Fix the inline-args pre-flight defect first, in its own change (section
    8). The plan reports what the pre-flight reports (5-0), so the plan
-   inherits the fix rather than working around it.
+   inherits the fix rather than working around it. **Done:** marvel#517,
+   closed at f1fe67f.
 2. Split `handleApply` into `evaluate` / commit, with `admission.Check`
-   called from `evaluate` and the log and emit kept in apply. This is a
-   refactor with no behavior change, so the existing apply tests cover it.
+   called from `evaluate` and the log and emit kept in apply. `evaluate`
+   takes the inputs of section 2 item 5 and runs all fifteen pre-commit steps
+   of section 1. This is a refactor with no behavior change, so the existing
+   apply tests cover it. Two new tests:
+   - one fixture per refusing step, nine in all (steps 1, 2, 3, 4, 7, 8, 9,
+     10 and 11), each asserting that `evaluate` alone returns the same
+     refusal apply returns;
+   - one manifest that triggers every advisory step (3, 5, 6, 7, 12, 13, 14
+     and 15), asserting that `evaluate`'s advisories equal, in order, the
+     ones apply logs. A refusal test cannot see a skipped advisory step;
+     this one can.
 3. Add the `plan_manifest` method and its result type: the findings with
    tags, the changes, the kill candidates, credential presence, the not
    evaluated list, and the digest.
@@ -272,20 +667,25 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
 
 ## 8. Defects this work surfaced (separate issues; this PR files none)
 
-- **A command with inline args fails apply's pre-flight (marvel#517).** `ValidateRuntimes`
+- **A command with inline args fails apply's pre-flight (marvel#517,
+  closed; fixed at f1fe67f, section 1a; the text below is as found at
+  03dd483).** `ValidateRuntimes`
   passes `Runtime.Command` whole to `validateCommand`, which `os.Stat`s or
-  `exec.LookPath`s the whole string (`manifest.go:618`, `:633-646`; no
-  `strings.Fields` in the file). The claude adapter splits the same string
-  (`internal/runtime/claude.go:186-196`). So `command = "claude --flag
+  `exec.LookPath`s the whole string (`manifest.go:618`, `:633-646` at
+  03dd483; no `strings.Fields` in the file then). The claude adapter splits
+  the same string (`internal/runtime/claude.go:186-196` at 03dd483; at
+  f1fe67f, `commandArgs` at `:241`). So `command = "claude --flag
   value"` is refused at apply although the adapter would run it. A
   throwaway unit-level probe at 889e49a confirmed it: `validateCommand("claude")`
   returns nil and `validateCommand("claude --flag value")` returns "not on
   PATH"; `ValidateRuntimes` refuses a role with `sh -c true` the same way.
   A working form exists today: the arguments go in `args`
-  (`ManifestRuntime.Args`, `internal/api/manifest.go:201`). A role with
+  (`ManifestRuntime.Args`, `internal/api/manifest.go:201` at 03dd483, `:230`
+  at f1fe67f). A role with
   `command = "sh"` and `args = ["-c", "true"]` passes. Filed as marvel#517.
 - **Apply's check-then-commit is not serialized.** Each connection runs in
-  its own goroutine (`daemon.go:582`), and I found no apply-level lock. Two
+  its own goroutine (`daemon.go:574`), and I found no apply-level lock (none
+  at f1fe67f either). Two
   concurrent `marvel work` calls can both pass the name-clash check.
   (This was partly checked: the store's own locking of that case was not
   read.)
@@ -295,7 +695,9 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
   is started by the pane's shell with tmux's PATH. Whether that equals the
   daemon's PATH is UNVERIFIED. If it differs, plan and apply agree on a
   binary the pane never finds.
-- **#502 for every verb.** The plan's refusal fixes only the plan.
+- **#502 for every verb.** Fixed for every verb by #502 and #586 (closed).
+  One case remains, `MARVEL_SOCKET` beside a `current_cluster`; the plan
+  refuses it (section 4 item 1), other verbs do not.
 - **The plan as an existence probe.** `plan_manifest` stats paths the
   manifest names, as the daemon's user. On a cluster shared between users,
   a plan would reveal which daemon-host paths exist. This is not a risk on
@@ -311,7 +713,7 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
 | a client-side plan | it checks the client's PATH, filesystem and store view, not the daemon's |
 | calling `admitGrowth` from the plan | it logs and emits refusal events for a preview that never happened |
 | a terraform-style saved plan file | it stores resolved paths and env, so it leaks secrets and goes stale; terraform's whole-state stale check also false-positives on no-op applies |
-| `work --expect-version N` on the store's ResourceVersion | the counter moves on every persisted mutation (`bolt.go:405-410`), so it would refuse almost always |
+| `work --expect-version N` on the store's ResourceVersion | the counter moves on every persisted mutation (`bumpVersion`, `internal/api/bolt.go:458-462`), so it would refuse almost always |
 | `work --expect <digest>` in v1 (5-0 against) | nobody has measured how often the digest moves under a live team; revisit with that measurement |
 | a historical reload cost line (3-1 against) | a number beside a plan reads as a forecast whatever the label, and the one sample is claude seats on one host |
 | proceeding past a `MARVEL_SOCKET` override with a banner (5-0 against) | the banner is read after the answer |
@@ -325,28 +727,34 @@ Five seats voted in the last round. A seat could abstain on an item
 outside its expertise, and an abstention counts as no vote, so some
 tallies (3-1, 4-0, 2-2) sum to four.
 
-1. **(a) OPEN. Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
+1. **(a) RULED 2026-10-19. Exit-code numbering (V3).** The vote split three ways: 0/2/1-for-both
    (2 seats), 0/2/1-error/3-refusal (1), 0/2/1-refusal/3-not-evaluated (2).
    - On the underlying question, refusal and "could not evaluate" get
      distinct codes, 3-2.
    - On whether exit 2 is the default, `--detailed-exitcode` wins 3-2. The
      minority's reason: a forgotten flag reads "changes" as 0.
-   - Default: section 6, with its cost (every error exits 1 today).
-2. **(b) OPEN. Home paths in output (V4), split 2-2.**
+   - Ruled: 0 evaluated, 1 could not evaluate, 3 apply would refuse, 2 under
+     `--detailed-exitcode`. Section 6 carries it.
+2. **(b) RULED 2026-10-19: (y). Home paths in output (V4), split 2-2.**
    - (x) Collapse the home prefix to `~` for display. This shows which
      binary resolved, for every role.
    - (y) Redact home paths except the one resolved binary path per role.
      This keeps another user's directory names out of CI logs.
 
    The redaction design (`describe-redaction.md`, #421) covers values, not
-   paths. Default: (y), the stricter one, until #421 rules on paths.
+   paths. Ruled: (y). The exact rule, with what each line prints, is in
+   section 3, "Home paths in the output".
 3. **Recorded dissent (V2).** The finops seat: without any figure the plan
    shows counts and nothing about cost, and operators will invent their own
    number. Reopen when `usage.Baseline` exists.
-4. **OPEN, not voted: the other two wrong-daemon paths** (section 4, item
-   1). The proposal is to put `--socket` in the banner and to refuse a
-   `config.Load` failure when `--cluster` was given. The party voted only on
-   the unknown cluster and the `MARVEL_SOCKET` override.
+4. **RULED 2026-10-19, not voted: the other two wrong-daemon paths**
+   (section 4, item 1). Narrowed at f1fe67f: a `config.Load` failure with
+   `--cluster` is now refused for every verb (#502). The party voted only on
+   the unknown cluster and the `MARVEL_SOCKET` override. The operator ruled
+   both remaining paths refuse: `plan` refuses when `--socket` is given, and
+   refuses on an unreadable config with no `--cluster`, printing the config
+   error. Both differ from the proposal this section carried (print a line
+   in the banner and run).
 
 ## 11. Prior art weighed
 
