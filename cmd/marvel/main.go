@@ -1923,6 +1923,23 @@ func captureRequest(key string, o captureOpts) map[string]any {
 	return p
 }
 
+// writeCaptureNotes writes the capture result's side reports to w, which is
+// stderr: the repaint status, the composer state, and nothing on stdout.
+func writeCaptureNotes(w io.Writer, result map[string]string) {
+	if status := result["repaint"]; status != "" {
+		if target := result["repaint_target"]; target != "" {
+			status += " (foreground: " + target + ")"
+		}
+		_, _ = fmt.Fprintf(w, "repaint: %s\n", status)
+	}
+	if state := result["composer"]; state != "" {
+		if cerr := result["composer_error"]; cerr != "" {
+			state += " (" + cerr + ")"
+		}
+		_, _ = fmt.Fprintf(w, "composer: %s\n", state)
+	}
+}
+
 func captureCmd() *cobra.Command {
 	var start, end int
 	var repaint, escapes, composerState bool
@@ -1989,18 +2006,7 @@ between them. A runtime with no reader reads unknown.`,
 				return fmt.Errorf("parse result: %w", err)
 			}
 			fmt.Print(result["content"])
-			if status := result["repaint"]; status != "" {
-				if target := result["repaint_target"]; target != "" {
-					status += " (foreground: " + target + ")"
-				}
-				_, _ = fmt.Fprintf(os.Stderr, "repaint: %s\n", status)
-			}
-			if state := result["composer"]; state != "" {
-				if cerr := result["composer_error"]; cerr != "" {
-					state += " (" + cerr + ")"
-				}
-				_, _ = fmt.Fprintf(os.Stderr, "composer: %s\n", state)
-			}
+			writeCaptureNotes(os.Stderr, result)
 			return nil
 		},
 	}
