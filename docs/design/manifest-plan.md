@@ -258,6 +258,26 @@ exactly:
   - If the key cannot be read or created, the line prints `<home>` with no
     token, and the banner says `redaction: unkeyed, tokens omitted`. A path
     is never printed in full for want of a key.
+  - **How the key is handled.**
+    - **Created exclusively.** 32 bytes from `crypto/rand`, written with
+      `O_CREATE|O_EXCL`, mode 0600, so two processes starting at once cannot
+      both write it: the loser reads the winner's key.
+    - **Checked on every read.** A key that is not a regular file, is not
+      owned by the reading uid, has any group or other permission bit, or
+      is not exactly 32 bytes is refused, never repaired or overwritten. The
+      line then uses the unkeyed form, and the banner says `redaction:
+      unkeyed, key refused (<check>)`, naming the check and not the path.
+    - **Never emitted.** The key's bytes are never logged, never put in an
+      event, a bus message, a describe output or an error, and never passed
+      to a child process. Only the derived 8-hex tokens leave the process.
+    - **Announced when made.** The run that creates the key prints one
+      banner line, `redaction: new key, tokens from earlier runs on this host
+      no longer match`.
+    - **Rotation.** Deleting the file and letting the next run create one
+      is the rotation; marvel has no rotate verb. A new key changes every
+      token, so a token from before the rotation cannot be compared with one
+      after it, and the banner line above says so. Nothing else depends on
+      the key.
 
 What that means for each line that can carry a path:
 
@@ -271,6 +291,9 @@ What that means for each line that can carry a path:
 | refusal text from a pre-flight | the same rule, applied to the text the daemon returns before it is printed |
 | client: config read error | `config.Load` wraps `os.ReadFile`'s error as `read config: open <path>: <reason>` (`internal/config/config.go:828-833`), so a config that exists but cannot be read names its path. Printed as `read config: open <home:XXXXXXXX>: permission denied`. A parse error (`parse config: ...`, `:837-838`) names no file and prints as it is |
 | client: dial error | `connect to daemon at <addr> (<network>): <err>` (`internal/daemonrpc/client.go:191`) prints the resolved address. A unix socket under a home prints as `connect to daemon at <home:XXXXXXXX> (unix): ...`, the same token as the banner's `socket=`. A TCP address carries no path and prints as it is |
+| cobra's own error print and usage text | today the root command sets neither `SilenceErrors` nor `SilenceUsage` (`cmd/marvel/main.go:207-213`), so cobra prints `Error: <err>` and the usage text itself, outside any filter. The `plan` command sets both on itself, which cobra honours for the command that ran. `plan` then prints its error through the client filter, one line, and on a usage error prints `run 'marvel plan --help' for usage` instead of the usage text. Other verbs keep cobra's print |
+| `--marvel-home` flag error | `applyMarvelHomeFlag` runs before cobra and prints `Error: <err>` itself (`main.go:202-205`); the error embeds the value as `<source>="<value>"` (`internal/paths/home.go:30`, `:34`). When the command line names `plan`, that print goes through the client filter, so `--marvel-home="<home:XXXXXXXX>" is not an absolute path`. The filter's key lives in the layout the flag failed to name, so this line uses the unkeyed form, `<home>`, with no token |
+| a panic trace | not covered, and left so on purpose: a Go panic prints the goroutine stack with source file paths, and marvel is built without `-trimpath`, so a trace can carry the build host's home. A panic is a defect, not output the plan promises; the build flag is a separate change |
 | client: `ErrInvalidClusterName` warning, unknown-cluster refusal | name a cluster and a byte, never a path (`config.go:863`, `:869`, `:962`); printed as they are, and still passed through the rule |
 
 A path not under any home (`/srv/work`, `/opt/homebrew/bin/codex`) prints as
@@ -356,8 +379,6 @@ second by most seats.
 
    The cases, each with its exit code:
 
-   | case | `MARVEL_SOCKET` | config under the scratch `MARVEL_HOME` | expect |
-   |---|---|---|---|
    | case | flags | `MARVEL_SOCKET` | config under the scratch `MARVEL_HOME` | expect |
    |---|---|---|---|---|
    | positive control | none | A | missing | runs against A, banner `(MARVEL_SOCKET)`, exit 0; A 1+, B 0 |
@@ -371,7 +392,17 @@ second by most seats.
    | unknown cluster, from the config | none | unset | `current_cluster: z`, clusters `b` only | refuses with the `unknown cluster "z"` text, exit 1; A 0, B 0 |
    | empty cluster flag | `--cluster ""` | A | cluster `b` at B | refuses with `--cluster needs a cluster name`, exit 1; A 0, B 0 |
    | `--socket` | `--socket <A>` | unset | missing | refuses, exit 1; A 0, B 0 |
+   | cluster flag, unreadable config | `--cluster b` | A | present, does not parse | refuses with `cluster "b": the client config is unreadable: parse config: ...` (`main.go:113-114`), exit 1; A 0, B 0 |
+   | another cluster's bad name | none | unset | `current_cluster: b`, cluster `b` at B, and a second cluster whose name has a byte outside the token class | prints the `ErrInvalidClusterName` warning once on stderr, then runs against B, banner `(cluster b)`, exit 0; A 0, B 1+ |
+   | plain default rung | none | unset | present, no `current_cluster` | resolves the scratch layout default (`main.go:132-133`), banner `(layout default)`. A third scratch daemon **D** listens there: runs against D, exit 0; A 0, B 0, D 1+ |
+   | a server address | none | unset | `current_cluster: s`, cluster `s` with `socket` at B and `server: tcp://127.0.0.1:<port>` | the server outranks the socket (`main.go:136-138`): dials the TCP listener **C** on a random localhost port, banner `socket=tcp:127.0.0.1:<port> (cluster s)`; C counts 1 accepted connection, B 0. C is a bare listener that accepts and closes, so the run then ends in the dial or protocol error, exit 1 |
    | unreadable config file, not a parse error | none | unset | present, mode 0000 | refuses, the text is `read config: open <home:XXXXXXXX>: permission denied` with no directory name, exit 1; A 0, B 0 |
+
+   The `mrvl://` and `ssh://` server forms are not in this table: both need
+   an SSH server and keys, which a localhost-only test with a scratch home
+   does not have. They go through the same `cl.Server` branch as the TCP
+   row, so the row checks that the server outranks the socket; the transport
+   each scheme opens is `daemonrpc`'s own tested code.
 
    "Dials nothing" is A's and B's request counts, both 0. A refusal is also
    read by its text, not only its code: each refusal row names the text it
