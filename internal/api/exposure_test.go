@@ -304,7 +304,7 @@ func TestExposureSealDetectsAnAlteredRecord(t *testing.T) {
 	exposureEditDB(t, path, func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketExposure)
 		k, v := b.Cursor().First()
-		return b.Put(k, []byte(strings.Replace(string(v), `"function":"emit"`, `"function":"zzzz"`, 1)+" "))
+		return b.Put(k, []byte(strings.Replace(string(v), `"function":"parse"`, `"function":"zzzz"`, 1)+" "))
 	})
 	s := exposureReopen(t, path)
 	if _, err := s.ExposuresForSlot("ws", "ops", "writer"); err == nil {
