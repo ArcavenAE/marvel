@@ -308,6 +308,13 @@ type Session struct {
 	// (marvel#364). Empty on every other row. Status, not spec; additive on
 	// the json path, so no bolt schema move.
 	KillError string `json:"kill_error,omitempty" toml:"-"`
+	// Ending is set, in memory only, when the session manager has reported
+	// the session's end to the credential broker and is about to kill the
+	// process. The row stays Running until the kill settles, so this is what
+	// keeps a seat that is still alive from being issued a credential in that
+	// window. It is never persisted: a restart forgets it, and a row left
+	// Running by a crashed delete authenticates again.
+	Ending bool `json:"-" toml:"-"`
 	// HarnessSessionID is the session identifier marvel ASSIGNED to this
 	// launch, for a harness that accepts one (Claude Code's --session-id).
 	// It is the spawn-time alternative to discovering the binding

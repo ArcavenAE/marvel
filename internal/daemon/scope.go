@@ -114,6 +114,9 @@ func localCaller() caller { return caller{scope: ScopeAdmin, local: true} }
 // the operator at the daemon's own socket (brief 9 S3).
 var localOnlyMethods = map[string]bool{
 	"credential.reveal": true,
+	// broker.token returns a bearer token, so like a revealed credential it
+	// never leaves through the mrvl:// tunnel.
+	"broker.token": true,
 }
 
 // methodRequiresLocal reports whether method may be called only from the local

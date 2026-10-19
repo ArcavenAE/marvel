@@ -151,3 +151,30 @@ func TestPlanLaunchCarriesTheGlobalRoleForAFreshSpawn(t *testing.T) {
 		t.Error("a fresh spawn after de-admission still carries DIRECTOR_GLOBAL_ROLE")
 	}
 }
+
+func TestPlanLaunchCarriesTheCredentialHelperPointer(t *testing.T) {
+	t.Parallel()
+	mgr := &Manager{
+		store:            api.NewStore(),
+		adapters:         runtime.NewRegistry(),
+		ProjectionDir:    t.TempDir(),
+		Events:           events.NewRing(16),
+		Bus:              roleBus{},
+		CredentialHelper: "/opt/marvel/credential-helper",
+	}
+	m, err := api.ParseManifestBytes([]byte(busRoleManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	plan := mgr.planLaunch(sessionFor("reviewer", "claude"))
+	if got := plan.env[api.CredentialHelperEnv]; got != "/opt/marvel/credential-helper" {
+		t.Errorf("%s = %q, want the manager's helper path", api.CredentialHelperEnv, got)
+	}
+	mgr.CredentialHelper = ""
+	if _, ok := mgr.planLaunch(sessionFor("reviewer", "claude")).env[api.CredentialHelperEnv]; ok {
+		t.Errorf("%s set with no helper configured", api.CredentialHelperEnv)
+	}
+}

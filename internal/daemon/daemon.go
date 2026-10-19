@@ -25,6 +25,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/broker"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/composer"
 	"github.com/arcavenae/marvel/internal/config"
@@ -86,6 +87,7 @@ type Daemon struct {
 	build              Build
 	startedAt          time.Time
 	store              *api.Store
+	broker             *broker.Broker
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
@@ -653,6 +655,14 @@ func (d *Daemon) Start(socketPath string) error {
 		d.RunLimits(ctx, ReconcileInterval)
 	}()
 
+	// Tokens whose revoke failed when their seat ended are retried on a tick;
+	// the seat's end is reported only once.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunBrokerRetry(ctx, ReconcileInterval)
+	}()
+
 	// Start the process sampler. Sibling of the reconcile loop rather
 	// than a step inside it: sampling reads the process table and takes
 	// no part in reconciliation, so it should not be able to slow a
@@ -1110,6 +1120,8 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
+	case "broker.token":
+		return d.handleBrokerToken(context.Background(), req.Params)
 	case "account.limits":
 		return d.handleAccountLimits(req.Params)
 	case "run":

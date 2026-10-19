@@ -58,6 +58,13 @@ type Manager struct {
 	// Views builds each seat's read-only views at spawn and removes them with
 	// the session. Nil means no views are built.
 	Views *view.Keeper
+	// SessionEnded is called with a session's key when its process is gone or
+	// being killed: a delete, a reaped pane, a failed kill. The credential
+	// broker revokes the seat's tokens here. Nil means nothing is told.
+	SessionEnded func(key string)
+	// CredentialHelper is the path a seat's environment carries to its
+	// credential helper. Empty means the cluster has no credential broker.
+	CredentialHelper string
 	// StreamDir holds the per-session FIFOs marvel reads agent output
 	// from. Defaults to a per-layout temp directory (see daemonTempDir).
 	// The pipes carry no content at rest, so nothing here needs to survive
@@ -1080,6 +1087,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	} else if layout, err := paths.Default(); err == nil {
 		lctx.ViewsDir = layout.ViewsDir()
 	}
+	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {
 		lctx.BusURL = m.Bus.URL()
 		lctx.GlobalRole = m.Bus.GlobalRole(*role)
@@ -1408,6 +1416,7 @@ const instanceTeardownGrace = 3 * time.Second
 // The instance is released either way; a retry goes through the driver.
 // It also returns the run's tail, for a cancelled run's record.
 func (m *Manager) retireInstance(key string) (bool, runTail, error) {
+	m.sessionEnded(key)
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
 		return false, m.forgetUsage(key, drain), nil
@@ -1422,11 +1431,32 @@ func (m *Manager) retireInstance(key string) (bool, runTail, error) {
 	return true, tail, nil
 }
 
+// sessionEnded tells SessionEnded, when set, that a session's process is gone
+// or being killed. It runs before the kill so a refused kill still revokes.
+//
+// The row stays Running until the kill settles, so it is marked Ending first:
+// a seat that asks for a credential in that window is refused, instead of
+// being issued one after its tokens were revoked.
+func (m *Manager) sessionEnded(key string) {
+	if m.SessionEnded == nil {
+		return
+	}
+	err := m.store.UpdateSession(key, func(live *api.Session) error {
+		live.Ending = true
+		return nil
+	})
+	if err != nil && !errors.Is(err, api.ErrNotFound) {
+		log.Printf("warning: session %s: mark ending: %v", key, err)
+	}
+	m.SessionEnded(key)
+}
+
 // detachInstance retires the stream of a session whose pane already
 // vanished. Distinct from retireInstance so the reap path does not log a
 // kill-pane failure for a pane it knows is gone. It returns the run's
 // tail for the reap path's run record.
 func (m *Manager) detachInstance(key string) runTail {
+	m.sessionEnded(key)
 	inst, drain := m.takeInstance(key)
 	if inst == nil {
 		return m.forgetUsage(key, drain)
