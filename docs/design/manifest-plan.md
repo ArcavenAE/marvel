@@ -78,7 +78,7 @@ an older runtime than their role's (`:1519`, `behindCount` in `spec.go:47`).
 | Change | Where | What it changes here |
 |---|---|---|
 | Six pre-commit steps were added or widened since 03dd483: items 2, 4, 6, 7, 9 and 15 above. Three of them refuse (2, 4 and 9). Steps 5, 12, 13 and 14 were already there at 03dd483 (`daemon.go:1222`, `:1271`, `:1273`, `:1274`) and the first version of this design missed them. | `daemon.go:1366-1444` | `evaluate` runs all fifteen (section 2, item 5). A plan that skips a refusing step says ok where apply refuses; one that skips an advisory step hides a line apply would print. |
-| Step 9 reads the bus config the daemon loaded, not the store. | `refuseUnadmittedGlobalRoles(m, b session.BusEnv)`, `daemon.go:3467` | `evaluate` takes the bus env as an input beside the store snapshot. It only reads it: the function has no side effect, and with no bus it refuses nothing. |
+| Step 9 reads the bus config the daemon loaded, not the store. | `refuseUnadmittedGlobalRoles(m, b session.BusEnv)`, `daemon.go:3467` at f1fe67f, `:3487` on main 69461c4 | `evaluate` takes the bus env as an input beside the store snapshot. It only reads it: the function has no side effect, and with no bus it refuses nothing. |
 | Step 4 runs `git` (5 second timeout) under each listed folder. | `internal/api/trusted_folders.go:120-158`, `gitTimeout` :26 | it writes nothing, so it stays in the plan; a slow filesystem makes the plan slow, not wrong. |
 | A command with inline args passes the pre-flight. | marvel#517, closed; `validateCommand` now splits on spaces and tabs (`manifest.go:756-794`) and marks shell text it does not parse with an advisory | section 7 step 1 is done; section 8's first defect is fixed. |
 | An unknown `--cluster`, or `--cluster` with an unreadable config, is refused for every verb; an explicit `--cluster` outranks `MARVEL_SOCKET`. | marvel#502 and #586, closed; `resolveDaemonRung`, `cmd/marvel/main.go:92-151` | most of section 4 item 1 and of section 10 item 4 is now how every verb behaves. What remains is in section 10. |
@@ -215,6 +215,46 @@ NOT EVALUATED
 3 spawns, 1 kill, 0 refusals
 ```
 
+### Home paths in the output (ruling (y), 2026-10-19)
+
+The plan's output reaches CI logs and pasted messages, so it shows no
+directory names under anyone's home, with one exception per role. The rule,
+exactly:
+
+- **A home path** is an absolute path, after `filepath.Clean`, that is
+  under the home of the process printing the line (`os.UserHomeDir`), or
+  under `/Users/` or `/home/`. The daemon applies it to the lines it builds,
+  with the daemon user's home; the client applies it to the banner, with
+  the client's home. Neither rewrites the other's lines.
+- **The exception: one program path per role.** The path `exec.LookPath`
+  returns for the role's command on the daemon's PATH (section 4 item 4).
+  When it is under the daemon user's home it is written with that home as
+  `~` (`~/.local/bin/claude`). Under `/Users/` or `/home/` but not the
+  daemon's home, it is hidden like any other.
+  - A wrapper script is the program: its own path is the exception, and
+    nothing it execs is printed (section 4 item 5, "harness not
+    inspectable").
+  - `args` are never printed, since they can name paths. The line prints
+    their count (`args: 2`).
+- **Every other home path is hidden** as `<home:XXXXXXXX>`, the first eight
+  hex digits of the SHA-256 of the cleaned path. The same path prints the
+  same token, so a before and after can still be compared, and no directory
+  name prints. This covers a passing check as well as a failing one.
+
+What that means for each line that can carry a path:
+
+| line | when its path is a home path |
+|---|---|
+| banner `socket=` | `socket=unix:<home:XXXXXXXX>`, with the rung that chose it (`(MARVEL_SOCKET)`, `(cluster <name>)`, `(layout default)`). The cluster, host, uid, pid and start time already identify the daemon. |
+| `workspace.root A -> B` | both sides hidden: `workspace.root <home:1b2c3d4e> -> <home:1b2c3d4e> (no symlink change)` |
+| command resolution | the exception above |
+| workdir, passing | `core workdir <home:5e6f7a8b> exists; daemon uid can enter and write` |
+| workdir or trusted folder, failing | names the check and the token, not the path: `core workdir <home:5e6f7a8b>: does not exist` |
+| refusal text from a pre-flight | the same rule, applied to the text the daemon returns before it is printed |
+
+A path not under any home (`/srv/work`, `/opt/homebrew/bin/codex`) prints as
+it is, as in the worked case above.
+
 ## 4. Features specific to marvel, ranked
 
 The party's final rankings, merged; the first three were ranked first or
@@ -241,15 +281,59 @@ second by most seats.
    - `--socket` (`:93-95`) is the operator naming a socket outright. `plan`
      refuses when `--socket` is given, and says why. The cost, accepted in
      the ruling: `plan` cannot preview against a daemon reached only by
-     `--socket`. A test of `plan` reaches its scratch daemon with
-     `MARVEL_SOCKET` under a scratch `HOME`, where no config names a
-     `current_cluster`, so the override refusal above does not fire.
+     `--socket`.
    - A `config.Load` failure with `--cluster` is now refused for every verb
      (`:108-117`). Without `--cluster` it still falls back to the local
      daemon with NO warning. `plan` refuses here too, and prints the config
      error. A missing config file is not a failure: `config.Load` returns
      the defaults for it (`internal/config/config.go:830-831`), so this
      refusal bites only on a config file that exists and does not parse.
+     An `ErrInvalidClusterName` (another cluster's bad name) stays a
+     warning, as it is for every verb (`main.go:118-120`).
+
+   **`plan` reads the config itself, on every rung but `--socket`.** With
+   `MARVEL_SOCKET` set and no `--cluster`, `resolveDaemonRung` returns at
+   `main.go:105-107`, before `config.Load` at `:108`. Every seat has the
+   variable set (`:101-104`), so if `plan` relied on the resolver, the
+   unreadable-config refusal could never fire from a seat. And `plan` needs
+   the config on that rung anyway: the `current_cluster` refusal above reads
+   it. So `plan` calls `config.Load` before it dials, whatever rung chose the
+   socket. A load error that is not `ErrInvalidClusterName` refuses, with
+   `MARVEL_SOCKET` set or not. On `--socket` it refuses before reading
+   anything.
+
+   Both refusals, and the `current_cluster` one, mean `plan` did not run, so
+   they exit 1, "could not evaluate" (section 6), never 3.
+
+   **How tests reach a daemon.** Every `plan` test builds the child's
+   environment from nothing and never inherits the caller's: a seat carries
+   `MARVEL_SOCKET`, `MARVEL_HOME` and the other `MARVEL_*` keys that point
+   at the live fleet. `MARVEL_HOME` outranks `HOME` for the whole layout
+   (`internal/paths/paths.go:62-68`), so a scratch `HOME` alone leaves the
+   config and the default socket wherever `MARVEL_HOME` names. Each test
+   sets:
+   - `HOME` to a scratch directory, and `MARVEL_HOME` to a scratch root
+     under it (short enough for `run/marvel.sock` to fit a unix socket
+     path);
+   - `MARVEL_SOCKET` per case: set to the scratch daemon's socket for the
+     cases that run, unset for the cases that check a refusal on the
+     default rung;
+   - no other `MARVEL_*` key.
+
+   The cases, each with its exit code:
+
+   | case | `MARVEL_SOCKET` | config under the scratch `MARVEL_HOME` | expect |
+   |---|---|---|---|
+   | positive control | the scratch daemon | missing | runs against the scratch daemon, exit 0 |
+   | env rung, unreadable config | the scratch daemon | present, does not parse | refuses, prints the config error, exit 1, dials nothing |
+   | default rung, unreadable config | unset | present, does not parse | refuses, exit 1, dials nothing |
+   | env rung, `current_cluster` set | the scratch daemon | names a cluster | refuses, exit 1 |
+   | `--socket` | unset | missing | refuses, exit 1 |
+
+   "Dials nothing" is checked by the scratch daemon's request count, which
+   stays 0. The default-rung case has no daemon at the default socket, so a
+   refusal that failed to fire shows as a dial error instead of exit 1's
+   refusal text, and the test reads the text, not only the code.
 2. **Gross adds, gross kills, and the net the gate sees, with a kill
    list.** The admission gate sees one net `want` per team and admits
    `want <= 0` (`internal/admission/admission.go:277-279`). So a manifest that lowers one role and raises another can
@@ -271,7 +355,11 @@ second by most seats.
      (`rootIsClientOnly`, `workdir.go:99`); then it is dropped with an
      advisory and the apply places nothing (`workdir.go:67-73`). The plan
      promotes that advisory to a finding;
-   - each command resolved to an absolute path on the daemon's PATH;
+   - each command resolved to an absolute path on the daemon's PATH. The
+     path printed is what `exec.LookPath` returns on the daemon's PATH, the
+     same call the validator makes (`internal/api/manifest.go:790`), not
+     the path after `EvalSymlinks`: it names what the daemon will exec, and
+     a Homebrew or mise link would otherwise print its versioned target;
    - the workdir checked for enter and write as the daemon's uid.
 5. **First-launch preconditions per adapter:**
    - claude: setting sources and, once SB-4M exists, trust for the realpath;
@@ -340,6 +428,13 @@ not classify. A failure path the builder misses therefore falls through to
 1, which here is the true reading, instead of reading as "your manifest
 would be refused".
 
+Exit codes are per verb. `marvel wait` already uses 3, for a timeout,
+beside 0 succeeded, 1 failed, 2 crashed, 4 unknown and 5 daemon error
+(`cmd/marvel/wait.go:18-26`). `plan` never returns wait's codes, and wait
+never returns plan's, so neither verb's 3 can be read as the other's. A
+script that runs both reads each exit code against the verb it just ran,
+which is how `wait`'s codes are documented today.
+
 Under the flag, 0 also means no changes. Without it, `marvel plan -f m &&
 marvel work m` keeps working.
 
@@ -347,7 +442,8 @@ The cost of this numbering: an error from `root.Execute` exits 1 unless it
 is an `exitError`, which exits with its own code (`cmd/marvel/main.go:207-212`,
 `exitError` in `wait.go:31`, used by `marvel wait`). `plan` returns an
 `exitError` with code 3 for each refusal apply would return, and a test
-checks that every refusal in section 2 item 4 exits 3. A dial failure, an
+checks that each of the nine refusing steps in section 1 (1, 2, 3, 4, 7, 8,
+9, 10 and 11, one fixture each, as section 7 step 2 lists them) exits 3. A dial failure, an
 unreachable daemon or a mistyped flag needs no wrapping: it exits 1, which
 is "could not evaluate".
 
@@ -458,9 +554,8 @@ tallies (3-1, 4-0, 2-2) sum to four.
      This keeps another user's directory names out of CI logs.
 
    The redaction design (`describe-redaction.md`, #421) covers values, not
-   paths. Ruled: (y). The resolved binary path is written with `~`. When a
-   workdir or trusted-folder check fails, the line names the check, not the
-   path.
+   paths. Ruled: (y). The exact rule, with what each line prints, is in
+   section 3, "Home paths in the output".
 3. **Recorded dissent (V2).** The finops seat: without any figure the plan
    shows counts and nothing about cost, and operators will invent their own
    number. Reopen when `usage.Baseline` exists.
