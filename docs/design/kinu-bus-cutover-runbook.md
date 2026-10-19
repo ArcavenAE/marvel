@@ -278,8 +278,13 @@ Then:
    work. Wait for the markers or the deadline.
 2. Add the bus entry to the `local` cluster (`bus-as-service.md` 6.1: class
    `message-bus`, provider `nats-server`, mode `managed`, listen and url
-   127.0.0.1:4222, store_dir `~/.director/nats`, seat `{workspace: aae-orc,
-   team: ops}`, hub url `nats-leaf://127.0.0.1:7442`). **Open question for the
+   127.0.0.1:4222, store_dir the absolute path of `~/.director/nats` (write it
+   out, e.g. `/Users/<you>/.director/nats`), seat `{workspace: aae-orc,
+   team: ops}`, hub url `nats-leaf://127.0.0.1:7442`). **`store_dir` is not `~`-expanded.**
+   marvel at f1fe67f passes it through as written (`internal/config/config.go:750`
+   and `:762-763`, `internal/bus/manager.go:370`, `internal/bus/render.go:157`);
+   only the hub CA path goes through the `~` expansion (`cleanPath`, used at
+   `config.go:666`). So the value must be an absolute path. **Open question for the
    operator's seat-credential card:** the live marvel workspace is named `aae`,
    so whether the seat pair is `aae-orc/ops`, as `bus-as-service.md` 6.1 spells
    it, or uses `aae`, is not decided here. The operator scripts' p0 check
