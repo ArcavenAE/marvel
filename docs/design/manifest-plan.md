@@ -370,13 +370,33 @@ it is, as in the worked case above.
   nothing to filter, and `plan` does not rely on them: it reads the error
   itself in the step above.
 
-Tests: under `plan`, `--marvel-home=~/x`, `--marvel-home=rel` and an
-absolute home value too long for a socket each print with no directory
-name, the last with both the value and the trailing socket path hidden.
-`MARVEL_HOME` set to each of the three gives the same. The same three under
-`marvel get sessions` print `ParseHome`'s ruled text unchanged, which is
-what marvel's own `internal/paths/home_test.go:58-64`, `:73` and `:77`
-already check.
+Tests, each run with the child environment built from nothing as in
+section 4 item 1, so the scratch `HOME` is the home the filter uses:
+- **Under `plan`, three values, by the flag and by `MARVEL_HOME`:**
+  - `~/x` and `rel` each print exactly `"<not absolute>"` where the value
+    was, and the test asserts that exact text, not only the absence of a
+    name;
+  - the too-long value is an absolute path under the scratch `HOME`, long
+    enough that its socket path is over the unix limit. It prints with the
+    quoted value and the trailing socket path both as `<home>`, and the
+    test asserts that neither the scratch `HOME`'s path nor any of its
+    directory names appears in the output.
+- **Under `marvel get sessions`, the flag only.** The three values given
+  by `--marvel-home` print `ParseHome`'s ruled text unchanged, which is
+  what marvel's own `internal/paths/home_test.go:58-64`, `:73` and `:77`
+  check. `MARVEL_HOME` is left out of this half: under any verb but `plan`,
+  a bad `MARVEL_HOME` with no cluster configured is not printed at all,
+  because the resolver falls back to the default socket without a word
+  (`main.go:108-116`). That silence is the case `plan` reads for itself.
+
+A known gap, not a blocker: the state directory's `Lstat` check and its
+`os.OpenRoot` are two calls, so a directory swapped for a symlink between
+them is opened. `OpenRoot` then confines every later operation to what it
+opened, so the swap cannot reach outside it. The ownership and mode
+check, though, ran on the directory that was there before the swap, not
+on the one opened. Repeating the check on the opened root (`root.Stat(".")`,
+which `os.Root` has had since Go 1.24) would close that gap; it is left as a
+note, and the builder may add it.
 
 ## 4. Features specific to marvel, ranked
 
