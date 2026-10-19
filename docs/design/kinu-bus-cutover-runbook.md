@@ -64,17 +64,18 @@ the operator says go. Written to assume the cutover goes badly.
    (`bus.leaf.unenrolled`): survivable, and recovered in the window.
 4. **Rehearsal passed** (section 3), its transcript linked from #534, with the
    broker gap and the per-seat respawn time measured.
-5. **Quiet fleet.** No merge, shift or apply in flight. mokuzai's
+5. **Quiet fleet.** No merge, shift or `marvel work` in flight. mokuzai's
    supervisor, and corporate's if that cluster leafs into this hub, are told kinu seats will be unreachable for the
    window, and that global mail to them queues at the hub.
 6. **Start directories.** The store-migration window has run, and its
    precondition 5 has settled where each team spawns: either each team
    declares its root, or the operator accepted the legacy stamp of the
    daemon's cwd. This window's step 9 is the first fleet-wide spawn since then,
-   so every one of the 32 seats lands wherever that decision put it. Today 30
-   of the 38 panes on the marvel tmux server start in the tmux server's cwd,
-   a worktree path (`tmux list-panes -a -F '#{pane_start_path}'` on the marvel
-   socket). After the stamp they would start in `~/work/aae-orc` instead.
+   so every one of the 32 seats lands wherever that decision put it. How many
+   panes on the marvel tmux server start in the tmux server's cwd, a worktree
+   path, is counted at window time and not fixed here, because the count moves
+   with the fleet (`tmux -L <socket> list-panes -a -F '#{pane_start_path}'`, with `<socket>`
+   the marvel tmux server's socket name). After the stamp they would start in `~/work/aae-orc` instead.
    Capture each team's `WorkDir` (`marvel describe team`) into `$W` at step 0.
 7. **Handoffs.** Every kinu seat is told before the window to write its
    handoff at the window's start. A respawn without one loses that seat's
@@ -103,7 +104,7 @@ The daemon reads `~/.marvel/config.yaml` through `os.UserHomeDir`
 (`internal/config/config.go:742-748`), so `HOME="$S"` gives the scratch daemon
 its own config; the client must still name `--socket` (marvel `CLAUDE.md`).
 **Every marvel command in this section goes through `m`.** A bare `marvel`
-with `MARVEL_*` unset resolves the live daemon: a bare `apply` would put a
+with `MARVEL_*` unset resolves the live daemon: a bare `work` would put a
 shell team on the live fleet, and a bare `credential put bus/leaf` would store
 the scratch seed in the live store, so window step 5 would boot with the
 wrong seed. The operator reads each step's commands for a bare `marvel`
@@ -190,7 +191,7 @@ Steps, each with a pass condition:
    --value-file <scratch seed file>`. Pass: `m bus status` reads ready,
    provisioned, authorized, leaf up; the stream message counts match step 1;
    an anonymous `nats -s nats://127.0.0.1:14222 sub '>'` is refused. **Measure** the gap from phase-0 stop to ready.
-3. **Spawn with a credential.** `m apply -f $S/team.yaml`, a one-role scratch
+3. **Spawn with a credential.** `m work $S/team.yaml`, a one-role scratch
    team whose runtime is a shell, not a harness. Pass: the session's env
    carries `NATS_URL` at `nats://127.0.0.1:14222` and a team user, and that
    user can subscribe its inbox (`nats -s nats://127.0.0.1:14222 --user ...`). **Measure** one respawn.
@@ -199,13 +200,15 @@ Steps, each with a pass condition:
    (named explicitly, not derived from `HOME`), `NATS_URL` at the scratch
    broker, and `DIRECTOR_TEAM`/`DIRECTOR_WORKSPACE` set. Pass: it connects as
    `director` and `inbox_summary` answers. Negative control: the same with
-   `MARVEL_BUS_STATE` at an empty scratch directory exits 1 with "no seat
-   password". So a pass cannot come from a credential the test did not
+   `MARVEL_BUS_STATE` at an empty scratch directory exits 1 printing `director-mcp-seat: no bus credentials in the environment, and no seat`
+   and, on the next line, `  password at <path>.` with two leading spaces (director `probe/nats-phase-0/director-mcp-seat:85-86`, at
+   director main 59f8512). So a pass cannot come from a credential the test did not
    intend.
 5. **The other leaf held.** Pass: the scratch mokuzai leaf never left the
    scratch hub's `/leafz` (`127.0.0.1:18242`) during steps 2 to 4.
 6. **Credentials against an anonymous broker.** Point the bare shim with
-   `DIRECTOR_NATS_USER`/`DIRECTOR_NATS_PASS` set, and the step-3 session, at an
+   `DIRECTOR_NATS_USER=director` (the user the wrapper exports for the seat,
+   `director-mcp-seat:92`) and `DIRECTOR_NATS_PASS` set, and the step-3 session, at an
    anonymous scratch broker started for this step on 34222 (monitor 38222),
    with the same conf checks, and `NATS_URL=nats://127.0.0.1:34222`. Record whether each connects. This decides
    rollback step 7.
@@ -274,8 +277,18 @@ Then:
    work. Wait for the markers or the deadline.
 2. Add the bus entry to the `local` cluster (`bus-as-service.md` 6.1: class
    `message-bus`, provider `nats-server`, mode `managed`, listen and url
-   127.0.0.1:4222, store_dir `~/.director/nats`, seat `{workspace: aae-orc,
-   team: ops}`, hub url `nats-leaf://127.0.0.1:7442`). One spelling only: a
+   127.0.0.1:4222, store_dir the absolute path of `~/.director/nats` (write it
+   out, e.g. `/Users/<you>/.director/nats`), seat `{workspace: <workspace>,
+   team: <team>}` (the pair is decided by the seat-credential card, below), hub url `nats-leaf://127.0.0.1:7442`). **`store_dir` is not `~`-expanded.**
+   marvel at f1fe67f passes it through as written (`internal/config/config.go:750`
+   and `:762-763`, `internal/bus/manager.go:370`, `internal/bus/render.go:157`);
+   in the bus entry, only `hub.ca_file` is `~`-expanded (`cleanPath`, at
+   `config.go:666` and `:771`); `store_dir` is not. So the value must be an absolute path. **Open question for the
+   operator's seat-credential card:** the live marvel workspace is named `aae`,
+   so whether the seat pair is the one `bus-as-service.md` 6.1 spells, or uses
+   `aae`, is not decided here. The operator scripts' p0 check
+   refuses a seat in `window.env` that differs from the pair in the director-mcp
+   registration, so the two must be one pair before the window. One spelling only: a
    `bus:` block or a Services entry, never both (`admin-guide.md` around line
    452).
 3. Stop the phase-0 broker, by the pid check of rollback step 1: read
