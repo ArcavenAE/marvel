@@ -625,6 +625,10 @@ type Role struct {
 	SettingsSources []string `toml:"settings_sources,omitempty"`
 	Name            string   `toml:"name"`
 	Replicas        int      `toml:"replicas"`
+	// Writes names the functions this role writes. A role that names one is not
+	// started while its slot carries an exposure record for it (marvel#945).
+	// Empty on every role that predates the key.
+	Writes []string `toml:"writes,omitempty"`
 	// WorkDir is where this role's sessions run; empty means the team's
 	// workdir, then the workspace root. Absolute once applied.
 	WorkDir string `toml:"workdir,omitempty"`

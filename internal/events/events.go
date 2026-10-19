@@ -340,6 +340,7 @@ const (
 	KindBusStopped        Kind = "bus.stopped"
 	KindBusCrashed        Kind = "bus.crashed"
 	KindBusUnavailable    Kind = "bus.unavailable"
+	KindExposureRefused   Kind = "exposure.refused" // a role that writes a function was held: its slot has read it (marvel#945)
 	KindBusReloaded       Kind = "bus.reloaded"
 	KindBusLeafUp         Kind = "bus.leaf.up"
 	KindBusLeafDown       Kind = "bus.leaf.down"
@@ -489,6 +490,7 @@ var allKinds = []Kind{
 	KindBusStopped,
 	KindBusCrashed,
 	KindBusUnavailable,
+	KindExposureRefused,
 	KindBusUnprovisioned,
 	KindBusReloaded,
 	KindBusLeafUp,

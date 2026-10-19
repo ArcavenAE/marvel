@@ -1,0 +1,130 @@
+package api
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func exposureFixture(function string) ExposureRecord {
+	return ExposureRecord{
+		Workspace: "ws", Team: "ops", Role: "writer", Function: function,
+		Paths: []string{"src/" + function}, Caster: "supervisor",
+		StartedAt: time.Date(2026, 10, 19, 20, 0, 0, 0, time.UTC),
+	}
+}
+
+// TestExposureOutlivesTheSessionRows: the lifecycle deletes session rows on a
+// restart, a crash respawn and a shift drain, so the record must not hang off
+// one. Deleting every row of the slot, and the team, leaves it readable
+// (marvel#945).
+func TestExposureOutlivesTheSessionRows(t *testing.T) {
+	s := NewStore()
+	if err := s.CreateSession(&Session{Name: "writer-0", Workspace: "ws", Team: "ops", Role: "writer", State: SessionRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordExposure(exposureFixture("parse")); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := s.DeleteSession("ws/writer-0"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ExposuresForSlot("ws", "ops", "writer")
+	if err != nil || len(got) != 1 || got[0].Function != "parse" || got[0].Caster != "supervisor" {
+		t.Fatalf("after the row was deleted: %+v, %v, want the one record", got, err)
+	}
+	if other, _ := s.ExposuresForSlot("ws", "ops", "reader"); len(other) != 0 {
+		t.Errorf("another role's slot reads %+v, want none", other)
+	}
+}
+
+// TestEndExposureSetsTheTimeAndKeepsTheRecord: ending a reading is an append of
+// an end time; the record stays, and so does a second reading of the same
+// function.
+func TestEndExposureSetsTheTimeAndKeepsTheRecord(t *testing.T) {
+	s := NewStore()
+	first, err := s.RecordExposure(exposureFixture("parse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.RecordExposure(exposureFixture("parse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Seq == 0 || second.Seq <= first.Seq {
+		t.Fatalf("seq %d then %d, want rising and non-zero", first.Seq, second.Seq)
+	}
+	end := time.Date(2026, 10, 19, 21, 0, 0, 0, time.UTC)
+	n, err := s.EndExposure("ws", "ops", "writer", "parse", end)
+	if err != nil || n != 2 {
+		t.Fatalf("EndExposure = %d, %v, want 2 records ended", n, err)
+	}
+	got, _ := s.ExposuresForSlot("ws", "ops", "writer")
+	if len(got) != 2 {
+		t.Fatalf("%d records after end, want 2: nothing is removed", len(got))
+	}
+	for _, r := range got {
+		if !r.EndedAt.Equal(end) {
+			t.Errorf("record %d EndedAt = %v, want %v", r.Seq, r.EndedAt, end)
+		}
+	}
+	if _, err := s.EndExposure("ws", "ops", "writer", "unread", end); err == nil {
+		t.Error("ending a function nothing recorded succeeded, want ErrNotFound")
+	}
+}
+
+// TestExposureSurvivesReopen: the bucket is on disk, with its end times and its
+// sequence, so a daemon restart forgets nothing and never reuses a number.
+func TestExposureSurvivesReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s1.RecordExposure(exposureFixture("parse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := time.Date(2026, 10, 19, 21, 0, 0, 0, time.UTC)
+	if _, err := s1.EndExposure("ws", "ops", "writer", "parse", end); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.ExposuresForSlot("ws", "ops", "writer")
+	if err != nil || len(got) != 1 || !got[0].EndedAt.Equal(end) || got[0].Seq != rec.Seq {
+		t.Fatalf("after reopen: %+v, %v, want the ended record with seq %d", got, err, rec.Seq)
+	}
+	next, err := s2.RecordExposure(exposureFixture("emit"))
+	if err != nil || next.Seq <= rec.Seq {
+		t.Errorf("seq after reopen = %d (%v), want above %d", next.Seq, err, rec.Seq)
+	}
+}
+
+// TestRecordExposureRefusesAnIncompleteRecord: a record that names no slot or
+// no function would match nothing and look like a recorded exposure.
+func TestRecordExposureRefusesAnIncompleteRecord(t *testing.T) {
+	s := NewStore()
+	for name, mutate := range map[string]func(*ExposureRecord){
+		"no workspace": func(r *ExposureRecord) { r.Workspace = "" },
+		"no team":      func(r *ExposureRecord) { r.Team = "" },
+		"no role":      func(r *ExposureRecord) { r.Role = "" },
+		"no function":  func(r *ExposureRecord) { r.Function = "" },
+	} {
+		r := exposureFixture("parse")
+		mutate(&r)
+		if _, err := s.RecordExposure(r); err == nil {
+			t.Errorf("%s: record accepted, want an error", name)
+		}
+	}
+	if got, _ := s.ExposuresForSlot("ws", "ops", "writer"); len(got) != 0 {
+		t.Errorf("a refused record was stored: %+v", got)
+	}
+}

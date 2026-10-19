@@ -89,6 +89,10 @@ type Controller struct {
 	// outage announces itself once per role rather than once per tick.
 	busHolds map[string]bool
 
+	// Exposures is where the exposure gate reads what a slot has read. Nil
+	// means the store. A role with no Writes never reads it (marvel#945).
+	Exposures ExposureSource
+
 	// ShiftTimeout bounds how long a single shift may run before the
 	// reconciler declares it stuck and aborts it. Zero uses
 	// defaultShiftTimeout. See aae-orc-qkfl.
@@ -1044,6 +1048,9 @@ const (
 	// under backoff, or not yet started. Spawning would hand a session a
 	// NATS_URL nothing answers on.
 	HoldBus HoldReason = "bus_unavailable"
+	// HoldExposure means the role writes a function its slot has read, or the
+	// record of what the slot has read could not be consulted (marvel#945).
+	HoldExposure HoldReason = "exposure"
 	// HoldSchedule means the role is on a schedule and its firing record
 	// allows no spawn now: no firing is due yet, the firing settled, a
 	// retry is backing off, or on_failure froze the schedule. Without it a
