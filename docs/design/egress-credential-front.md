@@ -269,12 +269,14 @@ starts empty with each daemon (section 7), so an event alone is not the
 record. `service.owner-mismatch`, `service.owner-login-failed` and
 `service.keychain-unreadable` each leave the service in state `failed`,
 held in the service's store record, with the reason and the time. No such
-record exists on main: the store's buckets are workspaces, teams,
-sessions, endpoints, policies, role health, schedule status and meta
-(`internal/api/bolt.go:50-61`). Build item 4 adds a persisted bucket for
-service records, and build item 5 one for bindings, which carries each
-seat's expiry. Both follow the schedule-status precedent at `:57-59`:
-`OpenBolt` creates a missing bucket, so an older database opens unchanged.
+record exists on main: the store opens the buckets in `allBuckets`
+(`internal/api/bolt.go:78-89` at main c73259b6): workspaces, teams,
+sessions, endpoints, policies, role health, schedule status, duty
+readiness, exposure, exposure seal and meta. None holds a service record.
+Build item 4 adds a persisted bucket for service records, and build item 5
+one for bindings, which carries each seat's expiry. Both join
+`allBuckets` the way schedule status did (`bolt.go:57-59`): `OpenBolt`
+creates a missing bucket, so an older database opens unchanged.
 `marvel get services` prints the state, and `marvel describe service`
 prints the reason, the time and the recovery to follow. It stays failed
 until the operator acts; nothing retries it.
@@ -330,21 +332,31 @@ mid-run. So:
 - marvel records each seat's session expiry in the binding's store record,
   so it survives a daemon restart or reexec. That record is the durable
   signal. `marvel describe session` prints the expiry. `marvel get
-  sessions` shows it in a new last column, EGRESS: `-` for a seat with no
-  binding, `ok` before the lead, `expiring` inside it, `expired` after;
+  sessions` can show it in a new column, `egress` (header EGRESS): `-` for
+  a seat with no binding, `ok` before the lead, `expiring` inside it,
+  `expired` after;
 - the EGRESS value is computed at display time from the stored expiry and
   the current time. It is never stored, so it cannot go stale across a
   restart;
+- it is **opt-in, and in the wide set.** marvel keeps new session columns
+  out of the default table "so a pipe prints what it always printed"
+  (`cmd/marvel/columns.go:50-53`), so `egress` joins `optInColumns` and is
+  added to `wideSessionColumns` (`:61`), last. A plain `marvel get
+  sessions` prints what it prints today; `--columns wide` or a list naming
+  `egress` shows it;
 - it is its own column, not a HEALTH suffix. HEALTH's grammar on main is
   one base word, then `(stalled)`, then at most one of `(logged-out)` or
-  `(parked: <reason>)` (`cmd/marvel/main.go:3100-3121`). A parked reason is
-  free text that runs to the last `)`, so a suffix after it would be read
-  into the reason, and director's dashboard reads HEALTH by exactly that
-  grammar and refuses anything after it (director
-  `sim/design/ops-dashboard.md`, the HEALTH grammar at :118-120). The
-  column goes last, so a reader that takes the existing columns by position
-  keeps their places. The dashboard's column grammar still has to learn the
-  new column: a follow-up on director, filed when build item 5 is routed;
+  `(parked: <reason>)` (`cmd/marvel/main.go:3108-3129` at c73259b6). A
+  parked reason is free text that runs to the last `)`, so a suffix after
+  it would be read into the reason, and director's dashboard grammar says
+  any later suffix "fails the grammar" (director
+  `sim/design/ops-dashboard.md:127`);
+- director's dashboard is not affected: it reads an explicit column list
+  (`ops-dashboard.md:175-176`, `--columns team,role,name,state,health,last-active`),
+  and an explicit list prints exactly those columns
+  (`selectSessionColumns`, `columns.go:126-135`), so `egress` never reaches
+  its header check. Adding `egress` to the dashboard is an optional
+  follow-up on director, not a precondition for build item 5;
 - the lead is the class config key `session_expiry_lead`, default 24 hours.
   It must be shorter than the session length (`session_length`, at most 7
   days). A lead equal to or longer than the session would mark every seat
@@ -355,12 +367,15 @@ mid-run. So:
   session and expiry time. These are notices only. On main the ring is the
   only emitter besides a discard (`internal/events/events.go`, `Ring`), an
   in-memory buffer of 2000 events built fresh at each daemon start
-  (`:639`; `internal/daemon/daemon.go:328`). So an event can be evicted
+  (`:641` at c73259b6; `internal/daemon/daemon.go:328`). So an event can be evicted
   before a once-a-day reader sees it, or lost on a restart. No push to
   supervisors exists;
-- so a supervisor learns of an expiring seat by polling: `marvel get
-  sessions` in its own sweep, where the mark shows until the seat is
-  shifted. A push (a bus message to the team's supervisor) is a later item,
+- so a supervisor learns of an expiring seat by polling. Its sweep runs
+  `marvel get sessions --columns workspace,team,role,name,health,egress`
+  (or `--columns wide`) on each cluster it supervises, and acts on any row
+  whose EGRESS reads `expiring` or `expired`; the value shows until the
+  seat is shifted. The supervisor's sweep text names this command when
+  build item 5 lands. A push (a bus message to the team's supervisor) is a later item,
   not this design's, and the mark stays the record when it comes;
 - marvel does not shift or restart the seat itself; that stays the
   supervisor's call, as for max age. If nobody acts, the seat's next
@@ -479,7 +494,8 @@ in order):
    step (reads only);
 5. the Binding: per-seat agent create, seat environment with
    `no_proxy_hosts`, the bindings bucket with each session's expiry, the
-   EGRESS column in `get sessions` (computed at display), the expiry in
+   opt-in `egress` column in `get sessions`, also in the wide set (computed
+   at display), the expiry in
    `describe session`, the refusal of a lead not shorter than
    `session_length`, the two notice events, and revoke at seat end.
 
