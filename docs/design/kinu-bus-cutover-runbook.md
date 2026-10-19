@@ -282,8 +282,8 @@ Then:
    team: <team>}` (the pair is decided by the seat-credential card, below), hub url `nats-leaf://127.0.0.1:7442`). **`store_dir` is not `~`-expanded.**
    marvel at f1fe67f passes it through as written (`internal/config/config.go:750`
    and `:762-763`, `internal/bus/manager.go:370`, `internal/bus/render.go:157`);
-   only the hub CA path goes through the `~` expansion (`cleanPath`, used at
-   `config.go:666`). So the value must be an absolute path. **Open question for the
+   in the bus entry, only `hub.ca_file` is `~`-expanded (`cleanPath`, at
+   `config.go:666` and `:771`); `store_dir` is not. So the value must be an absolute path. **Open question for the
    operator's seat-credential card:** the live marvel workspace is named `aae`,
    so whether the seat pair is the one `bus-as-service.md` 6.1 spells, or uses
    `aae`, is not decided here. The operator scripts' p0 check
