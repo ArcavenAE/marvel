@@ -108,9 +108,9 @@ func TestExposureAddEndVoidThroughDispatch(t *testing.T) {
 	}
 }
 
-// TestExposureVoidIsOperatorRunAndCredentialKeysCannotRecord: a void is only
+// TestExposureVoidIsLocalSocketOnlyAndCredentialKeysCannotRecord: a void is only
 // served on the local socket, and a credential-push key reaches none of them.
-func TestExposureVoidIsOperatorRunAndCredentialKeysCannotRecord(t *testing.T) {
+func TestExposureVoidIsLocalSocketOnlyAndCredentialKeysCannotRecord(t *testing.T) {
 	d := exposureVerbsDaemon(t)
 	if r := d.dispatchAs(Request{Method: "exposure.add", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
 		t.Fatalf("setup: %s", r.Error)
