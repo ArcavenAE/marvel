@@ -664,6 +664,9 @@ func (m *Manager) PrepareViews(sess *api.Session, role *api.Role) bool {
 // Create creates a new session: registers it in the store, ensures the tmux
 // session exists, and spawns a pane running the runtime command.
 func (m *Manager) Create(sess *api.Session) error {
+	if err := m.checkExposure(sess); err != nil {
+		return err
+	}
 	if err := m.checkWorkDir(sess); err != nil {
 		return err
 	}
@@ -1922,6 +1925,31 @@ type BusEnv interface {
 // caller can tell a placement refusal, which the manager already reports, from
 // any other spawn failure.
 var ErrPlacementRefused = errors.New("placement refused")
+
+// checkExposure refuses a session for a role that writes a function its slot has
+// read. Every spawn path ends in Create, so this is the one place the ad-hoc run,
+// a shift successor and a reconcile spawn all pass; the planner and the shift
+// check earlier only to hold quietly (marvel#945). A session with no team record
+// or no role of that name declares no writes and is admitted.
+func (m *Manager) checkExposure(sess *api.Session) error {
+	t, err := m.store.GetTeam(sess.Workspace + "/" + sess.Team)
+	if err != nil {
+		if errors.Is(err, api.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("refuse to start session %s: team record unreadable: %v: %w", sess.Key(), err, ErrExposureRefused)
+	}
+	for i := range t.Roles {
+		if t.Roles[i].Name != sess.Role {
+			continue
+		}
+		if held, reason := api.ExposureVerdict(m.store, sess.Workspace, sess.Team, &t.Roles[i]); held {
+			return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), reason, ErrExposureRefused)
+		}
+		return nil
+	}
+	return nil
+}
 
 // ErrExposureRefused is wrapped by the error Create returns when the role the
 // session is for writes a function its slot has read (marvel#945).

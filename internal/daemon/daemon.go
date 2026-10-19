@@ -2153,6 +2153,16 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	}
 
 	if err := d.sessMgr.Create(sess); err != nil {
+		if errors.Is(err, session.ErrExposureRefused) {
+			events.Emit(d.events, events.Event{
+				Kind:      events.KindExposureRefused,
+				Severity:  events.SeverityWarning,
+				Workspace: sess.Workspace,
+				Team:      sess.Team,
+				Role:      sess.Role,
+				Message:   err.Error(),
+			})
+		}
 		return Response{Error: fmt.Sprintf("create session: %v", err)}
 	}
 

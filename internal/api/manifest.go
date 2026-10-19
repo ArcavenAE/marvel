@@ -965,7 +965,7 @@ func (m *Manifest) Apply(store *Store) error {
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 				ContainerImage:       mr.ContainerImage,
 				SettingsSources:      mr.SettingsSources,
-				Writes:               mr.Writes,
+				Writes:               normalizeWrites(mr.Writes),
 			}
 			if mr.RestartPolicy != "" {
 				role.RestartPolicy = RestartPolicy(mr.RestartPolicy)
@@ -1090,19 +1090,34 @@ func searchString(s, substr string) bool {
 var settingsSourceNames = map[string]bool{"user": true, "project": true, "local": true}
 
 // validateWrites refuses a writes list the exposure gate could not match: an
-// empty name matches nothing, and a name twice says the author lost track.
+// empty name matches nothing, and a name twice, in any case or with edge space,
+// says the author lost track.
 func validateWrites(where string, writes []string) error {
 	seen := make(map[string]bool, len(writes))
 	for _, w := range writes {
-		if strings.TrimSpace(w) == "" {
+		n := NormalizeFunction(w)
+		if n == "" {
 			return fmt.Errorf("%s.writes: an entry is empty", where)
 		}
-		if seen[w] {
-			return fmt.Errorf("%s.writes: %q appears twice", where, w)
+		if seen[n] {
+			return fmt.Errorf("%s.writes: %q appears twice (names compare without case or edge space)", where, w)
 		}
-		seen[w] = true
+		seen[n] = true
 	}
 	return nil
+}
+
+// normalizeWrites returns the writes list in the one spelling the gate compares,
+// or nil for an empty list. validateWrites has already refused repeats.
+func normalizeWrites(writes []string) []string {
+	if len(writes) == 0 {
+		return nil
+	}
+	out := make([]string, len(writes))
+	for i, w := range writes {
+		out[i] = NormalizeFunction(w)
+	}
+	return out
 }
 
 // validateSettingsSources refuses a declaration the harness would reject or

@@ -1395,7 +1395,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				break
 			}
 			// A refused placement is reported, at a low rate, by the manager.
-			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) {
+			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
@@ -2327,6 +2327,16 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	}
 
 	if len(live) < desired {
+		// A writer whose slot has read its function launches no successor:
+		// this path creates sessions itself and reconcile never plans the
+		// shifting role, so the planner's gate does not reach it. The shift
+		// stays in launching and says so once (marvel#945).
+		if held, reason := c.exposureVerdict(t, role); held {
+			c.latchExposureHold(t, role.Name, reason)
+			return
+		}
+		c.clearExposureHold(t, role.Name)
+
 		// Each successor is paired with one of the seats shiftDrain will
 		// retire, oldest first, the order it retires them in. Selected the
 		// way shiftDrain selects them: outside this shift's generation, not
@@ -2361,7 +2371,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				return
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
-				if !errors.Is(err, session.ErrPlacementRefused) {
+				if !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) {
 					log.Printf("shift: create session %s: %v", name, err)
 				}
 				return

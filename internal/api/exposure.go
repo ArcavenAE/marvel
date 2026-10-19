@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -14,6 +15,18 @@ import (
 // a schema-compatible way: OpenBolt creates it when missing. Nothing in this
 // package deletes from it, and the session and team deletes never reach it.
 var bucketExposure = []byte("exposure")
+
+// metaKeyExposureUsed marks a database that has held an exposure record. A
+// bucket found empty beside this marker was emptied or removed, which is the
+// deletion this design exists to survive: the store then refuses to read, and
+// the gate holds, instead of reading it as nothing exposed.
+var metaKeyExposureUsed = []byte("exposure_used")
+
+// NormalizeFunction is the one spelling a function name is compared in: edge
+// space trimmed and case folded, so " Parse" and "parse" are the same function.
+func NormalizeFunction(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
 
 // ExposureRecord says that a seat of a role read one function's source, so a
 // role that writes that function must not be started in the same slot
@@ -51,6 +64,7 @@ func exposureKey(r ExposureRecord) string {
 // with its own clock. A record that names no slot or no function is refused,
 // since it would match nothing and still look like a recorded exposure.
 func (s *Store) RecordExposure(r ExposureRecord) (ExposureRecord, error) {
+	r.Function = NormalizeFunction(r.Function)
 	if r.Workspace == "" || r.Team == "" || r.Role == "" || r.Function == "" {
 		return ExposureRecord{}, errors.New("exposure: a record names a workspace, team, role and function")
 	}
@@ -63,7 +77,7 @@ func (s *Store) RecordExposure(r ExposureRecord) (ExposureRecord, error) {
 	r.Seq = s.exposureSeq + 1
 	r.Paths = append([]string(nil), r.Paths...)
 	key := exposureKey(r)
-	if err := s.persistPut(bucketExposure, key, &r); err != nil {
+	if err := s.persistExposure(key, &r); err != nil {
 		return ExposureRecord{}, fmt.Errorf("persist exposure %s: %w", key, err)
 	}
 	s.exposureSeq = r.Seq
@@ -77,6 +91,7 @@ func (s *Store) RecordExposure(r ExposureRecord) (ExposureRecord, error) {
 // the slot has no record for is ErrNotFound; one whose records are all ended
 // already marks none and is not an error.
 func (s *Store) EndExposure(workspace, team, role, function string, at time.Time) (int, error) {
+	function = NormalizeFunction(function)
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
@@ -111,6 +126,9 @@ func (s *Store) EndExposure(workspace, team, role, function string, at time.Time
 func (s *Store) ExposuresForSlot(workspace, team, role string) ([]ExposureRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.exposureLost {
+		return nil, errExposureLost
+	}
 	var out []ExposureRecord
 	for _, r := range s.exposures {
 		if r.Workspace == workspace && r.Team == team && r.Role == role {
@@ -123,11 +141,38 @@ func (s *Store) ExposuresForSlot(workspace, team, role string) ([]ExposureRecord
 	return out, nil
 }
 
+// errExposureLost is what a read returns when the bucket held records and is
+// now empty. Recovery is the operator's: restore the state database, or record
+// the exposures again and restart the daemon.
+var errExposureLost = errors.New("exposure records were in use and the bucket is now empty; restore the state database, or record the exposures again and restart the daemon")
+
+// persistExposure writes a record and the in-use marker in one transaction, so
+// a bucket that has held a record always has the marker beside it.
+func (s *Store) persistExposure(key string, r *ExposureRecord) error {
+	if s.bolt == nil {
+		return nil
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("marshal exposure %s: %w", key, err)
+	}
+	return s.bolt.Update(func(tx *bolt.Tx) error {
+		if err := tx.Bucket(bucketExposure).Put([]byte(key), data); err != nil {
+			return fmt.Errorf("put exposure %s: %w", key, err)
+		}
+		if err := tx.Bucket(bucketMeta).Put(metaKeyExposureUsed, []byte("1")); err != nil {
+			return fmt.Errorf("put exposure marker: %w", err)
+		}
+		return bumpVersion(tx)
+	})
+}
+
 // rehydrateExposures loads the records and the sequence high-water mark. A
 // record that cannot be read fails the open: a gate that reads a partial set
 // would admit what it should refuse.
 func (s *Store) rehydrateExposures(tx *bolt.Tx) error {
-	return tx.Bucket(bucketExposure).ForEach(func(k, v []byte) error {
+	s.exposureLost = false
+	err := tx.Bucket(bucketExposure).ForEach(func(k, v []byte) error {
 		var r ExposureRecord
 		if err := json.Unmarshal(v, &r); err != nil {
 			return fmt.Errorf("unmarshal exposure %s: %w", string(k), err)
@@ -138,6 +183,13 @@ func (s *Store) rehydrateExposures(tx *bolt.Tx) error {
 		s.exposures[string(k)] = &r
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if len(s.exposures) == 0 && tx.Bucket(bucketMeta).Get(metaKeyExposureUsed) != nil {
+		s.exposureLost = true
+	}
+	return nil
 }
 
 // ExposureReader is where the gate reads what a slot has read.
@@ -145,7 +197,38 @@ type ExposureReader interface {
 	ExposuresForSlot(workspace, team, role string) ([]ExposureRecord, error)
 }
 
-// ExposureVerdict reports whether a role that writes functions must be held.
+// ExposureVerdict is the one gate every spawn path asks: held is true, with the
+// reason, when the role declares writes and the slot (workspace, team, role)
+// carries a record for any of them, ended or not, or when the records cannot be
+// read. A role with no writes never reads the source. The record is keyed on
+// the slot, so a restart, a crash respawn, a shift successor and an ad-hoc run
+// all read the same answer (marvel#945).
 func ExposureVerdict(src ExposureReader, workspace, team string, role *Role) (held bool, reason string) {
-	return false, ""
+	if role == nil || len(role.Writes) == 0 {
+		return false, ""
+	}
+	recs, err := src.ExposuresForSlot(workspace, team, role.Name)
+	if err != nil {
+		return true, fmt.Sprintf("role %s writes %s and its exposure record could not be read: %v",
+			role.Name, strings.Join(role.Writes, ", "), err)
+	}
+	writes := make(map[string]bool, len(role.Writes))
+	for _, f := range role.Writes {
+		writes[NormalizeFunction(f)] = true
+	}
+	seen := map[string]bool{}
+	for _, r := range recs {
+		if f := NormalizeFunction(r.Function); writes[f] {
+			seen[f] = true
+		}
+	}
+	if len(seen) == 0 {
+		return false, ""
+	}
+	names := make([]string, 0, len(seen))
+	for f := range seen {
+		names = append(names, f)
+	}
+	sort.Strings(names)
+	return true, fmt.Sprintf("role %s writes %s and its slot has read it", role.Name, strings.Join(names, ", "))
 }

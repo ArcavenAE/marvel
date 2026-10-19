@@ -50,7 +50,9 @@ func TestHandleRunRefusesAWriterWhoseSlotHasRead(t *testing.T) {
 		Workspace: "xrun", Team: "crew", Role: "reader", Name: "run-y",
 		RuntimeCommand: "sleep", RuntimeArgs: []string{"300"},
 	}))
-	if resp.Error != "" {
-		t.Errorf("a run for a role with no writes was refused: %s", resp.Error)
+	// Starting the pane can fail for reasons of the host; only an exposure
+	// refusal would be wrong here.
+	if strings.Contains(resp.Error, "exposure") {
+		t.Errorf("a run for a role with no writes was refused for exposure: %s", resp.Error)
 	}
 }

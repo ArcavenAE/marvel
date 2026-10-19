@@ -46,6 +46,9 @@ type Store struct {
 	// assigned. Nothing deletes from them. See exposure.go (marvel#945).
 	exposures   map[string]*ExposureRecord
 	exposureSeq uint64
+	// exposureLost is set at load when the bucket is empty beside the in-use
+	// marker: reads then fail instead of reporting nothing exposed.
+	exposureLost bool
 
 	// bolt is the optional L2 persistence backend. Nil means in-memory
 	// only (default for tests + the legacy daemon path). Populated by
