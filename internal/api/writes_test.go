@@ -45,6 +45,9 @@ func TestWritesRefusals(t *testing.T) {
 		{"an empty entry", `writes = ["parse", " "]`, `writes: [parse, " "]`, "empty"},
 		{"a duplicate", `writes = ["parse", "parse"]`, `writes: [parse, parse]`, "twice"},
 		{"a duplicate in another case", `writes = ["parse", "Parse"]`, `writes: [parse, Parse]`, "twice"},
+		{"an inner space", `writes = ["par se"]`, `writes: ["par se"]`, "name"},
+		{"full-width letters", `writes = ["\uff50\uff41\uff52\uff53\uff45"]`, `writes: ["\uff50\uff41\uff52\uff53\uff45"]`, "name"},
+		{"a zero-width space", `writes = ["pa\u200brse"]`, `writes: ["pa\u200brse"]`, "name"},
 		{"a duplicate past edge space", `writes = ["parse", "parse "]`, `writes: [parse, "parse "]`, "twice"},
 	}
 	for _, tc := range cases {

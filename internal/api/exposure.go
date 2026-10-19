@@ -22,6 +22,11 @@ var bucketExposure = []byte("exposure")
 // the gate holds, instead of reading it as nothing exposed.
 var metaKeyExposureUsed = []byte("exposure_used")
 
+// bucketExposureSeal holds the seal over the exposure records: their count and
+// a digest of them, rewritten in the same transaction as every change. Stub in
+// the red commit.
+var bucketExposureSeal = []byte("exposure_seal")
+
 // NormalizeFunction is the one spelling a function name is compared in: edge
 // space trimmed and case folded, so " Parse" and "parse" are the same function.
 func NormalizeFunction(name string) string {
