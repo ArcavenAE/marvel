@@ -74,8 +74,8 @@ the operator says go. Written to assume the cutover goes badly.
    so every one of the 32 seats lands wherever that decision put it. How many
    panes on the marvel tmux server start in the tmux server's cwd, a worktree
    path, is counted at window time and not fixed here, because the count moves
-   with the fleet (`tmux list-panes -a -F '#{pane_start_path}'` on the marvel
-   socket). After the stamp they would start in `~/work/aae-orc` instead.
+   with the fleet (`tmux -L <socket> list-panes -a -F '#{pane_start_path}'`, with `<socket>`
+   the marvel tmux server's socket name). After the stamp they would start in `~/work/aae-orc` instead.
    Capture each team's `WorkDir` (`marvel describe team`) into `$W` at step 0.
 7. **Handoffs.** Every kinu seat is told before the window to write its
    handoff at the window's start. A respawn without one loses that seat's
@@ -200,9 +200,8 @@ Steps, each with a pass condition:
    (named explicitly, not derived from `HOME`), `NATS_URL` at the scratch
    broker, and `DIRECTOR_TEAM`/`DIRECTOR_WORKSPACE` set. Pass: it connects as
    `director` and `inbox_summary` answers. Negative control: the same with
-   `MARVEL_BUS_STATE` at an empty scratch directory exits 1 with "no bus
-   credentials in the environment, and no seat" and, on the next line, "password
-   at <path>." (director `probe/nats-phase-0/director-mcp-seat:85-86`, at
+   `MARVEL_BUS_STATE` at an empty scratch directory exits 1 printing `director-mcp-seat: no bus credentials in the environment, and no seat`
+   and, on the next line, `  password at <path>.` with two leading spaces (director `probe/nats-phase-0/director-mcp-seat:85-86`, at
    director main 59f8512). So a pass cannot come from a credential the test did not
    intend.
 5. **The other leaf held.** Pass: the scratch mokuzai leaf never left the
@@ -279,15 +278,15 @@ Then:
 2. Add the bus entry to the `local` cluster (`bus-as-service.md` 6.1: class
    `message-bus`, provider `nats-server`, mode `managed`, listen and url
    127.0.0.1:4222, store_dir the absolute path of `~/.director/nats` (write it
-   out, e.g. `/Users/<you>/.director/nats`), seat `{workspace: aae-orc,
-   team: ops}`, hub url `nats-leaf://127.0.0.1:7442`). **`store_dir` is not `~`-expanded.**
+   out, e.g. `/Users/<you>/.director/nats`), seat `{workspace: <workspace>,
+   team: <team>}` (the pair is decided by the seat-credential card, below), hub url `nats-leaf://127.0.0.1:7442`). **`store_dir` is not `~`-expanded.**
    marvel at f1fe67f passes it through as written (`internal/config/config.go:750`
    and `:762-763`, `internal/bus/manager.go:370`, `internal/bus/render.go:157`);
    only the hub CA path goes through the `~` expansion (`cleanPath`, used at
    `config.go:666`). So the value must be an absolute path. **Open question for the
    operator's seat-credential card:** the live marvel workspace is named `aae`,
-   so whether the seat pair is `aae-orc/ops`, as `bus-as-service.md` 6.1 spells
-   it, or uses `aae`, is not decided here. The operator scripts' p0 check
+   so whether the seat pair is the one `bus-as-service.md` 6.1 spells, or uses
+   `aae`, is not decided here. The operator scripts' p0 check
    refuses a seat in `window.env` that differs from the pair in the director-mcp
    registration, so the two must be one pair before the window. One spelling only: a
    `bus:` block or a Services entry, never both (`admin-guide.md` around line
