@@ -15,6 +15,14 @@ func costRing(s Session) []float64 {
 	return out
 }
 
+// holdCost feeds unchanged beats every minute for d after from, so the feed
+// stays alive (no gap) while the total is flat.
+func holdCost(s *Session, usd float64, from time.Time, d time.Duration) {
+	for at := from.Add(time.Minute); at.Before(from.Add(d)); at = at.Add(time.Minute) {
+		recordCostSample(s, usd, at)
+	}
+}
+
 func sameFloats(a, b []float64) bool {
 	if len(a) != len(b) {
 		return false
@@ -74,7 +82,9 @@ func TestRecordCostSampleKeepsOneAnchorAndHonorsTheCap(t *testing.T) {
 	t.Parallel()
 	var s Session
 	recordCostSample(&s, 1, costT0)
+	holdCost(&s, 1, costT0, 10*time.Minute)
 	recordCostSample(&s, 2, costT0.Add(10*time.Minute))
+	holdCost(&s, 2, costT0.Add(10*time.Minute), CostSampleKeep+5*time.Minute)
 	recordCostSample(&s, 3, costT0.Add(CostSampleKeep+15*time.Minute))
 	if got := costRing(s); !sameFloats(got, []float64{2, 3}) {
 		t.Fatalf("after the keep age the ring is %v, want [2 3] (one anchor, then the new)", got)
@@ -140,6 +150,9 @@ func TestRecordCostSampleGapStartsAFreshBaseline(t *testing.T) {
 	if !s.CostSamples[0].At.Equal(costT0.Add(40 * time.Minute)) {
 		t.Errorf("baseline At = %v, want the beat that ended the gap", s.CostSamples[0].At)
 	}
+	if !s.CostGapAt.Equal(costT0.Add(40 * time.Minute)) {
+		t.Errorf("CostGapAt = %v, want the beat that ended the gap", s.CostGapAt)
+	}
 }
 
 // A flat run is not a gap: beats keep arriving with the total unchanged, the
@@ -157,5 +170,8 @@ func TestRecordCostSampleFlatRunKeepsItsAnchor(t *testing.T) {
 	}
 	if !s.CostSeenAt.Equal(costT0.Add(40 * time.Minute)) {
 		t.Errorf("CostSeenAt = %v, want the last beat", s.CostSeenAt)
+	}
+	if !s.CostGapAt.IsZero() {
+		t.Errorf("CostGapAt = %v after a flat run, want unset", s.CostGapAt)
 	}
 }

@@ -260,7 +260,11 @@ type Session struct {
 	CostSamples  []CostSample `json:"cost_samples,omitempty" toml:"-"`
 	// CostSeenAt is when a beat last carried the cost total, changed or not. A
 	// gap in it is what tells a silent feed from a flat run (cost_samples.go).
-	CostSeenAt      time.Time   `json:"cost_seen_at,omitempty" toml:"-"`
+	CostSeenAt time.Time `json:"cost_seen_at,omitempty" toml:"-"`
+	// CostGapAt is when the feed last came back after a silence longer than
+	// CostGapLimit, which a daemon restart is too. RATE reads ? while it is
+	// inside the window.
+	CostGapAt       time.Time   `json:"cost_gap_at,omitempty" toml:"-"`
 	APIDurationMS   *int64      `json:"api_duration_ms,omitempty" toml:"-"`
 	TotalsChangedAt time.Time   `json:"totals_changed_at,omitempty" toml:"-"`
 	HealthState     HealthState `toml:"-"`

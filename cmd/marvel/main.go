@@ -1079,7 +1079,7 @@ claude seat with a statusline feed shows Claude Code's own running cost total as
 an estimate: it is the harness's list-price figure, not a bill, and under a subscription it
 measures usage, not money. RATE shows a - until a full window of readings exists, which
 includes the first window after the total drops (a restart, /clear or a new session starts
-a fresh baseline), a ? once the feed has been silent past the window, and never a negative
+a fresh baseline), a ? once the feed has been silent past the window or while a silence of over three minutes (a stopped seat, a daemon restart) is inside it, and never a negative
 figure. A seat with a token stream keeps its token cells, so one seat never shows both
 units, and sorting by RATE orders token rates only (a dollar rate sorts below them). That is
 the expected shape, not a broken feed.

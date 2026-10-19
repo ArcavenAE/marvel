@@ -24,6 +24,12 @@ func at(ago time.Duration, usd float64) api.CostSample {
 	return api.CostSample{At: costNow.Add(-ago), USD: usd}
 }
 
+// withGap marks the feed as having come back from a silence ago.
+func withGap(s api.Session, ago time.Duration) api.Session {
+	s.CostGapAt = costNow.Add(-ago)
+	return s
+}
+
 func usd(v float64) *float64 { return &v }
 
 func costCells(t *testing.T, sessions ...api.Session) map[string][2]string {
@@ -73,6 +79,14 @@ func TestCostCellsForAStatuslineSeat(t *testing.T) {
 		{
 			"silent", costSession("silent", usd(4.12), 11*time.Minute, at(30*time.Minute, 3)),
 			"~$4.12", "?", "a feed silent past the window reads as expired",
+		},
+		{
+			"gap", withGap(costSession("gap", usd(3), 15*time.Second, at(5*time.Minute, 3)), 5*time.Minute),
+			"~$3.00", "?", "a silence inside the window is not a rate",
+		},
+		{
+			"aftergap", withGap(costSession("aftergap", usd(3.5), 15*time.Second, at(11*time.Minute, 3), at(time.Minute, 3.5)), 11*time.Minute),
+			"~$3.50", "~$0.05/m", "a rate resumes once the gap is a window behind",
 		},
 		{
 			"missing", costSession("missing", nil, 15*time.Second),

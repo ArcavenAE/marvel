@@ -147,7 +147,10 @@ TEAM stays reachable through `--columns` and `describe`.
   seconds at most and one hour deep, and takes the change since the sample at
   the start of the quiet window. A total that goes down starts the ring over,
   so RATE shows `-` until a window of readings exists and is never negative;
-  `?` once the feed has been silent past the window. A seat with a token
+  `?` once the feed has been silent past the window, or while a silence of
+  over three minutes is inside it (`CostGapLimit`; every beat stamps
+  `CostSeenAt`, so a silence tells itself apart from a flat run, and a daemon
+  restart reads the same way). A seat with a token
   stream keeps the token cells (`cmd/marvel/cost.go`, marvel#801).
 - **No Tin column.** Raw input is not comparable across harnesses: codex's
   layout counts cached input inside input, while Claude's adds it

@@ -28,7 +28,8 @@ func costTout(s api.Session) (string, bool) {
 // minute over the quiet window the seat was judged under, from the sample at
 // the window's start. It reads "-" until a window of samples exists, which
 // covers the first window after a reset (a lower total starts the ring over),
-// "?" once the feed has been silent past the window, and never goes below 0.
+// "?" once the feed has been silent past the window or while a silence is
+// inside it (the spend of a gap is not a rate), and never goes below 0.
 func costRate(s api.Session, now time.Time) (string, bool) {
 	if s.SpendOut != nil || s.CostTotalUSD == nil || s.OutRate.State(now) != asof.None {
 		return "", false
@@ -40,10 +41,17 @@ func costRate(s api.Session, now time.Time) (string, bool) {
 	if len(s.CostSamples) == 0 {
 		return asof.DashNone, true
 	}
-	if now.Sub(s.LastHeartbeat) > window {
+	seen := s.CostSeenAt
+	if seen.IsZero() {
+		seen = s.LastHeartbeat
+	}
+	if now.Sub(seen) > window {
 		return asof.MarkStale, true
 	}
 	start := now.Add(-window)
+	if s.CostGapAt.After(start) {
+		return asof.MarkStale, true
+	}
 	if s.CostSamples[0].At.After(start) {
 		return asof.DashNone, true
 	}
