@@ -124,3 +124,38 @@ func TestHeartbeatFeedsTheCostRing(t *testing.T) {
 		t.Errorf("a seat that never reported cost holds samples %v, want none", none.CostSamples)
 	}
 }
+
+// A silent feed must not read as a flat run. The feed goes quiet at $1 for 40
+// minutes and returns at $3: the ring starts over at the return, so no window
+// can hold the whole gap's spend as one burst. A daemon restart leaves the
+// same shape (the ring is persisted, the beats are not), so it is the same case.
+func TestRecordCostSampleGapStartsAFreshBaseline(t *testing.T) {
+	t.Parallel()
+	var s Session
+	recordCostSample(&s, 1.0, costT0)
+	recordCostSample(&s, 3.0, costT0.Add(40*time.Minute))
+	if got := costRing(s); !sameFloats(got, []float64{3.0}) {
+		t.Fatalf("ring after a 40 minute gap = %v, want [3] so RATE reads - until a window exists", got)
+	}
+	if !s.CostSamples[0].At.Equal(costT0.Add(40 * time.Minute)) {
+		t.Errorf("baseline At = %v, want the beat that ended the gap", s.CostSamples[0].At)
+	}
+}
+
+// A flat run is not a gap: beats keep arriving with the total unchanged, the
+// old anchor stays, and the later change is measured from it.
+func TestRecordCostSampleFlatRunKeepsItsAnchor(t *testing.T) {
+	t.Parallel()
+	var s Session
+	recordCostSample(&s, 1.0, costT0)
+	for at := costT0.Add(15 * time.Second); at.Before(costT0.Add(40 * time.Minute)); at = at.Add(15 * time.Second) {
+		recordCostSample(&s, 1.0, at)
+	}
+	recordCostSample(&s, 1.5, costT0.Add(40*time.Minute))
+	if got := costRing(s); !sameFloats(got, []float64{1.0, 1.5}) {
+		t.Fatalf("ring after a flat run = %v, want [1 1.5]", got)
+	}
+	if !s.CostSeenAt.Equal(costT0.Add(40 * time.Minute)) {
+		t.Errorf("CostSeenAt = %v, want the last beat", s.CostSeenAt)
+	}
+}
