@@ -19,8 +19,9 @@ Design for review. No code lands until this doc is reviewed.
   unchanged at 889e49a.
 - Refreshed 2026-10-19 against `origin/main` f1fe67f, after the operator ruled
   that this design is built without a second party. Every line cite below
-  now points at f1fe67f. What changed underneath it, and what that changes
-  here, is in section 1a.
+  points at f1fe67f, except the first defect in section 8, which is kept as
+  found at 03dd483 and says so. What changed underneath the design, and what
+  that changes here, is in section 1a.
 
 ## 1. The problem, verified
 
@@ -33,25 +34,39 @@ Design for review. No code lands until this doc is reviewed.
 | The workaround is itself an apply | load at `replicas: 0`, then plan: it stores the manifest, and the plan shows desired 0 and spawn 0 | true; it also skips admission, since a request that adds nothing is never refused (`internal/admission/admission.go:277-280`) |
 
 What `handleApply` runs today, in order, before it commits
-(`daemon.go:1351-1445`, f1fe67f):
+(`daemon.go:1351-1445`, f1fe67f). Nine of the fifteen steps can refuse the
+apply; the other six only add advisories.
 
-1. parse (`:1357`);
-2. `ScheduleHistoryCap` (`:1366`): refuses a schedule history above the
-   cluster's cap;
-3. `ValidateWorkDirs` (`:1375`): placement, with advisories;
+1. parse (`:1357`): **refuses** a manifest that does not parse;
+2. `ScheduleHistoryCap` (`:1366`): **refuses** a schedule history above the
+   cluster's cap (`d.scheduleHistoryMax`, from the daemon's config);
+
+   Between steps 2 and 3, `workspace_root` from the request replaces the
+   manifest's root (`:1370-1372`). That is a transform, not a check, and
+   `evaluate` applies it the same way.
+3. `ValidateWorkDirs` (`:1375`): **refuses** a workdir it cannot place, and
+   otherwise adds advisories;
 4. `ValidateTrustedFolders` (`:1379`): **refuses** a listed folder that does
    not exist or is not the top of a main git checkout (marvel#684);
-5. `TrustedFolderNotes(d.store)` (`:1383`): an advisory when this apply
+5. `LegacyPlacementNotes(d.store)` (`:1382`): advisories;
+6. `TrustedFolderNotes(d.store)` (`:1383`): an advisory when this apply
    replaces the workspace's stored list;
-6. `ValidateRuntimes` (`:1389`): the command resolves, and it now returns
-   advisories as well as errors;
-7. `ValidateBudgets` (`:1400`);
-8. `refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus)` (`:1406`, defined at
+7. `ValidateRuntimes` (`:1389`): **refuses** a command that does not
+   resolve, and now also returns advisories;
+8. `ValidateBudgets(d.sessMgr.CanStreamRole)` (`:1400`): **refuses** a
+   declared budget dimension no role can report;
+9. `refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus)` (`:1406`, defined at
    `:3467`): **refuses** a role that declares the global tier on a cluster
    whose bus config does not admit its name;
-9. `ValidateTeamNames` (`:1412`, marvel#319);
-10. admission per team (`admitGrowth`, `:1435`);
-11. `ShiftHeadroomAdvisories` (`:1444`).
+10. `ValidateTeamNames(d.store.ListTeams())` (`:1412`, marvel#319):
+    **refuses** a name clash;
+11. admission per team (`admitGrowth`, `:1435`): **refuses** growth over a
+    budget;
+12. `ContextFeedAdvisories(d.sessMgr.CanFeedContextRole)` (`:1440`);
+13. `DSTAcknowledgements(now)` (`:1441-1442`), with `now` read once at
+    `:1441`;
+14. `ScheduleAdvisories(now)` (`:1443`);
+15. `ShiftHeadroomAdvisories` (`:1444`).
 
 Then it commits: `m.Apply(d.store)` (`:1446`), the posture write, `Reproject`
 (`:1499`), `regenerateBus` (`:1503`) and `ReconcileOnce` (`:1506`). The result
@@ -62,14 +77,14 @@ an older runtime than their role's (`:1519`, `behindCount` in `spec.go:47`).
 
 | Change | Where | What it changes here |
 |---|---|---|
-| Six pre-commit steps were added or widened: items 2, 4, 5, 6, 8 and 11 above. Two of them refuse (4 and 8). | `daemon.go:1366-1444` | `evaluate` runs all of them (section 2, item 5). A plan that skips one says ok where apply refuses. |
-| Step 8 reads the bus config the daemon loaded, not the store. | `refuseUnadmittedGlobalRoles(m, b session.BusEnv)`, `daemon.go:3467` | `evaluate` takes the bus env as an input beside the store snapshot. It only reads it: the function has no side effect, and with no bus it refuses nothing. |
-| Step 4 runs `git` (5 second timeout) under each listed folder. | `internal/api/trusted_folders.go:120-158`, `gitTimeout` :26 | still read-only, so it stays in the plan; a slow filesystem makes the plan slow, not wrong. |
+| Six pre-commit steps were added or widened since 03dd483: items 2, 4, 6, 7, 9 and 15 above. Three of them refuse (2, 4 and 9). Steps 5, 12, 13 and 14 were already there at 03dd483 (`daemon.go:1222`, `:1271`, `:1273`, `:1274`) and the first version of this design missed them. | `daemon.go:1366-1444` | `evaluate` runs all fifteen (section 2, item 5). A plan that skips a refusing step says ok where apply refuses; one that skips an advisory step hides a line apply would print. |
+| Step 9 reads the bus config the daemon loaded, not the store. | `refuseUnadmittedGlobalRoles(m, b session.BusEnv)`, `daemon.go:3467` | `evaluate` takes the bus env as an input beside the store snapshot. It only reads it: the function has no side effect, and with no bus it refuses nothing. |
+| Step 4 runs `git` (5 second timeout) under each listed folder. | `internal/api/trusted_folders.go:120-158`, `gitTimeout` :26 | it writes nothing, so it stays in the plan; a slow filesystem makes the plan slow, not wrong. |
 | A command with inline args passes the pre-flight. | marvel#517, closed; `validateCommand` now splits on spaces and tabs (`manifest.go:756-794`) and marks shell text it does not parse with an advisory | section 7 step 1 is done; section 8's first defect is fixed. |
 | An unknown `--cluster`, or `--cluster` with an unreadable config, is refused for every verb; an explicit `--cluster` outranks `MARVEL_SOCKET`. | marvel#502 and #586, closed; `resolveDaemonRung`, `cmd/marvel/main.go:92-151` | most of section 4 item 1 and of section 10 item 4 is now how every verb behaves. What remains is in section 10. |
 | The client reports which rung chose the daemon: flag, env, cluster or default. | `resolveRung`, `main.go:77-80` | the banner prints the rung; no new resolution code is needed. |
-| A typed exit code exists. | `exitError{Code, Msg}`, `cmd/marvel/wait.go:31`; `main.go:208-212` exits with its code | section 6's mapping cost is smaller: `plan` returns an `exitError` per outcome instead of adding a new mechanism. |
-| Codex folder trust has a pure judge. | `resolveCodexTrust`, `internal/runtime/codex_trust.go:28`; `codexFolderTrust` (:52) wraps it and records an event | the plan can report each codex seat's trust by calling the judge, never the wrapper, the same split as `admission.Check` and `admitGrowth`. Claude trust (SB-4M) stays NOT EVALUATED. |
+| A typed exit code exists. | `exitError{Code, Msg}`, `cmd/marvel/wait.go:31`; `main.go:208-212` exits with its code | section 6's mapping cost is smaller: whichever numbering is ruled, `plan` can return an `exitError` per outcome instead of adding a new mechanism. The numbering itself is still open (section 10 item 1). |
+| Codex folder trust has a judge with no side effect. | `resolveCodexTrust`, `internal/runtime/codex_trust.go:28`, reads the filesystem and runs `git` through `GitMainRoot` but records nothing; `codexFolderTrust` (:52) wraps it and records an event | the plan can report each codex seat's trust by calling the judge, never the wrapper, the same split as `admission.Check` and `admitGrowth`. Claude trust (SB-4M) stays NOT EVALUATED. |
 | `behind` is counted at apply. | marvel#416, closed; `spec.go:47` | section 4 item 8 reuses `behindCount`'s rule; it is no longer the architect's guess. |
 
 ## 2. The decided shape
@@ -102,18 +117,39 @@ All five seats agreed on each point in this section by the final round.
    - trusted folders are checked with `os.Stat`, `EvalSymlinks` and `git` on
      the daemon's host (`trusted_folders.go:120`);
    - the global-role admission is read from the bus config the daemon loaded;
+   - the schedule history cap and the two adapter predicates are the
+     daemon's own;
    - the name clash and admission are read from the store.
 
    A client-side plan would answer for the wrong machine. The client sends
    the bytes and the resolved `workspace_root`, as `marvel work` does, and
    renders the result.
 5. **One evaluation, three callers.** `handleApply` is split three ways:
-   - a pure `evaluate(manifest, store snapshot, bus env)` that runs every
-     pre-commit step in section 1, all eleven, in apply's order, and computes
-     the plan. The bus env is an input because step 8 reads it, and passing
-     it in keeps `evaluate` testable without a live daemon. A step added to
-     apply later is added to `evaluate`, not beside it, since apply calls
-     `evaluate`;
+   - a side-effect free `evaluate` that runs every pre-commit step in
+     section 1, all fifteen, in apply's order, plus the `workspace_root`
+     transform, and computes the plan. Side-effect free, not pure: it writes
+     nothing, emits nothing and logs nothing, but it reads the daemon host's
+     filesystem, PATH and git (steps 3, 4 and 7), so the same input can give a
+     different answer a second later. Its inputs, each passed in so a test can
+     supply them without a live daemon:
+     - the manifest and the request's `workspace_root`;
+     - the store, read only through its read methods (`GetWorkspace`,
+       `ListTeams`, `ListSessionsByTeam`, and the `*Store` that steps 5 and 6
+       take). "Snapshot" in this design means exactly that: each read returns
+       value copies (`internal/api/store.go`), but the reads are not one
+       frozen view, so two reads can straddle a reconcile tick. The plan's
+       digest (section 5) records what was read;
+     - the bus env (step 9);
+     - the schedule history cap (step 2);
+     - the predicates `CanStreamRole` (step 8) and `CanFeedContextRole`
+       (step 12);
+     - `now`, read once, for steps 13 and 14;
+     - the usage accountant's team spend, which the admission snapshot of
+       step 11 reads (`AdmissionSnapshot`, `internal/daemon/admission.go:21`,
+       `d.usage.TeamSpend` at `:33`).
+
+     A step added to apply later is added to `evaluate`, not beside it,
+     since apply calls `evaluate`;
    - `apply`, which calls `evaluate`, then logs, emits events and commits;
    - `plan_manifest`, which calls `evaluate` and returns the plan.
 
@@ -134,8 +170,8 @@ All five seats agreed on each point in this section by the final round.
 
    seat-bootstrap's SB-4M trust step (marvel#490, design) needs a
    check-only mode before a plan can report it. Until then the plan prints
-   that step as "not evaluated". Codex trust is the exception: its judge is
-   already pure (section 1a).
+   that step as "not evaluated". Codex trust is the exception: its judge
+   already has no side effect (section 1a).
 
 ## 3. What it prints
 
@@ -225,8 +261,10 @@ second by most seats.
    f1fe67f).
 4. **Daemon-host verdicts per seat:**
    - the root, visible or dropped. Today an absolute root the daemon cannot
-     see is dropped with one log line and the apply places nothing
-     (`workdir.go:67-73`); the plan promotes that to a finding;
+     see is refused, unless no relative workdir depends on it
+     (`rootIsClientOnly`, `workdir.go:99`); then it is dropped with an
+     advisory and the apply places nothing (`workdir.go:67-73`). The plan
+     promotes that advisory to a finding;
    - each command resolved to an absolute path on the daemon's PATH;
    - the workdir checked for enter and write as the daemon's uid.
 5. **First-launch preconditions per adapter:**
@@ -311,10 +349,16 @@ failure path in `plan`, and to test that none escapes as a bare error. The
    closed at f1fe67f.
 2. Split `handleApply` into `evaluate` / commit, with `admission.Check`
    called from `evaluate` and the log and emit kept in apply. `evaluate`
-   takes the bus env and runs all eleven pre-commit steps of section 1. This
-   is a refactor with no behavior change, so the existing apply tests cover
-   it; one new test asserts that each refusal apply returns, including
-   trusted folders and global roles, is returned by `evaluate` alone.
+   takes the inputs of section 2 item 5 and runs all fifteen pre-commit steps
+   of section 1. This is a refactor with no behavior change, so the existing
+   apply tests cover it. Two new tests:
+   - one fixture per refusing step, nine in all (steps 1, 2, 3, 4, 7, 8, 9,
+     10 and 11), each asserting that `evaluate` alone returns the same
+     refusal apply returns;
+   - one manifest that triggers every advisory step (3, 5, 6, 7, 12, 13, 14
+     and 15), asserting that `evaluate`'s advisories equal, in order, the
+     ones apply logs. A refusal test cannot see a skipped advisory step;
+     this one can.
 3. Add the `plan_manifest` method and its result type: the findings with
    tags, the changes, the kill candidates, credential presence, the not
    evaluated list, and the digest.
@@ -333,15 +377,17 @@ Each step is its own PR. Step 2 blocks 3, and 3 blocks 4.
   closed; fixed at f1fe67f, section 1a; the text below is as found at
   03dd483).** `ValidateRuntimes`
   passes `Runtime.Command` whole to `validateCommand`, which `os.Stat`s or
-  `exec.LookPath`s the whole string (`manifest.go:618`, `:633-646`; no
-  `strings.Fields` in the file). The claude adapter splits the same string
-  (`internal/runtime/claude.go:186-196`). So `command = "claude --flag
+  `exec.LookPath`s the whole string (`manifest.go:618`, `:633-646` at
+  03dd483; no `strings.Fields` in the file then). The claude adapter splits
+  the same string (`internal/runtime/claude.go:186-196` at 03dd483; at
+  f1fe67f, `commandArgs` at `:241`). So `command = "claude --flag
   value"` is refused at apply although the adapter would run it. A
   throwaway unit-level probe at 889e49a confirmed it: `validateCommand("claude")`
   returns nil and `validateCommand("claude --flag value")` returns "not on
   PATH"; `ValidateRuntimes` refuses a role with `sh -c true` the same way.
   A working form exists today: the arguments go in `args`
-  (`ManifestRuntime.Args`, `internal/api/manifest.go:201`). A role with
+  (`ManifestRuntime.Args`, `internal/api/manifest.go:201` at 03dd483, `:230`
+  at f1fe67f). A role with
   `command = "sh"` and `args = ["-c", "true"]` passes. Filed as marvel#517.
 - **Apply's check-then-commit is not serialized.** Each connection runs in
   its own goroutine (`daemon.go:574`), and I found no apply-level lock (none
