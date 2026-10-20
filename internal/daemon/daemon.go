@@ -465,7 +465,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
 	}
-	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, injector)
+	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, "", injector)
 	return nil
 }
 
@@ -2346,16 +2346,9 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		}
 	}
 
-	if clearKey != "" {
-		if err := d.driver.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
-			return Response{Error: fmt.Sprintf("inject %s: clear: %v", p.SessionKey, err)}
-		}
-	}
-	if err := d.driver.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
+	if err := sendInject(d.driver, d.events, sess, p, clearKey, origin); err != nil {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
-
-	recordInject(d.events, sess, p, origin)
 
 	out := map[string]string{
 		"status":  "injected",
@@ -3388,18 +3381,51 @@ func cleanDeclared(s string) string {
 	return b.String()
 }
 
+// sendInject sends the clear key, if any, then the text with its Enter, and
+// records the inject only when every key reached the pane. The Enter goes out in
+// the same driver call as the text, so a failed Enter is a failed text send.
+// A failed send leaves no session.injected event, as it never did: that event
+// says keystrokes were delivered, and the error answers the caller. A clear key
+// that had already gone out is named in the error, since it is otherwise the one
+// keystroke of the inject with no trace.
+func sendInject(drv keySender, ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) error {
+	if clearKey != "" {
+		if err := drv.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
+			return fmt.Errorf("clear: %w", err)
+		}
+	}
+	if err := drv.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
+		if clearKey != "" {
+			return fmt.Errorf("%w (the clear key %s was already sent)", err, clearKey)
+		}
+		return err
+	}
+	recordInject(ring, sess, p, clearKey, origin)
+	return nil
+}
+
 // recordInject emits session.injected for keystrokes that reached a pane. It
-// records how much was sent and, for a named key, the key; it never records
-// typed text.
-func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin string) {
+// records what was sent and not the text: the byte count of literal text, which
+// is pasted as is; the key itself for a named key; the Enter key alone when an
+// empty literal text sends only that; and the clear key that went out before
+// the text, if one did. It never records typed text.
+func recordInject(ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) {
 	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
-	if !p.Literal {
+	switch {
+	case !p.Literal:
 		what = "key (unrecognized)"
 		if recognizedKey(p.Text) {
 			what = "key " + p.Text
 		}
+	case p.Text == "" && p.Enter:
+		// Nothing is pasted; the driver sends the Enter key and no bytes.
+		what = "key Enter"
 	}
-	msg := fmt.Sprintf("inject %s enter=%v %s", what, p.Enter, origin)
+	msg := fmt.Sprintf("inject %s enter=%v", what, p.Enter)
+	if clearKey != "" {
+		msg += " clear=" + clearKey
+	}
+	msg += " " + origin
 	log.Printf("inject: %s <- %s", sess.Key(), msg)
 	events.Emit(ring, events.Event{
 		Kind:      events.KindSessionInjected,

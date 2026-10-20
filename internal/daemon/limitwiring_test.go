@@ -290,9 +290,9 @@ func (p pkgFiles) eachFunc(fn func(file, fun string, n ast.Node) bool) {
 func TestEveryKeyPressInTheDaemonIsInventoried(t *testing.T) {
 	t.Parallel()
 	want := map[string]int{
-		"*Daemon.notifyHandoff":  1, // the max-age handoff request, after the pre-flight
-		"*Daemon.handleInjectAs": 2, // the operator's inject: clear key, then the text
-		"limitSender":            1, // the limit action's digit
+		"*Daemon.notifyHandoff": 1, // the max-age handoff request, after the pre-flight
+		"sendInject":            2, // the operator's inject: clear key, then the text; handleInjectAs hands it the driver
+		"limitSender":           1, // the limit action's digit
 	}
 	got := map[string]int{}
 	p := parseDaemon(t)
@@ -340,7 +340,6 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.handleCapture d.driver.CapturePaneRange":            true,
 		"*Daemon.handleCapture d.driver.CapturePaneEscapes":          true,
 		"*Daemon.handleCapture d.driver.CapturePaneRangeEscapes":     true,
-		"*Daemon.handleInjectAs d.driver.SendKeys":                   true,
 		"*Daemon.readComposerAfterNudge d.driver.CapturePane":        true,
 		"*Daemon.readComposerAfterNudge d.driver.CapturePaneEscapes": true,
 		"*Daemon.repaintSettled d.driver.Repaint":                    true,
@@ -351,12 +350,13 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"preflightRefusal driver.CapturePaneJoined":                  true,
 		"bareDigitRefusal driver.CapturePaneEscapes":                 true,
 		"limitSender drv.SendKeys":                                   true,
+		"sendInject drv.SendKeys":                                    true,
 		"*Daemon.newLimitAction d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
 	}
 	wantValue := map[string]bool{
-		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...)
+		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
 		"*Daemon.notifyHandoff":  true, // preflightRefusal(d.driver, ...)
 		"*Daemon.newLimitAction": true, // limitSender(d.driver)
 	}
@@ -537,7 +537,8 @@ func keysOf(m map[string]bool) []string {
 // hook or a watcher could reach it with "3": by calling the handler, by feeding a
 // request to the connection handlers over a pipe, or by dialing the daemon's own
 // socket as a client. Every function on that road has an inventory of callers
-// (marvel#556 review r5 and r6: routes N1c, W2, W3). The handler is reached only
+// (marvel#556 review r5 and r6: routes N1c, W2, W3), and so does the helper the
+// handler sends its keys through, sendInject. The handler is reached only
 // from the dispatcher, the dispatcher only from the connection reader, the
 // connection handlers only from the listener and the SSH server, and the client
 // entry points from nothing in this package. None is used as a value.
@@ -545,11 +546,15 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	t.Parallel()
 	want := map[string]map[string]int{
 		"handleInjectAs": {"*Daemon.dispatchAs": 1},
-		"dispatchAs":     {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
-		"dispatch":       {},
-		"handleRWCAs":    {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
-		"handleRWC":      {},
-		"handleConn":     {"*Daemon.Start": 1},
+		// The helper that presses the inject's keys. Its body is pinned by the
+		// key-press inventory; this pins who may call it, since it takes the
+		// driver as a value and a second caller would type into a pane.
+		"sendInject":  {"*Daemon.handleInjectAs": 1},
+		"dispatchAs":  {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
+		"dispatch":    {},
+		"handleRWCAs": {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
+		"handleRWC":   {},
+		"handleConn":  {"*Daemon.Start": 1},
 		// The client lives in internal/daemonrpc, which carries its own inventory
 		// of the same entry points and of every dial. Nothing in this package
 		// calls them (the tests that talk to a daemon are _test files, which this
