@@ -21,19 +21,37 @@ const suspendKey = "cluster"
 // this package does not depend on that one, and rehydrate leaves it alone.
 
 // PersistSuspendRecord writes the record. No-op when bolt is not open.
-func (s *Store) PersistSuspendRecord(raw json.RawMessage) error { return nil }
+func (s *Store) PersistSuspendRecord(raw json.RawMessage) error {
+	if !json.Valid(raw) {
+		return fmt.Errorf("persist suspend record: not valid JSON")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistPut(bucketSuspend, suspendKey, raw)
+}
 
 // SuspendRecord returns the stored record, or nil when there is none or bolt is
 // not open.
-func (s *Store) SuspendRecord() (json.RawMessage, error) { return nil, nil }
+func (s *Store) SuspendRecord() (json.RawMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.bolt == nil {
+		return nil, nil
+	}
+	var out json.RawMessage
+	err := s.bolt.View(func(tx *bolt.Tx) error {
+		if v := tx.Bucket(bucketSuspend).Get([]byte(suspendKey)); v != nil {
+			out = append(json.RawMessage(nil), v...)
+		}
+		return nil
+	})
+	return out, err
+}
 
 // ClearSuspendRecord removes the record. No-op when bolt is not open or there
 // is none.
-func (s *Store) ClearSuspendRecord() error { return nil }
-
-var (
-	_ = fmt.Errorf
-	_ = bolt.Open
-	_ = bucketSuspend
-	_ = suspendKey
-)
+func (s *Store) ClearSuspendRecord() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistDelete(bucketSuspend, suspendKey)
+}

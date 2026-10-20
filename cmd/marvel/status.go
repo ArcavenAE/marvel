@@ -61,11 +61,36 @@ Exit codes: 0 running, 3 suspended or partway through a suspend or resume,
 // reportStatus writes the status for addr from the daemon's answer, or from
 // the mirror when the daemon did not answer, and returns the exit code.
 func reportStatus(w io.Writer, addr string, resp *daemonrpc.Response, sendErr error, now time.Time) (int, error) {
-	return 0, nil
+	if sendErr != nil {
+		mirror := suspend.MirrorPath(addr)
+		if mirror == "" {
+			return 1, fmt.Errorf("daemon at %s is not answering (%v), and a TCP address has no suspend mirror on this host", addr, sendErr)
+		}
+		rec, found, err := suspend.ReadMirror(mirror)
+		if err != nil {
+			return 1, fmt.Errorf("daemon at %s is not answering (%v), and its mirror cannot be read: %w", addr, sendErr, err)
+		}
+		if !found {
+			return 1, fmt.Errorf("daemon at %s is not answering (%v); no suspend mirror beside its socket, so it recorded no suspend", addr, sendErr)
+		}
+		st := suspend.StatusOf(&rec)
+		if _, err := fmt.Fprint(w, suspend.Render(st, now, true)); err != nil {
+			return 1, fmt.Errorf("write status: %w", err)
+		}
+		return st.ExitCode(), nil
+	}
+	if resp.Error != "" {
+		if strings.HasPrefix(resp.Error, "unknown method") {
+			return 1, fmt.Errorf("the daemon at %s predates marvel status; it cannot report a suspend", addr)
+		}
+		return 1, fmt.Errorf("%s", resp.Error)
+	}
+	var st suspend.Status
+	if err := json.Unmarshal(resp.Result, &st); err != nil {
+		return 1, fmt.Errorf("decode suspend status: %w", err)
+	}
+	if _, err := fmt.Fprint(w, suspend.Render(st, now, false)); err != nil {
+		return 1, fmt.Errorf("write status: %w", err)
+	}
+	return st.ExitCode(), nil
 }
-
-var (
-	_ = json.Unmarshal
-	_ = strings.HasPrefix
-	_ = suspend.Render
-)
