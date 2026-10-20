@@ -57,6 +57,8 @@ type Supervisor struct {
 	// 3.2). checkStructure reads the broker through this, so a test can
 	// point it at a reader that fails on demand.
 	checkStructureFn func(ctx context.Context) (Structure, error)
+	// writeProbeFn is the write probe's reader; nil means ProbeWrites.
+	writeProbeFn func(ctx context.Context) (WriteReading, error)
 	// backoff maps a restart count to a wait; tests shorten it.
 	backoff func(n int) time.Duration
 	// dialTimeout bounds the listener wait at start.
@@ -163,6 +165,9 @@ type Status struct {
 	PID          int    `json:"pid,omitempty"`
 	Adopted      bool   `json:"adopted"`
 	Ready        bool   `json:"ready"`
+	// WriteFailed names, comma separated, the declared objects whose last
+	// canary write failed. A string so Status stays comparable.
+	WriteFailed string `json:"write_failed,omitempty"`
 	// Leaf is "up", "down", "detached" (enrolled but the operator disconnected
 	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
 	// polled yet).
