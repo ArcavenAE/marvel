@@ -205,7 +205,8 @@ func TestFreezeDropsASeatThatExits(t *testing.T) {
 }
 
 // A server that is not the recorded process is refused before anything is
-// saved or signalled, and so is a pid of 1 or below.
+// saved or signalled, and so is a pid of 1 or below, or any recorded pid past
+// 32 bits.
 func TestFreezeRefusesAServerItCannotProve(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -220,6 +221,16 @@ func TestFreezeRefusesAServerItCannotProve(t *testing.T) {
 			return record(1, 200)
 		}},
 		{"pid 0", func(*fakeOS) Record { return record(0, 200) }},
+		// The fake holds a process at the wide pid, so only the range check
+		// refuses it; on darwin the syscalls would act on pid 100.
+		{"server pid 2^32+100", func(o *fakeOS) Record {
+			o.procs[big] = &fakeProc{id: ident(big)}
+			return record(big, 200)
+		}},
+		{"seat pid 2^32+100", func(o *fakeOS) Record {
+			o.procs[big] = &fakeProc{id: ident(big)}
+			return record(100, 200, big)
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			o := newFakeOS(100, 200)
@@ -229,6 +240,26 @@ func TestFreezeRefusesAServerItCannotProve(t *testing.T) {
 			}
 			if len(st.saves) != 0 || len(o.log) != 0 {
 				t.Errorf("saves %v, signals %v; want none", st.saves, o.log)
+			}
+		})
+	}
+}
+
+// big is a pid past 32 bits whose low 32 bits are 100.
+const big = 1<<32 + 100
+
+// Thaw refuses a record holding a pid past 32 bits before it saves or signals.
+func TestThawRefusesAPidPast32Bits(t *testing.T) {
+	for name, rec := range map[string]Record{"server": record(big, 200), "seat": record(100, 200, big)} {
+		t.Run(name, func(t *testing.T) {
+			o := newFakeOS(100, 200, big)
+			rec.State = StateSuspended
+			st := &memStore{os: o}
+			if _, err := o.freezer(t).Thaw(rec, st); err == nil {
+				t.Fatal("Thaw accepted a pid past 32 bits")
+			}
+			if len(st.saves) != 0 || st.cleared || len(o.log) != 0 {
+				t.Errorf("saves %v, cleared %v, signals %v; want none", st.saves, st.cleared, o.log)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package childproof
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -555,5 +556,29 @@ func TestSpawnedRefusesAPidThatNamesNoSingleProcess(t *testing.T) {
 	}
 	if reads != 0 {
 		t.Errorf("Spawned read %d identities for a pid that names no process", reads)
+	}
+}
+
+// A pid above the 32-bit range is refused before it is read: darwin takes a
+// 32-bit pid at the syscall, so kill and sysctl on 2^32+100 act on pid 100.
+func TestProveAndSpawnedRefuseAPidPast32Bits(t *testing.T) {
+	reads := 0
+	p, err := NewForTest(func(int) (Identity, error) { reads++; return broker("a"), nil }, func(int, syscall.Signal) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pid := range []int{math.MaxInt32 + 1, 1<<32 + 100} {
+		if c, err := p.Prove(pid, broker("a")); err == nil {
+			t.Errorf("Prove proved pid %d: %+v", pid, c)
+		}
+		if c, err := p.Spawned(&exec.Cmd{Process: &os.Process{Pid: pid}}); err == nil {
+			t.Errorf("Spawned proved pid %d: %+v", pid, c)
+		}
+	}
+	if reads != 0 {
+		t.Errorf("read %d identities for a pid past 32 bits", reads)
+	}
+	if _, err := p.Prove(math.MaxInt32, broker("a")); err != nil {
+		t.Errorf("Prove refused the largest 32-bit pid: %v", err)
 	}
 }

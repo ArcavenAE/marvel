@@ -14,6 +14,7 @@ package childproof
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -104,6 +105,17 @@ func NewForTest(read func(int) (Identity, error), kill func(int, syscall.Signal)
 
 func (p *Prober) wired() bool { return p != nil && p.read != nil && p.kill != nil }
 
+// CheckPid refuses a pid that names no single recorded process: 1 or below
+// (kill(0) is the caller's group and kill(-1) is everything), or past 32 bits,
+// which darwin's kill and sysctl take as a 32-bit pid and so act on the process
+// whose low 32 bits match.
+func CheckPid(pid int) error {
+	if pid <= 1 || pid > math.MaxInt32 {
+		return fmt.Errorf("childproof: pid %d names no single process", pid)
+	}
+	return nil
+}
+
 // Spawned returns the Child for a process this caller just started through
 // cmd. Its identity is read for up to identifyWindow while the process settles:
 // on linux /proc/<pid>/cmdline is empty for a moment after exec. It is the one
@@ -119,8 +131,8 @@ func (p *Prober) Spawned(cmd *exec.Cmd) (Child, error) {
 		return Child{}, errors.New("childproof: Spawned needs a command that is started and not yet waited for")
 	}
 	pid := cmd.Process.Pid
-	if pid <= 1 {
-		return Child{}, fmt.Errorf("childproof: pid %d names no single process", pid)
+	if err := CheckPid(pid); err != nil {
+		return Child{}, err
 	}
 	self := os.Getpid()
 	deadline := time.Now().Add(identifyWindow)
@@ -159,8 +171,8 @@ func (p *Prober) Prove(pid int, want Identity) (Child, error) {
 	if !p.wired() {
 		return Child{}, errNoSeams
 	}
-	if pid <= 1 {
-		return Child{}, fmt.Errorf("childproof: pid %d names no single process", pid)
+	if err := CheckPid(pid); err != nil {
+		return Child{}, err
 	}
 	if want.Start == "" {
 		return Child{}, errors.New("childproof: no recorded start time to prove against")
@@ -184,7 +196,7 @@ func (p *Prober) Prove(pid int, want Identity) (Child, error) {
 // start time, executable and arguments. It is the "is it still alive" check
 // that cannot be fooled by a reused pid.
 func (p *Prober) Same(c Child) bool {
-	if !p.wired() || c.by != p || c.pid <= 1 {
+	if !p.wired() || c.by != p || CheckPid(c.pid) != nil {
 		return false
 	}
 	live, err := p.read(c.pid)
@@ -206,7 +218,7 @@ func (p *Prober) Signal(c Child, sig syscall.Signal, group bool) error {
 	if !p.wired() {
 		return errNoSeams
 	}
-	if c.by != p || c.pid <= 1 {
+	if c.by != p || CheckPid(c.pid) != nil {
 		return ErrUnsignalable
 	}
 	live, err := p.read(c.pid)
