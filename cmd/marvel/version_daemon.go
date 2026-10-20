@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -89,6 +90,22 @@ func versionReport(w io.Writer, client daemon.Build, q buildQuery) {
 			say("note: %s", note)
 		}
 	}
+}
+
+// buildWarned is set once a build-mismatch warning has been printed, so a
+// command that calls the daemon many times (get -w polls) prints it once.
+var buildWarned atomic.Bool
+
+// buildMismatchWarning is the warning for a daemon whose stamped build differs
+// from client, or "" when they match, when the stamp is absent (a daemon that
+// predates it) or cannot be read.
+func buildMismatchWarning(client daemon.Build, stamp json.RawMessage) string {
+	return ""
+}
+
+// noteBuildMismatch prints the build-mismatch warning to w at most once per
+// process. marvel version prints its own comparison, so its call is skipped.
+func noteBuildMismatch(w io.Writer, method string, stamp json.RawMessage) {
 }
 
 // thisBuild is the build of the running binary: its stamped version and channel
