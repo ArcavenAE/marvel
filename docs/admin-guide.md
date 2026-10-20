@@ -741,6 +741,22 @@ the README). If a host ends up with both, the first `marvel` on `PATH` is the
 one that runs, which may be the stale one; check it with `command -v marvel`
 and `marvel version`, or call the pinned binary by its full path.
 
+### The version store
+
+A direct-binary upgrade keeps the build it replaced under the marvel home, at
+`versions/<version>/marvel`, and drops the one before that, so one prior build
+is kept. When the release publishes `checksums.txt`, the download is checked
+against it before anything is installed, and a mismatch is refused. A release
+that publishes none (every release before aae-orc-r770g) installs as before,
+with a note, and the build is recorded unverified.
+
+`versions/record.json` names the active build and the prior one: version,
+install channel, path, sha256, and whether the sum was verified. A Homebrew
+keg and a mise install are recorded where they are and never moved; a mise
+install is replaced in place as before, so no prior is recorded for it.
+Nothing reads the record yet. `upgrade --check` and the fallback to the prior
+binary will (docs/design/zero-downtime-upgrade.md section 5).
+
 ### Under mise: reexec from the new binary
 
 `marvel daemon reexec` run on the daemon's host names the binary it runs from,
