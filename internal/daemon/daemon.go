@@ -2346,16 +2346,9 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		}
 	}
 
-	if clearKey != "" {
-		if err := d.driver.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
-			return Response{Error: fmt.Sprintf("inject %s: clear: %v", p.SessionKey, err)}
-		}
-	}
-	if err := d.driver.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
+	if err := sendInject(d.driver, d.events, sess, p, clearKey, origin); err != nil {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
-
-	recordInject(d.events, sess, p, clearKey, origin)
 
 	out := map[string]string{
 		"status":  "injected",
@@ -3386,6 +3379,17 @@ func cleanDeclared(s string) string {
 		return "-"
 	}
 	return b.String()
+}
+
+// sendInject sends the clear key, if any, then the text, and records the inject.
+func sendInject(drv keySender, ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) error {
+	recordInject(ring, sess, p, clearKey, origin)
+	if clearKey != "" {
+		if err := drv.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
+			return fmt.Errorf("clear: %w", err)
+		}
+	}
+	return drv.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter)
 }
 
 // recordInject emits session.injected for keystrokes that reached a pane. It
