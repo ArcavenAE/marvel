@@ -967,6 +967,7 @@ func (m *Manifest) Apply(store *Store) error {
 				DangerousPermissions: mr.DangerousPermissions,
 				Persona:              mr.Persona,
 				GlobalRole:           mr.GlobalRole,
+				Duties:               slices.Clone(mr.Duties),
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
