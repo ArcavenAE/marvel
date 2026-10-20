@@ -69,8 +69,8 @@ func deadTestServerNames(ps string) []string {
 		if m == nil || seen[name] {
 			continue
 		}
-		pid, err := strconv.Atoi(m[1])
-		if err != nil || pid <= 0 || pidAlive(pid) {
+		pid, ok := parsePid(m[1])
+		if !ok || pidAlive(pid) {
 			continue
 		}
 		seen[name] = true
@@ -121,15 +121,15 @@ func sweepStaleSockets(dir string) []string {
 		if m == nil {
 			continue
 		}
-		pid, err := strconv.Atoi(m[1])
-		if err != nil || pid <= 0 || pidAlive(pid) {
+		pid, ok := parsePid(m[1])
+		if !ok || pidAlive(pid) {
 			continue
 		}
 		path := filepath.Join(sockets, e.Name())
 		if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSocket == 0 {
 			continue
 		}
-		if c, err := net.Dial("unix", path); err == nil {
+		if c, err := dialUnix(path); err == nil {
 			_ = c.Close()
 			continue
 		}
@@ -138,4 +138,27 @@ func sweepStaleSockets(dir string) []string {
 		}
 	}
 	return swept
+}
+
+// parsePid reads the pid in a test server name. It reports false for anything
+// that is not a positive pid.
+func parsePid(s string) (int, bool) {
+	pid, err := strconv.Atoi(s)
+	return pid, err == nil && pid > 0
+}
+
+// dialUnix is how sweepStaleSockets asks whether a server answers on a socket;
+// a test replaces it.
+var dialUnix = func(path string) (net.Conn, error) { return net.Dial("unix", path) }
+
+// UseScratchTmuxTmpDir points TMUX_TMPDIR at a directory of the test binaries'
+// own when it is unset, and returns the directory it set ("" when it left the
+// variable alone).
+func UseScratchTmuxTmpDir() string { return "" }
+
+// scratchTmuxTmpDir returns the per-user directory under base for test
+// binaries' tmux sockets, creating it with mode 0700.
+func scratchTmuxTmpDir(base string) string {
+	_ = base
+	return ""
 }
