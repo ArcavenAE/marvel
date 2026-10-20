@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/asof"
@@ -83,7 +84,99 @@ type RouteDecision struct {
 	OverriddenBy string      `json:"overridden_by,omitempty"`
 }
 
-// RouteSeat applies the routing rule to one seat at now.
+// RouteSeat applies the routing rule to one seat at now. Each duty the job
+// needs gets a verdict; the seat is excluded if any duty is, eligible only if
+// every duty is, and asks first otherwise. A supervisor override that names
+// this seat lifts each exclusion to ask first, never to eligible: naming a
+// seat is a choice to ask it, not evidence that the duty works.
 func RouteSeat(in RouteInput, now time.Time) RouteDecision {
-	return RouteDecision{Verdict: RouteAskFirst}
+	if len(in.Duties) == 0 {
+		return RouteDecision{Verdict: RouteAskFirst, Reason: ReasonNoDuties}
+	}
+	override := in.Override != nil && in.Override.By != "" && in.Override.Seat == in.Seat
+	out := RouteDecision{Verdict: RouteEligible, Duties: make([]DutyRoute, 0, len(in.Duties))}
+	lifted := false
+	for _, duty := range in.Duties {
+		d := routeDuty(duty, in.Cells, now)
+		if d.Verdict == RouteExcluded && override {
+			d.Verdict, d.Reason = RouteAskFirst, ReasonOverridden
+			lifted = true
+		}
+		out.Duties = append(out.Duties, d)
+		switch {
+		case d.Verdict == RouteExcluded:
+			out.Verdict = RouteExcluded
+		case d.Verdict == RouteAskFirst && out.Verdict == RouteEligible:
+			out.Verdict = RouteAskFirst
+		}
+	}
+	if lifted {
+		out.OverriddenBy = in.Override.By
+	}
+	return out
+}
+
+// routeDuty is the verdict for one duty. A withdrawal is read first and
+// never expires. Then the duty cell: fresh structural fail excludes, fresh
+// proven from the seat's own vantage is eligible, and everything else asks
+// first.
+func routeDuty(duty string, cells map[string]asof.Cell[string], now time.Time) DutyRoute {
+	if w, ok := cells[WithdrawnCellName(duty)]; ok && w.Value == string(DutyWithdrawn) && !w.ObservedAt.IsZero() {
+		return DutyRoute{Duty: duty, Verdict: RouteExcluded, Reason: ReasonWithdrawn, Source: w.Source}
+	}
+	c := cells[DutyCellName(duty)]
+	d := DutyRoute{Duty: duty, Verdict: RouteAskFirst, Source: c.Source}
+	switch c.State(now) {
+	case asof.None:
+		d.Reason = ReasonNeverObserved
+	case asof.Stale:
+		d.Reason = ReasonExpired
+	default:
+		switch DutyState(c.Value) {
+		case DutyProven:
+			if dutySourceVantage(c.Source) == "host" {
+				d.Reason = ReasonHostVantage
+			} else {
+				d.Verdict, d.Reason = RouteEligible, ReasonProven
+			}
+		case DutyFail:
+			if structuralDutySource(c.Source) {
+				d.Verdict, d.Reason = RouteExcluded, ReasonStructuralFail
+			} else {
+				d.Reason = ReasonTransientFail
+			}
+		default:
+			d.Reason = ReasonUnproven
+		}
+	}
+	return d
+}
+
+// dutySourceVantage is the vantage word of a Source.
+func dutySourceVantage(src string) string {
+	v, _, _ := strings.Cut(src, ":")
+	return v
+}
+
+// structuralDutySource reports whether a fail's Source is one of the codes
+// that may exclude (design section 4, "Structural codes"): the far side
+// refused the credential, the watcher saw a denial, or a dialog pattern
+// matched. Every reach code, rate-limited, and an unmatched dialog are
+// transient.
+func structuralDutySource(src string) bool {
+	switch src {
+	case "seat:auth:auth-rejected", "seat:auth:forbidden":
+		return true
+	}
+	parts := strings.Split(src, ":")
+	if len(parts) < 2 {
+		return false
+	}
+	switch parts[1] {
+	case "denial":
+		return parts[0] == "seat" || parts[0] == "pane"
+	case "dialog":
+		return parts[0] == "pane" && len(parts) == 3 && parts[2] != "unknown"
+	}
+	return false
 }
