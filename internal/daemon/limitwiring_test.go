@@ -356,7 +356,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
 	}
 	wantValue := map[string]bool{
-		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...)
+		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
 		"*Daemon.notifyHandoff":  true, // preflightRefusal(d.driver, ...)
 		"*Daemon.newLimitAction": true, // limitSender(d.driver)
 	}
@@ -537,7 +537,8 @@ func keysOf(m map[string]bool) []string {
 // hook or a watcher could reach it with "3": by calling the handler, by feeding a
 // request to the connection handlers over a pipe, or by dialing the daemon's own
 // socket as a client. Every function on that road has an inventory of callers
-// (marvel#556 review r5 and r6: routes N1c, W2, W3). The handler is reached only
+// (marvel#556 review r5 and r6: routes N1c, W2, W3), and so does the helper the
+// handler sends its keys through, sendInject. The handler is reached only
 // from the dispatcher, the dispatcher only from the connection reader, the
 // connection handlers only from the listener and the SSH server, and the client
 // entry points from nothing in this package. None is used as a value.
@@ -545,11 +546,15 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	t.Parallel()
 	want := map[string]map[string]int{
 		"handleInjectAs": {"*Daemon.dispatchAs": 1},
-		"dispatchAs":     {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
-		"dispatch":       {},
-		"handleRWCAs":    {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
-		"handleRWC":      {},
-		"handleConn":     {"*Daemon.Start": 1},
+		// The helper that presses the inject's keys. Its body is pinned by the
+		// key-press inventory; this pins who may call it, since it takes the
+		// driver as a value and a second caller would type into a pane.
+		"sendInject":  {"*Daemon.handleInjectAs": 1},
+		"dispatchAs":  {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
+		"dispatch":    {},
+		"handleRWCAs": {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
+		"handleRWC":   {},
+		"handleConn":  {"*Daemon.Start": 1},
 		// The client lives in internal/daemonrpc, which carries its own inventory
 		// of the same entry points and of every dial. Nothing in this package
 		// calls them (the tests that talk to a daemon are _test files, which this
