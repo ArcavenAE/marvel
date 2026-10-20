@@ -1089,6 +1089,25 @@ func searchString(s, substr string) bool {
 // marvel passes them as given and does not interpret the files they name.
 var settingsSourceNames = map[string]bool{"user": true, "project": true, "local": true}
 
+// CheckExposure refuses a manifest that would cast a role whose slot has read a
+// function the role writes, so marvel work cannot start a writer the gate would
+// hold. It asks the same gate as every spawn path, ExposureVerdict, once per
+// role that declares writes, and names the slot it refused.
+func (m *Manifest) CheckExposure(src ExposureReader) error {
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if len(r.Writes) == 0 {
+				continue
+			}
+			role := Role{Name: r.Name, Writes: normalizeWrites(r.Writes)}
+			if held, reason := ExposureVerdict(src, m.Workspace.Name, t.Name, &role); held {
+				return fmt.Errorf("exposure: %s/%s: %s", m.Workspace.Name, t.Name, reason)
+			}
+		}
+	}
+	return nil
+}
+
 // validateWrites refuses a writes list the exposure gate could not match: an
 // empty name matches nothing, and a name twice, in any case or with edge space,
 // says the author lost track.

@@ -341,6 +341,9 @@ const (
 	KindBusCrashed        Kind = "bus.crashed"
 	KindBusUnavailable    Kind = "bus.unavailable"
 	KindExposureRefused   Kind = "exposure.refused" // a role that writes a function was held: its slot has read it (marvel#945)
+	KindExposureRecorded  Kind = "exposure.recorded"
+	KindExposureEnded     Kind = "exposure.ended"
+	KindExposureVoided    Kind = "exposure.voided" // a record was voided over the local socket; the gate stops counting it
 	KindBusReloaded       Kind = "bus.reloaded"
 	KindBusLeafUp         Kind = "bus.leaf.up"
 	KindBusLeafDown       Kind = "bus.leaf.down"
@@ -491,6 +494,9 @@ var allKinds = []Kind{
 	KindBusCrashed,
 	KindBusUnavailable,
 	KindExposureRefused,
+	KindExposureRecorded,
+	KindExposureEnded,
+	KindExposureVoided,
 	KindBusUnprovisioned,
 	KindBusReloaded,
 	KindBusLeafUp,

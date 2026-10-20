@@ -88,6 +88,11 @@ type ExposureRecord struct {
 	EndedAt time.Time `json:"ended_at,omitzero"`
 	// Seq orders the records and keeps two readings of one function apart.
 	Seq uint64 `json:"seq"`
+	// VoidedAt and VoidReason are set by a void when a record was wrong.
+	// A voided record stays in the store and under the seal; the gate stops
+	// counting it. Nothing is ever deleted.
+	VoidedAt   time.Time `json:"voided_at,omitzero"`
+	VoidReason string    `json:"void_reason,omitempty"`
 }
 
 func exposureSlot(workspace, team, role string) string {
@@ -114,7 +119,7 @@ func (s *Store) RecordExposure(r ExposureRecord) (ExposureRecord, error) {
 	if r.StartedAt.IsZero() {
 		r.StartedAt = time.Now().UTC()
 	}
-	r.EndedAt = time.Time{}
+	r.EndedAt, r.VoidedAt, r.VoidReason = time.Time{}, time.Time{}, ""
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.exposureLost {
@@ -123,12 +128,14 @@ func (s *Store) RecordExposure(r ExposureRecord) (ExposureRecord, error) {
 	r.Seq = s.exposureSeq + 1
 	r.Paths = append([]string(nil), r.Paths...)
 	key := exposureKey(r)
-	if err := s.persistExposure(key, &r); err != nil {
-		return ExposureRecord{}, fmt.Errorf("persist exposure %s: %w", key, err)
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return ExposureRecord{}, fmt.Errorf("marshal exposure %s: %w", key, err)
+	}
+	if err := s.commitExposure(key, raw, r); err != nil {
+		return ExposureRecord{}, err
 	}
 	s.exposureSeq = r.Seq
-	stored := r
-	s.exposures[key] = &stored
 	return r, nil
 }
 
@@ -137,44 +144,98 @@ func (s *Store) RecordExposure(r ExposureRecord) (ExposureRecord, error) {
 // the slot has no record for is ErrNotFound; one whose records are all ended
 // already marks none and is not an error.
 func (s *Store) EndExposure(workspace, team, role, function string, at time.Time) (int, error) {
-	function, cerr := CheckFunction(function)
-	if cerr != nil {
-		return 0, fmt.Errorf("exposure: %w", cerr)
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	return s.amendExposures(workspace, team, role, function,
+		func(r *ExposureRecord) bool { return r.EndedAt.IsZero() },
+		map[string]any{"ended_at": at.UTC()})
+}
+
+// VoidExposure marks a slot's records for a function as voided, with a reason,
+// and returns how many it marked. It is the way out of a record that was
+// wrong: the record stays in the store and under the seal, the gate
+// stops counting it, and nothing is deleted. A void needs a reason; a function
+// the slot has no record for is ErrNotFound; records already voided mark none.
+func (s *Store) VoidExposure(workspace, team, role, function, reason string, at time.Time) (int, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return 0, errors.New("exposure: a void needs a reason")
 	}
 	if at.IsZero() {
 		at = time.Now().UTC()
+	}
+	return s.amendExposures(workspace, team, role, function,
+		func(r *ExposureRecord) bool { return r.VoidedAt.IsZero() },
+		map[string]any{"voided_at": at.UTC(), "void_reason": reason})
+}
+
+// amendExposures sets fields on the records of a slot's function that the
+// predicate selects. The stored bytes are amended, not re-encoded from the
+// decoded record, so a field a newer binary wrote survives.
+func (s *Store) amendExposures(workspace, team, role, function string, pick func(*ExposureRecord) bool, set map[string]any) (int, error) {
+	function, cerr := CheckFunction(function)
+	if cerr != nil {
+		return 0, fmt.Errorf("exposure: %w", cerr)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.exposureLost {
 		return 0, errExposureLost
 	}
-	seen, marked := false, 0
+	keys := make([]string, 0, 4)
+	seen := false
 	for key, r := range s.exposures {
 		if r.Workspace != workspace || r.Team != team || r.Role != role || r.Function != function {
 			continue
 		}
 		seen = true
-		if !r.EndedAt.IsZero() {
-			continue
+		if pick(r) {
+			keys = append(keys, key)
 		}
-		next := *r
-		next.EndedAt = at
-		if err := s.persistExposure(key, &next); err != nil {
-			return marked, fmt.Errorf("persist exposure %s: %w", key, err)
-		}
-		s.exposures[key] = &next
-		marked++
 	}
 	if !seen {
 		return 0, fmt.Errorf("exposure: no record for that function in the slot: %w", ErrNotFound)
 	}
+	sort.Strings(keys)
+	marked := 0
+	for _, key := range keys {
+		raw, err := amendExposure(s.exposureRaw[key], set)
+		if err != nil {
+			return marked, fmt.Errorf("amend exposure %s: %w", key, err)
+		}
+		var next ExposureRecord
+		if err := json.Unmarshal(raw, &next); err != nil {
+			return marked, fmt.Errorf("decode amended exposure %s: %w", key, err)
+		}
+		if err := s.commitExposure(key, raw, next); err != nil {
+			return marked, err
+		}
+		marked++
+	}
 	return marked, nil
 }
 
-// ExposuresForSlot returns every record of a slot, ended or not, oldest first.
-// The in-memory read cannot fail today; the error is in the signature because
-// the gate that calls it treats a failed read as a refusal.
+// amendExposure returns the stored bytes of a record with fields set and every
+// other field kept, including ones this binary does not know.
+func amendExposure(raw []byte, set map[string]any) ([]byte, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range set {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		m[k] = b
+	}
+	return json.Marshal(m)
+}
+
+// ExposuresForSlot returns every record of a slot, ended, voided or not, oldest
+// first. The in-memory read cannot fail today; the error is in the signature
+// because the gate that calls it treats a failed read as a refusal.
 func (s *Store) ExposuresForSlot(workspace, team, role string) ([]ExposureRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -199,10 +260,12 @@ func (s *Store) ExposuresForSlot(workspace, team, role string) ([]ExposureRecord
 // the operator's: restore the state database from a backup.
 var errExposureLost = errors.New("exposure records do not match their seal (a record was lost or changed); restore the state database from a backup")
 
-// sealOf is the count and digest of a set of records, with one entry replaced:
-// the set as it will be once the change being persisted has landed.
-func sealOf(recs map[string]*ExposureRecord, key string, with *ExposureRecord) (exposureSeal, error) {
-	keys := make([]string, 0, len(recs)+1)
+// sealOfRaw is the count and digest of the stored bytes of a set of records,
+// with one entry replaced: the set as it will be once the change being
+// persisted has landed. It digests the bytes as stored, not the decoded
+// record, so a field this binary does not know is under the seal.
+func sealOfRaw(recs map[string][]byte, key string, with []byte) exposureSeal {
+	var keys []string
 	for k := range recs {
 		if k != key {
 			keys = append(keys, k)
@@ -214,54 +277,48 @@ func sealOf(recs map[string]*ExposureRecord, key string, with *ExposureRecord) (
 	sort.Strings(keys)
 	h := sha256.New()
 	for _, k := range keys {
-		rec := recs[k]
+		data := recs[k]
 		if k == key {
-			rec = with
-		}
-		data, err := json.Marshal(rec)
-		if err != nil {
-			return exposureSeal{}, fmt.Errorf("marshal exposure %s: %w", k, err)
+			data = with
 		}
 		h.Write([]byte(k))
 		h.Write([]byte{0})
 		h.Write(data)
 		h.Write([]byte{'\n'})
 	}
-	return exposureSeal{Count: len(keys), Digest: hex.EncodeToString(h.Sum(nil))}, nil
+	return exposureSeal{Count: len(keys), Digest: hex.EncodeToString(h.Sum(nil))}
 }
 
-// persistExposure writes a record and the seal over the set it joins in one
-// transaction, so the file never holds a record the seal does not cover.
-func (s *Store) persistExposure(key string, r *ExposureRecord) error {
-	if s.bolt == nil {
-		return nil
-	}
-	data, err := json.Marshal(r)
-	if err != nil {
-		return fmt.Errorf("marshal exposure %s: %w", key, err)
-	}
-	seal, err := sealOf(s.exposures, key, r)
-	if err != nil {
-		return err
-	}
-	sealData, err := json.Marshal(seal)
-	if err != nil {
-		return fmt.Errorf("marshal exposure seal: %w", err)
-	}
-	return s.bolt.Update(func(tx *bolt.Tx) error {
-		if err := tx.Bucket(bucketExposure).Put([]byte(key), data); err != nil {
-			return fmt.Errorf("put exposure %s: %w", key, err)
+// commitExposure writes a record's stored bytes and the seal over the set it
+// joins in one transaction, so the file never holds a record the seal does not
+// cover, then updates the in-memory copies. Caller holds s.mu.
+func (s *Store) commitExposure(key string, raw []byte, rec ExposureRecord) error {
+	if s.bolt != nil {
+		sealData, err := json.Marshal(sealOfRaw(s.exposureRaw, key, raw))
+		if err != nil {
+			return fmt.Errorf("marshal exposure seal: %w", err)
 		}
-		if err := tx.Bucket(bucketExposureSeal).Put(keyExposureSeal, sealData); err != nil {
-			return fmt.Errorf("put exposure seal: %w", err)
+		if err := s.bolt.Update(func(tx *bolt.Tx) error {
+			if err := tx.Bucket(bucketExposure).Put([]byte(key), raw); err != nil {
+				return fmt.Errorf("put exposure %s: %w", key, err)
+			}
+			if err := tx.Bucket(bucketExposureSeal).Put(keyExposureSeal, sealData); err != nil {
+				return fmt.Errorf("put exposure seal: %w", err)
+			}
+			return bumpVersion(tx)
+		}); err != nil {
+			return fmt.Errorf("persist exposure %s: %w", key, err)
 		}
-		return bumpVersion(tx)
-	})
+	}
+	stored := rec
+	s.exposures[key] = &stored
+	s.exposureRaw[key] = raw
+	return nil
 }
 
-// rehydrateExposures loads the records and the sequence high-water mark. A
-// record that cannot be read fails the open: a gate that reads a partial set
-// would admit what it should refuse.
+// rehydrateExposures loads the records, their stored bytes and the sequence
+// high-water mark. A record that cannot be read fails the open: a gate that
+// reads a partial set would admit what it should refuse.
 func (s *Store) rehydrateExposures(tx *bolt.Tx) error {
 	s.exposureLost = false
 	err := tx.Bucket(bucketExposure).ForEach(func(k, v []byte) error {
@@ -273,6 +330,7 @@ func (s *Store) rehydrateExposures(tx *bolt.Tx) error {
 			s.exposureSeq = r.Seq
 		}
 		s.exposures[string(k)] = &r
+		s.exposureRaw[string(k)] = append([]byte(nil), v...)
 		return nil
 	})
 	if err != nil {
@@ -291,8 +349,7 @@ func (s *Store) rehydrateExposures(tx *bolt.Tx) error {
 		s.exposureLost = true
 		return nil
 	}
-	got, err := sealOf(s.exposures, "", nil)
-	if err != nil || got != want {
+	if sealOfRaw(s.exposureRaw, "", nil) != want {
 		s.exposureLost = true
 	}
 	return nil
@@ -332,6 +389,9 @@ func ExposureVerdict(src ExposureReader, workspace, team string, role *Role) (he
 	}
 	seen := map[string]bool{}
 	for _, r := range recs {
+		if !r.VoidedAt.IsZero() {
+			continue
+		}
 		f, cerr := CheckFunction(r.Function)
 		if cerr != nil {
 			return true, fmt.Sprintf("role %s writes %s and its slot has a record with a name the gate cannot match: %v",

@@ -46,6 +46,7 @@ type Store struct {
 	// assigned. Nothing deletes from them. See exposure.go (marvel#945).
 	exposures   map[string]*ExposureRecord
 	exposureSeq uint64
+	exposureRaw map[string][]byte // the stored bytes of each record, which the seal digests
 	// exposureLost is set at load when the bucket is empty beside the in-use
 	// marker: reads then fail instead of reporting nothing exposed.
 	exposureLost bool
@@ -111,6 +112,7 @@ func NewStore() *Store {
 		scheduleStatus: make(map[string]*ScheduleStatus),
 		duties:         make(map[string]*DutyRecord),
 		exposures:      make(map[string]*ExposureRecord),
+		exposureRaw:    make(map[string][]byte),
 	}
 }
 
