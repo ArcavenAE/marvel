@@ -1476,6 +1476,226 @@
           }
         ]
       }
+    },
+    {
+      "name": "a denial seen from a host vantage is not structural and asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "host:denial"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "host:denial"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a denial reported by a peer is not structural and asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:denial"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "peer:denial"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a forbidden refusal reported by a peer is not structural and asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:auth:forbidden"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "peer:auth:forbidden"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an auth-rejected refusal from the pane is not structural and asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:auth:auth-rejected"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "pane:auth:auth-rejected"
+          }
+        ]
+      }
     }
   ]
 }
