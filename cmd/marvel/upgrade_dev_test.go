@@ -17,7 +17,7 @@ func TestUpgradeRefusesADevBuild(t *testing.T) {
 	// If the refusal ever stops coming first, this must fail the test, not fetch
 	// releases and replace the test binary.
 	prev := runUpgrade
-	runUpgrade = func(string, string) (upgrade.Result, error) {
+	runUpgrade = func(string, string, string) (upgrade.Result, error) {
 		t.Error("the install step ran on a dev build: the refusal must come first")
 		return upgrade.Result{}, nil
 	}

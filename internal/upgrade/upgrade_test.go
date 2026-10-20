@@ -345,7 +345,7 @@ func TestFailedBrewUpdateFails(t *testing.T) {
 // A system package manager owns the binary, so marvel cannot upgrade it. That
 // is not a success: the host is not upgraded, and a rollout script must see it.
 func TestPackagePathFails(t *testing.T) {
-	err := runMethod(methodPackage, "alpha", "")
+	err := runMethod(methodPackage, "0.1", "alpha", "")
 	if err == nil {
 		t.Fatal("the package path returned nil, so a host that was not upgraded reads as upgraded")
 	}
@@ -510,7 +510,7 @@ func TestHomebrewOnLinuxFingerprintsTheStableLink(t *testing.T) {
 			self := kegLayout(t, cleanup)
 			captureOut(t)
 
-			res, err := runInstall(methodHomebrew, installedBinary(methodHomebrew, self), "alpha", "")
+			res, err := runInstall(methodHomebrew, installedBinary(methodHomebrew, self), "0.1", "alpha", "")
 			if err != nil {
 				t.Fatalf("a successful upgrade failed: %v", err)
 			}

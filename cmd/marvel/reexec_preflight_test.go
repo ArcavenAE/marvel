@@ -125,7 +125,7 @@ func TestUpgradeDaemonTakesThePreflight(t *testing.T) {
 	r := newRig(t, "/opt/marvel/marvel", "daemon", "zzz-bogus-control")
 	prevV, prevU := version, runUpgrade
 	version = "0.3.0"
-	runUpgrade = func(string, string) (upgrade.Result, error) { return upgrade.Result{Changed: true}, nil }
+	runUpgrade = func(string, string, string) (upgrade.Result, error) { return upgrade.Result{Changed: true}, nil }
 	t.Cleanup(func() { version, runUpgrade = prevV, prevU })
 	if err := upgrade.ReexecRefusal(); err != nil {
 		t.Skipf("this host refuses --daemon before the pre-flight: %v", err)
