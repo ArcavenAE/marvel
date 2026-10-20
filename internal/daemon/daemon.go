@@ -465,7 +465,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
 	}
-	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, injector)
+	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, "", injector)
 	return nil
 }
 
@@ -2355,7 +2355,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
-	recordInject(d.events, sess, p, origin)
+	recordInject(d.events, sess, p, clearKey, origin)
 
 	out := map[string]string{
 		"status":  "injected",
@@ -3391,7 +3391,8 @@ func cleanDeclared(s string) string {
 // recordInject emits session.injected for keystrokes that reached a pane. It
 // records how much was sent and, for a named key, the key; it never records
 // typed text.
-func recordInject(ring *events.Ring, sess api.Session, p injectParams, origin string) {
+func recordInject(ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) {
+	_ = clearKey
 	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
 	if !p.Literal {
 		what = "key (unrecognized)"
