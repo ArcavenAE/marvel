@@ -100,12 +100,31 @@ var buildWarned atomic.Bool
 // from client, or "" when they match, when the stamp is absent (a daemon that
 // predates it) or cannot be read.
 func buildMismatchWarning(client daemon.Build, stamp json.RawMessage) string {
-	return ""
+	if len(stamp) == 0 {
+		return ""
+	}
+	var d daemon.Build
+	if err := json.Unmarshal(stamp, &d); err != nil {
+		return ""
+	}
+	// Only a warning, never the note: a note is a difference that cannot be
+	// ruled out, and printing it on every verb of a dev build would be noise.
+	// marvel version still prints it.
+	warning, _ := compareBuilds(client, d)
+	return warning
 }
 
 // noteBuildMismatch prints the build-mismatch warning to w at most once per
 // process. marvel version prints its own comparison, so its call is skipped.
 func noteBuildMismatch(w io.Writer, method string, stamp json.RawMessage) {
+	if method == daemonrpc.MethodVersion || buildWarned.Load() {
+		return
+	}
+	warning := buildMismatchWarning(thisBuild(), stamp)
+	if warning == "" || !buildWarned.CompareAndSwap(false, true) {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "warning: %s\n", warning)
 }
 
 // thisBuild is the build of the running binary: its stamped version and channel
