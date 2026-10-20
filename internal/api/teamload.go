@@ -58,10 +58,17 @@ func RollTeamLoad(t Team, sessions []Session, now time.Time) TeamLoad {
 		if s.Condition == ConditionLimited {
 			row.Limited++
 		}
-		// The same gate the ACTIVE% cell uses: a seat with no activity channel,
-		// one that has never reported, or a ring that has not watched the whole
-		// window, has no reading.
-		if tk := s.ActiveTicks; tk.Observable && tk.Full && tk.Total > 0 && !s.ContextAt.IsZero() {
+		// The same gate the ACTIVE% cell uses. A seat with a statusline feed
+		// counts at its API-time reading, and has none while that is pending
+		// or stale (provisional, cost_samples.go). Any other seat: no activity
+		// channel, one that has never reported, or a ring that has not watched
+		// the whole window, has no reading.
+		if pct, kind := APIActivePct(s, now); kind != APIActivityNone {
+			if kind == APIActivityReading {
+				sum += pct
+				row.ActiveMeasured++
+			}
+		} else if tk := s.ActiveTicks; tk.Observable && tk.Full && tk.Total > 0 && !s.ContextAt.IsZero() {
 			sum += 100 * float64(tk.Active) / float64(tk.Total)
 			row.ActiveMeasured++
 		}

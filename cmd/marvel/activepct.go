@@ -18,10 +18,11 @@ const activePctValidity = 30 * time.Second
 // unless the seat has an activity channel that has reported at least once and
 // the ring has watched the whole window, so a restart or a seat marvel cannot
 // observe never reads 0%. A declared channel that has never reported leaves
-// ContextAt zero and every tick quiet, which is no reading either.
+// ContextAt zero and every tick quiet, which is no reading either. A seat with
+// a statusline feed takes the provisional API-time reading instead.
 func activePctAsOf(s api.Session, now time.Time) asof.Cell[float64] {
-	if _, kind := api.APIActivePct(s, now); kind != api.APIActivityNone {
-		return asof.Cell[float64]{}
+	if pct, kind := api.APIActivePct(s, now); kind != api.APIActivityNone {
+		return apiActivePctAsOf(s, now, pct, kind)
 	}
 	t := s.ActiveTicks
 	if !t.Observable || !t.Full || t.Total <= 0 || t.At.IsZero() || s.ContextAt.IsZero() {
@@ -33,6 +34,30 @@ func activePctAsOf(s api.Session, now time.Time) asof.Cell[float64] {
 		ValidUntil: t.At.Add(activePctValidity),
 		Source:     string(s.ContextSource),
 	}
+}
+
+// apiActivePctAsOf is the provisional reading of a seat with a statusline feed:
+// the share of the last 15 minutes spent in API time, not the tick share. The
+// operator's provisional choice; the definition is still being developed. A
+// pending reading is empty (a dash) and a stale one is already expired (a ?).
+func apiActivePctAsOf(s api.Session, now time.Time, pct float64, kind api.APIActivity) asof.Cell[float64] {
+	switch kind {
+	case api.APIActivityReading:
+		seen := s.APISeenAt
+		if seen.IsZero() {
+			seen = s.LastHeartbeat
+		}
+		return asof.Cell[float64]{
+			Value:      pct,
+			ObservedAt: seen,
+			ValidUntil: seen.Add(api.APIActiveWindow),
+			Source:     string(s.ContextSource),
+		}
+	case api.APIActivityStale:
+		past := now.Add(-time.Nanosecond)
+		return asof.Cell[float64]{ObservedAt: past, ValidUntil: past}
+	}
+	return asof.Cell[float64]{}
 }
 
 // activePctCell renders the ACTIVE% cell. It claims "not quiet", not "busy",
