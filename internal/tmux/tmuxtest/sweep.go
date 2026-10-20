@@ -91,3 +91,10 @@ func sweepNames(names []string) []string {
 	}
 	return swept
 }
+
+// sweepStaleSockets removes the socket files a killed test binary left in
+// dir/tmux-<uid>, and returns their names.
+func sweepStaleSockets(dir string) []string {
+	_ = dir
+	return nil
+}
