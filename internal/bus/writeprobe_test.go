@@ -234,3 +234,29 @@ func TestWriteFailureEscalatesOncePerChangeAndNeverRestartsOrHolds(t *testing.T)
 		t.Errorf("status after recovery = %+v", st)
 	}
 }
+
+// A declared object that is absent is the structural check's miss, not a
+// failed write: the probe skips it and still probes the rest.
+func TestProbeWritesSkipsAnAbsentObject(t *testing.T) {
+	url := startScratchBroker(t, 0)
+	ctx := context.Background()
+	if _, err := Provision(ctx, url, "any", "any"); err != nil {
+		t.Fatal(err)
+	}
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, _ := jetstream.New(nc)
+	if err := js.DeleteStream(ctx, InboxStream); err != nil {
+		t.Fatal(err)
+	}
+	if err := js.DeleteKeyValue(ctx, StateBucket); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ProbeWrites(ctx, url, "any", "any")
+	if err != nil || len(got.Failures) != 0 {
+		t.Fatalf("probe with %s and %s absent = %+v, %v; want a clean reading", InboxStream, StateBucket, got, err)
+	}
+}
