@@ -893,6 +893,11 @@ func (s *Supervisor) probeWritesLocked(ctx context.Context) {
 		log.Printf("bus: write probe: no reading (%v); keeping the last one", err)
 		return
 	}
+	prevSkipped := s.writeSkipped
+	s.writeSkipped = w.SkippedNames()
+	if s.writeSkipped != "" && s.writeSkipped != prevSkipped {
+		log.Printf("bus: write probe skipped %s on %s: a real limit would make the canary evict or be refused", s.writeSkipped, s.mgr.bus.Listen)
+	}
 	prev := s.writeFailed
 	s.writeFailed = w.Problems()
 	switch {

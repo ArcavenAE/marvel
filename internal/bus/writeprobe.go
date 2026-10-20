@@ -122,6 +122,23 @@ func ProbeWrites(ctx context.Context, url, user, password string) (WriteReading,
 				cancel()
 				return out, fmt.Errorf("look up %s: %w", obj.Name, kerr)
 			}
+			// A bucket is a stream underneath, and a put plus a delete marker
+			// is two messages in it.
+			backing, berr := js.Stream(octx, "KV_"+obj.Name)
+			if berr != nil {
+				cancel()
+				return out, fmt.Errorf("look up the stream behind %s: %w", obj.Name, berr)
+			}
+			reason, rerr := capReason(octx, backing, 2, len(nonce))
+			if rerr != nil {
+				cancel()
+				return out, fmt.Errorf("read limits of %s: %w", obj.Name, rerr)
+			}
+			if reason != "" {
+				cancel()
+				out.Skipped = append(out.Skipped, WriteSkip{Object: obj.Name, Reason: reason})
+				continue
+			}
 			failure = probeBucket(octx, kv, nonce)
 		case ObjectStream:
 			st, serr := js.Stream(octx, obj.Name)
@@ -137,6 +154,16 @@ func ProbeWrites(ctx context.Context, url, user, password string) (WriteReading,
 				cancel()
 				return out, fmt.Errorf("declared stream %s has no subject to probe", obj.Name)
 			}
+			reason, rerr := capReason(octx, st, 1, len(nonce))
+			if rerr != nil {
+				cancel()
+				return out, fmt.Errorf("read limits of %s: %w", obj.Name, rerr)
+			}
+			if reason != "" {
+				cancel()
+				out.Skipped = append(out.Skipped, WriteSkip{Object: obj.Name, Reason: reason})
+				continue
+			}
 			failure = probeStream(octx, js, st, canarySubject(obj.Stream.Subjects[0]), nonce)
 		default:
 			cancel()
@@ -148,6 +175,31 @@ func ProbeWrites(ctx context.Context, url, user, password string) (WriteReading,
 		}
 	}
 	return out, nil
+}
+
+// probeOverhead is a margin for a message's subject and framing when the
+// probe asks whether its writes would reach a byte cap.
+const probeOverhead = 256
+
+// capReason reads the stream's live config and state, and says why a canary of
+// msgs messages carrying size bytes each should not be written: the write
+// would evict a real message under discard-old, or be refused under
+// discard-new. It returns "" when there is room. Declared streams carry no
+// caps today, but an operator can set them on a live broker, and the probe
+// must never make its own writes the cause of data loss.
+func capReason(ctx context.Context, st jetstream.Stream, msgs, size int) (string, error) {
+	info, err := st.Info(ctx)
+	if err != nil {
+		return "", err
+	}
+	c := info.Config
+	if c.MaxMsgs > 0 && info.State.Msgs+uint64(msgs) > uint64(c.MaxMsgs) {
+		return fmt.Sprintf("at its message cap (%d of %d); a canary would evict or be refused", info.State.Msgs, c.MaxMsgs), nil
+	}
+	if c.MaxBytes > 0 && info.State.Bytes+uint64(msgs*(size+probeOverhead)) > uint64(c.MaxBytes) {
+		return fmt.Sprintf("within one canary of its byte cap (%d of %d bytes); a canary would evict or be refused", info.State.Bytes, c.MaxBytes), nil
+	}
+	return "", nil
 }
 
 // probeBucket puts, reads back and deletes the canary key.
