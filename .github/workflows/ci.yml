@@ -396,6 +396,13 @@ jobs:
             [ -f "$f" ] && ASSETS+=("$f")
           done
 
+          # checksums.txt lets marvel upgrade verify a download and keep the
+          # prior binary it replaced (marvel#910). sha256sum format, one line
+          # per asset above, so `sha256sum -c` reads it.
+          sha256sum "${ASSETS[@]}" > checksums.txt
+          cat checksums.txt
+          ASSETS+=(checksums.txt)
+
           gh release create "$TAG" \
             --title "Alpha ${TAG}" \
             --notes "$BODY" \
