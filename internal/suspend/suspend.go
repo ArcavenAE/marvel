@@ -18,6 +18,7 @@ package suspend
 import (
 	"errors"
 	"fmt"
+	"syscall"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/childproof"
@@ -112,18 +113,108 @@ func (e *FreezeError) Error() string {
 // rolls the suspend back: every process already stopped is resumed, the seats
 // first and the server last, and the record is cleared.
 func (f *Freezer) Freeze(rec Record, store Store) (Record, Result, error) {
-	return rec, Result{}, nil
+	var res Result
+	if rec.State != "" {
+		return rec, res, fmt.Errorf("%w: freeze needs a new record, this one is %s", ErrState, rec.State)
+	}
+	server, err := f.prober.Prove(rec.Server.Pid, rec.Server.Identity)
+	if err != nil {
+		return rec, res, fmt.Errorf("suspend: the tmux server is not the recorded process: %w", err)
+	}
+	seats := make([]childproof.Child, 0, len(rec.Seats))
+	kept := make([]Proc, 0, len(rec.Seats))
+	for _, s := range rec.Seats {
+		c, err := f.prober.Prove(s.Pid, s.Identity)
+		if err != nil {
+			res.Gone = append(res.Gone, s.Pid)
+			continue
+		}
+		seats = append(seats, c)
+		kept = append(kept, s)
+	}
+	rec.Seats = kept
+
+	rec.State = StateSuspending
+	if err := store.Save(rec); err != nil {
+		return rec, res, fmt.Errorf("suspend: save the record before signalling: %w", err)
+	}
+
+	var signalled []childproof.Child
+	if err := f.prober.Signal(server, syscall.SIGSTOP, false); err != nil {
+		return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: server.Pid(), Reason: err.Error()})
+	}
+	live := make([]childproof.Child, 0, len(seats))
+	for _, c := range seats {
+		err := f.prober.Signal(c, syscall.SIGSTOP, false)
+		var mm *childproof.MismatchError
+		switch {
+		case errors.As(err, &mm):
+			res.Gone = append(res.Gone, c.Pid())
+		case err != nil:
+			return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: c.Pid(), Reason: err.Error()})
+		default:
+			signalled = append(signalled, c)
+			live = append(live, c)
+		}
+	}
+
+	// Twice, with a pause between, because a stop that tmux undoes reads T
+	// for a moment first.
+	for read := 0; read < 2; read++ {
+		time.Sleep(f.settle)
+		if ok, why := f.isStopped(server); !ok {
+			return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: server.Pid(), Reason: why})
+		}
+		still := live[:0]
+		for _, c := range live {
+			if !f.prober.Same(c) {
+				res.Gone = append(res.Gone, c.Pid())
+				continue
+			}
+			if ok, why := f.isStopped(c); !ok {
+				return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: c.Pid(), Reason: why})
+			}
+			still = append(still, c)
+		}
+		live = still
+	}
+
+	rec.Seats = keepOnly(rec.Seats, live)
+	rec.State = StateSuspended
+	if err := store.Save(rec); err != nil {
+		return rec, res, fmt.Errorf("suspend: every process is stopped, but the record could not be saved as suspended: %w", err)
+	}
+	return rec, res, nil
 }
 
 // isStopped reads c's stop state, and says why when it is not stopped.
 func (f *Freezer) isStopped(c childproof.Child) (bool, string) {
+	stopped, err := f.stopped(c.Pid())
+	switch {
+	case err != nil:
+		return false, "its state could not be read: " + err.Error()
+	case !stopped:
+		return false, "it did not read stopped"
+	}
 	return true, ""
 }
 
 // rollback resumes every seat already stopped and then the server, clears the
 // record, and returns cause with any rollback trouble joined to it.
 func (f *Freezer) rollback(store Store, server childproof.Child, seats []childproof.Child, cause error) error {
-	return cause
+	errs := []error{cause}
+	for _, c := range seats {
+		if err := f.prober.Signal(c, syscall.SIGCONT, false); err != nil {
+			errs = append(errs, fmt.Errorf("rollback: resume pid %d: %w", c.Pid(), err))
+		}
+	}
+	if err := f.prober.Signal(server, syscall.SIGCONT, false); err != nil {
+		errs = append(errs, fmt.Errorf("rollback: resume the tmux server %d: %w", server.Pid(), err))
+	}
+	if err := store.Clear(); err != nil {
+		errs = append(errs, fmt.Errorf("rollback: clear the record: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 // Thaw resumes a suspended record, or rolls back one left suspending. It saves
@@ -133,10 +224,68 @@ func (f *Freezer) rollback(store Store, server childproof.Child, seats []childpr
 // that still reads stopped afterwards is reported in Result.StillStopped.
 // Nothing here restarts a seat.
 func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
-	return Result{}, nil
+	var res Result
+	if rec.State != StateSuspended && rec.State != StateSuspending {
+		return res, fmt.Errorf("%w: thaw needs a suspended or suspending record, this one is %q", ErrState, rec.State)
+	}
+	rec.State = StateResuming
+	if err := store.Save(rec); err != nil {
+		return res, fmt.Errorf("suspend: save the record before resuming: %w", err)
+	}
+
+	var (
+		resumed []childproof.Child
+		errs    []error
+	)
+	for _, s := range rec.Seats {
+		c, err := f.prober.Prove(s.Pid, s.Identity)
+		if err != nil {
+			res.Gone = append(res.Gone, s.Pid)
+			continue
+		}
+		err = f.prober.Signal(c, syscall.SIGCONT, false)
+		var mm *childproof.MismatchError
+		switch {
+		case errors.As(err, &mm):
+			res.Gone = append(res.Gone, s.Pid)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("suspend: resume pid %d: %w", s.Pid, err))
+		default:
+			resumed = append(resumed, c)
+		}
+	}
+	server, err := f.prober.Prove(rec.Server.Pid, rec.Server.Identity)
+	if err != nil {
+		res.Gone = append(res.Gone, rec.Server.Pid)
+	} else if err := f.prober.Signal(server, syscall.SIGCONT, false); err != nil {
+		errs = append(errs, fmt.Errorf("suspend: resume the tmux server %d: %w", server.Pid(), err))
+	} else {
+		resumed = append(resumed, server)
+	}
+
+	time.Sleep(f.settle)
+	for _, c := range resumed {
+		if stopped, err := f.stopped(c.Pid()); err == nil && stopped {
+			res.StillStopped = append(res.StillStopped, c.Pid())
+		}
+	}
+	if err := store.Clear(); err != nil {
+		errs = append(errs, fmt.Errorf("suspend: clear the record after resuming: %w", err))
+	}
+	return res, errors.Join(errs...)
 }
 
 // keepOnly returns the procs whose pid is among the children, in record order.
 func keepOnly(procs []Proc, children []childproof.Child) []Proc {
-	return procs
+	in := make(map[int]bool, len(children))
+	for _, c := range children {
+		in[c.Pid()] = true
+	}
+	out := make([]Proc, 0, len(children))
+	for _, p := range procs {
+		if in[p.Pid] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
