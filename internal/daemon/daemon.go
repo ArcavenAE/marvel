@@ -3389,18 +3389,27 @@ func cleanDeclared(s string) string {
 }
 
 // recordInject emits session.injected for keystrokes that reached a pane. It
-// records how much was sent and, for a named key, the key; it never records
-// typed text.
+// records what was sent and not the text: the byte count of literal text, which
+// is pasted as is; the key itself for a named key; the Enter key alone when an
+// empty literal text sends only that; and the clear key that went out before
+// the text, if one did. It never records typed text.
 func recordInject(ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) {
-	_ = clearKey
 	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
-	if !p.Literal {
+	switch {
+	case !p.Literal:
 		what = "key (unrecognized)"
 		if recognizedKey(p.Text) {
 			what = "key " + p.Text
 		}
+	case p.Text == "" && p.Enter:
+		// Nothing is pasted; the driver sends the Enter key and no bytes.
+		what = "key Enter"
 	}
-	msg := fmt.Sprintf("inject %s enter=%v %s", what, p.Enter, origin)
+	msg := fmt.Sprintf("inject %s enter=%v", what, p.Enter)
+	if clearKey != "" {
+		msg += " clear=" + clearKey
+	}
+	msg += " " + origin
 	log.Printf("inject: %s <- %s", sess.Key(), msg)
 	events.Emit(ring, events.Event{
 		Kind:      events.KindSessionInjected,
