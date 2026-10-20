@@ -1,0 +1,1187 @@
+{
+  "version": 1,
+  "design": "docs/design/seat-readiness.md section 6, rulings in section 9",
+  "note": "Shared by marvel and director: both must return want for input at now. Cells use the asof.Cell JSON shape.",
+  "now": "2026-10-10T12:00:00Z",
+  "vectors": [
+    {
+      "name": "every duty fresh proven is eligible",
+      "rule": "6.2",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth"
+          }
+        }
+      },
+      "want": {
+        "verdict": "eligible",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "seat:auth"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a fresh unproven duty asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "unproven",
+            "observed_at": "2026-10-10T11:50:00Z"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "unproven"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a never observed duty asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "never-observed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an expired proven duty asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T10:00:00Z",
+            "valid_until": "2026-10-10T11:00:00Z",
+            "source": "seat:auth"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "expired",
+            "source": "seat:auth"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a fresh auth-rejected fail excludes",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:auth-rejected"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "seat:auth:auth-rejected"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a fresh forbidden fail excludes",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:forbidden"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "seat:auth:forbidden"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a matched dialog on first-turn excludes",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:trust"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "pane:dialog:trust"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a denial the watcher saw excludes",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:denial"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "pane:denial"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an unmatched dialog is not structural",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:unknown"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "pane:dialog:unknown"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a reach fail is transient and asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:reach:dns"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "seat:reach:dns"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a rate-limited fail is transient and asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:rate-limited"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "seat:auth:rate-limited"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an expired structural fail asks first: a clock never excludes",
+      "rule": "6, ADR-007",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T10:00:00Z",
+            "valid_until": "2026-10-10T11:00:00Z",
+            "source": "seat:auth:auth-rejected"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "expired",
+            "source": "seat:auth:auth-rejected"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a withdrawal excludes, however old",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth"
+          },
+          "withdrawn.gh.read": {
+            "value": "withdrawn",
+            "observed_at": "2026-10-01T09:00:00Z",
+            "source": "by:supervisor"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "excluded",
+            "reason": "withdrawn",
+            "source": "by:supervisor"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a withdrawal of a duty the job does not need is not read",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth"
+          },
+          "withdrawn.gh.comment": {
+            "value": "withdrawn",
+            "observed_at": "2026-10-01T09:00:00Z",
+            "source": "by:supervisor"
+          }
+        }
+      },
+      "want": {
+        "verdict": "eligible",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "seat:auth"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a proven value from a host vantage proves the host, not the seat",
+      "rule": "6, register rule 3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "host:reach"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "host-vantage",
+            "source": "host:reach"
+          }
+        ]
+      }
+    },
+    {
+      "name": "one excluded duty excludes the seat over one asking first",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read",
+          "gh.comment"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:forbidden"
+          },
+          "duty.gh.comment": {
+            "value": "unproven",
+            "observed_at": "2026-10-10T11:50:00Z"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "seat:auth:forbidden"
+          },
+          {
+            "duty": "gh.comment",
+            "verdict": "ask-first",
+            "reason": "unproven"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a supervisor naming the seat lifts the exclusion to ask first",
+      "rule": "6.1, ruling 3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:auth-rejected"
+          }
+        },
+        "override": {
+          "seat": "ws/team-reviewer-g1-0",
+          "by": "supervisor"
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "overridden_by": "supervisor",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "overridden",
+            "source": "seat:auth:auth-rejected"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an override lifts a withdrawal the same way",
+      "rule": "6.1, ruling 3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth"
+          },
+          "withdrawn.gh.read": {
+            "value": "withdrawn",
+            "observed_at": "2026-10-01T09:00:00Z",
+            "source": "by:supervisor"
+          }
+        },
+        "override": {
+          "seat": "ws/team-reviewer-g1-0",
+          "by": "supervisor"
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "overridden_by": "supervisor",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "ask-first",
+            "reason": "overridden",
+            "source": "by:supervisor"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an override naming another seat changes nothing",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:auth-rejected"
+          }
+        },
+        "override": {
+          "seat": "ws/team-reviewer-g1-1",
+          "by": "supervisor"
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "seat:auth:auth-rejected"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an override that names no one changes nothing",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth:auth-rejected"
+          }
+        },
+        "override": {
+          "seat": "ws/team-reviewer-g1-0",
+          "by": ""
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "seat:auth:auth-rejected"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an override on a seat with nothing excluded is not recorded",
+      "rule": "6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack",
+          "gh.read"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          },
+          "duty.gh.read": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:auth"
+          }
+        },
+        "override": {
+          "seat": "ws/team-reviewer-g1-0",
+          "by": "supervisor"
+        }
+      },
+      "want": {
+        "verdict": "eligible",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          },
+          {
+            "duty": "gh.read",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "seat:auth"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a job with no duties asks first",
+      "rule": "6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "reason": "no-duties"
+      }
+    }
+  ]
+}
