@@ -77,12 +77,33 @@ envelope:
 
   `outcome` is `refused` when `Director-Outcome` is `refused`, else `sent`;
   `stage` and `refusal` print only on a refusal.
-- **Text from the record is quoted, never printed raw.** Headers print with
-  `strconv.Quote`. A body that is valid JSON prints through `json.Indent` of a
-  re-marshalled value, so a control character in a message's text arrives as
-  `\u001b`, never as a terminal escape. A body that is not JSON prints as
-  `body: <strconv.Quote of it>`. `-o json` prints the record as one JSON
-  object, encoded by `encoding/json`.
+- **Text from the record is escaped, never printed raw, on every path.**
+  `encoding/json` alone is not enough: it escapes C0 controls such as ESC
+  (U+001B) and the line and paragraph separators (U+2028, U+2029), but
+  passes C1 controls and the bidi controls through as raw UTF-8. Measured
+  (Go 1.26.5 here; the reviewer saw the same on 1.27.0): after `json.Marshal`
+  and `json.Indent`, U+0085 comes out as bytes `c2 85`, U+009B as `c2 9b`,
+  U+202A as `e2 80 aa`, U+202E as `e2 80 ae`, U+2066 as `e2 81 a6` and U+2069
+  as `e2 81 a9`. U+009B is a one-byte CSI on terminals that read C1 controls,
+  and the bidi controls reorder what a reader sees. `strconv.Quote` escapes
+  all of them, because it escapes every rune `strconv.IsPrint` rejects.
+
+  So one rule covers every printed path: **no rune that `strconv.IsPrint`
+  rejects reaches the terminal raw.** That set includes C0 and C1 controls
+  (U+0000 to U+001F, U+007F, U+0080 to U+009F), the bidi embedding and
+  override controls (U+202A to U+202E), the bidi isolates (U+2066 to U+2069),
+  and the other format characters such as U+200E, U+200F and U+061C.
+  - Headers and a body that is not JSON print with `strconv.Quote`, which
+    already applies the rule.
+  - A JSON body prints through `json.Indent` of a re-marshalled value, then
+    one pass, `escapeUnprintable`, that rewrites each rejected rune as
+    `\uXXXX` (two `\u` escapes for a rune above U+FFFF, as JSON writes a
+    surrogate pair). Every such rune sits inside a JSON string, since the
+    JSON structure is all ASCII, so the output stays valid JSON that decodes
+    to the same text.
+  - `-o json` is `encoding/json` output, then the same pass.
+  - The daemon's error text, printed on stderr, goes through the same pass,
+    so a broker message cannot carry a raw control either.
 - Exit 0 on a record, 1 on any refusal or miss, with the daemon's text on
   stderr.
 
@@ -100,12 +121,27 @@ envelope:
 4. Return the record: seq, time, subject, the four headers by name only, and
    the body as bytes. No other header and nothing else from the broker.
 
-Misses: `no record at seq N; AGENT_AUDIT holds F to L` (from the stream's
-info), `this broker has no AGENT_AUDIT stream`, and a connect or read error
-returned as `read AGENT_AUDIT: <error>`.
+Misses, each with its own text, from the stream's info and the `GetMsg`
+error. The stream is declared with neither `DenyDelete` nor `DenyPurge`
+(`internal/bus/declared.go`, the `AuditStream` object), so a number inside the
+range can be missing:
+
+| case | text |
+|---|---|
+| no stream | `this broker has no AGENT_AUDIT stream` |
+| the stream is empty | `AGENT_AUDIT holds no records` |
+| N below the first sequence | `seq N has aged out; AGENT_AUDIT holds F to L` |
+| N past the last sequence | `seq N is past the last record, L; check the number came from this cluster's audit line` |
+| N inside F to L with no message | `seq N was deleted or purged; AGENT_AUDIT holds F to L with gaps` |
+| a connect or read error | `read AGENT_AUDIT: <error>` |
+
+`--cluster` already binds the number to one daemon and so one broker, so
+the cluster binding director's half needs is the flag here.
 
 **What it never does:** publish, ack, delete, purge, or create a consumer.
-`GetMsg` is a direct read by sequence, so no ack floor moves.
+`GetMsg` is a get by sequence: the stream does not set `AllowDirect`, so the
+client sends `$JS.API.STREAM.MSG.GET.AGENT_AUDIT` (nats.go v1.53.1
+`jetstream/stream.go:577`, `api.go:97`), and no ack floor moves.
 
 **Scope and reach.**
 - Admin keys only: `bus.audit` is not added to `credentialPushMethods`, so a
@@ -130,8 +166,11 @@ harness, under the `TestMain` home guard, a scratch `TMPDIR` and no
    returned with all four headers and the body unchanged.
 2. Daemon: a record with no `Director-Outcome` header returns `outcome:
    sent` and no stage or refusal.
-3. Daemon: seq past the last returns the miss text with the stream's range;
-   seq 0 is refused.
+3. Daemon: each miss in section 4's table returns its own text: an empty
+   stream; seq below the first (the test deletes from the front with
+   `Stream.DeleteMsg` to move the first sequence); seq past the last; and a
+   record deleted from inside the range, which must return the deleted-or-
+   purged text and never the aged-out or past-the-end one. Seq 0 is refused.
 4. Daemon: no managed bus returns the no-managed-bus text.
 5. Daemon: a `credential-push` caller is refused with "not permitted"
    (as `TestBusStatusIsNotACredentialPushMethod`).
@@ -139,8 +178,16 @@ harness, under the `TestMain` home guard, a scratch `TMPDIR` and no
 7. CLI: `marvel bus audit abc`, `0`, `-1` and no argument exit 1 before any
    dial (run with `--socket` pointing at a path with nothing listening, and
    the error must be the argument text, not a dial error).
-8. CLI: a body carrying `\x1b[2J` prints as `\u001b[2J`; a header carrying a
-   newline prints quoted on one line.
+8. CLI: for each of U+001B, U+0085, U+009B, U+202A, U+202B, U+202C, U+202D,
+   U+202E, U+2066, U+2067, U+2068, U+2069, U+200E, U+200F and U+061C, a body
+   carrying it, a non-JSON body carrying it, a header carrying it and a
+   daemon error carrying it each print with the rune written as `\uXXXX`.
+   The check reads the printed bytes and fails on the rune's raw UTF-8 bytes,
+   in both the line output and `-o json`. A rune above U+FFFF that IsPrint
+   rejects (U+E0001) prints as a surrogate pair. Each `-o json` output still
+   parses and decodes to the original text. A header carrying a newline
+   prints quoted on one line. Fixtures name each rune by its number in the
+   test source (`"\u202e"`), never as the raw rune.
 9. CLI: `marvel bus audit 1 --cluster ""` is refused with the existing
    `--cluster needs a cluster name` text (the rung is shared; this pins that
    the new command goes through `send`).
