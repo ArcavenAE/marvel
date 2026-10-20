@@ -685,6 +685,11 @@ type Role struct {
 	// Read it only through config.ResolvedGlobalRole, which also checks that
 	// the cluster admits the role's name.
 	GlobalRole string `toml:"global_role,omitempty"`
+	// Duties names the readiness checks this role must pass, each from the
+	// fixed library (DutyNames). Empty means the role declared none. Read it
+	// only through config.ResolvedDuties, which adds the duties every
+	// supervised seat carries (docs/design/seat-readiness.md section 3).
+	Duties []string `toml:"duties,omitempty"`
 	// Policy names the Policy this role's sessions are projected with —
 	// the contract half of finding-024: a Claude Code settings fragment
 	// marvel writes to a per-session file the harness reads. Empty means
