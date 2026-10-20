@@ -857,6 +857,28 @@ marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
 marvel --cluster <name> bus status --require-leaf
 ```
 
+### Version skew
+
+A fleet is rarely on one build at once. These are the rules for a mixed one
+(`docs/design/zero-downtime-upgrade.md` section 6). A row marked planned
+describes behavior that has not shipped; do not rely on it yet.
+
+| Pair | Rule |
+|---|---|
+| CLI against daemon | Either may be newer. The daemon keeps each RPC method and field for at least one release after its replacement ships. `marvel version` shows both builds today. A warning on every verb when the builds differ is planned, item 1 of the design's follow-on list. |
+| A verb the daemon does not support | Planned, item 10: the CLI refuses and names the missing capability. Today there is no daemon-side capability answer, and `marvel version --capabilities` is local: it dials no daemon and reports only this binary's reexec handoff format. A verb the daemon lacks fails with whatever the daemon returns. |
+| Daemon downgrade | Not by reexec: reexec refuses a target older than the running daemon. A downgrade is a stop and a fresh start of the older binary, and is safe only where that binary reads every record the newer one wrote: the store schema (a binary refuses a store whose schema is newer than its own) and the broker identity record, which carries its own schema version. |
+| Daemon and the director shim | Out of marvel's scope. The shim has its own contract (`docs/design/shim-heartbeat-feed.md`). |
+| Daemon and nats-server | The broker version is pinned in `mise.toml`, and the daemon logs the version it started. The broker's own activation is in `docs/design/bus-as-service.md` section 5. |
+
+Across clusters, activate one cluster at a time and read each cluster's
+result before the next. A person says go; nothing proceeds on a timer, so a
+quiet cluster is not a pass. The pre-flight `marvel upgrade --check` and the
+wider post-reexec health check are planned (items 4 and 6), so today the
+reading is by hand. The order is open decision Z2 in the design. Its
+recommendation is the cluster with the fewest live seats first, and the cluster
+that hosts director last.
+
 ## Monitoring
 
 ### Watch mode
