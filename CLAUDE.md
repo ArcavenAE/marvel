@@ -149,6 +149,16 @@ name = "review-squad"
 
 Healthchecks, policies, endpoints, and headless launches: see `examples/`.
 
+A role may declare `duties = ["gh.read", "gh.comment"]`, the readiness checks
+its seat must pass (`docs/design/seat-readiness.md` section 3). Each names a
+check from a fixed library (`api.DutyNames`: `first-turn`, `ack`, `gh.read`,
+`gh.comment`, `gh.post`, `jira.read`, `jira.write`); parse refuses any other
+name, a repeat, or an empty entry, and does not echo an unknown one. Read duties
+only through `config.ResolvedDuties`, which always adds `first-turn` and `ack`
+(it reads "every supervised seat" as every seat marvel spawns) and then the
+declared duties once each. Nothing consumes duties yet; spawn's default-deny
+write (aae-orc-0m1lo) is the first reader.
+
 ### Automatic shifts (context pressure, max age)
 
 A role may declare a `shift` block with one condition (`on = ...` on the
