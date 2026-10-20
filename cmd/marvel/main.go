@@ -2115,7 +2115,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 					return err
 				}
 			}
-			res, err := runUpgrade(channel, targetVersion)
+			res, err := runUpgrade(version, channel, targetVersion)
 			if err != nil {
 				return err
 			}
