@@ -154,11 +154,74 @@ func DaemonHomeWarning(addr, daemonHome, clientHome string) string {
 		addr, daemonHome, clientHome, SocketEnv)
 }
 
-// DialLiteralWarning is the stub the red commit compiles against.
-func DialLiteralWarning(addr string) string { return "" }
+// DialLiteralWarning returns a warning to show the operator when addr
+// dials another host by an IPv4 literal, or the empty string when there
+// is nothing to warn about.
+//
+// A name lets a dial site end its own outage when the host moves: the
+// resolver hands back the new address. A literal keeps dialing the old one
+// and fails until a person edits the config (aae-orc#576, the network-move
+// recovery design). So the docs say to use a name, and this says so at the
+// moment a literal is written.
+//
+// This warns. It does not refuse and it does not rewrite the address.
+//
+// Silent for a name, a Unix socket, loopback and the unspecified address
+// (neither is cross-host), and an IPv6 literal (out of scope here). It is
+// never applied to an address marvel recorded itself, only to one an
+// operator typed or a config holds.
+func DialLiteralWarning(addr string) string {
+	host := dialHost(addr)
+	if host == "" || strings.Contains(host, ":") {
+		return ""
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return ""
+	}
+	return fmt.Sprintf(
+		"warning: %s dials the IPv4 literal %s. A literal keeps dialing the old "+
+			"address after the host moves, and the failure waits for a person; a "+
+			"name lets the dial recover on its own. Use a DNS name instead.",
+		addr, host)
+}
 
-// DialLiteralWarnings is the stub the red commit compiles against.
-func (c *Config) DialLiteralWarnings() []string { return nil }
+// DialLiteralWarnings returns DialLiteralWarning for every cluster in the
+// config, each naming its cluster. It is the validator's form of the same
+// check, so add-cluster and a config review cannot disagree.
+func (c *Config) DialLiteralWarnings() []string {
+	var out []string
+	for _, cl := range c.Clusters {
+		for _, addr := range []string{cl.Server, cl.Socket} {
+			if w := DialLiteralWarning(addr); w != "" {
+				out = append(out, fmt.Sprintf("cluster %q: %s", cl.Name, w))
+			}
+		}
+	}
+	return out
+}
+
+// dialHost returns the host part of a remote address (mrvl://, ssh://,
+// tcp:// or host:port), or the empty string for a Unix socket path.
+func dialHost(addr string) string {
+	rest := addr
+	switch {
+	case isMRVL(addr), isSSH(addr), strings.HasPrefix(addr, "tcp://"):
+		rest = addr[strings.Index(addr, "://")+3:]
+	case !paths.IsTCPAddr(addr):
+		return ""
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	if i := strings.LastIndexByte(rest, '@'); i >= 0 {
+		rest = rest[i+1:]
+	}
+	if h, _, err := net.SplitHostPort(rest); err == nil {
+		return h
+	}
+	return rest
+}
 
 // isLocalSocket reports whether addr names a Unix socket on this
 // machine. A scheme means remote; otherwise the host:port rule decides,
