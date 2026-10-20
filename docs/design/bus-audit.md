@@ -96,14 +96,26 @@ envelope:
   - Headers and a body that is not JSON print with `strconv.Quote`, which
     already applies the rule.
   - A JSON body prints through `json.Indent` of a re-marshalled value, then
-    one pass, `escapeUnprintable`, that rewrites each rejected rune as
-    `\uXXXX` (two `\u` escapes for a rune above U+FFFF, as JSON writes a
-    surrogate pair). Every such rune sits inside a JSON string, since the
-    JSON structure is all ASCII, so the output stays valid JSON that decodes
-    to the same text.
-  - `-o json` is `encoding/json` output, then the same pass.
-  - The daemon's error text, printed on stderr, goes through the same pass,
-    so a broker message cannot carry a raw control either.
+    one pass, `escapeInStrings`, that works **inside JSON string literals
+    only**. Outside a string it copies every byte, so the newlines and spaces
+    `json.Indent` writes between tokens stay as they are: `strconv.IsPrint`
+    rejects U+000A, and a pass over the whole output would turn that
+    structure into `\u000a` and the result would no longer be valid JSON
+    (the reviewer measured that). Inside a string it copies a backslash and
+    the byte after it as they are, ends the string at an unescaped `"`, and
+    rewrites each other rune that `strconv.IsPrint` rejects as `\uXXXX`, or
+    as two `\u` escapes (a UTF-16 surrogate pair) for a rune above U+FFFF.
+    Measured here on Go 1.26.5 with a short version of that pass, for each
+    rune in test 8 placed in a key, a top-level value and a nested value: the
+    output passed `json.Valid`, decoded to the original text, held none of
+    the rune's raw bytes, and kept every newline `json.Indent` wrote. Sixteen
+    cases, no failures.
+  - `-o json` is `encoding/json` output, then the same `escapeInStrings`
+    pass.
+  - The daemon's error text, printed on stderr, is plain text, not JSON, so
+    it goes through `escapeAll`, which rewrites every rejected rune in the
+    text, a newline included, as `\uXXXX`; the CLI then ends the line with
+    its own newline. A broker message cannot carry a raw control either.
 - Exit 0 on a record, 1 on any refusal or miss, with the daemon's text on
   stderr.
 
@@ -184,8 +196,11 @@ harness, under the `TestMain` home guard, a scratch `TMPDIR` and no
    daemon error carrying it each print with the rune written as `\uXXXX`.
    The check reads the printed bytes and fails on the rune's raw UTF-8 bytes,
    in both the line output and `-o json`. A rune above U+FFFF that IsPrint
-   rejects (U+E0001) prints as a surrogate pair. Each `-o json` output still
-   parses and decodes to the original text. A header carrying a newline
+   rejects (U+E0001) prints as a surrogate pair. For every rune case, in a
+   key, a top-level value and a nested value, the JSON body and the `-o json`
+   output each pass `json.Valid`, decode to the original text, and keep the
+   same count of newlines that `json.Indent` wrote (so the structure was not
+   escaped). A daemon error carrying U+000A prints on one line. A header carrying a newline
    prints quoted on one line. Fixtures name each rune by its number in the
    test source (`"\u202e"`), never as the raw rune.
 9. CLI: `marvel bus audit 1 --cluster ""` is refused with the existing
