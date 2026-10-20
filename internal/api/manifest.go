@@ -136,7 +136,11 @@ type ManifestRole struct {
 	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
 	// Writes names the functions the role writes. A role that names one is not
 	// started while its slot has an exposure record for it (marvel#945).
-	Writes   []string `toml:"writes,omitempty" yaml:"writes,omitempty"`
+	Writes []string `toml:"writes,omitempty" yaml:"writes,omitempty"`
+	// Duties names the readiness checks the role must pass, each from the
+	// fixed library (docs/design/seat-readiness.md section 3). Parsed into
+	// Role.Duties.
+	Duties   []string `toml:"duties,omitempty" yaml:"duties,omitempty"`
 	Name     string   `toml:"name"                          yaml:"name"`
 	Replicas int      `toml:"replicas"                      yaml:"replicas"`
 	// WorkDir is where this role's sessions run. Relative values resolve
@@ -466,6 +470,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if err := validateWrites(fmt.Sprintf("team[%d].role[%d]", i, j), r.Writes); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			if err := validateDuties(fmt.Sprintf("team[%d].role[%d]", i, j), r.Duties); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if r.Schedule != nil {
