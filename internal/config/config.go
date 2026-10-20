@@ -154,6 +154,12 @@ func DaemonHomeWarning(addr, daemonHome, clientHome string) string {
 		addr, daemonHome, clientHome, SocketEnv)
 }
 
+// DialLiteralWarning is the stub the red commit compiles against.
+func DialLiteralWarning(addr string) string { return "" }
+
+// DialLiteralWarnings is the stub the red commit compiles against.
+func (c *Config) DialLiteralWarnings() []string { return nil }
+
 // isLocalSocket reports whether addr names a Unix socket on this
 // machine. A scheme means remote; otherwise the host:port rule decides,
 // and that rule is paths.IsTCPAddr so the client cannot drift from what
