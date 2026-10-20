@@ -110,6 +110,20 @@ envelope:
     output passed `json.Valid`, decoded to the original text, held none of
     the rune's raw bytes, and kept every newline `json.Indent` wrote. Sixteen
     cases, no failures.
+  - **Invalid UTF-8.** A byte that does not start a valid UTF-8 sequence, such
+    as a lone 0x9B or the first byte of a truncated sequence, decodes as
+    U+FFFD with width 1. Both passes write it as the literal U+FFFD (bytes
+    `ef bf bd`), one for each invalid byte, and never copy the raw byte. That
+    is what `encoding/json` itself writes for invalid UTF-8, and U+FFFD is
+    printable, so the output stays valid UTF-8 and valid JSON. On today's
+    paths no such byte reaches either pass (measured, Go 1.26.5):
+    `json.Valid` accepts a string holding 0x9B, but the body is unmarshalled
+    and re-marshalled first, which already writes U+FFFD for each invalid
+    byte (0x9B to `ef bf bd`, the truncated `e2 80` to two of them); a
+    non-JSON body and the headers go through `strconv.Quote`, which writes
+    `\x9b`; and the daemon's error arrives inside the JSON RPC response. The
+    rule is there so the passes stay safe if a later path feeds them raw
+    bytes.
   - `-o json` is `encoding/json` output, then the same `escapeInStrings`
     pass.
   - The daemon's error text, printed on stderr, is plain text, not JSON, so
@@ -200,7 +214,11 @@ harness, under the `TestMain` home guard, a scratch `TMPDIR` and no
    key, a top-level value and a nested value, the JSON body and the `-o json`
    output each pass `json.Valid`, decode to the original text, and keep the
    same count of newlines that `json.Indent` wrote (so the structure was not
-   escaped). A daemon error carrying U+000A prints on one line. A header carrying a newline
+   escaped). A daemon error carrying U+000A prints on one line.
+   Invalid UTF-8, fed to each pass directly: a lone 0x9B inside a JSON
+   string, and a truncated sequence (`e2 80` then an ASCII letter), each
+   come out as one U+FFFD per invalid byte, with no raw 0x9B, 0xE2 or 0x80
+   byte left, and the output passes `json.Valid` and `utf8.Valid`. A header carrying a newline
    prints quoted on one line. Fixtures name each rune by its number in the
    test source (`"\u202e"`), never as the raw rune.
 9. CLI: `marvel bus audit 1 --cluster ""` is refused with the existing
