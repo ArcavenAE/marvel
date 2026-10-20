@@ -3120,8 +3120,9 @@ func newSessionRow(s api.Session) sessionRow {
 		health = "unknown"
 	}
 	// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
-	// HEALTH is LIVENESS (the process is alive and its pane exists), so a
-	// stalled session still reads healthy/unknown here; the "(stalled)"
+	// HEALTH is liveness: alive means the process runs in a pane that exists
+	// and no check beyond that ran, healthy means a heartbeat check passed.
+	// A stalled session still reads alive/healthy/unknown here; the "(stalled)"
 	// suffix says marvel has not observed it do work within its role's
 	// activity_timeout, which liveness cannot tell you. Running sessions
 	// only: a terminated session's last advisory is not news.
@@ -3255,8 +3256,10 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "  \"succeeded (exit 0)\" is a headless run that finished; it holds its\n")
 		fmt.Fprintf(&buf, "  replica and is not re-run. \"crashed (exit N)\" carries the exit code.\n")
 		fmt.Fprintf(&buf, "\n")
-		fmt.Fprintf(&buf, "  HEALTH is liveness (process + pane), not productivity. A live\n")
-		fmt.Fprintf(&buf, "  process at a login prompt still reads healthy. \"(stalled)\" marks a\n")
+		fmt.Fprintf(&buf, "  HEALTH is liveness, not productivity. \"alive\" means the process runs\n")
+		fmt.Fprintf(&buf, "  in a pane that exists and no check ran beyond that; \"healthy\" means a\n")
+		fmt.Fprintf(&buf, "  heartbeat check passed. A live process at a login prompt still reads\n")
+		fmt.Fprintf(&buf, "  alive or healthy. \"(stalled)\" marks a\n")
 		fmt.Fprintf(&buf, "  session marvel has not seen do work within its role's activity_timeout.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
