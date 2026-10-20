@@ -62,3 +62,35 @@ func recordCostSample(sess *Session, usd float64, at time.Time) {
 	}
 	sess.CostSamples = append([]CostSample(nil), sess.CostSamples[drop:]...)
 }
+
+// APISample is one stored value of the statusline's running API-time total
+// (milliseconds spent waiting on model responses) and when it was first seen.
+type APISample struct {
+	At time.Time `json:"at"`
+	MS int64     `json:"ms"`
+}
+
+// APIActiveWindow is the span ACTIVE% reads for a seat with a statusline feed.
+const APIActiveWindow = 15 * time.Minute
+
+// APIActivity says what the API-time reading of a seat amounts to.
+type APIActivity int
+
+const (
+	// APIActivityNone: the seat has no statusline feed, so ACTIVE% is the tick
+	// reading.
+	APIActivityNone APIActivity = iota
+	// APIActivityPending: a feed seat with no window of samples yet.
+	APIActivityPending
+	// APIActivityStale: the feed is silent past the window, or a gap sits in it.
+	APIActivityStale
+	// APIActivityReading: the percentage is valid.
+	APIActivityReading
+)
+
+func recordAPISample(sess *Session, ms int64, at time.Time) {}
+
+// APIActivePct is the provisional ACTIVE% of a seat with a statusline feed.
+func APIActivePct(s Session, now time.Time) (float64, APIActivity) {
+	return 0, APIActivityNone
+}

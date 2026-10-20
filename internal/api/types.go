@@ -264,8 +264,15 @@ type Session struct {
 	// CostGapAt is when the feed last came back after a silence longer than
 	// CostGapLimit, which a daemon restart is too. RATE reads ? while it is
 	// inside the window.
-	CostGapAt       time.Time   `json:"cost_gap_at,omitempty" toml:"-"`
-	APIDurationMS   *int64      `json:"api_duration_ms,omitempty" toml:"-"`
+	CostGapAt     time.Time `json:"cost_gap_at,omitempty" toml:"-"`
+	APIDurationMS *int64    `json:"api_duration_ms,omitempty" toml:"-"`
+	// APISamples, APISeenAt and APIGapAt are the API-time total's ring, last
+	// beat and last return from a silence, kept by the same rules as the cost
+	// ring. ACTIVE% reads them for a seat with a statusline feed
+	// (cost_samples.go). Provisional, with the reading they feed.
+	APISamples      []APISample `json:"api_samples,omitempty" toml:"-"`
+	APISeenAt       time.Time   `json:"api_seen_at,omitempty" toml:"-"`
+	APIGapAt        time.Time   `json:"api_gap_at,omitempty" toml:"-"`
 	TotalsChangedAt time.Time   `json:"totals_changed_at,omitempty" toml:"-"`
 	HealthState     HealthState `toml:"-"`
 	// ActivityState is the restart-neutral staleness advisory (aae-orc-9box).

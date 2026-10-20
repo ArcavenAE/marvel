@@ -19,7 +19,10 @@ const activePctValidity = 30 * time.Second
 // the ring has watched the whole window, so a restart or a seat marvel cannot
 // observe never reads 0%. A declared channel that has never reported leaves
 // ContextAt zero and every tick quiet, which is no reading either.
-func activePctAsOf(s api.Session, _ time.Time) asof.Cell[float64] {
+func activePctAsOf(s api.Session, now time.Time) asof.Cell[float64] {
+	if _, kind := api.APIActivePct(s, now); kind != api.APIActivityNone {
+		return asof.Cell[float64]{}
+	}
 	t := s.ActiveTicks
 	if !t.Observable || !t.Full || t.Total <= 0 || t.At.IsZero() || s.ContextAt.IsZero() {
 		return asof.Cell[float64]{}
