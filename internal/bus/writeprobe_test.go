@@ -260,3 +260,153 @@ func TestProbeWritesSkipsAnAbsentObject(t *testing.T) {
 		t.Fatalf("probe with %s and %s absent = %+v, %v; want a clean reading", InboxStream, StateBucket, got, err)
 	}
 }
+
+// A live stream at a message cap with discard-old would lose a real message
+// to every canary. The probe must read the live limits first, leave the
+// stream alone, and say it did not test it.
+func TestProbeWritesDoesNotEvictFromAStreamAtItsMessageCap(t *testing.T) {
+	url := startScratchBroker(t, 0)
+	ctx := context.Background()
+	if _, err := Provision(ctx, url, "any", "any"); err != nil {
+		t.Fatal(err)
+	}
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, _ := jetstream.New(nc)
+	st, err := js.Stream(ctx, InboxStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := st.CachedInfo().Config
+	cfg.MaxMsgs, cfg.Discard = 2, jetstream.DiscardOld
+	if _, err := js.UpdateStream(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"real one", "real two"} {
+		if _, err := js.Publish(ctx, "agent.t.w.x.inbox", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := mustStreamState(t, st)
+
+	for i := 0; i < 3; i++ {
+		got, err := ProbeWrites(ctx, url, "any", "any")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Failures) != 0 {
+			t.Fatalf("a stream at its cap read as a failed write: %+v", got.Failures)
+		}
+		if len(got.Skipped) != 1 || got.Skipped[0].Object != InboxStream || got.Skipped[0].Reason == "" {
+			t.Fatalf("skipped = %+v, want %s skipped with a reason", got.Skipped, InboxStream)
+		}
+	}
+	after := mustStreamState(t, st)
+	if after.Msgs != before.Msgs || after.FirstSeq != before.FirstSeq || after.LastSeq != before.LastSeq {
+		t.Fatalf("the probe changed a capped stream: before %+v, after %+v", before, after)
+	}
+}
+
+// The same for a byte cap, and for the bucket's backing stream.
+func TestProbeWritesSkipsAStreamAndABucketAtTheirCaps(t *testing.T) {
+	url := startScratchBroker(t, 0)
+	ctx := context.Background()
+	if _, err := Provision(ctx, url, "any", "any"); err != nil {
+		t.Fatal(err)
+	}
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, _ := jetstream.New(nc)
+
+	audit, err := js.Stream(ctx, AuditStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acfg := audit.CachedInfo().Config
+	acfg.MaxBytes, acfg.Discard = 1024, jetstream.DiscardOld
+	if _, err := js.UpdateStream(ctx, acfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.Publish(ctx, "agent.audit", make([]byte, 900)); err != nil {
+		t.Fatal(err)
+	}
+
+	kv, err := js.KeyValue(ctx, StateBucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kv.Put(ctx, "real.key", []byte("keep me")); err != nil {
+		t.Fatal(err)
+	}
+	backing, err := js.Stream(ctx, "KV_"+StateBucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kcfg := backing.CachedInfo().Config
+	kcfg.MaxMsgs, kcfg.Discard = 1, jetstream.DiscardOld
+	if _, err := js.UpdateStream(ctx, kcfg); err != nil {
+		t.Fatal(err)
+	}
+	auditBefore, kvBefore := mustStreamState(t, audit), mustStreamState(t, backing)
+
+	got, err := ProbeWrites(ctx, url, "any", "any")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Failures) != 0 {
+		t.Fatalf("capped objects read as failed writes: %+v", got.Failures)
+	}
+	skipped := map[string]bool{}
+	for _, sk := range got.Skipped {
+		skipped[sk.Object] = true
+	}
+	if !skipped[AuditStream] || !skipped[StateBucket] {
+		t.Fatalf("skipped = %+v, want both %s and %s", got.Skipped, AuditStream, StateBucket)
+	}
+	if after := mustStreamState(t, audit); after.Msgs != auditBefore.Msgs || after.FirstSeq != auditBefore.FirstSeq || after.LastSeq != auditBefore.LastSeq {
+		t.Errorf("the probe changed the capped audit stream: %+v -> %+v", auditBefore, after)
+	}
+	if after := mustStreamState(t, backing); after.Msgs != kvBefore.Msgs || after.LastSeq != kvBefore.LastSeq {
+		t.Errorf("the probe changed the capped bucket: %+v -> %+v", kvBefore, after)
+	}
+	if e, err := kv.Get(ctx, "real.key"); err != nil || string(e.Value()) != "keep me" {
+		t.Errorf("the real key did not survive the probe: %v", err)
+	}
+}
+
+func mustStreamState(t *testing.T, st jetstream.Stream) jetstream.StreamState {
+	t.Helper()
+	info, err := st.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.State
+}
+
+// A skip shows in the status and is told once, as a log line; it is not the
+// write-failed event.
+func TestSkippedObjectsShowInStatusAndAreNotAWriteFailure(t *testing.T) {
+	s, _, ring := newTestSupervisor(t, "")
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.writeProbeFn = func(context.Context) (WriteReading, error) {
+		return WriteReading{Skipped: []WriteSkip{{Object: InboxStream, Reason: "at its message cap"}}}, nil
+	}
+	s.mu.Unlock()
+	s.checkStructure(context.Background())
+	st := s.Status()
+	if st.WriteSkipped != InboxStream {
+		t.Fatalf("status write_skipped = %q, want %s", st.WriteSkipped, InboxStream)
+	}
+	if st.WriteFailed != "" || len(writeFailedEvents(ring)) != 0 || !s.Ready() {
+		t.Fatalf("a skip was treated as a failure: %+v", st)
+	}
+}

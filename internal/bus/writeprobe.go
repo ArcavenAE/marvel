@@ -40,9 +40,18 @@ type WriteFailure struct {
 	Err    string `json:"err"`
 }
 
+// WriteSkip is one declared object the probe did not write to, because the
+// canary would have evicted or been refused by a real limit. It is not a
+// failure and not a pass: the object was not tested.
+type WriteSkip struct {
+	Object string `json:"object"`
+	Reason string `json:"reason"`
+}
+
 // WriteReading is one write-probe reading of a managed broker.
 type WriteReading struct {
 	Failures []WriteFailure `json:"failures,omitempty"`
+	Skipped  []WriteSkip    `json:"skipped,omitempty"`
 }
 
 // Problems renders the failing objects, sorted and comma separated, for the
@@ -52,6 +61,17 @@ func (w WriteReading) Problems() string {
 	names := make([]string, 0, len(w.Failures))
 	for _, f := range w.Failures {
 		names = append(names, f.Object)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// SkippedNames renders the objects the probe did not test, sorted and comma
+// separated.
+func (w WriteReading) SkippedNames() string {
+	names := make([]string, 0, len(w.Skipped))
+	for _, sk := range w.Skipped {
+		names = append(names, sk.Object)
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
