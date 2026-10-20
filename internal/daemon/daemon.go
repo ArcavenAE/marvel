@@ -3381,15 +3381,27 @@ func cleanDeclared(s string) string {
 	return b.String()
 }
 
-// sendInject sends the clear key, if any, then the text, and records the inject.
+// sendInject sends the clear key, if any, then the text with its Enter, and
+// records the inject only when every key reached the pane. The Enter goes out in
+// the same driver call as the text, so a failed Enter is a failed text send.
+// A failed send leaves no session.injected event, as it never did: that event
+// says keystrokes were delivered, and the error answers the caller. A clear key
+// that had already gone out is named in the error, since it is otherwise the one
+// keystroke of the inject with no trace.
 func sendInject(drv keySender, ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) error {
-	recordInject(ring, sess, p, clearKey, origin)
 	if clearKey != "" {
 		if err := drv.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
 			return fmt.Errorf("clear: %w", err)
 		}
 	}
-	return drv.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter)
+	if err := drv.SendKeys(sess.PaneID, p.Text, p.Literal, p.Enter); err != nil {
+		if clearKey != "" {
+			return fmt.Errorf("%w (the clear key %s was already sent)", err, clearKey)
+		}
+		return err
+	}
+	recordInject(ring, sess, p, clearKey, origin)
+	return nil
 }
 
 // recordInject emits session.injected for keystrokes that reached a pane. It

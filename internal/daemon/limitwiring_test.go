@@ -290,9 +290,9 @@ func (p pkgFiles) eachFunc(fn func(file, fun string, n ast.Node) bool) {
 func TestEveryKeyPressInTheDaemonIsInventoried(t *testing.T) {
 	t.Parallel()
 	want := map[string]int{
-		"*Daemon.notifyHandoff":  1, // the max-age handoff request, after the pre-flight
-		"*Daemon.handleInjectAs": 2, // the operator's inject: clear key, then the text
-		"limitSender":            1, // the limit action's digit
+		"*Daemon.notifyHandoff": 1, // the max-age handoff request, after the pre-flight
+		"sendInject":            2, // the operator's inject: clear key, then the text; handleInjectAs hands it the driver
+		"limitSender":           1, // the limit action's digit
 	}
 	got := map[string]int{}
 	p := parseDaemon(t)
@@ -340,7 +340,6 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.handleCapture d.driver.CapturePaneRange":            true,
 		"*Daemon.handleCapture d.driver.CapturePaneEscapes":          true,
 		"*Daemon.handleCapture d.driver.CapturePaneRangeEscapes":     true,
-		"*Daemon.handleInjectAs d.driver.SendKeys":                   true,
 		"*Daemon.readComposerAfterNudge d.driver.CapturePane":        true,
 		"*Daemon.readComposerAfterNudge d.driver.CapturePaneEscapes": true,
 		"*Daemon.repaintSettled d.driver.Repaint":                    true,
@@ -351,6 +350,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"preflightRefusal driver.CapturePaneJoined":                  true,
 		"bareDigitRefusal driver.CapturePaneEscapes":                 true,
 		"limitSender drv.SendKeys":                                   true,
+		"sendInject drv.SendKeys":                                    true,
 		"*Daemon.newLimitAction d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
