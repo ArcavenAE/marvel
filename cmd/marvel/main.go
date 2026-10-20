@@ -1072,6 +1072,15 @@ context reading; and a headless seat the daemon adopted across a restart, whose 
 marvel does not reopen, so it reads - until the seat is relaunched. A heartbeat-fed seat
 keeps its last reading across a restart.
 
+For a seat with a statusline feed, ACTIVE% is provisional: the share of the last 15
+minutes the seat spent waiting on model responses (API time), read from the same
+stored totals as TOUT and RATE. Tool runs count as inactive, so a busy seat can read
+low and a seat in a long build near 0%. The definition is still being developed. It
+is a - until 15 minutes of samples exist (including the first 15 minutes after the
+total drops), and a ? once the feed has been silent past the window or went silent
+for over three minutes inside it, as RATE does. Every other seat keeps the tick
+reading above, and --load averages whatever each seat shows.
+
 TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
 no such stream, so both show a - for it, with two exceptions. An interactive codex seat
 fills TOUT from the output total in its rollout, and RATE stays a -. An interactive

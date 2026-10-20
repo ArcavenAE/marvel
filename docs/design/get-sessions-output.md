@@ -208,6 +208,19 @@ TEAM stays reachable through `--columns` and `describe`.
     no work happens.
   - **Heartbeat seats.** The same as statusline seats.
 
+  **Provisional override for statusline seats.** A seat whose statusline feed
+  carries the API-time total (`APIDurationMS`) reads ACTIVE% from that total
+  instead: the API-time increase over 15 minutes as a share of the window,
+  held to 0..100 (`api.APIActivePct`). Tool runs are not API time, so a busy
+  seat can read low and a seat in a long build near 0%. It uses the cost
+  ring's rules (a lower total starts the ring over, a silence over
+  `CostGapLimit` starts it over and stamps a gap), so the cell is `-` until a
+  15 minute window of samples exists and `?` once the feed is silent past the
+  window or a gap sits inside it. Seats with no such feed keep the tick
+  reading, and `--load` averages whatever each seat shows. This is the
+  operator's provisional choice and is not a ruling; the definition is still
+  being developed.
+
   The difference shows in the cell, not only in `describe`:
   - an ACTIVE% or LAST-ACTIVE value from a statusline or heartbeat source
     carries a trailing `*` (`80%*`, `3m*`); a value from the token stream

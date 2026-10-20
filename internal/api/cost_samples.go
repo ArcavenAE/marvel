@@ -62,3 +62,100 @@ func recordCostSample(sess *Session, usd float64, at time.Time) {
 	}
 	sess.CostSamples = append([]CostSample(nil), sess.CostSamples[drop:]...)
 }
+
+// APISample is one stored value of the statusline's running API-time total
+// (milliseconds spent waiting on model responses) and when it was first seen.
+type APISample struct {
+	At time.Time `json:"at"`
+	MS int64     `json:"ms"`
+}
+
+// APIActiveWindow is the span ACTIVE% reads for a seat with a statusline feed.
+const APIActiveWindow = 15 * time.Minute
+
+// APIActivity says what the API-time reading of a seat amounts to.
+type APIActivity int
+
+const (
+	// APIActivityNone: the seat has no statusline feed, so ACTIVE% is the tick
+	// reading.
+	APIActivityNone APIActivity = iota
+	// APIActivityPending: a feed seat with no window of samples yet.
+	APIActivityPending
+	// APIActivityStale: the feed is silent past the window, or a gap sits in it.
+	APIActivityStale
+	// APIActivityReading: the percentage is valid.
+	APIActivityReading
+)
+
+// recordAPISample adds the API-time total seen at at, by the cost ring's rules
+// (recordCostSample): a lower total starts the ring over, an unchanged total
+// stores nothing but stamps APISeenAt, and a silence over CostGapLimit starts
+// the ring over and stamps APIGapAt, so a stopped feed never reads as a flat
+// run and a restart never puts a whole silence into one window.
+func recordAPISample(sess *Session, ms int64, at time.Time) {
+	gap := !sess.APISeenAt.IsZero() && at.Sub(sess.APISeenAt) > CostGapLimit
+	sess.APISeenAt = at
+	if gap {
+		sess.APISamples = []APISample{{At: at, MS: ms}}
+		sess.APIGapAt = at
+		return
+	}
+	n := len(sess.APISamples)
+	switch {
+	case n == 0 || ms < sess.APISamples[n-1].MS:
+		sess.APISamples = []APISample{{At: at, MS: ms}}
+		return
+	case ms == sess.APISamples[n-1].MS:
+		return
+	case at.Sub(sess.APISamples[n-1].At) < costSampleSpacing:
+		sess.APISamples[n-1].MS = ms
+	default:
+		sess.APISamples = append(sess.APISamples, APISample{At: at, MS: ms})
+	}
+	cutoff := at.Add(-CostSampleKeep)
+	drop := 0
+	for drop+1 < len(sess.APISamples) && !sess.APISamples[drop+1].At.After(cutoff) {
+		drop++
+	}
+	if over := len(sess.APISamples) - drop - costSampleCap; over > 0 {
+		drop += over
+	}
+	sess.APISamples = append([]APISample(nil), sess.APISamples[drop:]...)
+}
+
+// APIActivePct is the provisional ACTIVE% of a seat with a statusline feed: the
+// API-time increase over APIActiveWindow as a share of the window, held to
+// 0..100. Tool runs are not API time, so a seat in a long build reads near 0.
+// It follows RATE's states: pending until a window of samples exists (including
+// the first window after a reset), stale once the feed has been silent past the
+// window or a silence sits inside it, and none for a seat with no feed, whose
+// reading stays the tick share.
+func APIActivePct(s Session, now time.Time) (float64, APIActivity) {
+	if s.APIDurationMS == nil {
+		return 0, APIActivityNone
+	}
+	if len(s.APISamples) == 0 {
+		return 0, APIActivityPending
+	}
+	seen := s.APISeenAt
+	if seen.IsZero() {
+		seen = s.LastHeartbeat
+	}
+	start := now.Add(-APIActiveWindow)
+	if now.Sub(seen) > APIActiveWindow || s.APIGapAt.After(start) {
+		return 0, APIActivityStale
+	}
+	if s.APISamples[0].At.After(start) {
+		return 0, APIActivityPending
+	}
+	anchor := s.APISamples[0].MS
+	for _, c := range s.APISamples {
+		if c.At.After(start) {
+			break
+		}
+		anchor = c.MS
+	}
+	pct := 100 * float64(*s.APIDurationMS-anchor) / float64(APIActiveWindow.Milliseconds())
+	return min(max(pct, 0), 100), APIActivityReading
+}

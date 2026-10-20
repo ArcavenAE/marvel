@@ -142,6 +142,7 @@ func cloneSession(s *Session) Session {
 	out.SpendOut = copyInt(s.SpendOut)
 	out.SpendPromptTokens = copyInt(s.SpendPromptTokens)
 	out.CostSamples = slices.Clone(s.CostSamples)
+	out.APISamples = slices.Clone(s.APISamples)
 	if s.HarnessState != nil {
 		hs := *s.HarnessState
 		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)
@@ -891,6 +892,7 @@ func recordTotals(sess *Session, r HeartbeatRequest, dropped bool) {
 	}
 	if r.APIDurationMS != nil {
 		moved = moved || sess.APIDurationMS == nil || *sess.APIDurationMS != *r.APIDurationMS
+		recordAPISample(sess, *r.APIDurationMS, sess.LastHeartbeat)
 		v := *r.APIDurationMS
 		sess.APIDurationMS = &v
 	}
