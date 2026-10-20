@@ -64,7 +64,14 @@ func (s SessionState) CountsAsAlive() bool {
 type HealthState string
 
 const (
-	HealthUnknown   HealthState = "unknown"
+	// HealthUnknown: marvel asserts nothing (no check declared, inside the
+	// first-heartbeat grace, or a finished headless run).
+	HealthUnknown HealthState = "unknown"
+	// HealthAlive: the process runs in a pane that exists, and no check
+	// beyond that ran. It is what a process-alive check can say. The restart
+	// path never reads it, and decay counts it the way it counts healthy.
+	HealthAlive HealthState = "alive"
+	// HealthHealthy: a check ran and passed (a heartbeat inside its timeout).
 	HealthHealthy   HealthState = "healthy"
 	HealthUnhealthy HealthState = "unhealthy"
 )
