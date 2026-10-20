@@ -14,21 +14,27 @@ import (
 // The checks themselves are not here. This file says which names a role may
 // declare; a check that proves a duty is built separately (aae-orc-lxb9b).
 
-// The duties every supervised seat carries, whatever its role declares.
+// The duty names. DutyFirstTurn and DutyAck are the duties every seat marvel
+// spawns carries, whatever its role declares (config.ResolvedDuties).
 const (
 	DutyFirstTurn = "first-turn"
 	DutyAck       = "ack"
+	DutyGHRead    = "gh.read"
+	DutyGHComment = "gh.comment"
+	DutyGHPost    = "gh.post"
+	DutyJiraRead  = "jira.read"
+	DutyJiraWrite = "jira.write"
 )
 
 // dutyLibrary is the fixed set of duty names, sorted.
 var dutyLibrary = []string{
 	DutyAck,
 	DutyFirstTurn,
-	"gh.comment",
-	"gh.post",
-	"gh.read",
-	"jira.read",
-	"jira.write",
+	DutyGHComment,
+	DutyGHPost,
+	DutyGHRead,
+	DutyJiraRead,
+	DutyJiraWrite,
 }
 
 // DutyNames returns the fixed duty library, sorted. The slice is a copy.
