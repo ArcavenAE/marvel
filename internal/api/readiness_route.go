@@ -158,11 +158,17 @@ func dutySourceVantage(src string) string {
 	return v
 }
 
+// matchedDialogClasses are the dialog pattern classes. A pane:dialog code is a
+// matched dialog only when it names one of them; any other code there
+// (no-dialog-pattern, unknown, or a code from another stage) is not a match
+// (design section 4, "a held dialog"), so it never excludes.
+var matchedDialogClasses = map[string]bool{"consent": true, "trust": true, "folder-trust": true, "logged-out": true}
+
 // structuralDutySource reports whether a fail's Source is one of the codes
 // that may exclude (design section 4, "Structural codes"): the far side
 // refused the credential, the watcher saw a denial, or a dialog pattern
-// matched. Every reach code, rate-limited, and an unmatched dialog are
-// transient.
+// matched. Every reach code, rate-limited, and anything under dialog that is
+// not a matched pattern class are transient.
 func structuralDutySource(src string) bool {
 	switch src {
 	case "seat:auth:auth-rejected", "seat:auth:forbidden":
@@ -176,7 +182,7 @@ func structuralDutySource(src string) bool {
 	case "denial":
 		return parts[0] == "seat" || parts[0] == "pane"
 	case "dialog":
-		return parts[0] == "pane" && len(parts) == 3 && parts[2] != "unknown"
+		return parts[0] == "pane" && len(parts) == 3 && matchedDialogClasses[parts[2]]
 	}
 	return false
 }
