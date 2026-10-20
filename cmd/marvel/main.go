@@ -173,6 +173,7 @@ func send(req daemonrpc.Request) (*daemonrpc.Response, error) {
 	if w := config.DaemonHomeWarning(addr, resp.DaemonHome, config.ClientHome()); w != "" {
 		fmt.Fprintln(os.Stderr, w)
 	}
+	noteBuildMismatch(os.Stderr, req.Method, resp.DaemonBuild)
 	return resp, nil
 }
 
@@ -779,6 +780,7 @@ func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, print
 			if w := config.DaemonHomeWarning(addr, resp.DaemonHome, config.ClientHome()); w != "" {
 				fmt.Fprintln(os.Stderr, w)
 			}
+			noteBuildMismatch(os.Stderr, daemonrpc.MethodEventsWatch, resp.DaemonBuild)
 		}
 		if b.Dropped > 0 {
 			fmt.Fprintf(os.Stderr, "note: %d event(s) dropped from the live stream (this client fell behind the ring); 'marvel events -n 0' still holds them if the ring has not wrapped\n", b.Dropped)

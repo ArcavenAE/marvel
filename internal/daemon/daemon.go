@@ -122,6 +122,10 @@ type Daemon struct {
 	// in the layout works either; the field is then simply absent from
 	// the wire and the client has nothing to compare.
 	home string
+
+	// buildStamp is build encoded once as JSON, stamped onto every response
+	// beside home so the client can warn on any verb when the builds differ.
+	buildStamp json.RawMessage
 	// cluster is the name the daemon's config gives the cluster it serves,
 	// set at start by identifyCluster. Empty when the config names none.
 	cluster string
@@ -416,6 +420,14 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		reexec:    syscall.Exec,
 
 		leafLossCause: leafLossCause,
+	}
+	// The build is fixed for this process image, so its stamp is encoded once.
+	// A Build is plain strings and a bool, so this cannot fail in practice; if
+	// it did, replies would go out unstamped, as from an older daemon.
+	if raw, err := json.Marshal(opts.Build); err != nil {
+		log.Printf("warning: encode build stamp: %v", err)
+	} else {
+		d.buildStamp = raw
 	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
@@ -1001,12 +1013,13 @@ func reportInvalidReplicas(store *api.Store, sink events.Emitter) {
 	}
 }
 
-// stamp records which daemon answered. It sits on the write path rather
-// than in the 14 handlers so no method can be added without it, and it
-// covers the decode-error reply too: a malformed request answered by the
-// wrong daemon is worth attributing as much as a successful one.
+// stamp records which daemon answered and which build it is. It sits on the
+// write path rather than in the 14 handlers so no method can be added without
+// it, and it covers the decode-error reply too: a malformed request answered by
+// the wrong daemon is worth attributing as much as a successful one.
 func (d *Daemon) stamp(resp Response) Response {
 	resp.DaemonHome = d.home
+	resp.DaemonBuild = d.buildStamp
 	resp.Starting = d.adoptingSince.Load() != 0
 	return resp
 }
