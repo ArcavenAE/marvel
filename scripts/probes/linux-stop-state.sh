@@ -24,6 +24,9 @@ RECORDS="$WORK/records.tsv"
 unset TMUX
 SERVER=""
 SIGNALLED=()
+# REAP holds pids that outlive the tmux server: arm 5's setsid sleep runs in
+# its own session, so killing the server does not reach it.
+REAP=()
 
 # Every tmux call is bounded, so a server left stopped by a broken arm cannot
 # hang the run.
@@ -35,6 +38,7 @@ cleanup() {
 	[[ -n "$SERVER" ]] && kill -CONT "$SERVER" 2>/dev/null
 	for p in "${SIGNALLED[@]}"; do kill -CONT "$p" 2>/dev/null; done
 	tm kill-server 2>/dev/null
+	for p in "${REAP[@]}"; do kill "$p" 2>/dev/null; done
 	rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -187,6 +191,7 @@ for rep in $(seq "$REPS"); do
 	w=$(new_pane "sh $WORK/setsid-child.sh $pidf") || die "new pane"
 	for _ in $(seq 20); do [[ -s "$pidf" ]] && break; sleep 0.1; done
 	c=$(cat "$pidf" 2>/dev/null) || die "no setsid child pid"
+	REAP+=("$c")
 	echo "arm 5 rep $rep: wrapper sid $(ps -o sid= -p "$w" | tr -d ' '), child sid $(ps -o sid= -p "$c" | tr -d ' ')"
 	stop STOP "$c"
 	sample 5-setsid-child "$rep" "$c" 1 5
