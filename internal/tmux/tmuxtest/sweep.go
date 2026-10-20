@@ -106,7 +106,7 @@ func sweepNames(names []string) []string {
 // usually exits with it and leaves the file, and the process sweep above never
 // sees a server that is gone. An entry goes only when all of these hold: its
 // name has the exact marvel-test-<package>-<pid> shape, the pid is not alive,
-// it is a socket file, and nothing accepts a connection on it. A socket a
+// it is a socket file, and a connect to it is refused. A socket a
 // server still answers on is left, since removing its file would hide a
 // running server from every client. Failures are ignored, as in SweepDead.
 func sweepStaleSockets(dir string) []string {
@@ -129,8 +129,15 @@ func sweepStaleSockets(dir string) []string {
 		if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSocket == 0 {
 			continue
 		}
-		if c, err := dialUnix(path); err == nil {
+		c, err := dialUnix(path)
+		if err == nil {
 			_ = c.Close()
+			continue
+		}
+		// Only a refused connection says nobody listens. Any other failure
+		// (a sandbox that denies unix-connect gives EPERM) says nothing about
+		// the server, so the file stays.
+		if !errors.Is(err, syscall.ECONNREFUSED) {
 			continue
 		}
 		if os.Remove(path) == nil {
@@ -141,10 +148,12 @@ func sweepStaleSockets(dir string) []string {
 }
 
 // parsePid reads the pid in a test server name. It reports false for anything
-// that is not a positive pid.
+// that is not a positive pid that fits in 32 bits: darwin takes a 32-bit pid at
+// the syscall, so a wider value would act on the process whose low 32 bits
+// match, and a name carrying one is not the pid it appears to be.
 func parsePid(s string) (int, bool) {
-	pid, err := strconv.Atoi(s)
-	return pid, err == nil && pid > 0
+	pid, err := strconv.ParseInt(s, 10, 32)
+	return int(pid), err == nil && pid > 0
 }
 
 // dialUnix is how sweepStaleSockets asks whether a server answers on a socket;
@@ -153,12 +162,39 @@ var dialUnix = func(path string) (net.Conn, error) { return net.Dial("unix", pat
 
 // UseScratchTmuxTmpDir points TMUX_TMPDIR at a directory of the test binaries'
 // own when it is unset, and returns the directory it set ("" when it left the
-// variable alone).
-func UseScratchTmuxTmpDir() string { return "" }
+// variable alone). Without it a test binary runs its server in, and sweeps, the
+// operator's own /tmp/tmux-<uid>. The directory is the same on every run, so
+// the next run's sweep finds what a killed run left.
+func UseScratchTmuxTmpDir() string {
+	if os.Getenv("TMUX_TMPDIR") != "" {
+		return ""
+	}
+	dir := scratchTmuxTmpDir("/tmp")
+	if dir == "" || os.Setenv("TMUX_TMPDIR", dir) != nil {
+		return ""
+	}
+	return dir
+}
 
 // scratchTmuxTmpDir returns the per-user directory under base for test
-// binaries' tmux sockets, creating it with mode 0700.
+// binaries' tmux sockets, created with mode 0700. base is shared and the name
+// is predictable, so an existing entry is used only when it is a real
+// directory this user owns with mode 0700; otherwise (a planted symlink, a
+// directory of another user) the binary gets a fresh private directory.
 func scratchTmuxTmpDir(base string) string {
-	_ = base
-	return ""
+	prefix := "marvel-test-tmux-" + strconv.Itoa(os.Getuid())
+	dir := filepath.Join(base, prefix)
+	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+		return ""
+	}
+	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() && fi.Mode().Perm() == 0o700 {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == os.Getuid() {
+			return dir
+		}
+	}
+	fresh, err := os.MkdirTemp(base, prefix+"-")
+	if err != nil {
+		return ""
+	}
+	return fresh
 }
