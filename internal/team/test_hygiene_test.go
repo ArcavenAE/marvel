@@ -2,6 +2,7 @@ package team
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -36,20 +37,26 @@ func (r *recordingT) Fatalf(format string, args ...any) {
 // the next line when setup failed, and one failed setup then panics the whole
 // test binary and skips every test after it.
 func mustRoleHealth(t fataler, ctrl *Controller, workspace, team, role string) *RoleHealth {
-	_ = t
-	rh, _ := ctrl.RoleHealthSnapshot(workspace, team, role)
+	t.Helper()
+	rh, ok := ctrl.RoleHealthSnapshot(workspace, team, role)
+	if !ok {
+		t.Fatalf("no health recorded for %s/%s/%s (the session may not have been created)", workspace, team, role)
+	}
 	return rh
 }
 
 func TestMustRoleHealthFailsTheTestWhenNothingWasRecorded(t *testing.T) {
 	ctrl := NewController(api.NewStore(), nil)
 	rec := &recordingT{}
-	done := make(chan *RoleHealth, 1)
+	var rh *RoleHealth
+	finished := make(chan struct{})
 	go func() {
-		defer func() { _ = recover() }()
-		done <- mustRoleHealth(rec, ctrl, "ws", "squad", "worker")
+		// Goexit, which recordingT.Fatalf calls, runs deferred calls, so the
+		// channel closes whether or not the helper returned.
+		defer close(finished)
+		rh = mustRoleHealth(rec, ctrl, "ws", "squad", "worker")
 	}()
-	rh := <-done
+	<-finished
 	if !rec.fatal {
 		t.Fatalf("mustRoleHealth returned %v without failing the test", rh)
 	}
@@ -64,7 +71,9 @@ func TestMustRoleHealthFailsTheTestWhenNothingWasRecorded(t *testing.T) {
 // sandbox-exec profile does that) every tmux-backed test fails with a bare
 // has-session error. A skip that names ps is the better answer.
 func psProblem(probe func() error) string {
-	_ = probe
+	if err := probe(); err != nil {
+		return fmt.Sprintf("ps cannot run (%v): the tmux driver reads it to tell an absent server from an unreachable one, so tmux-backed tests cannot create a session here", err)
+	}
 	return ""
 }
 
