@@ -58,3 +58,11 @@ jobs:
             cat probe.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Reports, never fails: any probe sleep still alive after the script's
+      # cleanup is an orphan the cleanup missed.
+      - name: List probe sleeps left after the run
+        if: always()
+        run: |
+          left=$(pgrep -af '^sleep 600$' || true)
+          echo "probe sleeps left: ${left:-none}"
