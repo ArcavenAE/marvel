@@ -98,7 +98,7 @@ func TestRecordInjectCountsWhatWasSent(t *testing.T) {
 	}
 }
 
-// Through the handler: `inject <session> ” --enter` sends only the Enter key,
+// Through the handler: `inject <session> "" --enter` sends only the Enter key,
 // and the event says so.
 func TestInjectEmptyTextWithEnterRecordsTheKey(t *testing.T) {
 	d := newHandlerDaemon(t)
