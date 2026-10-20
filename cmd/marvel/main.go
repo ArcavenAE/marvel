@@ -2095,7 +2095,9 @@ func upgradeCmd() *cobra.Command {
 If installed via Homebrew, delegates to brew upgrade. Homebrew installs only
 the tap's current formula, so --version is refused there unless it names that
 build. Otherwise downloads the latest release from GitHub; --version takes an
-exact release tag and nothing else. A dev build is not upgraded.
+exact release tag and nothing else. A dev build is not upgraded. A direct
+download is checked against the release's checksums.txt when it publishes
+one, and the build it replaces is kept under the marvel home in versions/.
 
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
