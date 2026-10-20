@@ -1182,6 +1182,300 @@
         "verdict": "ask-first",
         "reason": "no-duties"
       }
+    },
+    {
+      "name": "no dialog pattern is not a matched dialog and asks first",
+      "rule": "4, 6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:no-dialog-pattern"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "pane:dialog:no-dialog-pattern"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a code from another stage is not a matched dialog",
+      "rule": "4, 6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:dns"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "pane:dialog:dns"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a dialog with no class is not a matched dialog",
+      "rule": "4, 6.3",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "ask-first",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "ask-first",
+            "reason": "transient-fail",
+            "source": "pane:dialog"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a matched consent dialog excludes",
+      "rule": "4, 6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:consent"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "pane:dialog:consent"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a matched folder-trust dialog excludes",
+      "rule": "4, 6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:folder-trust"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "pane:dialog:folder-trust"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a matched logged-out dialog excludes",
+      "rule": "4, 6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:dialog:logged-out"
+          },
+          "duty.ack": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "peer:ack"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "pane:dialog:logged-out"
+          },
+          {
+            "duty": "ack",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "peer:ack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a denial seen from the seat excludes",
+      "rule": "4, 6.1",
+      "input": {
+        "seat": "ws/team-reviewer-g1-0",
+        "duties": [
+          "first-turn",
+          "ack"
+        ],
+        "cells": {
+          "duty.first-turn": {
+            "value": "proven",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "pane:turn"
+          },
+          "duty.ack": {
+            "value": "fail",
+            "observed_at": "2026-10-10T11:50:00Z",
+            "valid_until": "2026-10-10T12:30:00Z",
+            "source": "seat:denial"
+          }
+        }
+      },
+      "want": {
+        "verdict": "excluded",
+        "duties": [
+          {
+            "duty": "first-turn",
+            "verdict": "eligible",
+            "reason": "proven",
+            "source": "pane:turn"
+          },
+          {
+            "duty": "ack",
+            "verdict": "excluded",
+            "reason": "structural-fail",
+            "source": "seat:denial"
+          }
+        ]
+      }
     }
   ]
 }
