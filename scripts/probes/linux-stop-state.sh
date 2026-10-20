@@ -39,7 +39,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-die() { echo "rig error: $*" >&2; exit 2; }
+# A trace of every command goes to a file, and a rig error prints its tail, so
+# a broken run says where it broke.
+exec 9>"$WORK/trace"
+BASH_XTRACEFD=9
+set -x
+
+die() {
+	echo "rig error: $*" >&2
+	echo "--- last 40 traced commands ---" >&2
+	tail -n 40 "$WORK/trace" >&2
+	exit 2
+}
 
 st() { ps -o stat= -p "$1" 2>/dev/null | cut -c1; }
 
@@ -112,12 +123,13 @@ echo "scratch tmux server pid $SERVER"
 printf 'arm\trep\tpid\tat\tstat\n' | tee "$RECORDS"
 
 for rep in $(seq "$REPS"); do
-	# Control: a stopped process with no tmux above it stays T. Shows the read works.
-	sleep 600 &
-	p=$!
+	# Control: a stopped process with no tmux above it stays T. Shows the read
+	# works. The sleep is reparented away from this shell, so the shell never
+	# sees a child of its own stop (the first hosted run broke on that).
+	p=$(sh -c 'sleep 600 >/dev/null 2>&1 & echo $!') || die "control sleep"
 	stop STOP "$p"
 	sample control-no-tmux "$rep" "$p" 0.05 1 5
-	kill -CONT "$p"; kill "$p"; wait "$p" 2>/dev/null
+	kill -CONT "$p"; kill "$p"
 
 	# Arm 1: SIGSTOP to the pane's own process with tmux running.
 	# Darwin: undone by the server within a second.
