@@ -37,6 +37,21 @@ const (
 	StateResuming State = "resuming"
 )
 
+// checkPids refuses a record holding a pid childproof would refuse, before
+// anything is saved or signalled. Without it, Freeze would drop such a seat as
+// gone instead of refusing the record.
+func checkPids(rec Record) error {
+	if err := childproof.CheckPid(rec.Server.Pid); err != nil {
+		return fmt.Errorf("suspend: the tmux server: %w", err)
+	}
+	for _, s := range rec.Seats {
+		if err := childproof.CheckPid(s.Pid); err != nil {
+			return fmt.Errorf("suspend: a seat: %w", err)
+		}
+	}
+	return nil
+}
+
 // Proc is one recorded process: its pid and the identity proven when it was
 // collected.
 type Proc struct {
@@ -116,6 +131,9 @@ func (f *Freezer) Freeze(rec Record, store Store) (Record, Result, error) {
 	var res Result
 	if rec.State != "" {
 		return rec, res, fmt.Errorf("%w: freeze needs a new record, this one is %s", ErrState, rec.State)
+	}
+	if err := checkPids(rec); err != nil {
+		return rec, res, err
 	}
 	server, err := f.prober.Prove(rec.Server.Pid, rec.Server.Identity)
 	if err != nil {
@@ -227,6 +245,9 @@ func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
 	var res Result
 	if rec.State != StateSuspended && rec.State != StateSuspending {
 		return res, fmt.Errorf("%w: thaw needs a suspended or suspending record, this one is %q", ErrState, rec.State)
+	}
+	if err := checkPids(rec); err != nil {
+		return res, err
 	}
 	rec.State = StateResuming
 	if err := store.Save(rec); err != nil {
