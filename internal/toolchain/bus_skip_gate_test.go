@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -304,6 +305,12 @@ func busSkipsGated(run string) bool {
 // ./<pkg> or ./<pkg>/... and writes its stream with "> <file>", the gate's
 // file. Lines continued with a trailing backslash are read as one.
 //
+// Every command before the gate must be set with option words only, or a go
+// test line that ends at "> <file>" and carries no shell operator, so nothing
+// before the gate can decide the step's status in its place: a trap on EXIT
+// that exits 0, or a function named scripts/no-skips.sh, makes the run read as
+// nothing gated.
+//
 // The shell's handling of go test's own exit status does not matter here:
 // under set +e or shell: bash {0} the gate still reads the stream, and fails
 // on a skip, a failed test or a package with no passing test.
@@ -324,6 +331,11 @@ func gatedPackages(run string, pkgs []string, race bool) []string {
 		return nil
 	}
 	file, named := gate[1], gate[2:]
+	for _, f := range cmds[:len(cmds)-1] {
+		if !setLine(f) && !plainTestLine(f, file) {
+			return nil
+		}
+	}
 	for _, arg := range named {
 		if !strings.HasPrefix(arg, modulePath+"/") || strings.ContainsAny(arg, ";|&<>$`()'\"\\") {
 			return nil
@@ -342,6 +354,38 @@ func gatedPackages(run string, pkgs []string, race bool) []string {
 		}
 	}
 	return out
+}
+
+// setLine reports whether the fields of one command are set with only option
+// words, such as set -euo pipefail or set +e.
+func setLine(fields []string) bool {
+	if fields[0] != "set" {
+		return false
+	}
+	for _, f := range fields[1:] {
+		if !setWord.MatchString(f) {
+			return false
+		}
+	}
+	return true
+}
+
+var setWord = regexp.MustCompile(`^([-+][A-Za-z]+|[a-z]+)$`)
+
+// plainTestLine reports whether the fields of one command are a go test run
+// that ends with "> file" and carries no shell operator before it, so it runs
+// nothing but go test.
+func plainTestLine(fields []string, file string) bool {
+	n := len(fields)
+	if n < 4 || fields[0] != "go" || fields[1] != "test" || fields[n-2] != ">" || fields[n-1] != file {
+		return false
+	}
+	for _, f := range fields[2 : n-2] {
+		if strings.ContainsAny(f, ";|&<>()`{}") {
+			return false
+		}
+	}
+	return true
 }
 
 // testLineNames reports whether the fields of one command are a go test run

@@ -108,8 +108,10 @@ func TestMacOSGaps(t *testing.T) {
 		// The reviewer's edits on #985 that passed the old guard. Each one either
 		// moves the gate off the last command, which this guard reports, or
 		// leaves it last, where it reads the stream: -run ^$, -skip . and -exec
-		// /usr/bin/true leave no passing test, and set +e, shell: bash {0} and
-		// && can no longer hide a failing one (TestNoSkipsGate).
+		// /usr/bin/true leave no passing test, and set +e and shell: bash {0}
+		// can no longer hide a failing one (TestNoSkipsGate). Before the gate
+		// only set and a plain go test line may run, so an && on the test line,
+		// a trap on EXIT or a function named after the gate is reported too.
 		{"a command after the gate (shell: bash {0} with a later line)", job(installStep, run(gated+"\necho done")), 2},
 		{"&& then a later line after the gate", job(installStep, run(testLine+" && echo ran\n"+gate+"\necho done")), 2},
 		{"|| true after the gate", job(installStep, run(gated+" || true")), 2},
