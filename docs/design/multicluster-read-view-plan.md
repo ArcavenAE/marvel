@@ -1,7 +1,9 @@
 # Multicluster read view: build plan and red tests
 
 - **Status:** Proposal, 2026-10-21, for review. It changes no code. Ticket
-  edges and bodies change only after this plan is reviewed.
+  edges and bodies change only after this plan is reviewed. Three of its four
+  ruling requests were ruled by the operator on 2026-10-21 (R1, R2, R4,
+  section 8); R3 is open.
 - **Design it builds:** #816 (design, ruled by the operator on 2026-10-10;
   the ruling is the comment on #816). Seed: `_kos/ideas/multicluster-view.md`
   and `question-multicluster-view`.
@@ -113,11 +115,13 @@ time, including when the exit code is 11.
 | 7 | `no_answer_in_time` (on a write: may have applied) |
 | 8 | `auth_refused` |
 | 9 | `host_key_unknown` or `host_key_changed` |
-| 10 | partial: at least one cluster answered and at least one did not, or any `starting` |
+| 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster a,b` or `--all-clusters`, any `starting` (R4) |
 | 11 | no cluster answered, and the causes differ |
 
 One cluster, or every cluster failing for the same reason, exits with that
-reason's code. A host-key failure is never 0.
+reason's code. A host-key failure is never 0. A plain single-cluster
+`get sessions`, with no cluster-set flag, keeps today's exit when the daemon
+is starting (R4).
 
 ### 3.3 Same-daemon merge (#831)
 
@@ -133,7 +137,8 @@ second reading `same_daemon` and naming the first in config order. A missed
 merge costs duplicate rows; a false merge would label one cluster's rows with
 another's name and send a later write to the wrong place.
 
-This replaces the ruled criterion, so it is ruling request R2 (section 8).
+This replaces the criterion ruled on 2026-10-10. RULED 2026-10-21 by the
+operator (R2, section 8).
 
 ### 3.4 The filter (#823)
 
@@ -230,7 +235,7 @@ Rigs:
 | 4 | #826 | `TestAgentConnClosedAfterCall`: a fake agent on a scratch `SSH_AUTH_SOCK` counts zero open connections after the call returns, and zero after the timer fires. | S |
 | 5 | #823 | `TestFilterReplacesC0C1DELFormat`. `TestNewlineCannotForgeRow`: a name holding `x\nother:ws/evil\trunning` draws exactly one row. `TestPlaceholderAddsNoSeparator`: for any input, the output holds no more `:`, `/` or `?` than the input. `TestSeparatorLookalikesReplacedInKeyParts`. `TestDaemonErrorFiltered`: an error text holding ESC prints filtered. | U, F |
 | 6 | #827 | `TestSortStableOnWorkspaceName`: tied rows keep their order over 100 shuffled inputs. | U |
-| 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: rows shown, exit 10. `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. If R1 is ruled: `TestFanOutOffersOnlyEntryKey`. | F, L, U |
+| 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster-set flag, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a scratch default key file; each listener sees one key, the entry's own, the agent gets zero connections and the default key file is never offered (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
 | 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). `TestWriteCutByTimerSaysMayHaveApplied`: exit 7. | F, S |
 | 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`. | U, F |
 | 10 | #825 | `TestFutureStampReadsQuestion`: a pinned clock gives `?` and the reason; a missing stamp reads `-`. | U |
@@ -255,7 +260,8 @@ Each test was checked against its ticket and that ticket's dependencies:
 - **The byte bound had no owner.** Assigned to #761, which already owns the
   client exchange; #830 maps the error to `bad_reply`.
 - **#812's host-key and auth types** need the S rig and nothing else.
-- **`TestFanOutOffersOnlyEntryKey`** belongs to #830 only if R1 is ruled.
+- **`TestFanOutOffersOnlyEntryKey`** and **`TestFanOutNoIdentityIsAuthRefused`**
+  belong to #830 (R1 is ruled); both need only the L rig.
 - Every other row is reachable from its ticket and the tickets it depends on.
 
 ## 7. Run conditions for every test, script and mutant
@@ -278,32 +284,34 @@ Each test was checked against its ticket and that ticket's dependencies:
   bound's value, are operator steps whose output goes into the PR. Neither is
   a test.
 
-## 8. Ruling requests
+## 8. Rulings
 
-These are recommendations, not decisions. Each is valid until 2026-10-28; the
-architect re-checks it then.
+R1, R2 and R4 were RULED 2026-10-21 by the operator. R3 is open and holds only
+the placeholder choice on #823.
 
-- **R1. Fan-out credentials.** Recommended (all six seats): during a fan-out,
-  each cluster's dial offers exactly one key, the identity in that cluster's
-  entry or marvel's own client key when the entry names none. It never uses
-  the SSH agent or the user's SSH directory keys. A cluster with neither key
-  loadable gets `auth_refused` before any dial. Today a fan-out would offer
-  every agent key and default key file to every cluster (`client.go:404-449`).
-  Cost: a cluster whose key lives only in an agent (a hardware key) reads
-  `auth_refused` in a fan-out. A follow-on, as its own ticket after #830: an
-  `identity` that names a `.pub` file selects only the matching agent signer.
-- **R2. Same-daemon merge criterion.** Recommended (all six): the rule in
-  section 3.3, replacing "same start time and pid, and the same sessions".
-- **R3. The placeholder.** The panel split 2-2-2. U+FFFD: one rune, so
+- **R1. Fan-out credentials. RULED 2026-10-21 by the operator: yes.** During
+  a fan-out, each cluster's dial offers exactly one key: the identity in that
+  cluster's entry, or marvel's own client key when the entry names none. It
+  never uses the SSH agent or the user's SSH directory keys. A cluster with
+  neither key loadable gets `auth_refused` before any dial. Today a fan-out
+  would offer every agent key and default key file to every cluster
+  (`client.go:404-449`). Cost: a cluster whose key lives only in an agent (a
+  hardware key) reads `auth_refused` in a fan-out. The follow-on, where an
+  `identity` that names a `.pub` file selects only the matching agent signer,
+  is its own ticket after #830; it is filed after this plan is reviewed.
+- **R2. Same-daemon merge criterion. RULED 2026-10-21 by the operator: yes.**
+  Merge two entries only on the same socket inode, or on a strict-verified host
+  fingerprint (plus the socket path for `ssh://`), and a matching pid and start
+  time. Show the union and keep both status lines (section 3.3).
+- **R3. The placeholder. Open.** The panel split 2-2-2. U+FFFD: one rune, so
   width stays in the cell's unit, and it cannot be mistaken for typed text.
   A visible ASCII escape such as `\x1b`: it tells the operator which byte was
-  there and stays ASCII in any terminal or log. No recommendation; #823 needs
-  the answer before it starts.
-- **R4. Scope of the `starting` exit.** Recommended: exit 10 for `starting`
-  applies under `--cluster a,b` or `--all-clusters` only, and a plain
-  single-cluster `get sessions` keeps today's exit so existing scripts do not
-  change. (One seat's scoped vote; the other four voting for `starting` did
-  not address the plain command.)
+  there and stays ASCII in any terminal or log. The operator asked for the
+  full details before ruling. Only #823's placeholder choice waits on it; the
+  rest of #823's tests and every other link can proceed.
+- **R4. Scope of the `starting` exit. RULED 2026-10-21 by the operator:
+  yes.** Exit 10 for `starting` applies only under `--cluster a,b` or
+  `--all-clusters`. A plain single-cluster `get sessions` keeps today's exit.
 - **Carried from 2026-10-10:** the bare-key-on-writes ruling is re-checked
   when #830 ships.
 
