@@ -92,3 +92,14 @@ func TestSingleClusterResolveUnchanged(t *testing.T) {
 		t.Errorf("got (%q, %q, %q, %v), want cluster b's address with the -i identity on rung %q", addr, opts.Identity, rung, err, rungCluster)
 	}
 }
+
+// TestSingleClusterResolveKeepsEntryIdentity: with no -i, the
+// single-cluster resolver dials with the entry's own identity.
+func TestSingleClusterResolveKeepsEntryIdentity(t *testing.T) {
+	clusterArgFixture(t)
+	socketPath, identityPath = "", ""
+	_, opts, _, err := resolveDaemonRung()
+	if err != nil || opts.Identity != "/scratch/b_ed25519" {
+		t.Errorf("identity = %q (%v), want cluster b's own /scratch/b_ed25519", opts.Identity, err)
+	}
+}
