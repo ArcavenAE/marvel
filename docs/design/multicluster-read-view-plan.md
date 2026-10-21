@@ -65,9 +65,12 @@ Agreed by all six seats:
   single-cluster command keeps today's behavior with no deadline (Q1,
   section 8). One exception: on `events --watch` the timer bounds the dial and
   handshake only, since the stream is meant to stay open
-  (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the watch: interval 2 s (`cmd/marvel/main.go:1152`) <
-  stale banner 5 s (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the
-  operator sees "late" before "gave up".
+  (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the
+  multi-cluster watch (#832), the only watch that arms the timer under Q1
+  (a): interval 2 s (`cmd/marvel/main.go:1152`) < stale banner 5 s
+  (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the operator sees "late"
+  before "gave up". A single-cluster watch has no timer; its 5 s view
+  deadline only raises the stale banner.
 - **Writes and the timer.** Under Q1 (a) the timer never cuts a write.
   Every write names one cluster (section 2), single-cluster commands keep no
   deadline, and today no write sets `DialOptions.Timeout`: its only caller
@@ -183,7 +186,7 @@ one column wider than measured.
 
 ## 4. The chain
 
-All fourteen tickets are one chain, in this order. #812's typed errors, #761's
+All thirteen tickets are one chain, in this order. #812's typed errors, #761's
 timer and #826's agent close all edit `internal/daemonrpc/client.go`, and
 nearly every other ticket edits `cmd/marvel/main.go`, so parallel PRs off
 main would conflict (rule (d), `code-restructure-plan.md` section 4). Each
@@ -208,15 +211,17 @@ Both are filed as bd `blocks`, so the ready list shows only the chain's head.
 | 9 | #829 | aae-orc-z885x | qualified keys, typed `--cluster` on writes | fyhx1, ioqwd (r) |
 | 10 | #825 | aae-orc-nprld | a future stamp reads `?` with a reason | z885x (c) |
 | 11 | #831 | aae-orc-lfb76 | same-daemon merge | jkb6u (r), nprld (c) |
-| 12 | #822 | aae-orc-2ihk2 | single-cluster watch: sequence discard of stale replies | 9mo6w (r), lfb76 (c) |
-| 13 | #832 | aae-orc-w5ik7 | `get sessions -w` across clusters | 2ihk2, jkb6u, lfb76 (r) |
-| 14 | #833 | aae-orc-xj69u | `get teams` and `events` across clusters | jkb6u, w5ik7 (r) |
+| 12 | #832 | aae-orc-w5ik7 | `get sessions -w` across clusters, with #822's sequence discard folded in | jkb6u, lfb76 (r) |
+| 13 | #833 | aae-orc-xj69u | `get teams` and `events` across clusters | jkb6u, w5ik7 (r) |
 
 Not in the chain: #834 (read-only permission level; unscheduled, its own
-ruling) and #835 (workspace name rule; its own change).
+ruling), #835 (workspace name rule; its own change), and #822 (aae-orc-2ihk2),
+folded into #832 (director, 2026-10-21, section 8). Director closes #822
+after this plan merges.
 
 **Edge changes against today's tracker.** Remove: `jkb6u` on `z885x`,
-`jkb6u` on `nprld`, `2ihk2` on `u2bvg`. Add every edge in the table that
+`jkb6u` on `nprld`, `2ihk2` on `u2bvg`, `2ihk2` on `9mo6w`, `w5ik7` on
+`2ihk2` (the last three because #822 leaves the chain). Add every edge in the table that
 does not exist yet. Today's tracker has no edges into `lsa0u`, `9mo6w`,
 `u2bvg`, `qeuth`, `73704` or `fyhx1`.
 
@@ -226,9 +231,9 @@ does not exist yet. Today's tracker has no edges into `lsa0u`, `9mo6w`,
   `internal/daemonrpc/client.go:430-433` (the client moved in #908 and #909).
 - #828 cites `cmd/marvel/main.go:91`; the resolver is `resolveDaemonRung` at
   `cmd/marvel/main.go:92`.
-- #822 asks for one fetch in flight per cluster. Before #830 there is one
-  cluster, so #822 is the single-cluster sequence discard; the per-cluster
-  form moves to #832.
+- #822 asks for one fetch in flight per cluster, with the per-call timer
+  freeing the slot. Under Q1 (a) only the fan-out arms that timer, so its
+  whole job moves to #832, and #832's body gains #822's sequence discard.
 - #827 sorts on cluster, workspace and name. Before #830 a row has no
   cluster, so #827 sorts on workspace and name with a full tiebreak, and #830
   puts cluster first.
@@ -278,9 +283,8 @@ Rigs:
 | 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`: a key holding U+FFFD, filtered or sent literally by the daemon, is refused and the refusal points at `-o json`. | U, F |
 | 10 | #825 | `TestFutureStampReadsQuestion`: a pinned clock gives `?` and the reason; a missing stamp reads `-`. | U |
 | 11 | #831 | `TestSameAddressDialledOnce`. `TestSameInodeMerges`: two paths, one a symlink to one fake. `TestEchoedVersionNotMerged`: a fake echoes another's pid and start time from a different inode. `TestSharedHostKeyDifferentSocketNotMerged`. `TestSameHostKeyAndSocketMerges`: two `ssh://` entries to one S server, same verified fingerprint, socket path, pid and start time, merge into one `same_daemon` line. `TestMergeNeverHidesStatusLine`. | F, S |
-| 12 | #822 | `TestStaleReplyDiscarded`: single cluster; fetch 1 blocks, the timer frees the slot, fetch 2 shows, a late fetch 1 is dropped. | U (the watch loop's seams) |
-| 13 | #832 | `TestStaleReplyDiscardedPerCluster`. `TestOneSlowClusterDoesNotBlankWatch`: today the first-answer wait blanks the whole frame (`cmd/marvel/main.go:3296`). `TestEachClusterAgesOnItsOwnAsOf`. | U, F |
-| 14 | #833 | `TestTeamsFanOutOutcomes`. `TestEventsSeatTextFiltered`. `TestEventsWatchTimerBoundsHandshakeOnly`. | F, S |
+| 12 | #832 | `TestStaleReplyDiscardedPerCluster`, which absorbs #822's `TestStaleReplyDiscarded`: under `--cluster a,b`, cluster a's fetch 1 blocks, the timer fires and frees a's slot, fetch 2 shows, a's late fetch 1 is dropped, and b's rows and as-of are untouched. `TestOneSlowClusterDoesNotBlankWatch`: today the first-answer wait blanks the whole frame (`cmd/marvel/main.go:3296`). `TestEachClusterAgesOnItsOwnAsOf`. | U, F |
+| 13 | #833 | `TestTeamsFanOutOutcomes`. `TestEventsSeatTextFiltered`. `TestEventsWatchTimerBoundsHandshakeOnly`. | F, S |
 
 Timer and race tests take their order from channels, never sleeps; a timeout
 test asserts an upper bound only; the merge gate for these packages is
@@ -292,7 +296,10 @@ guard `TestMain`.
 Each test was checked against its ticket and that ticket's dependencies:
 
 - **#822 as filed was not reachable.** A per-cluster test needs a fan-out
-  that #822 does not depend on. Fixed by moving the per-cluster form to #832.
+  that #822 does not depend on, and under Q1 (a) a single-cluster watch has
+  no timer to free a slot: today one fetch holds it until it returns
+  (`watchLoop`, `cmd/marvel/watchloop.go`), so no stale reply can exist.
+  Fixed by folding #822 into #832 (section 8).
 - **#827 as filed was not reachable.** Sorting on cluster needs a cluster
   field that rows gain only in #830. Fixed by moving cluster-first to #830.
 - **The byte bound had no owner.** Assigned to #761, which already owns the
@@ -376,6 +383,12 @@ link waits on a ruling.
     goes badly, those are the next options to put back on the table.
   - **The cap's value.** It comes from the link 3 (#761) build. Its basis is
     still open with the operator, so this plan names no number.
+- **#822 folded into #832. RULED 2026-10-21 by director, applying the
+  operator's Q1 (a).** Only the fan-out arms the timer, so only a fan-out
+  watch can free a slot early and receive a stale reply. #822 leaves the
+  chain, its test merges into #832's `TestStaleReplyDiscardedPerCluster`,
+  and the 2 s < 5 s < 10 s watch line is scoped to #832. No new operator
+  ruling was needed.
 - **Carried from 2026-10-10:** the bare-key-on-writes ruling is re-checked
   when #830 ships.
 
