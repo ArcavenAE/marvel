@@ -283,10 +283,30 @@ func TestGetSessionsComposerColumn(t *testing.T) {
 	if err := d.store.UpdateSession(key, func(s *api.Session) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	// Every file under the scratch HOME and TMPDIR, which is everywhere this
-	// daemon writes, except the frame file the seat cats: that is the input.
-	files := 0
-	for _, root := range []string{os.Getenv("HOME"), os.TempDir()} {
+	hits, files, err := filesHoldingText(composerScanRoots(t), marker, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range hits {
+		t.Errorf("%s holds captured text", path)
+	}
+	if files == 0 {
+		t.Fatal("no files under the scanned directories, so the check read nothing")
+	}
+}
+
+// composerScanRoots names the directories the no-captured-text check reads:
+// the scratch HOME and TMPDIR, which is everywhere this daemon writes.
+func composerScanRoots(t *testing.T) []string {
+	t.Helper()
+	return []string{os.Getenv("HOME"), os.TempDir()}
+}
+
+// filesHoldingText walks roots and returns every regular file that holds
+// text, and how many files it read. A file whose content is exactly skip,
+// the input the seat cats, is not counted.
+func filesHoldingText(roots []string, text, skip string) (hits []string, files int, err error) {
+	for _, root := range roots {
 		err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
@@ -301,21 +321,71 @@ func TestGetSessionsComposerColumn(t *testing.T) {
 			if rerr != nil {
 				return nil // a socket or a file another test removed
 			}
-			if string(b) == frame {
+			if string(b) == skip {
 				return nil
 			}
 			files++
-			if strings.Contains(string(b), marker) {
-				t.Errorf("%s holds captured text", path)
+			if strings.Contains(string(b), text) {
+				hits = append(hits, path)
 			}
 			return nil
 		})
 		if err != nil {
-			t.Fatal(err)
+			return hits, files, err
 		}
 	}
-	if files == 0 {
-		t.Fatal("no files under HOME or TMPDIR, so the check read nothing")
+	return hits, files, nil
+}
+
+// The no-captured-text check reads only the directories this test and its
+// daemon write. A directory it cannot read beside them, such as one a CI
+// runner's system owns in /tmp, must not fail it, and a file outside them
+// is not its business. Positive control: text planted in the test's own
+// temp dir is found.
+func TestComposerScanStaysInItsOwnDirs(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 0 directory")
+	}
+	// TMPDIR is set before this test's first t.TempDir, so the test's own
+	// temp root is made inside outer, beside the foreign directory.
+	outer, err := os.MkdirTemp("", "scan-outer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(outer, "foreign")
+	if err := os.Mkdir(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "other.txt"), []byte("Marker-foreign"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(foreign, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(foreign, 0o700)
+		_ = os.RemoveAll(outer)
+	})
+	if err := os.WriteFile(filepath.Join(outer, "beside.txt"), []byte("Marker-foreign"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", outer)
+
+	planted := filepath.Join(t.TempDir(), "written.txt")
+	if err := os.WriteFile(planted, []byte("Marker-foreign"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hits, _, err := filesHoldingText(composerScanRoots(t), "Marker-foreign", "")
+	if err != nil {
+		t.Fatalf("the check failed on a directory outside its own: %v", err)
+	}
+	if !slices.Contains(hits, planted) {
+		t.Fatalf("the check missed text planted in the test's own dir %s; hits %q", planted, hits)
+	}
+	for _, h := range hits {
+		if h != planted {
+			t.Errorf("the check read %s, outside the test's own dirs", h)
+		}
 	}
 }
 
