@@ -81,11 +81,11 @@ func authorize(t *testing.T, k *keys.ClientKey, scope Scope) {
 	}
 }
 
-func (f remoteFixture) opts(identity string) DialOptions {
-	return DialOptions{Identity: identity, TrustUnknownHost: true, Timeout: 20 * time.Second}
+func (f remoteFixture) opts(identity string) daemonrpc.DialOptions {
+	return daemonrpc.DialOptions{Identity: identity, TrustUnknownHost: true, Timeout: 20 * time.Second}
 }
 
-func versionOf(t *testing.T, resp *Response) BuildInfo {
+func versionOf(t *testing.T, resp *daemonrpc.Response) BuildInfo {
 	t.Helper()
 	if resp.Error != "" {
 		t.Fatalf("version answered with an error: %s", resp.Error)
@@ -99,7 +99,7 @@ func versionOf(t *testing.T, resp *Response) BuildInfo {
 
 func TestRemoteClientVersionOverMRVL(t *testing.T) {
 	f := newRemoteFixture(t)
-	resp, err := daemonrpc.SendRequestWith("mrvl://u@127.0.0.1:"+f.port, Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
+	resp, err := daemonrpc.SendRequestWith("mrvl://u@127.0.0.1:"+f.port, daemonrpc.Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
 	if err != nil {
 		t.Fatalf("SendRequestWith over mrvl://: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestRemoteClientVersionOverMRVL(t *testing.T) {
 
 func TestRemoteClientVersionOverSSHDirect(t *testing.T) {
 	f := newRemoteFixture(t)
-	resp, err := daemonrpc.SendRequestWith("ssh://u@127.0.0.1:"+f.port, Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
+	resp, err := daemonrpc.SendRequestWith("ssh://u@127.0.0.1:"+f.port, daemonrpc.Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
 	if err != nil {
 		t.Fatalf("SendRequestWith over ssh:// with a port and no path: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestRemoteClientVersionOverSSHDirect(t *testing.T) {
 // The ssh:// form with no path needs the daemon's own SSH port in the URL.
 func TestRemoteClientSSHDirectNeedsAPort(t *testing.T) {
 	f := newRemoteFixture(t)
-	_, err := daemonrpc.SendRequestWith("ssh://u@127.0.0.1", Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
+	_, err := daemonrpc.SendRequestWith("ssh://u@127.0.0.1", daemonrpc.Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
 	if err == nil || !strings.Contains(err.Error(), "need a port") {
 		t.Errorf("error = %v, want one saying the address needs a port", err)
 	}
@@ -142,9 +142,9 @@ func TestRemoteClientHostKeyTrustOnFirstUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := "mrvl://u@127.0.0.1:" + f.port
-	strict := DialOptions{Identity: f.key.PrivatePath, StrictHostKey: true, Timeout: 20 * time.Second}
+	strict := daemonrpc.DialOptions{Identity: f.key.PrivatePath, StrictHostKey: true, Timeout: 20 * time.Second}
 
-	_, err = daemonrpc.SendRequestWith(addr, Request{Method: MethodVersion}, strict)
+	_, err = daemonrpc.SendRequestWith(addr, daemonrpc.Request{Method: MethodVersion}, strict)
 	if err == nil || !strings.Contains(err.Error(), "is not trusted") {
 		t.Fatalf("a strict connection to an unrecorded host: error = %v, want one saying the host key is not trusted", err)
 	}
@@ -152,7 +152,7 @@ func TestRemoteClientHostKeyTrustOnFirstUse(t *testing.T) {
 		t.Fatalf("a refused strict connection wrote %d bytes to known_hosts", fi.Size())
 	}
 
-	if _, err := daemonrpc.SendRequestWith(addr, Request{Method: MethodVersion}, f.opts(f.key.PrivatePath)); err != nil {
+	if _, err := daemonrpc.SendRequestWith(addr, daemonrpc.Request{Method: MethodVersion}, f.opts(f.key.PrivatePath)); err != nil {
 		t.Fatalf("the trusting connection: %v", err)
 	}
 	kh, err := os.ReadFile(layout.KnownHosts())
@@ -166,7 +166,7 @@ func TestRemoteClientHostKeyTrustOnFirstUse(t *testing.T) {
 		t.Errorf("known_hosts is at %s, not under the scratch HOME's .marvel", layout.KnownHosts())
 	}
 
-	resp, err := daemonrpc.SendRequestWith(addr, Request{Method: MethodVersion}, strict)
+	resp, err := daemonrpc.SendRequestWith(addr, daemonrpc.Request{Method: MethodVersion}, strict)
 	if err != nil {
 		t.Fatalf("a strict connection after the host key was recorded: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRemoteClientUnauthorizedKeyIsRefused(t *testing.T) {
 	}
 	stranger := generateKey(t, layout, "stranger")
 	for _, addr := range []string{"mrvl://u@127.0.0.1:" + f.port, "ssh://u@127.0.0.1:" + f.port} {
-		resp, err := daemonrpc.SendRequestWith(addr, Request{Method: MethodVersion}, f.opts(stranger.PrivatePath))
+		resp, err := daemonrpc.SendRequestWith(addr, daemonrpc.Request{Method: MethodVersion}, f.opts(stranger.PrivatePath))
 		if err == nil {
 			t.Errorf("%s: an unauthorized key got through: %+v", addr, resp)
 			continue
@@ -207,7 +207,7 @@ func TestRemoteClientKeyScopeIsEnforced(t *testing.T) {
 	pusher := generateKey(t, layout, "pusher")
 	authorize(t, pusher, ScopeCredentialPush)
 
-	resp, err := daemonrpc.SendRequestWith("mrvl://u@127.0.0.1:"+f.port, Request{Method: MethodVersion}, f.opts(pusher.PrivatePath))
+	resp, err := daemonrpc.SendRequestWith("mrvl://u@127.0.0.1:"+f.port, daemonrpc.Request{Method: MethodVersion}, f.opts(pusher.PrivatePath))
 	if err != nil {
 		t.Fatalf("the credential-push key could not connect: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestRemoteClientRefusedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, addr := range []string{"mrvl://u@127.0.0.1:" + port, "ssh://u@127.0.0.1:" + port} {
-		_, err := daemonrpc.SendRequestWith(addr, Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
+		_, err := daemonrpc.SendRequestWith(addr, daemonrpc.Request{Method: MethodVersion}, f.opts(f.key.PrivatePath))
 		if err == nil || !strings.Contains(err.Error(), "ssh connect") {
 			t.Errorf("%s: error = %v, want an ssh connect failure", addr, err)
 		}
@@ -252,7 +252,7 @@ func TestRemoteClientWithoutAnyKeyRefusesBeforeDialing(t *testing.T) {
 	if _, statErr := os.Stat(layout.DefaultClientKey()); statErr == nil {
 		t.Fatalf("the scratch HOME has a default client key at %s", layout.DefaultClientKey())
 	}
-	_, err = daemonrpc.SendRequestWith("mrvl://u@127.0.0.1:"+f.port, Request{Method: MethodVersion}, DialOptions{TrustUnknownHost: true, Timeout: 20 * time.Second})
+	_, err = daemonrpc.SendRequestWith("mrvl://u@127.0.0.1:"+f.port, daemonrpc.Request{Method: MethodVersion}, daemonrpc.DialOptions{TrustUnknownHost: true, Timeout: 20 * time.Second})
 	if err == nil || !strings.Contains(err.Error(), "no SSH auth available") {
 		t.Errorf("error = %v, want one saying no SSH auth is available", err)
 	}

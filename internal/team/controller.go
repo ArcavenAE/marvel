@@ -1517,8 +1517,10 @@ func (c *Controller) evaluateHealth() {
 				return nil
 			}
 			if role.HealthCheck.Type != api.HealthCheckHeartbeat {
-				// process-alive is handled by ReapDead. Pane exists → healthy.
-				live.HealthState = api.HealthHealthy
+				// process-alive is handled by ReapDead, which marks a lost
+				// pane unhealthy. Here the pane exists and no check ran
+				// beyond that, so the session is alive, not healthy.
+				live.HealthState = api.HealthAlive
 				live.FailureCount = 0
 				updated = *live
 				return nil
@@ -1565,9 +1567,11 @@ func (c *Controller) evaluateHealth() {
 		// Record this session's health against its role for decay. Unknown
 		// (no healthcheck, or inside the first-heartbeat grace period) counts
 		// as neither: a role marvel cannot assert is healthy does not decay.
+		// Alive counts as healthy here, as it did before it had its own name:
+		// a process-alive role that stops crashing still decays.
 		key := updated.Workspace + "/" + updated.Team + "/" + updated.Role
 		switch updated.HealthState {
-		case api.HealthHealthy:
+		case api.HealthHealthy, api.HealthAlive:
 			o := obs[key]
 			o.healthy = true
 			obs[key] = o
