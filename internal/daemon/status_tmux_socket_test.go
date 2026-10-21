@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
@@ -21,7 +22,7 @@ type tmuxSocketStatus struct {
 
 func statusTmuxSocket(t *testing.T, d *Daemon) (string, string) {
 	t.Helper()
-	resp := d.dispatchAs(Request{Method: "daemon.status"}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "daemon.status"}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("daemon.status: %s", resp.Error)
 	}

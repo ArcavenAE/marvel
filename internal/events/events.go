@@ -331,6 +331,12 @@ const (
 	// KindBusProvisioned reports the streams and bucket the daemon ensured on
 	// the managed broker after it came up (aae-orc-apeoc).
 	KindBusProvisioned Kind = "bus.provisioned"
+	// KindBusStoreWriteFailed is the write probe's miss: a canary write to a
+	// declared stream or bucket was refused or timed out while every read
+	// still answers (a full disk, a store at its limit). Emitted once per
+	// change in the failing set. It reports and escalates; it never
+	// restarts the broker and never holds spawns.
+	KindBusStoreWriteFailed Kind = "bus.store.write-failed"
 	// KindBusUnprovisioned is the structural-health miss (aae-orc-vy6k7):
 	// a declared service-scope object is absent from the running broker,
 	// or its authorization is not loaded. Emitted once per change in the
@@ -498,6 +504,7 @@ var allKinds = []Kind{
 	KindExposureEnded,
 	KindExposureVoided,
 	KindBusUnprovisioned,
+	KindBusStoreWriteFailed,
 	KindBusReloaded,
 	KindBusLeafUp,
 	KindBusLeafDown,

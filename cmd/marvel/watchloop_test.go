@@ -304,7 +304,7 @@ func TestWatchQuitsWhileTheRealHeaderReadIsBlocked(t *testing.T) {
 		deadline: 30 * time.Millisecond,
 		fetch: func() watchData {
 			defer fetches.Done()
-			return fetchWatchData(ws.showHeader)
+			return fetchWatchData(ws.showHeader, wantsComposer(ws.columns))
 		},
 		now: time.Now,
 		out: func(frame string) {
