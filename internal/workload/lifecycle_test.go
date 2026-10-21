@@ -452,6 +452,46 @@ func TestSpawnOrAdoptDuringTheWaitBecomesTheStart(t *testing.T) {
 	}
 }
 
+// A Spawn that fails during the wait after a crash leaves the respawn armed:
+// when the wait ends, the respawn starts the child and the snapshot's
+// BackoffUntil, which named it as due, is cleared by that start.
+func TestFailedSpawnDuringTheWaitKeepsTheRespawn(t *testing.T) {
+	spec := procSpec(t)
+	var fail atomic.Bool
+	spec.BeforePidFile = func(*exec.Cmd) error {
+		if fail.Load() {
+			return errors.New("planted BeforePidFile failure")
+		}
+		return nil
+	}
+	p, d, c := newProc(t, spec)
+	if err := p.Spawn(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first := p.Snapshot().Pid
+	killPid(t, first)
+	until(t, "the crash", func() bool { return len(d.exitsCopy()) == 1 })
+
+	fail.Store(true)
+	if err := p.Spawn(context.Background()); err == nil {
+		t.Fatal("Spawn during the wait succeeded with BeforePidFile failing")
+	}
+	fail.Store(false)
+	if st := p.Snapshot(); st.BackoffUntil.IsZero() {
+		t.Fatal("the failed Spawn cleared the respawn's due time")
+	}
+
+	c.fire <- c.at
+	until(t, "the respawn after the wait", func() bool { return len(d.startsCopy()) == 2 })
+	st := p.Snapshot()
+	if st.Pid <= 1 || st.Pid == first || !st.Ready || !st.BackoffUntil.IsZero() {
+		t.Errorf("after the respawn: pid %d (first %d), ready %v, backoff until %s; want a new ready child and no wait", st.Pid, first, st.Ready, st.BackoffUntil)
+	}
+	if s := d.startsCopy(); s[1].How != StartRestarted {
+		t.Errorf("second start = %v, want %v", s[1].How, StartRestarted)
+	}
+}
+
 func TestRestartBeforeStartIsAnErrorAndStopIsANoOp(t *testing.T) {
 	p, d, _ := newProc(t, procSpec(t))
 	if err := p.Restart("early"); err == nil {
