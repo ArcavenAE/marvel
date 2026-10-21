@@ -255,6 +255,15 @@ func TestBusGateGaps(t *testing.T) {
 		{"the gate step's shell is bash -e {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash -e {0}" })), 0},
 		{"the gate step's shell is GitHub's bash default", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash --noprofile --norc -eo pipefail {0}" })), 0},
 		{"a bash step under a true {0} job default", withJob(job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash" })), func(j *ciJob) { j.Defaults.Run.Shell = "true {0}" }), 0},
+		// bash reads SHELLOPTS, BASH_ENV and BASHOPTS from the environment at
+		// startup: SHELLOPTS=noexec runs nothing, and BASH_ENV can run a file
+		// that exits 0 first. env: on the step, the job or the workflow sets them.
+		{"the gate step sets SHELLOPTS", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"SHELLOPTS": "noexec"} })), 1},
+		{"the gate step sets BASH_ENV", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"BASH_ENV": "scripts/exit0.sh"} })), 1},
+		{"the gate step sets BASHOPTS", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"BASHOPTS": "extdebug"} })), 1},
+		{"the job sets SHELLOPTS", withJob(good, func(j *ciJob) { j.Env = map[string]string{"SHELLOPTS": "noexec"} }), 1},
+		{"the job sets BASH_ENV", withJob(good, func(j *ciJob) { j.Env = map[string]string{"BASH_ENV": "scripts/exit0.sh"} }), 1},
+		{"the gate step sets another variable", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"GOFLAGS": "-mod=readonly"} })), 0},
 	} {
 		if got := busGateGaps(tc.job); len(got) != tc.gaps {
 			t.Errorf("%s: gaps = %q, want %d", tc.name, got, tc.gaps)

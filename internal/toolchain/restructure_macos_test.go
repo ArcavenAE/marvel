@@ -144,6 +144,10 @@ func TestMacOSGaps(t *testing.T) {
 		{"the test step's shell is bash {0}", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Shell = "bash {0}" })), 0},
 		{"the install step's shell is true {0}", job(withStep(installStep, func(st *ciJobStep) { st.Shell = "true {0}" }), run(gated)), 3},
 		{"the job's default shell is true {0}", withJob(good, func(j *ciJob) { j.Defaults.Run.Shell = "true {0}" }), 6},
+		{"the test step sets SHELLOPTS", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Env = map[string]string{"SHELLOPTS": "noexec"} })), 3},
+		{"the install step sets BASH_ENV", job(withStep(installStep, func(st *ciJobStep) { st.Env["BASH_ENV"] = "scripts/exit0.sh" }), run(gated)), 3},
+		{"the job sets SHELLOPTS", withJob(good, func(j *ciJob) { j.Env = map[string]string{"SHELLOPTS": "noexec"} }), 6},
+		{"the job sets BASHOPTS", withJob(good, func(j *ciJob) { j.Env = map[string]string{"BASHOPTS": "extdebug"} }), 6},
 		{"nothing", ciJob{}, 4},
 	} {
 		if got := macOSGaps(tc.job, pkgs); len(got) != tc.gaps {
@@ -165,8 +169,9 @@ type ciJob struct {
 	RunsOn          string      `yaml:"runs-on"`
 	If              string      `yaml:"if"`
 	ContinueOnError any         `yaml:"continue-on-error"`
-	Defaults        ciDefaults  `yaml:"defaults"`
-	Steps           []ciJobStep `yaml:"steps"`
+	Defaults        ciDefaults        `yaml:"defaults"`
+	Env             map[string]string `yaml:"env"`
+	Steps           []ciJobStep       `yaml:"steps"`
 }
 
 // ciDefaults is a workflow's or a job's defaults: block.
@@ -194,6 +199,98 @@ func TestCIJobsTakesTheWorkflowDefaultShell(t *testing.T) {
 	}
 	if got := jobs["b"].Defaults.Run.Shell; got != "bash" {
 		t.Errorf("job b default shell = %q, want its own %q", got, "bash")
+	}
+}
+
+// A workflow's env: reaches every job, merged by name with the job's own.
+func TestCIJobsTakesTheWorkflowEnv(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ci.yml")
+	wf := "env:\n  SHELLOPTS: noexec\njobs:\n  a:\n    steps: []\n  b:\n    env:\n      GOFLAGS: -mod=readonly\n    steps: []\n"
+	if err := os.WriteFile(path, []byte(wf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := ciJobs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if got := jobs[name].Env["SHELLOPTS"]; got != "noexec" {
+			t.Errorf("job %s SHELLOPTS = %q, want the workflow's %q", name, got, "noexec")
+		}
+	}
+	if got := jobs["b"].Env["GOFLAGS"]; got != "-mod=readonly" {
+		t.Errorf("job b GOFLAGS = %q, want its own", got)
+	}
+}
+
+// The review's measurement on the shipped ci.yml: SHELLOPTS=noexec on the
+// macOS test step, the Linux bus gate step, their jobs or the workflow made
+// each step exit 0 with no stream, while both guards passed. Each place must
+// now be a gap.
+func TestShippedCIRefusesShellEnv(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	load := func(t *testing.T, text string) (ciJob, ciJob) {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "ci.yml")
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		jobs, err := ciJobs(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jobs["quality-gate"], jobs["restructure-macos"]
+	}
+	linux, mac := load(t, string(data))
+	if gaps := busGateGaps(linux); len(gaps) != 0 {
+		t.Fatalf("the shipped Linux job has gaps before any change: %q", gaps)
+	}
+	if gaps := macOSGaps(mac, restructurePackages); len(gaps) != 0 {
+		t.Fatalf("the shipped macOS job has gaps before any change: %q", gaps)
+	}
+	noexec := map[string]string{"SHELLOPTS": "noexec"}
+	gateStep := func(job ciJob, gated func(string) bool) int {
+		for i, st := range job.Steps {
+			if gated(st.Run) {
+				return i
+			}
+		}
+		t.Fatal("no gate step")
+		return -1
+	}
+	busGate := func(run string) bool { return busSkipsGated(run) }
+	macGate := func(run string) bool { return len(gatedPackages(run, restructurePackages, true)) > 0 }
+
+	l, m := linux, mac
+	l.Env, m.Env = noexec, noexec
+	if len(busGateGaps(l)) == 0 {
+		t.Error("SHELLOPTS on the Linux job: the bus gate guard passes")
+	}
+	if len(macOSGaps(m, restructurePackages)) == 0 {
+		t.Error("SHELLOPTS on the macOS job: the macOS guard passes")
+	}
+	l, m = linux, mac
+	l.Steps, m.Steps = slices.Clone(linux.Steps), slices.Clone(mac.Steps)
+	l.Steps[gateStep(l, busGate)].Env = noexec
+	m.Steps[gateStep(m, macGate)].Env = noexec
+	if len(busGateGaps(l)) == 0 {
+		t.Error("SHELLOPTS on the Linux bus gate step: the bus gate guard passes")
+	}
+	if len(macOSGaps(m, restructurePackages)) == 0 {
+		t.Error("SHELLOPTS on the macOS test step: the macOS guard passes")
+	}
+	l, m = load(t, "env:\n  SHELLOPTS: noexec\n"+string(data))
+	if len(busGateGaps(l)) == 0 {
+		t.Error("SHELLOPTS on the workflow: the bus gate guard passes")
+	}
+	if len(macOSGaps(m, restructurePackages)) == 0 {
+		t.Error("SHELLOPTS on the workflow: the macOS guard passes")
 	}
 }
 
