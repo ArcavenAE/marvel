@@ -1,14 +1,17 @@
 package api
 
 import (
+	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -20,159 +23,241 @@ type marryReach struct {
 	uses  map[string][]string
 }
 
-// reachFrom follows package-level references from roots through the
-// non-test Go files of dir. Files are named under fileRoot.
+// reachFrom follows references from roots through the type-checked non-test
+// Go files of dir, and names files under fileRoot. It follows objects, not
+// names, so a struct field's key is a field and a map literal's key is the
+// value it names. A reached type brings every method declared on it, since a
+// caller outside the package (encoding/json, fmt) may call any of them. A
+// reached method of an interface declared in the package brings that method
+// of every type in the package that implements the interface. A reached
+// package variable brings every declaration that assigns to it, init
+// included.
+//
+// The limit: it reads one package. An implementation or function value that
+// another package supplies, and anything reached through reflection, are not
+// followed; TestMarryReachDependsOnNoProcessPackage covers the packages the
+// reached declarations import, not values they are handed.
 func reachFrom(t *testing.T, dir, fileRoot string, roots []string) marryReach {
 	t.Helper()
+	r, err := reachIn(dir, fileRoot, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// reachIn is reachFrom without a test, for a walk shared between tests.
+func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil || len(paths) == 0 {
-		t.Fatalf("no Go files in %s (%v)", dir, err)
+		return marryReach{}, fmt.Errorf("no Go files in %s (%v)", dir, err)
 	}
-	type decl struct {
-		file, name string
-		refs       []string
-		pkgs       []string
-	}
-	byName := map[string][]*decl{}
 	fset := token.NewFileSet()
+	var files []*ast.File
 	for _, p := range paths {
 		if strings.HasSuffix(p, "_test.go") {
 			continue
 		}
 		f, err := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution)
 		if err != nil {
-			t.Fatal(err)
+			return marryReach{}, err
 		}
-		imports := map[string]string{}
-		for _, imp := range f.Imports {
-			path, _ := strconv.Unquote(imp.Path.Value)
-			name := path[strings.LastIndex(path, "/")+1:]
-			if imp.Name != nil {
-				name = imp.Name.Name
-			}
-			imports[name] = path
-		}
+		files = append(files, f)
+	}
+	pkgPath := "marryreach/" + filepath.Base(dir)
+	if dir == "." {
+		pkgPath = "github.com/arcavenae/marvel/internal/api"
+	}
+	info := &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}}
+	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	pkg, err := conf.Check(pkgPath, fset, files, info)
+	if err != nil {
+		return marryReach{}, fmt.Errorf("type-check %s: %w", dir, err)
+	}
+
+	type decl struct {
+		file   string
+		name   string
+		uses   []types.Object
+		ifaces []*types.Func
+		pkgs   []string
+	}
+	defined := map[types.Object]*decl{}
+	methods := map[*types.TypeName][]*decl{}
+	assigners := map[types.Object][]*decl{}
+	packageLevel := func(o types.Object) bool { return o.Pkg() == pkg && o.Parent() == pkg.Scope() }
+	for _, f := range files {
+		file := filepath.ToSlash(filepath.Join(fileRoot, filepath.Base(fset.Position(f.Pos()).Filename)))
 		for _, d := range f.Decls {
-			var names []string
+			n := &decl{file: file}
 			switch d := d.(type) {
 			case *ast.FuncDecl:
-				if d.Recv != nil {
-					// A method is reached through its type.
-					names = []string{receiverType(d.Recv)}
-				} else {
-					names = []string{d.Name.Name}
+				n.name = d.Name.Name
+				obj := info.Defs[d.Name]
+				defined[obj] = n
+				if recv := obj.Type().(*types.Signature).Recv(); recv != nil {
+					rt := recv.Type()
+					if p, ok := rt.(*types.Pointer); ok {
+						rt = p.Elem()
+					}
+					if named, ok := rt.(*types.Named); ok {
+						tn := named.Obj()
+						methods[tn] = append(methods[tn], n)
+						n.name = tn.Name() + "." + n.name
+					}
 				}
 			case *ast.GenDecl:
 				for _, s := range d.Specs {
 					switch s := s.(type) {
 					case *ast.TypeSpec:
-						names = append(names, s.Name.Name)
+						defined[info.Defs[s.Name]] = n
+						n.name = s.Name.Name
 					case *ast.ValueSpec:
-						for _, n := range s.Names {
-							names = append(names, n.Name)
+						for _, id := range s.Names {
+							if o := info.Defs[id]; o != nil {
+								defined[o] = n
+								n.name = id.Name
+							}
 						}
 					}
 				}
 			}
-			refs, pkgs := referencedNames(d, imports)
-			for _, n := range names {
-				if n == "" || n == "_" {
-					continue
+			ast.Inspect(d, func(x ast.Node) bool {
+				switch x := x.(type) {
+				case *ast.AssignStmt:
+					for _, lhs := range x.Lhs {
+						if id, ok := lhs.(*ast.Ident); ok {
+							if o, ok := info.Uses[id].(*types.Var); ok && packageLevel(o) {
+								assigners[o] = append(assigners[o], n)
+							}
+						}
+					}
+				case *ast.Ident:
+					o := info.Uses[x]
+					if o == nil {
+						break
+					}
+					if pn, ok := o.(*types.PkgName); ok {
+						if p := pn.Imported().Path(); !slices.Contains(n.pkgs, p) {
+							n.pkgs = append(n.pkgs, p)
+						}
+						break
+					}
+					if o.Pkg() != pkg {
+						break
+					}
+					if fn, ok := o.(*types.Func); ok {
+						if recv := fn.Type().(*types.Signature).Recv(); recv != nil {
+							if types.IsInterface(recv.Type()) {
+								n.ifaces = append(n.ifaces, fn)
+							} else {
+								n.uses = append(n.uses, fn)
+							}
+							break
+						}
+					}
+					if packageLevel(o) {
+						n.uses = append(n.uses, o)
+					}
 				}
-				byName[n] = append(byName[n], &decl{
-					file: filepath.ToSlash(filepath.Join(fileRoot, filepath.Base(p))),
-					name: n, refs: refs, pkgs: pkgs,
-				})
-			}
+				return true
+			})
 		}
 	}
+
+	// implementers returns that method of every package type implementing the
+	// interface m belongs to.
+	implementers := func(m *types.Func) []*decl {
+		iface, _ := m.Type().(*types.Signature).Recv().Type().Underlying().(*types.Interface)
+		if iface == nil {
+			return nil
+		}
+		var out []*decl
+		for _, name := range pkg.Scope().Names() {
+			tn, ok := pkg.Scope().Lookup(name).(*types.TypeName)
+			if !ok || types.IsInterface(tn.Type()) {
+				continue
+			}
+			if !types.Implements(tn.Type(), iface) && !types.Implements(types.NewPointer(tn.Type()), iface) {
+				continue
+			}
+			o, _, _ := types.LookupFieldOrMethod(tn.Type(), true, pkg, m.Name())
+			if d := defined[o]; d != nil {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+
 	r := marryReach{uses: map[string][]string{}}
-	reached := map[string]bool{}
-	queue := slices.Clone(roots)
+	seen := map[*decl]bool{}
+	var queue []*decl
+	for _, name := range roots {
+		if d := defined[pkg.Scope().Lookup(name)]; d != nil {
+			queue = append(queue, d)
+		} else {
+			return marryReach{}, fmt.Errorf("%s: no package-level %s", dir, name)
+		}
+	}
 	for len(queue) > 0 {
 		n := queue[0]
 		queue = queue[1:]
-		if reached[n] || byName[n] == nil {
+		if seen[n] {
 			continue
 		}
-		reached[n] = true
-		for _, d := range byName[n] {
-			if !slices.Contains(r.files, d.file) {
-				r.files = append(r.files, d.file)
+		seen[n] = true
+		if !slices.Contains(r.files, n.file) {
+			r.files = append(r.files, n.file)
+		}
+		for _, p := range n.pkgs {
+			if !slices.Contains(r.uses[p], n.name) {
+				r.uses[p] = append(r.uses[p], n.name)
 			}
-			for _, p := range d.pkgs {
-				if !slices.Contains(r.uses[p], d.name) {
-					r.uses[p] = append(r.uses[p], d.name)
-				}
+		}
+		for _, o := range n.uses {
+			if d := defined[o]; d != nil {
+				queue = append(queue, d)
 			}
-			queue = append(queue, d.refs...)
+			if tn, ok := o.(*types.TypeName); ok {
+				queue = append(queue, methods[tn]...)
+			}
+			queue = append(queue, assigners[o]...)
+		}
+		for _, m := range n.ifaces {
+			queue = append(queue, implementers(m)...)
 		}
 	}
 	slices.Sort(r.files)
-	return r
+	return r, nil
 }
 
-// referencedNames returns the identifiers in d that can name a package-level
-// declaration, and the import paths d uses. A selector's field or method name,
-// a struct field's name and a composite literal's key name members of a type,
-// not package-level names, so they are skipped.
-func referencedNames(d ast.Decl, imports map[string]string) (refs, pkgs []string) {
-	skip := map[*ast.Ident]bool{}
-	ast.Inspect(d, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.SelectorExpr:
-			skip[n.Sel] = true
-			if id, ok := n.X.(*ast.Ident); ok {
-				if path, ok := imports[id.Name]; ok {
-					skip[id] = true
-					if !slices.Contains(pkgs, path) {
-						pkgs = append(pkgs, path)
-					}
-				}
-			}
-		case *ast.Field:
-			for _, id := range n.Names {
-				skip[id] = true
-			}
-		case *ast.KeyValueExpr:
-			if id, ok := n.Key.(*ast.Ident); ok {
-				skip[id] = true
-			}
-		case *ast.Ident:
-			if !skip[n] {
-				refs = append(refs, n.Name)
-			}
-		}
-		return true
+var (
+	marrySourceOnce sync.Once
+	marrySource     marryReach
+	marrySourceErr  error
+)
+
+// marrySourceReach is the walk of this package from the entry points,
+// computed once per test binary: type-checking from source takes seconds.
+func marrySourceReach(t *testing.T) marryReach {
+	t.Helper()
+	marrySourceOnce.Do(func() {
+		marrySource, marrySourceErr = reachIn(".", "internal/api", marryEntryPoints)
 	})
-	return refs, pkgs
-}
-
-func receiverType(recv *ast.FieldList) string {
-	if recv == nil || len(recv.List) == 0 {
-		return ""
+	if marrySourceErr != nil {
+		t.Fatal(marrySourceErr)
 	}
-	e := recv.List[0].Type
-	if s, ok := e.(*ast.StarExpr); ok {
-		e = s.X
-	}
-	if id, ok := e.(*ast.Ident); ok {
-		return id.Name
-	}
-	return ""
+	return marrySource
 }
 
 // marryReachAllowed are the packages a declaration the marrying step reaches
 // may use. A logger, a store or anything that starts a process is not among
 // them, wherever in the file the rest of the package uses one.
 var marryReachAllowed = []string{
-	"encoding/json", "errors", "fmt", "regexp", "regexp/syntax", "slices", "sort", "strings", "time",
+	"encoding/json", "errors", "fmt", "regexp", "regexp/syntax", "slices", "strings", "time",
 	"github.com/arcavenae/marvel/contracts/go/envelopeschema",
 	"github.com/arcavenae/marvel/internal/asof",
 }
-
-// processPackages start or replace a process.
-var processPackages = []string{"os/exec", "syscall", "golang.org/x/sys/unix"}
 
 // marryReachViolations lists each package a reached declaration uses that is
 // not allowed, with the declarations that use it.
@@ -193,7 +278,7 @@ func marryReachViolations(r marryReach, allowed []string) []string {
 // other declarations, and a reached one using either would fail here.
 func TestMarryReachUsesOnlyAllowedPackages(t *testing.T) {
 	t.Parallel()
-	r := reachFrom(t, ".", "internal/api", marryEntryPoints)
+	r := marrySourceReach(t)
 	if len(r.uses) == 0 {
 		t.Fatal("the reach uses no package, so the check read nothing")
 	}
@@ -203,11 +288,11 @@ func TestMarryReachUsesOnlyAllowedPackages(t *testing.T) {
 }
 
 // No package a reached declaration uses depends on a package that starts a
-// process. syscall is checked only as a direct use: time and os depend on it
-// on every platform.
+// process: os/exec or x/sys/unix. syscall is refused as a direct use by
+// marryReachAllowed, but not here, since time and os depend on it.
 func TestMarryReachDependsOnNoProcessPackage(t *testing.T) {
 	t.Parallel()
-	r := reachFrom(t, ".", "internal/api", marryEntryPoints)
+	r := marrySourceReach(t)
 	for p := range r.uses {
 		out, err := exec.Command("go", "list", "-deps", p).Output()
 		if err != nil {
@@ -236,6 +321,7 @@ func TestMarryReachFollowsEachRoute(t *testing.T) {
 		"mapkey":     "os/exec", // a package-level value used only as a map-literal key
 		"initfunc":   "os/exec", // a function value an init assigns
 		"declimport": "log",     // a reached declaration's own use, not its file's
+		"method":     "os/exec", // a method of a reached type, called from outside
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

@@ -15,7 +15,7 @@ var marryEntryPoints = []string{"Marry", "MarryAddress", "AnswerTake", "RecheckB
 // readiness_marry.go.
 func TestMarryGrepReadsEveryMarrySourceFile(t *testing.T) {
 	t.Parallel()
-	want := reachFrom(t, ".", "internal/api", marryEntryPoints).files
+	want := marrySourceReach(t).files
 	// Positive controls: the reach finds the marry file itself, and follows a
 	// reference out of it (MarryAddress uses agentAddress).
 	for _, f := range []string{"internal/api/readiness_marry.go", "internal/api/readiness_address.go"} {
