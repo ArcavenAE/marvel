@@ -2007,6 +2007,90 @@
             "Command",
             "Dial"
           ]
+        },
+        {
+          "op": "grep",
+          "file": "internal/api/readiness_address.go",
+          "allowed_imports": [
+            "encoding/json",
+            "fmt",
+            "regexp",
+            "regexp/syntax",
+            "github.com/arcavenae/marvel/contracts/go/envelopeschema"
+          ],
+          "forbid_literals": [
+            "role://",
+            "broadcast://",
+            "global://"
+          ],
+          "forbid_calls": [
+            "Send",
+            "SendMessage",
+            "Publish",
+            "Request",
+            "Write",
+            "Exec",
+            "Run",
+            "Command",
+            "Dial"
+          ]
+        },
+        {
+          "op": "grep",
+          "file": "internal/api/readiness_route.go",
+          "allowed_imports": [
+            "strings",
+            "time",
+            "github.com/arcavenae/marvel/internal/asof"
+          ],
+          "forbid_literals": [
+            "role://",
+            "broadcast://",
+            "global://"
+          ],
+          "forbid_calls": [
+            "Send",
+            "SendMessage",
+            "Publish",
+            "Request",
+            "Write",
+            "Exec",
+            "Run",
+            "Command",
+            "Dial"
+          ]
+        },
+        {
+          "op": "grep",
+          "file": "internal/api/readiness.go",
+          "allowed_imports": [
+            "encoding/json",
+            "errors",
+            "fmt",
+            "log",
+            "regexp",
+            "sort",
+            "strings",
+            "time",
+            "go.etcd.io/bbolt",
+            "github.com/arcavenae/marvel/internal/asof"
+          ],
+          "forbid_literals": [
+            "role://",
+            "broadcast://",
+            "global://"
+          ],
+          "forbid_calls": [
+            "Send",
+            "SendMessage",
+            "Publish",
+            "Request",
+            "Write",
+            "Exec",
+            "Run",
+            "Command",
+            "Dial"
+          ]
         }
       ]
     },
