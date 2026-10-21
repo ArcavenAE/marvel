@@ -337,6 +337,7 @@ func TestCIJobsListsKeysTheGuardDoesNotRead(t *testing.T) {
 	wf := `defaults:
   run:
     working-directory: internal
+  other: x
 jobs:
   a:
     runs-on: ubuntu-24.04
@@ -386,7 +387,7 @@ jobs:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"container", "defaults.run.working-directory", "services", "timeout-minutes", "workflow defaults.run.working-directory"}
+	want := []string{"container", "defaults", "defaults.run.working-directory", "services", "timeout-minutes", "workflow defaults.other", "workflow defaults.run.working-directory"}
 	if got := jobs["a"].ExtraKeys; !slices.Equal(got, want) {
 		t.Errorf("job a ExtraKeys = %q, want %q", got, want)
 	}
@@ -396,11 +397,14 @@ jobs:
 	if got := jobs["a"].Steps[1].ExtraKeys; len(got) != 0 {
 		t.Errorf("job a step 1 ExtraKeys = %q, want none", got)
 	}
-	if got := jobs["b"].ExtraKeys; !slices.Equal(got, []string{"workflow defaults.run.working-directory"}) {
-		t.Errorf("job b ExtraKeys = %q, want only the workflow's defaults", got)
+	// Only the keys ci.yml uses today are accepted, so even the keys the
+	// guards judge themselves (if, continue-on-error, env, defaults on a job;
+	// if, continue-on-error, shell on a step) fail closed.
+	if got, want := jobs["b"].ExtraKeys, []string{"continue-on-error", "defaults", "env", "if", "workflow defaults.other", "workflow defaults.run.working-directory"}; !slices.Equal(got, want) {
+		t.Errorf("job b ExtraKeys = %q, want %q", got, want)
 	}
-	if got := jobs["b"].Steps[0].ExtraKeys; len(got) != 0 {
-		t.Errorf("job b step 0 ExtraKeys = %q, want none", got)
+	if got, want := jobs["b"].Steps[0].ExtraKeys, []string{"continue-on-error", "if", "shell"}; !slices.Equal(got, want) {
+		t.Errorf("job b step 0 ExtraKeys = %q, want %q", got, want)
 	}
 }
 
@@ -495,6 +499,70 @@ func defaultsExtra(d map[string]any) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// One case per refused key: each key ci.yml does not use today on the two gate
+// jobs or their gate steps, inserted into the shipped file, is a gap for the
+// guard of that job, and only for it.
+func TestShippedCIRefusesEachUnusedKey(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	jobKeys := map[string]string{
+		"concurrency":       "    concurrency: ci\n",
+		"container":         "    container:\n      image: ubuntu:24.04\n",
+		"continue-on-error": "    continue-on-error: false\n",
+		"defaults":          "    defaults:\n      run:\n        shell: bash\n",
+		"env":               "    env:\n      NATS_SERVER_VERSION: v2.15.0\n",
+		"environment":       "    environment: ci\n",
+		"if":                "    if: always()\n",
+		"needs":             "    needs: []\n",
+		"outputs":           "    outputs:\n      x: y\n",
+		"permissions":       "    permissions:\n      contents: read\n",
+		"services":          "    services:\n      db:\n        image: postgres\n",
+		"strategy":          "    strategy:\n      matrix:\n        x: [1]\n",
+		"timeout-minutes":   "    timeout-minutes: 30\n",
+	}
+	stepKeys := map[string]string{
+		"continue-on-error": "        continue-on-error: false\n",
+		"id":                "        id: gate\n",
+		"if":                "        if: always()\n",
+		"shell":             "        shell: bash\n",
+		"timeout-minutes":   "        timeout-minutes: 30\n",
+		"working-directory": "        working-directory: internal\n",
+	}
+	for _, place := range []struct {
+		where, anchor string
+		keys          map[string]string
+		linux         bool
+	}{
+		{"the Linux job", "  quality-gate:\n", jobKeys, true},
+		{"the macOS job", "  restructure-macos:\n", jobKeys, false},
+		{"the Linux gate step", "      - name: Fail if an internal/bus test skipped\n", stepKeys, true},
+		{"the macOS test step", "      - name: Run the restructure packages' tests with the race detector\n", stepKeys, false},
+	} {
+		if strings.Count(text, place.anchor) != 1 {
+			t.Fatalf("ci.yml has %d copies of %q; the test's anchors are stale", strings.Count(text, place.anchor), place.anchor)
+		}
+		for _, key := range slices.Sorted(maps.Keys(place.keys)) {
+			p := filepath.Join(t.TempDir(), "ci.yml")
+			if err := os.WriteFile(p, []byte(strings.Replace(text, place.anchor, place.anchor+place.keys[key], 1)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			jobs, err := ciJobs(p)
+			if err != nil {
+				t.Fatalf("%s on %s: %v", key, place.where, err)
+			}
+			linux := len(busGateGaps(jobs["quality-gate"])) > 0
+			macOS := len(macOSGaps(jobs["restructure-macos"], restructurePackages)) > 0
+			if linux != place.linux || macOS == place.linux {
+				t.Errorf("%s on %s: Linux guard gap %v, macOS guard gap %v; want only the %s guard", key, place.where, linux, macOS, map[bool]string{true: "Linux", false: "macOS"}[place.linux])
+			}
+		}
+	}
 }
 
 func ciJobs(path string) (map[string]ciJob, error) {
