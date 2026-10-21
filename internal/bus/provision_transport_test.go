@@ -19,10 +19,7 @@ import (
 // for a broker that drops a fresh connection the moment it is dialed.
 func dropFirst(t *testing.T, target string, drops int32) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ln := listenLoopback(t)
 	t.Cleanup(func() { _ = ln.Close() })
 	var seen atomic.Int32
 	go func() {
@@ -77,10 +74,7 @@ func TestProvisionSurvivesADroppedFirstConnection(t *testing.T) {
 // A refused address is not a transient reset: it fails at once instead of
 // spending the retry window.
 func TestProvisionFailsAtOnceOnARefusedAddress(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ln := listenLoopback(t)
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
@@ -120,10 +114,7 @@ func TestRetryableConnect(t *testing.T) {
 // check this loop would not end. The context bounds the test, so a missing
 // check fails it instead of hanging.
 func TestProvisionGivesUpOnABrokerThatDropsEveryConnection(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ln := listenLoopback(t)
 	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
