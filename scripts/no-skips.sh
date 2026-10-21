@@ -29,7 +29,7 @@ passed="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"pass\" and .Test != 
 
 if [[ -n "$skipped" ]]; then
   echo "no-skips: tests in $pkg skipped, so they did not run:" >&2
-  printf '  %s\n' "$skipped" >&2
+  printf '%s\n' "$skipped" | sed 's/^/  /' >&2
   exit 1
 fi
 if [[ -z "$passed" ]]; then
