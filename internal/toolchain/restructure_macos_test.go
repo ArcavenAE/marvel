@@ -28,6 +28,10 @@ var restructurePackages = []string{
 	"internal/backoff",
 }
 
+// modulePath prefixes a package directory to give the import path the skip
+// gate names.
+const modulePath = "github.com/arcavenae/marvel"
+
 // TestRestructurePackagesRunOnMacOS requires one macOS job to run every
 // restructure package, and to install the two tools whose absence
 // makes those tests skip rather than run: tmux (internal/daemon) and
@@ -74,42 +78,64 @@ func TestMacOSGaps(t *testing.T) {
 		Env: map[string]string{"NATS_SERVER_VERSION": "v2.15.0"},
 		Run: "brew install tmux\ngo install \"github.com/nats-io/nats-server/v2@${NATS_SERVER_VERSION}\"",
 	}
-	const testLine = "go test -v -count=1 -race ./internal/bus/... ./internal/daemon/..."
+	const stream = `"${RUNNER_TEMP}/restructure.json"`
+	const testLine = "go test -json -count=1 -race ./internal/bus/... ./internal/daemon/... > " + stream
+	const gate = "scripts/no-skips.sh " + stream + " " + modulePath + "/internal/bus " + modulePath + "/internal/daemon"
+	gated := testLine + "\n" + gate
 	job := func(steps ...ciJobStep) ciJob { return ciJob{Steps: steps} }
 	run := func(r string) ciJobStep { return ciJobStep{Run: r} }
 	withJob := func(j ciJob, f func(*ciJob)) ciJob { f(&j); return j }
 	withStep := func(st ciJobStep, f func(*ciJobStep)) ciJobStep { f(&st); return st }
-	good := job(installStep, run(testLine))
+	good := job(installStep, run(gated))
 	pkgs := []string{"internal/bus", "internal/daemon"}
 	for _, tc := range []struct {
 		name string
 		job  ciJob
 		gaps int
 	}{
-		{"all run, both installed", good, 0},
-		{"one package missing", job(installStep, run("go test -race ./internal/bus/...")), 1},
-		{"a prefix is not the package", job(installStep, run("go test -race ./internal/busx/... ./internal/daemon/...")), 1},
-		{"named outside go test", job(installStep, run("echo -race ./internal/bus/... ./internal/daemon/...")), 2},
-		{"no -race", job(installStep, run("go test -v -count=1 ./internal/bus/... ./internal/daemon/...")), 2},
-		{"the test line ignores a failure", job(installStep, run(testLine+" || true")), 2},
+		{"all run under the gate, both installed", good, 0},
+		{"one package missing from the test line", job(installStep, run(strings.Replace(testLine, " ./internal/daemon/...", "", 1)+"\n"+gate)), 1},
+		{"one package missing from the gate", job(installStep, run(testLine+"\n"+strings.TrimSuffix(gate, " "+modulePath+"/internal/daemon"))), 1},
+		{"a prefix is not the package", job(installStep, run(strings.Replace(gated, "./internal/bus/...", "./internal/busx/...", 1))), 1},
+		{"named outside go test", job(installStep, run(strings.Replace(gated, "go test", "echo", 1))), 2},
+		{"no -race", job(installStep, run(strings.Replace(gated, " -race", "", 1))), 2},
+		{"no -json", job(installStep, run(strings.Replace(gated, " -json", "", 1))), 2},
+		{"the test line ignores a failure", job(installStep, run(strings.Replace(testLine, " > ", " || true > ", 1)+"\n"+gate)), 2},
+		{"the gate reads another file", job(installStep, run(testLine+"\n"+strings.Replace(gate, "restructure.json", "old.json", 1))), 2},
+		{"no gate (the old -v line)", job(installStep, run("go test -v -count=1 -race ./internal/bus/... ./internal/daemon/...")), 2},
+		{"the gate before the test line", job(installStep, run(gate+"\n"+testLine)), 2},
+		{"the gate in another step", job(installStep, run(testLine), run(gate)), 2},
+		// The reviewer's edits on #985 that passed the old guard. Each one either
+		// moves the gate off the last command, which this guard reports, or
+		// leaves it last, where it reads the stream: -run ^$, -skip . and -exec
+		// /usr/bin/true leave no passing test, and set +e, shell: bash {0} and
+		// && can no longer hide a failing one (TestNoSkipsGate).
+		{"a command after the gate (shell: bash {0} with a later line)", job(installStep, run(gated+"\necho done")), 2},
+		{"&& then a later line after the gate", job(installStep, run(testLine+" && echo ran\n"+gate+"\necho done")), 2},
+		{"|| true after the gate", job(installStep, run(gated+" || true")), 2},
+		{"; true after the gate", job(installStep, run(gated+"; true")), 2},
+		{"set +e before the test line, the gate last", job(installStep, run("set +e\n"+gated)), 0},
+		{"&& on the test line, the gate last", job(installStep, run(testLine+" && echo ran\n"+gate)), 0},
+		{"-run ^$ on the test line, the gate last", job(installStep, run(strings.Replace(gated, "-count=1", "-count=1 -run ^$", 1))), 0},
+		{"a test line continued with backslashes", job(installStep, run(strings.Replace(testLine, " ./internal/daemon/...", " \\\n  ./internal/daemon/...", 1)+"\n"+gate)), 0},
 		{"no tmux", job(ciJobStep{
 			Env: installStep.Env,
 			Run: "go install \"github.com/nats-io/nats-server/v2@${NATS_SERVER_VERSION}\"",
-		}, run(testLine)), 1},
+		}, run(gated)), 1},
 		{"the tmux install ignores a failure", job(withStep(installStep, func(st *ciJobStep) {
 			st.Run = strings.Replace(st.Run, "brew install tmux", "brew install tmux || true", 1)
-		}), run(testLine)), 1},
+		}), run(gated)), 1},
 		{"nats-server at a literal version", job(ciJobStep{
 			Run: "brew install tmux\ngo install github.com/nats-io/nats-server/v2@v2.14.0",
-		}, run(testLine)), 1},
+		}, run(gated)), 1},
 		{"the job has an if", withJob(good, func(j *ciJob) { j.If = "false" }), 1},
 		{"the job continues on error", withJob(good, func(j *ciJob) { j.ContinueOnError = true }), 1},
 		{"the job continues on an expression", withJob(good, func(j *ciJob) { j.ContinueOnError = "${{ matrix.experimental }}" }), 1},
 		{"continue-on-error false on the job", withJob(good, func(j *ciJob) { j.ContinueOnError = false }), 0},
 		{"continue-on-error \"false\" on the job", withJob(good, func(j *ciJob) { j.ContinueOnError = "false" }), 0},
-		{"the test step has an if", job(installStep, withStep(run(testLine), func(st *ciJobStep) { st.If = "github.event_name == 'push'" })), 3},
-		{"the test step continues on error", job(installStep, withStep(run(testLine), func(st *ciJobStep) { st.ContinueOnError = true })), 3},
-		{"the install step continues on error", job(withStep(installStep, func(st *ciJobStep) { st.ContinueOnError = true }), run(testLine)), 3},
+		{"the test step has an if", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.If = "github.event_name == 'push'" })), 3},
+		{"the test step continues on error", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.ContinueOnError = true })), 3},
+		{"the install step continues on error", job(withStep(installStep, func(st *ciJobStep) { st.ContinueOnError = true }), run(gated)), 3},
 		{"nothing", ciJob{}, 4},
 	} {
 		if got := macOSGaps(tc.job, pkgs); len(got) != tc.gaps {
@@ -147,26 +173,32 @@ func ciJobs(path string) (map[string]ciJob, error) {
 	return wf.Jobs, nil
 }
 
-// macOSGaps lists what the job lacks: each package no go test line names, and
-// each tool it does not install. A package counts when a go test line names it
-// as ./<pkg> or ./<pkg>/... exactly and carries -race; nats-server counts only
-// when installed at the step's NATS_SERVER_VERSION, so the version stays under
-// the pin check.
+// macOSGaps lists what the job lacks: each package no step tests under the
+// skip gate, and each tool it does not install. A package counts when a step
+// runs it with go test -json -race and ends with scripts/no-skips.sh on that
+// stream, as gatedPackages reads it: a test that skips, fails or never runs
+// then fails the step, whatever the shell does with go test's own status.
+// nats-server counts only when installed at the step's NATS_SERVER_VERSION, so
+// the version stays under the pin check.
 //
 // Only what can fail the job counts. A job that sets if, or a continue-on-error
 // that is not false, is a gap, since it may never run or never go red. A step
-// that sets either is reported and read as absent, and a line with || on it
-// counts for nothing, since it can swallow the failure.
+// that sets either is reported and read as absent, and an install line with ||
+// on it counts for nothing, since it can swallow the failure.
 func macOSGaps(job ciJob, pkgs []string) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
 		gaps = append(gaps, "the job sets "+why)
 	}
 	var lines []string
+	gated := map[string]bool{}
 	for i, step := range job.Steps {
 		if whys := mayNotFail(step.If, step.ContinueOnError); len(whys) > 0 {
 			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s, so it is not counted", i, step.Name, strings.Join(whys, " and ")))
 			continue
+		}
+		for _, pkg := range gatedPackages(step.Run, pkgs, true) {
+			gated[pkg] = true
 		}
 		for _, line := range strings.Split(step.Run, "\n") {
 			if strings.Contains(line, "||") {
@@ -177,8 +209,8 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 	}
 	natsLines := natsInstallLines(job)
 	for _, pkg := range pkgs {
-		if !linesTestPackage(lines, pkg) {
-			gaps = append(gaps, "does not test ./"+pkg+" with -race")
+		if !gated[pkg] {
+			gaps = append(gaps, "does not test ./"+pkg+" with go test -json -race and end that step with scripts/no-skips.sh on the stream")
 		}
 	}
 	tmux := false
@@ -241,19 +273,6 @@ func natsInstallLines(job ciJob) []string {
 		}
 	}
 	return out
-}
-
-func linesTestPackage(lines []string, pkg string) bool {
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if !strings.Contains(line, "go test") || !slices.Contains(fields, "-race") {
-			continue
-		}
-		if slices.Contains(fields, "./"+pkg) || slices.Contains(fields, "./"+pkg+"/...") {
-			return true
-		}
-	}
-	return false
 }
 
 // hasTests reports whether dir holds a Go test file.
