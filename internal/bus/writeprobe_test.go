@@ -501,7 +501,11 @@ func TestFailingToSkippedLogsASkipNotARecovery(t *testing.T) {
 		t.Fatalf("the log does not say the object is skipped:\n%s", out)
 	}
 
-	// A true recovery still says so.
+	// A true recovery, failing straight to clean, still says so.
+	mu.Lock()
+	reading = WriteReading{Failures: []WriteFailure{{Object: InboxStream, Err: "no space left on device"}}}
+	mu.Unlock()
+	s.checkStructure(context.Background())
 	mu.Lock()
 	reading = WriteReading{}
 	mu.Unlock()

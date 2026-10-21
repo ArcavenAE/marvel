@@ -181,6 +181,13 @@ func ProbeWrites(ctx context.Context, url, user, password string) (WriteReading,
 // probe asks whether its writes would reach a byte cap.
 const probeOverhead = 256
 
+// probeHeadroomMsgs is how many canaries' worth of room the probe leaves
+// below a cap. The limits are read one round trip before the write, and
+// another publisher can take the last slot in between; with a message of
+// headroom the canary still does not evict on that race. A stream within
+// headroom of its cap is skipped, not probed.
+const probeHeadroomMsgs = 1
+
 // capReason reads the stream's live config and state, and says why a canary of
 // msgs messages carrying size bytes each should not be written: the write
 // would evict a real message under discard-old, or be refused under
@@ -193,10 +200,10 @@ func capReason(ctx context.Context, st jetstream.Stream, msgs, size int) (string
 		return "", err
 	}
 	c := info.Config
-	if c.MaxMsgs > 0 && info.State.Msgs+uint64(msgs) > uint64(c.MaxMsgs) {
+	if c.MaxMsgs > 0 && info.State.Msgs+uint64(msgs)+probeHeadroomMsgs > uint64(c.MaxMsgs) {
 		return fmt.Sprintf("at its message cap (%d of %d); a canary would evict or be refused", info.State.Msgs, c.MaxMsgs), nil
 	}
-	if c.MaxBytes > 0 && info.State.Bytes+uint64(msgs*(size+probeOverhead)) > uint64(c.MaxBytes) {
+	if c.MaxBytes > 0 && info.State.Bytes+uint64((msgs+probeHeadroomMsgs)*(size+probeOverhead)) > uint64(c.MaxBytes) {
 		return fmt.Sprintf("within one canary of its byte cap (%d of %d bytes); a canary would evict or be refused", info.State.Bytes, c.MaxBytes), nil
 	}
 	return "", nil

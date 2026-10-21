@@ -157,7 +157,14 @@ func RenderConf(s Spec) (string, error) {
 	fmt.Fprintf(&b, "# ~/.marvel/config.yaml instead; this file is regenerated.\n\n")
 	fmt.Fprintf(&b, "listen: %s\n", s.Listen)
 	fmt.Fprintf(&b, "http: %s\n\n", monitor)
-	fmt.Fprintf(&b, "jetstream {\n  store_dir: %q\n  domain: %s\n}\n\n", filepath.Join(s.StoreDir, "store"), s.Domain)
+	fmt.Fprintf(&b, "jetstream {\n  store_dir: %q\n  domain: %s\n", filepath.Join(s.StoreDir, "store"), s.Domain)
+	if s.MaxFileStore > 0 {
+		fmt.Fprintf(&b, "  max_file_store: %d\n", s.MaxFileStore)
+	}
+	if s.MaxMemoryStore > 0 {
+		fmt.Fprintf(&b, "  max_memory_store: %d\n", s.MaxMemoryStore)
+	}
+	fmt.Fprintf(&b, "}\n\n")
 	fmt.Fprintf(&b, "include %q\n", AuthName)
 	if s.HubURL != "" && s.LeafSeed && s.LeafAttached {
 		// nkey is unquoted on purpose: quoted, nats-server would take the

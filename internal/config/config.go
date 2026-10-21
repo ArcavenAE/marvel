@@ -5,10 +5,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -612,8 +614,41 @@ func (b *Bus) lift() (Service, error) {
 // parsed config so tolerant callers can proceed.
 var ErrInvalidBus = errors.New("invalid bus section")
 
-// ParseStoreSize is the red commit's stub.
-func ParseStoreSize(s string) (int64, error) { return 0, nil }
+// storeSizeRE is a whole number with an optional binary unit.
+var storeSizeRE = regexp.MustCompile(`^([0-9]+)\s*(KiB|MiB|GiB|TiB)?$`)
+
+// ParseStoreSize reads a JetStream store cap: a positive whole number of
+// bytes, or a positive count with a binary unit (KiB, MiB, GiB, TiB). A
+// decimal unit such as GB is refused, not guessed at, because it reads as
+// 10^9 to some people and 2^30 to others, and the broker's own parser takes
+// its own view; the result is rendered as plain bytes so the broker has
+// nothing to interpret.
+func ParseStoreSize(s string) (int64, error) {
+	in := strings.TrimSpace(s)
+	m := storeSizeRE.FindStringSubmatch(in)
+	if m == nil {
+		return 0, fmt.Errorf("%q is not a size: write whole bytes, or a count with a binary unit such as 512MiB or 2GiB (a decimal unit like 2GB is ambiguous and is refused)", s)
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is too large", s)
+	}
+	mult := int64(1)
+	switch m[2] {
+	case "KiB":
+		mult = 1 << 10
+	case "MiB":
+		mult = 1 << 20
+	case "GiB":
+		mult = 1 << 30
+	case "TiB":
+		mult = 1 << 40
+	}
+	if n < 1 || n > math.MaxInt64/mult {
+		return 0, fmt.Errorf("%q is not a size from 1 byte up to what fits in 63 bits", s)
+	}
+	return n * mult, nil
+}
 
 // ValidateBus checks a bus section. A managed broker needs an explicit
 // listen host:port; a url or hub url must parse with a nats scheme.
@@ -655,6 +690,18 @@ func ValidateBus(cluster string, b *Bus) error {
 	if b.URL != "" {
 		if err := checkNATSURL(b.URL, "nats", "tls"); err != nil {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: url: %v", ErrInvalidBus, cluster, err))
+		}
+	}
+	for key, val := range map[string]string{"max_file_store": b.MaxFileStore, "max_memory_store": b.MaxMemoryStore} {
+		if val == "" {
+			continue
+		}
+		if !managed {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: %s caps a broker marvel renders, which only a managed bus is; this bus is %s", ErrInvalidBus, cluster, key, mode))
+			continue
+		}
+		if _, err := ParseStoreSize(val); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: %s: %v", ErrInvalidBus, cluster, key, err))
 		}
 	}
 	if b.Hub != nil {
@@ -763,6 +810,10 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 		Listen: b.Listen, URL: b.URL, StoreDir: b.StoreDir, Seat: b.Seat,
 		GlobalRoles: b.GlobalRoles,
 	}
+	// Resolve does not validate: a value ValidateBus refuses resolves to no
+	// cap rather than to a guess.
+	r.MaxFileStore, _ = ParseStoreSize(b.MaxFileStore)
+	r.MaxMemoryStore, _ = ParseStoreSize(b.MaxMemoryStore)
 	if r.Class == "" {
 		r.Class = service.ClassMessageBus
 	}
