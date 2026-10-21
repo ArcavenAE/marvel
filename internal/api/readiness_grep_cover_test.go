@@ -142,8 +142,12 @@ func receiverType(recv *ast.FieldList) string {
 func TestMarryGrepReadsEveryMarrySourceFile(t *testing.T) {
 	t.Parallel()
 	want := marrySourceFiles(t)
-	if !slices.Contains(want, "internal/api/readiness_marry.go") {
-		t.Fatalf("the reach found %q, which misses the marry file itself", want)
+	// Positive controls: the reach finds the marry file itself, and follows a
+	// reference out of it (MarryAddress uses agentAddress).
+	for _, f := range []string{"internal/api/readiness_marry.go", "internal/api/readiness_address.go"} {
+		if !slices.Contains(want, f) {
+			t.Fatalf("the reach found %q, which misses %s", want, f)
+		}
 	}
 	var grepped []string
 	for _, v := range loadMarryVectors(t).Vectors {
