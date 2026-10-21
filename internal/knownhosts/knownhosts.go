@@ -43,6 +43,42 @@ const (
 	ModeTrust
 )
 
+// HostKeyUnknownError is returned when no key is recorded for the host and
+// the mode does not record one. Fingerprint is the offered key's SHA256
+// fingerprint, in ssh.FingerprintSHA256 form.
+type HostKeyUnknownError struct {
+	Host        string
+	Fingerprint string
+	msg         string
+}
+
+func (e *HostKeyUnknownError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return fmt.Sprintf("host key for %s is not trusted (%s)", e.Host, e.Fingerprint)
+}
+
+func unknownHost(hostname string, key ssh.PublicKey, msg string) error {
+	return &HostKeyUnknownError{Host: hostname, Fingerprint: ssh.FingerprintSHA256(key), msg: msg}
+}
+
+// HostKeyChangedError is returned when a key is recorded for the host and
+// the offered key differs. Fingerprint is the offered key's SHA256
+// fingerprint, in ssh.FingerprintSHA256 form.
+type HostKeyChangedError struct {
+	Host        string
+	Fingerprint string
+	msg         string
+}
+
+func (e *HostKeyChangedError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return fmt.Sprintf("host key for %s changed; offered %s", e.Host, e.Fingerprint)
+}
+
 // Callback returns an ssh.HostKeyCallback for mrvl:// clients that
 // verifies against layout.KnownHosts(), honouring mode for unknown
 // hosts. The prompt writer and reader default to os.Stderr/os.Stdin
@@ -83,26 +119,30 @@ func Callback(layout paths.Layout, mode Mode, prompt io.Writer, answer io.Reader
 		if len(keyErr.Want) > 0 {
 			// Mismatch — a key is recorded but doesn't match. Never
 			// silently update.
-			return fmt.Errorf(
-				"host key for %s changed; offered %s (%s), expected %s — "+
-					"possible MITM attack, investigate before continuing; "+
-					"to accept the new key (only if you are certain), remove "+
-					"the matching line from %s and reconnect",
-				hostname,
-				ssh.FingerprintSHA256(key), key.Type(),
-				formatWant(keyErr.Want),
-				path,
-			)
+			return &HostKeyChangedError{
+				Host:        hostname,
+				Fingerprint: ssh.FingerprintSHA256(key),
+				msg: fmt.Sprintf(
+					"host key for %s changed; offered %s (%s), expected %s — "+
+						"possible MITM attack, investigate before continuing; "+
+						"to accept the new key (only if you are certain), remove "+
+						"the matching line from %s and reconnect",
+					hostname,
+					ssh.FingerprintSHA256(key), key.Type(),
+					formatWant(keyErr.Want),
+					path,
+				),
+			}
 		}
 
 		// Unknown host — decide what to do based on mode.
 		switch mode {
 		case ModeStrict:
-			return fmt.Errorf(
+			return unknownHost(hostname, key, fmt.Sprintf(
 				"host key for %s is not trusted (SHA256:%s); run "+
 					"'marvel keys trust <cluster>' (add --yes in a script) or connect interactively to add it",
 				hostname, fingerprintBytes(key),
-			)
+			))
 		case ModeTrust:
 			_, _ = fmt.Fprintf(prompt, "Recording %s host key for %s: SHA256:%s\n", key.Type(), hostname, fingerprintBytes(key))
 			return appendKnownHost(path, hostname, key)
@@ -110,12 +150,12 @@ func Callback(layout paths.Layout, mode Mode, prompt io.Writer, answer io.Reader
 			if isTTY(answer) {
 				return promptAndTrust(path, hostname, key, prompt, answer)
 			}
-			return fmt.Errorf(
+			return unknownHost(hostname, key, fmt.Sprintf(
 				"host key for %s is not trusted (SHA256:%s); compare it with "+
 					"'marvel keys host-fingerprint' on the daemon, then run "+
 					"'marvel keys trust --yes <cluster>' to record it non-interactively",
 				hostname, fingerprintBytes(key),
-			)
+			))
 		}
 		return err
 	}
