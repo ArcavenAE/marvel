@@ -557,6 +557,21 @@
         },
         {
           "op": "address",
+          "address": "agent:///",
+          "want": "agent:/// is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/",
+          "want": "agent://ops/ is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent:///a",
+          "want": "agent:///a is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
           "address": "agent://ops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "want": "agent://ops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is not agent://{team}/{id}"
         },
