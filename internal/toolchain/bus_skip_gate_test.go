@@ -189,7 +189,7 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 // step, a gate before the nats-server install, an if or a continue-on-error
 // that is not false on the job or the gate step, which would let it skip or
 // stay green, or a gate step whose shell bashShell does not accept or whose
-// env sets a variable shellEnv names.
+// env, its job's or the workflow's sets a name shellEnv reports.
 func busGateGaps(job ciJob) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
@@ -217,7 +217,7 @@ func busGateGaps(job ciJob) []string {
 		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) runs under shell %q, which may not run the script", gated, sh))
 	}
 	if names := shellEnv(job, job.Steps[gated]); len(names) > 0 {
-		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s in its env or its job's, which bash reads at startup", gated, strings.Join(names, " and ")))
+		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s in its env, its job's or the workflow's, outside the allowed names %v", gated, strings.Join(names, " and "), allowedEnv))
 	}
 	return gaps
 }
@@ -475,23 +475,33 @@ func bashShell(shell string) bool {
 	return setOptions(opts)
 }
 
-// shellEnv names the variables, set in the step's env or the job's (which
-// ciJobs merges with the workflow's), that bash reads at startup and that can
-// stop it running the script as written: SHELLOPTS (noexec runs nothing),
-// BASH_ENV (a file sourced first, which may exit 0) and BASHOPTS (shopt
-// options, the same mechanism). A value an earlier step writes to $GITHUB_ENV
-// is out of reach here: it is set at run time, not in the workflow file.
+// shellEnv names the variables set in the step's env or the job's (which
+// ciJobs merges with the workflow's) that are not on allowedEnv, sorted. bash
+// and the commands the gate runs read the environment in more ways than a
+// denylist keeps up with: SHELLOPTS=noexec runs nothing, BASH_ENV sources a
+// file first, BASH_FUNC_go%% replaces go with a function, and PATH can put a
+// fake go or jq first. So every name but the few ci.yml uses is refused.
+//
+// Out of reach here: a value an earlier step writes to $GITHUB_ENV or a
+// directory it adds to $GITHUB_PATH, since both are set at run time and not in
+// the workflow file.
 func shellEnv(job ciJob, step ciJobStep) []string {
 	var names []string
-	for _, name := range []string{"BASHOPTS", "BASH_ENV", "SHELLOPTS"} {
-		_, inStep := step.Env[name]
-		_, inJob := job.Env[name]
-		if inStep || inJob {
-			names = append(names, name)
+	for _, env := range []map[string]string{step.Env, job.Env} {
+		for name := range env {
+			if !slices.Contains(allowedEnv, name) && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
 		}
 	}
+	slices.Sort(names)
 	return names
 }
+
+// allowedEnv is every env name ci.yml sets on a step the guards read, its job
+// or the workflow, as of this change. A new name needs adding here, which puts
+// it in front of a reviewer.
+var allowedEnv = []string{"HOMEBREW_NO_AUTO_UPDATE", "NATS_SERVER_SHA256", "NATS_SERVER_VERSION"}
 
 // stepShell is the shell a step's script runs under: its own, else the job's
 // default, which ciJobs fills from the workflow's when the job names none.

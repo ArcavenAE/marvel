@@ -360,7 +360,7 @@ func ciJobs(path string) (map[string]ciJob, error) {
 // Only what can fail the job counts. A job that sets if, or a continue-on-error
 // that is not false, is a gap, since it may never run or never go red. A step
 // that sets either, runs under a shell bashShell does not accept (its own or
-// the job's default), or sets a variable shellEnv names, is reported and read
+// the job's default), or sets an env name shellEnv reports, is reported and read
 // as absent, and an install line with || on it counts for nothing, since it
 // can swallow the failure.
 func macOSGaps(job ciJob, pkgs []string) []string {
@@ -380,7 +380,7 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 			continue
 		}
 		if names := shellEnv(job, step); len(names) > 0 {
-			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s in its env, which bash reads at startup, so it is not counted", i, step.Name, strings.Join(names, " and ")))
+			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s in its env, its job's or the workflow's, outside the allowed names %v, so it is not counted", i, step.Name, strings.Join(names, " and "), allowedEnv))
 			continue
 		}
 		for _, pkg := range gatedPackages(step.Run, pkgs, true) {
