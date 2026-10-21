@@ -153,6 +153,9 @@ func TestMacOSGaps(t *testing.T) {
 		{"the test step imports a go function", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Env = map[string]string{"BASH_FUNC_go%%": "() { :; }"} })), 3},
 		{"the test step sets PATH", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Env = map[string]string{"PATH": "./fake:/usr/bin"} })), 3},
 		{"the job sets PATH", withJob(good, func(j *ciJob) { j.Env = map[string]string{"PATH": "./fake:/usr/bin"} }), 6},
+		{"the job sets a key the guard does not read", withJob(good, func(j *ciJob) { j.ExtraKeys = []string{"container"} }), 1},
+		{"the test step sets a key the guard does not read", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.ExtraKeys = []string{"working-directory"} })), 3},
+		{"the install step sets a key the guard does not read", job(withStep(installStep, func(st *ciJobStep) { st.ExtraKeys = []string{"working-directory"} }), run(gated)), 3},
 		{"the job sets HOMEBREW_NO_AUTO_UPDATE", withJob(good, func(j *ciJob) { j.Env = map[string]string{"HOMEBREW_NO_AUTO_UPDATE": "1"} }), 0},
 		{"nothing", ciJob{}, 4},
 	} {
@@ -169,6 +172,8 @@ type ciJobStep struct {
 	ContinueOnError any               `yaml:"continue-on-error"`
 	Env             map[string]string `yaml:"env"`
 	Run             string            `yaml:"run"`
+	// ExtraKeys are the step's keys the guard does not read, from ciJobs.
+	ExtraKeys []string `yaml:"-"`
 }
 
 type ciJob struct {
@@ -178,6 +183,9 @@ type ciJob struct {
 	Defaults        ciDefaults        `yaml:"defaults"`
 	Env             map[string]string `yaml:"env"`
 	Steps           []ciJobStep       `yaml:"steps"`
+	// ExtraKeys are the job's keys the guard does not read, and any defaults
+	// beyond run.shell on the job or the workflow, from ciJobs.
+	ExtraKeys []string `yaml:"-"`
 }
 
 // ciDefaults is a workflow's or a job's defaults: block.
@@ -317,6 +325,132 @@ func shippedRefuses(t *testing.T, data string, load func(*testing.T, string) (ci
 	}
 	if len(macOSGaps(m, restructurePackages)) == 0 {
 		t.Errorf("%s on the workflow: the macOS guard passes", name)
+	}
+}
+
+// ciJobs lists every key the guard does not read: job keys outside
+// allowedJobKeys, step keys outside allowedStepKeys, and defaults other than
+// run.shell on the job or the workflow.
+func TestCIJobsListsKeysTheGuardDoesNotRead(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ci.yml")
+	wf := `defaults:
+  run:
+    working-directory: internal
+jobs:
+  a:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:24.04
+    services:
+      db:
+        image: postgres
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+        working-directory: internal
+    steps:
+      - name: one
+        id: one
+        working-directory: internal
+        run: echo
+      - name: two
+        run: echo
+  b:
+    name: b
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push'
+    continue-on-error: false
+    env:
+      NATS_SERVER_VERSION: v2.15.0
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: one
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+        env:
+          NATS_SERVER_VERSION: v2.15.0
+        if: always()
+        continue-on-error: false
+        shell: bash
+        run: echo
+`
+	if err := os.WriteFile(path, []byte(wf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := ciJobs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"container", "defaults.run.working-directory", "services", "timeout-minutes", "workflow defaults.run.working-directory"}
+	if got := jobs["a"].ExtraKeys; !slices.Equal(got, want) {
+		t.Errorf("job a ExtraKeys = %q, want %q", got, want)
+	}
+	if got := jobs["a"].Steps[0].ExtraKeys; !slices.Equal(got, []string{"id", "working-directory"}) {
+		t.Errorf("job a step 0 ExtraKeys = %q, want [id working-directory]", got)
+	}
+	if got := jobs["a"].Steps[1].ExtraKeys; len(got) != 0 {
+		t.Errorf("job a step 1 ExtraKeys = %q, want none", got)
+	}
+	if got := jobs["b"].ExtraKeys; !slices.Equal(got, []string{"workflow defaults.run.working-directory"}) {
+		t.Errorf("job b ExtraKeys = %q, want only the workflow's defaults", got)
+	}
+	if got := jobs["b"].Steps[0].ExtraKeys; len(got) != 0 {
+		t.Errorf("job b step 0 ExtraKeys = %q, want none", got)
+	}
+}
+
+// The round 4 measurement on the shipped ci.yml: a container: block, with env
+// or with --env in its options, set the step's environment where neither
+// guard looked. Each key the guard does not read must now be a gap, on the
+// job, on the gate step, and in defaults on the job or the workflow.
+func TestShippedCIRefusesUnreadKeys(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	const linuxJob, macJob = "  quality-gate:\n", "  restructure-macos:\n"
+	const linuxStep = "      - name: Fail if an internal/bus test skipped\n"
+	const macStep = "      - name: Run the restructure packages' tests with the race detector\n"
+	for _, anchor := range []string{linuxJob, macJob, linuxStep, macStep} {
+		if strings.Count(text, anchor) != 1 {
+			t.Fatalf("ci.yml has %d copies of %q; the test's anchors are stale", strings.Count(text, anchor), anchor)
+		}
+	}
+	insert := func(anchor, lines string) string { return strings.Replace(text, anchor, anchor+lines, 1) }
+	for _, tc := range []struct {
+		name, text   string
+		linux, macOS bool // which guard must report a gap
+	}{
+		{"container with env on the Linux job", insert(linuxJob, "    container:\n      image: ubuntu:24.04\n      env:\n        SHELLOPTS: noexec\n"), true, false},
+		{"container options --env on the Linux job", insert(linuxJob, "    container:\n      image: ubuntu:24.04\n      options: --env SHELLOPTS=noexec\n"), true, false},
+		{"container on the macOS job", insert(macJob, "    container:\n      image: ubuntu:24.04\n"), false, true},
+		{"services on the Linux job", insert(linuxJob, "    services:\n      db:\n        image: postgres\n"), true, false},
+		{"defaults working-directory on the Linux job", insert(linuxJob, "    defaults:\n      run:\n        working-directory: internal\n"), true, false},
+		{"defaults working-directory on the workflow", "defaults:\n  run:\n    working-directory: internal\n" + text, true, true},
+		{"working-directory on the Linux gate step", insert(linuxStep, "        working-directory: internal\n"), true, false},
+		{"working-directory on the macOS test step", insert(macStep, "        working-directory: internal\n"), false, true},
+	} {
+		p := filepath.Join(t.TempDir(), "ci.yml")
+		if err := os.WriteFile(p, []byte(tc.text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		jobs, err := ciJobs(p)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := len(busGateGaps(jobs["quality-gate"])) > 0; got != tc.linux {
+			t.Errorf("%s: the bus gate guard reports a gap: %v, want %v", tc.name, got, tc.linux)
+		}
+		if got := len(macOSGaps(jobs["restructure-macos"], restructurePackages)) > 0; got != tc.macOS {
+			t.Errorf("%s: the macOS guard reports a gap: %v, want %v", tc.name, got, tc.macOS)
+		}
 	}
 }
 

@@ -275,6 +275,12 @@ func TestBusGateGaps(t *testing.T) {
 		{"the job sets PATH", withJob(good, func(j *ciJob) { j.Env = map[string]string{"PATH": "./fake:/usr/bin"} }), 1},
 		{"the job imports a jq function", withJob(good, func(j *ciJob) { j.Env = map[string]string{"BASH_FUNC_jq%%": "() { :; }"} }), 1},
 		{"the gate step sets an allowed name", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"NATS_SERVER_VERSION": "v2.15.0"} })), 0},
+		// Only the job and step keys the guard reads are allowed: a key it does
+		// not read, such as container:, can change the step's environment or
+		// its tools. ciJobs fills ExtraKeys from the file.
+		{"the job sets a key the guard does not read", withJob(good, func(j *ciJob) { j.ExtraKeys = []string{"container"} }), 1},
+		{"the gate step sets a key the guard does not read", job(install, withStep(gate, func(st *ciJobStep) { st.ExtraKeys = []string{"working-directory"} })), 1},
+		{"another step sets a key the guard does not read", job(withStep(install, func(st *ciJobStep) { st.ExtraKeys = []string{"id"} }), gate), 0},
 		{"the job sets the allowed names", withJob(good, func(j *ciJob) {
 			j.Env = map[string]string{"HOMEBREW_NO_AUTO_UPDATE": "1", "NATS_SERVER_SHA256": "abc", "NATS_SERVER_VERSION": "v2.15.0"}
 		}), 0},
