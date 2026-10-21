@@ -361,6 +361,8 @@ func (p *Process) loop(parent context.Context) {
 					r.reply <- fmt.Errorf("%s: a child is already running (pid %d)", p.spec.Name, cur.info.Child.Pid())
 					continue
 				}
+				// A start during the wait after a crash replaces the respawn.
+				retry = nil
 				var c *running
 				how := Spawned
 				if r.kind == reqAdopt {
@@ -394,6 +396,9 @@ func (p *Process) loop(parent context.Context) {
 
 		case <-retry:
 			retry = nil
+			if cur != nil {
+				continue // a request already started a child
+			}
 			c, err := spawn()
 			if err != nil {
 				log.Printf("%s: restart failed: %v", p.spec.Name, err)
