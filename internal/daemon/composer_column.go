@@ -96,11 +96,13 @@ func (d *Daemon) composerClientWorkspace(workspace string) (bool, error) {
 
 // workspaceIsClient is the ruled source (K1a, director 2026-10-21): the
 // workspace manifest's scope. A workspace the store cannot read is an error,
-// so the column refuses to capture it.
+// so the column refuses to capture it. Any stored scope counts as client,
+// not only "client": the apply refuses every other value, so another one in
+// the store came from somewhere else, and the column fails closed on it.
 func (d *Daemon) workspaceIsClient(workspace string) (bool, error) {
 	ws, err := d.store.GetWorkspace(workspace)
 	if err != nil {
 		return false, err
 	}
-	return ws.Scope == api.WorkspaceScopeClient, nil
+	return ws.Scope != "", nil
 }
