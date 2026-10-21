@@ -175,3 +175,53 @@ func TestWatchBoundsEachMessage(t *testing.T) {
 		t.Errorf("fn ran %d times, want 3: the three small messages pass the bound one by one", got)
 	}
 }
+
+// TestHoldAfterFireClosesAtOnce: a connection held after the timer has
+// fired is closed at once, since nothing else would close it.
+func TestHoldAfterFireClosesAtOnce(t *testing.T) {
+	ex := startExchange(time.Millisecond)
+	defer ex.stop()
+	for i := 0; i < 200; i++ {
+		ex.mu.Lock()
+		done := ex.fired != ""
+		ex.mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	a, b := net.Pipe()
+	defer func() { _ = b.Close() }()
+	ex.hold(a)
+	_ = b.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := b.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Errorf("read on the far end of a held connection after the fire: %v, want EOF", err)
+	}
+}
+
+// TestBoundedReaderNextCountsBufferedBytes: when a message ends before the
+// bytes the decoder has already read, those bytes count against the next
+// message's budget, so the bound holds for each message exactly.
+func TestBoundedReaderNextCountsBufferedBytes(t *testing.T) {
+	const limit = 1000
+	r := newBoundedReader(strings.NewReader(strings.Repeat("x", 5000)), limit)
+	buf := make([]byte, 800)
+	if n, err := r.Read(buf); n != 800 || err != nil {
+		t.Fatalf("first read: %d, %v", n, err)
+	}
+	r.next(500) // the decoder used 500 bytes; the other 300 are the next message's
+	total := 0
+	for i := 0; i < 20; i++ {
+		n, err := r.Read(buf)
+		total += n
+		if err != nil {
+			if !errors.Is(err, errReplyTooLarge) {
+				t.Fatalf("err = %v, want errReplyTooLarge", err)
+			}
+			break
+		}
+	}
+	if total != 700 {
+		t.Errorf("read %d more bytes after next, want 700: the budget is the limit minus the 300 already buffered", total)
+	}
+}
