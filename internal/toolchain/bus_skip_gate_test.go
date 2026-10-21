@@ -129,6 +129,40 @@ func TestNoSkipsGateEachPackage(t *testing.T) {
 	}
 }
 
+func outEv(pkg, test, output string) string {
+	if test == "" {
+		return `{"Action":"output","Package":"` + pkg + `","Output":"` + output + `\n"}` + "\n"
+	}
+	return `{"Action":"output","Package":"` + pkg + `","Test":"` + test + `","Output":"` + output + `\n"}` + "\n"
+}
+
+// On a failure the gate prints what the failed tests and the failed package
+// wrote, since the step sends go test's output to the stream and the job log
+// would otherwise show only the test names. Output of a passing test, or of a
+// failure in a package the gate was not asked about, stays out.
+func TestNoSkipsGatePrintsFailedOutput(t *testing.T) {
+	t.Parallel()
+	other := "github.com/arcavenae/marvel/internal/daemon"
+	stream := ev("run", busPkg, "TestA") + outEv(busPkg, "TestA", "chatter from a passing test") + ev("pass", busPkg, "TestA") +
+		ev("run", busPkg, "TestB") + outEv(busPkg, "TestB", "bus_test.go:9: want 1, got 2") + ev("fail", busPkg, "TestB") +
+		outEv(busPkg, "", "FAIL bus package summary") + ev("fail", busPkg, "") +
+		ev("run", other, "TestD") + outEv(other, "TestD", "output of another package") + ev("fail", other, "TestD")
+	got, out := runNoSkips(t, stream, busPkg)
+	if got != 1 {
+		t.Fatalf("exit %d, want 1; output:\n%s", got, out)
+	}
+	for _, want := range []string{"    bus_test.go:9: want 1, got 2", "    FAIL bus package summary"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not carry the failed output %q:\n%s", want, out)
+		}
+	}
+	for _, not := range []string{"chatter from a passing test", "output of another package"} {
+		if strings.Contains(out, not) {
+			t.Errorf("output carries %q, which no failure in %s wrote:\n%s", not, busPkg, out)
+		}
+	}
+}
+
 // The Linux job runs internal/bus with -json and passes the stream to the gate
 // in the same step, after nats-server is installed, so a skip there fails the
 // job rather than reading as a pass.
@@ -239,6 +273,15 @@ func TestBusSkipsGated(t *testing.T) {
 		{"; true glued to the gate's last path", test + "\n" + gate + ";true", false},
 		{"; true glued to an extra module path", test + "\n" + gate + " " + modulePath + "/internal/daemon;true", false},
 		{"a word that is not an import path after the gate's path", test + "\n" + gate + " extra", false},
+		// Only set and the go test line may come before the gate. A trap on EXIT
+		// that exits 0, or a function named after the gate, would decide the
+		// step's status while the gate still looks like its last command.
+		{"a trap on EXIT that exits 0", "trap 'exit 0' EXIT\n" + test + "\n" + gate, false},
+		{"a function named after the gate", "scripts/no-skips.sh() { return 0; }\n" + test + "\n" + gate, false},
+		{"a function defined after set on one line", "set -e; scripts/no-skips.sh() { :; }\n" + test + "\n" + gate, false},
+		{"a trap after the test line's redirect", test + " && trap 'exit 0' EXIT\n" + gate, false},
+		{"another command before the test line", "echo starting\n" + test + "\n" + gate, false},
+		{"set -o pipefail before the test", "set -e -o pipefail\n" + test + "\n" + gate, true},
 	} {
 		if got := busSkipsGated(tc.run); got != tc.want {
 			t.Errorf("%s: busSkipsGated = %v, want %v", tc.name, got, tc.want)

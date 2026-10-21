@@ -115,7 +115,9 @@ func TestMacOSGaps(t *testing.T) {
 		{"|| true after the gate", job(installStep, run(gated+" || true")), 2},
 		{"; true after the gate", job(installStep, run(gated+"; true")), 2},
 		{"set +e before the test line, the gate last", job(installStep, run("set +e\n"+gated)), 0},
-		{"&& on the test line, the gate last", job(installStep, run(testLine+" && echo ran\n"+gate)), 0},
+		{"&& on the test line, the gate last", job(installStep, run(testLine+" && echo ran\n"+gate)), 2},
+		{"a trap on EXIT before the test line", job(installStep, run("trap 'exit 0' EXIT\n"+gated)), 2},
+		{"a function named after the gate", job(installStep, run("scripts/no-skips.sh() { return 0; }\n"+gated)), 2},
 		{"-run ^$ on the test line, the gate last", job(installStep, run(strings.Replace(gated, "-count=1", "-count=1 -run ^$", 1))), 0},
 		{"a test line continued with backslashes", job(installStep, run(strings.Replace(testLine, " ./internal/daemon/...", " \\\n  ./internal/daemon/...", 1)+"\n"+gate)), 0},
 		{"no tmux", job(ciJobStep{
