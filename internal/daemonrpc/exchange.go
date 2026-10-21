@@ -32,7 +32,7 @@ const (
 // that is not on the alternate screen reaches 100,000 lines; at 200
 // columns and the 1.16 escapes ratio seen in that measurement, that is
 // about 23 MB. 32 MiB is 1.4 times that worst case and 6.7 times the
-// measured maximum. A pane wider than about 280 columns with full
+// measured maximum. A pane wider than about 289 columns with full
 // scrollback can exceed it and become a bad reply: the known risk of the
 // trial.
 const defaultMaxReplyBytes int64 = 32 << 20
