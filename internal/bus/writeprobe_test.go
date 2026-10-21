@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,14 +24,22 @@ import (
 // zero, and returns its URL. Never the live bus.
 func startScratchBroker(t *testing.T, maxFileStore int) string {
 	t.Helper()
+	url, _ := startScratchBrokerMon(t, maxFileStore)
+	return url
+}
+
+// startScratchBrokerMon is startScratchBroker that also serves the loopback
+// monitor, and returns its address.
+func startScratchBrokerMon(t *testing.T, maxFileStore int) (string, string) {
+	t.Helper()
 	ns, err := exec.LookPath("nats-server")
 	if err != nil {
 		t.Skip("nats-server not on PATH")
 	}
-	port := freePort(t)
+	port, mon := freePort(t), freePort(t)
 	dir := t.TempDir()
 	conf := filepath.Join(dir, "n.conf")
-	body := "listen: 127.0.0.1:" + strconv.Itoa(port) + "\njetstream {\n  store_dir: \"" + filepath.Join(dir, "js") + "\"\n"
+	body := "listen: 127.0.0.1:" + strconv.Itoa(port) + "\nhttp: 127.0.0.1:" + strconv.Itoa(mon) + "\njetstream {\n  store_dir: \"" + filepath.Join(dir, "js") + "\"\n"
 	if maxFileStore > 0 {
 		body += "  max_file_store: " + strconv.Itoa(maxFileStore) + "\n"
 	}
@@ -53,7 +62,7 @@ func startScratchBroker(t *testing.T, maxFileStore int) string {
 		nc.Close()
 		return true
 	})
-	return url
+	return url, "127.0.0.1:" + strconv.Itoa(mon)
 }
 
 func streamMsgs(t *testing.T, js jetstream.JetStream, name string) uint64 {
@@ -409,4 +418,126 @@ func TestSkippedObjectsShowInStatusAndAreNotAWriteFailure(t *testing.T) {
 	if st.WriteFailed != "" || len(writeFailedEvents(ring)) != 0 || !s.Ready() {
 		t.Fatalf("a skip was treated as a failure: %+v", st)
 	}
+}
+
+// One message of headroom: a stream one message below its cap is skipped
+// too, because between the limit read and the write another publisher can
+// take the last slot and the canary would evict. A stream with room is still
+// probed and left as it was.
+func TestProbeWritesKeepsOneMessageOfHeadroomBelowTheCap(t *testing.T) {
+	url := startScratchBroker(t, 0)
+	ctx := context.Background()
+	if _, err := Provision(ctx, url, "any", "any"); err != nil {
+		t.Fatal(err)
+	}
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, _ := jetstream.New(nc)
+	st, err := js.Stream(ctx, InboxStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := st.CachedInfo().Config
+	cfg.Discard = jetstream.DiscardOld
+	for _, body := range []string{"real one", "real two"} {
+		if _, err := js.Publish(ctx, "agent.t.w.x.inbox", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg.MaxMsgs = 3 // room for one more, no headroom
+	if _, err := js.UpdateStream(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ProbeWrites(ctx, url, "any", "any")
+	if err != nil || len(got.Failures) != 0 {
+		t.Fatalf("probe at cap-1: %+v, %v", got, err)
+	}
+	if len(got.Skipped) != 1 || got.Skipped[0].Object != InboxStream {
+		t.Fatalf("a stream one message below its cap was probed: skipped = %+v", got.Skipped)
+	}
+
+	cfg.MaxMsgs = 5 // room and headroom
+	if _, err := js.UpdateStream(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ProbeWrites(ctx, url, "any", "any")
+	if err != nil || len(got.Failures) != 0 || len(got.Skipped) != 0 {
+		t.Fatalf("probe with headroom: %+v, %v", got, err)
+	}
+	if n := mustStreamState(t, st).Msgs; n != 2 {
+		t.Fatalf("the stream holds %d messages after a probe, want the 2 real ones", n)
+	}
+}
+
+// Going from failing to skipped is not recovery. The log must say the
+// object is no longer failing but is not being tested, and must not say the
+// writes succeed again.
+func TestFailingToSkippedLogsASkipNotARecovery(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	reading := WriteReading{Failures: []WriteFailure{{Object: InboxStream, Err: "no space left on device"}}}
+	s.mu.Lock()
+	s.writeProbeFn = func(context.Context) (WriteReading, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return reading, nil
+	}
+	s.mu.Unlock()
+
+	var buf lockedBuffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	s.checkStructure(context.Background())
+	mu.Lock()
+	reading = WriteReading{Skipped: []WriteSkip{{Object: InboxStream, Reason: "at its message cap"}}}
+	mu.Unlock()
+	s.checkStructure(context.Background())
+	out := buf.String()
+	if strings.Contains(out, "succeed again") {
+		t.Fatalf("a skipped object was logged as recovered:\n%s", out)
+	}
+	if !strings.Contains(out, "no longer failing") || !strings.Contains(out, InboxStream+" is skipped") {
+		t.Fatalf("the log does not say the object is skipped:\n%s", out)
+	}
+
+	// A true recovery, failing straight to clean, still says so.
+	mu.Lock()
+	reading = WriteReading{Failures: []WriteFailure{{Object: InboxStream, Err: "no space left on device"}}}
+	mu.Unlock()
+	s.checkStructure(context.Background())
+	mu.Lock()
+	reading = WriteReading{}
+	mu.Unlock()
+	s.checkStructure(context.Background())
+	if !strings.Contains(buf.String(), "succeed again") {
+		t.Fatalf("a clean reading after skipping did not log recovery:\n%s", buf.String())
+	}
+}
+
+// lockedBuffer is a log sink the supervisor's tick goroutine and the test
+// can both touch.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }

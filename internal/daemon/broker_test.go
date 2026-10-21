@@ -13,6 +13,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/broker"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -87,7 +88,7 @@ func TestBrokerTokenIsLocalSocketOnly(t *testing.T) {
 	d, _ := brokerDaemon(t)
 	key, token := registerSession(t, d, "agent-0", true)
 	remoteAdmin := caller{scope: ScopeAdmin, fingerprint: "SHA256:remote", local: false}
-	resp := d.dispatchAs(Request{Method: "broker.token", Params: brokerParams(t, key, token)}, remoteAdmin)
+	resp := d.dispatchAs(daemonrpc.Request{Method: "broker.token", Params: brokerParams(t, key, token)}, remoteAdmin)
 	if !strings.Contains(resp.Error, "only available on the local unix socket") {
 		t.Fatalf("error = %q, want a local-only refusal", resp.Error)
 	}
@@ -154,7 +155,7 @@ func TestBrokerRefusesATokenAskMadeWhileTheSeatIsBeingDeleted(t *testing.T) {
 	key, token := registerSession(t, d, "agent-0", true)
 
 	revoke := d.sessMgr.SessionEnded
-	var window Response
+	var window daemonrpc.Response
 	d.sessMgr.SessionEnded = func(k string) {
 		revoke(k)
 		window = d.handleBrokerToken(context.Background(), brokerParams(t, k, token))

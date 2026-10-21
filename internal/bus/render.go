@@ -46,7 +46,10 @@ type Spec struct {
 	Domain   string // the cluster name; becomes the JetStream domain
 	Listen   string // explicit host:port
 	StoreDir string // JetStream store root; the store itself is StoreDir/store
-	HubURL   string // empty for a local-only cluster
+	// MaxFileStore and MaxMemoryStore cap the JetStream stores in bytes; zero
+	// renders no cap.
+	MaxFileStore, MaxMemoryStore int64
+	HubURL                       string // empty for a local-only cluster
 	// HubURLs is every hub address the leaf remote lists; empty means just HubURL.
 	HubURLs   []string
 	HubCAFile string // trusts a TLS hub from the leaf remote; empty for plaintext
@@ -154,7 +157,14 @@ func RenderConf(s Spec) (string, error) {
 	fmt.Fprintf(&b, "# ~/.marvel/config.yaml instead; this file is regenerated.\n\n")
 	fmt.Fprintf(&b, "listen: %s\n", s.Listen)
 	fmt.Fprintf(&b, "http: %s\n\n", monitor)
-	fmt.Fprintf(&b, "jetstream {\n  store_dir: %q\n  domain: %s\n}\n\n", filepath.Join(s.StoreDir, "store"), s.Domain)
+	fmt.Fprintf(&b, "jetstream {\n  store_dir: %q\n  domain: %s\n", filepath.Join(s.StoreDir, "store"), s.Domain)
+	if s.MaxFileStore > 0 {
+		fmt.Fprintf(&b, "  max_file_store: %d\n", s.MaxFileStore)
+	}
+	if s.MaxMemoryStore > 0 {
+		fmt.Fprintf(&b, "  max_memory_store: %d\n", s.MaxMemoryStore)
+	}
+	fmt.Fprintf(&b, "}\n\n")
 	fmt.Fprintf(&b, "include %q\n", AuthName)
 	if s.HubURL != "" && s.LeafSeed && s.LeafAttached {
 		// nkey is unquoted on purpose: quoted, nats-server would take the

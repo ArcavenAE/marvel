@@ -118,6 +118,14 @@ func (l Layout) StateDir() string { return filepath.Join(l.Home, "state") }
 // session key (docs/design/readonly-view.md section 3).
 func (l Layout) ViewsDir() string { return filepath.Join(l.StateDir(), "views") }
 
+// VersionsDir holds the version store: the prior build the direct install
+// channel keeps when it replaces one, and the record naming the active and
+// prior builds (docs/design/zero-downtime-upgrade.md section 5).
+func (l Layout) VersionsDir() string { return filepath.Join(l.Home, "versions") }
+
+// VersionRecord returns the path to the record naming the active and prior builds.
+func (l Layout) VersionRecord() string { return filepath.Join(l.VersionsDir(), "record.json") }
+
 // DaemonBolt returns the canonical path for the daemon's bbolt L2 file.
 func (l Layout) DaemonBolt() string { return filepath.Join(l.StateDir(), "marvel.bolt") }
 
@@ -270,6 +278,14 @@ func (l Layout) EnsureStateDir() error {
 		return err
 	}
 	return ensurePrivateDir(l.StateDir())
+}
+
+// EnsureVersionsDir creates the version store directory at 0700 if missing.
+func (l Layout) EnsureVersionsDir() error {
+	if err := l.EnsureHome(); err != nil {
+		return err
+	}
+	return ensurePrivateDir(l.VersionsDir())
 }
 
 // ensurePrivateDir creates dir at ModeDir (0700) if missing. If it
