@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 const (
@@ -30,6 +32,10 @@ const (
 
 // apiBase is the releases API root; tests point it at a local server.
 var apiBase = "https://api.github.com/repos/" + repoOwner + "/" + repoName
+
+// storeLayout finds the marvel home the version store lives under; tests
+// point it at a temp dir.
+var storeLayout = paths.Default
 
 type githubRelease struct {
 	TagName     string        `json:"tag_name"`
@@ -71,21 +77,44 @@ const (
 )
 
 // Run performs the upgrade and reports whether the binary on disk changed. The
-// caller re-executes a running daemon only into a binary that changed.
-func Run(channel, targetVersion string) (Result, error) {
+// caller re-executes a running daemon only into a binary that changed. current
+// is the running build's version, which names the prior build in the version
+// store.
+func Run(current, channel, targetVersion string) (Result, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return Result{}, fmt.Errorf("find the running binary: %w", err)
 	}
 	method := detectInstallMethod()
-	return runInstall(method, installedBinary(method, self), channel, targetVersion)
+	return runInstall(method, installedBinary(method, self), current, channel, targetVersion)
 }
 
 // runInstall performs the upgrade and reports whether the binary at exe changed.
-func runInstall(method installMethod, exe, channel, targetVersion string) (Result, error) {
-	return runWith(exe, func() error {
-		return runMethod(method, channel, targetVersion)
+// A Homebrew upgrade that succeeded is recorded in the version store; the
+// direct channel records its own, since it alone knows whether the download was
+// verified.
+func runInstall(method installMethod, exe, current, channel, targetVersion string) (Result, error) {
+	before := resolvedPath(exe)
+	res, err := runWith(exe, func() error {
+		return runMethod(method, current, channel, targetVersion)
 	})
+	if err == nil && method == methodHomebrew {
+		if l, lerr := storeLayout(); lerr != nil {
+			storeNote("%v; the upgrade is not recorded", lerr)
+		} else {
+			recordKeg(l, before, resolvedPath(exe))
+		}
+	}
+	return res, err
+}
+
+// resolvedPath follows the links brew retargets, so a recorded keg is the
+// versioned directory and not the link to whichever version is current.
+func resolvedPath(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	return path
 }
 
 // homebrewFormula is the tap formula marvel installs and upgrades through.
@@ -144,7 +173,7 @@ func reexecRefusal(goos string, method installMethod) error {
 }
 
 // runMethod performs the upgrade for one install method.
-func runMethod(method installMethod, channel, targetVersion string) error {
+func runMethod(method installMethod, current, channel, targetVersion string) error {
 	switch method {
 	case methodHomebrew:
 		return upgradeViaHomebrew(channel, targetVersion)
@@ -153,7 +182,7 @@ func runMethod(method installMethod, channel, targetVersion string) error {
 		return errors.New("marvel was installed via a system package manager, so marvel cannot upgrade it; " +
 			"use your package manager (for example apt upgrade or dnf upgrade)")
 	default:
-		return upgradeDirectBinary(channel, targetVersion)
+		return upgradeDirectBinary(current, channel, targetVersion)
 	}
 }
 
@@ -235,7 +264,7 @@ func upgradeViaHomebrew(channel, targetVersion string) error {
 	return nil
 }
 
-func upgradeDirectBinary(channel, targetVersion string) error {
+func upgradeDirectBinary(current, channel, targetVersion string) error {
 	fmt.Println("Checking for updates...")
 
 	release, err := lookupRelease(apiBase, channel, targetVersion)
@@ -264,7 +293,7 @@ func upgradeDirectBinary(channel, targetVersion string) error {
 			assetName, release.TagName, strings.Join(available, ", "))
 	}
 
-	return downloadAndReplace(asset, release.TagName)
+	return downloadAndReplace(release, asset, current)
 }
 
 // fetchReleases lists releases. With no want it reads the first page, which
@@ -412,7 +441,11 @@ func platformAssetName() (string, error) {
 	return fmt.Sprintf("marvel-%s-%s", goos, goarch), nil
 }
 
-func downloadAndReplace(asset *githubAsset, tag string) error {
+// downloadAndReplace downloads asset, checks it against the release's
+// checksums.txt, and installs it through the version store, which keeps the
+// build it replaces.
+func downloadAndReplace(release *githubRelease, asset *githubAsset, current string) error {
+	tag := release.TagName
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot determine binary path: %w", err)
@@ -424,7 +457,6 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	}
 
 	dir := filepath.Dir(resolved)
-	base := filepath.Base(resolved)
 
 	// Check write access.
 	testPath := filepath.Join(dir, ".marvel-update-test")
@@ -433,8 +465,10 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 	}
 	_ = os.Remove(testPath)
 
-	newPath := filepath.Join(dir, base+".new")
-	oldPath := filepath.Join(dir, base+".old")
+	layout, err := storeLayout()
+	if err != nil {
+		return fmt.Errorf("find the version store: %w", err)
+	}
 
 	fmt.Printf("Downloading %s (%s)...\n", asset.Name, tag)
 
@@ -458,23 +492,18 @@ func downloadAndReplace(asset *githubAsset, tag string) error {
 		return fmt.Errorf("downloaded file is empty")
 	}
 
-	if err := os.WriteFile(newPath, body, 0o755); err != nil {
-		return fmt.Errorf("write %s: %w", newPath, err)
+	verified, err := verifyDownload(client, release, asset.Name, body)
+	if err != nil {
+		return err
+	}
+	if !verified {
+		_, _ = fmt.Fprintf(errOut, "note: release %s publishes no %s, so the download is installed and recorded unverified\n",
+			tag, checksumsAsset)
 	}
 
-	// Atomic swap: current → .old, .new → current.
-	if err := os.Rename(resolved, oldPath); err != nil {
-		_ = os.Remove(newPath)
-		return fmt.Errorf("backup current binary: %w", err)
+	if err := installDirect(layout, resolved, body, tag, current, verified); err != nil {
+		return err
 	}
-
-	if err := os.Rename(newPath, resolved); err != nil {
-		_ = os.Rename(oldPath, resolved) // rollback
-		_ = os.Remove(newPath)
-		return fmt.Errorf("install new binary: %w", err)
-	}
-
-	_ = os.Remove(oldPath)
 
 	fmt.Printf("Upgraded to %s\n", tag)
 	return nil
