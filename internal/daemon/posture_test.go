@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // createColdHeldTeam seeds a workspace + a cold team holding at the start line
@@ -65,7 +66,7 @@ func TestConvergeRPCSpawnsHeldTeam(t *testing.T) {
 	}
 
 	params, _ := json.Marshal(convergeParams{TeamKey: "ws/crew"})
-	resp := d.dispatch(Request{Method: "converge", Params: params})
+	resp := d.dispatch(daemonrpc.Request{Method: "converge", Params: params})
 	if resp.Error != "" {
 		t.Fatalf("converge: %s", resp.Error)
 	}
@@ -99,7 +100,7 @@ func TestConvergeRPCEmptyKeyTargetsAllTeams(t *testing.T) {
 	createColdHeldTeam(t, d, "ws", "a", "worker", 1)
 	createColdHeldTeam(t, d, "ws", "b", "worker", 2)
 
-	resp := d.dispatch(Request{Method: "converge"})
+	resp := d.dispatch(daemonrpc.Request{Method: "converge"})
 	if resp.Error != "" {
 		t.Fatalf("converge all: %s", resp.Error)
 	}

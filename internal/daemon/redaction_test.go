@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // Redaction (docs/design/describe-redaction.md, RD-1). A role's declared Env
@@ -37,7 +38,7 @@ func rawResponse(t *testing.T, d *Daemon, method string, params any) string {
 	if params != nil {
 		p = mustMarshal(t, params)
 	}
-	resp := d.dispatch(Request{Method: method, Params: p})
+	resp := d.dispatch(daemonrpc.Request{Method: method, Params: p})
 	return string(resp.Result) + resp.Error
 }
 

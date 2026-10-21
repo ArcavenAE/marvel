@@ -71,7 +71,7 @@ type BuildInfo struct {
 	PID       int       `json:"pid"`
 }
 
-func (d *Daemon) handleVersion() Response {
+func (d *Daemon) handleVersion() daemonrpc.Response {
 	return respond(BuildInfo{Build: d.build, StartedAt: d.startedAt, PID: os.Getpid()})
 }
 

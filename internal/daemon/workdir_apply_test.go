@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // Placement at apply (docs/design/session-working-directory.md, marvel#255).
@@ -26,7 +28,7 @@ teams:
 `
 
 // applyWithRoot posts a manifest with the workspace_root param the CLI sends.
-func applyWithRoot(t *testing.T, d *Daemon, manifest, root string) Response {
+func applyWithRoot(t *testing.T, d *Daemon, manifest, root string) daemonrpc.Response {
 	t.Helper()
 	m := map[string]any{"manifest_data": []byte(manifest)}
 	if root != "" {
@@ -39,7 +41,7 @@ func applyWithRoot(t *testing.T, d *Daemon, manifest, root string) Response {
 	return d.handleApply(params)
 }
 
-func advisoriesOf(t *testing.T, resp Response) []string {
+func advisoriesOf(t *testing.T, resp daemonrpc.Response) []string {
 	t.Helper()
 	var r struct {
 		Advisories []string `json:"advisories"`

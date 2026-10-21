@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -276,7 +277,7 @@ func TestAccountLimitsStaleLowerReadingLeavesLimitedSet(t *testing.T) {
 	token := tokenedSession(t, d, "seat")
 	now := time.Now().UTC()
 	reset := now.Add(2 * time.Hour)
-	post := func(pct float64, observed time.Time) Response {
+	post := func(pct float64, observed time.Time) daemonrpc.Response {
 		return d.recordAccountLimits(api.AccountLimitsRequest{
 			Session: "ws/seat", SessionToken: token, ObservedAt: observed,
 			Windows: []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(pct), ResetsAt: reset}},
@@ -338,7 +339,7 @@ func TestAccountLimitsZeroTimeReadingNeverDisplacesAStampedOne(t *testing.T) {
 	token := tokenedSession(t, d, "seat")
 	now := time.Now().UTC()
 	reset := now.Add(2 * time.Hour)
-	post := func(pct float64, observed time.Time) Response {
+	post := func(pct float64, observed time.Time) daemonrpc.Response {
 		return d.recordAccountLimits(api.AccountLimitsRequest{
 			Session: "ws/seat", SessionToken: token, ObservedAt: observed,
 			Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(pct), ResetsAt: reset}},
@@ -384,7 +385,7 @@ func TestAccountLimitsTwoSeatsAReRenderingSiblingNeverLiftsALimit(t *testing.T) 
 	tokB := tokenedSession(t, d, "seat-b")
 	now := time.Now().UTC()
 	reset := now.Add(3 * time.Hour)
-	post := func(session, token string, pct float64, firstSeen time.Time) Response {
+	post := func(session, token string, pct float64, firstSeen time.Time) daemonrpc.Response {
 		return d.recordAccountLimits(api.AccountLimitsRequest{
 			Session: session, SessionToken: token, ObservedAt: firstSeen,
 			Windows: []api.AccountWindow{{Name: "five_hour", UsedPercent: acctPct(pct), ResetsAt: reset}},
