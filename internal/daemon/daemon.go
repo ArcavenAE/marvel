@@ -1591,6 +1591,9 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
 		d.stampSpec(live)
+		if p.Composer {
+			stampComposer(d.driver, live, d.composerClientWorkspace)
+		}
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()

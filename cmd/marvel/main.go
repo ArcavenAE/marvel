@@ -3019,7 +3019,11 @@ func fetchSessions() ([]api.Session, error) { return fetchSessionsWith(false) }
 // COMPOSER column, which reads each seat's pane, so it is set only when that
 // column is selected.
 func getRequest(resourceType string, composer bool) map[string]any {
-	return map[string]any{"resource_type": resourceType} // red: not built
+	p := map[string]any{"resource_type": resourceType}
+	if composer {
+		p["composer"] = true
+	}
+	return p
 }
 
 // fetchSessionsWith reads the sessions, with the COMPOSER verdicts when asked.
@@ -3647,5 +3651,8 @@ func stripComments(args []string) []string {
 // composerCell is the COMPOSER cell: the daemon's verdict word, or "-" where
 // no pane was read.
 func composerCell(s api.Session) string {
-	return "" // red: not built
+	if s.Composer == "" {
+		return "-"
+	}
+	return s.Composer
 }
