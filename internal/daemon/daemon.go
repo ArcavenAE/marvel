@@ -91,8 +91,12 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
-	listener           net.Listener
-	sshServer          atomic.Pointer[SSHServer]
+	// composerClient reports whether a workspace is a client one, whose
+	// panes the COMPOSER column never reads. Nil until a source is ruled
+	// (K1a), and nil captures nothing.
+	composerClient func(workspace string) bool
+	listener       net.Listener
+	sshServer      atomic.Pointer[SSHServer]
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -1549,6 +1553,8 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 // Get params
 type getParams struct {
 	ResourceType string `json:"resource_type"`
+	// Composer asks for the COMPOSER column, which reads each seat's pane.
+	Composer bool `json:"composer,omitempty"`
 }
 
 func (d *Daemon) handleGet(params json.RawMessage) Response {

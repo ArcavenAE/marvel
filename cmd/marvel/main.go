@@ -1187,7 +1187,7 @@ func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string, cols []sessionColumn, header string, fit fitOptions) error {
-	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
+	params, _ := json.Marshal(getRequest(resourceType, wantsComposer(cols)))
 	resp, err := send(daemonrpc.Request{
 		Method: "get",
 		Params: params,
@@ -2918,12 +2918,12 @@ type watchData struct {
 }
 
 // fetchWatchData reads the sessions, and the header when asked.
-func fetchWatchData(wantHeader bool) watchData {
+func fetchWatchData(wantHeader, composer bool) watchData {
 	var d watchData
 	if wantHeader {
 		d.header = collectHeader()
 	}
-	d.sessions, d.err = fetchSessions()
+	d.sessions, d.err = fetchSessionsWith(composer)
 	d.at = time.Now()
 	return d
 }
@@ -3013,8 +3013,18 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 	})
 }
 
-func fetchSessions() ([]api.Session, error) {
-	params, _ := json.Marshal(map[string]string{"resource_type": "sessions"})
+func fetchSessions() ([]api.Session, error) { return fetchSessionsWith(false) }
+
+// getRequest is the get RPC's params. composer asks the daemon for the
+// COMPOSER column, which reads each seat's pane, so it is set only when that
+// column is selected.
+func getRequest(resourceType string, composer bool) map[string]any {
+	return map[string]any{"resource_type": resourceType} // red: not built
+}
+
+// fetchSessionsWith reads the sessions, with the COMPOSER verdicts when asked.
+func fetchSessionsWith(composer bool) ([]api.Session, error) {
+	params, _ := json.Marshal(getRequest("sessions", composer))
 	resp, err := send(daemonrpc.Request{
 		Method: "get",
 		Params: params,
@@ -3058,6 +3068,7 @@ type sessionRow struct {
 	workspace, team, role, generation, name                                              string
 	state, health, context, cpu, rss                                                     string
 	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
+	composer                                                                             string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -3191,6 +3202,7 @@ func newSessionRow(s api.Session) sessionRow {
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
 		acct:       acctCell(s),
+		composer:   composerCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
@@ -3230,7 +3242,7 @@ func renderSessionTable(sessions []api.Session) string {
 // key loop and draws with renderWatchFrame instead.
 func renderWatch(ws *watchSort) string {
 	if !ws.showHelp {
-		ws.apply(fetchWatchData(ws.showHeader))
+		ws.apply(fetchWatchData(ws.showHeader, wantsComposer(ws.columns)))
 	}
 	return renderWatchFrame(ws, time.Second, time.Now())
 }
@@ -3363,7 +3375,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, n
 	watchLoop(ws, watchLoopConfig{
 		interval: interval,
 		deadline: watchFetchDeadline,
-		fetch:    func() watchData { return fetchWatchData(ws.showHeader) },
+		fetch:    func() watchData { return fetchWatchData(ws.showHeader, wantsComposer(ws.columns)) },
 		now:      time.Now,
 		out: func(frame string) {
 			// Raw mode needs \r\n instead of \n.
@@ -3630,4 +3642,10 @@ func stripComments(args []string) []string {
 		}
 	}
 	return args
+}
+
+// composerCell is the COMPOSER cell: the daemon's verdict word, or "-" where
+// no pane was read.
+func composerCell(s api.Session) string {
+	return "" // red: not built
 }

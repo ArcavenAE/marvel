@@ -52,6 +52,13 @@ var sessionColumnRegistry = []sessionColumn{
 // is where they show by default.
 var optInColumns = map[string]bool{"workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "age": true, "active": true, "spec": true, "acct": true}
 
+// wantsComposer reports whether the COMPOSER column is selected. Only then does
+// the listing ask the daemon to read each seat's pane; it is opt-in and in no
+// named set, so no default view captures a pane.
+func wantsComposer(cols []sessionColumn) bool {
+	return false // red: not built
+}
+
 // columnSetWide is the one named set. A set expands in place wherever its
 // name appears, because no `-o wide` exists (`-w` is --watch). It starts
 // as today's columns and is where later columns that belong in a wide view

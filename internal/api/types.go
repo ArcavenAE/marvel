@@ -387,6 +387,11 @@ type Session struct {
 	// Spec means no role to compare against (docs/design/drift-view.md).
 	Spec     string   `json:"spec,omitempty" toml:"-"`
 	SpecDiff []string `json:"spec_diff,omitempty" toml:"-"`
+	// Composer is the composer reader's verdict for the seat's pane (empty,
+	// holds_text, mid_turn, menu_unsafe, shell or unknown), filled on read
+	// for a `get sessions` that asks for the COMPOSER column and never
+	// stored. No captured text travels with it.
+	Composer string `json:"composer,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
