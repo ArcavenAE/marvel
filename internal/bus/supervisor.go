@@ -877,6 +877,7 @@ func (s *Supervisor) checkStructureLocked(ctx context.Context) {
 		log.Printf("bus: structure restored on %s; releasing the spawn hold", s.mgr.bus.Listen)
 	}
 	s.probeWritesLocked(ctx)
+	s.checkHeadroomLocked(ctx)
 }
 
 // probeWritesLocked takes one write-probe reading and reports it: one
@@ -914,6 +915,45 @@ func (s *Supervisor) probeWritesLocked(ctx context.Context) {
 	case s.writeFailed == "" && prev != "":
 		log.Printf("bus: canary writes succeed again on %s", s.mgr.bus.Listen)
 	}
+}
+
+// checkHeadroomLocked takes one headroom reading and reports it: one
+// bus.store.low per change in the low set, a log line when it clears. It
+// never holds spawns and never restarts the broker. A read error is no
+// information and changes nothing. It releases s.mu around the reads.
+func (s *Supervisor) checkHeadroomLocked(ctx context.Context) {
+	read := s.headroomFn
+	if read == nil {
+		read = s.readHeadroom
+	}
+	s.mu.Unlock()
+	h, err := read(ctx)
+	s.mu.Lock()
+	if s.stopping {
+		return
+	}
+	if err != nil {
+		log.Printf("bus: headroom check: no reading (%v); keeping the last one", err)
+		return
+	}
+	prev := s.headroomLow
+	s.headroomLow = h.Problems()
+	switch {
+	case s.headroomLow != "" && s.headroomLow != prev:
+		s.emit(events.KindBusStoreLow, events.SeverityWarning, fmt.Sprintf("broker %s is short of room: %s; JetStream refuses writes when a store fills, free space or raise the cap, nothing is restarted", s.mgr.bus.Listen, strings.Join(h.Low(), "; ")))
+	case s.headroomLow == "" && prev != "":
+		log.Printf("bus: store headroom is back above the warning levels on %s", s.mgr.bus.Listen)
+	}
+}
+
+// readHeadroom is the production reader: the loopback monitor and the store
+// directory.
+func (s *Supervisor) readHeadroom(ctx context.Context) (Headroom, error) {
+	mon, err := MonitorAddr(s.mgr.bus.Listen)
+	if err != nil {
+		return Headroom{}, err
+	}
+	return ReadHeadroom(ctx, mon, s.mgr.bus.StoreDir)
 }
 
 // probeWrites is the production reader: the admin identity against the

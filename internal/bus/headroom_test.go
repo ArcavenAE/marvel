@@ -114,20 +114,20 @@ func storeLowEvents(ring *events.Ring) []events.Event {
 // restarts the broker.
 func TestHeadroomLowWarnsOncePerChangeAndNeverHoldsOrRestarts(t *testing.T) {
 	s, _, ring := newTestSupervisor(t, "")
-	if err := s.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	pid := s.Status().PID
+	// Set before Start, so the first tick reads the scripted headroom and not
+	// the free space of the machine the test runs on.
 	var mu sync.Mutex
 	reading := Headroom{}
 	var readErr error
-	s.mu.Lock()
 	s.headroomFn = func(context.Context) (Headroom, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		return reading, readErr
 	}
-	s.mu.Unlock()
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pid := s.Status().PID
 	set := func(h Headroom, err error) {
 		mu.Lock()
 		reading, readErr = h, err
