@@ -173,26 +173,32 @@ func ciJobs(path string) (map[string]ciJob, error) {
 	return wf.Jobs, nil
 }
 
-// macOSGaps lists what the job lacks: each package no go test line names, and
-// each tool it does not install. A package counts when a go test line names it
-// as ./<pkg> or ./<pkg>/... exactly and carries -race; nats-server counts only
-// when installed at the step's NATS_SERVER_VERSION, so the version stays under
-// the pin check.
+// macOSGaps lists what the job lacks: each package no step tests under the
+// skip gate, and each tool it does not install. A package counts when a step
+// runs it with go test -json -race and ends with scripts/no-skips.sh on that
+// stream, as gatedPackages reads it: a test that skips, fails or never runs
+// then fails the step, whatever the shell does with go test's own status.
+// nats-server counts only when installed at the step's NATS_SERVER_VERSION, so
+// the version stays under the pin check.
 //
 // Only what can fail the job counts. A job that sets if, or a continue-on-error
 // that is not false, is a gap, since it may never run or never go red. A step
-// that sets either is reported and read as absent, and a line with || on it
-// counts for nothing, since it can swallow the failure.
+// that sets either is reported and read as absent, and an install line with ||
+// on it counts for nothing, since it can swallow the failure.
 func macOSGaps(job ciJob, pkgs []string) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
 		gaps = append(gaps, "the job sets "+why)
 	}
 	var lines []string
+	gated := map[string]bool{}
 	for i, step := range job.Steps {
 		if whys := mayNotFail(step.If, step.ContinueOnError); len(whys) > 0 {
 			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s, so it is not counted", i, step.Name, strings.Join(whys, " and ")))
 			continue
+		}
+		for _, pkg := range gatedPackages(step.Run, pkgs, true) {
+			gated[pkg] = true
 		}
 		for _, line := range strings.Split(step.Run, "\n") {
 			if strings.Contains(line, "||") {
@@ -203,8 +209,8 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 	}
 	natsLines := natsInstallLines(job)
 	for _, pkg := range pkgs {
-		if !linesTestPackage(lines, pkg) {
-			gaps = append(gaps, "does not test ./"+pkg+" with -race")
+		if !gated[pkg] {
+			gaps = append(gaps, "does not test ./"+pkg+" with go test -json -race and end that step with scripts/no-skips.sh on the stream")
 		}
 	}
 	tmux := false
@@ -267,19 +273,6 @@ func natsInstallLines(job ciJob) []string {
 		}
 	}
 	return out
-}
-
-func linesTestPackage(lines []string, pkg string) bool {
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if !strings.Contains(line, "go test") || !slices.Contains(fields, "-race") {
-			continue
-		}
-		if slices.Contains(fields, "./"+pkg) || slices.Contains(fields, "./"+pkg+"/...") {
-			return true
-		}
-	}
-	return false
 }
 
 // hasTests reports whether dir holds a Go test file.
