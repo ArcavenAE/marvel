@@ -52,6 +52,7 @@ func freePort(t *testing.T) int {
 		port := l.Addr().(*net.TCPAddr).Port
 		_ = l.Close()
 		if port <= maxBase {
+			markStarted("127.0.0.1:" + strconv.Itoa(port))
 			return port
 		}
 	}

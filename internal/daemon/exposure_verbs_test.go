@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -62,7 +63,7 @@ func eventsOfKind(d *Daemon, k events.Kind) []events.Event {
 func TestExposureAddEndVoidThroughDispatch(t *testing.T) {
 	d := exposureVerbsDaemon(t)
 
-	resp := d.dispatchAs(Request{Method: "exposure.add", Params: exposureParams(t, map[string]any{
+	resp := d.dispatchAs(daemonrpc.Request{Method: "exposure.add", Params: exposureParams(t, map[string]any{
 		"paths": []string{"src/parse"}, "caster": "supervisor",
 	})}, localCaller())
 	if resp.Error != "" {
@@ -77,12 +78,12 @@ func TestExposureAddEndVoidThroughDispatch(t *testing.T) {
 	}
 
 	for _, bad := range []string{"par se", "pa\u200brse", ""} {
-		if r := d.dispatchAs(Request{Method: "exposure.add", Params: exposureParams(t, map[string]any{"function": bad})}, localCaller()); r.Error == "" {
+		if r := d.dispatchAs(daemonrpc.Request{Method: "exposure.add", Params: exposureParams(t, map[string]any{"function": bad})}, localCaller()); r.Error == "" {
 			t.Errorf("exposure.add accepted the name %q", bad)
 		}
 	}
 
-	if r := d.dispatchAs(Request{Method: "exposure.end", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
+	if r := d.dispatchAs(daemonrpc.Request{Method: "exposure.end", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
 		t.Fatalf("exposure.end: %s", r.Error)
 	}
 	if recs, _ = d.store.ExposuresForSlot("xverb", "crew", "writer"); recs[0].EndedAt.IsZero() {
@@ -92,10 +93,10 @@ func TestExposureAddEndVoidThroughDispatch(t *testing.T) {
 		t.Errorf("exposure.ended events = %d, want 1", n)
 	}
 
-	if r := d.dispatchAs(Request{Method: "exposure.void", Params: exposureParams(t, nil)}, localCaller()); r.Error == "" {
+	if r := d.dispatchAs(daemonrpc.Request{Method: "exposure.void", Params: exposureParams(t, nil)}, localCaller()); r.Error == "" {
 		t.Error("exposure.void with no reason was accepted")
 	}
-	r := d.dispatchAs(Request{Method: "exposure.void", Params: exposureParams(t, map[string]any{"reason": "wrong role"})}, localCaller())
+	r := d.dispatchAs(daemonrpc.Request{Method: "exposure.void", Params: exposureParams(t, map[string]any{"reason": "wrong role"})}, localCaller())
 	if r.Error != "" {
 		t.Fatalf("exposure.void: %s", r.Error)
 	}
@@ -112,11 +113,11 @@ func TestExposureAddEndVoidThroughDispatch(t *testing.T) {
 // served on the local socket, and a credential-push key reaches none of them.
 func TestExposureVoidIsLocalSocketOnlyAndCredentialKeysCannotRecord(t *testing.T) {
 	d := exposureVerbsDaemon(t)
-	if r := d.dispatchAs(Request{Method: "exposure.add", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
+	if r := d.dispatchAs(daemonrpc.Request{Method: "exposure.add", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
 		t.Fatalf("setup: %s", r.Error)
 	}
 	tunnelled := caller{scope: ScopeAdmin, fingerprint: "SHA256:abc"}
-	r := d.dispatchAs(Request{Method: "exposure.void", Params: exposureParams(t, map[string]any{"reason": "x"})}, tunnelled)
+	r := d.dispatchAs(daemonrpc.Request{Method: "exposure.void", Params: exposureParams(t, map[string]any{"reason": "x"})}, tunnelled)
 	if !strings.Contains(r.Error, "local unix socket") {
 		t.Errorf("a tunnelled void: error = %q, want the local-socket refusal", r.Error)
 	}
@@ -125,7 +126,7 @@ func TestExposureVoidIsLocalSocketOnlyAndCredentialKeysCannotRecord(t *testing.T
 	}
 	push := caller{scope: ScopeCredentialPush, fingerprint: "SHA256:def"}
 	for _, m := range []string{"exposure.add", "exposure.end", "exposure.void"} {
-		r := d.dispatchAs(Request{Method: m, Params: exposureParams(t, map[string]any{"reason": "x"})}, push)
+		r := d.dispatchAs(daemonrpc.Request{Method: m, Params: exposureParams(t, map[string]any{"reason": "x"})}, push)
 		if !strings.Contains(r.Error, "not permitted") {
 			t.Errorf("%s for a credential-push key: error = %q, want a scope refusal", m, r.Error)
 		}
@@ -158,7 +159,7 @@ func TestApplyRefusesAManifestThatCastsAnExposedWriter(t *testing.T) {
 // starting and what was voided.
 func TestDescribeTeamNamesExposure(t *testing.T) {
 	d := exposureVerbsDaemon(t)
-	if r := d.dispatchAs(Request{Method: "exposure.add", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
+	if r := d.dispatchAs(daemonrpc.Request{Method: "exposure.add", Params: exposureParams(t, nil)}, localCaller()); r.Error != "" {
 		t.Fatalf("setup: %s", r.Error)
 	}
 	desc, err := d.describeTeam("xverb/crew")
@@ -168,7 +169,7 @@ func TestDescribeTeamNamesExposure(t *testing.T) {
 	if !hasCondition(desc, "ExposureHeld", "writer", "parse") {
 		t.Errorf("conditions = %+v, want ExposureHeld for writer naming parse", desc.Conditions)
 	}
-	if r := d.dispatchAs(Request{Method: "exposure.void", Params: exposureParams(t, map[string]any{"reason": "wrong role"})}, localCaller()); r.Error != "" {
+	if r := d.dispatchAs(daemonrpc.Request{Method: "exposure.void", Params: exposureParams(t, map[string]any{"reason": "wrong role"})}, localCaller()); r.Error != "" {
 		t.Fatalf("void: %s", r.Error)
 	}
 	desc, _ = d.describeTeam("xverb/crew")

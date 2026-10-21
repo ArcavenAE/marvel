@@ -8,6 +8,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // MRVLState is how far the mrvl:// listener reaches, read from the address the
@@ -108,7 +109,7 @@ func (d *Daemon) identifyCluster(socketPath string) {
 }
 
 // handleDaemonStatus answers daemon.status.
-func (d *Daemon) handleDaemonStatus() Response {
+func (d *Daemon) handleDaemonStatus() daemonrpc.Response {
 	st := DaemonStatus{Home: d.home, Cluster: d.cluster, MRVL: MRVLStatus{State: MRVLOff}}
 	if srv := d.sshServer.Load(); srv != nil {
 		if addr := srv.Addr(); addr != nil {

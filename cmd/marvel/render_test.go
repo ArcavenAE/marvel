@@ -107,6 +107,19 @@ func TestRenderSessionTableStalledAdvisory(t *testing.T) {
 	}
 }
 
+// A process-alive role reads alive, and the stalled advisory rides on it the
+// same way it rides on healthy (party-t1-1).
+func TestRenderSessionTableAliveCarriesTheAdvisory(t *testing.T) {
+	table := renderSessionTable([]api.Session{{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthAlive, ActivityState: api.ActivityStalled,
+	}})
+	if got := column(t, table, "HEALTH"); got != "alive (stalled)" {
+		t.Errorf("HEALTH = %q for a stalled process-alive session, want %q", got, "alive (stalled)")
+	}
+}
+
 // Active and Unknown add nothing — the advisory is a stalled-only annotation.
 func TestRenderSessionTableActiveNoAdvisory(t *testing.T) {
 	table := renderSessionTable([]api.Session{{

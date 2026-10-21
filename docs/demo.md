@@ -158,13 +158,13 @@ produce three distinct events. This act runs them one at a time.
 ### 1a. Unplanned pane loss: `session.crashed` then `session.created`
 
 `demo-act1-recovery` runs two `sleep` workers with a process-alive healthcheck
-(pane exists means healthy). Nothing removes a session on its own, so the only
+(pane exists means alive). Nothing removes a session on its own, so the only
 loss is the one you cause.
 
 ```sh
 ./bin/marvel work examples/demo-act1-recovery.toml
 sleep 5
-./bin/marvel get sessions            # two workers, STATE running, HEALTH healthy
+./bin/marvel get sessions            # two workers, STATE running, HEALTH alive
 ```
 
 Kill one worker's pane out of band, the way a crashed agent process would
@@ -187,7 +187,7 @@ crashed, and (after a crash-loop backoff) spawns a replacement:
 ./bin/marvel get sessions                       # crashed row, DESK blank, RSS 0B
 sleep 75
 ./bin/marvel events --kind session.created     # replacement line-worker-g1-2
-./bin/marvel get sessions                       # back to two healthy workers
+./bin/marvel get sessions                       # back to two alive workers
 ```
 
 Timing note, measured 2026-08-09: the crash lands within about 2 seconds and
@@ -360,7 +360,7 @@ smallest count where the difference is unmistakable.
 ```sh
 ./bin/marvel work examples/demo-act1-fleet-loss.toml
 sleep 6
-./bin/marvel get sessions   # three workers, healthy
+./bin/marvel get sessions   # three workers, alive
 ```
 
 Kill the workspace's whole tmux session rather than one pane. The session is
@@ -401,7 +401,7 @@ All three replicas come back together when that one window elapses:
 
 ```sh
 sleep 70
-./bin/marvel get sessions   # three workers, healthy, ~64s after the kill
+./bin/marvel get sessions   # three workers, alive, ~64s after the kill
 ```
 
 They also come back under their original names. The index is
@@ -474,7 +474,7 @@ Confirm the first daemon's agents never noticed:
 MARVEL_SOCKET="$A/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel get sessions
 ```
 
-Both workers still `running` and `healthy`. Ask the second daemon what it is
+Both workers still `running` and `alive`. Ask the second daemon what it is
 holding back from, and it lists rather than acts:
 
 ```sh

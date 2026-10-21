@@ -87,8 +87,11 @@ func TestProvisionCreatesThenFindsAgainstRealBroker(t *testing.T) {
 
 func TestProvisionUnreachableBrokerNamesTheURL(t *testing.T) {
 	t.Parallel()
-	_, err := Provision(context.Background(), "nats://127.0.0.1:1", "a", "b")
-	if err == nil || !strings.Contains(err.Error(), "127.0.0.1:1") {
+	ln := listenLoopback(t)
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	_, err := Provision(context.Background(), "nats://"+addr, "a", "b")
+	if err == nil || !strings.Contains(err.Error(), addr) {
 		t.Fatalf("err = %v", err)
 	}
 }

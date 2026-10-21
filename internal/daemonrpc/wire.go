@@ -44,6 +44,15 @@ type Response struct {
 	// docs/design/daemon-isolation.md decision 8.
 	DaemonHome string `json:"daemon_home,omitempty"`
 
+	// DaemonBuild is the answering daemon's build, the JSON of daemon.Build,
+	// stamped on every response beside DaemonHome so a client can warn on any
+	// verb when its build differs from the daemon's
+	// (docs/design/zero-downtime-upgrade.md section 6). Raw JSON because the
+	// type lives in the daemon package, which imports this one. Empty from a
+	// daemon that predates the field, and omitempty keeps the envelope
+	// readable by a client that predates it. Diagnostic only, like DaemonHome.
+	DaemonBuild json.RawMessage `json:"daemon_build,omitempty"`
+
 	// Starting is true on every response the daemon sends while it is still
 	// adopting tmux state, so a client reading get or describe knows the rows
 	// may be incomplete. Absent once the daemon has finished starting.

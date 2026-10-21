@@ -27,13 +27,18 @@ const (
 )
 
 // exitError carries a process exit code out of a command. main exits with
-// Code; Msg is what the command prints first.
+// Code; Msg is what the command prints first. Err, when set, is the error
+// behind it, so a typed connection error inside still reads as one: the
+// usage block stays off, and Code still wins (exitCodeFor checks exitError
+// first).
 type exitError struct {
 	Code int
 	Msg  string
+	Err  error
 }
 
 func (e *exitError) Error() string { return fmt.Sprintf("%s (exit %d)", e.Msg, e.Code) }
+func (e *exitError) Unwrap() error { return e.Err }
 
 // requireExperimental refuses a surface that is gated behind --experimental.
 func requireExperimental(on bool, what string) error {
@@ -115,7 +120,7 @@ A refused flag or a bad argument exits 1.`,
 			state, code, err := waitForSession(args[0], timeout, poll)
 			if err != nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "unavailable")
-				return &exitError{Code: waitDaemonError, Msg: fmt.Sprintf("session/%s: %v", args[0], err)}
+				return &exitError{Code: waitDaemonError, Msg: fmt.Sprintf("session/%s: %v", args[0], err), Err: err}
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), state)
 			if code == waitSucceeded {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/broker"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // storeSessionAuth lets the broker check a seat against the session store.
@@ -81,13 +82,13 @@ func (d *Daemon) retryBrokerRevokes(ctx context.Context) {
 // handleBrokerToken issues one short-lived token to a seat that proves it
 // holds its session's heartbeat token. The response is the only place the
 // token value appears: it is not logged, stored or put on the event ring.
-func (d *Daemon) handleBrokerToken(ctx context.Context, params json.RawMessage) Response {
+func (d *Daemon) handleBrokerToken(ctx context.Context, params json.RawMessage) daemonrpc.Response {
 	if d.broker == nil {
-		return Response{Error: "no credential broker is configured on this daemon"}
+		return daemonrpc.Response{Error: "no credential broker is configured on this daemon"}
 	}
 	var p api.BrokerTokenRequest
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	tok, err := d.broker.Issue(ctx, p.SessionKey, p.SessionToken)
 	if err != nil {
@@ -96,9 +97,9 @@ func (d *Daemon) handleBrokerToken(ctx context.Context, params json.RawMessage) 
 			log.Printf("warning: session %s: %v", p.SessionKey, err)
 		}
 		if errors.Is(err, broker.ErrUnauthorized) {
-			return Response{Error: broker.ErrUnauthorized.Error()}
+			return daemonrpc.Response{Error: broker.ErrUnauthorized.Error()}
 		}
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	return respond(api.BrokerTokenResponse{ID: tok.ID, Value: tok.Value, Expires: tok.Expires})
 }
