@@ -170,9 +170,9 @@ func TestClientEntryPointsHaveOnlyTheirInventoriedCallers(t *testing.T) {
 func TestTheOnlyDialsAreTheClients(t *testing.T) {
 	t.Parallel()
 	wantDial := map[string]int{
-		"net.Dial in dialDaemonWith":    2,
-		"net.Dial in sshAuthMethodsFor": 1,
-		"net.DialTimeout in sshDial":    1,
+		"net.DialTimeout in dialDaemonWith": 2,
+		"net.Dial in sshAuthMethodsFor":     1,
+		"net.DialTimeout in sshDial":        1,
 	}
 	gotDial := map[string]int{}
 	p := parseClient(t)

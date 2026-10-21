@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -58,9 +59,31 @@ func writeIdentity(t *testing.T, pemBytes []byte) string {
 // startSSHRig starts the server, accepting only allowed as a client key.
 func startSSHRig(t *testing.T, allowed ssh.PublicKey) sshRig {
 	t.Helper()
+	return startSSHRigWith(t, allowed, rigAnswers)
+}
+
+// rigMode picks where the rig stops answering.
+type rigMode int
+
+const (
+	rigAnswers     rigMode = iota // answers the request
+	rigSilentReply                // reads the request and never answers
+	rigStallShell                 // never replies to the shell request
+	rigStallAuth                  // never decides on the offered key
+)
+
+// startSSHRigWith is startSSHRig that stops answering where mode says,
+// until the client closes or the test ends.
+func startSSHRigWith(t *testing.T, allowed ssh.PublicKey, mode rigMode) sshRig {
+	t.Helper()
+	stall := make(chan struct{})
+	t.Cleanup(func() { close(stall) })
 	hostSigner, _ := newSigner(t)
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if mode == rigStallAuth {
+				<-stall
+			}
 			if string(key.Marshal()) == string(allowed.Marshal()) {
 				return nil, nil
 			}
@@ -79,13 +102,13 @@ func startSSHRig(t *testing.T, allowed ssh.PublicKey) sshRig {
 			if err != nil {
 				return
 			}
-			go serveSSHRig(c, cfg)
+			go serveSSHRig(c, cfg, mode)
 		}
 	}()
 	return sshRig{addr: "mrvl://rig@" + ln.Addr().String(), hostKey: hostSigner.PublicKey()}
 }
 
-func serveSSHRig(c net.Conn, cfg *ssh.ServerConfig) {
+func serveSSHRig(c net.Conn, cfg *ssh.ServerConfig, mode rigMode) {
 	defer func() { _ = c.Close() }()
 	sc, chans, reqs, err := ssh.NewServerConn(c, cfg)
 	if err != nil {
@@ -104,11 +127,17 @@ func serveSSHRig(c net.Conn, cfg *ssh.ServerConfig) {
 		}
 		go func() {
 			for r := range in {
+				if r.Type == "shell" && mode == rigStallShell {
+					continue
+				}
 				_ = r.Reply(r.Type == "shell", nil)
 			}
 		}()
 		var req Request
-		if err := json.NewDecoder(ch).Decode(&req); err == nil {
+		if mode == rigSilentReply || mode == rigStallShell {
+			_ = json.NewDecoder(ch).Decode(&req)
+			_, _ = io.Copy(io.Discard, ch)
+		} else if err := json.NewDecoder(ch).Decode(&req); err == nil {
 			_ = json.NewEncoder(ch).Encode(Response{Result: json.RawMessage(`"ok"`)})
 		}
 		_ = ch.Close()
