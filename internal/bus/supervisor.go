@@ -59,9 +59,12 @@ type Supervisor struct {
 	checkStructureFn func(ctx context.Context) (Structure, error)
 	// writeProbeFn is the write probe's reader; nil means ProbeWrites.
 	writeProbeFn func(ctx context.Context) (WriteReading, error)
+	// headroomFn is the headroom reader; nil means readHeadroom.
+	headroomFn func(ctx context.Context) (Headroom, error)
 	// writeFailed is the failing set of the last write-probe reading.
 	writeFailed  string
 	writeSkipped string
+	headroomLow  string
 	// backoff maps a restart count to a wait; tests shorten it.
 	backoff func(n int) time.Duration
 	// dialTimeout bounds the listener wait at start.
@@ -174,6 +177,9 @@ type Status struct {
 	// WriteSkipped names the declared objects the probe did not write to
 	// because a real limit would have made the canary evict or be refused.
 	WriteSkipped string `json:"write_skipped,omitempty"`
+	// HeadroomLow names, comma separated, the stores near their cap: the
+	// file store, the memory store, the store filesystem.
+	HeadroomLow string `json:"headroom_low,omitempty"`
 	// Leaf is "up", "down", "detached" (enrolled but the operator disconnected
 	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
 	// polled yet).
@@ -1012,7 +1018,7 @@ func (s *Supervisor) Status() Status {
 		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
 		Version:  s.version,
 		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.readyLocked(), Restarts: s.restarts,
-		Pidfile: s.pidState, WriteFailed: s.writeFailed, WriteSkipped: s.writeSkipped,
+		Pidfile: s.pidState, WriteFailed: s.writeFailed, WriteSkipped: s.writeSkipped, HeadroomLow: s.headroomLow,
 	}
 	if s.structureKnown {
 		st.Structure = &StructureStatus{
