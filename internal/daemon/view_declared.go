@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/view"
 )
 
@@ -51,20 +52,20 @@ type viewRefreshParams struct {
 }
 
 // handleViewRefresh follows one named view of a session, or all of them.
-func (d *Daemon) handleViewRefresh(params json.RawMessage) Response {
+func (d *Daemon) handleViewRefresh(params json.RawMessage) daemonrpc.Response {
 	var p viewRefreshParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	if strings.TrimSpace(p.Session) == "" {
-		return Response{Error: "view.refresh requires a session"}
+		return daemonrpc.Response{Error: "view.refresh requires a session"}
 	}
 	if d.views == nil {
-		return Response{Error: "views are not running"}
+		return daemonrpc.Response{Error: "views are not running"}
 	}
 	lines, err := d.views.Refresh(p.Session, p.Name)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	return respond(map[string]any{"lines": lines})
 }

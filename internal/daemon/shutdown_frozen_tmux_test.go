@@ -51,7 +51,7 @@ name = "squad"
     command = "sleep"
     args = ["300"]
 `
-	resp, err := daemonrpc.SendRequest(sock, Request{
+	resp, err := daemonrpc.SendRequest(sock, daemonrpc.Request{
 		Method: "apply",
 		Params: mustMarshal(t, map[string]any{"manifest_data": []byte(manifest)}),
 	})

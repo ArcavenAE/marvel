@@ -15,15 +15,15 @@ import (
 )
 
 // decodeBatch reads one stream message from dec with a bound.
-func decodeBatch(t *testing.T, dec *json.Decoder) (Response, EventsBatch) {
+func decodeBatch(t *testing.T, dec *json.Decoder) (daemonrpc.Response, daemonrpc.EventsBatch) {
 	t.Helper()
 	type out struct {
-		resp Response
+		resp daemonrpc.Response
 		err  error
 	}
 	ch := make(chan out, 1)
 	go func() {
-		var resp Response
+		var resp daemonrpc.Response
 		err := dec.Decode(&resp)
 		ch <- out{resp, err}
 	}()
@@ -32,7 +32,7 @@ func decodeBatch(t *testing.T, dec *json.Decoder) (Response, EventsBatch) {
 		if o.err != nil {
 			t.Fatalf("decode stream message: %v", o.err)
 		}
-		var b EventsBatch
+		var b daemonrpc.EventsBatch
 		if o.resp.Error == "" && len(o.resp.Result) > 0 {
 			if err := json.Unmarshal(o.resp.Result, &b); err != nil {
 				t.Fatalf("parse batch: %v", err)
@@ -42,7 +42,7 @@ func decodeBatch(t *testing.T, dec *json.Decoder) (Response, EventsBatch) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("no stream message within 3s")
 	}
-	return Response{}, EventsBatch{}
+	return daemonrpc.Response{}, daemonrpc.EventsBatch{}
 }
 
 // startWatch runs handleRWCAs on one end of a pipe as caller c and sends
@@ -216,7 +216,7 @@ func TestWatchEventsWithOverUnixSocket(t *testing.T) {
 	stop := errors.New("enough")
 	var got []events.Event
 	var homes []string
-	err = daemonrpc.WatchEventsWith(sock, json.RawMessage(`{"n":0}`), DialOptions{}, func(resp *Response, b EventsBatch) error {
+	err = daemonrpc.WatchEventsWith(sock, json.RawMessage(`{"n":0}`), daemonrpc.DialOptions{}, func(resp *daemonrpc.Response, b daemonrpc.EventsBatch) error {
 		homes = append(homes, resp.DaemonHome)
 		got = append(got, b.Events...)
 		if len(got) == 1 {
@@ -257,17 +257,17 @@ func TestWatchEventsWithReportsUnsupportedDaemon(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		var req Request
+		var req daemonrpc.Request
 		_ = json.NewDecoder(conn).Decode(&req)
 		// What a daemon before this method answers.
-		_ = json.NewEncoder(conn).Encode(Response{Error: "unknown method: " + req.Method})
+		_ = json.NewEncoder(conn).Encode(daemonrpc.Response{Error: "unknown method: " + req.Method})
 	}()
 
-	err = daemonrpc.WatchEventsWith(sock, nil, DialOptions{}, func(*Response, EventsBatch) error {
+	err = daemonrpc.WatchEventsWith(sock, nil, daemonrpc.DialOptions{}, func(*daemonrpc.Response, daemonrpc.EventsBatch) error {
 		t.Fatal("fn called on an unsupported daemon")
 		return nil
 	})
-	if !errors.Is(err, ErrWatchUnsupported) {
+	if !errors.Is(err, daemonrpc.ErrWatchUnsupported) {
 		t.Fatalf("got %v, want ErrWatchUnsupported", err)
 	}
 }
