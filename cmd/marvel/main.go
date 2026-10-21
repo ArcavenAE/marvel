@@ -3056,6 +3056,7 @@ type sessionRow struct {
 	workspace, team, role, generation, name                                              string
 	state, health, context, cpu, rss                                                     string
 	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
+	lastTurn                                                                             string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -3185,6 +3186,7 @@ func newSessionRow(s api.Session) sessionRow {
 		rate:       rate,
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),
+		lastTurn:   lastTurnCell(s, lastActiveClock()),
 		age:        ageCell(s, lastActiveClock()),
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
