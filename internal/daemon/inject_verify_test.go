@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -380,7 +381,19 @@ func TestVerifyConfirmsStagedTextAndDoesNotConfirmItAsSubmitted(t *testing.T) {
 // pythonSeat paints a frame and then becomes python3, a program that is not a
 // shell, which counts each C-c it receives ("got-C-c") instead of dying, so a
 // clear that reached the pane is visible.
+//
+// python3 prints "frame-painted" itself, after it has installed the SIGINT
+// handler. A shell that printed it and then exec'd python3 told the test the
+// seat was ready while python3 was still starting, and a C-c in that window
+// killed the pane (marvel#673).
 func pythonSeat(t *testing.T, frame string) string {
+	t.Helper()
+	return pythonSeatSlow(t, frame, 0)
+}
+
+// pythonSeatSlow is pythonSeat whose python3 waits before it installs the
+// handler, to hold open the window a loaded machine opens by chance.
+func pythonSeatSlow(t *testing.T, frame string, pause time.Duration) string {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
@@ -389,9 +402,11 @@ func pythonSeat(t *testing.T, frame string) string {
 	if err := os.WriteFile(path, []byte(frame), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return "stty -echo\ncat " + path + "\necho frame-painted\n" +
+	return "stty -echo\ncat " + path + "\n" +
 		`exec python3 -c "import signal,time
+time.sleep(` + strconv.FormatFloat(pause.Seconds(), 'f', 3, 64) + `)
 signal.signal(signal.SIGINT, lambda *a: print('got-C-c', flush=True))
+print('frame-painted', flush=True)
 while True: time.sleep(0.2)"` + "\n"
 }
 
@@ -402,8 +417,21 @@ func frameWith(above, composer string) string {
 // claude's clear is one C-c (aae-orc-6vcr2), sent once, only when a capture shows
 // text in an idle composer. The text that follows lands on a clean line.
 func TestClearSendsOneCtrlCToAnIdleClaudeComposerHoldingText(t *testing.T) {
+	clearReachesTheSeatOnce(t, 0)
+}
+
+// The seat is ready when it says so, not when its shell has started: with
+// python3 slow to install its handler, the clear still reaches it once
+// (marvel#673). On a seat that announced readiness before the handler was in,
+// this C-c kills the pane.
+func TestClearWaitsForTheSeatToBeReady(t *testing.T) {
+	clearReachesTheSeatOnce(t, 1500*time.Millisecond)
+}
+
+func clearReachesTheSeatOnce(t *testing.T, pause time.Duration) {
+	t.Helper()
 	d := newHandlerDaemon(t)
-	key := verifySeat(t, d, pythonSeat(t, frameWith("✻ Worked for 2s · done 5:23 PM", "❯"+testNB+"an old half draft")), "claude", "frame-painted")
+	key := verifySeat(t, d, pythonSeatSlow(t, frameWith("✻ Worked for 2s · done 5:23 PM", "❯"+testNB+"an old half draft"), pause), "claude", "frame-painted")
 
 	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "new message", "literal": true, "clear": true, "settle_ms": 100})
 	if resp.Error != "" {
