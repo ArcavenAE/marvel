@@ -60,9 +60,14 @@ type DialOptions struct {
 	// is on a TTY, marvel prompts; when false and off-TTY, marvel
 	// refuses with a pointer to `marvel keys trust --yes`.
 	StrictHostKey bool
-	// Timeout bounds the whole request/response exchange when positive. Zero
-	// keeps the historical behavior of no deadline; a best-effort sender sets it.
+	// Timeout bounds the whole exchange when positive: one timer, armed
+	// before the dial, over connect, handshake, auth, request and reply,
+	// which closes the connection when it fires (see exchange). Zero keeps
+	// the historical behavior of no bound; a best-effort sender sets it.
 	Timeout time.Duration
+
+	// ex is the timer of the call in progress, set by SendRequestWith.
+	ex *exchange
 }
 
 // SendRequest sends a request to the daemon and returns the response,
@@ -83,21 +88,29 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 // this when the caller has a per-cluster identity key or known_hosts
 // file it wants to thread through.
 func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Response, error) {
+	ex := startExchange(opts.Timeout)
+	defer ex.stop()
+	opts.ex = ex
 	conn, err := dialDaemonWith(socketPath, opts)
 	if err != nil {
-		return nil, err
+		return nil, ex.wrap(err)
 	}
 	defer func() { _ = conn.Close() }()
-	if opts.Timeout > 0 {
-		_ = conn.SetDeadline(time.Now().Add(opts.Timeout))
-	}
+	ex.enter(phaseReply, conn)
 
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, ex.wrap(fmt.Errorf("send request: %w", err))
 	}
 
 	var resp Response
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+	limit := maxReplyBytes
+	if err := json.NewDecoder(newBoundedReader(conn, limit)).Decode(&resp); err != nil {
+		if errors.Is(err, errReplyTooLarge) {
+			return nil, &BadReplyError{Err: fmt.Errorf("read response: the reply passed the %d-byte bound", limit)}
+		}
+		if err := ex.wrap(err); errors.As(err, new(*TimeoutError)) {
+			return nil, err
+		}
 		return nil, &BadReplyError{Err: fmt.Errorf("read response: %w", err)}
 	}
 	return &resp, nil
@@ -179,7 +192,7 @@ func dialDaemonWith(addr string, opts DialOptions) (net.Conn, error) {
 	// Strip tcp:// prefix for explicit bare-TCP use.
 	if strings.HasPrefix(addr, "tcp://") {
 		addr = strings.TrimPrefix(addr, "tcp://")
-		conn, err := net.Dial("tcp", addr)
+		conn, err := net.DialTimeout("tcp", addr, opts.ex.connectTimeout(0))
 		if err != nil {
 			return nil, fmt.Errorf("connect to daemon at %s (tcp): %w", addr, dialError(addr, err))
 		}
@@ -187,7 +200,7 @@ func dialDaemonWith(addr string, opts DialOptions) (net.Conn, error) {
 	}
 
 	network := ListenNetwork(addr)
-	conn, err := net.Dial(network, addr)
+	conn, err := net.DialTimeout(network, addr, opts.ex.connectTimeout(0))
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", addr, network, dialError(addr, err))
 	}
@@ -329,16 +342,29 @@ func sshDial(user, host, port string, opts DialOptions) (*ssh.Client, error) {
 	}
 	config.AuthCallback = authRefusedCallback(user, addr, offered)
 
-	tcp, err := net.DialTimeout("tcp", addr, config.Timeout)
+	tcp, err := net.DialTimeout("tcp", addr, opts.ex.connectTimeout(config.Timeout))
 	if err != nil {
 		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, dialError(addr, err))
+	}
+	// The timer closes the TCP connection if it fires during the handshake
+	// or auth; auth starts once the host key is accepted.
+	opts.ex.enter(phaseHandshake, tcp)
+	verify := config.HostKeyCallback
+	config.HostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		if err := verify(hostname, remote, key); err != nil {
+			return err
+		}
+		opts.ex.enter(phaseAuth, tcp)
+		return nil
 	}
 	c, chans, reqs, err := ssh.NewClientConn(tcp, addr, config)
 	if err != nil {
 		_ = tcp.Close()
-		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err)
+		return nil, opts.ex.wrap(fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err))
 	}
-	return ssh.NewClient(c, chans, reqs), nil
+	client := ssh.NewClient(c, chans, reqs)
+	opts.ex.enter(phaseReply, client)
+	return client, nil
 }
 
 // offeredKeys records the fingerprint of each key handed to the server
