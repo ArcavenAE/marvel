@@ -168,9 +168,9 @@ type ciJobStep struct {
 }
 
 type ciJob struct {
-	RunsOn          string      `yaml:"runs-on"`
-	If              string      `yaml:"if"`
-	ContinueOnError any         `yaml:"continue-on-error"`
+	RunsOn          string            `yaml:"runs-on"`
+	If              string            `yaml:"if"`
+	ContinueOnError any               `yaml:"continue-on-error"`
 	Defaults        ciDefaults        `yaml:"defaults"`
 	Env             map[string]string `yaml:"env"`
 	Steps           []ciJobStep       `yaml:"steps"`
