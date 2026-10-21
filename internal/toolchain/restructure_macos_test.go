@@ -70,31 +70,46 @@ func TestRestructurePackagesRunOnMacOS(t *testing.T) {
 
 func TestMacOSGaps(t *testing.T) {
 	t.Parallel()
-	install := ciJob{Steps: []ciJobStep{{
+	installStep := ciJobStep{
 		Env: map[string]string{"NATS_SERVER_VERSION": "v2.15.0"},
 		Run: "brew install tmux\ngo install \"github.com/nats-io/nats-server/v2@${NATS_SERVER_VERSION}\"",
-	}}}
-	withTest := func(j ciJob, run string) ciJob {
-		j.Steps = append(slices.Clone(j.Steps), ciJobStep{Run: run})
-		return j
 	}
+	const testLine = "go test -v -count=1 -race ./internal/bus/... ./internal/daemon/..."
+	job := func(steps ...ciJobStep) ciJob { return ciJob{Steps: steps} }
+	run := func(r string) ciJobStep { return ciJobStep{Run: r} }
+	withJob := func(j ciJob, f func(*ciJob)) ciJob { f(&j); return j }
+	withStep := func(st ciJobStep, f func(*ciJobStep)) ciJobStep { f(&st); return st }
+	good := job(installStep, run(testLine))
 	pkgs := []string{"internal/bus", "internal/daemon"}
 	for _, tc := range []struct {
 		name string
 		job  ciJob
 		gaps int
 	}{
-		{"all run, both installed", withTest(install, "go test ./internal/bus/... ./internal/daemon -race"), 0},
-		{"one package missing", withTest(install, "go test ./internal/bus/... -race"), 1},
-		{"a prefix is not the package", withTest(install, "go test ./internal/busx/... ./internal/daemon/..."), 1},
-		{"named outside go test", withTest(install, "echo ./internal/bus/... ./internal/daemon/..."), 2},
-		{"no tmux", withTest(ciJob{Steps: []ciJobStep{{
-			Env: install.Steps[0].Env,
+		{"all run, both installed", good, 0},
+		{"one package missing", job(installStep, run("go test -race ./internal/bus/...")), 1},
+		{"a prefix is not the package", job(installStep, run("go test -race ./internal/busx/... ./internal/daemon/...")), 1},
+		{"named outside go test", job(installStep, run("echo -race ./internal/bus/... ./internal/daemon/...")), 2},
+		{"no -race", job(installStep, run("go test -v -count=1 ./internal/bus/... ./internal/daemon/...")), 2},
+		{"the test line ignores a failure", job(installStep, run(testLine+" || true")), 2},
+		{"no tmux", job(ciJobStep{
+			Env: installStep.Env,
 			Run: "go install \"github.com/nats-io/nats-server/v2@${NATS_SERVER_VERSION}\"",
-		}}}, "go test ./internal/bus/... ./internal/daemon/..."), 1},
-		{"nats-server at a literal version", withTest(ciJob{Steps: []ciJobStep{{
+		}, run(testLine)), 1},
+		{"the tmux install ignores a failure", job(withStep(installStep, func(st *ciJobStep) {
+			st.Run = strings.Replace(st.Run, "brew install tmux", "brew install tmux || true", 1)
+		}), run(testLine)), 1},
+		{"nats-server at a literal version", job(ciJobStep{
 			Run: "brew install tmux\ngo install github.com/nats-io/nats-server/v2@v2.14.0",
-		}}}, "go test ./internal/bus/... ./internal/daemon/..."), 1},
+		}, run(testLine)), 1},
+		{"the job has an if", withJob(good, func(j *ciJob) { j.If = "false" }), 1},
+		{"the job continues on error", withJob(good, func(j *ciJob) { j.ContinueOnError = true }), 1},
+		{"the job continues on an expression", withJob(good, func(j *ciJob) { j.ContinueOnError = "${{ matrix.experimental }}" }), 1},
+		{"continue-on-error false on the job", withJob(good, func(j *ciJob) { j.ContinueOnError = false }), 0},
+		{"continue-on-error \"false\" on the job", withJob(good, func(j *ciJob) { j.ContinueOnError = "false" }), 0},
+		{"the test step has an if", job(installStep, withStep(run(testLine), func(st *ciJobStep) { st.If = "github.event_name == 'push'" })), 3},
+		{"the test step continues on error", job(installStep, withStep(run(testLine), func(st *ciJobStep) { st.ContinueOnError = true })), 3},
+		{"the install step continues on error", job(withStep(installStep, func(st *ciJobStep) { st.ContinueOnError = true }), run(testLine)), 3},
 		{"nothing", ciJob{}, 4},
 	} {
 		if got := macOSGaps(tc.job, pkgs); len(got) != tc.gaps {
@@ -104,14 +119,18 @@ func TestMacOSGaps(t *testing.T) {
 }
 
 type ciJobStep struct {
-	Name string            `yaml:"name"`
-	Env  map[string]string `yaml:"env"`
-	Run  string            `yaml:"run"`
+	Name            string            `yaml:"name"`
+	If              string            `yaml:"if"`
+	ContinueOnError any               `yaml:"continue-on-error"`
+	Env             map[string]string `yaml:"env"`
+	Run             string            `yaml:"run"`
 }
 
 type ciJob struct {
-	RunsOn string      `yaml:"runs-on"`
-	Steps  []ciJobStep `yaml:"steps"`
+	RunsOn          string      `yaml:"runs-on"`
+	If              string      `yaml:"if"`
+	ContinueOnError any         `yaml:"continue-on-error"`
+	Steps           []ciJobStep `yaml:"steps"`
 }
 
 func ciJobs(path string) (map[string]ciJob, error) {
