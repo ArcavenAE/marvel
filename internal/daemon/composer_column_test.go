@@ -507,3 +507,32 @@ func TestComposerReapplyAddingTheClientScopeStopsTheCapture(t *testing.T) {
 	}
 }
 
+// Any stored scope other than none is read as client: the apply refuses
+// every value but "client", so another value in the store came from
+// somewhere else, and the column fails closed on it.
+func TestWorkspaceIsClientFailsClosedOnAnyStoredScope(t *testing.T) {
+	d := &Daemon{store: api.NewStore()}
+	for _, c := range []struct {
+		scope  string
+		client bool
+	}{
+		{"", false},
+		{api.WorkspaceScopeClient, true},
+		{"Client", true},
+		{"CLIENT", true},
+		{" client", true},
+		{"customer", true},
+	} {
+		name := "ws-" + strconv.Itoa(len(c.scope)) + "-" + strings.ReplaceAll(strings.TrimSpace(c.scope), " ", "_")
+		if err := d.store.CreateWorkspace(&api.Workspace{Name: name, Scope: c.scope}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := d.workspaceIsClient(name)
+		if err != nil {
+			t.Fatalf("scope %q: %v", c.scope, err)
+		}
+		if got != c.client {
+			t.Errorf("stored scope %q: client = %v, want %v", c.scope, got, c.client)
+		}
+	}
+}
