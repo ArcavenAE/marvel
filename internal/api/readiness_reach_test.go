@@ -35,9 +35,10 @@ type marryReach struct {
 // package variable brings every declaration that mentions it, init included:
 // a write can come through the bare name, a field, an element, a pointer or a
 // copy of a map or slice, so any mention counts, reads too. A write can also
-// come through a reached accessor, a function that returns a reference to
-// such a variable, so a reached accessor brings every declaration that calls
-// it, repeated until nothing new is added.
+// come through a function: a setter, or one whose result refers to the
+// variable. So a reached function that mentions a package variable, or calls
+// a function that does, brings every declaration that calls it, repeated until
+// nothing new is added.
 //
 // The limit: it reads one package. An implementation or function value that
 // another package supplies, and anything reached through reflection, are not
@@ -206,26 +207,17 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 		return out
 	}
 
-	// accessor holds each function or method that returns a reference
-	// (pointer, map, slice, chan or func) and mentions a package variable or
-	// another accessor: a caller can write the variable through its result
-	// while mentioning only the function. A reached accessor brings every
-	// declaration that calls it. The set is grown until nothing new is added.
-	refResult := func(fn *types.Func) bool {
-		res := fn.Type().(*types.Signature).Results()
-		for i := range res.Len() {
-			switch res.At(i).Type().Underlying().(type) {
-			case *types.Pointer, *types.Map, *types.Slice, *types.Chan, *types.Signature:
-				return true
-			}
-		}
-		return false
-	}
+	// accessor holds each function or method that mentions a package
+	// variable or another accessor, whatever it returns: a caller can write
+	// the variable through it (a setter, or a result that refers to the
+	// variable) while mentioning only the function. A reached accessor brings
+	// every declaration that calls it. The set is grown until nothing new is
+	// added.
 	accessor := map[*decl]bool{}
 	for grew := true; grew; {
 		grew = false
 		for _, n := range all {
-			if n.fn == nil || accessor[n] || !refResult(n.fn) {
+			if n.fn == nil || accessor[n] {
 				continue
 			}
 			for _, o := range n.uses {
