@@ -145,7 +145,9 @@ func TestMacOSGaps(t *testing.T) {
 		{"the install step's shell is true {0}", job(withStep(installStep, func(st *ciJobStep) { st.Shell = "true {0}" }), run(gated)), 3},
 		{"the job's default shell is true {0}", withJob(good, func(j *ciJob) { j.Defaults.Run.Shell = "true {0}" }), 6},
 		{"the test step sets SHELLOPTS", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Env = map[string]string{"SHELLOPTS": "noexec"} })), 3},
-		{"the install step sets BASH_ENV", job(withStep(installStep, func(st *ciJobStep) { st.Env["BASH_ENV"] = "scripts/exit0.sh" }), run(gated)), 3},
+		{"the install step sets BASH_ENV", job(withStep(installStep, func(st *ciJobStep) {
+			st.Env = map[string]string{"NATS_SERVER_VERSION": "v2.15.0", "BASH_ENV": "scripts/exit0.sh"}
+		}), run(gated)), 3},
 		{"the job sets SHELLOPTS", withJob(good, func(j *ciJob) { j.Env = map[string]string{"SHELLOPTS": "noexec"} }), 6},
 		{"the job sets BASHOPTS", withJob(good, func(j *ciJob) { j.Env = map[string]string{"BASHOPTS": "extdebug"} }), 6},
 		{"nothing", ciJob{}, 4},
@@ -300,8 +302,9 @@ func ciJobs(path string) (map[string]ciJob, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var wf struct {
-		Defaults ciDefaults       `yaml:"defaults"`
-		Jobs     map[string]ciJob `yaml:"jobs"`
+		Defaults ciDefaults        `yaml:"defaults"`
+		Env      map[string]string `yaml:"env"`
+		Jobs     map[string]ciJob  `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -309,8 +312,15 @@ func ciJobs(path string) (map[string]ciJob, error) {
 	for name, job := range wf.Jobs {
 		if job.Defaults.Run.Shell == "" {
 			job.Defaults.Run.Shell = wf.Defaults.Run.Shell
-			wf.Jobs[name] = job
 		}
+		// GitHub merges env by name, and the job's own value wins.
+		env := maps.Clone(wf.Env)
+		if env == nil {
+			env = map[string]string{}
+		}
+		maps.Copy(env, job.Env)
+		job.Env = env
+		wf.Jobs[name] = job
 	}
 	return wf.Jobs, nil
 }
@@ -325,9 +335,10 @@ func ciJobs(path string) (map[string]ciJob, error) {
 //
 // Only what can fail the job counts. A job that sets if, or a continue-on-error
 // that is not false, is a gap, since it may never run or never go red. A step
-// that sets either, or runs under a shell bashShell does not accept (its own or
-// the job's default), is reported and read as absent, and an install line with
-// || on it counts for nothing, since it can swallow the failure.
+// that sets either, runs under a shell bashShell does not accept (its own or
+// the job's default), or sets a variable shellEnv names, is reported and read
+// as absent, and an install line with || on it counts for nothing, since it
+// can swallow the failure.
 func macOSGaps(job ciJob, pkgs []string) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
@@ -342,6 +353,10 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 		}
 		if sh := stepShell(job, step); !bashShell(sh) {
 			gaps = append(gaps, fmt.Sprintf("step %d (%s) runs under shell %q, which may not run the script, so it is not counted", i, step.Name, sh))
+			continue
+		}
+		if names := shellEnv(job, step); len(names) > 0 {
+			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s in its env, which bash reads at startup, so it is not counted", i, step.Name, strings.Join(names, " and ")))
 			continue
 		}
 		for _, pkg := range gatedPackages(step.Run, pkgs, true) {

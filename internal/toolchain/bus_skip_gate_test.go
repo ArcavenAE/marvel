@@ -188,7 +188,8 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 // busGateGaps lists why the job's bus skip gate could not fail it: no gate
 // step, a gate before the nats-server install, an if or a continue-on-error
 // that is not false on the job or the gate step, which would let it skip or
-// stay green, or a gate step whose shell bashShell does not accept.
+// stay green, or a gate step whose shell bashShell does not accept or whose
+// env sets a variable shellEnv names.
 func busGateGaps(job ciJob) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
@@ -214,6 +215,9 @@ func busGateGaps(job ciJob) []string {
 	}
 	if sh := stepShell(job, job.Steps[gated]); !bashShell(sh) {
 		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) runs under shell %q, which may not run the script", gated, sh))
+	}
+	if names := shellEnv(job, job.Steps[gated]); len(names) > 0 {
+		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s in its env or its job's, which bash reads at startup", gated, strings.Join(names, " and ")))
 	}
 	return gaps
 }
@@ -459,6 +463,24 @@ func bashShell(shell string) bool {
 		}
 	}
 	return setOptions(opts)
+}
+
+// shellEnv names the variables, set in the step's env or the job's (which
+// ciJobs merges with the workflow's), that bash reads at startup and that can
+// stop it running the script as written: SHELLOPTS (noexec runs nothing),
+// BASH_ENV (a file sourced first, which may exit 0) and BASHOPTS (shopt
+// options, the same mechanism). A value an earlier step writes to $GITHUB_ENV
+// is out of reach here: it is set at run time, not in the workflow file.
+func shellEnv(job ciJob, step ciJobStep) []string {
+	var names []string
+	for _, name := range []string{"BASHOPTS", "BASH_ENV", "SHELLOPTS"} {
+		_, inStep := step.Env[name]
+		_, inJob := job.Env[name]
+		if inStep || inJob {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // stepShell is the shell a step's script runs under: its own, else the job's
