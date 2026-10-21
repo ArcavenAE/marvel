@@ -163,16 +163,16 @@ func TestClientEntryPointsHaveOnlyTheirInventoriedCallers(t *testing.T) {
 }
 
 // The only dials in the package are the client's (dialDaemonWith, to the
-// daemon the CLI names), the SSH client's two, and the dial to the user's SSH
-// agent; net.Pipe and the Dialer type are not used at all, and the package may
-// not spawn commands or open HTTP or RPC connections.
+// daemon the CLI names), the SSH client's one (sshDial, which the tunnel and
+// the direct dial share), and the dial to the user's SSH agent; net.Pipe and
+// the Dialer type are not used at all, and the package may not spawn commands
+// or open HTTP or RPC connections.
 func TestTheOnlyDialsAreTheClients(t *testing.T) {
 	t.Parallel()
 	wantDial := map[string]int{
-		"net.Dial in dialDaemonWith":    2,
-		"net.Dial in sshAuthMethodsFor": 1,
-		"ssh.Dial in dialSSHDirect":     1,
-		"ssh.Dial in dialSSHTunnel":     1,
+		"net.DialTimeout in dialDaemonWith": 2,
+		"net.Dial in sshAuthMethodsFor":     1,
+		"net.DialTimeout in sshDial":        1,
 	}
 	gotDial := map[string]int{}
 	p := parseClient(t)

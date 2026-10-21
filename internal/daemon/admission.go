@@ -7,6 +7,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -58,7 +59,7 @@ func (d *Daemon) AdmissionSnapshot(t api.Team) admission.Snapshot {
 // be marvel editing intent, which is worse than refusing. The reconciler
 // takes the opposite side (partial grants), because convergence is repair
 // and some is better than none.
-func (d *Daemon) admitGrowth(t api.Team, role string, want int, trig admission.Trigger) *Response {
+func (d *Daemon) admitGrowth(t api.Team, role string, want int, trig admission.Trigger) *daemonrpc.Response {
 	if !t.Budget.Declared() || want <= 0 {
 		return nil
 	}
@@ -79,7 +80,7 @@ func (d *Daemon) admitGrowth(t api.Team, role string, want int, trig admission.T
 			Role:      role,
 			Message:   reason,
 		})
-		return &Response{Error: fmt.Sprintf(
+		return &daemonrpc.Response{Error: fmt.Sprintf(
 			"%s: %s. Nothing changed; raise the budget in the manifest or free headroom first",
 			t.Key(), reason,
 		)}
@@ -117,7 +118,7 @@ func (d *Daemon) admitGrowth(t api.Team, role string, want int, trig admission.T
 // Whole-or-nothing and never a partial edit: a replica count is operator
 // intent, and marvel committing a number the operator did not ask for would
 // be marvel editing intent.
-func (d *Daemon) admitDeclaration(t api.Team, role string, replicas, old int) *Response {
+func (d *Daemon) admitDeclaration(t api.Team, role string, replicas, old int) *daemonrpc.Response {
 	if t.Budget.MaxSessions <= 0 || replicas <= old {
 		return nil
 	}
@@ -141,7 +142,7 @@ func (d *Daemon) admitDeclaration(t api.Team, role string, replicas, old int) *R
 		Role:      role,
 		Message:   reason,
 	})
-	return &Response{Error: fmt.Sprintf(
+	return &daemonrpc.Response{Error: fmt.Sprintf(
 		"%s: %s. Nothing changed; raise the budget in the manifest or scale another role down first",
 		t.Key(), reason,
 	)}

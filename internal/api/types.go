@@ -64,7 +64,14 @@ func (s SessionState) CountsAsAlive() bool {
 type HealthState string
 
 const (
-	HealthUnknown   HealthState = "unknown"
+	// HealthUnknown: marvel asserts nothing (no check declared, inside the
+	// first-heartbeat grace, or a finished headless run).
+	HealthUnknown HealthState = "unknown"
+	// HealthAlive: the process runs in a pane that exists, and no check
+	// beyond that ran. It is what a process-alive check can say. The restart
+	// path never reads it, and decay counts it the way it counts healthy.
+	HealthAlive HealthState = "alive"
+	// HealthHealthy: a check ran and passed (a heartbeat inside its timeout).
 	HealthHealthy   HealthState = "healthy"
 	HealthUnhealthy HealthState = "unhealthy"
 )
@@ -147,7 +154,14 @@ type Workspace struct {
 	TrustedFolders []string  `toml:"trusted_folders,omitempty"`
 	CreatedAt      time.Time `toml:"-"`
 	Placement      Placement `toml:"placement,omitempty"`
+	// Scope is WorkspaceScopeClient for a workspace whose seats work on a
+	// client's material. marvel reads no pane of such a seat for a listing,
+	// so no client screen text reaches a scheduler.
+	Scope string `toml:"scope,omitempty"`
 }
+
+// WorkspaceScopeClient marks a client workspace.
+const WorkspaceScopeClient = "client"
 
 // RuntimeMode selects how a harness is launched within its pane.
 type RuntimeMode string
@@ -387,6 +401,14 @@ type Session struct {
 	// Spec means no role to compare against (docs/design/drift-view.md).
 	Spec     string   `json:"spec,omitempty" toml:"-"`
 	SpecDiff []string `json:"spec_diff,omitempty" toml:"-"`
+	// Composer is the composer reader's verdict for the seat's pane (empty,
+	// holds_text, mid_turn, menu_unsafe, shell or unknown), filled on read
+	// for a `get sessions` that asks for the COMPOSER column and never
+	// stored. No captured text travels with it.
+	Composer string `json:"composer,omitempty" toml:"-"`
+	// ComposerGap is why Composer is unknown when marvel knows why: a fixed
+	// reason, never pane text or an error string. Filled and kept as Composer.
+	ComposerGap string `json:"composer_gap,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
@@ -685,6 +707,11 @@ type Role struct {
 	// Read it only through config.ResolvedGlobalRole, which also checks that
 	// the cluster admits the role's name.
 	GlobalRole string `toml:"global_role,omitempty"`
+	// Duties names the readiness checks this role must pass, each from the
+	// fixed library (DutyNames). Empty means the role declared none. Read it
+	// only through config.ResolvedDuties, which adds the duties every
+	// supervised seat carries (docs/design/seat-readiness.md section 3).
+	Duties []string `toml:"duties,omitempty"`
 	// Policy names the Policy this role's sessions are projected with —
 	// the contract half of finding-024: a Claude Code settings fragment
 	// marvel writes to a per-session file the harness reads. Empty means

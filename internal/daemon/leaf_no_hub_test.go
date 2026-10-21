@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // A daemon reads its client config once, at start. When bus.hub.url is added
@@ -17,7 +18,7 @@ func TestLeafToggleWithoutAHubExplainsTheStartTimeConfig(t *testing.T) {
 		attachTestBus(t, d, "")
 		d.lifecycle = bus.NewLifecycle(new(bus.Supervisor)) // the handler answers before it uses the broker
 
-		resp := d.dispatchAs(Request{Method: method}, localCaller())
+		resp := d.dispatchAs(daemonrpc.Request{Method: method}, localCaller())
 		if resp.Error == "" {
 			t.Fatalf("%s with no hub succeeded, want an error", method)
 		}

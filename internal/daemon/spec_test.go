@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // setRoleArgs changes the stored role's runtime args the way a re-apply
@@ -150,7 +151,7 @@ func TestSpecDiffForEnvCarriesNoValue(t *testing.T) {
 func TestApplyCountsSessionsLeftBehind(t *testing.T) {
 	d := newHandlerDaemon(t)
 	_ = liveSession(t, d)
-	behind := func(resp Response) int {
+	behind := func(resp daemonrpc.Response) int {
 		t.Helper()
 		if resp.Error != "" {
 			t.Fatalf("apply: %s", resp.Error)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // marshalRedacted marshals a redacted copy of v, so no Runtime Env value that
@@ -19,10 +20,10 @@ func marshalRedacted(v any) (json.RawMessage, error) {
 // redaction in marshalRedacted cannot be skipped by a handler that marshals its
 // own bytes. A source test (response_source_test.go) fails if anything else
 // sets Response.Result.
-func respond(v any) Response {
+func respond(v any) daemonrpc.Response {
 	data, err := marshalRedacted(v)
 	if err != nil {
-		return Response{Error: fmt.Sprintf("marshal response: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("marshal response: %v", err)}
 	}
-	return Response{Result: data}
+	return daemonrpc.Response{Result: data}
 }

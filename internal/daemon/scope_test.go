@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/paths"
 )
 
@@ -186,13 +187,13 @@ func TestDispatchAsScopeEnforcement(t *testing.T) {
 	const refusal = "is not permitted for a"
 
 	// A credential-push key cannot reach an admin method.
-	resp := d.dispatchAs(Request{Method: "logs"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:test"})
+	resp := d.dispatchAs(daemonrpc.Request{Method: "logs"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:test"})
 	if !strings.Contains(resp.Error, refusal) {
 		t.Errorf("credential-push on logs: error = %q, want a scope refusal", resp.Error)
 	}
 
 	// An admin key (and the local socket) reaches it.
-	resp = d.dispatchAs(Request{Method: "logs"}, localCaller())
+	resp = d.dispatchAs(daemonrpc.Request{Method: "logs"}, localCaller())
 	if strings.Contains(resp.Error, refusal) {
 		t.Errorf("admin on logs: unexpected scope refusal %q", resp.Error)
 	}
@@ -200,7 +201,7 @@ func TestDispatchAsScopeEnforcement(t *testing.T) {
 	// A credential-push method passes the scope gate and reaches its handler
 	// (gdum6 landed the credential.* handlers). With no params it fails as a
 	// bad request, never as a scope refusal and no longer as an unknown method.
-	resp = d.dispatchAs(Request{Method: "credential.put"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:test"})
+	resp = d.dispatchAs(daemonrpc.Request{Method: "credential.put"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:test"})
 	if strings.Contains(resp.Error, refusal) {
 		t.Errorf("credential-push on credential.put: unexpected scope refusal %q", resp.Error)
 	}
@@ -212,7 +213,7 @@ func TestDispatchAsScopeEnforcement(t *testing.T) {
 	}
 
 	// An empty or unrecognized scope permits nothing.
-	resp = d.dispatchAs(Request{Method: "logs"}, caller{scope: Scope(""), fingerprint: "SHA256:test"})
+	resp = d.dispatchAs(daemonrpc.Request{Method: "logs"}, caller{scope: Scope(""), fingerprint: "SHA256:test"})
 	if !strings.Contains(resp.Error, refusal) {
 		t.Errorf("empty scope on logs: error = %q, want a scope refusal", resp.Error)
 	}

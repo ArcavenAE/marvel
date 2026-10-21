@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -50,7 +51,7 @@ func TestScaleToNegativeReplicasIsRefused(t *testing.T) {
 	}
 	d.teamCtrl.ReconcileOnce()
 
-	var resp Response
+	var resp daemonrpc.Response
 	noPanic(t, "scale to -1", func() {
 		resp = d.handleScale(mustMarshal(t, scaleParams{TeamKey: "negscale/crew", Role: "crew", Replicas: -1}))
 	})
@@ -122,9 +123,9 @@ func TestRestartWithStoredNegativeReplicasDoesNotPanic(t *testing.T) {
 // on serving the next request on a new connection.
 func TestRecoverRequestTurnsAPanicIntoAnError(t *testing.T) {
 	d := newHandlerDaemon(t)
-	var resp Response
+	var resp daemonrpc.Response
 	noPanic(t, "recoverRequest", func() {
-		resp = d.recoverRequest("boom", func() Response { panic("forced") })
+		resp = d.recoverRequest("boom", func() daemonrpc.Response { panic("forced") })
 	})
 	if !strings.Contains(resp.Error, "internal error handling boom") || !strings.Contains(resp.Error, "forced") {
 		t.Errorf("error = %q, want an internal-error response naming the method and the panic", resp.Error)
@@ -132,10 +133,10 @@ func TestRecoverRequestTurnsAPanicIntoAnError(t *testing.T) {
 
 	client, server := net.Pipe()
 	go d.handleRWCAs(server, localCaller())
-	if err := json.NewEncoder(client).Encode(Request{Method: "get", Params: mustMarshal(t, map[string]string{"resource_type": "workspaces"})}); err != nil {
+	if err := json.NewEncoder(client).Encode(daemonrpc.Request{Method: "get", Params: mustMarshal(t, map[string]string{"resource_type": "workspaces"})}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	var next Response
+	var next daemonrpc.Response
 	if err := json.NewDecoder(client).Decode(&next); err != nil {
 		t.Fatalf("read: %v", err)
 	}
