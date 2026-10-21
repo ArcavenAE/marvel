@@ -57,6 +57,11 @@ type Supervisor struct {
 	// 3.2). checkStructure reads the broker through this, so a test can
 	// point it at a reader that fails on demand.
 	checkStructureFn func(ctx context.Context) (Structure, error)
+	// writeProbeFn is the write probe's reader; nil means ProbeWrites.
+	writeProbeFn func(ctx context.Context) (WriteReading, error)
+	// writeFailed is the failing set of the last write-probe reading.
+	writeFailed  string
+	writeSkipped string
 	// backoff maps a restart count to a wait; tests shorten it.
 	backoff func(n int) time.Duration
 	// dialTimeout bounds the listener wait at start.
@@ -163,6 +168,12 @@ type Status struct {
 	PID          int    `json:"pid,omitempty"`
 	Adopted      bool   `json:"adopted"`
 	Ready        bool   `json:"ready"`
+	// WriteFailed names, comma separated, the declared objects whose last
+	// canary write failed. A string so Status stays comparable.
+	WriteFailed string `json:"write_failed,omitempty"`
+	// WriteSkipped names the declared objects the probe did not write to
+	// because a real limit would have made the canary evict or be refused.
+	WriteSkipped string `json:"write_skipped,omitempty"`
 	// Leaf is "up", "down", "detached" (enrolled but the operator disconnected
 	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
 	// polled yet).
@@ -859,6 +870,49 @@ func (s *Supervisor) checkStructureLocked(ctx context.Context) {
 	case s.problems == "" && prevKnown && prev != "":
 		log.Printf("bus: structure restored on %s; releasing the spawn hold", s.mgr.bus.Listen)
 	}
+	s.probeWritesLocked(ctx)
+}
+
+// probeWritesLocked takes one write-probe reading and reports it: one
+// bus.store.write-failed per change in the failing set, a log line when it
+// clears. It never holds spawns and never restarts the broker. A read error
+// is no information and changes nothing. It releases s.mu around the broker
+// calls, as checkStructureLocked does.
+func (s *Supervisor) probeWritesLocked(ctx context.Context) {
+	probe := s.writeProbeFn
+	if probe == nil {
+		probe = s.probeWrites
+	}
+	s.mu.Unlock()
+	w, err := probe(ctx)
+	s.mu.Lock()
+	if s.stopping {
+		return
+	}
+	if err != nil {
+		log.Printf("bus: write probe: no reading (%v); keeping the last one", err)
+		return
+	}
+	prevSkipped := s.writeSkipped
+	s.writeSkipped = w.SkippedNames()
+	if s.writeSkipped != "" && s.writeSkipped != prevSkipped {
+		log.Printf("bus: write probe skipped %s on %s: a real limit would make the canary evict or be refused", s.writeSkipped, s.mgr.bus.Listen)
+	}
+	prev := s.writeFailed
+	s.writeFailed = w.Problems()
+	switch {
+	case s.writeFailed != "" && s.writeFailed != prev:
+		s.emit(events.KindBusStoreWriteFailed, events.SeverityError, fmt.Sprintf("broker %s refuses canary writes: %s; the broker is not restarted and spawns are not held, free the store and the next tick re-reads", s.mgr.bus.Listen, w.detail()))
+	case s.writeFailed == "" && prev != "":
+		log.Printf("bus: canary writes succeed again on %s", s.mgr.bus.Listen)
+	}
+}
+
+// probeWrites is the production reader: the admin identity against the
+// broker URL.
+func (s *Supervisor) probeWrites(ctx context.Context) (WriteReading, error) {
+	admin := s.mgr.Admin()
+	return ProbeWrites(ctx, s.mgr.URL(), admin.Name, admin.Password)
 }
 
 // readStructure is the production reader: the admin identity against the
@@ -956,7 +1010,7 @@ func (s *Supervisor) Status() Status {
 		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
 		Version:  s.version,
 		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.readyLocked(), Restarts: s.restarts,
-		Pidfile: s.pidState,
+		Pidfile: s.pidState, WriteFailed: s.writeFailed, WriteSkipped: s.writeSkipped,
 	}
 	if s.structureKnown {
 		st.Structure = &StructureStatus{
