@@ -58,8 +58,34 @@ func agentAddressFrom(pattern string) (*regexp.Regexp, error) {
 	if hasAnchor(part) {
 		return nil, fmt.Errorf("%q has an anchor between its outer ^ and $", pattern)
 	}
+	if hasFlag(re) {
+		return nil, fmt.Errorf("%q sets a flag; the class must hold without one", pattern)
+	}
 	seg := "(?:" + part.String() + ")"
+	if regexp.MustCompile("^" + seg + "$").MatchString("") {
+		return nil, fmt.Errorf("%q matches an empty part, so it would accept agent:///", pattern)
+	}
 	return regexp.Compile("^agent://" + seg + "/" + seg + "$")
+}
+
+// refusedFlags change what a part admits or how it repeats: case folding
+// adds upper case and two non-ASCII letters, DotNL lets a dot match a newline,
+// and NonGreedy makes repeats lazy.
+const refusedFlags = syntax.FoldCase | syntax.DotNL | syntax.NonGreedy
+
+// hasFlag reports whether any node of re was parsed under one of
+// refusedFlags. Multi-line mode needs no check here: it turns the outer ^ and
+// $ into line anchors, which the anchor checks refuse.
+func hasFlag(re *syntax.Regexp) bool {
+	if re.Flags&refusedFlags != 0 {
+		return true
+	}
+	for _, sub := range re.Sub {
+		if hasFlag(sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasAnchor reports whether re holds a line or text anchor anywhere.
