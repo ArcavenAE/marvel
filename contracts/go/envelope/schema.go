@@ -2,19 +2,19 @@ package envelope
 
 import (
 	"bytes"
-	_ "embed"
 	"fmt"
 
+	"github.com/arcavenae/marvel/contracts/go/envelopeschema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // SchemaJSON is the director envelope JSON Schema, embedded so the validator
 // needs no filesystem at runtime. It is a generated copy of
 // contracts/schema/director-envelope.schema.json (kept in sync by
-// `just contracts-gen`; a test guards against drift).
-//
-//go:embed schema.gen.json
-var SchemaJSON []byte
+// `just contracts-gen`; a test guards against drift). The bytes live in the
+// envelopeschema leaf, so a reader that needs only the schema does not pay
+// for compiling it.
+var SchemaJSON = envelopeschema.JSON
 
 // schemaID matches the $id in the schema, so the compiler resolves the document
 // against its own identifier rather than fetching the URL.

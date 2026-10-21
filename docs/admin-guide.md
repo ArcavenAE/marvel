@@ -741,6 +741,22 @@ the README). If a host ends up with both, the first `marvel` on `PATH` is the
 one that runs, which may be the stale one; check it with `command -v marvel`
 and `marvel version`, or call the pinned binary by its full path.
 
+### The version store
+
+A direct-binary upgrade keeps the build it replaced under the marvel home, at
+`versions/<version>/marvel`, and drops the one before that, so one prior build
+is kept. When the release publishes `checksums.txt`, the download is checked
+against it before anything is installed, and a mismatch is refused. A release
+that publishes none (every release before aae-orc-r770g) installs as before,
+with a note, and the build is recorded unverified.
+
+`versions/record.json` names the active build and the prior one: version,
+install channel, path, sha256, and whether the sum was verified. A Homebrew
+keg and a mise install are recorded where they are and never moved; a mise
+install is replaced in place as before, so no prior is recorded for it.
+Nothing reads the record yet. `upgrade --check` and the fallback to the prior
+binary will (docs/design/zero-downtime-upgrade.md section 5).
+
 ### Under mise: reexec from the new binary
 
 `marvel daemon reexec` run on the daemon's host names the binary it runs from,
@@ -856,6 +872,28 @@ print it; see "Connecting to a shared hub"):
 marvel --cluster <name> credential put bus/leaf --value-file <seed-file>
 marvel --cluster <name> bus status --require-leaf
 ```
+
+### Version skew
+
+A fleet is rarely on one build at once. These are the rules for a mixed one
+(`docs/design/zero-downtime-upgrade.md` section 6). A row marked planned
+describes behavior that has not shipped; do not rely on it yet.
+
+| Pair | Rule |
+|---|---|
+| CLI against daemon | Either may be newer. The daemon keeps each RPC method and field for at least one release after its replacement ships. `marvel version` shows both builds today. A warning on every verb when the builds differ is planned, item 1 of the design's follow-on list. |
+| A verb the daemon does not support | Planned, item 10: the CLI refuses and names the missing capability. Today there is no daemon-side capability answer, and `marvel version --capabilities` is local: it dials no daemon and reports only this binary's reexec handoff format. A verb the daemon lacks fails with whatever the daemon returns. |
+| Daemon downgrade | Not by reexec: reexec refuses a target older than the running daemon. A downgrade is a stop and a fresh start of the older binary, and is safe only where that binary reads every record the newer one wrote: the store schema (a binary refuses a store whose schema is newer than its own) and the broker identity record, which carries its own schema version. |
+| Daemon and the director shim | Out of marvel's scope. The shim has its own contract (`docs/design/shim-heartbeat-feed.md`). |
+| Daemon and nats-server | The broker version is pinned in `mise.toml`, and the daemon logs the version it started. The broker's own activation is in `docs/design/bus-as-service.md` section 5. |
+
+Across clusters, activate one cluster at a time and read each cluster's
+result before the next. A person says go; nothing proceeds on a timer, so a
+quiet cluster is not a pass. The pre-flight `marvel upgrade --check` and the
+wider post-reexec health check are planned (items 4 and 6), so today the
+reading is by hand. The order is open decision Z2 in the design. Its
+recommendation is the cluster with the fewest live seats first, and the cluster
+that hosts director last.
 
 ## Monitoring
 

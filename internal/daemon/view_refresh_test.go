@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/view"
 )
 
@@ -67,7 +68,7 @@ func TestViewRefreshVerbReachesTheKeeper(t *testing.T) {
 	}
 
 	params, _ := json.Marshal(map[string]string{"session": sess.Key(), "name": "repo"})
-	resp := d.dispatchAs(Request{Method: "view.refresh", Params: params}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "view.refresh", Params: params}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("view.refresh: %s", resp.Error)
 	}
@@ -82,11 +83,11 @@ func TestViewRefreshVerbReachesTheKeeper(t *testing.T) {
 	}
 
 	bad, _ := json.Marshal(map[string]string{"session": sess.Key(), "name": "nosuch"})
-	if resp := d.dispatchAs(Request{Method: "view.refresh", Params: bad}, localCaller()); resp.Error == "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "view.refresh", Params: bad}, localCaller()); resp.Error == "" {
 		t.Error("a refresh of an undeclared view returned no error")
 	}
 	ghost, _ := json.Marshal(map[string]string{"session": "acme/ghost"})
-	if resp := d.dispatchAs(Request{Method: "view.refresh", Params: ghost}, localCaller()); resp.Error == "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "view.refresh", Params: ghost}, localCaller()); resp.Error == "" {
 		t.Error("a refresh of an unknown session returned no error")
 	}
 }
@@ -94,7 +95,7 @@ func TestViewRefreshVerbReachesTheKeeper(t *testing.T) {
 // A credential-push key does not get the verb: it moves what a seat reads.
 func TestViewRefreshVerbIsAdminOnly(t *testing.T) {
 	d := newHandlerDaemon(t)
-	resp := d.dispatchAs(Request{Method: "view.refresh"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
+	resp := d.dispatchAs(daemonrpc.Request{Method: "view.refresh"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
 	if !strings.Contains(resp.Error, "not permitted") {
 		t.Fatalf("credential-push reached view.refresh: %+v", resp)
 	}

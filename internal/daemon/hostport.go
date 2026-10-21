@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // HostPortOf returns the "host:port" pair a direct mrvl:// or ssh://host:port
@@ -11,7 +13,7 @@ import (
 // socket path, a tcp:// address, and an ssh:// address that tunnels to a
 // socket, because the key those present is not the daemon's own.
 func HostPortOf(addr string) (string, error) {
-	if !isMRVL(addr) && !isSSH(addr) {
+	if !daemonrpc.IsMRVL(addr) && !daemonrpc.IsSSH(addr) {
 		return "", fmt.Errorf("address %q is not a direct mrvl:// or ssh://host:port address", addr)
 	}
 	u, err := url.Parse(addr)
@@ -22,7 +24,7 @@ func HostPortOf(addr string) (string, error) {
 	if host == "" {
 		return "", fmt.Errorf("address %q names no host", addr)
 	}
-	if isSSH(addr) {
+	if daemonrpc.IsSSH(addr) {
 		if u.Path != "" && u.Path != "/" {
 			return "", fmt.Errorf("address %q tunnels to a socket path; only the daemon's own SSH port can be read directly", addr)
 		}
