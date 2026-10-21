@@ -42,6 +42,18 @@ func TestAgentAddressFromSplicesOnlyOneAnchoredExpression(t *testing.T) {
 		{name: "no anchors", pattern: "[a-z]+"},
 		{name: "nothing between the anchors", pattern: "^$"},
 		{name: "not a pattern", pattern: "^[a-z$"},
+		// A part that matches the empty string would accept agent:///.
+		{name: "an empty group", pattern: "^()$"},
+		{name: "an empty non-capturing group", pattern: "^(?:)$"},
+		{name: "an optional part", pattern: "^a?$"},
+		{name: "a class that allows zero characters", pattern: "^[a-z0-9-]{0,32}$"},
+		// A flag changes what the class admits or how it repeats: (?i)
+		// folds case, adding A-Z and the Kelvin and long s signs.
+		{name: "case folding", pattern: "^(?i)[a-z]+$"},
+		{name: "case folding on a group", pattern: "^(?i:[a-z]+)$"},
+		{name: "dot matching a newline", pattern: "^(?s)a.b$"},
+		{name: "ungreedy repeats", pattern: "^(?U)[a-z]+$"},
+		{name: "multi-line anchors", pattern: "(?m)^[a-z]+$"},
 	} {
 		re, err := agentAddressFrom(c.pattern)
 		if c.match == nil {
