@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // runWith sends a run request as the CLI would, from loose params so the test
 // states the wire names and not the Go field names.
-func runWith(t *testing.T, d *Daemon, p map[string]any) Response {
+func runWith(t *testing.T, d *Daemon, p map[string]any) daemonrpc.Response {
 	t.Helper()
 	if _, ok := p["runtime_command"]; !ok {
 		p["runtime_command"] = "sleep"
@@ -23,7 +24,7 @@ func runWith(t *testing.T, d *Daemon, p map[string]any) Response {
 	return d.handleRun(raw)
 }
 
-func ranSession(t *testing.T, d *Daemon, resp Response) api.Session {
+func ranSession(t *testing.T, d *Daemon, resp daemonrpc.Response) api.Session {
 	t.Helper()
 	if resp.Error != "" {
 		t.Fatalf("run: %s", resp.Error)

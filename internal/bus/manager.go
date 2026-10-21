@@ -368,6 +368,7 @@ func (m *Manager) Render() (bool, error) {
 		Domain:       m.domain,
 		Listen:       m.bus.Listen,
 		StoreDir:     m.bus.StoreDir,
+		MaxFileStore: m.bus.MaxFileStore, MaxMemoryStore: m.bus.MaxMemoryStore,
 		HubURL:       m.bus.HubURL,
 		HubURLs:      m.bus.HubURLs,
 		HubCAFile:    m.bus.HubCAFile,
