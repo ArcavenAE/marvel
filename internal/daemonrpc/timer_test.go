@@ -335,3 +335,36 @@ func TestExpiredTimerMakesNoConnect(t *testing.T) {
 		t.Errorf("the first connection accepted read %q, want the control connection's \"control\": the dial connected after its timer ran out", buf[:n])
 	}
 }
+
+// TestBoundedReaderStopsAtTheLimit pins the edge of the cap: a reply under
+// the limit is read whole and ends in EOF, and a reply at or over it is
+// read up to the limit and no further, then refused with the too-large
+// error.
+func TestBoundedReaderStopsAtTheLimit(t *testing.T) {
+	const limit = 1000
+	read := func(n int) (int, error) {
+		r := newBoundedReader(strings.NewReader(strings.Repeat("x", n)), limit)
+		buf := make([]byte, 4096)
+		total := 0
+		for {
+			k, err := r.Read(buf)
+			total += k
+			if err != nil {
+				return total, err
+			}
+		}
+	}
+	got, err := read(limit - 1)
+	if got != limit-1 || err != io.EOF {
+		t.Errorf("a reply one byte under: read %d bytes, err %v; want %d and EOF", got, err, limit-1)
+	}
+	for _, n := range []int{limit, limit + 1, 5 * limit} {
+		got, err = read(n)
+		if got != limit {
+			t.Errorf("a reply of %d bytes: read %d; want exactly %d", n, got, limit)
+		}
+		if !errors.Is(err, errReplyTooLarge) {
+			t.Errorf("a reply of %d bytes ended with %v; want errReplyTooLarge", n, err)
+		}
+	}
+}
