@@ -119,35 +119,64 @@ func resolveDaemonRung() (string, daemonrpc.DialOptions, resolveRung, error) {
 		// Another cluster's bad name does not stop this one from resolving.
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
-	cl, err := cfg.GetCluster(clusterName)
-	if err != nil {
-		// A cluster name that matches nothing is refused, whether the
-		// operator typed it with --cluster or the config's current_cluster
-		// names it: acting on the local daemon instead could land a mutating
-		// command on the wrong host (#502). The commands that define or
-		// configure a cluster (config add-cluster, use-cluster, ...) never
-		// reach this path; they take the name as an argument.
-		return "", daemonrpc.DialOptions{}, rungDefault, err
+	// The single-cluster form: --cluster, else the config's current_cluster,
+	// with -i overriding the entry's identity. A name that matches nothing
+	// is refused, whether the operator typed it with --cluster or the
+	// config's current_cluster names it: acting on the local daemon instead
+	// could land a mutating command on the wrong host (#502). The commands
+	// that define or configure a cluster (config add-cluster, use-cluster,
+	// ...) never reach this path; they take the name as an argument.
+	name := clusterName
+	if name == "" {
+		name = cfg.CurrentCluster
 	}
-	if cl == nil {
+	if name == "" {
 		return config.ResolveSocket(), daemonrpc.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
-	addr := cl.Socket
+	target, err := resolveCluster(cfg, name)
+	if err != nil {
+		return "", daemonrpc.DialOptions{}, rungDefault, err
+	}
+	if identityPath != "" {
+		target.Opts.Identity = identityPath
+	}
+	return target.Addr, target.Opts, target.Rung, nil
+}
+
+// clusterTarget is one cluster resolved from its own config entry.
+type clusterTarget struct {
+	Name string
+	Addr string
+	Opts daemonrpc.DialOptions
+	Rung resolveRung
+}
+
+// resolveCluster resolves the named cluster from its config entry alone, so
+// one command can resolve several clusters side by side (#828). Unlike
+// resolveDaemonRung it reads no package state: MARVEL_SOCKET, --socket,
+// --cluster, -i and current_cluster play no part, and the identity is the
+// entry's own. The config is an argument so a caller resolving several
+// clusters loads it once. An empty name is refused rather than read as
+// current_cluster.
+func resolveCluster(cfg *config.Config, name string) (clusterTarget, error) {
+	if name == "" {
+		return clusterTarget{}, errors.New("a cluster name is required")
+	}
+	cl, err := cfg.GetCluster(name)
+	if err != nil {
+		return clusterTarget{}, err
+	}
+	// A cluster with no address means the layout default. ResolveSocket
+	// would return MARVEL_SOCKET first, which a named cluster must not end
+	// on (#586).
+	addr, rung := cl.Socket, rungCluster
 	if cl.Server != "" {
 		addr = cl.Server
 	}
-	rung := rungCluster
 	if addr == "" {
-		// A cluster with no address means the layout default. ResolveSocket
-		// would return MARVEL_SOCKET first, which an explicit --cluster must
-		// not end on (#586).
 		addr, rung = config.DefaultSocket(), rungDefault
 	}
-	id := identityPath
-	if id == "" {
-		id = cl.Identity
-	}
-	return addr, daemonrpc.DialOptions{Identity: id}, rung, nil
+	return clusterTarget{Name: name, Addr: addr, Opts: daemonrpc.DialOptions{Identity: cl.Identity}, Rung: rung}, nil
 }
 
 // send runs a JSON-RPC request against the currently selected daemon,
