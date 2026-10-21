@@ -250,8 +250,8 @@ func TestActivityStalledNeverRestarts(t *testing.T) {
 		t.Fatalf("expected ActivityStalled, got %q", got.ActivityState)
 	}
 	// Liveness is unaffected: the process is alive, the pane exists.
-	if got.HealthState != api.HealthHealthy {
-		t.Fatalf("expected HealthHealthy (liveness intact), got %q", got.HealthState)
+	if got.HealthState != api.HealthAlive {
+		t.Fatalf("expected HealthAlive (liveness intact), got %q", got.HealthState)
 	}
 	if got.State != api.SessionRunning {
 		t.Fatalf("expected SessionRunning (no restart), got %q", got.State)

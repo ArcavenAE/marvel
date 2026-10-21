@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 // ProcessSpec describes one managed child.
@@ -50,6 +51,15 @@ type ProcessSpec struct {
 	// PidFile, when set, records the child pid for adoption by a
 	// successor daemon. Written 0644 on a best-effort basis.
 	PidFile string
+	// Grace is the wait between SIGTERM and SIGKILL when a Process ends the
+	// child. Zero means DefaultGrace.
+	Grace time.Duration
+	// TickEvery is the period of the Process loop's one ticker, which calls
+	// Driver.Tick. Zero means no ticker.
+	TickEvery time.Duration
+	// AdoptPoll is how often a Process re-reads an adopted child's identity
+	// to see that it exited. Zero means two seconds.
+	AdoptPoll time.Duration
 }
 
 // Child is a started managed child.

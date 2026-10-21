@@ -10,6 +10,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -105,11 +106,11 @@ func accountRows(readings *api.AccountReadings, sessions []api.Session, now time
 // The account key is derived from that session's own record, so a reporter
 // cannot name an account it is not on. The clock is the daemon's: a sender's
 // own time is not trusted to decide what is stale.
-func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time) Response {
+func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time) daemonrpc.Response {
 	sess, err := d.store.AuthenticateAccountReport(req.Session, req.SessionToken)
 	if err != nil {
 		d.noteRefusedAccountReport(req, err)
-		return Response{Error: fmt.Sprintf("account.limits: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("account.limits: %v", err)}
 	}
 	key := api.AccountKeyOf(sess)
 	var stored bool
@@ -120,7 +121,7 @@ func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time
 	} else {
 		observed, err := observationTime(req.ObservedAt, now)
 		if err != nil {
-			return Response{Error: fmt.Sprintf("account.limits: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("account.limits: %v", err)}
 		}
 		stored = d.accounts.RecordObserved(key, req.Windows, sess.Key(), observed, now)
 	}
@@ -144,10 +145,10 @@ func observationTime(observed, now time.Time) (time.Time, error) {
 	return observed.UTC(), nil
 }
 
-func (d *Daemon) handleAccountLimits(params json.RawMessage) Response {
+func (d *Daemon) handleAccountLimits(params json.RawMessage) daemonrpc.Response {
 	var req api.AccountLimitsRequest
 	if err := json.Unmarshal(params, &req); err != nil {
-		return Response{Error: fmt.Sprintf("account.limits: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("account.limits: %v", err)}
 	}
 	return d.recordAccountLimits(req, time.Now().UTC())
 }

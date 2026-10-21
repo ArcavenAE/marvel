@@ -1,7 +1,7 @@
 # Marvel demo — Act 1, pane-loss recovery.
 #
 # Two workers, each a `sleep` process in a pane with a process-alive
-# healthcheck (pane exists => healthy). They stay up on their own, so the
+# healthcheck (pane exists => alive). They stay up on their own, so the
 # only thing that removes a session is an operator kill. Kill one and the
 # daemon reaps the dead pane, marks the session crashed, and the reconciler
 # spawns a replacement to restore the desired replica count.
@@ -18,13 +18,13 @@
 #   just build
 #   ./bin/marvel daemon &
 #   ./bin/marvel work examples/demo-act1-recovery.toml
-#   ./bin/marvel get sessions          # two running workers, HEALTH healthy
+#   ./bin/marvel get sessions          # two running workers, HEALTH alive
 #
 # Kill a pane and watch recovery:
 #   ./bin/marvel kill recover/line-worker-g1-0
 #   ./bin/marvel events --kind session.crashed     # the loss is detected
 #   ./bin/marvel events --kind session.created     # the replacement spawns
-#   ./bin/marvel get sessions                       # back to two healthy workers
+#   ./bin/marvel get sessions                       # back to two alive workers
 #
 # The recovery pair is session.crashed then session.created. The
 # session.restarted event belongs to the health-driven path, not pane loss;

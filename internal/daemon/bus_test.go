@@ -10,6 +10,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -75,7 +76,7 @@ func TestBusRegeneratesOnTeamApplyAndDelete(t *testing.T) {
 
 	// Deleting the team through the RPC path removes its user (revocation).
 	params, _ := json.Marshal(map[string]string{"resource_type": "team", "name": "acme/ops"})
-	if resp := d.dispatch(Request{Method: "delete", Params: params}); resp.Error != "" {
+	if resp := d.dispatch(daemonrpc.Request{Method: "delete", Params: params}); resp.Error != "" {
 		t.Fatalf("delete team: %s", resp.Error)
 	}
 	if auth := readAuth(t, dir); strings.Contains(auth, "user: ops") {
@@ -96,7 +97,7 @@ func TestBusLeafBlockFollowsTheSeedCredential(t *testing.T) {
 	}
 
 	// Pushing bus/leaf re-renders with the remote; deleting it drops it.
-	if resp := d.dispatchAs(Request{Method: "credential.put", Params: putParams(t, busLeafCredential, "SUSEEDFORTEST")}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: putParams(t, busLeafCredential, "SUSEEDFORTEST")}, localCaller()); resp.Error != "" {
 		t.Fatalf("put: %s", resp.Error)
 	}
 	conf, _ = os.ReadFile(filepath.Join(dir, bus.ConfName))
@@ -106,7 +107,7 @@ func TestBusLeafBlockFollowsTheSeedCredential(t *testing.T) {
 	if strings.Contains(string(conf), "SUSEEDFORTEST") {
 		t.Error("seed value rendered into the conf; it must stay environment-only")
 	}
-	if resp := d.dispatchAs(Request{Method: "credential.delete", Params: nameParams(t, busLeafCredential)}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.delete", Params: nameParams(t, busLeafCredential)}, localCaller()); resp.Error != "" {
 		t.Fatalf("delete: %s", resp.Error)
 	}
 	conf, _ = os.ReadFile(filepath.Join(dir, bus.ConfName))
