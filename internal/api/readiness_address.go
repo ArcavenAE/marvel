@@ -32,12 +32,22 @@ func mustAgentAddress() *regexp.Regexp {
 	if err := json.Unmarshal(envelopeschema.JSON, &doc); err != nil {
 		panic(fmt.Sprintf("api: the envelope schema is not JSON: %v", err))
 	}
-	seg, ok := strings.CutPrefix(doc.Properties.Sender.Properties.AgentID.Pattern, "^")
+	re, err := agentAddressFrom(doc.Properties.Sender.Properties.AgentID.Pattern)
+	if err != nil {
+		panic(fmt.Sprintf("api: the envelope schema's agent_id pattern: %v", err))
+	}
+	return re
+}
+
+// agentAddressFrom builds the agent://{team}/{id} matcher from the agent_id
+// pattern, using the pattern between its anchors as each part.
+func agentAddressFrom(pattern string) (*regexp.Regexp, error) {
+	seg, ok := strings.CutPrefix(pattern, "^")
 	if ok {
 		seg, ok = strings.CutSuffix(seg, "$")
 	}
 	if !ok || seg == "" {
-		panic("api: the envelope schema's agent_id pattern is not an anchored class")
+		return nil, fmt.Errorf("%q is not an anchored class", pattern)
 	}
-	return regexp.MustCompile("^agent://" + seg + "/" + seg + "$")
+	return regexp.Compile("^agent://" + seg + "/" + seg + "$")
 }
