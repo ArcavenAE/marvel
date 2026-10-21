@@ -34,6 +34,11 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
   round-trip fixture per kind plus a 64 KiB truncation-boundary frame; the
   invalid set pins the frame guards (unknown kind, wrong data shape, wrong
   `schema_version`).
+- `readiness/routing-vectors.json`: golden vectors for the seat readiness
+  routing rule (`docs/design/seat-readiness.md` section 6). Each vector is a
+  seat's duty and withdrawn cells, the job's duties, an optional supervisor
+  override and the decision; marvel's `api.RouteSeat` and director must both
+  return it at the file's `now`. Cells use the `asof.Cell` JSON shape.
 - `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
   validator only for the event twin, whose Go source of truth is `events.go`).
 
