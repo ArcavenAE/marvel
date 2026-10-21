@@ -45,8 +45,9 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
   `api.Marry`), `take`, `recheck`, `address`, and the trigger row's `grep` of
   the marry source. The step is shadow only, so no vector sends. Decode the
   file strictly (an unknown field is an error) and compare each `want` after
-  decoding it, never as bytes: empty fields are omitted. The `grep` step reads
-  marvel's Go source, so it runs in marvel only.
+  decoding it, never as bytes: empty fields are omitted. The `grep` steps read
+  marvel's Go source, one per file the marrying step reaches, so they run in
+  marvel only.
 - `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
   validator only for the event twin, whose Go source of truth is `events.go`).
 

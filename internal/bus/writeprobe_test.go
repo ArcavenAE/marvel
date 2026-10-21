@@ -24,14 +24,22 @@ import (
 // zero, and returns its URL. Never the live bus.
 func startScratchBroker(t *testing.T, maxFileStore int) string {
 	t.Helper()
+	url, _ := startScratchBrokerMon(t, maxFileStore)
+	return url
+}
+
+// startScratchBrokerMon is startScratchBroker that also serves the loopback
+// monitor, and returns its address.
+func startScratchBrokerMon(t *testing.T, maxFileStore int) (string, string) {
+	t.Helper()
 	ns, err := exec.LookPath("nats-server")
 	if err != nil {
 		t.Skip("nats-server not on PATH")
 	}
-	port := freePort(t)
+	port, mon := freePort(t), freePort(t)
 	dir := t.TempDir()
 	conf := filepath.Join(dir, "n.conf")
-	body := "listen: 127.0.0.1:" + strconv.Itoa(port) + "\njetstream {\n  store_dir: \"" + filepath.Join(dir, "js") + "\"\n"
+	body := "listen: 127.0.0.1:" + strconv.Itoa(port) + "\nhttp: 127.0.0.1:" + strconv.Itoa(mon) + "\njetstream {\n  store_dir: \"" + filepath.Join(dir, "js") + "\"\n"
 	if maxFileStore > 0 {
 		body += "  max_file_store: " + strconv.Itoa(maxFileStore) + "\n"
 	}
@@ -54,7 +62,7 @@ func startScratchBroker(t *testing.T, maxFileStore int) string {
 		nc.Close()
 		return true
 	})
-	return url
+	return url, "127.0.0.1:" + strconv.Itoa(mon)
 }
 
 func streamMsgs(t *testing.T, js jetstream.JetStream, name string) uint64 {
