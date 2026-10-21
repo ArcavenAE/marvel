@@ -63,8 +63,9 @@ contracts-gen:
       -p envelope --only-models --minimal-names --capitalization ID \
       -o "$OUT/envelope.gen.go" "$S"
     # The validator embeds the schema; go:embed cannot reach ../../schema, so keep
-    # a package-local copy. A test guards it against drift from the canonical.
-    cp "$S" "$OUT/schema.gen.json"
+    # a package-local copy in the envelopeschema leaf, which readers that need
+    # only the bytes import. A test guards it against drift from the canonical.
+    cp "$S" contracts/go/envelopeschema/schema.gen.json
     # Match the repo formatter (lefthook fmt-check runs gofumpt); fall back to gofmt.
     if command -v gofumpt >/dev/null 2>&1; then
       gofumpt -w "$OUT/envelope.gen.go"
@@ -74,7 +75,7 @@ contracts-gen:
     # Event twin: schema-as-wire-twin, NO Go regen (events.go stays source of
     # truth); refresh only the embedded schema copy the validator compiles.
     cp contracts/schema/director-event.schema.json contracts/go/event/schema.gen.json
-    echo "contracts-gen: regenerated $OUT/envelope.gen.go + envelope/schema.gen.json + event/schema.gen.json"
+    echo "contracts-gen: regenerated $OUT/envelope.gen.go + envelopeschema/schema.gen.json + event/schema.gen.json"
 
 # Start the marvel daemon (foreground)
 start: build
