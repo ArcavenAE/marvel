@@ -2,6 +2,7 @@ package daemonrpc
 
 import (
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -289,5 +290,48 @@ func TestConnectTimeoutIsTimeLeft(t *testing.T) {
 	ex = &exchange{deadline: time.Now().Add(-time.Second)}
 	if got := ex.connectTimeout(0); got <= 0 {
 		t.Errorf("past the deadline: %s, want a positive duration so the dial fails at once", got)
+	}
+}
+
+// TestExpiredTimerMakesNoConnect: once the timer has run out, the SSH
+// dial's connect gets no time of its own, so no TCP connection is made.
+// The listener's first accept must be the control connection made after
+// the call returns.
+func TestExpiredTimerMakesNoConnect(t *testing.T) {
+	_, pemBytes := newSigner(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- c
+		}
+	}()
+	_, err = SendRequestWith("mrvl://u@"+ln.Addr().String(), Request{Method: "ping"},
+		DialOptions{Identity: writeIdentity(t, pemBytes), StrictHostKey: true, Timeout: time.Nanosecond})
+	wantTimeout(t, err, "connect")
+
+	ctl, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ctl.Close() }()
+	if _, err := ctl.Write([]byte("control")); err != nil {
+		t.Fatal(err)
+	}
+	first := <-accepted
+	defer func() { _ = first.Close() }()
+	_ = first.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 7)
+	n, _ := io.ReadFull(first, buf)
+	if string(buf[:n]) != "control" {
+		t.Errorf("the first connection accepted read %q, want the control connection's \"control\": the dial connected after its timer ran out", buf[:n])
 	}
 }
