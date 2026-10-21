@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -233,7 +234,7 @@ func TestReexecExecsTheNamedBinary(t *testing.T) {
 	_ = fakeMarvel(t, filepath.Join(root, "installs", "0.2.0"), marvelModule, "0.2.0")
 	want, _ := filepath.EvalSymlinks(newBin)
 
-	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, newBin)}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "reexec", Params: reexecParamsJSON(t, newBin)}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("reexec: %s", resp.Error)
 	}
@@ -265,7 +266,7 @@ func TestReexecExecsTheNamedBinary(t *testing.T) {
 // Without exec_path the daemon execs its own path, as before.
 func TestReexecWithoutExecPathKeepsItsOwnPath(t *testing.T) {
 	d, calls := reexecHarness(t)
-	if resp := d.dispatchAs(Request{Method: "reexec"}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "reexec"}, localCaller()); resp.Error != "" {
 		t.Fatalf("reexec: %s", resp.Error)
 	}
 	want, _ := selfExecPath()
@@ -288,7 +289,7 @@ func TestReexecExecPathRefusedOffTheLocalSocket(t *testing.T) {
 	d, calls := reexecHarness(t)
 	good := fakeMarvel(t, t.TempDir(), marvelModule, "0.3.0")
 	c := caller{scope: ScopeAdmin, fingerprint: "SHA256:admin", local: false}
-	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, good)}, c)
+	resp := d.dispatchAs(daemonrpc.Request{Method: "reexec", Params: reexecParamsJSON(t, good)}, c)
 	if !strings.Contains(resp.Error, "only accepted on the local unix socket") {
 		t.Errorf("an admin key over mrvl://: want the local-only refusal, got %+v", resp)
 	}
@@ -302,7 +303,7 @@ func TestReexecExecPathRefusedOffTheLocalSocket(t *testing.T) {
 func TestReexecRefusedTargetNeitherExecsNorEmits(t *testing.T) {
 	d, calls := reexecHarness(t)
 	older := fakeMarvel(t, t.TempDir(), marvelModule, "0.1.0")
-	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, older)}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "reexec", Params: reexecParamsJSON(t, older)}, localCaller())
 	if !strings.Contains(resp.Error, "a downgrade is refused") {
 		t.Fatalf("want the downgrade refusal, got %+v", resp)
 	}
@@ -456,7 +457,7 @@ func TestValidateReexecTargetWalksTheAncestors(t *testing.T) {
 func TestReexecRefusesATargetInAWritableDirectoryBeforeTheExec(t *testing.T) {
 	d, calls := reexecHarness(t)
 	dir, bin := dirWithMarvel(t, 0o777)
-	resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, bin)}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "reexec", Params: reexecParamsJSON(t, bin)}, localCaller())
 	if !strings.Contains(resp.Error, dir) {
 		t.Fatalf("want a refusal naming %s, got %+v", dir, resp)
 	}
@@ -472,7 +473,7 @@ func TestReexecLocalOnlyRefusalComesBeforeValidation(t *testing.T) {
 	d, calls := reexecHarness(t)
 	c := caller{scope: ScopeAdmin, fingerprint: "SHA256:admin", local: false}
 	for _, path := range []string{"relative/marvel", "/nonexistent/marvel", "/bin/ls"} {
-		resp := d.dispatchAs(Request{Method: "reexec", Params: reexecParamsJSON(t, path)}, c)
+		resp := d.dispatchAs(daemonrpc.Request{Method: "reexec", Params: reexecParamsJSON(t, path)}, c)
 		if resp.Error != errNotLocal.Error() {
 			t.Errorf("%s over mrvl://: want errNotLocal, got %q", path, resp.Error)
 		}

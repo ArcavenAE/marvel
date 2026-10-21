@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ func skipIfNoTmux(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
+	}
+	if why := psProblem(func() error { return exec.Command("ps", "-p", strconv.Itoa(os.Getpid())).Run() }); why != "" {
+		t.Skip(why)
 	}
 }
 
@@ -687,7 +691,7 @@ func TestHealthRestartBackoffSiblingMarked(t *testing.T) {
 	if workers[0].State != api.SessionCrashLoopBackOff {
 		t.Fatalf("sibling expected SessionCrashLoopBackOff, got %q", workers[0].State)
 	}
-	rh, _ := ctrl.RoleHealthSnapshot("test-health-sibling", "squad", "worker")
+	rh := mustRoleHealth(t, ctrl, "test-health-sibling", "squad", "worker")
 	if rh.RestartCount != 1 {
 		t.Fatalf("RestartCount must stay at 1 during backoff, got %d", rh.RestartCount)
 	}
@@ -731,7 +735,7 @@ func TestHealthRestartMaxReached(t *testing.T) {
 		clock.Advance(10 * time.Minute)
 	}
 
-	rh, _ := ctrl.RoleHealthSnapshot("test-health-maxrst", "squad", "worker")
+	rh := mustRoleHealth(t, ctrl, "test-health-maxrst", "squad", "worker")
 	if rh.RestartCount != 2 {
 		t.Fatalf("expected RestartCount capped at MaxRestarts=2, got %d", rh.RestartCount)
 	}
@@ -876,7 +880,7 @@ func TestReapPathSaturatesMaxRestarts(t *testing.T) {
 		clock.Advance(10 * time.Minute)
 	}
 
-	rh, _ := ctrl.RoleHealthSnapshot("test-reap-maxrst", "squad", "worker")
+	rh := mustRoleHealth(t, ctrl, "test-reap-maxrst", "squad", "worker")
 	if rh.RestartCount != 2 {
 		t.Fatalf("expected RestartCount=2 after two reap cycles, got %d", rh.RestartCount)
 	}
@@ -892,7 +896,7 @@ func TestReapPathSaturatesMaxRestarts(t *testing.T) {
 	killPaneAndWait(t, sess.PaneID)
 	ctrl.ReconcileOnce() // reap; saturation freezes BackoffUntil
 
-	rh, _ = ctrl.RoleHealthSnapshot("test-reap-maxrst", "squad", "worker")
+	rh = mustRoleHealth(t, ctrl, "test-reap-maxrst", "squad", "worker")
 	if rh.RestartCount != 2 {
 		t.Fatalf("RestartCount must stay at MaxRestarts=2 after saturation, got %d", rh.RestartCount)
 	}
@@ -1100,7 +1104,7 @@ func TestRoleHealthSnapshotSurfacesHealthySince(t *testing.T) {
 	// controller's state; mutating it must not be observable on the next read.
 	got.HealthySince = time.Time{}
 	got.RestartCount = 99
-	if again, _ := ctrl.RoleHealthSnapshot("ws", "t", "worker"); !again.HealthySince.Equal(since) || again.RestartCount != 2 {
+	if again := mustRoleHealth(t, ctrl, "ws", "t", "worker"); !again.HealthySince.Equal(since) || again.RestartCount != 2 {
 		t.Errorf("mutating the snapshot leaked into the store: got HealthySince=%v RestartCount=%d", again.HealthySince, again.RestartCount)
 	}
 }
@@ -2842,14 +2846,14 @@ func TestRestartCountDecaysAfterHealthyWindow(t *testing.T) {
 
 	// First eval: healthy → the streak starts (HealthySince at T0), count held.
 	ctrl.evaluateHealth()
-	if got, _ := ctrl.RoleHealthSnapshot("test-decay", "squad", "worker"); got.RestartCount != 3 {
+	if got := mustRoleHealth(t, ctrl, "test-decay", "squad", "worker"); got.RestartCount != 3 {
 		t.Fatalf("RestartCount after first healthy eval = %d, want 3 (streak just started)", got.RestartCount)
 	}
 
 	// Still inside the window: no decay.
 	clock.Advance(restartCountDecayWindow - time.Minute)
 	ctrl.evaluateHealth()
-	if got, _ := ctrl.RoleHealthSnapshot("test-decay", "squad", "worker"); got.RestartCount != 3 {
+	if got := mustRoleHealth(t, ctrl, "test-decay", "squad", "worker"); got.RestartCount != 3 {
 		t.Fatalf("RestartCount before the window elapses = %d, want 3 (still cooling in)", got.RestartCount)
 	}
 
@@ -2973,7 +2977,7 @@ func TestDecayStopsJoinSynthesizingRecoveredRole(t *testing.T) {
 	clock.Advance(restartCountDecayWindow + time.Minute)
 	ctrl.evaluateHealth() // past the window → decay fires
 
-	if got, _ := ctrl.RoleHealthSnapshot("test-decay-join", "squad", "worker"); got.RestartCount != 0 {
+	if got := mustRoleHealth(t, ctrl, "test-decay-join", "squad", "worker"); got.RestartCount != 0 {
 		t.Fatalf("RestartCount after the recovery window = %d, want 0 (decayed)", got.RestartCount)
 	}
 

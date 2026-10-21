@@ -26,7 +26,7 @@ func TestMarvelHomeDoesNotMoveTheSSHKeyFallback(t *testing.T) {
 	t.Setenv("MARVEL_HOME", filepath.Join(rootParent, "mh"))
 	t.Setenv("SSH_AUTH_SOCK", "")
 
-	methods, err := sshAuthMethodsFor("")
+	methods, err := sshAuthMethodsFor("", nil, nil)
 	if err != nil || len(methods) != 0 {
 		t.Fatalf("positive control: with no key anywhere, got %d methods, %v; want none", len(methods), err)
 	}
@@ -45,7 +45,7 @@ func TestMarvelHomeDoesNotMoveTheSSHKeyFallback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), pem.EncodeToMemory(block), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	methods, err = sshAuthMethodsFor("")
+	methods, err = sshAuthMethodsFor("", nil, nil)
 	if err != nil || len(methods) != 1 {
 		t.Errorf("a key in the user's ~/.ssh gave %d methods, %v; want 1: the fallback no longer reads the user's home", len(methods), err)
 	}
