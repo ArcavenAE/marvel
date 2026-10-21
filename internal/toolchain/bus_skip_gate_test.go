@@ -283,6 +283,7 @@ func TestBusSkipsGated(t *testing.T) {
 		{"a trap after the test line's redirect", test + " && trap 'exit 0' EXIT\n" + gate, false},
 		{"another command before the test line", "echo starting\n" + test + "\n" + gate, false},
 		{"a go command other than go test before it", "go env -w GOFLAGS=-skip=TestA\n" + test + "\n" + gate, false},
+		{"a go command other than go test, with the stream redirect", `go env -w GOFLAGS=-skip=TestA > "${RUNNER_TEMP}/bus.json"` + "\n" + test + "\n" + gate, false},
 		{"the test line goes on past its redirect", strings.Replace(test, `"${RUNNER_TEMP}/bus.json"`, `"${RUNNER_TEMP}/bus.json" -count=2`, 1) + "\n" + gate, false},
 		{"set -o pipefail before the test", "set -e -o pipefail\n" + test + "\n" + gate, true},
 	} {
@@ -390,12 +391,12 @@ func plainTestLine(fields []string, file string) bool {
 	return true
 }
 
-// testLineNames reports whether the fields of one command are a go test run
-// of pkg with -json, and -race when race is set. plainTestLine has already
-// held the line to ending at "> <file>" with no shell operator.
+// testLineNames reports whether the fields of one command before the gate
+// name pkg with -json, and -race when race is set. setLine and plainTestLine
+// have already held the command to set with option words, which cannot name a
+// package, or a go test line ending at "> <file>" with no shell operator.
 func testLineNames(fields []string, pkg string, race bool) bool {
-	if len(fields) < 2 || fields[0] != "go" || fields[1] != "test" ||
-		!slices.Contains(fields, "-json") || (race && !slices.Contains(fields, "-race")) {
+	if !slices.Contains(fields, "-json") || (race && !slices.Contains(fields, "-race")) {
 		return false
 	}
 	return slices.Contains(fields, "./"+pkg) || slices.Contains(fields, "./"+pkg+"/...")
