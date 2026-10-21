@@ -205,13 +205,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := newRootCmd().Execute(); err != nil {
-		var ee *exitError
-		if errors.As(err, &ee) {
-			os.Exit(ee.Code)
-		}
-		os.Exit(1)
-	}
+	os.Exit(execute(newRootCmd(), os.Stderr))
 }
 
 // newDaemon builds the daemon the command goes on to start. A seam, so a test
@@ -264,6 +258,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(planCmd())
 	root.AddCommand(marryCmd())
 
+	silenceUsageOnConnectErrors(root)
 	return root
 }
 

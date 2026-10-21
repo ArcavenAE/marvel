@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -97,7 +98,7 @@ func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Respons
 
 	var resp Response
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, &BadReplyError{Err: fmt.Errorf("read response: %w", err)}
 	}
 	return &resp, nil
 }
@@ -180,7 +181,7 @@ func dialDaemonWith(addr string, opts DialOptions) (net.Conn, error) {
 		addr = strings.TrimPrefix(addr, "tcp://")
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
-			return nil, fmt.Errorf("connect to daemon at %s (tcp): %w", addr, err)
+			return nil, fmt.Errorf("connect to daemon at %s (tcp): %w", addr, dialError(addr, err))
 		}
 		return conn, nil
 	}
@@ -188,7 +189,7 @@ func dialDaemonWith(addr string, opts DialOptions) (net.Conn, error) {
 	network := ListenNetwork(addr)
 	conn, err := net.Dial(network, addr)
 	if err != nil {
-		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", addr, network, err)
+		return nil, fmt.Errorf("connect to daemon at %s (%s): %w", addr, network, dialError(addr, err))
 	}
 	return conn, nil
 }
@@ -261,14 +262,9 @@ func dialSSH(addr string, opts DialOptions) (net.Conn, error) {
 
 // dialSSHTunnel connects through a remote sshd to a Unix or TCP socket (mode 1).
 func dialSSHTunnel(user, host, sshPort, network, addr string, opts DialOptions) (net.Conn, error) {
-	config, err := sshClientConfig(user, opts)
+	sshConn, err := sshDial(user, host, sshPort, opts)
 	if err != nil {
 		return nil, err
-	}
-
-	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(host, sshPort), config)
-	if err != nil {
-		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, sshPort, err)
 	}
 
 	conn, err := sshConn.Dial(network, addr)
@@ -283,14 +279,9 @@ func dialSSHTunnel(user, host, sshPort, network, addr string, opts DialOptions) 
 // dialSSHDirect connects to the daemon's embedded SSH server (mode 2).
 // Opens a session channel for JSON-RPC instead of tunneling to a socket.
 func dialSSHDirect(user, host, port string, opts DialOptions) (net.Conn, error) {
-	config, err := sshClientConfig(user, opts)
+	sshConn, err := sshDial(user, host, port, opts)
 	if err != nil {
 		return nil, err
-	}
-
-	sshConn, err := ssh.Dial("tcp", net.JoinHostPort(host, port), config)
-	if err != nil {
-		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err)
 	}
 
 	session, err := sshConn.NewSession()
@@ -325,13 +316,85 @@ func dialSSHDirect(user, host, port string, opts DialOptions) (net.Conn, error) 
 	}, nil
 }
 
-func sshClientConfig(user string, opts DialOptions) (*ssh.ClientConfig, error) {
-	methods, err := sshAuthMethodsFor(opts.Identity)
+// sshDial connects to an SSH server and completes the handshake. The TCP
+// connect and the handshake are separate steps so that a failed connect is
+// typed as unreachable or a timeout, and a handshake failure keeps the host
+// key or auth error the callbacks returned.
+func sshDial(user, host, port string, opts DialOptions) (*ssh.Client, error) {
+	addr := net.JoinHostPort(host, port)
+	offered := &offeredKeys{}
+	config, err := sshClientConfig(user, opts, offered)
+	if err != nil {
+		return nil, err
+	}
+	config.AuthCallback = authRefusedCallback(user, addr, offered)
+
+	tcp, err := net.DialTimeout("tcp", addr, config.Timeout)
+	if err != nil {
+		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, dialError(addr, err))
+	}
+	c, chans, reqs, err := ssh.NewClientConn(tcp, addr, config)
+	if err != nil {
+		_ = tcp.Close()
+		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err)
+	}
+	return ssh.NewClient(c, chans, reqs), nil
+}
+
+// offeredKeys records the fingerprint of each key handed to x/crypto to
+// offer during one handshake (see AuthRefusedError.Offered). A handshake is sequential, so it needs no lock.
+type offeredKeys struct {
+	fingerprints []string
+}
+
+// record wraps a signer source so each signer it yields is recorded when
+// x/crypto asks for it, which is when the key is offered. A nil recorder
+// records nothing.
+func (o *offeredKeys) record(signers func() ([]ssh.Signer, error)) ssh.AuthMethod {
+	if o == nil {
+		return ssh.PublicKeysCallback(signers)
+	}
+	return ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+		ss, err := signers()
+		for _, s := range ss {
+			o.fingerprints = append(o.fingerprints, ssh.FingerprintSHA256(s.PublicKey()))
+		}
+		return ss, err
+	})
+}
+
+// staticSigners is a signer source that always yields the one signer.
+func staticSigners(s ssh.Signer) func() ([]ssh.Signer, error) {
+	return func() ([]ssh.Signer, error) { return []ssh.Signer{s}, nil }
+}
+
+// authRefusedCallback returns an AuthCallback that turns x/crypto's bare
+// "unable to authenticate" string into an AuthRefusedError. Every method
+// sshAuthMethodsFor builds is publickey, and x/crypto tries a method name
+// once, so once publickey has been tried, or the server does not allow it,
+// nothing is left to offer. Otherwise it returns (nil, nil), which leaves
+// the choice of the next method to x/crypto.
+func authRefusedCallback(user, addr string, offered *offeredKeys) ssh.ClientAuthCallback {
+	return func(ctx *ssh.ClientAuthContext) (ssh.AuthMethod, error) {
+		if slices.Contains(ctx.TriedMethods, "publickey") || !slices.Contains(ctx.AllowedMethods, "publickey") {
+			return nil, &AuthRefusedError{
+				User:    user,
+				Addr:    addr,
+				Offered: slices.Clone(offered.fingerprints),
+				Allowed: ctx.AllowedMethods,
+			}
+		}
+		return nil, nil
+	}
+}
+
+func sshClientConfig(user string, opts DialOptions, offered *offeredKeys) (*ssh.ClientConfig, error) {
+	methods, err := sshAuthMethodsFor(opts.Identity, offered)
 	if err != nil {
 		return nil, err
 	}
 	if len(methods) == 0 {
-		return nil, errors.New("no SSH auth available: generate a key with 'marvel keys generate' or start ssh-agent")
+		return nil, &NoIdentityError{}
 	}
 
 	layout, err := paths.Default()
@@ -401,7 +464,7 @@ func (c *sshWrappedConn) Close() error {
 //
 // If identity is set but unreadable or has weak permissions, that is a
 // hard error — callers expect the cluster's configured key to be used.
-func sshAuthMethodsFor(identity string) ([]ssh.AuthMethod, error) {
+func sshAuthMethodsFor(identity string, offered *offeredKeys) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
 	if identity != "" {
@@ -409,7 +472,7 @@ func sshAuthMethodsFor(identity string) ([]ssh.AuthMethod, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cluster identity %s: %w", identity, err)
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
+		methods = append(methods, offered.record(staticSigners(signer)))
 		return methods, nil
 	}
 
@@ -419,7 +482,7 @@ func sshAuthMethodsFor(identity string) ([]ssh.AuthMethod, error) {
 		if _, statErr := os.Stat(defaultKey); statErr == nil {
 			signer, err := loadKeyFile(defaultKey, true)
 			if err == nil {
-				methods = append(methods, ssh.PublicKeys(signer))
+				methods = append(methods, offered.record(staticSigners(signer)))
 			} else {
 				log.Printf("warning: %s unusable: %v", defaultKey, err)
 			}
@@ -430,7 +493,7 @@ func sshAuthMethodsFor(identity string) ([]ssh.AuthMethod, error) {
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		conn, err := net.Dial("unix", sock)
 		if err == nil {
-			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			methods = append(methods, offered.record(agent.NewClient(conn).Signers))
 		}
 	}
 
@@ -445,7 +508,7 @@ func sshAuthMethodsFor(identity string) ([]ssh.AuthMethod, error) {
 		if err != nil {
 			continue
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
+		methods = append(methods, offered.record(staticSigners(signer)))
 	}
 	return methods, nil
 }
