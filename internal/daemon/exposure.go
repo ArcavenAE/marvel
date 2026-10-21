@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -56,10 +57,10 @@ func (d *Daemon) emitExposure(kind events.Kind, sev events.Severity, p exposureV
 
 // handleExposureAdd records that the slot read a function. The caster defaults
 // to who called.
-func (d *Daemon) handleExposureAdd(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleExposureAdd(params json.RawMessage, c caller) daemonrpc.Response {
 	p, err := decodeExposureParams(params)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	if p.Caster == "" {
 		p.Caster = callerName(c)
@@ -69,7 +70,7 @@ func (d *Daemon) handleExposureAdd(params json.RawMessage, c caller) Response {
 		Paths: p.Paths, Caster: p.Caster,
 	})
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitExposure(events.KindExposureRecorded, events.SeverityInfo, p,
 		fmt.Sprintf("slot %s/%s/%s read %s (recorded by %s)", p.Workspace, p.Team, p.Role, rec.Function, p.Caster))
@@ -78,14 +79,14 @@ func (d *Daemon) handleExposureAdd(params json.RawMessage, c caller) Response {
 
 // handleExposureEnd marks the slot's open readings of a function as ended. The
 // refusal still counts them.
-func (d *Daemon) handleExposureEnd(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleExposureEnd(params json.RawMessage, c caller) daemonrpc.Response {
 	p, err := decodeExposureParams(params)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	n, err := d.store.EndExposure(p.Workspace, p.Team, p.Role, p.Function, time.Time{})
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitExposure(events.KindExposureEnded, events.SeverityInfo, p,
 		fmt.Sprintf("slot %s/%s/%s ended %d reading(s) of %s (by %s); they still count", p.Workspace, p.Team, p.Role, n, api.NormalizeFunction(p.Function), callerName(c)))
@@ -96,14 +97,14 @@ func (d *Daemon) handleExposureEnd(params json.RawMessage, c caller) Response {
 // local socket, which any seat on the host can reach, so it is not limited to
 // the operator. It needs a reason, appends voided_at and the reason and deletes
 // nothing, and says so on the event ring as a warning.
-func (d *Daemon) handleExposureVoid(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleExposureVoid(params json.RawMessage, c caller) daemonrpc.Response {
 	p, err := decodeExposureParams(params)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	n, err := d.store.VoidExposure(p.Workspace, p.Team, p.Role, p.Function, p.Reason, time.Time{})
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitExposure(events.KindExposureVoided, events.SeverityWarning, p,
 		fmt.Sprintf("slot %s/%s/%s: %d record(s) for %s VOIDED by %s: %s; the gate no longer counts them",

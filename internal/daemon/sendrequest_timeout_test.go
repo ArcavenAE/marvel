@@ -31,7 +31,7 @@ func TestSendRequestWithTimeoutReturns(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	_, err = daemonrpc.SendRequestWith(sock, Request{Method: "account.limits"}, DialOptions{Timeout: 200 * time.Millisecond})
+	_, err = daemonrpc.SendRequestWith(sock, daemonrpc.Request{Method: "account.limits"}, daemonrpc.DialOptions{Timeout: 200 * time.Millisecond})
 	if err == nil {
 		t.Fatal("an unanswered request returned no error")
 	}

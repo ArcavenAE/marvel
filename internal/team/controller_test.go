@@ -1104,7 +1104,7 @@ func TestRoleHealthSnapshotSurfacesHealthySince(t *testing.T) {
 	// controller's state; mutating it must not be observable on the next read.
 	got.HealthySince = time.Time{}
 	got.RestartCount = 99
-	if again, _ := ctrl.RoleHealthSnapshot("ws", "t", "worker"); !again.HealthySince.Equal(since) || again.RestartCount != 2 {
+	if again := mustRoleHealth(t, ctrl, "ws", "t", "worker"); !again.HealthySince.Equal(since) || again.RestartCount != 2 {
 		t.Errorf("mutating the snapshot leaked into the store: got HealthySince=%v RestartCount=%d", again.HealthySince, again.RestartCount)
 	}
 }

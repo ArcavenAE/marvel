@@ -1,0 +1,25 @@
+# The bus.* events of the parity sequence (TestParitySequenceEmitsTheGoldenBusEvents),
+# recorded against bus.Supervisor before its lifecycle moved into workload.Process
+# (docs/design/code-restructure-plan.md, Move 2, PR 2b). PR 2c asserts the same
+# list from the driver. One kind per line, in ring order.
+
+# A stale pidfile, and the port held by a process it does not prove.
+bus.pidfile-stale
+bus.pidfile-unproven
+
+# A fresh start with a structural miss, on a hub with no leaf credential.
+bus.unprovisioned
+bus.started
+bus.leaf.unenrolled
+
+# A crash, and the respawn after the backoff.
+bus.crashed
+bus.started
+bus.leaf.unenrolled
+
+# A requested restart.
+bus.started
+bus.leaf.unenrolled
+
+# A stop.
+bus.stopped
