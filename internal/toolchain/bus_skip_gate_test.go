@@ -68,6 +68,14 @@ func TestNoSkipsGate(t *testing.T) {
 		{"a package-level pass with no test events (-run NoSuch)", ev("start", busPkg, "") + ev("output", busPkg, "") + ev("pass", busPkg, ""), 1, busPkg},
 		{"only a sibling package's tests passed", ev("pass", sibling, "TestG"), 1, busPkg},
 		{"the stream is not go test -json", "ok  \t" + busPkg + "\t1.0s\n", 2, ""},
+		// One bus test passed and another failed. Under set +e or shell: bash {0},
+		// go test's own exit status would no longer end the step, so the gate must
+		// fail on the failure itself.
+		{"one bus test passed and another failed", ran + ev("run", busPkg, "TestB") + ev("fail", busPkg, "TestB") + ev("fail", busPkg, ""), 1, "TestB"},
+		{"a bus subtest failed", ran + ev("fail", busPkg, "TestA/sub"), 1, "TestA/sub"},
+		{"a test under internal/bus failed", ran + ev("fail", busPkg+"/inner", "TestC"), 1, "TestC"},
+		{"a failure in another package", ran + ev("fail", other, "TestD"), 0, ""},
+		{"a failure in a package that only shares the prefix", ran + ev("fail", sibling, "TestE"), 0, ""},
 	} {
 		got, out := runNoSkips(t, tc.stream, busPkg)
 		switch {
