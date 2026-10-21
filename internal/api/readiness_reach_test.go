@@ -409,6 +409,10 @@ func TestMarryReachFollowsEachRoute(t *testing.T) {
 		"accptr":     "os/exec", // an init writes through a pointer a reached accessor returns
 		"accsetter":  "os/exec", // an init calls a setter on a reached accessor's result
 		"accwrap":    "os/exec", // an init writes through an accessor that wraps another
+		"funcsetter": "os/exec", // an init calls a reached setter that returns nothing
+		"ptrsetter":  "os/exec", // an init calls a setter that writes through an accessor's result
+		"accany":     "os/exec", // an init writes through an accessor whose result is an interface
+		"accstruct":  "os/exec", // an init writes through an accessor whose result is a struct
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
