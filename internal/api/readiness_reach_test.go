@@ -34,7 +34,10 @@ type marryReach struct {
 // of every type in the package that implements the interface. A reached
 // package variable brings every declaration that mentions it, init included:
 // a write can come through the bare name, a field, an element, a pointer or a
-// copy of a map or slice, so any mention counts, reads too.
+// copy of a map or slice, so any mention counts, reads too. A write can also
+// come through a reached accessor, a function that returns a reference to
+// such a variable, so a reached accessor brings every declaration that calls
+// it, repeated until nothing new is added.
 //
 // The limit: it reads one package. An implementation or function value that
 // another package supplies, and anything reached through reflection, are not
@@ -85,20 +88,25 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 		ifaces  []*types.Func
 		pkgs    []string
 		members []string
+		fn      *types.Func // the function or method a FuncDecl declares
 	}
 	defined := map[types.Object]*decl{}
 	methods := map[*types.TypeName][]*decl{}
 	mentions := map[types.Object][]*decl{}
+	callers := map[*types.Func][]*decl{}
+	var all []*decl
 	packageLevel := func(o types.Object) bool { return o.Pkg() == pkg && o.Parent() == pkg.Scope() }
 	for _, f := range files {
 		file := filepath.ToSlash(filepath.Join(fileRoot, filepath.Base(fset.Position(f.Pos()).Filename)))
 		for _, d := range f.Decls {
 			n := &decl{file: file}
+			all = append(all, n)
 			switch d := d.(type) {
 			case *ast.FuncDecl:
 				n.name = d.Name.Name
 				obj := info.Defs[d.Name]
 				defined[obj] = n
+				n.fn, _ = obj.(*types.Func)
 				if recv := obj.Type().(*types.Signature).Recv(); recv != nil {
 					rt := recv.Type()
 					if p, ok := rt.(*types.Pointer); ok {
@@ -154,14 +162,18 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 								n.ifaces = append(n.ifaces, fn)
 							} else {
 								n.uses = append(n.uses, fn)
+								callers[fn] = append(callers[fn], n)
 							}
 							break
 						}
 					}
 					if packageLevel(o) {
 						n.uses = append(n.uses, o)
-						if v, ok := o.(*types.Var); ok {
-							mentions[v] = append(mentions[v], n)
+						switch o := o.(type) {
+						case *types.Var:
+							mentions[o] = append(mentions[o], n)
+						case *types.Func:
+							callers[o] = append(callers[o], n)
 						}
 					}
 				}
@@ -192,6 +204,38 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 			}
 		}
 		return out
+	}
+
+	// accessor holds each function or method that returns a reference
+	// (pointer, map, slice, chan or func) and mentions a package variable or
+	// another accessor: a caller can write the variable through its result
+	// while mentioning only the function. A reached accessor brings every
+	// declaration that calls it. The set is grown until nothing new is added.
+	refResult := func(fn *types.Func) bool {
+		res := fn.Type().(*types.Signature).Results()
+		for i := range res.Len() {
+			switch res.At(i).Type().Underlying().(type) {
+			case *types.Pointer, *types.Map, *types.Slice, *types.Chan, *types.Signature:
+				return true
+			}
+		}
+		return false
+	}
+	accessor := map[*decl]bool{}
+	for grew := true; grew; {
+		grew = false
+		for _, n := range all {
+			if n.fn == nil || accessor[n] || !refResult(n.fn) {
+				continue
+			}
+			for _, o := range n.uses {
+				v, isVar := o.(*types.Var)
+				if (isVar && packageLevel(v)) || accessor[defined[o]] {
+					accessor[n], grew = true, true
+					break
+				}
+			}
+		}
 	}
 
 	r := marryReach{uses: map[string][]string{}, members: map[string][]string{}}
@@ -236,6 +280,9 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 		for _, m := range n.ifaces {
 			queue = append(queue, implementers(m)...)
 		}
+		if accessor[n] {
+			queue = append(queue, callers[n.fn]...)
+		}
 	}
 	slices.Sort(r.files)
 	return r, nil
@@ -263,6 +310,12 @@ func marrySourceReach(t *testing.T) marryReach {
 // marryReachAllowed are the packages a declaration the marrying step reaches
 // may use. A logger, a store or anything that starts a process is not among
 // them, wherever in the file the rest of the package uses one.
+//
+// To the next editor: the walk over-reaches on purpose (a reader of a reached
+// variable is pulled in), so a failure here may name code the step never
+// runs. Move that code out of the reach rather than widen this list, and the
+// same for marryReachNarrow; a wider list is the hole the check exists to
+// close.
 var marryReachAllowed = []string{
 	"encoding/json", "errors", "fmt", "regexp", "regexp/syntax", "slices", "strings", "time",
 	"github.com/arcavenae/marvel/contracts/go/envelopeschema",
@@ -355,6 +408,7 @@ func TestMarryReachFollowsEachRoute(t *testing.T) {
 		"accmap":     "os/exec", // an init writes an element through a reached accessor
 		"accptr":     "os/exec", // an init writes through a pointer a reached accessor returns
 		"accsetter":  "os/exec", // an init calls a setter on a reached accessor's result
+		"accwrap":    "os/exec", // an init writes through an accessor that wraps another
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
