@@ -7,11 +7,12 @@ import (
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func TestBusStatusWithoutABusSaysSo(t *testing.T) {
 	d := newHandlerDaemon(t)
-	resp := d.dispatchAs(Request{Method: "bus.status"}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "bus.status"}, localCaller())
 	if resp.Error == "" || !strings.Contains(resp.Error, "no bus is configured") {
 		t.Fatalf("resp = %+v, want a no-bus error", resp)
 	}
@@ -20,7 +21,7 @@ func TestBusStatusWithoutABusSaysSo(t *testing.T) {
 func TestBusStatusReportsAnAdoptedURL(t *testing.T) {
 	d := newHandlerDaemon(t)
 	d.sessMgr.Bus = bus.NewAdopted(config.ResolvedBus{Mode: "adopted", Class: "message-bus", Provider: "nats-server", URL: "nats://h:4222"})
-	resp := d.dispatchAs(Request{Method: "bus.status"}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "bus.status"}, localCaller())
 	if resp.Error != "" {
 		t.Fatal(resp.Error)
 	}
@@ -38,7 +39,7 @@ func TestBusStatusReportsAnAdoptedURL(t *testing.T) {
 
 func TestBusStatusIsNotACredentialPushMethod(t *testing.T) {
 	d := newHandlerDaemon(t)
-	resp := d.dispatchAs(Request{Method: "bus.status"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
+	resp := d.dispatchAs(daemonrpc.Request{Method: "bus.status"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
 	if resp.Error == "" || !strings.Contains(resp.Error, "not permitted") {
 		t.Fatalf("credential-push key reached bus.status: %+v", resp)
 	}
@@ -47,7 +48,7 @@ func TestBusStatusIsNotACredentialPushMethod(t *testing.T) {
 func TestBusLeafToggleReusesTheCredentialPushGate(t *testing.T) {
 	d := newHandlerDaemon(t)
 	for _, m := range []string{"bus.leaf.connect", "bus.leaf.disconnect"} {
-		resp := d.dispatchAs(Request{Method: m}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
+		resp := d.dispatchAs(daemonrpc.Request{Method: m}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
 		// The toggle reuses credential.put/delete's gate (aae-orc-ct0l4), so the
 		// scope does not refuse; without a managed bus the handler answers.
 		if strings.Contains(resp.Error, "not permitted") {

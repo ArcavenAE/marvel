@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/team"
 )
@@ -55,7 +56,7 @@ func verifySeat(t *testing.T, d *Daemon, script, runtimeName, wait string) strin
 	return key
 }
 
-func injectOf(t *testing.T, d *Daemon, p map[string]any) Response {
+func injectOf(t *testing.T, d *Daemon, p map[string]any) daemonrpc.Response {
 	t.Helper()
 	return d.handleInjectAs(mustMarshal(t, p), caller{})
 }
