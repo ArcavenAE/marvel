@@ -2,6 +2,7 @@ package main
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -47,5 +48,28 @@ func TestComposerCell(t *testing.T) {
 		if got := newSessionRow(api.Session{Composer: word}).composer; got != want {
 			t.Errorf("cell for %q = %q, want %q", word, got, want)
 		}
+	}
+}
+
+// With the column selected, each seat whose cell is unknown for a known
+// reason gets one GAP line after the table; without it, none.
+func TestComposerGapLinesFollowTheTable(t *testing.T) {
+	sessions := []api.Session{
+		{Workspace: "ws", Name: "a", Composer: "mid_turn"},
+		{Workspace: "ws", Name: "b", Composer: "unknown", ComposerGap: "client workspace, not read"},
+		{Workspace: "ws2", Name: "c", Composer: "unknown", ComposerGap: "workspace manifest not read"},
+	}
+	c, _ := lookupSessionColumn("composer")
+	n, _ := lookupSessionColumn("name")
+	out := renderSessionsView(sessions, []sessionColumn{n, c}, "", fitOptions{})
+	want := "GAP pane ws/b: client workspace, not read\nGAP pane ws2/c: workspace manifest not read\n"
+	if !strings.HasSuffix(out, want) {
+		t.Fatalf("view does not end with the GAP lines:\n%s", out)
+	}
+	if strings.Count(out, "GAP pane") != 2 {
+		t.Fatalf("want two GAP lines:\n%s", out)
+	}
+	if out := renderSessionsView(sessions, []sessionColumn{n}, "", fitOptions{}); strings.Contains(out, "GAP") {
+		t.Fatalf("GAP lines without the column:\n%s", out)
 	}
 }

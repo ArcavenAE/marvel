@@ -73,17 +73,17 @@ func runningSeat(runtime string) api.Session {
 // captured with them reads empty (the control that the reader is reached).
 func TestComposerWordReadsTheFixtures(t *testing.T) {
 	for name, tc := range map[string]struct {
-		escapes string
-		want    string
+		escapes   string
+		want, gap string
 	}{
-		"a spinner line is mid_turn":                        {composerFixture(t, "3a-mid-turn-1s5.ansi.txt"), "mid_turn"},
-		"a placeholder captured without escapes is unknown": {composerFixture(t, "1-empty-idle.txt"), "unknown"},
-		"an empty composer with escapes is empty":           {composerFixture(t, "1-empty-idle.ansi.txt"), "empty"},
+		"a spinner line is mid_turn":                        {composerFixture(t, "3a-mid-turn-1s5.ansi.txt"), "mid_turn", ""},
+		"a placeholder captured without escapes is unknown": {composerFixture(t, "1-empty-idle.txt"), "unknown", "reader unknown"},
+		"an empty composer with escapes is empty":           {composerFixture(t, "1-empty-idle.ansi.txt"), "empty", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := &fakePane{foreground: "2.1.290", escapes: tc.escapes}
-			if got := composerWord(p, runningSeat("claude"), false); got != tc.want {
-				t.Fatalf("composer = %q, want %q", got, tc.want)
+			if got, gap := composerWord(p, runningSeat("claude"), false, nil); got != tc.want || gap != tc.gap {
+				t.Fatalf("composer = %q, %q; want %q, %q", got, gap, tc.want, tc.gap)
 			}
 			if want := []string{"foreground %7", "capture-e %7"}; !slices.Equal(p.calls, want) {
 				t.Fatalf("calls = %q, want %q: the claude reader reads a capture taken with escapes", p.calls, want)
@@ -92,34 +92,38 @@ func TestComposerWordReadsTheFixtures(t *testing.T) {
 	}
 }
 
-// A client-workspace seat is never captured, nor is a seat whose runtime has
-// no reader, a seat not running, or a pane with a shell in front.
+// A client-workspace seat is never captured, nor is a seat whose workspace
+// manifest could not be read, a seat whose runtime has no reader, a seat not
+// running, or a pane with a shell in front. Each unknown names its reason.
 func TestComposerWordReadsNoPaneItMayNotOrNeedNot(t *testing.T) {
+	unread := errors.New("workspace not in the store")
 	for name, tc := range map[string]struct {
-		seat   api.Session
-		client bool
-		fg     string
-		want   string
-		calls  []string
+		seat      api.Session
+		client    bool
+		clientErr error
+		fg        string
+		want, gap string
+		calls     []string
 	}{
-		"a client workspace":       {runningSeat("claude"), true, "2.1.290", "unknown", nil},
-		"a runtime with no reader": {runningSeat("opencode"), false, "opencode", "unknown", nil},
+		"a client workspace":       {runningSeat("claude"), true, nil, "2.1.290", "unknown", "client workspace, not read", nil},
+		"an unread manifest":       {runningSeat("claude"), false, unread, "2.1.290", "unknown", "workspace manifest not read", nil},
+		"a runtime with no reader": {runningSeat("opencode"), false, nil, "opencode", "unknown", "no reader for opencode", nil},
 		"a seat not running": {func() api.Session {
 			s := runningSeat("claude")
 			s.State = api.SessionFailed
 			return s
-		}(), false, "2.1.290", "", nil},
+		}(), false, nil, "2.1.290", "", "", nil},
 		"a seat with no pane": {func() api.Session {
 			s := runningSeat("claude")
 			s.PaneID = ""
 			return s
-		}(), false, "2.1.290", "", nil},
-		"a shell in front": {runningSeat("claude"), false, "zsh", "shell", []string{"foreground %7"}},
+		}(), false, nil, "2.1.290", "", "", nil},
+		"a shell in front": {runningSeat("claude"), false, nil, "zsh", "shell", "", []string{"foreground %7"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := &fakePane{foreground: tc.fg, escapes: "never read", plain: "never read"}
-			if got := composerWord(p, tc.seat, tc.client); got != tc.want {
-				t.Fatalf("composer = %q, want %q", got, tc.want)
+			if got, gap := composerWord(p, tc.seat, tc.client, tc.clientErr); got != tc.want || gap != tc.gap {
+				t.Fatalf("composer = %q, %q; want %q, %q", got, gap, tc.want, tc.gap)
 			}
 			if !slices.Equal(p.calls, tc.calls) {
 				t.Fatalf("calls = %q, want %q", p.calls, tc.calls)
@@ -128,18 +132,43 @@ func TestComposerWordReadsNoPaneItMayNotOrNeedNot(t *testing.T) {
 	}
 }
 
-// Until a client-workspace source is ruled, no workspace is captured: the
-// column reads unknown everywhere rather than open a client's panes.
-func TestComposerClientSourceUnruledCapturesNothing(t *testing.T) {
+// With no source set, no workspace is captured: the column reads unknown
+// everywhere rather than open a client's panes. A set source is the one
+// consulted.
+func TestComposerWithNoSourceCapturesNothing(t *testing.T) {
 	var d Daemon
 	for _, ws := range []string{"", "ws", "any"} {
-		if !d.composerClientWorkspace(ws) {
-			t.Errorf("workspace %q may be captured with no source ruled", ws)
+		if c, err := d.composerClientWorkspace(ws); !c || err != nil {
+			t.Errorf("workspace %q may be captured with no source: %v, %v", ws, c, err)
 		}
 	}
-	d.composerClient = func(ws string) bool { return ws == "client-ws" }
-	if d.composerClientWorkspace("ws") || !d.composerClientWorkspace("client-ws") {
-		t.Error("the injected source is not the one consulted")
+	d.composerClient = func(ws string) (bool, error) { return ws == "client-ws", nil }
+	if c, _ := d.composerClientWorkspace("ws"); c {
+		t.Error("the set source is not the one consulted")
+	}
+	if c, _ := d.composerClientWorkspace("client-ws"); !c {
+		t.Error("the set source is not the one consulted")
+	}
+}
+
+// The ruled source is the workspace manifest's scope: client is client, no
+// scope is not, and a workspace the store cannot read is an error, so the
+// column refuses it. A daemon from New uses it.
+func TestComposerSourceIsTheManifestScope(t *testing.T) {
+	d := newHandlerDaemon(t)
+	if d.composerClient == nil {
+		t.Fatal("New set no client-workspace source")
+	}
+	composerSeat(t, d, "scopeclientws", "client", "echo frame-painted\nexec sleep 300\n")
+	composerSeat(t, d, "scopeplainws", "", "echo frame-painted\nexec sleep 300\n")
+	if c, err := d.composerClientWorkspace("scopeclientws"); !c || err != nil {
+		t.Errorf("scope client: %v, %v; want client", c, err)
+	}
+	if c, err := d.composerClientWorkspace("scopeplainws"); c || err != nil {
+		t.Errorf("no scope: %v, %v; want not client", c, err)
+	}
+	if _, err := d.composerClientWorkspace("no-such-workspace"); err == nil {
+		t.Error("a workspace the store cannot read gave no error")
 	}
 }
 
@@ -156,8 +185,8 @@ func TestComposerWordFailedReadIsUnknown(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := composerWord(p, runningSeat("claude"), false); got != "unknown" {
-				t.Fatalf("composer = %q, want unknown", got)
+			if got, gap := composerWord(p, runningSeat("claude"), false, nil); got != "unknown" || gap != "capture failed" {
+				t.Fatalf("composer = %q, %q; want unknown, capture failed", got, gap)
 			}
 		})
 	}
@@ -189,9 +218,8 @@ func TestGetSessionsComposerColumn(t *testing.T) {
 	marker := "Mark" + strconv.Itoa(os.Getpid()) + "ing"
 	frame := "\n✻ " + marker + "… (1s · esc to interrupt)\n\n" + testRule + "\n❯" + testNB + "\n" + testRule + "\n  [Model] scratch\n"
 	script := claudeFrameSeat(t, frame)
-	key := composerSeat(t, d, "composerws", script)
-	client := composerSeat(t, d, "composerclientws", script)
-	d.composerClient = func(ws string) bool { return ws == "composerclientws" }
+	key := composerSeat(t, d, "composerws", "", script)
+	client := composerSeat(t, d, "composerclientws", "client", script)
 
 	served := func(composer bool) map[string]api.Session {
 		t.Helper()
@@ -229,15 +257,18 @@ func TestGetSessionsComposerColumn(t *testing.T) {
 	if got[key].Composer != "mid_turn" {
 		t.Fatalf("composer = %q, want mid_turn", got[key].Composer)
 	}
-	if got[client].Composer != "unknown" {
-		t.Fatalf("client workspace composer = %q, want unknown", got[client].Composer)
+	if got[client].Composer != "unknown" || got[client].ComposerGap != "client workspace, not read" {
+		t.Fatalf("client workspace composer = %q, %q; want unknown, client workspace, not read", got[client].Composer, got[client].ComposerGap)
+	}
+	if got[key].ComposerGap != "" {
+		t.Fatalf("a placed seat carries the gap %q", got[key].ComposerGap)
 	}
 	stored, err := d.store.GetSession(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Composer != "" {
-		t.Fatalf("the stored session carries %q", stored.Composer)
+	if stored.Composer != "" || stored.ComposerGap != "" {
+		t.Fatalf("the stored session carries %q, %q", stored.Composer, stored.ComposerGap)
 	}
 
 	// Positive control: the marker is on the screen the column read.
@@ -288,9 +319,10 @@ func TestGetSessionsComposerColumn(t *testing.T) {
 	}
 }
 
-// composerSeat applies a one-seat team in workspace ws running script,
-// retags its runtime as claude, and returns its key.
-func composerSeat(t *testing.T, d *Daemon, ws, script string) string {
+// composerSeat applies a one-seat team in workspace ws, with the workspace
+// scope given, running script, retags its runtime as claude, and returns its
+// key. The workspaces are fixtures; no real workspace is named.
+func composerSeat(t *testing.T, d *Daemon, ws, scope, script string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "seat.sh")
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -299,6 +331,9 @@ func composerSeat(t *testing.T, d *Daemon, ws, script string) string {
 	manifest := strings.ReplaceAll(winchManifest(path), `name = "repaintws"`, `name = "`+ws+`"`)
 	// Team names are cluster-wide, so each seat gets its own.
 	manifest = strings.ReplaceAll(manifest, `name = "squad"`, `name = "`+ws+`-squad"`)
+	if scope != "" {
+		manifest = strings.Replace(manifest, `name = "`+ws+`"`, `name = "`+ws+`"`+"\nscope = \""+scope+"\"", 1)
+	}
 	if resp := applyManifest(t, d, manifest); resp.Error != "" {
 		t.Fatalf("apply: %s", resp.Error)
 	}

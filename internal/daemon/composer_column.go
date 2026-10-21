@@ -23,27 +23,39 @@ type composerPane interface {
 	CapturePaneEscapes(paneID string) (string, error)
 }
 
-// composerWord is the column's value for one session. "" means not read: the
-// session has no running pane. A client-workspace seat is never captured and
-// reads unknown, and so does a runtime with no reader, a failed read, and a
-// capture the reader cannot place.
-func composerWord(pane composerPane, s api.Session, client bool) string {
+// The fixed reasons a COMPOSER cell is unknown, printed as GAP lines. None
+// carries pane text or an error string.
+const (
+	gapClient       = "client workspace, not read"
+	gapManifest     = "workspace manifest not read"
+	gapNoReader     = "no reader for "
+	gapCapture      = "capture failed"
+	gapReaderUnsure = "reader unknown"
+)
+
+// composerWord is the column's value for one session, with the reason when
+// it is unknown. "" means not read: the session has no running pane. A
+// client-workspace seat and a seat whose workspace manifest could not be
+// read are never captured, and read unknown; so do a runtime with no reader,
+// a failed read, and a capture the reader cannot place.
+func composerWord(pane composerPane, s api.Session, client bool, clientErr error) (word, gap string) {
+	unknown := string(composer.Unknown)
 	if s.PaneID == "" || s.State != api.SessionRunning {
-		return ""
+		return "", ""
 	}
 	if client {
-		return string(composer.Unknown)
+		return unknown, "" // red
 	}
 	reader := composer.ReaderFor(s.Runtime.Name)
 	if reader.Name() == "unknown" {
-		return string(composer.Unknown)
+		return unknown, "" // red
 	}
 	cmd, _, err := pane.PaneForeground(s.PaneID)
 	if err != nil {
-		return string(composer.Unknown)
+		return unknown, "" // red
 	}
 	if composer.ShellTarget(cmd) {
-		return string(composer.Shell)
+		return string(composer.Shell), ""
 	}
 	capture := pane.CapturePane
 	if reader.Escapes() {
@@ -51,25 +63,34 @@ func composerWord(pane composerPane, s api.Session, client bool) string {
 	}
 	content, err := capture(s.PaneID)
 	if err != nil {
-		return string(composer.Unknown)
+		return unknown, "" // red
 	}
-	return string(reader.Read(content))
+	return string(reader.Read(content)), "" // red
 }
 
-// stampComposer puts the verdict word on each served copy. client reports
-// whether a workspace's panes must not be read.
-func stampComposer(pane composerPane, sessions []api.Session, client func(workspace string) bool) {
+// stampComposer puts the verdict word, and the reason for an unknown, on
+// each served copy. client reports whether a workspace's panes must not be
+// read, or an error when its manifest could not be read.
+func stampComposer(pane composerPane, sessions []api.Session, client func(workspace string) (bool, error)) {
 	for i := range sessions {
-		sessions[i].Composer = composerWord(pane, sessions[i], client(sessions[i].Workspace))
+		c, err := client(sessions[i].Workspace)
+		sessions[i].Composer, sessions[i].ComposerGap = composerWord(pane, sessions[i], c, err)
 	}
 }
 
 // composerClientWorkspace is the one place the column asks whether a
-// workspace is a client one. Which source answers is not ruled yet (K1a), so
-// with none injected every workspace counts as client and no pane is read.
-func (d *Daemon) composerClientWorkspace(workspace string) bool {
+// workspace is a client one. With no source set, every workspace counts as
+// client and no pane is read.
+func (d *Daemon) composerClientWorkspace(workspace string) (bool, error) {
 	if d.composerClient == nil {
-		return true
+		return true, nil
 	}
 	return d.composerClient(workspace)
+}
+
+// workspaceIsClient is the ruled source (K1a, director 2026-10-21): the
+// workspace manifest's scope. A workspace the store cannot read is an error,
+// so the column refuses to capture it.
+func (d *Daemon) workspaceIsClient(workspace string) (bool, error) {
+	return false, nil // red: not built
 }

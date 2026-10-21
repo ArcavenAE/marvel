@@ -92,9 +92,9 @@ type Daemon struct {
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
 	// composerClient reports whether a workspace is a client one, whose
-	// panes the COMPOSER column never reads. Nil until a source is ruled
-	// (K1a), and nil captures nothing.
-	composerClient func(workspace string) bool
+	// panes the COMPOSER column never reads, or an error when its manifest
+	// cannot be read. New sets the workspace scope; nil captures nothing.
+	composerClient func(workspace string) (bool, error)
 	listener       net.Listener
 	sshServer      atomic.Pointer[SSHServer]
 	// ctx is the run context set by Start; cancel ends it. Long-lived

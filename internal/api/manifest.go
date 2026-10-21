@@ -80,6 +80,9 @@ type ManifestWorkspace struct {
 	// "container". Absent or empty means the manifest names none, so the
 	// harness's recommendation and then localhost decide (ResolvePlacement).
 	Placement string `toml:"placement,omitempty" yaml:"placement,omitempty"`
+	// Scope is "client" for a client workspace. Absent leaves a stored scope
+	// alone, so a later apply cannot quietly open a client's panes.
+	Scope string `toml:"scope,omitempty" yaml:"scope,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.

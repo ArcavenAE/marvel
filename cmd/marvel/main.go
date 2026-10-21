@@ -3424,7 +3424,16 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	if res.hidden > 0 {
 		fmt.Fprintf(&b, "%d columns hidden at this width\n", res.hidden)
 	}
+	if wantsComposer(cols) {
+		b.WriteString(composerGapLines(sessions))
+	}
 	return b.String()
+}
+
+// composerGapLines names each seat whose COMPOSER cell is unknown for a reason
+// marvel knows, one GAP line each, in the listing's order.
+func composerGapLines(sessions []api.Session) string {
+	return "" // red: not built
 }
 
 func printTeams(data json.RawMessage) error {
