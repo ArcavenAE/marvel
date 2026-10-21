@@ -13,9 +13,9 @@ import (
 
 const busPkg = "github.com/arcavenae/marvel/internal/bus"
 
-// runNoSkips runs scripts/no-skips.sh on a go test -json stream and returns its
-// exit code and combined output.
-func runNoSkips(t *testing.T, stream, pkg string) (int, string) {
+// runNoSkips runs scripts/no-skips.sh on a go test -json stream and the given
+// import paths, and returns its exit code and combined output.
+func runNoSkips(t *testing.T, stream string, pkgs ...string) (int, string) {
 	t.Helper()
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Fatalf("jq is not on PATH; the gate needs it: %v", err)
@@ -24,7 +24,7 @@ func runNoSkips(t *testing.T, stream, pkg string) (int, string) {
 	if err := os.WriteFile(path, []byte(stream), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(filepath.Join("..", "..", "scripts", "no-skips.sh"), path, pkg).CombinedOutput()
+	out, err := exec.Command(filepath.Join("..", "..", "scripts", "no-skips.sh"), append([]string{path}, pkgs...)...).CombinedOutput()
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
@@ -76,8 +76,50 @@ func TestNoSkipsGate(t *testing.T) {
 		{"a test under internal/bus failed", ran + ev("fail", busPkg+"/inner", "TestC"), 1, "TestC"},
 		{"a failure in another package", ran + ev("fail", other, "TestD"), 0, ""},
 		{"a failure in a package that only shares the prefix", ran + ev("fail", sibling, "TestE"), 0, ""},
+		{"an empty stream", "", 2, ""},
+		{"a package under internal/bus failed", ran + ev("fail", busPkg+"/inner", ""), 1, busPkg + "/inner"},
+		// Measured on go1.27.0: the build events name the package in ImportPath and
+		// carry no Package, then the package fails with FailedBuild set.
+		{"the package failed to build, with its build events", `{"ImportPath":"` + busPkg + ` [` + busPkg + `.test]","Action":"build-output","Output":"bus.go:3:12: syntax error\n"}` + "\n" +
+			`{"ImportPath":"` + busPkg + ` [` + busPkg + `.test]","Action":"build-fail"}` + "\n" +
+			ev("start", busPkg, "") + `{"Action":"fail","Package":"` + busPkg + `","FailedBuild":"` + busPkg + ` [` + busPkg + `.test]"}` + "\n", 1, "syntax error"},
+		{"the package failed to build", ev("start", busPkg, "") + ev("output", busPkg, "") + `{"Action":"fail","Package":"` + busPkg + `","FailedBuild":"` + busPkg + ` [` + busPkg + `.test]"}` + "\n", 1, "build"},
+		// What go test -json writes for -run ^$, -skip . and -exec /usr/bin/true,
+		// measured on go1.27.0: a start and a package pass, with no test events.
+		{"-run ^$, -skip . or -exec /usr/bin/true", ev("start", busPkg, "") + ev("pass", busPkg, ""), 1, busPkg},
 	} {
 		got, out := runNoSkips(t, tc.stream, busPkg)
+		switch {
+		case got != tc.want:
+			t.Errorf("%s: exit %d, want %d; output:\n%s", tc.name, got, tc.want, out)
+		case tc.names != "" && !strings.Contains(out, tc.names):
+			t.Errorf("%s: output does not name %s:\n%s", tc.name, tc.names, out)
+		}
+	}
+}
+
+// The gate takes any number of import paths and holds each to the same rule,
+// so one go test -json run of several packages needs one gate.
+func TestNoSkipsGateEachPackage(t *testing.T) {
+	t.Parallel()
+	daemon := "github.com/arcavenae/marvel/internal/daemon"
+	bus := ev("run", busPkg, "TestA") + ev("pass", busPkg, "TestA") + ev("pass", busPkg, "")
+	dmn := ev("run", daemon, "TestD") + ev("pass", daemon, "TestD") + ev("pass", daemon, "")
+	for _, tc := range []struct {
+		name, stream string
+		pkgs         []string
+		want         int
+		names        string
+	}{
+		{"both packages ran", bus + dmn, []string{busPkg, daemon}, 0, ""},
+		{"one package has no passing test", bus + ev("pass", daemon, ""), []string{busPkg, daemon}, 1, daemon},
+		{"one package skipped a test", bus + dmn + ev("skip", daemon, "TestE"), []string{busPkg, daemon}, 1, "TestE"},
+		{"one package failed a test", bus + dmn + ev("fail", daemon, "TestE"), []string{busPkg, daemon}, 1, "TestE"},
+		{"a package missing from the stream", bus, []string{busPkg, daemon}, 1, daemon},
+		{"no import path", bus, nil, 2, "usage"},
+		{"an empty import path", bus, []string{busPkg, ""}, 2, "usage"},
+	} {
+		got, out := runNoSkips(t, tc.stream, tc.pkgs...)
 		switch {
 		case got != tc.want:
 			t.Errorf("%s: exit %d, want %d; output:\n%s", tc.name, got, tc.want, out)
@@ -189,6 +231,14 @@ func TestBusSkipsGated(t *testing.T) {
 		{"a command after the gate", test + "\n" + gate + "\necho done", false},
 		{"a blank line and a comment after the gate", test + "\n" + gate + "\n\n# done", true},
 		{"|| true on the test line", strings.Replace(test, " > ", " || true > ", 1) + "\n" + gate, false},
+		{"the gate reads another file", test + "\n" + strings.Replace(gate, "bus.json", "old.json", 1), false},
+		{"the test writes no file", strings.Replace(test, ` > "${RUNNER_TEMP}/bus.json"`, "", 1) + "\n" + gate, false},
+		{"set +e before the test", "set +e\n" + test + "\n" + gate, true},
+		// The gate takes only import paths of this module: a shell operator glued
+		// to the last one, or a word that is not one, is not read as the gate.
+		{"; true glued to the gate's last path", test + "\n" + gate + ";true", false},
+		{"; true glued to an extra module path", test + "\n" + gate + " " + modulePath + "/internal/daemon;true", false},
+		{"a word that is not an import path after the gate's path", test + "\n" + gate + " extra", false},
 	} {
 		if got := busSkipsGated(tc.run); got != tc.want {
 			t.Errorf("%s: busSkipsGated = %v, want %v", tc.name, got, tc.want)
@@ -196,25 +246,77 @@ func TestBusSkipsGated(t *testing.T) {
 	}
 }
 
-// busSkipsGated reports whether a run script has a go test -json line naming
-// ./internal/bus/..., with no || on it, and ends with the gate: the last line
-// that is not blank or a comment runs scripts/no-skips.sh with exactly its two
-// arguments, the stream and the bus package. Nothing after the gate can then
-// replace its exit status.
+// busSkipsGated reports whether a run script tests ./internal/bus/... under
+// the skip gate, as gatedPackages reads it.
 func busSkipsGated(run string) bool {
-	tested := false
-	var last []string
-	for _, line := range strings.Split(run, "\n") {
+	return slices.Contains(gatedPackages(run, []string{"internal/bus"}, false), "internal/bus")
+}
+
+// gatedPackages returns which of pkgs (directories such as internal/bus) a run
+// script tests under the skip gate. The script's last command that is not
+// blank or a comment must be scripts/no-skips.sh <file> followed only by
+// import paths of this module, so nothing after the gate can replace its exit
+// status. A package counts when the gate names its import path and a go test
+// line with -json (and -race, when race is set), with no || on it, names
+// ./<pkg> or ./<pkg>/... and writes its stream with "> <file>", the gate's
+// file. Lines continued with a trailing backslash are read as one.
+//
+// The shell's handling of go test's own exit status does not matter here:
+// under set +e or shell: bash {0} the gate still reads the stream, and fails
+// on a skip, a failed test or a package with no passing test.
+func gatedPackages(run string, pkgs []string, race bool) []string {
+	var cmds [][]string
+	for _, line := range strings.Split(strings.ReplaceAll(run, "\\\n", " "), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		fields := strings.Fields(line)
-		last = fields
-		if strings.Contains(line, "go test") && slices.Contains(fields, "-json") && slices.Contains(fields, "./internal/bus/...") &&
-			!strings.Contains(line, "||") {
-			tested = true
+		cmds = append(cmds, strings.Fields(line))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	gate := cmds[len(cmds)-1]
+	if len(gate) < 3 || !strings.HasSuffix(gate[0], "scripts/no-skips.sh") {
+		return nil
+	}
+	file, named := gate[1], gate[2:]
+	for _, arg := range named {
+		if !strings.HasPrefix(arg, modulePath+"/") || strings.ContainsAny(arg, ";|&<>$`()'\"\\") {
+			return nil
 		}
 	}
-	return tested && len(last) == 3 && strings.HasSuffix(last[0], "scripts/no-skips.sh") && last[2] == busPkg
+	var out []string
+	for _, pkg := range pkgs {
+		if !slices.Contains(named, modulePath+"/"+pkg) {
+			continue
+		}
+		for _, f := range cmds[:len(cmds)-1] {
+			if testLineNames(f, pkg, file, race) {
+				out = append(out, pkg)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// testLineNames reports whether the fields of one command are a go test run
+// of pkg with -json, and -race when race is set, that writes its stream to
+// file with "> file" and carries no ||.
+func testLineNames(fields []string, pkg, file string, race bool) bool {
+	line := strings.Join(fields, " ")
+	if !strings.Contains(line, "go test") || strings.Contains(line, "||") ||
+		!slices.Contains(fields, "-json") || (race && !slices.Contains(fields, "-race")) {
+		return false
+	}
+	if !slices.Contains(fields, "./"+pkg) && !slices.Contains(fields, "./"+pkg+"/...") {
+		return false
+	}
+	for i, f := range fields[:len(fields)-1] {
+		if f == ">" && fields[i+1] == file {
+			return true
+		}
+	}
+	return false
 }
