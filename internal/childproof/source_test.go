@@ -142,7 +142,12 @@ func TestNewForTestCheckSeesEachWayToReachIt(t *testing.T) {
 // spawnedAllowed are the non-test files that may call Prober.Spawned. It is the
 // one constructor that proves a process without a record, and it trusts the
 // *exec.Cmd it is given, so its call sites are listed, as NewForTest's are.
-var spawnedAllowed = map[string]bool{"internal/bus/supervisor.go": true}
+// workload.Process proves every child it spawns (restructure plan, Move 2,
+// PR 2b); the bus supervisor's own call goes when it becomes a driver (2c).
+var spawnedAllowed = map[string]bool{
+	"internal/bus/supervisor.go":     true,
+	"internal/workload/lifecycle.go": true,
+}
 
 // spawnedRefs returns the position of every selector named Spawned in a parsed
 // file: a call, a method value, or a method expression.

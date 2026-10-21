@@ -455,7 +455,7 @@ func TestNoDriverCallOrSpecFuncRunsUnderTheProcessLock(t *testing.T) {
 	var p *Process
 	var mu sync.Mutex
 	var held []string
-	var seen = map[string]bool{}
+	seen := map[string]bool{}
 	check := func(where string) {
 		mu.Lock()
 		defer mu.Unlock()
