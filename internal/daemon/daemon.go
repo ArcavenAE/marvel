@@ -91,8 +91,12 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
-	listener           net.Listener
-	sshServer          atomic.Pointer[SSHServer]
+	// composerClient reports whether a workspace is a client one, whose
+	// panes the COMPOSER column never reads, or an error when its manifest
+	// cannot be read. New sets the workspace scope; nil captures nothing.
+	composerClient func(workspace string) (bool, error)
+	listener       net.Listener
+	sshServer      atomic.Pointer[SSHServer]
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -447,6 +451,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		teamCtrl.SealViewTrees = d.views.Seal
 		sessMgr.Views = d.views
 	}
+	d.composerClient = d.workspaceIsClient
 	return d, nil
 }
 
@@ -1549,6 +1554,8 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 // Get params
 type getParams struct {
 	ResourceType string `json:"resource_type"`
+	// Composer asks for the COMPOSER column, which reads each seat's pane.
+	Composer bool `json:"composer,omitempty"`
 }
 
 func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
@@ -1585,6 +1592,9 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
 		d.stampSpec(live)
+		if p.Composer {
+			stampComposer(d.driver, live, d.composerClientWorkspace)
+		}
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()

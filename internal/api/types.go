@@ -147,7 +147,14 @@ type Workspace struct {
 	TrustedFolders []string  `toml:"trusted_folders,omitempty"`
 	CreatedAt      time.Time `toml:"-"`
 	Placement      Placement `toml:"placement,omitempty"`
+	// Scope is WorkspaceScopeClient for a workspace whose seats work on a
+	// client's material. marvel reads no pane of such a seat for a listing,
+	// so no client screen text reaches a scheduler.
+	Scope string `toml:"scope,omitempty"`
 }
+
+// WorkspaceScopeClient marks a client workspace.
+const WorkspaceScopeClient = "client"
 
 // RuntimeMode selects how a harness is launched within its pane.
 type RuntimeMode string
@@ -387,6 +394,14 @@ type Session struct {
 	// Spec means no role to compare against (docs/design/drift-view.md).
 	Spec     string   `json:"spec,omitempty" toml:"-"`
 	SpecDiff []string `json:"spec_diff,omitempty" toml:"-"`
+	// Composer is the composer reader's verdict for the seat's pane (empty,
+	// holds_text, mid_turn, menu_unsafe, shell or unknown), filled on read
+	// for a `get sessions` that asks for the COMPOSER column and never
+	// stored. No captured text travels with it.
+	Composer string `json:"composer,omitempty" toml:"-"`
+	// ComposerGap is why Composer is unknown when marvel knows why: a fixed
+	// reason, never pane text or an error string. Filled and kept as Composer.
+	ComposerGap string `json:"composer_gap,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
