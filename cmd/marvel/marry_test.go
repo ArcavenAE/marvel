@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"go/parser"
 	"go/token"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -76,6 +77,26 @@ func marryVectorSteps(t *testing.T) map[string]struct {
 	return out
 }
 
+// pairingVectorInput returns, as JSON, the input of a vector step that
+// pairs at least one item, so a run with it goes through the whole step.
+func pairingVectorInput(t *testing.T) string {
+	t.Helper()
+	steps := marryVectorSteps(t)
+	for _, name := range slices.Sorted(maps.Keys(steps)) {
+		st := steps[name]
+		var want api.MarryOutput
+		if st.Error == "" && json.Unmarshal(st.Want, &want) == nil && len(want.Pairs) > 0 {
+			b, err := json.Marshal(st.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return string(b)
+		}
+	}
+	t.Fatal("no vector pairs anything")
+	return ""
+}
+
 // runMarryCLI runs `marvel marry` with args through the real command tree,
 // with stdin as given, and returns stdout, stderr and the error main would
 // turn into a nonzero exit.
@@ -138,11 +159,17 @@ func TestMarryVerbRunsTheVectors(t *testing.T) {
 // field, a file that is not JSON, and a missing file each fail with nothing
 // on stdout.
 func TestMarryVerbRefusesInputOutsideTheContract(t *testing.T) {
+	// Each bad input is a good one changed in one place, so it is refused for
+	// that change and not for a missing field.
+	good := pairingVectorInput(t)
+	if _, stderr, err := runMarryCLI(t, good, "--input", "-"); err != nil {
+		t.Fatalf("the good input is refused, so the cases below prove nothing: %v: %s", err, stderr)
+	}
 	dir := t.TempDir()
 	for name, c := range map[string]struct{ stdin, input string }{
-		"an unknown field":    {`{"items":[],"seats":[],"surprise":1}`, "-"},
+		"an unknown field":    {`{"surprise":1,` + good[1:], "-"},
 		"not JSON":            {`items: []`, "-"},
-		"a second document":   {`{"items":[],"seats":[]} {}`, "-"},
+		"a second document":   {good + ` {}`, "-"},
 		"a file that is gone": {"", filepath.Join(dir, "missing.json")},
 	} {
 		stdout, stderr, err := runMarryCLI(t, c.stdin, "--input", c.input)
@@ -166,12 +193,12 @@ func TestMarryVerbDialsNoDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	accepted := make(chan error, 1)
 	go func() {
 		c, err := ln.Accept()
 		if err == nil {
-			c.Close()
+			_ = c.Close()
 		}
 		accepted <- err
 	}()
@@ -182,21 +209,22 @@ func TestMarryVerbDialsNoDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the listener does not answer, so the check proves nothing: %v", err)
 	}
-	probe.Close()
+	_ = probe.Close()
 	if err := <-accepted; err != nil {
 		t.Fatalf("control accept: %v", err)
 	}
 	go func() {
 		c, err := ln.Accept()
 		if err == nil {
-			c.Close()
+			_ = c.Close()
 		}
 		accepted <- err
 	}()
 
-	in := `{"items":[],"seats":[]}`
-	if _, stderr, err := runMarryCLI(t, in, "--input", "-"); err != nil {
-		t.Fatalf("marry: %v: %s", err, stderr)
+	// A vector input that pairs, so the run goes through the whole step.
+	stdout, stderr, err := runMarryCLI(t, pairingVectorInput(t), "--input", "-")
+	if err != nil || !strings.Contains(stdout, `"pairs":[{`) {
+		t.Fatalf("marry: %v: stdout %q, stderr %q", err, stdout, stderr)
 	}
 	select {
 	case err := <-accepted:
