@@ -393,6 +393,65 @@ func TestRestartDuringTheWaitBecomesTheStart(t *testing.T) {
 	}
 }
 
+// A Spawn or an Adopt during the wait after a crash becomes the start, and the
+// wait no longer spawns a second child: the child it took stays the one
+// watched, and Stop ends it (review 5595287694).
+func TestSpawnOrAdoptDuringTheWaitBecomesTheStart(t *testing.T) {
+	for _, how := range []string{"Spawn", "Adopt"} {
+		t.Run(how, func(t *testing.T) {
+			spec := procSpec(t)
+			p, d, c := newProc(t, spec)
+			if err := p.Spawn(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			killPid(t, p.Snapshot().Pid)
+			until(t, "the crash", func() bool { return len(d.exitsCopy()) == 1 })
+
+			switch how {
+			case "Spawn":
+				if err := p.Spawn(context.Background()); err != nil {
+					t.Fatalf("Spawn during the wait: %v", err)
+				}
+			case "Adopt":
+				cmd := exec.Command(spec.Binary, "60")
+				cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				child, err := p.prober.Spawned(cmd)
+				if err != nil {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+					t.Fatal(err)
+				}
+				reaped := make(chan struct{})
+				go func() { _ = cmd.Wait(); close(reaped) }()
+				t.Cleanup(func() { _ = cmd.Process.Kill(); <-reaped })
+				if err := p.Adopt(context.Background(), child); err != nil {
+					t.Fatalf("Adopt during the wait: %v", err)
+				}
+			}
+			taken := p.Snapshot().Child
+			if st := p.Snapshot(); !st.BackoffUntil.IsZero() {
+				t.Errorf("backoff until %s after the %s, want none", st.BackoffUntil, how)
+			}
+
+			c.fire <- c.at
+			time.Sleep(150 * time.Millisecond) // a respawn, were there one, has no other signal
+			if n := len(d.startsCopy()); n != 2 {
+				t.Errorf("%d starts after the wait ended, want 2: the wait spawned a child over the one %s took", n, how)
+			}
+			if st := p.Snapshot(); st.Pid != taken.Pid() {
+				t.Errorf("the watched child changed from pid %d to pid %d after the wait", taken.Pid(), st.Pid)
+			}
+			p.Stop(false)
+			if p.prober.Same(taken) {
+				t.Errorf("the child %s took is still running after Stop", how)
+			}
+		})
+	}
+}
+
 func TestRestartBeforeStartIsAnErrorAndStopIsANoOp(t *testing.T) {
 	p, d, _ := newProc(t, procSpec(t))
 	if err := p.Restart("early"); err == nil {
