@@ -295,11 +295,18 @@ func TestGetSessionsComposerColumn(t *testing.T) {
 	}
 }
 
-// composerScanRoots names the directories the no-captured-text check reads:
-// the scratch HOME and TMPDIR, which is everywhere this daemon writes.
+// composerScanRoots names the directories the no-captured-text check reads,
+// which are the ones this test and its daemon write: the scratch HOME that
+// homeguard sets (the daemon's state, log and run dirs are under it), the
+// scratch TMUX_TMPDIR, and this test's own temp root. Never all of TMPDIR,
+// which on CI is /tmp and holds directories other users own.
 func composerScanRoots(t *testing.T) []string {
 	t.Helper()
-	return []string{os.Getenv("HOME"), os.TempDir()}
+	roots := []string{os.Getenv("HOME"), filepath.Dir(t.TempDir())}
+	if dir := os.Getenv("TMUX_TMPDIR"); dir != "" {
+		roots = append(roots, dir)
+	}
+	return roots
 }
 
 // filesHoldingText walks roots and returns every regular file that holds
