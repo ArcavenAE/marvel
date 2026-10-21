@@ -473,8 +473,11 @@ type SendReRead struct {
 	Seat         MarrySeat `json:"seat"`
 	ItemStatus   string    `json:"item_status"`
 	ItemAssignee string    `json:"item_assignee,omitempty"`
-	OverlapPR    bool      `json:"overlap_pr,omitempty"`
-	Stop         MarryStop `json:"stop"`
+	// ItemScope is the item's scope label as read again; a flip to client
+	// scope refuses the send (ADR-009).
+	ItemScope string    `json:"item_scope,omitempty"`
+	OverlapPR bool      `json:"overlap_pr,omitempty"`
+	Stop      MarryStop `json:"stop"`
 }
 
 // SendCheck is the re-read's answer. A refusal cancels the lease as refused

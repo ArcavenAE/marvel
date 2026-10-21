@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -8,11 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/contracts/go/envelope"
 )
 
 // marryVectorsPath is the shared golden file for the marrying step. director
@@ -30,11 +34,22 @@ type marryStep struct {
 	AllowedImports []string        `json:"allowed_imports"`
 	ForbidLiterals []string        `json:"forbid_literals"`
 	ForbidCalls    []string        `json:"forbid_calls"`
+	Error          string          `json:"error"`
 	Want           json.RawMessage `json:"want"`
+}
+
+// strictDecode decodes b into v and refuses an unknown field, so a vector
+// that names a field the code does not have fails instead of being ignored.
+func strictDecode(b []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
 }
 
 type marryVectors struct {
 	Version int      `json:"version"`
+	Design  string   `json:"design"`
+	Note    string   `json:"note"`
 	Rows    []string `json:"rows"`
 	Vectors []struct {
 		Name  string      `json:"name"`
@@ -50,7 +65,7 @@ func loadMarryVectors(t *testing.T) marryVectors {
 		t.Fatalf("read %s: %v", marryVectorsPath, err)
 	}
 	var v marryVectors
-	if err := json.Unmarshal(b, &v); err != nil {
+	if err := strictDecode(b, &v); err != nil {
 		t.Fatalf("parse %s: %v", marryVectorsPath, err)
 	}
 	if v.Version != 1 || len(v.Rows) == 0 || len(v.Vectors) == 0 {
@@ -79,9 +94,18 @@ func runMarryStep(t *testing.T, name string, st marryStep) {
 	t.Helper()
 	switch st.Op {
 	case "marry":
+		if st.Input == nil {
+			t.Fatalf("step %s: no input", name)
+		}
+		if st.Error != "" {
+			if _, err := Marry(*st.Input); err == nil || !strings.Contains(err.Error(), st.Error) {
+				t.Errorf("step %s: Marry error = %v, want one containing %q", name, err, st.Error)
+			}
+			return
+		}
 		var want MarryOutput
-		if err := json.Unmarshal(st.Want, &want); err != nil || st.Input == nil {
-			t.Fatalf("step %s: input %v, want %v", name, st.Input != nil, err)
+		if err := strictDecode(st.Want, &want); err != nil {
+			t.Fatalf("step %s: want: %v", name, err)
 		}
 		got, err := Marry(*st.Input)
 		if err != nil {
@@ -101,7 +125,7 @@ func runMarryStep(t *testing.T, name string, st marryStep) {
 		}
 	case "recheck":
 		var want SendCheck
-		if err := json.Unmarshal(st.Want, &want); err != nil || st.Lease == nil || st.ReRead == nil {
+		if err := strictDecode(st.Want, &want); err != nil || st.Lease == nil || st.ReRead == nil {
 			t.Fatalf("step %s: lease %v, reread %v, want %v", name, st.Lease != nil, st.ReRead != nil, err)
 		}
 		if got := RecheckBeforeSend(*st.Lease, *st.ReRead); got != want {
@@ -294,5 +318,46 @@ func TestMarryCountLineNamesEveryField(t *testing.T) {
 		"would-pair 15, leases sent 0, taken 17, declined 18, lapsed 19, DUPLICATE 20"
 	if got := c.String(); got != want {
 		t.Fatalf("count line\n got %s\nwant %s", got, want)
+	}
+}
+
+// The agent address rule is the envelope schema's, not a copy: every address
+// vector that names an agent:// form gets the same answer from MarryAddress
+// as from the schema's recipient pattern.
+func TestMarryAddressAgreesWithTheEnvelopeSchema(t *testing.T) {
+	t.Parallel()
+	var doc struct {
+		Properties struct {
+			Recipient struct {
+				Properties struct {
+					Address struct {
+						Pattern string `json:"pattern"`
+					} `json:"address"`
+				} `json:"properties"`
+			} `json:"recipient"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(envelope.SchemaJSON, &doc); err != nil {
+		t.Fatal(err)
+	}
+	pat := doc.Properties.Recipient.Properties.Address.Pattern
+	if pat == "" {
+		t.Fatal("the envelope schema names no recipient address pattern")
+	}
+	schema := regexp.MustCompile(pat)
+	checked := 0
+	for _, vec := range loadMarryVectors(t).Vectors {
+		for _, st := range vec.Steps {
+			if st.Op != "address" || !strings.HasPrefix(st.Address, "agent://") {
+				continue
+			}
+			checked++
+			if got, want := MarryAddress(st.Address) == nil, schema.MatchString(st.Address); got != want {
+				t.Errorf("%s: MarryAddress accepts %v, the envelope schema accepts %v", st.Address, got, want)
+			}
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("only %d agent:// address vectors checked", checked)
 	}
 }
