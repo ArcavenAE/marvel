@@ -203,10 +203,17 @@ func ciJobs(path string) (map[string]ciJob, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var wf struct {
-		Jobs map[string]ciJob `yaml:"jobs"`
+		Defaults ciDefaults       `yaml:"defaults"`
+		Jobs     map[string]ciJob `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	for name, job := range wf.Jobs {
+		if job.Defaults.Run.Shell == "" {
+			job.Defaults.Run.Shell = wf.Defaults.Run.Shell
+			wf.Jobs[name] = job
+		}
 	}
 	return wf.Jobs, nil
 }
@@ -221,8 +228,9 @@ func ciJobs(path string) (map[string]ciJob, error) {
 //
 // Only what can fail the job counts. A job that sets if, or a continue-on-error
 // that is not false, is a gap, since it may never run or never go red. A step
-// that sets either is reported and read as absent, and an install line with ||
-// on it counts for nothing, since it can swallow the failure.
+// that sets either, or runs under a shell bashShell does not accept (its own or
+// the job's default), is reported and read as absent, and an install line with
+// || on it counts for nothing, since it can swallow the failure.
 func macOSGaps(job ciJob, pkgs []string) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
@@ -233,6 +241,10 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 	for i, step := range job.Steps {
 		if whys := mayNotFail(step.If, step.ContinueOnError); len(whys) > 0 {
 			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s, so it is not counted", i, step.Name, strings.Join(whys, " and ")))
+			continue
+		}
+		if sh := stepShell(job, step); !bashShell(sh) {
+			gaps = append(gaps, fmt.Sprintf("step %d (%s) runs under shell %q, which may not run the script, so it is not counted", i, step.Name, sh))
 			continue
 		}
 		for _, pkg := range gatedPackages(step.Run, pkgs, true) {

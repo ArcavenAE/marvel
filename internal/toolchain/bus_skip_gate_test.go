@@ -186,9 +186,9 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 }
 
 // busGateGaps lists why the job's bus skip gate could not fail it: no gate
-// step, a gate before the nats-server install, or an if or a continue-on-error
+// step, a gate before the nats-server install, an if or a continue-on-error
 // that is not false on the job or the gate step, which would let it skip or
-// stay green.
+// stay green, or a gate step whose shell bashShell does not accept.
 func busGateGaps(job ciJob) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
@@ -211,6 +211,9 @@ func busGateGaps(job ciJob) []string {
 	}
 	if whys := mayNotFail(job.Steps[gated].If, job.Steps[gated].ContinueOnError); len(whys) > 0 {
 		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s", gated, strings.Join(whys, " and ")))
+	}
+	if sh := stepShell(job, job.Steps[gated]); !bashShell(sh) {
+		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) runs under shell %q, which may not run the script", gated, sh))
 	}
 	return gaps
 }
@@ -355,12 +358,12 @@ func gatedPackages(run string, pkgs []string, race bool) []string {
 	if len(cmds) == 0 {
 		return nil
 	}
-	gate := cmds[len(cmds)-1]
+	pre, gate := cmds[:len(cmds)-1], cmds[len(cmds)-1]
 	if len(gate) < 3 || !strings.HasSuffix(gate[0], "scripts/no-skips.sh") {
 		return nil
 	}
 	file, named := gate[1], gate[2:]
-	for _, f := range cmds[:len(cmds)-1] {
+	for _, f := range pre {
 		if !setLine(f) && !plainTestLine(f, file) {
 			return nil
 		}
@@ -375,7 +378,7 @@ func gatedPackages(run string, pkgs []string, race bool) []string {
 		if !slices.Contains(named, modulePath+"/"+pkg) {
 			continue
 		}
-		for _, f := range cmds[:len(cmds)-1] {
+		for _, f := range pre {
 			if testLineNames(f, pkg, race) {
 				out = append(out, pkg)
 				break
@@ -385,21 +388,71 @@ func gatedPackages(run string, pkgs []string, race bool) []string {
 	return out
 }
 
-// setLine reports whether the fields of one command are set with only option
-// words, such as set -euo pipefail or set +e.
+// setLine reports whether the fields of one command are set with only the
+// options setOptions allows, such as set -euo pipefail or set +e.
 func setLine(fields []string) bool {
-	if fields[0] != "set" {
-		return false
-	}
-	for _, f := range fields[1:] {
-		if !setWord.MatchString(f) {
+	return fields[0] == "set" && setOptions(fields[1:])
+}
+
+// setOptions reports whether words only turn errexit, nounset, pipefail and
+// xtrace on or off: -e, -u, -x, their + forms and clusters of them, and -o or
+// +o followed by one of the four names, with o last in its cluster. Anything
+// else, such as -n or -o noexec, which run nothing, is refused.
+func setOptions(words []string) bool {
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		if !setLetters.MatchString(w) {
+			return false
+		}
+		switch strings.Count(w, "o") {
+		case 0:
+			continue
+		case 1:
+			if !strings.HasSuffix(w, "o") || i+1 >= len(words) || !slices.Contains(setNames, words[i+1]) {
+				return false
+			}
+			i++
+		default:
 			return false
 		}
 	}
 	return true
 }
 
-var setWord = regexp.MustCompile(`^([-+][A-Za-z]+|[a-z]+)$`)
+var (
+	setLetters = regexp.MustCompile(`^[-+][euxo]+$`)
+	setNames   = []string{"errexit", "nounset", "pipefail", "xtrace"}
+)
+
+// bashShell reports whether a step's shell runs its script with bash: empty
+// (the runner's default, bash on the Linux and macOS images), bash, or bash
+// with --noprofile, --norc and the options setOptions allows, then {0}. Any
+// other shell, such as true {0}, may run none of the script.
+func bashShell(shell string) bool {
+	f := strings.Fields(shell)
+	switch {
+	case len(f) == 0 || len(f) == 1 && f[0] == "bash":
+		return true
+	case f[0] != "bash" || f[len(f)-1] != "{0}":
+		return false
+	}
+	var opts []string
+	for _, w := range f[1 : len(f)-1] {
+		if w != "--noprofile" && w != "--norc" {
+			opts = append(opts, w)
+		}
+	}
+	return setOptions(opts)
+}
+
+// stepShell is the shell a step's script runs under: its own, else the job's
+// default, which ciJobs fills from the workflow's when the job names none.
+func stepShell(job ciJob, step ciJobStep) string {
+	if step.Shell != "" {
+		return step.Shell
+	}
+	return job.Defaults.Run.Shell
+}
 
 // plainTestLine reports whether the fields of one command are a go test run
 // that ends with "> file" and carries no shell operator before it, so it runs
