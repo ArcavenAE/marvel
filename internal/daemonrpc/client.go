@@ -360,7 +360,7 @@ func sshDial(user, host, port string, opts DialOptions) (*ssh.Client, error) {
 	c, chans, reqs, err := ssh.NewClientConn(tcp, addr, config)
 	if err != nil {
 		_ = tcp.Close()
-		return nil, opts.ex.wrap(fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err))
+		return nil, fmt.Errorf("ssh connect %s@%s:%s: %w", user, host, port, err)
 	}
 	client := ssh.NewClient(c, chans, reqs)
 	opts.ex.enter(phaseReply, client)
