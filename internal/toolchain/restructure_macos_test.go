@@ -149,26 +149,48 @@ func ciJobs(path string) (map[string]ciJob, error) {
 
 // macOSGaps lists what the job lacks: each package no go test line names, and
 // each tool it does not install. A package counts when a go test line names it
-// as ./<pkg> or ./<pkg>/... exactly; nats-server counts only when installed at
-// the step's NATS_SERVER_VERSION, so the version stays under the pin check.
+// as ./<pkg> or ./<pkg>/... exactly and carries -race; nats-server counts only
+// when installed at the step's NATS_SERVER_VERSION, so the version stays under
+// the pin check.
+//
+// Only what can fail the job counts. A job that sets if, or a continue-on-error
+// that is not false, is a gap, since it may never run or never go red. A step
+// that sets either is reported and read as absent, and a line with || on it
+// counts for nothing, since it can swallow the failure.
 func macOSGaps(job ciJob, pkgs []string) []string {
 	var gaps []string
-	for _, pkg := range pkgs {
-		if !jobTestsPackage(job, pkg) {
-			gaps = append(gaps, "does not test ./"+pkg)
+	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
+		gaps = append(gaps, "the job sets "+why)
+	}
+	var lines []string
+	for i, step := range job.Steps {
+		if whys := mayNotFail(step.If, step.ContinueOnError); len(whys) > 0 {
+			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s, so it is not counted", i, step.Name, strings.Join(whys, " and ")))
+			continue
+		}
+		for _, line := range strings.Split(step.Run, "\n") {
+			if strings.Contains(line, "||") {
+				continue
+			}
+			lines = append(lines, line)
 		}
 	}
-	tmux, nats := false, false
-	for _, step := range job.Steps {
-		for _, line := range strings.Split(step.Run, "\n") {
-			if strings.Contains(line, "brew install") && slices.Contains(strings.Fields(line), "tmux") {
-				tmux = true
-			}
-			if _, ok := step.Env["NATS_SERVER_VERSION"]; ok &&
-				strings.Contains(line, "go install") &&
-				strings.Contains(line, "github.com/nats-io/nats-server/v2@${NATS_SERVER_VERSION}") {
-				nats = true
-			}
+	natsLines := natsInstallLines(job)
+	for _, pkg := range pkgs {
+		if !linesTestPackage(lines, pkg) {
+			gaps = append(gaps, "does not test ./"+pkg+" with -race")
+		}
+	}
+	tmux := false
+	for _, line := range lines {
+		if strings.Contains(line, "brew install") && slices.Contains(strings.Fields(line), "tmux") {
+			tmux = true
+		}
+	}
+	nats := false
+	for _, line := range natsLines {
+		if slices.Contains(lines, line) {
+			nats = true
 		}
 	}
 	if !tmux {
@@ -180,17 +202,55 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 	return gaps
 }
 
-func jobTestsPackage(job ciJob, pkg string) bool {
+// mayNotFail names the keys that let a job or step skip or stay green: an if
+// of any kind, and a continue-on-error that is not false.
+func mayNotFail(cond string, continueOnError any) []string {
+	var whys []string
+	if strings.TrimSpace(cond) != "" {
+		whys = append(whys, "if: "+cond)
+	}
+	switch v := continueOnError.(type) {
+	case nil:
+	case bool:
+		if v {
+			whys = append(whys, "continue-on-error: true")
+		}
+	case string:
+		if strings.TrimSpace(v) != "false" {
+			whys = append(whys, "continue-on-error: "+v)
+		}
+	default:
+		whys = append(whys, fmt.Sprintf("continue-on-error: %v", v))
+	}
+	return whys
+}
+
+// natsInstallLines are the lines that go install nats-server at the step's
+// NATS_SERVER_VERSION.
+func natsInstallLines(job ciJob) []string {
+	var out []string
 	for _, step := range job.Steps {
+		if _, ok := step.Env["NATS_SERVER_VERSION"]; !ok {
+			continue
+		}
 		for _, line := range strings.Split(step.Run, "\n") {
-			if !strings.Contains(line, "go test") {
-				continue
+			if strings.Contains(line, "go install") &&
+				strings.Contains(line, "github.com/nats-io/nats-server/v2@${NATS_SERVER_VERSION}") {
+				out = append(out, line)
 			}
-			for _, f := range strings.Fields(line) {
-				if f == "./"+pkg || f == "./"+pkg+"/..." {
-					return true
-				}
-			}
+		}
+	}
+	return out
+}
+
+func linesTestPackage(lines []string, pkg string) bool {
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if !strings.Contains(line, "go test") || !slices.Contains(fields, "-race") {
+			continue
+		}
+		if slices.Contains(fields, "./"+pkg) || slices.Contains(fields, "./"+pkg+"/...") {
+			return true
 		}
 	}
 	return false
