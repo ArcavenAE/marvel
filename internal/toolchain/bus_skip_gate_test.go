@@ -187,14 +187,18 @@ func linuxGateGaps(jobs map[string]ciJob) []string {
 		return []string{"ci.yml has no quality-gate job"}
 	}
 	if !linuxRunner(job.RunsOn) {
-		return []string{fmt.Sprintf("quality-gate runs on %q, want ubuntu", job.RunsOn)}
+		return []string{fmt.Sprintf("quality-gate runs on %q, want %s", job.RunsOn, linuxLabel)}
 	}
 	return busGateGaps(job)
 }
 
-// linuxRunner reports whether a runs-on label is the Linux runner the bus gate
-// is held to.
-func linuxRunner(label string) bool { return strings.HasPrefix(label, "ubuntu") }
+// linuxLabel is the runner quality-gate is held to. It is pinned, not matched
+// by prefix: a self-hosted runner labelled ubuntu-anything would bring its own
+// env and tools, which the guard cannot see.
+const linuxLabel = "ubuntu-24.04"
+
+// linuxRunner reports whether a runs-on label is linuxLabel.
+func linuxRunner(label string) bool { return label == linuxLabel }
 
 // busGateGaps lists why the job's bus skip gate could not fail it: no gate
 // step, a gate before the nats-server install, an if or a continue-on-error

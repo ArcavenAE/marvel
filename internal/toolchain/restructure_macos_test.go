@@ -80,9 +80,12 @@ func macOSGateReasons(jobs map[string]ciJob, pkgs []string) []string {
 	return reasons
 }
 
-// macOSRunner reports whether a runs-on label is the macOS runner the
-// restructure packages are held to.
-func macOSRunner(label string) bool { return strings.HasPrefix(label, "macos") }
+// macOSLabel is the runner the restructure packages are held to, pinned for
+// the same reason as linuxLabel.
+const macOSLabel = "macos-latest"
+
+// macOSRunner reports whether a runs-on label is macOSLabel.
+func macOSRunner(label string) bool { return label == macOSLabel }
 
 // The runner labels are pinned, not matched by prefix: a self-hosted runner
 // given a label such as ubuntu-self-hosted brings its own env and tools, which
