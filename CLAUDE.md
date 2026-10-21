@@ -359,8 +359,12 @@ Restart policies: `always`, `on-failure`, `never`.
 question: is the process alive and does its pane exist? It does NOT mean the
 agent can do anything. A harness sitting at a login prompt (unauthenticated,
 expired credentials, a revoked token, a model the account cannot reach) is a
-live process in a live pane, so health calls it healthy while it does no work
-(aae-orc-9box, finding-025). Read the column as liveness and nothing more.
+live process in a live pane, so health calls it alive or healthy while it does
+no work (aae-orc-9box, finding-025). Read the column as liveness and nothing
+more. Its values: `alive` (process and pane, and no check ran beyond that,
+which is all `process-alive` can say), `healthy` (a heartbeat inside its
+timeout), `unhealthy` (a failed check or a lost pane), `unknown` (no check, or
+the first-heartbeat grace). Restart-count decay counts `alive` as healthy.
 
 **Activity advisory (opt-in, restart-neutral).** A separate, orthogonal axis
 answers "has marvel recently seen this harness do work?" — surfaced as a

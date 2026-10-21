@@ -903,6 +903,8 @@ func (s *Supervisor) probeWritesLocked(ctx context.Context) {
 	switch {
 	case s.writeFailed != "" && s.writeFailed != prev:
 		s.emit(events.KindBusStoreWriteFailed, events.SeverityError, fmt.Sprintf("broker %s refuses canary writes: %s; the broker is not restarted and spawns are not held, free the store and the next tick re-reads", s.mgr.bus.Listen, w.detail()))
+	case s.writeFailed == "" && prev != "" && s.writeSkipped != "":
+		log.Printf("bus: canary writes on %s are no longer failing, but %s is skipped (a real limit), so its writes are not being tested", s.mgr.bus.Listen, s.writeSkipped)
 	case s.writeFailed == "" && prev != "":
 		log.Printf("bus: canary writes succeed again on %s", s.mgr.bus.Listen)
 	}
