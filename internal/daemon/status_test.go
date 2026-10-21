@@ -9,6 +9,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // statusDaemon is a handler daemon rooted at a short scratch home, so the SSH
@@ -27,7 +28,7 @@ func statusDaemon(t *testing.T) *Daemon {
 
 func daemonStatus(t *testing.T, d *Daemon) DaemonStatus {
 	t.Helper()
-	resp := d.dispatchAs(Request{Method: "daemon.status"}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "daemon.status"}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("daemon.status: %s", resp.Error)
 	}
@@ -175,7 +176,7 @@ func TestStatusEmbedsTheBusStatus(t *testing.T) {
 	if st.Bus == nil {
 		t.Fatal("bus absent, want the adopted bus status")
 	}
-	resp := d.dispatchAs(Request{Method: "bus.status"}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "bus.status"}, localCaller())
 	var want bus.Status
 	if err := json.Unmarshal(resp.Result, &want); err != nil {
 		t.Fatal(err)
@@ -188,7 +189,7 @@ func TestStatusEmbedsTheBusStatus(t *testing.T) {
 // daemon.status is an admin read: a credential-push key does not get it.
 func TestDaemonStatusIsNotACredentialPushMethod(t *testing.T) {
 	d := statusDaemon(t)
-	resp := d.dispatchAs(Request{Method: "daemon.status"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
+	resp := d.dispatchAs(daemonrpc.Request{Method: "daemon.status"}, caller{scope: ScopeCredentialPush, fingerprint: "SHA256:x"})
 	if resp.Error == "" || !strings.Contains(resp.Error, "not permitted") {
 		t.Fatalf("credential-push key reached daemon.status: %+v", resp)
 	}

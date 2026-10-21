@@ -262,6 +262,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newCtxForwardCmd())
 	root.AddCommand(newCodexCtxCmd())
 	root.AddCommand(planCmd())
+	root.AddCommand(marryCmd())
 
 	return root
 }
@@ -1187,7 +1188,7 @@ func (o *optionalString) Set(s string) error      { *o.val = s; return nil }
 func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string, cols []sessionColumn, header string, fit fitOptions) error {
-	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
+	params, _ := json.Marshal(getRequest(resourceType, wantsComposer(cols)))
 	resp, err := send(daemonrpc.Request{
 		Method: "get",
 		Params: params,
@@ -2095,7 +2096,9 @@ func upgradeCmd() *cobra.Command {
 If installed via Homebrew, delegates to brew upgrade. Homebrew installs only
 the tap's current formula, so --version is refused there unless it names that
 build. Otherwise downloads the latest release from GitHub; --version takes an
-exact release tag and nothing else. A dev build is not upgraded.
+exact release tag and nothing else. A dev build is not upgraded. A direct
+download is checked against the release's checksums.txt when it publishes
+one, and the build it replaces is kept under the marvel home in versions/.
 
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
@@ -2115,7 +2118,7 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 					return err
 				}
 			}
-			res, err := runUpgrade(channel, targetVersion)
+			res, err := runUpgrade(version, channel, targetVersion)
 			if err != nil {
 				return err
 			}
@@ -2916,12 +2919,12 @@ type watchData struct {
 }
 
 // fetchWatchData reads the sessions, and the header when asked.
-func fetchWatchData(wantHeader bool) watchData {
+func fetchWatchData(wantHeader, composer bool) watchData {
 	var d watchData
 	if wantHeader {
 		d.header = collectHeader()
 	}
-	d.sessions, d.err = fetchSessions()
+	d.sessions, d.err = fetchSessionsWith(composer)
 	d.at = time.Now()
 	return d
 }
@@ -3011,8 +3014,22 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 	})
 }
 
-func fetchSessions() ([]api.Session, error) {
-	params, _ := json.Marshal(map[string]string{"resource_type": "sessions"})
+func fetchSessions() ([]api.Session, error) { return fetchSessionsWith(false) }
+
+// getRequest is the get RPC's params. composer asks the daemon for the
+// COMPOSER column, which reads each seat's pane, so it is set only when that
+// column is selected.
+func getRequest(resourceType string, composer bool) map[string]any {
+	p := map[string]any{"resource_type": resourceType}
+	if composer {
+		p["composer"] = true
+	}
+	return p
+}
+
+// fetchSessionsWith reads the sessions, with the COMPOSER verdicts when asked.
+func fetchSessionsWith(composer bool) ([]api.Session, error) {
+	params, _ := json.Marshal(getRequest("sessions", composer))
 	resp, err := send(daemonrpc.Request{
 		Method: "get",
 		Params: params,
@@ -3056,6 +3073,7 @@ type sessionRow struct {
 	workspace, team, role, generation, name                                              string
 	state, health, context, cpu, rss                                                     string
 	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
+	composer                                                                             string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -3122,8 +3140,9 @@ func newSessionRow(s api.Session) sessionRow {
 		health = "unknown"
 	}
 	// Activity is an orthogonal, restart-neutral advisory (aae-orc-9box).
-	// HEALTH is LIVENESS (the process is alive and its pane exists), so a
-	// stalled session still reads healthy/unknown here; the "(stalled)"
+	// HEALTH is liveness: alive means the process runs in a pane that exists
+	// and no check beyond that ran, healthy means a heartbeat check passed.
+	// A stalled session still reads alive/healthy/unknown here; the "(stalled)"
 	// suffix says marvel has not observed it do work within its role's
 	// activity_timeout, which liveness cannot tell you. Running sessions
 	// only: a terminated session's last advisory is not news.
@@ -3189,6 +3208,7 @@ func newSessionRow(s api.Session) sessionRow {
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
 		acct:       acctCell(s),
+		composer:   composerCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
@@ -3228,7 +3248,7 @@ func renderSessionTable(sessions []api.Session) string {
 // key loop and draws with renderWatchFrame instead.
 func renderWatch(ws *watchSort) string {
 	if !ws.showHelp {
-		ws.apply(fetchWatchData(ws.showHeader))
+		ws.apply(fetchWatchData(ws.showHeader, wantsComposer(ws.columns)))
 	}
 	return renderWatchFrame(ws, time.Second, time.Now())
 }
@@ -3257,8 +3277,10 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "  \"succeeded (exit 0)\" is a headless run that finished; it holds its\n")
 		fmt.Fprintf(&buf, "  replica and is not re-run. \"crashed (exit N)\" carries the exit code.\n")
 		fmt.Fprintf(&buf, "\n")
-		fmt.Fprintf(&buf, "  HEALTH is liveness (process + pane), not productivity. A live\n")
-		fmt.Fprintf(&buf, "  process at a login prompt still reads healthy. \"(stalled)\" marks a\n")
+		fmt.Fprintf(&buf, "  HEALTH is liveness, not productivity. \"alive\" means the process runs\n")
+		fmt.Fprintf(&buf, "  in a pane that exists and no check ran beyond that; \"healthy\" means a\n")
+		fmt.Fprintf(&buf, "  heartbeat check passed. A live process at a login prompt still reads\n")
+		fmt.Fprintf(&buf, "  alive or healthy. \"(stalled)\" marks a\n")
 		fmt.Fprintf(&buf, "  session marvel has not seen do work within its role's activity_timeout.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
@@ -3361,7 +3383,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, n
 	watchLoop(ws, watchLoopConfig{
 		interval: interval,
 		deadline: watchFetchDeadline,
-		fetch:    func() watchData { return fetchWatchData(ws.showHeader) },
+		fetch:    func() watchData { return fetchWatchData(ws.showHeader, wantsComposer(ws.columns)) },
 		now:      time.Now,
 		out: func(frame string) {
 			// Raw mode needs \r\n instead of \n.
@@ -3405,6 +3427,21 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	}
 	if res.hidden > 0 {
 		fmt.Fprintf(&b, "%d columns hidden at this width\n", res.hidden)
+	}
+	if wantsComposer(cols) {
+		b.WriteString(composerGapLines(sessions))
+	}
+	return b.String()
+}
+
+// composerGapLines names each seat whose COMPOSER cell is unknown for a reason
+// marvel knows, one GAP line each, in the listing's order.
+func composerGapLines(sessions []api.Session) string {
+	var b strings.Builder
+	for _, s := range sessions {
+		if s.ComposerGap != "" {
+			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", s.Workspace, s.Name, s.ComposerGap)
+		}
 	}
 	return b.String()
 }
@@ -3628,4 +3665,13 @@ func stripComments(args []string) []string {
 		}
 	}
 	return args
+}
+
+// composerCell is the COMPOSER cell: the daemon's verdict word, or "-" where
+// no pane was read.
+func composerCell(s api.Session) string {
+	if s.Composer == "" {
+		return "-"
+	}
+	return s.Composer
 }
