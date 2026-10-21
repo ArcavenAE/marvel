@@ -100,8 +100,15 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 	}
 }
 
-// busGateGaps lists why the job's bus skip gate could not fail it.
+// busGateGaps lists why the job's bus skip gate could not fail it: no gate
+// step, a gate before the nats-server install, or an if or a continue-on-error
+// that is not false on the job or the gate step, which would let it skip or
+// stay green.
 func busGateGaps(job ciJob) []string {
+	var gaps []string
+	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
+		gaps = append(gaps, "the job sets "+why)
+	}
 	nats, gated := -1, -1
 	for i, step := range job.Steps {
 		if strings.Contains(step.Run, "nats-server") && nats < 0 {
@@ -113,11 +120,14 @@ func busGateGaps(job ciJob) []string {
 	}
 	switch {
 	case gated < 0:
-		return []string{"no quality-gate step runs ./internal/bus/... with go test -json and passes the stream to scripts/no-skips.sh"}
+		return append(gaps, "no quality-gate step runs ./internal/bus/... with go test -json and passes the stream to scripts/no-skips.sh")
 	case nats < 0 || gated < nats:
-		return []string{fmt.Sprintf("the bus skip gate (step %d) runs before nats-server is installed (step %d), so every broker test would skip", gated, nats)}
+		gaps = append(gaps, fmt.Sprintf("the bus skip gate (step %d) runs before nats-server is installed (step %d), so every broker test would skip", gated, nats))
 	}
-	return nil
+	if whys := mayNotFail(job.Steps[gated].If, job.Steps[gated].ContinueOnError); len(whys) > 0 {
+		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s", gated, strings.Join(whys, " and ")))
+	}
+	return gaps
 }
 
 func TestBusGateGaps(t *testing.T) {
@@ -179,23 +189,24 @@ func TestBusSkipsGated(t *testing.T) {
 }
 
 // busSkipsGated reports whether a run script has a go test -json line naming
-// ./internal/bus/... followed by a line that runs scripts/no-skips.sh for the
-// bus package.
+// ./internal/bus/..., with no || on it, and ends with the gate: the last line
+// that is not blank or a comment runs scripts/no-skips.sh with exactly its two
+// arguments, the stream and the bus package. Nothing after the gate can then
+// replace its exit status.
 func busSkipsGated(run string) bool {
 	tested := false
+	var last []string
 	for _, line := range strings.Split(run, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		fields := strings.Fields(line)
-		if strings.Contains(line, "go test") && slices.Contains(fields, "-json") && slices.Contains(fields, "./internal/bus/...") {
+		last = fields
+		if strings.Contains(line, "go test") && slices.Contains(fields, "-json") && slices.Contains(fields, "./internal/bus/...") &&
+			!strings.Contains(line, "||") {
 			tested = true
-			continue
-		}
-		if tested && len(fields) > 0 && strings.HasSuffix(fields[0], "scripts/no-skips.sh") && slices.Contains(fields, busPkg) {
-			return true
 		}
 	}
-	return false
+	return tested && len(last) == 3 && strings.HasSuffix(last[0], "scripts/no-skips.sh") && last[2] == busPkg
 }
