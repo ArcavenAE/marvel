@@ -2,6 +2,7 @@ package toolchain
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,7 @@ func TestNoSkipsGate(t *testing.T) {
 		{"internal/bus has no test files", ev("skip", busPkg, ""), 1, busPkg},
 		{"no test files at the top, a package under it passed", ev("skip", busPkg, "") + ev("pass", busPkg+"/inner", "TestH"), 1, "no test files"},
 		{"no bus test ran", ev("pass", other, "TestF"), 1, busPkg},
+		{"a package-level pass with no test events (-run NoSuch)", ev("start", busPkg, "") + ev("output", busPkg, "") + ev("pass", busPkg, ""), 1, busPkg},
 		{"only a sibling package's tests passed", ev("pass", sibling, "TestG"), 1, busPkg},
 		{"the stream is not go test -json", "ok  \t" + busPkg + "\t1.0s\n", 2, ""},
 	} {
@@ -93,6 +95,13 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 	if !strings.HasPrefix(job.RunsOn, "ubuntu") {
 		t.Fatalf("quality-gate runs on %q, want ubuntu", job.RunsOn)
 	}
+	for _, gap := range busGateGaps(job) {
+		t.Error(gap)
+	}
+}
+
+// busGateGaps lists why the job's bus skip gate could not fail it.
+func busGateGaps(job ciJob) []string {
 	nats, gated := -1, -1
 	for i, step := range job.Steps {
 		if strings.Contains(step.Run, "nats-server") && nats < 0 {
@@ -104,9 +113,41 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 	}
 	switch {
 	case gated < 0:
-		t.Error("no quality-gate step runs ./internal/bus/... with go test -json and passes the stream to scripts/no-skips.sh")
+		return []string{"no quality-gate step runs ./internal/bus/... with go test -json and passes the stream to scripts/no-skips.sh"}
 	case nats < 0 || gated < nats:
-		t.Errorf("the bus skip gate (step %d) runs before nats-server is installed (step %d), so every broker test would skip", gated, nats)
+		return []string{fmt.Sprintf("the bus skip gate (step %d) runs before nats-server is installed (step %d), so every broker test would skip", gated, nats)}
+	}
+	return nil
+}
+
+func TestBusGateGaps(t *testing.T) {
+	t.Parallel()
+	install := ciJobStep{Name: "Install nats-server", Run: "install nats-server"}
+	gate := ciJobStep{Name: "gate", Run: "set -euo pipefail\n" +
+		`go test -json -count=1 ./internal/bus/... > "${RUNNER_TEMP}/bus.json"` + "\n" +
+		`scripts/no-skips.sh "${RUNNER_TEMP}/bus.json" ` + busPkg}
+	job := func(steps ...ciJobStep) ciJob { return ciJob{RunsOn: "ubuntu-24.04", Steps: steps} }
+	withJob := func(j ciJob, f func(*ciJob)) ciJob { f(&j); return j }
+	withStep := func(st ciJobStep, f func(*ciJobStep)) ciJobStep { f(&st); return st }
+	good := job(install, gate)
+	for _, tc := range []struct {
+		name string
+		job  ciJob
+		gaps int
+	}{
+		{"install then gate", good, 0},
+		{"no gate", job(install), 1},
+		{"gate before the install", job(gate, install), 1},
+		{"the job has an if", withJob(good, func(j *ciJob) { j.If = "false" }), 1},
+		{"the job continues on error", withJob(good, func(j *ciJob) { j.ContinueOnError = true }), 1},
+		{"continue-on-error false on the job", withJob(good, func(j *ciJob) { j.ContinueOnError = false }), 0},
+		{"the gate step has an if", job(install, withStep(gate, func(st *ciJobStep) { st.If = "github.event_name == 'push'" })), 1},
+		{"the gate step continues on error", job(install, withStep(gate, func(st *ciJobStep) { st.ContinueOnError = true })), 1},
+		{"the gate step continues on an expression", job(install, withStep(gate, func(st *ciJobStep) { st.ContinueOnError = "${{ inputs.soft }}" })), 1},
+	} {
+		if got := busGateGaps(tc.job); len(got) != tc.gaps {
+			t.Errorf("%s: gaps = %q, want %d", tc.name, got, tc.gaps)
+		}
 	}
 }
 
@@ -125,6 +166,11 @@ func TestBusSkipsGated(t *testing.T) {
 		{"gate on another package", test + "\n" + strings.Replace(gate, "internal/bus", "internal/daemon", 1), false},
 		{"no gate", test, false},
 		{"gate commented out", test + "\n# " + gate, false},
+		{"|| true after the gate", test + "\n" + gate + " || true", false},
+		{"; true after the gate", test + "\n" + gate + "; true", false},
+		{"a command after the gate", test + "\n" + gate + "\necho done", false},
+		{"a blank line and a comment after the gate", test + "\n" + gate + "\n\n# done", true},
+		{"|| true on the test line", strings.Replace(test, " > ", " || true > ", 1) + "\n" + gate, false},
 	} {
 		if got := busSkipsGated(tc.run); got != tc.want {
 			t.Errorf("%s: busSkipsGated = %v, want %v", tc.name, got, tc.want)
