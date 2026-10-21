@@ -1,10 +1,9 @@
 # Multicluster read view: build plan and red tests
 
 - **Status:** Proposal, 2026-10-21, for review. It changes no code. Ticket
-  edges and bodies change only after this plan is reviewed. Three of its four
-  ruling requests were ruled by the operator on 2026-10-21 (R1, R2, R4,
-  section 8). R3 is open and holds merging link 5 onward (section 8); links
-  1 to 4 may proceed.
+  edges and bodies change only after this plan is reviewed. All four ruling
+  requests were ruled by the operator on 2026-10-21 (R1 to R4, section 8);
+  no link waits on a ruling.
 - **Design it builds:** #816 (design, ruled by the operator on 2026-10-10;
   the ruling is the comment on #816). Seed: `_kos/ideas/multicluster-view.md`
   and `question-multicluster-view`.
@@ -121,13 +120,13 @@ time, including when the exit code is 11.
 | 7 | `no_answer_in_time` (on a write: may have applied) |
 | 8 | `auth_refused` |
 | 9 | `host_key_unknown` or `host_key_changed` |
-| 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster a,b` or `--all-clusters`, any `starting` (R4). A `starting` cluster shows rows, so it counts as answered here and the result is 10, not 11 (the architect's reading, open to review) |
+| 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster` with two or more clusters or `--all-clusters`, any `starting` (R4). Because any `starting` gives 10 there, a set with a `starting` cluster exits 10, never 11 |
 | 11 | no cluster answered, and the causes differ |
 
 One cluster, or every cluster failing for the same reason, exits with that
-reason's code. A host-key failure is never 0. A plain single-cluster
-`get sessions`, with no cluster-set flag, keeps today's exit when the daemon
-is starting (R4).
+reason's code. A host-key failure is never 0. Single-cluster use keeps
+today's exit when the daemon is starting: `get sessions` with no cluster
+flag, and `get sessions --cluster a` naming one cluster (R4).
 
 ### 3.3 Same-daemon merge (#831)
 
@@ -156,9 +155,20 @@ Cf, which covers the bidi controls and the zero-width characters) and each
 invalid UTF-8 byte. In KEY's workspace and name parts it also replaces the
 separator lookalikes U+FF1A, U+2236, U+A789, U+FE55, U+2215, U+2044, U+FF0F
 and U+29F8. Nothing is dropped silently. JSON output and `capture` stay raw.
-A key holding the placeholder is refused as a handle and points at `-o json`.
-The placeholder is never `:`, `/` or `?`; which character it is remains open
-(R3, section 8).
+The placeholder is U+FFFD (R3, section 8). Each replaced code point and each
+invalid UTF-8 byte becomes exactly one U+FFFD, which is also what Go's own
+decoding gives for an invalid byte, so filtering never changes a cell's rune
+count. When anything was replaced, one line follows the output naming the
+code points, for example `2 fields held undrawable characters (U+001B,
+U+202E); -o json shows them`, so the operator still learns which characters
+were there. A key holding U+FFFD, whether the filter put it there or the
+daemon sent it, is refused as a handle and points at `-o json`.
+
+Known cost, on the table when R3 was ruled: U+FFFD's East Asian Width is
+"ambiguous" (Unicode 16.0), so a terminal set to draw ambiguous characters
+wide draws it two columns, while the table counts one (`tableWidth` counts
+runes, `cmd/marvel/fit.go:156-162`). On such a terminal a filtered cell draws
+one column wider than measured.
 
 ## 4. The chain
 
@@ -246,11 +256,11 @@ Rigs:
 | 2 | #828 | `TestResolveTakesClusterArg`: two clusters resolve side by side, and `MARVEL_SOCKET`, `--socket` and `-i` leak into neither. `TestResolveIdentityFromEntryOnly`: the package `identityPath` never reaches a named cluster. | U |
 | 3 | #761 | `TestTimerBoundsSilentBanner`: TCP accepted, no banner; returns within the timer plus 2 s. `TestTimerBoundsSilentSession`: handshake done, no reply; same bound. `TestTimerFreesEverything`: no goroutine or file descriptor left after it fires. `TestOversizedReplyIsBadReply`: a reply past the bound fails with the bad-reply type, and its cause names the limit. | S, F |
 | 4 | #826 | `TestAgentConnClosedAfterCall`: a fake agent on a scratch `SSH_AUTH_SOCK` counts zero open connections after the call returns, and zero after the timer fires. | S |
-| 5 | #823 | `TestFilterReplacesC0C1DELFormat`. `TestNewlineCannotForgeRow`: a name holding `x\nother:ws/evil\trunning` draws exactly one row. `TestPlaceholderAddsNoSeparator`: for any input, the output holds no more `:`, `/` or `?` than the input. `TestSeparatorLookalikesReplacedInKeyParts`. `TestDaemonErrorFiltered`: an error text holding ESC prints filtered. | U, F |
+| 5 | #823 | `TestFilterReplacesC0C1DELFormat`. `TestNewlineCannotForgeRow`: a name holding `x\nother:ws/evil\trunning` draws exactly one row. `TestPlaceholderAddsNoSeparator`: for any input, the output holds no more `:`, `/` or `?` than the input. `TestSeparatorLookalikesReplacedInKeyParts`. `TestDaemonErrorFiltered`: an error text holding ESC prints filtered. `TestEachReplacementIsOneFFFD`: each replaced code point and each invalid byte becomes exactly one U+FFFD, and the rune count is unchanged. `TestUndrawableNoteNamesCodePoints`: a name holding ESC and U+202E gives one note line naming `U+001B, U+202E` and pointing at `-o json`; clean input gives no note. | U, F |
 | 6 | #827 | `TestSortStableOnWorkspaceName`: tied rows keep their order over 100 shuffled inputs. | U |
-| 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster-set flag, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a key at `~/.ssh/id_ed25519` under the scratch HOME; each listener sees one key, the entry's own, the agent gets zero connections and `~/.ssh/id_ed25519` is never offered (R1). `TestFanOutEntryWithoutIdentityOffersOnlyClientKey`: an entry that names no identity, with marvel's client key in the scratch marvel layout (`layout.DefaultClientKey()`, `internal/daemonrpc/client.go:418`), an agent on a scratch `SSH_AUTH_SOCK` and a key at `~/.ssh/id_ed25519`; the listener sees only the client key and the agent gets zero connections (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
+| 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b` and under `--all-clusters`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster flag, today's exit (R4). `TestSingleClusterFlagStartingKeepsExit`: `--cluster a` naming one cluster, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a key at `~/.ssh/id_ed25519` under the scratch HOME; each listener sees one key, the entry's own, the agent gets zero connections and `~/.ssh/id_ed25519` is never offered (R1). `TestFanOutEntryWithoutIdentityOffersOnlyClientKey`: an entry that names no identity, with marvel's client key in the scratch marvel layout (`layout.DefaultClientKey()`, `internal/daemonrpc/client.go:418`), an agent on a scratch `SSH_AUTH_SOCK` and a key at `~/.ssh/id_ed25519`; the listener sees only the client key and the agent gets zero connections (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
 | 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). `TestWriteCutByTimerSaysMayHaveApplied`: the fake receives exactly one request, then goes quiet; exit 7 and "may have applied". `TestWriteCutBeforeSendSaysNothingSent`: the timer fires before the request is written; the fake receives zero requests; exit 7 and "nothing sent; safe to retry". | F, S |
-| 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`. | U, F |
+| 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`: a key holding U+FFFD, filtered or sent literally by the daemon, is refused and the refusal points at `-o json`. | U, F |
 | 10 | #825 | `TestFutureStampReadsQuestion`: a pinned clock gives `?` and the reason; a missing stamp reads `-`. | U |
 | 11 | #831 | `TestSameAddressDialledOnce`. `TestSameInodeMerges`: two paths, one a symlink to one fake. `TestEchoedVersionNotMerged`: a fake echoes another's pid and start time from a different inode. `TestSharedHostKeyDifferentSocketNotMerged`. `TestSameHostKeyAndSocketMerges`: two `ssh://` entries to one S server, same verified fingerprint, socket path, pid and start time, merge into one `same_daemon` line. `TestMergeNeverHidesStatusLine`. | F, S |
 | 12 | #822 | `TestStaleReplyDiscarded`: single cluster; fetch 1 blocks, the timer frees the slot, fetch 2 shows, a late fetch 1 is dropped. | U (the watch loop's seams) |
@@ -301,8 +311,7 @@ Each test was checked against its ticket and that ticket's dependencies:
 
 ## 8. Rulings
 
-R1, R2 and R4 were RULED 2026-10-21 by the operator. R3 is open and holds
-merging link 5 onward.
+R1 to R4 were RULED 2026-10-21 by the operator. No link waits on a ruling.
 
 - **R1. Fan-out credentials. RULED 2026-10-21 by the operator: yes.** During
   a fan-out, each cluster's dial offers exactly one key: the identity in that
@@ -318,20 +327,22 @@ merging link 5 onward.
   Merge two entries only on the same socket inode, or on a strict-verified host
   fingerprint (plus the socket path for `ssh://`), and a matching pid and start
   time. Show the union and keep both status lines (section 3.3).
-- **R3. The placeholder. Open.** The panel split 2-2-2. U+FFFD: one rune, so
-  width stays in the cell's unit, and it cannot be mistaken for typed text.
-  A visible ASCII escape such as `\x1b`: it tells the operator which byte was
-  there and stays ASCII in any terminal or log. The operator asked for the
-  full details before ruling. What it holds: links 1 to 4 (#812, #828, #761,
-  #826) proceed. #823's work short of merging may proceed. Merging #823, and
-  so every link after it in the chain, waits on R3, because the placeholder
-  is part of #823's output and #829's `TestKeyHoldingPlaceholderRefused`
-  needs to know which character it is. This hold is valid until 2026-10-28;
-  the architect seat re-checks it then, and it is not a default that takes
-  effect on that date.
+- **R3. The placeholder. RULED 2026-10-21 by the operator, verbatim: "V4 A
+  U+FFFD".** The panel had split 2-2-2 on vote V4: U+FFFD (Option A;
+  Test-architecture, Security) against a visible ASCII escape such as `\x1b`
+  (Option B; Operability, UX), with Custody and Distributed-systems
+  abstaining. The operator had the full details of both options, including
+  the East Asian Width cost, before ruling. The placeholder is U+FFFD, #823
+  carries Option A's tests and the note line naming the code points (section
+  3.4), and the chain order voted in V1 stands.
 - **R4. Scope of the `starting` exit. RULED 2026-10-21 by the operator:
   yes.** Exit 10 for `starting` applies only under `--cluster a,b` or
   `--all-clusters`. A plain single-cluster `get sessions` keeps today's exit.
+  The follow-up question, whether a single `--cluster a` counts as a cluster
+  set, was RULED 2026-10-21 by the operator, verbatim: "re R4 (a)
+  single-cluster behavoir for single clusters". So `--cluster a` naming one
+  cluster keeps today's exit, and exit 10 on `starting` needs `--cluster`
+  with two or more clusters, or `--all-clusters`.
 - **Carried from 2026-10-10:** the bare-key-on-writes ruling is re-checked
   when #830 ships.
 
