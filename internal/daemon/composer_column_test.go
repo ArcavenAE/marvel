@@ -22,7 +22,8 @@ type fakePane struct {
 	foreground string
 	plain      string
 	escapes    string
-	err        error
+	err        error // fails every call
+	captureErr error // fails only the captures
 	calls      []string
 }
 
@@ -36,11 +37,21 @@ func (f *fakePane) PaneForeground(id string) (string, int, error) {
 
 func (f *fakePane) CapturePane(id string) (string, error) {
 	f.calls = append(f.calls, "capture "+id)
+	if f.captureErr != nil {
+		// The screen comes back with the error: the driver returns "" on an
+		// error today, and the column must not depend on that.
+		return f.plain, f.captureErr
+	}
 	return f.plain, f.err
 }
 
 func (f *fakePane) CapturePaneEscapes(id string) (string, error) {
 	f.calls = append(f.calls, "capture-e "+id)
+	if f.captureErr != nil {
+		// The screen comes back with the error: the driver returns "" on an
+		// error today, and the column must not depend on that.
+		return f.escapes, f.captureErr
+	}
 	return f.escapes, f.err
 }
 
@@ -132,11 +143,23 @@ func TestComposerClientSourceUnruledCapturesNothing(t *testing.T) {
 	}
 }
 
-// A failed read is unknown, never a guess.
+// A failed read is unknown, never a guess: a failed foreground read, and a
+// capture that fails after the foreground read succeeded. The second fake
+// returns a mid-turn screen beside its error, so reading it anyway would give
+// mid_turn, not unknown.
 func TestComposerWordFailedReadIsUnknown(t *testing.T) {
-	p := &fakePane{foreground: "2.1.290", err: errors.New("no such pane")}
-	if got := composerWord(p, runningSeat("claude"), false); got != "unknown" {
-		t.Fatalf("composer = %q, want unknown", got)
+	for name, p := range map[string]*fakePane{
+		"the foreground read fails": {foreground: "2.1.290", err: errors.New("no such pane")},
+		"the capture fails": {
+			foreground: "2.1.290", captureErr: errors.New("capture-pane timed out"),
+			escapes: composerFixture(t, "3a-mid-turn-1s5.ansi.txt"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := composerWord(p, runningSeat("claude"), false); got != "unknown" {
+				t.Fatalf("composer = %q, want unknown", got)
+			}
+		})
 	}
 }
 
