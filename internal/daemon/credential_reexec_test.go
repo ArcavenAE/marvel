@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -14,7 +15,7 @@ import (
 func TestDetachWarnsTransientCredentialsDropped(t *testing.T) {
 	d := newHandlerDaemon(t)
 	for _, name := range []string{"bus/leaf", "bus/hub"} {
-		if resp := d.dispatchAs(Request{Method: "credential.put", Params: putParams(t, name, "DROPSEED-"+name)}, localCaller()); resp.Error != "" {
+		if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: putParams(t, name, "DROPSEED-"+name)}, localCaller()); resp.Error != "" {
 			t.Fatalf("put %s: %s", name, resp.Error)
 		}
 	}
