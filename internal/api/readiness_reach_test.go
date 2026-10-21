@@ -352,6 +352,9 @@ func TestMarryReachFollowsEachRoute(t *testing.T) {
 		"mapelem":    "os/exec", // an init sets an element of a reached map
 		"pointer":    "os/exec", // an init writes a reached variable through a pointer
 		"alias":      "os/exec", // an init writes a reached map through a copy of it
+		"accmap":     "os/exec", // an init writes an element through a reached accessor
+		"accptr":     "os/exec", // an init writes through a pointer a reached accessor returns
+		"accsetter":  "os/exec", // an init calls a setter on a reached accessor's result
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
