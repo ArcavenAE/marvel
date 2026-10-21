@@ -262,6 +262,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newCtxForwardCmd())
 	root.AddCommand(newCodexCtxCmd())
 	root.AddCommand(planCmd())
+	root.AddCommand(marryCmd())
 
 	return root
 }
