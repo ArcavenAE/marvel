@@ -267,7 +267,17 @@ func TestBusGateGaps(t *testing.T) {
 		{"the gate step sets BASHOPTS", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"BASHOPTS": "extdebug"} })), 1},
 		{"the job sets SHELLOPTS", withJob(good, func(j *ciJob) { j.Env = map[string]string{"SHELLOPTS": "noexec"} }), 1},
 		{"the job sets BASH_ENV", withJob(good, func(j *ciJob) { j.Env = map[string]string{"BASH_ENV": "scripts/exit0.sh"} }), 1},
-		{"the gate step sets another variable", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"GOFLAGS": "-mod=readonly"} })), 0},
+		// Only the names ci.yml uses today are allowed; every other name is a
+		// gap, so a new route through the environment fails closed.
+		{"the gate step sets a name outside the allowlist", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"GOFLAGS": "-mod=readonly"} })), 1},
+		{"the gate step imports a go function (BASH_FUNC_go%%)", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"BASH_FUNC_go%%": "() { :; }"} })), 1},
+		{"the gate step sets PATH", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"PATH": "./fake:/usr/bin"} })), 1},
+		{"the job sets PATH", withJob(good, func(j *ciJob) { j.Env = map[string]string{"PATH": "./fake:/usr/bin"} }), 1},
+		{"the job imports a jq function", withJob(good, func(j *ciJob) { j.Env = map[string]string{"BASH_FUNC_jq%%": "() { :; }"} }), 1},
+		{"the gate step sets an allowed name", job(install, withStep(gate, func(st *ciJobStep) { st.Env = map[string]string{"NATS_SERVER_VERSION": "v2.15.0"} })), 0},
+		{"the job sets the allowed names", withJob(good, func(j *ciJob) {
+			j.Env = map[string]string{"HOMEBREW_NO_AUTO_UPDATE": "1", "NATS_SERVER_SHA256": "abc", "NATS_SERVER_VERSION": "v2.15.0"}
+		}), 0},
 	} {
 		if got := busGateGaps(tc.job); len(got) != tc.gaps {
 			t.Errorf("%s: gaps = %q, want %d", tc.name, got, tc.gaps)
