@@ -53,23 +53,90 @@ func TestRestructurePackagesRunOnMacOS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if reasons := macOSGateReasons(jobs, want); len(reasons) > 0 {
+		t.Errorf("no macOS job runs the restructure packages %v with tmux and nats-server installed:\n  %s",
+			want, strings.Join(reasons, "\n  "))
+	}
+}
+
+// macOSGateReasons returns nothing when a job on macOSRunner tests pkgs under
+// the skip gate with no macOSGaps, and otherwise why each macOS job falls short.
+func macOSGateReasons(jobs map[string]ciJob, pkgs []string) []string {
 	var reasons []string
 	for _, name := range slices.Sorted(maps.Keys(jobs)) {
 		job := jobs[name]
-		if !strings.HasPrefix(job.RunsOn, "macos") {
+		if !macOSRunner(job.RunsOn) {
 			continue
 		}
-		missing := macOSGaps(job, want)
+		missing := macOSGaps(job, pkgs)
 		if len(missing) == 0 {
-			return
+			return nil
 		}
 		reasons = append(reasons, fmt.Sprintf("job %s: %s", name, strings.Join(missing, "; ")))
 	}
 	if len(reasons) == 0 {
 		reasons = []string{"no job runs on macOS"}
 	}
-	t.Errorf("no macOS job runs the restructure packages %v with tmux and nats-server installed:\n  %s",
-		want, strings.Join(reasons, "\n  "))
+	return reasons
+}
+
+// macOSRunner reports whether a runs-on label is the macOS runner the
+// restructure packages are held to.
+func macOSRunner(label string) bool { return strings.HasPrefix(label, "macos") }
+
+// The runner labels are pinned, not matched by prefix: a self-hosted runner
+// given a label such as ubuntu-self-hosted brings its own env and tools, which
+// the guards cannot see (review 5599661990 on marvel#994).
+func TestShippedCIPinsTheRunnerLabels(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	// relabel sets the runs-on of the job under header to label.
+	relabel := func(header, label string) string {
+		i := strings.Index(text, header)
+		if i < 0 || strings.Count(text, header) != 1 {
+			t.Fatalf("ci.yml has %d copies of %q", strings.Count(text, header), header)
+		}
+		j := strings.Index(text[i:], "    runs-on: ")
+		k := strings.Index(text[i+j:], "\n")
+		if j < 0 || k < 0 {
+			t.Fatalf("no runs-on under %q", header)
+		}
+		return text[:i+j] + "    runs-on: " + label + text[i+j+k:]
+	}
+	load := func(text string) map[string]ciJob {
+		p := filepath.Join(t.TempDir(), "ci.yml")
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		jobs, err := ciJobs(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jobs
+	}
+	for _, tc := range []struct {
+		name         string
+		text         string
+		linux, macOS bool // whether each guard should pass
+	}{
+		{"the shipped labels", text, true, true},
+		{"quality-gate on a self-hosted ubuntu label", relabel("  quality-gate:\n", "ubuntu-self-hosted"), false, true},
+		{"quality-gate on another ubuntu image", relabel("  quality-gate:\n", "ubuntu-22.04"), false, true},
+		{"restructure-macos on a self-hosted macos label", relabel("  restructure-macos:\n", "macos-self-hosted"), true, false},
+		{"restructure-macos on another macos image", relabel("  restructure-macos:\n", "macos-14"), true, false},
+	} {
+		jobs := load(tc.text)
+		if got := len(linuxGateGaps(jobs)) == 0; got != tc.linux {
+			t.Errorf("%s: the Linux gate passes: %v, want %v (runs-on %q)", tc.name, got, tc.linux, jobs["quality-gate"].RunsOn)
+		}
+		if got := len(macOSGateReasons(jobs, restructurePackages)) == 0; got != tc.macOS {
+			t.Errorf("%s: the macOS gate passes: %v, want %v (runs-on %q)", tc.name, got, tc.macOS, jobs["restructure-macos"].RunsOn)
+		}
+	}
 }
 
 func TestMacOSGaps(t *testing.T) {
