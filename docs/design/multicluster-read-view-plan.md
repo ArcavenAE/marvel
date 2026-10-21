@@ -2,8 +2,9 @@
 
 - **Status:** Proposal, 2026-10-21, for review. It changes no code. Ticket
   edges and bodies change only after this plan is reviewed. All four ruling
-  requests were ruled by the operator on 2026-10-21 (R1 to R4, section 8);
-  no link waits on a ruling.
+  requests were ruled by the operator on 2026-10-21 (R1 to R4, section 8),
+  and so were #761's two questions (Q1, Q2, section 8); no link waits on a
+  ruling.
 - **Design it builds:** #816 (design, ruled by the operator on 2026-10-10;
   the ruling is the comment on #816). Seed: `_kos/ideas/multicluster-view.md`
   and `question-multicluster-view`.
@@ -59,19 +60,32 @@ runs the view until a read-only daemon permission level (#834) exists.
 Agreed by all six seats:
 
 - **Timer.** One constant, 10 s, over connect, handshake, auth, request and
-  reply. One exception: on `events --watch` the timer bounds the dial and
+  reply, set per cluster in the fan-out. #761 builds the timer and sets no
+  deadline of its own; #830 arms it at 10 s for each cluster, and a
+  single-cluster command keeps today's behavior with no deadline (Q1,
+  section 8). One exception: on `events --watch` the timer bounds the dial and
   handshake only, since the stream is meant to stay open
-  (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the watch: interval 2 s (`cmd/marvel/main.go:1152`) <
-  stale banner 5 s (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the
-  operator sees "late" before "gave up".
-- **Writes cut by the timer.** If it fires before the request is written,
-  nothing was sent: exit 7 with "nothing sent; safe to retry". If it fires
-  after, the result is unknown: exit 7 with
-  "may have applied; check before retrying", never retried automatically.
+  (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the
+  multi-cluster watch (#832), the only watch that arms the timer under Q1
+  (a): interval 2 s (`cmd/marvel/main.go:1152`) < stale banner 5 s
+  (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the operator sees "late"
+  before "gave up". A single-cluster watch has no timer; its 5 s view
+  deadline only raises the stale banner.
+- **Writes and the timer.** Under Q1 (a) the timer never cuts a write.
+  Every write names one cluster (section 2), single-cluster commands keep no
+  deadline, and today no write sets `DialOptions.Timeout`: its only caller
+  that sets one is `cmd/marvel/accountlimits.go:120` (at `363e7bb`). The
+  rule below waits on a write getting a deadline, which Q1 (a) does not give
+  and which would need its own ruling: if the timer fires before the request
+  is written, nothing was sent: exit 7 with "nothing sent; safe to retry". If
+  it fires after, the result is unknown: exit 7 with "may have applied; check
+  before retrying", never retried automatically.
 - **A byte bound on every reply**, per cluster, in `internal/daemonrpc`
-  beside the timer. Over the bound the outcome is `bad_reply` and `cause`
-  names the limit. The bound's value is an operator step, set from the
-  largest real reply.
+  beside the timer, single-cluster commands included. It is a trial: one cap
+  for every reply, to see how it goes (Q2, section 8). Over the bound the
+  outcome is `bad_reply` and `cause` names the limit. The value comes from
+  the link 3 (#761) build; its basis is still open with the operator, and
+  this plan names no number.
 - **Strict host keys in every fan-out dial**, never trust, never stdin.
 - **Typed errors** for the outcome classes, so nothing is parsed from message
   text: unknown host key, host key changed (today a string,
@@ -117,7 +131,7 @@ time, including when the exit code is 11.
 | 2-4 | `marvel wait` only, unchanged (`cmd/marvel/wait.go:18-26`) |
 | 5 | the daemon answered and the answer is unusable (`daemon_error`, `bad_reply`); inside `wait`, 5 keeps its wider meaning |
 | 6 | `unreachable` |
-| 7 | `no_answer_in_time`. On a write cut before the request was sent: nothing sent; safe to retry. On a write cut after it was sent: may have applied; check before retrying (section 3) |
+| 7 | `no_answer_in_time`. Under Q1 (a) only a fan-out read arms the timer, so a write never exits 7 from it. The two write messages wait on a write getting a deadline (section 3) |
 | 8 | `auth_refused` |
 | 9 | `host_key_unknown` or `host_key_changed` |
 | 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster` with two or more clusters or `--all-clusters`, any `starting` (R4). Because any `starting` gives 10 there, a set with a `starting` cluster exits 10, never 11 |
@@ -172,7 +186,7 @@ one column wider than measured.
 
 ## 4. The chain
 
-All fourteen tickets are one chain, in this order. #812's typed errors, #761's
+All thirteen tickets are one chain, in this order. #812's typed errors, #761's
 timer and #826's agent close all edit `internal/daemonrpc/client.go`, and
 nearly every other ticket edits `cmd/marvel/main.go`, so parallel PRs off
 main would conflict (rule (d), `code-restructure-plan.md` section 4). Each
@@ -188,24 +202,26 @@ Both are filed as bd `blocks`, so the ready list shows only the chain's head.
 |---|---|---|---|---|
 | 1 | #812 | aae-orc-lsa0u | no usage text on connection errors; typed errors; the exit table | none |
 | 2 | #828 | aae-orc-fyhx1 | resolver takes the cluster (and its identity) as an argument | lsa0u (c) |
-| 3 | #761 | aae-orc-9mo6w | timer armed before the dial that closes everything; reply byte bound | lsa0u (r: the timeout and bad-reply types), fyhx1 (c) |
+| 3 | #761 | aae-orc-9mo6w | timer armed before the dial that closes everything, with no default deadline (Q1); byte bound on every reply, a trial (Q2) | lsa0u (r: the timeout and bad-reply types), fyhx1 (c) |
 | 4 | #826 | aae-orc-u2bvg | close the SSH agent connection after the handshake | 9mo6w (r: the timer also closes it) |
 | 5 | #823 | aae-orc-qeuth | the filter | u2bvg (c) |
 | 6 | #827 | aae-orc-73704 | stable sort with a full tiebreak | qeuth (c) |
-| 7 | #830 | aae-orc-jkb6u | `get sessions` across clusters | lsa0u, fyhx1, 9mo6w, u2bvg, qeuth, 73704 (r) |
+| 7 | #830 | aae-orc-jkb6u | `get sessions` across clusters; arms the timer at 10 s per cluster (Q1) | lsa0u, fyhx1, 9mo6w, u2bvg, qeuth, 73704 (r) |
 | 8 | #824 | aae-orc-ioqwd | write result lines name the cluster | jkb6u (c) |
 | 9 | #829 | aae-orc-z885x | qualified keys, typed `--cluster` on writes | fyhx1, ioqwd (r) |
 | 10 | #825 | aae-orc-nprld | a future stamp reads `?` with a reason | z885x (c) |
 | 11 | #831 | aae-orc-lfb76 | same-daemon merge | jkb6u (r), nprld (c) |
-| 12 | #822 | aae-orc-2ihk2 | single-cluster watch: sequence discard of stale replies | 9mo6w (r), lfb76 (c) |
-| 13 | #832 | aae-orc-w5ik7 | `get sessions -w` across clusters | 2ihk2, jkb6u, lfb76 (r) |
-| 14 | #833 | aae-orc-xj69u | `get teams` and `events` across clusters | jkb6u, w5ik7 (r) |
+| 12 | #832 | aae-orc-w5ik7 | `get sessions -w` across clusters, with #822's sequence discard folded in | jkb6u, lfb76 (r) |
+| 13 | #833 | aae-orc-xj69u | `get teams` and `events` across clusters | jkb6u, w5ik7 (r) |
 
 Not in the chain: #834 (read-only permission level; unscheduled, its own
-ruling) and #835 (workspace name rule; its own change).
+ruling), #835 (workspace name rule; its own change), and #822 (aae-orc-2ihk2),
+folded into #832 (director, 2026-10-21, section 8). Director closes #822
+after this plan merges.
 
 **Edge changes against today's tracker.** Remove: `jkb6u` on `z885x`,
-`jkb6u` on `nprld`, `2ihk2` on `u2bvg`. Add every edge in the table that
+`jkb6u` on `nprld`, `2ihk2` on `u2bvg`, `2ihk2` on `9mo6w`, `w5ik7` on
+`2ihk2` (the last three because #822 leaves the chain). Add every edge in the table that
 does not exist yet. Today's tracker has no edges into `lsa0u`, `9mo6w`,
 `u2bvg`, `qeuth`, `73704` or `fyhx1`.
 
@@ -215,14 +231,18 @@ does not exist yet. Today's tracker has no edges into `lsa0u`, `9mo6w`,
   `internal/daemonrpc/client.go:430-433` (the client moved in #908 and #909).
 - #828 cites `cmd/marvel/main.go:91`; the resolver is `resolveDaemonRung` at
   `cmd/marvel/main.go:92`.
-- #822 asks for one fetch in flight per cluster. Before #830 there is one
-  cluster, so #822 is the single-cluster sequence discard; the per-cluster
-  form moves to #832.
+- #822 asks for one fetch in flight per cluster, with the per-call timer
+  freeing the slot. Under Q1 (a) only the fan-out arms that timer, so its
+  whole job moves to #832, and #832's body gains #822's sequence discard.
 - #827 sorts on cluster, workspace and name. Before #830 a row has no
   cluster, so #827 sorts on workspace and name with a full tiebreak, and #830
   puts cluster first.
-- #761 gains the reply byte bound and the rule that the timer starts before
-  the dial.
+- #761 builds the timer only and sets no default deadline: #830 arms it at
+  10 s per cluster in the fan-out, and single-cluster commands keep today's
+  behavior with no deadline (Q1). #761 also gains the byte bound on every
+  reply, as a trial (Q2), and the rule that the timer starts before the
+  dial. Its ask for a default `Timeout` in `send()` is answered by Q1 (a),
+  not adopted.
 
 Anchors here and in section 5 are at `d0616f9`. Four have moved on main at
 `b9f33a8` (#1004 merged): `cmd/marvel/columns.go:165-183` is now `:178-196`;
@@ -259,13 +279,12 @@ Rigs:
 | 5 | #823 | `TestFilterReplacesC0C1DELFormat`. `TestNewlineCannotForgeRow`: a name holding `x\nother:ws/evil\trunning` draws exactly one row. `TestPlaceholderAddsNoSeparator`: for any input, the output holds no more `:`, `/` or `?` than the input. `TestSeparatorLookalikesReplacedInKeyParts`. `TestDaemonErrorFiltered`: an error text holding ESC prints filtered. `TestEachReplacementIsOneFFFD`: each replaced code point and each invalid byte becomes exactly one U+FFFD, and the rune count is unchanged. `TestUndrawableNoteNamesCodePoints`: a name holding ESC and U+202E gives one note line naming `U+001B, U+202E` and pointing at `-o json`; clean input gives no note. | U, F |
 | 6 | #827 | `TestSortStableOnWorkspaceName`: tied rows keep their order over 100 shuffled inputs. | U |
 | 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b` and under `--all-clusters`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster flag, today's exit (R4). `TestSingleClusterFlagStartingKeepsExit`: `--cluster a` naming one cluster, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a key at `~/.ssh/id_ed25519` under the scratch HOME; each listener sees one key, the entry's own, the agent gets zero connections and `~/.ssh/id_ed25519` is never offered (R1). `TestFanOutEntryWithoutIdentityOffersOnlyClientKey`: an entry that names no identity, with marvel's client key in the scratch marvel layout (`layout.DefaultClientKey()`, `internal/daemonrpc/client.go:418`), an agent on a scratch `SSH_AUTH_SOCK` and a key at `~/.ssh/id_ed25519`; the listener sees only the client key and the agent gets zero connections (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
-| 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). `TestWriteCutByTimerSaysMayHaveApplied`: the fake receives exactly one request, then goes quiet; exit 7 and "may have applied". `TestWriteCutBeforeSendSaysNothingSent`: the timer fires before the request is written; the fake receives zero requests; exit 7 and "nothing sent; safe to retry". | F, S |
+| 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). Held, not in #824's red set: `TestWriteCutByTimerSaysMayHaveApplied` (the fake receives exactly one request, then goes quiet; exit 7 and "may have applied") and `TestWriteCutBeforeSendSaysNothingSent` (the timer fires before the request is written; the fake receives zero requests; exit 7 and "nothing sent; safe to retry") wait on a write getting a deadline (section 3) and join the ticket that adds one. | F |
 | 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`: a key holding U+FFFD, filtered or sent literally by the daemon, is refused and the refusal points at `-o json`. | U, F |
 | 10 | #825 | `TestFutureStampReadsQuestion`: a pinned clock gives `?` and the reason; a missing stamp reads `-`. | U |
 | 11 | #831 | `TestSameAddressDialledOnce`. `TestSameInodeMerges`: two paths, one a symlink to one fake. `TestEchoedVersionNotMerged`: a fake echoes another's pid and start time from a different inode. `TestSharedHostKeyDifferentSocketNotMerged`. `TestSameHostKeyAndSocketMerges`: two `ssh://` entries to one S server, same verified fingerprint, socket path, pid and start time, merge into one `same_daemon` line. `TestMergeNeverHidesStatusLine`. | F, S |
-| 12 | #822 | `TestStaleReplyDiscarded`: single cluster; fetch 1 blocks, the timer frees the slot, fetch 2 shows, a late fetch 1 is dropped. | U (the watch loop's seams) |
-| 13 | #832 | `TestStaleReplyDiscardedPerCluster`. `TestOneSlowClusterDoesNotBlankWatch`: today the first-answer wait blanks the whole frame (`cmd/marvel/main.go:3296`). `TestEachClusterAgesOnItsOwnAsOf`. | U, F |
-| 14 | #833 | `TestTeamsFanOutOutcomes`. `TestEventsSeatTextFiltered`. `TestEventsWatchTimerBoundsHandshakeOnly`. | F, S |
+| 12 | #832 | `TestStaleReplyDiscardedPerCluster`, which absorbs #822's `TestStaleReplyDiscarded`: under `--cluster a,b`, cluster a's fetch 1 blocks, the timer fires and frees a's slot, fetch 2 shows, a's late fetch 1 is dropped, and b's rows and as-of are untouched. `TestOneSlowClusterDoesNotBlankWatch`: today the first-answer wait blanks the whole frame (`cmd/marvel/main.go:3296`). `TestEachClusterAgesOnItsOwnAsOf`. | U, F |
+| 13 | #833 | `TestTeamsFanOutOutcomes`. `TestEventsSeatTextFiltered`. `TestEventsWatchTimerBoundsHandshakeOnly`. | F, S |
 
 Timer and race tests take their order from channels, never sleeps; a timeout
 test asserts an upper bound only; the merge gate for these packages is
@@ -277,12 +296,19 @@ guard `TestMain`.
 Each test was checked against its ticket and that ticket's dependencies:
 
 - **#822 as filed was not reachable.** A per-cluster test needs a fan-out
-  that #822 does not depend on. Fixed by moving the per-cluster form to #832.
+  that #822 does not depend on, and under Q1 (a) a single-cluster watch has
+  no timer to free a slot: today one fetch holds it until it returns
+  (`watchLoop`, `cmd/marvel/watchloop.go`), so no stale reply can exist.
+  Fixed by folding #822 into #832 (section 8).
 - **#827 as filed was not reachable.** Sorting on cluster needs a cluster
   field that rows gain only in #830. Fixed by moving cluster-first to #830.
 - **The byte bound had no owner.** Assigned to #761, which already owns the
   client exchange; #830 maps the error to `bad_reply`.
 - **#812's host-key and auth types** need the S rig and nothing else.
+- **#824's two write-cut tests are not reachable under Q1 (a).** No write
+  arms the timer, so they could pass only through a test seam that proves a
+  message no operator sees. They are held, named in #824's row, until a
+  ticket gives a write a deadline.
 - **`TestFanOutOffersOnlyEntryKey`**, **`TestFanOutEntryWithoutIdentityOffersOnlyClientKey`**
   and **`TestFanOutNoIdentityIsAuthRefused`** belong to #830 (R1 is ruled, both
   branches: the entry's key, or marvel's client key when the entry names
@@ -305,13 +331,15 @@ Each test was checked against its ticket and that ticket's dependencies:
   not touch.
 - No `MARVEL_SOCKET` in the environment; socket paths come from a short
   `TMPDIR` to stay under the 104-character limit.
-- #829's check of workspace names on every live cluster, and the reply byte
-  bound's value, are operator steps whose output goes into the PR. Neither is
-  a test.
+- #829's check of workspace names on every live cluster is an operator step
+  whose output goes into the PR. The reply byte bound's value comes from the
+  link 3 (#761) build and goes into that PR with its basis; the basis is
+  still open with the operator (Q2). Neither is a test.
 
 ## 8. Rulings
 
-R1 to R4 were RULED 2026-10-21 by the operator. No link waits on a ruling.
+R1 to R4, and #761's Q1 and Q2, were RULED 2026-10-21 by the operator. No
+link waits on a ruling.
 
 - **R1. Fan-out credentials. RULED 2026-10-21 by the operator: yes.** During
   a fan-out, each cluster's dial offers exactly one key: the identity in that
@@ -343,6 +371,24 @@ R1 to R4 were RULED 2026-10-21 by the operator. No link waits on a ruling.
   single-cluster behavoir for single clusters". So `--cluster a` naming one
   cluster keeps today's exit, and exit 10 on `starting` needs `--cluster`
   with two or more clusters, or `--all-clusters`.
+- **#761 Q1 and Q2. RULED 2026-10-21 by the operator, verbatim:
+  "#761 Q1 (a), Q2 apply to every reply but I may regret this so let's keep some kind of hint about the other options and we're just trying a single cap to see how it goes".**
+  - **Q1 (a). Where the timer is set.** #761 builds the timer mechanism only.
+    #830 sets 10 s per cluster in the fan-out. Single-cluster commands keep
+    today's behavior with no deadline.
+  - **Q2. Which replies the byte cap covers: every reply, as a trial.** One
+    cap on every reply, single-cluster commands included. The options not
+    taken, kept here as the hint the ruling asks for: a cap only on the
+    fan-out path, where the timer is set; and a cap per verb. If the trial
+    goes badly, those are the next options to put back on the table.
+  - **The cap's value.** It comes from the link 3 (#761) build. Its basis is
+    still open with the operator, so this plan names no number.
+- **#822 folded into #832. RULED 2026-10-21 by director, applying the
+  operator's Q1 (a).** Only the fan-out arms the timer, so only a fan-out
+  watch can free a slot early and receive a stale reply. #822 leaves the
+  chain, its test merges into #832's `TestStaleReplyDiscardedPerCluster`,
+  and the 2 s < 5 s < 10 s watch line is scoped to #832. No new operator
+  ruling was needed.
 - **Carried from 2026-10-10:** the bare-key-on-writes ruling is re-checked
   when #830 ships.
 
