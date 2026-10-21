@@ -16,11 +16,13 @@ import (
 )
 
 // marryReach is what the marrying step reaches in one package: the files of
-// the reached declarations, and for each package a reached declaration uses,
-// the declarations that use it.
+// the reached declarations; for each package a reached declaration uses, the
+// declarations that use it; and the same for each member of another package
+// (fmt.Errorf, for one).
 type marryReach struct {
-	files []string
-	uses  map[string][]string
+	files   []string
+	uses    map[string][]string
+	members map[string][]string
 }
 
 // reachFrom follows references from roots through the type-checked non-test
@@ -30,8 +32,9 @@ type marryReach struct {
 // caller outside the package (encoding/json, fmt) may call any of them. A
 // reached method of an interface declared in the package brings that method
 // of every type in the package that implements the interface. A reached
-// package variable brings every declaration that assigns to it, init
-// included.
+// package variable brings every declaration that mentions it, init included:
+// a write can come through the bare name, a field, an element, a pointer or a
+// copy of a map or slice, so any mention counts, reads too.
 //
 // The limit: it reads one package. An implementation or function value that
 // another package supplies, and anything reached through reflection, are not
@@ -76,15 +79,16 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 	}
 
 	type decl struct {
-		file   string
-		name   string
-		uses   []types.Object
-		ifaces []*types.Func
-		pkgs   []string
+		file    string
+		name    string
+		uses    []types.Object
+		ifaces  []*types.Func
+		pkgs    []string
+		members []string
 	}
 	defined := map[types.Object]*decl{}
 	methods := map[*types.TypeName][]*decl{}
-	assigners := map[types.Object][]*decl{}
+	mentions := map[types.Object][]*decl{}
 	packageLevel := func(o types.Object) bool { return o.Pkg() == pkg && o.Parent() == pkg.Scope() }
 	for _, f := range files {
 		file := filepath.ToSlash(filepath.Join(fileRoot, filepath.Base(fset.Position(f.Pos()).Filename)))
@@ -124,14 +128,6 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 			}
 			ast.Inspect(d, func(x ast.Node) bool {
 				switch x := x.(type) {
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok {
-							if o, ok := info.Uses[id].(*types.Var); ok && packageLevel(o) {
-								assigners[o] = append(assigners[o], n)
-							}
-						}
-					}
 				case *ast.Ident:
 					o := info.Uses[x]
 					if o == nil {
@@ -144,6 +140,12 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 						break
 					}
 					if o.Pkg() != pkg {
+						// A member of another package, such as fmt.Println.
+						if o.Pkg() != nil && o.Parent() == o.Pkg().Scope() {
+							if m := o.Pkg().Path() + "." + o.Name(); !slices.Contains(n.members, m) {
+								n.members = append(n.members, m)
+							}
+						}
 						break
 					}
 					if fn, ok := o.(*types.Func); ok {
@@ -158,6 +160,9 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 					}
 					if packageLevel(o) {
 						n.uses = append(n.uses, o)
+						if v, ok := o.(*types.Var); ok {
+							mentions[v] = append(mentions[v], n)
+						}
 					}
 				}
 				return true
@@ -189,7 +194,7 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 		return out
 	}
 
-	r := marryReach{uses: map[string][]string{}}
+	r := marryReach{uses: map[string][]string{}, members: map[string][]string{}}
 	seen := map[*decl]bool{}
 	var queue []*decl
 	for _, name := range roots {
@@ -214,6 +219,11 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 				r.uses[p] = append(r.uses[p], n.name)
 			}
 		}
+		for _, m := range n.members {
+			if !slices.Contains(r.members[m], n.name) {
+				r.members[m] = append(r.members[m], n.name)
+			}
+		}
 		for _, o := range n.uses {
 			if d := defined[o]; d != nil {
 				queue = append(queue, d)
@@ -221,7 +231,7 @@ func reachIn(dir, fileRoot string, roots []string) (marryReach, error) {
 			if tn, ok := o.(*types.TypeName); ok {
 				queue = append(queue, methods[tn]...)
 			}
-			queue = append(queue, assigners[o]...)
+			queue = append(queue, mentions[o]...)
 		}
 		for _, m := range n.ifaces {
 			queue = append(queue, implementers(m)...)
@@ -259,14 +269,30 @@ var marryReachAllowed = []string{
 	"github.com/arcavenae/marvel/internal/asof",
 }
 
+// marryReachNarrow are allowed packages of which a reached declaration may
+// use only the members named: fmt can write to stdout, so only the
+// formatting functions the step uses today are allowed.
+var marryReachNarrow = map[string][]string{
+	"fmt": {"Errorf", "Sprintf"},
+}
+
 // marryReachViolations lists each package a reached declaration uses that is
-// not allowed, with the declarations that use it.
+// not allowed, and each member of a narrowed package outside its list, with
+// the declarations that use it.
 func marryReachViolations(r marryReach, allowed []string) []string {
 	var out []string
 	for p, decls := range r.uses {
 		if !slices.Contains(allowed, p) {
 			slices.Sort(decls)
 			out = append(out, p+" (used by "+strings.Join(decls, ", ")+")")
+		}
+	}
+	for m, decls := range r.members {
+		i := strings.LastIndex(m, ".")
+		names, narrow := marryReachNarrow[m[:i]]
+		if narrow && !slices.Contains(names, m[i+1:]) {
+			slices.Sort(decls)
+			out = append(out, m+" (used by "+strings.Join(decls, ", ")+")")
 		}
 	}
 	slices.Sort(out)

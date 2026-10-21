@@ -59,7 +59,7 @@ func agentAddressFrom(pattern string) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("%q has an anchor between its outer ^ and $", pattern)
 	}
 	if hasFlag(re) {
-		return nil, fmt.Errorf("%q sets a flag; the class must hold without one", pattern)
+		return nil, fmt.Errorf("%q sets a flag or a lazy repeat; the class must hold without either", pattern)
 	}
 	seg := "(?:" + part.String() + ")"
 	if regexp.MustCompile("^" + seg + "$").MatchString("") {
