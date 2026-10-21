@@ -43,7 +43,10 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
   marrying step (idle-scheduler design v2, section 3.2, one vector per row,
   plus section 3.1). Each vector is a list of steps: `marry` (marvel's
   `api.Marry`), `take`, `recheck`, `address`, and the trigger row's `grep` of
-  the marry source. The step is shadow only, so no vector sends.
+  the marry source. The step is shadow only, so no vector sends. Decode the
+  file strictly (an unknown field is an error) and compare each `want` after
+  decoding it, never as bytes: empty fields are omitted. The `grep` step reads
+  marvel's Go source, so it runs in marvel only.
 - `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
   validator only for the event twin, whose Go source of truth is `events.go`).
 

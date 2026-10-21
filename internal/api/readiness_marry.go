@@ -236,9 +236,10 @@ type MarryOutput struct {
 // no ruled sender reaches.
 const UnplacedNoSender = "no sender ruled"
 
-// MarryAddress accepts only an agent:// seat address. No path through the
-// matcher builds a role://, broadcast:// or global:// address, so nothing it
-// produces can fan out.
+// MarryAddress accepts only an agent:// seat address of the form
+// agent://{team}/{id}, each part in the envelope schema's agent_id class. No
+// path through the matcher builds a role://, broadcast:// or global://
+// address, and no wildcard passes, so nothing it produces can fan out.
 func MarryAddress(addr string) error {
 	rest, ok := strings.CutPrefix(addr, "agent://")
 	if !ok {
@@ -248,8 +249,11 @@ func MarryAddress(addr string) error {
 		}
 		return fmt.Errorf("%s:// is not a seat address", scheme)
 	}
-	if rest == "" || strings.ContainsAny(rest, " \t\n") {
+	if rest == "" {
 		return errors.New("agent:// names no seat")
+	}
+	if !agentAddress.MatchString(addr) {
+		return fmt.Errorf("%s is not agent://{team}/{id}", addr)
 	}
 	return nil
 }
@@ -268,6 +272,26 @@ func Marry(in MarryInput) (MarryOutput, error) {
 		return MarryOutput{}, fmt.Errorf("marry: lease cap %d", in.LeaseCap)
 	case in.LeaseMinutes <= 0:
 		return MarryOutput{}, fmt.Errorf("marry: lease of %d minutes", in.LeaseMinutes)
+	}
+	// One item, one holder starts at the input: a repeated item would get
+	// two leases with one id, and a repeated seat two items. A client-scope
+	// item is skipped here too, so none of its fields is read.
+	seenSeat := map[string]bool{}
+	for _, s := range in.Seats {
+		if seenSeat[s.Address] {
+			return MarryOutput{}, fmt.Errorf("marry: seat %s is listed twice", s.Address)
+		}
+		seenSeat[s.Address] = true
+	}
+	seenItem := map[string]bool{}
+	for _, it := range in.Items {
+		if it.Scope == MarryScopeClient {
+			continue
+		}
+		if seenItem[it.ID] {
+			return MarryOutput{}, fmt.Errorf("marry: item %s is listed twice", it.ID)
+		}
+		seenItem[it.ID] = true
 	}
 	var out MarryOutput
 	out.Stopped = in.Stop.Stop
@@ -402,6 +426,14 @@ func Marry(in MarryInput) (MarryOutput, error) {
 			if a.rank != b.rank {
 				return a.rank - b.rank
 			}
+			// A seat with no free-since time is not known to be the longest
+			// free, so it goes after every seat that has one.
+			if az, bz := a.seat.FreeSince.IsZero(), b.seat.FreeSince.IsZero(); az != bz {
+				if az {
+					return 1
+				}
+				return -1
+			}
 			if c := a.seat.FreeSince.Compare(b.seat.FreeSince); c != 0 {
 				return c
 			}
@@ -504,6 +536,8 @@ func RecheckBeforeSend(l Lease, rr SendReRead) SendCheck {
 		return refuse("seat row does not match the lease")
 	case rr.Seat.Availability != SeatFree || len(rr.Seat.Gaps) > 0:
 		return refuse("seat not free")
+	case rr.ItemScope == MarryScopeClient:
+		return refuse("item is client scope")
 	case rr.ItemStatus != "open":
 		return refuse("item not open")
 	case rr.ItemAssignee != "":
