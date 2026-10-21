@@ -306,6 +306,13 @@ func TestBusSkipsGated(t *testing.T) {
 		// -n or -o noexec before the test line runs nothing, and the step exits 0.
 		{"set -n before the test", "set -n\n" + test + "\n" + gate, false},
 		{"set -o noexec before the test", "set -o noexec\n" + test + "\n" + gate, false},
+		{"set +o noexec before the test", "set +o noexec\n" + test + "\n" + gate, false},
+		// Either sign is allowed for the four options: the shipped macOS step
+		// opens with set +e, so the gate still runs after a failed go test, and
+		// the gate's own status, as the last command, is the step's.
+		{"set +e, as the shipped macOS step opens", "set +e\n" + test + "\n" + gate, true},
+		{"set +o errexit before the test", "set +o errexit\n" + test + "\n" + gate, true},
+		{"set +eux and +o pipefail", "set +eux +o pipefail\n" + test + "\n" + gate, true},
 		{"-n inside a cluster", "set -eun\n" + test + "\n" + gate, false},
 		{"an unknown letter", "set -eq\n" + test + "\n" + gate, false},
 		{"an unknown long name", "set -o posix\n" + test + "\n" + gate, false},
