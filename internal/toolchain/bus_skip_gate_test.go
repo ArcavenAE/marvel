@@ -61,15 +61,14 @@ func TestNoSkipsGate(t *testing.T) {
 		{"a skip in another package", ran + ev("skip", other, "TestD"), 0, ""},
 		{"a skip in a package that only shares the prefix", ran + ev("skip", sibling, "TestE"), 0, ""},
 		{"internal/bus has no test files", ev("skip", busPkg, ""), 1, busPkg},
+		{"no test files at the top, a package under it passed", ev("skip", busPkg, "") + ev("pass", busPkg+"/inner", "TestH"), 1, "no test files"},
 		{"no bus test ran", ev("pass", other, "TestF"), 1, busPkg},
 		{"only a sibling package's tests passed", ev("pass", sibling, "TestG"), 1, busPkg},
-		{"the stream is not go test -json", "ok  \t" + busPkg + "\t1.0s\n", -1, ""},
+		{"the stream is not go test -json", "ok  \t" + busPkg + "\t1.0s\n", 2, ""},
 	} {
 		got, out := runNoSkips(t, tc.stream, busPkg)
 		switch {
-		case tc.want < 0 && got == 0:
-			t.Errorf("%s: exit 0, want nonzero; output:\n%s", tc.name, out)
-		case tc.want >= 0 && got != tc.want:
+		case got != tc.want:
 			t.Errorf("%s: exit %d, want %d; output:\n%s", tc.name, got, tc.want, out)
 		case tc.names != "" && !strings.Contains(out, tc.names):
 			t.Errorf("%s: output does not name %s:\n%s", tc.name, tc.names, out)
