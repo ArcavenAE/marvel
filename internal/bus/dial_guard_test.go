@@ -111,12 +111,26 @@ func failOnRefusedDials(code int) int {
 }
 
 // The guard refuses an address no test started, before any dial, and lets a
-// started one through.
+// started one through. connectAdmin is tried only on a loopback port this test
+// opened and closed without marking, so with the guard missing the dial is
+// refused by the host and reaches no broker. The live broker's address and an
+// empty URL go to guardDial directly, since guardDial never dials.
 func TestDialGuardRefusesABrokerNoTestStarted(t *testing.T) {
-	const fixed = "nats://127.0.0.1:4222"
-	t.Cleanup(func() { forgetRefused(fixed) })
-	if _, err := connectAdmin(context.Background(), fixed, "u", "p"); !errors.Is(err, errNotStarted) {
-		t.Fatalf("connectAdmin(%s) = %v, want the guard's refusal", fixed, err)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "nats://" + ln.Addr().String()
+	_ = ln.Close()
+	t.Cleanup(func() { forgetRefused(closed) })
+	if _, err := connectAdmin(context.Background(), closed, "u", "p"); !errors.Is(err, errNotStarted) {
+		t.Fatalf("connectAdmin(%s) = %v, want the guard's refusal", closed, err)
+	}
+	for _, raw := range []string{"nats://127.0.0.1:4222", ""} {
+		t.Cleanup(func() { forgetRefused(raw) })
+		if err := guardDial(raw); !errors.Is(err, errNotStarted) {
+			t.Errorf("guardDial(%q) = %v, want a refusal", raw, err)
+		}
 	}
 	if err := guardDial("nats://127.0.0.1:" + fmt.Sprint(freePort(t))); err != nil {
 		t.Errorf("a port from freePort was refused: %v", err)
