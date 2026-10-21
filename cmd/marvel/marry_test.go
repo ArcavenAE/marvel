@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
@@ -24,14 +25,19 @@ import (
 // one internal/api's tests and director (M2) read.
 var marryVectorsFile = filepath.Join("..", "..", "contracts", "readiness", "marry-vectors.json")
 
+// marryCLIStep is one marry step of the shared vectors. Input is the step's
+// bytes exactly as the file holds them, so the CLI reads what a caller in
+// another repo reads, not a copy re-encoded by this test.
+type marryCLIStep struct {
+	Input json.RawMessage
+	Error string
+	Want  json.RawMessage
+}
+
 // marryVectorSteps returns every marry step of every shared vector. The
 // file's other ops (take, recheck, address, grep) have no CLI and are read by
 // internal/api's tests.
-func marryVectorSteps(t *testing.T) map[string]struct {
-	Input *api.MarryInput
-	Error string
-	Want  json.RawMessage
-} {
+func marryVectorSteps(t *testing.T) map[string]marryCLIStep {
 	t.Helper()
 	b, err := os.ReadFile(marryVectorsFile)
 	if err != nil {
@@ -42,7 +48,7 @@ func marryVectorSteps(t *testing.T) map[string]struct {
 			Name  string `json:"name"`
 			Steps []struct {
 				Op    string          `json:"op"`
-				Input *api.MarryInput `json:"input"`
+				Input json.RawMessage `json:"input"`
 				Error string          `json:"error"`
 				Want  json.RawMessage `json:"want"`
 			} `json:"steps"`
@@ -51,24 +57,16 @@ func marryVectorSteps(t *testing.T) map[string]struct {
 	if err := json.Unmarshal(b, &file); err != nil {
 		t.Fatal(err)
 	}
-	out := map[string]struct {
-		Input *api.MarryInput
-		Error string
-		Want  json.RawMessage
-	}{}
+	out := map[string]marryCLIStep{}
 	for _, v := range file.Vectors {
 		for i, st := range v.Steps {
 			if st.Op != "marry" {
 				continue
 			}
-			if st.Input == nil {
+			if len(st.Input) == 0 || string(st.Input) == "null" {
 				t.Fatalf("%s step %d: no input", v.Name, i)
 			}
-			out[v.Name+"/"+strconv.Itoa(i)] = struct {
-				Input *api.MarryInput
-				Error string
-				Want  json.RawMessage
-			}{st.Input, st.Error, st.Want}
+			out[v.Name+"/"+strconv.Itoa(i)] = marryCLIStep{st.Input, st.Error, st.Want}
 		}
 	}
 	if len(out) == 0 {
@@ -86,11 +84,7 @@ func pairingVectorInput(t *testing.T) string {
 		st := steps[name]
 		var want api.MarryOutput
 		if st.Error == "" && json.Unmarshal(st.Want, &want) == nil && len(want.Pairs) > 0 {
-			b, err := json.Marshal(st.Input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return string(b)
+			return string(st.Input)
 		}
 	}
 	t.Fatal("no vector pairs anything")
@@ -114,14 +108,11 @@ func runMarryCLI(t *testing.T, stdin string, args ...string) (string, string, er
 
 // Every marry vector, run through the CLI, gives the vector's output
 // (compared decoded, as the Go tests compare it) or fails with its error on
-// stderr and a nonzero exit. Each vector goes in once as a file and once on
-// stdin.
+// stderr and a nonzero exit. Each vector's input goes in as the file's own
+// bytes, once as a file and once on stdin.
 func TestMarryVerbRunsTheVectors(t *testing.T) {
 	for name, st := range marryVectorSteps(t) {
-		in, err := json.Marshal(st.Input)
-		if err != nil {
-			t.Fatal(err)
-		}
+		in := []byte(st.Input)
 		path := filepath.Join(t.TempDir(), "input.json")
 		if err := os.WriteFile(path, in, 0o600); err != nil {
 			t.Fatal(err)
@@ -182,26 +173,49 @@ func TestMarryVerbRefusesInputOutsideTheContract(t *testing.T) {
 	}
 }
 
-// The verb never reaches a daemon. A listener stands at MARVEL_SOCKET and at
-// the default socket path under the scratch HOME for the whole run; the verb
-// must succeed and neither listener may see a connection.
+// The verb never reaches a daemon, at either address a client would dial
+// with no flag: the one MARVEL_SOCKET names, and the layout default under
+// HOME when it names none. A listener stands at that address for the run; the
+// verb must succeed and the listener must see no connection.
 func TestMarryVerbDialsNoDaemon(t *testing.T) {
-	dir := shorttmp.Dir(t)
-	sock := filepath.Join(dir, "m.sock")
-	t.Setenv("MARVEL_SOCKET", sock)
+	t.Run("MARVEL_SOCKET", func(t *testing.T) {
+		sock := filepath.Join(shorttmp.Dir(t), "m.sock")
+		t.Setenv("MARVEL_SOCKET", sock)
+		marryDialsNothingAt(t, sock)
+	})
+	t.Run("the layout default", func(t *testing.T) {
+		home := shorttmp.Dir(t)
+		t.Setenv("HOME", home)
+		t.Setenv("MARVEL_SOCKET", "")
+		sock := config.DefaultSocket()
+		if !strings.HasPrefix(sock, home+string(filepath.Separator)) {
+			t.Fatalf("the default socket %s is not under the test's HOME %s", sock, home)
+		}
+		if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		marryDialsNothingAt(t, sock)
+	})
+}
+
+// marryDialsNothingAt listens at sock, proves the listener answers a dial,
+// then runs the verb on a pairing input and fails if it connects.
+func marryDialsNothingAt(t *testing.T, sock string) {
+	t.Helper()
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = ln.Close() }()
 	accepted := make(chan error, 1)
-	go func() {
+	accept := func() {
 		c, err := ln.Accept()
 		if err == nil {
 			_ = c.Close()
 		}
 		accepted <- err
-	}()
+	}
+	go accept()
 
 	// Positive control: the listener answers a dial, so a verb that dialed
 	// would be seen.
@@ -213,13 +227,7 @@ func TestMarryVerbDialsNoDaemon(t *testing.T) {
 	if err := <-accepted; err != nil {
 		t.Fatalf("control accept: %v", err)
 	}
-	go func() {
-		c, err := ln.Accept()
-		if err == nil {
-			_ = c.Close()
-		}
-		accepted <- err
-	}()
+	go accept()
 
 	// A vector input that pairs, so the run goes through the whole step.
 	stdout, stderr, err := runMarryCLI(t, pairingVectorInput(t), "--input", "-")
@@ -229,7 +237,7 @@ func TestMarryVerbDialsNoDaemon(t *testing.T) {
 	select {
 	case err := <-accepted:
 		if err == nil {
-			t.Fatal("marry connected to the daemon socket")
+			t.Fatalf("marry connected to %s", sock)
 		}
 	case <-time.After(200 * time.Millisecond):
 	}
