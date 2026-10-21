@@ -142,7 +142,14 @@ func TestNewForTestCheckSeesEachWayToReachIt(t *testing.T) {
 // spawnedAllowed are the non-test files that may call Prober.Spawned. It is the
 // one constructor that proves a process without a record, and it trusts the
 // *exec.Cmd it is given, so its call sites are listed, as NewForTest's are.
-var spawnedAllowed = map[string]bool{"internal/bus/supervisor.go": true}
+// workload.Process proves every child it spawns (restructure plan, Move 2,
+// PR 2b); the bus supervisor's own call goes when it becomes a driver (2c).
+// Each file is allowed exactly the references it has, so a second call in an
+// allowed file fails as a call in any other file does.
+var spawnedAllowed = map[string]int{
+	"internal/bus/supervisor.go":     1,
+	"internal/workload/lifecycle.go": 1,
+}
 
 // spawnedRefs returns the position of every selector named Spawned in a parsed
 // file: a call, a method value, or a method expression.
@@ -161,7 +168,7 @@ func TestSpawnedIsCalledOnlyFromTheSupervisor(t *testing.T) {
 	root := moduleRoot(t)
 	fset := token.NewFileSet()
 	var bad []string
-	allowedSeen, checked := 0, 0
+	seen, checked := map[string]int{}, 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -182,9 +189,10 @@ func TestSpawnedIsCalledOnlyFromTheSupervisor(t *testing.T) {
 		}
 		checked++
 		rel, _ := filepath.Rel(root, path)
+		key := filepath.ToSlash(rel)
 		for _, pos := range spawnedRefs(fset, f) {
-			if spawnedAllowed[filepath.ToSlash(rel)] {
-				allowedSeen++
+			seen[key]++
+			if seen[key] <= spawnedAllowed[key] {
 				continue
 			}
 			bad = append(bad, pos.String())
@@ -197,8 +205,10 @@ func TestSpawnedIsCalledOnlyFromTheSupervisor(t *testing.T) {
 	if checked < 50 {
 		t.Fatalf("parsed only %d non-test files under %s; the walk is not reaching the module", checked, root)
 	}
-	if allowedSeen == 0 {
-		t.Error("the supervisor no longer calls Spawned; the allowed list is stale")
+	for file, n := range spawnedAllowed {
+		if seen[file] < n {
+			t.Errorf("%s references Spawned %d times, the list allows %d; the allowed list is stale", file, seen[file], n)
+		}
 	}
 	if len(bad) > 0 {
 		t.Errorf("Spawned is referenced outside %v: %v", spawnedAllowed, bad)
