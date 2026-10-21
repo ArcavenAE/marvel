@@ -117,7 +117,7 @@ time, including when the exit code is 11.
 | 2-4 | `marvel wait` only, unchanged (`cmd/marvel/wait.go:18-26`) |
 | 5 | the daemon answered and the answer is unusable (`daemon_error`, `bad_reply`); inside `wait`, 5 keeps its wider meaning |
 | 6 | `unreachable` |
-| 7 | `no_answer_in_time` (on a write: may have applied) |
+| 7 | `no_answer_in_time`. On a write cut before the request was sent: nothing sent; safe to retry. On a write cut after it was sent: may have applied; check before retrying (section 3) |
 | 8 | `auth_refused` |
 | 9 | `host_key_unknown` or `host_key_changed` |
 | 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster` with two or more clusters or `--all-clusters`, any `starting` (R4). Because any `starting` gives 10 there, a set with a `starting` cluster exits 10, never 11 |
