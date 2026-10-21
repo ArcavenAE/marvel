@@ -3,7 +3,8 @@
 - **Status:** Proposal, 2026-10-21, for review. It changes no code. Ticket
   edges and bodies change only after this plan is reviewed. Three of its four
   ruling requests were ruled by the operator on 2026-10-21 (R1, R2, R4,
-  section 8); R3 is open.
+  section 8). R3 is open and holds merging link 5 onward (section 8); links
+  1 to 4 may proceed.
 - **Design it builds:** #816 (design, ruled by the operator on 2026-10-10;
   the ruling is the comment on #816). Seed: `_kos/ideas/multicluster-view.md`
   and `question-multicluster-view`.
@@ -12,7 +13,9 @@
   architecture) saw the existing plan and improved it. Each code claim a
   panelist made was checked with one command; the results are in section 9.
 - **Author seat:** architect, team migrated.
-- **Code read at:** marvel `d0616f9`; `golang.org/x/crypto` v0.58.0.
+- **Code read at:** marvel `d0616f9`; `golang.org/x/crypto` v0.58.0. Every
+  line anchor in this plan is at `d0616f9` (section 5 lists the ones that
+  have since moved on main).
 
 ## 1. Why this plan exists
 
@@ -57,11 +60,14 @@ runs the view until a read-only daemon permission level (#834) exists.
 Agreed by all six seats:
 
 - **Timer.** One constant, 10 s, over connect, handshake, auth, request and
-  reply. Against the watch: interval 2 s (`cmd/marvel/main.go:1152`) <
+  reply. One exception: on `events --watch` the timer bounds the dial and
+  handshake only, since the stream is meant to stay open
+  (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the watch: interval 2 s (`cmd/marvel/main.go:1152`) <
   stale banner 5 s (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the
   operator sees "late" before "gave up".
 - **Writes cut by the timer.** If it fires before the request is written,
-  nothing was sent. If it fires after, the result is unknown: exit 7 with
+  nothing was sent: exit 7 with "nothing sent; safe to retry". If it fires
+  after, the result is unknown: exit 7 with
   "may have applied; check before retrying", never retried automatically.
 - **A byte bound on every reply**, per cluster, in `internal/daemonrpc`
   beside the timer. Over the bound the outcome is `bad_reply` and `cause`
@@ -115,7 +121,7 @@ time, including when the exit code is 11.
 | 7 | `no_answer_in_time` (on a write: may have applied) |
 | 8 | `auth_refused` |
 | 9 | `host_key_unknown` or `host_key_changed` |
-| 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster a,b` or `--all-clusters`, any `starting` (R4) |
+| 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster a,b` or `--all-clusters`, any `starting` (R4). A `starting` cluster shows rows, so it counts as answered here and the result is 10, not 11 (the architect's reading, open to review) |
 | 11 | no cluster answered, and the causes differ |
 
 One cluster, or every cluster failing for the same reason, exits with that
@@ -162,8 +168,8 @@ nearly every other ticket edits `cmd/marvel/main.go`, so parallel PRs off
 main would conflict (rule (d), `code-restructure-plan.md` section 4). Each
 link is based on the one before and merges in order. When another feature's
 PR lands on main first, the current link merges main in; nothing is rebased
-or force-pushed. Six open PRs from other features touch `cmd/marvel/main.go`
-today: #968, #970, #977, #979, #990, #992.
+or force-pushed. Three open PRs from other features touch
+`cmd/marvel/main.go` as of 2026-10-21: #970, #977, #979.
 
 In the table, (r) is a real dependency and (c) is file order under rule (d).
 Both are filed as bd `blocks`, so the ready list shows only the chain's head.
@@ -208,6 +214,13 @@ does not exist yet. Today's tracker has no edges into `lsa0u`, `9mo6w`,
 - #761 gains the reply byte bound and the rule that the timer starts before
   the dial.
 
+Anchors here and in section 5 are at `d0616f9`. Four have moved on main at
+`b9f33a8` (#1004 merged): `cmd/marvel/columns.go:165-183` is now `:178-196`;
+`cmd/marvel/main.go:3296` is now `:3317`; `cmd/marvel/main.go:1152` is now
+`:1153`; `internal/daemon/daemon.go:1115-1117` is now `:1118-1122`. The
+`internal/daemonrpc/client.go` anchors have not moved. A ticket body cites
+the anchor at the commit it is edited against.
+
 ## 5. Red tests
 
 Each test fails on main at `d0616f9` (or does not compile), its failure
@@ -235,11 +248,11 @@ Rigs:
 | 4 | #826 | `TestAgentConnClosedAfterCall`: a fake agent on a scratch `SSH_AUTH_SOCK` counts zero open connections after the call returns, and zero after the timer fires. | S |
 | 5 | #823 | `TestFilterReplacesC0C1DELFormat`. `TestNewlineCannotForgeRow`: a name holding `x\nother:ws/evil\trunning` draws exactly one row. `TestPlaceholderAddsNoSeparator`: for any input, the output holds no more `:`, `/` or `?` than the input. `TestSeparatorLookalikesReplacedInKeyParts`. `TestDaemonErrorFiltered`: an error text holding ESC prints filtered. | U, F |
 | 6 | #827 | `TestSortStableOnWorkspaceName`: tied rows keep their order over 100 shuffled inputs. | U |
-| 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster-set flag, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a scratch default key file; each listener sees one key, the entry's own, the agent gets zero connections and the default key file is never offered (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
-| 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). `TestWriteCutByTimerSaysMayHaveApplied`: exit 7. | F, S |
+| 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster-set flag, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a key at `~/.ssh/id_ed25519` under the scratch HOME; each listener sees one key, the entry's own, the agent gets zero connections and `~/.ssh/id_ed25519` is never offered (R1). `TestFanOutEntryWithoutIdentityOffersOnlyClientKey`: an entry that names no identity, with marvel's client key in the scratch marvel layout (`layout.DefaultClientKey()`, `internal/daemonrpc/client.go:418`), an agent on a scratch `SSH_AUTH_SOCK` and a key at `~/.ssh/id_ed25519`; the listener sees only the client key and the agent gets zero connections (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
+| 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). `TestWriteCutByTimerSaysMayHaveApplied`: the fake receives exactly one request, then goes quiet; exit 7 and "may have applied". `TestWriteCutBeforeSendSaysNothingSent`: the timer fires before the request is written; the fake receives zero requests; exit 7 and "nothing sent; safe to retry". | F, S |
 | 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`. | U, F |
 | 10 | #825 | `TestFutureStampReadsQuestion`: a pinned clock gives `?` and the reason; a missing stamp reads `-`. | U |
-| 11 | #831 | `TestSameAddressDialledOnce`. `TestSameInodeMerges`: two paths, one a symlink to one fake. `TestEchoedVersionNotMerged`: a fake echoes another's pid and start time from a different inode. `TestSharedHostKeyDifferentSocketNotMerged`. `TestMergeNeverHidesStatusLine`. | F, S |
+| 11 | #831 | `TestSameAddressDialledOnce`. `TestSameInodeMerges`: two paths, one a symlink to one fake. `TestEchoedVersionNotMerged`: a fake echoes another's pid and start time from a different inode. `TestSharedHostKeyDifferentSocketNotMerged`. `TestSameHostKeyAndSocketMerges`: two `ssh://` entries to one S server, same verified fingerprint, socket path, pid and start time, merge into one `same_daemon` line. `TestMergeNeverHidesStatusLine`. | F, S |
 | 12 | #822 | `TestStaleReplyDiscarded`: single cluster; fetch 1 blocks, the timer frees the slot, fetch 2 shows, a late fetch 1 is dropped. | U (the watch loop's seams) |
 | 13 | #832 | `TestStaleReplyDiscardedPerCluster`. `TestOneSlowClusterDoesNotBlankWatch`: today the first-answer wait blanks the whole frame (`cmd/marvel/main.go:3296`). `TestEachClusterAgesOnItsOwnAsOf`. | U, F |
 | 14 | #833 | `TestTeamsFanOutOutcomes`. `TestEventsSeatTextFiltered`. `TestEventsWatchTimerBoundsHandshakeOnly`. | F, S |
@@ -260,8 +273,10 @@ Each test was checked against its ticket and that ticket's dependencies:
 - **The byte bound had no owner.** Assigned to #761, which already owns the
   client exchange; #830 maps the error to `bad_reply`.
 - **#812's host-key and auth types** need the S rig and nothing else.
-- **`TestFanOutOffersOnlyEntryKey`** and **`TestFanOutNoIdentityIsAuthRefused`**
-  belong to #830 (R1 is ruled); both need only the L rig.
+- **`TestFanOutOffersOnlyEntryKey`**, **`TestFanOutEntryWithoutIdentityOffersOnlyClientKey`**
+  and **`TestFanOutNoIdentityIsAuthRefused`** belong to #830 (R1 is ruled, both
+  branches: the entry's key, or marvel's client key when the entry names
+  none); all three need only the L rig and a scratch HOME.
 - Every other row is reachable from its ticket and the tickets it depends on.
 
 ## 7. Run conditions for every test, script and mutant
@@ -286,8 +301,8 @@ Each test was checked against its ticket and that ticket's dependencies:
 
 ## 8. Rulings
 
-R1, R2 and R4 were RULED 2026-10-21 by the operator. R3 is open and holds only
-the placeholder choice on #823.
+R1, R2 and R4 were RULED 2026-10-21 by the operator. R3 is open and holds
+merging link 5 onward.
 
 - **R1. Fan-out credentials. RULED 2026-10-21 by the operator: yes.** During
   a fan-out, each cluster's dial offers exactly one key: the identity in that
@@ -307,8 +322,13 @@ the placeholder choice on #823.
   width stays in the cell's unit, and it cannot be mistaken for typed text.
   A visible ASCII escape such as `\x1b`: it tells the operator which byte was
   there and stays ASCII in any terminal or log. The operator asked for the
-  full details before ruling. Only #823's placeholder choice waits on it; the
-  rest of #823's tests and every other link can proceed.
+  full details before ruling. What it holds: links 1 to 4 (#812, #828, #761,
+  #826) proceed. #823's work short of merging may proceed. Merging #823, and
+  so every link after it in the chain, waits on R3, because the placeholder
+  is part of #823's output and #829's `TestKeyHoldingPlaceholderRefused`
+  needs to know which character it is. This hold is valid until 2026-10-28;
+  the architect seat re-checks it then, and it is not a default that takes
+  effect on that date.
 - **R4. Scope of the `starting` exit. RULED 2026-10-21 by the operator:
   yes.** Exit 10 for `starting` applies only under `--cluster a,b` or
   `--all-clusters`. A plain single-cluster `get sessions` keeps today's exit.
