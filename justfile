@@ -246,7 +246,7 @@ demo-act1: build _require-daemon
     ./bin/marvel work examples/demo-act1-recovery.toml
     @sleep 5
     @echo ""
-    @echo "==> Sessions (two workers, HEALTH healthy):"
+    @echo "==> Sessions (two workers, HEALTH alive):"
     ./bin/marvel get sessions
     @echo ""
     @echo "Next, cause an unplanned pane loss and watch marvel recover it:"
