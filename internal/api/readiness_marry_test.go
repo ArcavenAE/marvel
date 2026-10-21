@@ -204,8 +204,10 @@ func TestMarrySendPathGrepSeesEachKind(t *testing.T) {
 func TestMarryVectorsCoverEveryRow(t *testing.T) {
 	t.Parallel()
 	gv := loadMarryVectors(t)
-	want := []string{"one item, one holder", "holder mismatch shows", "no fan-out", "strict free", "scope is a filter",
-		"re-read before send", "stop word", "one lapse time", "trigger", "client isolation"}
+	want := []string{
+		"one item, one holder", "holder mismatch shows", "no fan-out", "strict free", "scope is a filter",
+		"re-read before send", "stop word", "one lapse time", "trigger", "client isolation",
+	}
 	if !slices.Equal(gv.Rows, want) {
 		t.Fatalf("rows = %q, want the ten rows of section 3.2", gv.Rows)
 	}
@@ -229,11 +231,15 @@ func TestMarryVectorsCoverEveryRow(t *testing.T) {
 func TestMarryReadsNothingOfAClientItem(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
-	base := MarryInput{RunID: "r", Now: now, LeaseCap: 3, LeaseMinutes: 30,
-		Placement: MarryPlacement{SenderCluster: "c1"}, Rulings: MarryRulings{WorkClassSource: "label"}}
+	base := MarryInput{
+		RunID: "r", Now: now, LeaseCap: 3, LeaseMinutes: 30,
+		Placement: MarryPlacement{SenderCluster: "c1"}, Rulings: MarryRulings{WorkClassSource: "label"},
+	}
 	in := base
-	in.Items = []MarryItem{{ID: "client-secret-id", Scope: MarryScopeClient, Classes: map[string]string{"label": "client-secret-class"},
-		Component: "client-secret-component", Assignee: "agent://t1/client-secret-holder", Status: "open"}}
+	in.Items = []MarryItem{{
+		ID: "client-secret-id", Scope: MarryScopeClient, Classes: map[string]string{"label": "client-secret-class"},
+		Component: "client-secret-component", Assignee: "agent://t1/client-secret-holder", Status: "open",
+	}}
 	other := base
 	other.Items = []MarryItem{{Scope: MarryScopeClient}}
 	got, err := Marry(in)
@@ -279,8 +285,10 @@ func TestMarryRefusesAnInputItCannotRunOn(t *testing.T) {
 // section 3.3, leases sent at 0 in shadow.
 func TestMarryCountLineNamesEveryField(t *testing.T) {
 	t.Parallel()
-	c := MarryCount{Ready: 1, Held: 2, Eligible: 3, Unmatched: 4, NoClass: 5, NoComponent: 6, NoEligibleSeat: 7, OperatorOnly: 8, Client: 9,
-		Free: 10, Working: 11, Queued: 12, Parked: 13, Unknown: 14, WouldPair: 15, Taken: 17, Declined: 18, Lapsed: 19, Duplicate: 20}
+	c := MarryCount{
+		Ready: 1, Held: 2, Eligible: 3, Unmatched: 4, NoClass: 5, NoComponent: 6, NoEligibleSeat: 7, OperatorOnly: 8, Client: 9,
+		Free: 10, Working: 11, Queued: 12, Parked: 13, Unknown: 14, WouldPair: 15, Taken: 17, Declined: 18, Lapsed: 19, Duplicate: 20,
+	}
 	want := "ready 1, held 2, eligible 3, unmatched 4 (no class 5, no component 6, no eligible seat 7, operator-only 8), client 9; " +
 		"seats free 10, working 11, queued 12, parked 13, unknown 14; " +
 		"would-pair 15, leases sent 0, taken 17, declined 18, lapsed 19, DUPLICATE 20"
