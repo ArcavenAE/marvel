@@ -2,8 +2,9 @@
 
 - **Status:** Proposal, 2026-10-21, for review. It changes no code. Ticket
   edges and bodies change only after this plan is reviewed. All four ruling
-  requests were ruled by the operator on 2026-10-21 (R1 to R4, section 8);
-  no link waits on a ruling.
+  requests were ruled by the operator on 2026-10-21 (R1 to R4, section 8),
+  and so were #761's two questions (Q1, Q2, section 8); no link waits on a
+  ruling.
 - **Design it builds:** #816 (design, ruled by the operator on 2026-10-10;
   the ruling is the comment on #816). Seed: `_kos/ideas/multicluster-view.md`
   and `question-multicluster-view`.
@@ -59,7 +60,10 @@ runs the view until a read-only daemon permission level (#834) exists.
 Agreed by all six seats:
 
 - **Timer.** One constant, 10 s, over connect, handshake, auth, request and
-  reply. One exception: on `events --watch` the timer bounds the dial and
+  reply, set per cluster in the fan-out. #761 builds the timer and sets no
+  deadline of its own; #830 arms it at 10 s for each cluster, and a
+  single-cluster command keeps today's behavior with no deadline (Q1,
+  section 8). One exception: on `events --watch` the timer bounds the dial and
   handshake only, since the stream is meant to stay open
   (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the watch: interval 2 s (`cmd/marvel/main.go:1152`) <
   stale banner 5 s (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the
@@ -69,9 +73,11 @@ Agreed by all six seats:
   after, the result is unknown: exit 7 with
   "may have applied; check before retrying", never retried automatically.
 - **A byte bound on every reply**, per cluster, in `internal/daemonrpc`
-  beside the timer. Over the bound the outcome is `bad_reply` and `cause`
-  names the limit. The bound's value is an operator step, set from the
-  largest real reply.
+  beside the timer, single-cluster commands included. It is a trial: one cap
+  for every reply, to see how it goes (Q2, section 8). Over the bound the
+  outcome is `bad_reply` and `cause` names the limit. The value comes from
+  the link 3 (#761) build; its basis is still open with the operator, and
+  this plan names no number.
 - **Strict host keys in every fan-out dial**, never trust, never stdin.
 - **Typed errors** for the outcome classes, so nothing is parsed from message
   text: unknown host key, host key changed (today a string,
@@ -188,11 +194,11 @@ Both are filed as bd `blocks`, so the ready list shows only the chain's head.
 |---|---|---|---|---|
 | 1 | #812 | aae-orc-lsa0u | no usage text on connection errors; typed errors; the exit table | none |
 | 2 | #828 | aae-orc-fyhx1 | resolver takes the cluster (and its identity) as an argument | lsa0u (c) |
-| 3 | #761 | aae-orc-9mo6w | timer armed before the dial that closes everything; reply byte bound | lsa0u (r: the timeout and bad-reply types), fyhx1 (c) |
+| 3 | #761 | aae-orc-9mo6w | timer armed before the dial that closes everything, with no default deadline (Q1); byte bound on every reply, a trial (Q2) | lsa0u (r: the timeout and bad-reply types), fyhx1 (c) |
 | 4 | #826 | aae-orc-u2bvg | close the SSH agent connection after the handshake | 9mo6w (r: the timer also closes it) |
 | 5 | #823 | aae-orc-qeuth | the filter | u2bvg (c) |
 | 6 | #827 | aae-orc-73704 | stable sort with a full tiebreak | qeuth (c) |
-| 7 | #830 | aae-orc-jkb6u | `get sessions` across clusters | lsa0u, fyhx1, 9mo6w, u2bvg, qeuth, 73704 (r) |
+| 7 | #830 | aae-orc-jkb6u | `get sessions` across clusters; arms the timer at 10 s per cluster (Q1) | lsa0u, fyhx1, 9mo6w, u2bvg, qeuth, 73704 (r) |
 | 8 | #824 | aae-orc-ioqwd | write result lines name the cluster | jkb6u (c) |
 | 9 | #829 | aae-orc-z885x | qualified keys, typed `--cluster` on writes | fyhx1, ioqwd (r) |
 | 10 | #825 | aae-orc-nprld | a future stamp reads `?` with a reason | z885x (c) |
@@ -221,8 +227,12 @@ does not exist yet. Today's tracker has no edges into `lsa0u`, `9mo6w`,
 - #827 sorts on cluster, workspace and name. Before #830 a row has no
   cluster, so #827 sorts on workspace and name with a full tiebreak, and #830
   puts cluster first.
-- #761 gains the reply byte bound and the rule that the timer starts before
-  the dial.
+- #761 builds the timer only and sets no default deadline: #830 arms it at
+  10 s per cluster in the fan-out, and single-cluster commands keep today's
+  behavior with no deadline (Q1). #761 also gains the byte bound on every
+  reply, as a trial (Q2), and the rule that the timer starts before the
+  dial. Its ask for a default `Timeout` in `send()` is answered by Q1 (a),
+  not adopted.
 
 Anchors here and in section 5 are at `d0616f9`. Four have moved on main at
 `b9f33a8` (#1004 merged): `cmd/marvel/columns.go:165-183` is now `:178-196`;
@@ -305,13 +315,15 @@ Each test was checked against its ticket and that ticket's dependencies:
   not touch.
 - No `MARVEL_SOCKET` in the environment; socket paths come from a short
   `TMPDIR` to stay under the 104-character limit.
-- #829's check of workspace names on every live cluster, and the reply byte
-  bound's value, are operator steps whose output goes into the PR. Neither is
-  a test.
+- #829's check of workspace names on every live cluster is an operator step
+  whose output goes into the PR. The reply byte bound's value comes from the
+  link 3 (#761) build and goes into that PR with its basis; the basis is
+  still open with the operator (Q2). Neither is a test.
 
 ## 8. Rulings
 
-R1 to R4 were RULED 2026-10-21 by the operator. No link waits on a ruling.
+R1 to R4, and #761's Q1 and Q2, were RULED 2026-10-21 by the operator. No
+link waits on a ruling.
 
 - **R1. Fan-out credentials. RULED 2026-10-21 by the operator: yes.** During
   a fan-out, each cluster's dial offers exactly one key: the identity in that
@@ -343,6 +355,18 @@ R1 to R4 were RULED 2026-10-21 by the operator. No link waits on a ruling.
   single-cluster behavoir for single clusters". So `--cluster a` naming one
   cluster keeps today's exit, and exit 10 on `starting` needs `--cluster`
   with two or more clusters, or `--all-clusters`.
+- **#761 Q1 and Q2. RULED 2026-10-21 by the operator, verbatim:
+  "#761 Q1 (a), Q2 apply to every reply but I may regret this so let's keep some kind of hint about the other options and we're just trying a single cap to see how it goes".**
+  - **Q1 (a). Where the timer is set.** #761 builds the timer mechanism only.
+    #830 sets 10 s per cluster in the fan-out. Single-cluster commands keep
+    today's behavior with no deadline.
+  - **Q2. Which replies the byte cap covers: every reply, as a trial.** One
+    cap on every reply, single-cluster commands included. The options not
+    taken, kept here as the hint the ruling asks for: a cap only on the
+    fan-out path, where the timer is set; and a cap per verb. If the trial
+    goes badly, those are the next options to put back on the table.
+  - **The cap's value.** It comes from the link 3 (#761) build. Its basis is
+    still open with the operator, so this plan names no number.
 - **Carried from 2026-10-10:** the bare-key-on-writes ruling is re-checked
   when #830 ships.
 
