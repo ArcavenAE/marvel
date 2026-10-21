@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/asof"
@@ -58,7 +60,7 @@ type Lease struct {
 // holds reports whether the lease still holds its item and seat at now. A
 // lease lapses at its stated valid-until and on no other clock.
 func (l Lease) holds(now time.Time) bool {
-	return false // red: stub
+	return (l.State == LeaseOpen || l.State == LeaseTaken) && now.Before(l.ValidUntil)
 }
 
 // MarryItem is one ready item with its eligibility record and the bd fields
@@ -238,7 +240,18 @@ const UnplacedNoSender = "no sender ruled"
 // matcher builds a role://, broadcast:// or global:// address, so nothing it
 // produces can fan out.
 func MarryAddress(addr string) error {
-	return errors.New("red: stub")
+	rest, ok := strings.CutPrefix(addr, "agent://")
+	if !ok {
+		scheme, _, found := strings.Cut(addr, "://")
+		if !found {
+			return errors.New("not a seat address")
+		}
+		return fmt.Errorf("%s:// is not a seat address", scheme)
+	}
+	if rest == "" || strings.ContainsAny(rest, " \t\n") {
+		return errors.New("agent:// names no seat")
+	}
+	return nil
 }
 
 // Marry runs the marrying step over one snapshot of its inputs. Items go in
@@ -246,7 +259,169 @@ func MarryAddress(addr string) error {
 // order, then longest free (R-116). It returns an error only for an input it
 // cannot run on.
 func Marry(in MarryInput) (MarryOutput, error) {
-	return MarryOutput{}, nil // red: stub
+	switch {
+	case in.RunID == "":
+		return MarryOutput{}, errors.New("marry: no run id")
+	case in.Now.IsZero():
+		return MarryOutput{}, errors.New("marry: no clock reading")
+	case in.LeaseCap < 0:
+		return MarryOutput{}, fmt.Errorf("marry: lease cap %d", in.LeaseCap)
+	case in.LeaseMinutes <= 0:
+		return MarryOutput{}, fmt.Errorf("marry: lease of %d minutes", in.LeaseMinutes)
+	}
+	var out MarryOutput
+	out.Stopped = in.Stop.Stop
+	validUntil := in.Now.Add(time.Duration(in.LeaseMinutes) * time.Minute)
+
+	heldItem := map[string]Lease{}
+	heldSeat := map[string]bool{}
+	for _, l := range in.Ledger {
+		switch {
+		case l.holds(in.Now):
+			heldItem[l.Item] = l
+			heldSeat[l.Seat] = true
+		case l.State == LeaseOpen:
+			out.Count.Lapsed++
+		}
+		switch l.State {
+		case LeaseTaken:
+			out.Count.Taken++
+		case LeaseDeclined:
+			out.Count.Declined++
+		}
+	}
+
+	addressable := make([]bool, len(in.Seats))
+	for i, s := range in.Seats {
+		switch {
+		case len(s.Gaps) > 0:
+			out.Count.Unknown++
+		case s.Availability == SeatFree:
+			out.Count.Free++
+		case s.Availability == SeatWorking:
+			out.Count.Working++
+		case s.Availability == SeatQueued:
+			out.Count.Queued++
+		case s.Availability == SeatParked:
+			out.Count.Parked++
+		default:
+			out.Count.Unknown++
+		}
+		if err := MarryAddress(s.Address); err != nil {
+			out.Refused = append(out.Refused, MarryRefusedSeat{Seat: s.Address, Reason: err.Error()})
+			continue
+		}
+		addressable[i] = true
+	}
+
+	// A client-scope item is counted by its scope alone; nothing else of it
+	// is read.
+	var items []MarryItem
+	for _, it := range in.Items {
+		if it.Scope == MarryScopeClient {
+			out.Count.Client++
+			continue
+		}
+		items = append(items, it)
+	}
+	slices.SortStableFunc(items, func(a, b MarryItem) int {
+		if a.Priority != b.Priority {
+			return a.Priority - b.Priority
+		}
+		if c := a.ReadyAt.Compare(b.ReadyAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	out.Count.Ready = len(items)
+
+	for _, it := range items {
+		if it.Assignee == "" {
+			continue
+		}
+		if l, ok := heldItem[it.ID]; !ok || l.Seat != it.Assignee {
+			out.Duplicates = append(out.Duplicates, MarryDuplicate{Item: it.ID, Assignee: it.Assignee, Holder: l.Seat})
+		}
+	}
+
+	used := map[string]bool{}
+	for _, it := range items {
+		if _, ok := heldItem[it.ID]; ok {
+			out.Count.Held++
+			continue
+		}
+		if it.Status != "open" || it.Assignee != "" {
+			continue
+		}
+		class := ""
+		if in.Rulings.WorkClassSource != "" {
+			class = it.Classes[in.Rulings.WorkClassSource]
+		}
+		var kind UnmatchedKind
+		switch {
+		case it.OperatorOnly:
+			kind = UnmatchedOperatorOnly
+		case class == "":
+			kind = UnmatchedNoClass
+		case it.Component == "":
+			kind = UnmatchedNoComponent
+		}
+		var cands []candidate
+		if kind == "" {
+			cands = eligibleSeats(in, addressable, it, class)
+			if len(cands) == 0 {
+				kind = UnmatchedNoEligibleSeat
+			}
+		}
+		if kind != "" {
+			out.Unmatched = append(out.Unmatched, MarryUnmatched{Item: it.ID, Kind: kind})
+			out.Count.Unmatched++
+			switch kind {
+			case UnmatchedOperatorOnly:
+				out.Count.OperatorOnly++
+			case UnmatchedNoClass:
+				out.Count.NoClass++
+			case UnmatchedNoComponent:
+				out.Count.NoComponent++
+			case UnmatchedNoEligibleSeat:
+				out.Count.NoEligibleSeat++
+			}
+			continue
+		}
+		out.Count.Eligible++
+		if out.Stopped || len(out.Leases) >= in.LeaseCap {
+			continue
+		}
+		var free []candidate
+		for _, c := range cands {
+			if strictlyFree(in, c.seat) && !heldSeat[c.seat.Address] && !used[c.seat.Address] {
+				free = append(free, c)
+			}
+		}
+		slices.SortStableFunc(free, func(a, b candidate) int {
+			if a.rank != b.rank {
+				return a.rank - b.rank
+			}
+			if c := a.seat.FreeSince.Compare(b.seat.FreeSince); c != 0 {
+				return c
+			}
+			return strings.Compare(a.seat.Address, b.seat.Address)
+		})
+		placedAt := slices.IndexFunc(free, func(c candidate) bool { return placed(in.Placement, c.seat) })
+		switch {
+		case placedAt >= 0:
+			s := free[placedAt].seat
+			used[s.Address] = true
+			l := Lease{ID: in.RunID + "/" + it.ID, Item: it.ID, Seat: s.Address, ValidUntil: validUntil, State: LeaseOpen}
+			out.Leases = append(out.Leases, l)
+			out.Pairs = append(out.Pairs, MarryPair{Item: it.ID, Seat: s.Address, Lease: l.ID})
+			out.Count.WouldPair++
+		case len(free) > 0:
+			out.Unplaced = append(out.Unplaced, MarryUnplaced{Item: it.ID, Seat: free[0].seat.Address, Reason: UnplacedNoSender})
+		}
+	}
+	out.Count.Duplicate = len(out.Duplicates)
+	return out, nil
 }
 
 // candidate is a seat that passed the eligibility join for an item, with the
@@ -260,18 +435,34 @@ type candidate struct {
 // work class, covers the component, has an agent:// address and RouteSeat
 // finds it eligible for every duty. Scope filters here, before any ordering.
 func eligibleSeats(in MarryInput, addressable []bool, it MarryItem, class string) []candidate {
-	return nil // red: stub
+	var out []candidate
+	for i, s := range in.Seats {
+		if !addressable[i] || !slices.Contains(s.Classes, class) {
+			continue
+		}
+		rank := slices.Index(s.Scopes, it.Component)
+		if rank < 0 {
+			continue
+		}
+		d := RouteSeat(RouteInput{Seat: s.Address, Duties: it.Duties, Cells: s.Cells}, in.Now)
+		if d.Verdict != RouteEligible {
+			continue
+		}
+		out = append(out, candidate{seat: s, rank: rank})
+	}
+	return out
 }
 
 // strictlyFree: only a seat the table reads as free, with no gap, not marked
 // not matchable and not in a paused team, may pair. Unknown is never free.
 func strictlyFree(in MarryInput, s MarrySeat) bool {
-	return false // red: stub
+	return s.Availability == SeatFree && len(s.Gaps) == 0 &&
+		!slices.Contains(in.Stop.NotMatchable, s.Address) && !slices.Contains(in.Stop.PausedTeams, s.Team)
 }
 
 // placed reports whether a ruled sender reaches the seat.
 func placed(p MarryPlacement, s MarrySeat) bool {
-	return false // red: stub
+	return s.Cluster != "" && (s.Cluster == p.SenderCluster || slices.Contains(p.RuledClusters, s.Cluster))
 }
 
 // SendReRead is what the delivery step reads again just before a send: the
@@ -296,7 +487,28 @@ type SendCheck struct {
 // RecheckBeforeSend is the last check before a send. Any flip since the run
 // paired the item refuses the send.
 func RecheckBeforeSend(l Lease, rr SendReRead) SendCheck {
-	return SendCheck{} // red: stub
+	refuse := func(why string) SendCheck { return SendCheck{Reason: "refused at send: " + why} }
+	switch {
+	case rr.Stop.Stop:
+		return refuse("stop")
+	case slices.Contains(rr.Stop.NotMatchable, l.Seat):
+		return refuse("not matchable")
+	case slices.Contains(rr.Stop.PausedTeams, rr.Seat.Team):
+		return refuse("team paused")
+	case !l.holds(rr.Now) || l.State != LeaseOpen:
+		return refuse("lease not current")
+	case rr.Seat.Address != l.Seat || MarryAddress(rr.Seat.Address) != nil:
+		return refuse("seat row does not match the lease")
+	case rr.Seat.Availability != SeatFree || len(rr.Seat.Gaps) > 0:
+		return refuse("seat not free")
+	case rr.ItemStatus != "open":
+		return refuse("item not open")
+	case rr.ItemAssignee != "":
+		return refuse("item assigned")
+	case rr.OverlapPR:
+		return refuse("an open PR names the item")
+	}
+	return SendCheck{Send: true}
 }
 
 // Answers to a seat's TAKE.
@@ -310,5 +522,11 @@ const (
 // is open and before its valid-until, LAPSED at or after it, and NOT-CURRENT
 // for a lease already taken, declined, released or refused.
 func AnswerTake(l Lease, now time.Time) string {
-	return "" // red: stub
+	switch {
+	case !now.Before(l.ValidUntil):
+		return AnswerLapsed
+	case l.State != LeaseOpen:
+		return AnswerNotCurrent
+	}
+	return AnswerGo
 }
