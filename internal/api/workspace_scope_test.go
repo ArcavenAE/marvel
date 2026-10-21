@@ -70,3 +70,30 @@ func TestWorkspaceScopeApplyKeepsAStoredScope(t *testing.T) {
 		t.Fatalf("after a re-apply naming no scope: %+v, %v", ws, err)
 	}
 }
+
+// A re-apply whose only change is adding scope = "client" to a workspace that
+// exists stores it: marking a known client workspace is the rollout step, and
+// it is a manifest edit of exactly this shape.
+func TestWorkspaceScopeReapplyAddsTheClientScope(t *testing.T) {
+	st := NewStore()
+	m, err := scopedManifest(t, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(st); err != nil {
+		t.Fatal(err)
+	}
+	if ws, err := st.GetWorkspace("scoped"); err != nil || ws.Scope != "" {
+		t.Fatalf("after an apply naming no scope: %+v, %v", ws, err)
+	}
+	marked, err := scopedManifest(t, `scope = "client"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := marked.Apply(st); err != nil {
+		t.Fatal(err)
+	}
+	if ws, err := st.GetWorkspace("scoped"); err != nil || ws.Scope != WorkspaceScopeClient {
+		t.Fatalf("after a re-apply adding the client scope: %+v, %v", ws, err)
+	}
+}

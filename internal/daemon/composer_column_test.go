@@ -396,6 +396,18 @@ func TestComposerScanStaysInItsOwnDirs(t *testing.T) {
 	}
 }
 
+// composerManifest is a one-seat team in workspace ws running the script at
+// path, with the workspace scope given ("" for none).
+func composerManifest(ws, scope, path string) string {
+	manifest := strings.ReplaceAll(winchManifest(path), `name = "repaintws"`, `name = "`+ws+`"`)
+	// Team names are cluster-wide, so each seat gets its own.
+	manifest = strings.ReplaceAll(manifest, `name = "squad"`, `name = "`+ws+`-squad"`)
+	if scope != "" {
+		manifest = strings.Replace(manifest, `name = "`+ws+`"`, `name = "`+ws+`"`+"\nscope = \""+scope+"\"", 1)
+	}
+	return manifest
+}
+
 // composerSeat applies a one-seat team in workspace ws, with the workspace
 // scope given, running script, retags its runtime as claude, and returns its
 // key. The workspaces are fixtures; no real workspace is named.
@@ -405,13 +417,7 @@ func composerSeat(t *testing.T, d *Daemon, ws, scope, script string) string {
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manifest := strings.ReplaceAll(winchManifest(path), `name = "repaintws"`, `name = "`+ws+`"`)
-	// Team names are cluster-wide, so each seat gets its own.
-	manifest = strings.ReplaceAll(manifest, `name = "squad"`, `name = "`+ws+`-squad"`)
-	if scope != "" {
-		manifest = strings.Replace(manifest, `name = "`+ws+`"`, `name = "`+ws+`"`+"\nscope = \""+scope+"\"", 1)
-	}
-	if resp := applyManifest(t, d, manifest); resp.Error != "" {
+	if resp := applyManifest(t, d, composerManifest(ws, scope, path)); resp.Error != "" {
 		t.Fatalf("apply: %s", resp.Error)
 	}
 	key := ""
@@ -429,3 +435,75 @@ func composerSeat(t *testing.T, d *Daemon, ws, scope, script string) string {
 	}
 	return key
 }
+
+// The rollout step: a re-apply whose only change adds scope = "client" to a
+// workspace that is already running. Before it the seat is read; after it the
+// store holds the client scope and the seat is not captured.
+func TestComposerReapplyAddingTheClientScopeStopsTheCapture(t *testing.T) {
+	d := newHandlerDaemon(t)
+	frame := "\n✻ Reading… (1s · esc to interrupt)\n\n" + testRule + "\n❯" + testNB + "\n" + testRule + "\n  [Model] scratch\n"
+	path := filepath.Join(t.TempDir(), "seat.sh")
+	if err := os.WriteFile(path, []byte(claudeFrameSeat(t, frame)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const ws = "reapplyclientws"
+	if resp := applyManifest(t, d, composerManifest(ws, "", path)); resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	key := ""
+	for _, s := range d.store.ListSessions() {
+		if s.Workspace == ws {
+			key = s.Key()
+		}
+	}
+	if key == "" {
+		t.Fatal("no session")
+	}
+	waitCaptureHas(t, d, key, "frame-painted")
+	if err := d.store.UpdateSession(key, func(s *api.Session) error { s.Runtime.Name = "claude"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	served := func() api.Session {
+		t.Helper()
+		resp := d.handleGet(mustMarshal(t, map[string]any{"resource_type": "sessions", "composer": true}))
+		if resp.Error != "" {
+			t.Fatalf("get: %s", resp.Error)
+		}
+		var got []api.Session
+		if err := json.Unmarshal(resp.Result, &got); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range got {
+			if s.Key() == key {
+				return s
+			}
+		}
+		t.Fatalf("%s is not listed", key)
+		return api.Session{}
+	}
+
+	// Positive control: before the re-apply the seat is read.
+	var before api.Session
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		before = served()
+		if before.Composer == "mid_turn" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if before.Composer != "mid_turn" {
+		t.Fatalf("before the re-apply: composer = %q, %q; want mid_turn", before.Composer, before.ComposerGap)
+	}
+
+	if resp := applyManifest(t, d, composerManifest(ws, "client", path)); resp.Error != "" {
+		t.Fatalf("re-apply: %s", resp.Error)
+	}
+	if w, err := d.store.GetWorkspace(ws); err != nil || w.Scope != api.WorkspaceScopeClient {
+		t.Fatalf("after the re-apply the stored workspace is %+v, %v; want scope client", w, err)
+	}
+	if after := served(); after.Composer != "unknown" || after.ComposerGap != "client workspace, not read" {
+		t.Fatalf("after the re-apply: composer = %q, %q; want unknown, client workspace, not read", after.Composer, after.ComposerGap)
+	}
+}
+
