@@ -68,10 +68,15 @@ Agreed by all six seats:
   (`TestEventsWatchTimerBoundsHandshakeOnly`, #833). Against the watch: interval 2 s (`cmd/marvel/main.go:1152`) <
   stale banner 5 s (`cmd/marvel/watchloop.go:8`) < timer 10 s, so the
   operator sees "late" before "gave up".
-- **Writes cut by the timer.** If it fires before the request is written,
-  nothing was sent: exit 7 with "nothing sent; safe to retry". If it fires
-  after, the result is unknown: exit 7 with
-  "may have applied; check before retrying", never retried automatically.
+- **Writes and the timer.** Under Q1 (a) the timer never cuts a write.
+  Every write names one cluster (section 2), single-cluster commands keep no
+  deadline, and today no write sets `DialOptions.Timeout`: its only caller
+  that sets one is `cmd/marvel/accountlimits.go:120` (at `363e7bb`). The
+  rule below waits on a write getting a deadline, which Q1 (a) does not give
+  and which would need its own ruling: if the timer fires before the request
+  is written, nothing was sent: exit 7 with "nothing sent; safe to retry". If
+  it fires after, the result is unknown: exit 7 with "may have applied; check
+  before retrying", never retried automatically.
 - **A byte bound on every reply**, per cluster, in `internal/daemonrpc`
   beside the timer, single-cluster commands included. It is a trial: one cap
   for every reply, to see how it goes (Q2, section 8). Over the bound the
@@ -123,7 +128,7 @@ time, including when the exit code is 11.
 | 2-4 | `marvel wait` only, unchanged (`cmd/marvel/wait.go:18-26`) |
 | 5 | the daemon answered and the answer is unusable (`daemon_error`, `bad_reply`); inside `wait`, 5 keeps its wider meaning |
 | 6 | `unreachable` |
-| 7 | `no_answer_in_time`. On a write cut before the request was sent: nothing sent; safe to retry. On a write cut after it was sent: may have applied; check before retrying (section 3) |
+| 7 | `no_answer_in_time`. Under Q1 (a) only a fan-out read arms the timer, so a write never exits 7 from it. The two write messages wait on a write getting a deadline (section 3) |
 | 8 | `auth_refused` |
 | 9 | `host_key_unknown` or `host_key_changed` |
 | 10 | partial: at least one cluster answered and at least one did not, or, under `--cluster` with two or more clusters or `--all-clusters`, any `starting` (R4). Because any `starting` gives 10 there, a set with a `starting` cluster exits 10, never 11 |
@@ -269,7 +274,7 @@ Rigs:
 | 5 | #823 | `TestFilterReplacesC0C1DELFormat`. `TestNewlineCannotForgeRow`: a name holding `x\nother:ws/evil\trunning` draws exactly one row. `TestPlaceholderAddsNoSeparator`: for any input, the output holds no more `:`, `/` or `?` than the input. `TestSeparatorLookalikesReplacedInKeyParts`. `TestDaemonErrorFiltered`: an error text holding ESC prints filtered. `TestEachReplacementIsOneFFFD`: each replaced code point and each invalid byte becomes exactly one U+FFFD, and the rune count is unchanged. `TestUndrawableNoteNamesCodePoints`: a name holding ESC and U+202E gives one note line naming `U+001B, U+202E` and pointing at `-o json`; clean input gives no note. | U, F |
 | 6 | #827 | `TestSortStableOnWorkspaceName`: tied rows keep their order over 100 shuffled inputs. | U |
 | 7 | #830 | `TestFanOutOneOutcomePerCluster`: three fakes (answers, absent, hung) give three status lines and three records, exit 10. `TestFanOutNoneAnswered`: mixed causes, exit 11. `TestAllFailSameCauseExitsThatCode`: one subtest each for 5, 6, 7, 8 and 9. `TestFanOutOneHungClusterBounded`. `TestFanOutIsParallel`: three hung clusters finish under twice the timer. `TestFanOutNeverReadsStdin`: an unknown host key, stdin a pipe holding `y`; the pipe is unread and known_hosts is byte-identical. `TestFanOutChangedKeyDistinct`. `TestFanOutRefusesIdentitySocketSeat`: zero connections. `TestFanOutCallsOnlyReadMethods`: the methods called are within a written allowlist. `TestColonKeyRefusedUntil829`. `TestStartingReplyIsPartial`: under `--cluster a,b` and under `--all-clusters`, rows shown, exit 10. `TestPlainGetSessionsStartingKeepsExit`: no cluster flag, today's exit (R4). `TestSingleClusterFlagStartingKeepsExit`: `--cluster a` naming one cluster, today's exit (R4). `TestFanOutSortsClusterFirst`. `TestKeyColumnSurvivesNarrowWidth`, `TestKeyColumnWithExplicitColumns`, `TestKeyColumnInPipe`. `TestOutcomeEnumIsClosed`. `TestFanOutOffersOnlyEntryKey`: two in-process listeners, a scratch `SSH_AUTH_SOCK` fake and a key at `~/.ssh/id_ed25519` under the scratch HOME; each listener sees one key, the entry's own, the agent gets zero connections and `~/.ssh/id_ed25519` is never offered (R1). `TestFanOutEntryWithoutIdentityOffersOnlyClientKey`: an entry that names no identity, with marvel's client key in the scratch marvel layout (`layout.DefaultClientKey()`, `internal/daemonrpc/client.go:418`), an agent on a scratch `SSH_AUTH_SOCK` and a key at `~/.ssh/id_ed25519`; the listener sees only the client key and the agent gets zero connections (R1). `TestFanOutNoIdentityIsAuthRefused`: an entry with no loadable key is `auth_refused` before any dial (R1). | F, L, U |
-| 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). `TestWriteCutByTimerSaysMayHaveApplied`: the fake receives exactly one request, then goes quiet; exit 7 and "may have applied". `TestWriteCutBeforeSendSaysNothingSent`: the timer fires before the request is written; the fake receives zero requests; exit 7 and "nothing sent; safe to retry". | F, S |
+| 8 | #824 | `TestWriteResultNamesCluster`: kill, delete, inject, scale and shift name the cluster, or the socket on the socket rung (`cmd/marvel/header.go:44`). Held, not in #824's red set: `TestWriteCutByTimerSaysMayHaveApplied` (the fake receives exactly one request, then goes quiet; exit 7 and "may have applied") and `TestWriteCutBeforeSendSaysNothingSent` (the timer fires before the request is written; the fake receives zero requests; exit 7 and "nothing sent; safe to retry") wait on a write getting a deadline (section 3) and join the ticket that adds one. | F |
 | 9 | #829 | `TestQualifiedKeySplitsAtFirstColon`. `TestFullwidthColonIsBare`. `TestQualifiedWriteNeedsMatchingCluster`. `TestKeyHoldingPlaceholderRefused`: a key holding U+FFFD, filtered or sent literally by the daemon, is refused and the refusal points at `-o json`. | U, F |
 | 10 | #825 | `TestFutureStampReadsQuestion`: a pinned clock gives `?` and the reason; a missing stamp reads `-`. | U |
 | 11 | #831 | `TestSameAddressDialledOnce`. `TestSameInodeMerges`: two paths, one a symlink to one fake. `TestEchoedVersionNotMerged`: a fake echoes another's pid and start time from a different inode. `TestSharedHostKeyDifferentSocketNotMerged`. `TestSameHostKeyAndSocketMerges`: two `ssh://` entries to one S server, same verified fingerprint, socket path, pid and start time, merge into one `same_daemon` line. `TestMergeNeverHidesStatusLine`. | F, S |
@@ -293,6 +298,10 @@ Each test was checked against its ticket and that ticket's dependencies:
 - **The byte bound had no owner.** Assigned to #761, which already owns the
   client exchange; #830 maps the error to `bad_reply`.
 - **#812's host-key and auth types** need the S rig and nothing else.
+- **#824's two write-cut tests are not reachable under Q1 (a).** No write
+  arms the timer, so they could pass only through a test seam that proves a
+  message no operator sees. They are held, named in #824's row, until a
+  ticket gives a write a deadline.
 - **`TestFanOutOffersOnlyEntryKey`**, **`TestFanOutEntryWithoutIdentityOffersOnlyClientKey`**
   and **`TestFanOutNoIdentityIsAuthRefused`** belong to #830 (R1 is ruled, both
   branches: the entry's key, or marvel's client key when the entry names
