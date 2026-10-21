@@ -122,14 +122,23 @@ func TestTimerBoundsSilentUnixDaemon(t *testing.T) {
 	wantTimeout(t, err, "reply")
 }
 
-// openFDs counts this process's open file descriptors.
+// openFDs counts this process's open file descriptors. It lists the names
+// without stat'ing them: os.ReadDir stats each entry, and on darwin that
+// fails in a test binary with "bad file descriptor". An unreadable table
+// fails the test rather than skipping it, because a skip lets the leak check
+// pass without running.
 func openFDs(t *testing.T) int {
 	t.Helper()
-	ents, err := os.ReadDir("/dev/fd")
+	d, err := os.Open("/dev/fd")
 	if err != nil {
-		t.Skipf("no /dev/fd: %v", err)
+		t.Fatalf("open /dev/fd: %v", err)
 	}
-	return len(ents)
+	defer func() { _ = d.Close() }()
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		t.Fatalf("read /dev/fd: %v", err)
+	}
+	return len(names)
 }
 
 // settle waits, with a bounded number of yields, for the goroutine count to
@@ -197,7 +206,10 @@ func TestOversizedReplyIsBadReply(t *testing.T) {
 		_, _ = c.Read(buf)
 		_, _ = c.Write([]byte(`{"result":"` + strings.Repeat("x", 4096) + `"}` + "\n"))
 	}()
-	_, err = SendRequestWith(sock, Request{Method: "ping"}, DialOptions{})
+	err = callWithin(t, func() error {
+		_, err := SendRequestWith(sock, Request{Method: "ping"}, DialOptions{})
+		return err
+	})
 	var bad *BadReplyError
 	if !errors.As(err, &bad) {
 		t.Fatalf("err = %v (%T), want a BadReplyError", err, err)
@@ -346,11 +358,16 @@ func TestBoundedReaderStopsAtTheLimit(t *testing.T) {
 		r := newBoundedReader(strings.NewReader(strings.Repeat("x", n)), limit)
 		buf := make([]byte, 4096)
 		total := 0
-		for {
+		for i := 0; ; i++ {
 			k, err := r.Read(buf)
 			total += k
 			if err != nil {
 				return total, err
+			}
+			// A read that makes no progress, or a loop that outlasts the
+			// data, is a failure to end the stream, not a pass.
+			if k == 0 || i > 4*n/len(buf)+4 {
+				t.Fatalf("a reply of %d bytes: read %d bytes with no end (k=%d, err=%v)", n, total, k, err)
 			}
 		}
 	}

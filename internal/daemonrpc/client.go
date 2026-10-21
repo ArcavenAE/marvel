@@ -129,6 +129,9 @@ var ErrWatchUnsupported = errors.New("daemon does not support events.watch; fall
 // Response alongside the decoded batch so the caller can read
 // DaemonHome once.
 //
+// Each message on the stream is held to the same byte bound as a single
+// reply (maxReplyBytes); the stream as a whole is not, since it has no end.
+//
 // A daemon that does not know the method answers the request with an
 // unknown-method error, which is returned as ErrWatchUnsupported. The
 // daemon closing the connection ends the stream with an error that says
@@ -144,16 +147,22 @@ func WatchEventsWith(socketPath string, params json.RawMessage, opts DialOptions
 	if err := json.NewEncoder(conn).Encode(Request{Method: MethodEventsWatch, Params: params}); err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	dec := json.NewDecoder(conn)
+	limit := maxReplyBytes
+	br := newBoundedReader(conn, limit)
+	dec := json.NewDecoder(br)
 	first := true
 	for {
 		var resp Response
 		if err := dec.Decode(&resp); err != nil {
+			if errors.Is(err, errReplyTooLarge) {
+				return &BadReplyError{Err: fmt.Errorf("read event stream: a message passed the %d-byte bound", limit)}
+			}
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return errors.New("event stream ended: the daemon closed the connection")
 			}
 			return fmt.Errorf("read event stream: %w", err)
 		}
+		br.next(dec.InputOffset())
 		if resp.Error != "" {
 			if first && strings.HasPrefix(resp.Error, "unknown method") {
 				return ErrWatchUnsupported
@@ -336,10 +345,12 @@ func dialSSHDirect(user, host, port string, opts DialOptions) (net.Conn, error) 
 func sshDial(user, host, port string, opts DialOptions) (*ssh.Client, error) {
 	addr := net.JoinHostPort(host, port)
 	offered := &offeredKeys{}
-	config, err := sshClientConfig(user, opts, offered)
+	config, closeHeld, err := sshClientConfig(user, opts, offered)
 	if err != nil {
 		return nil, err
 	}
+	// The agent socket is only needed until auth is done.
+	defer closeHeld()
 	config.AuthCallback = authRefusedCallback(user, addr, offered)
 
 	tcp, err := net.DialTimeout("tcp", addr, opts.ex.connectTimeout(config.Timeout))
@@ -414,18 +425,34 @@ func authRefusedCallback(user, addr string, offered *offeredKeys) ssh.ClientAuth
 	}
 }
 
-func sshClientConfig(user string, opts DialOptions, offered *offeredKeys) (*ssh.ClientConfig, error) {
-	methods, err := sshAuthMethodsFor(opts.Identity, offered)
+// sshClientConfig builds the client config. The returned func closes the
+// connections building it opened (the agent socket); the caller runs it when
+// auth is over. The exchange timer closes them too if it fires first.
+func sshClientConfig(user string, opts DialOptions, offered *offeredKeys) (*ssh.ClientConfig, func(), error) {
+	var held []io.Closer
+	hold := func(c io.Closer) {
+		held = append(held, c)
+		opts.ex.hold(c)
+	}
+	closeHeld := func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}
+	methods, err := sshAuthMethodsFor(opts.Identity, offered, hold)
 	if err != nil {
-		return nil, err
+		closeHeld()
+		return nil, nil, err
 	}
 	if len(methods) == 0 {
-		return nil, &NoIdentityError{}
+		closeHeld()
+		return nil, nil, &NoIdentityError{}
 	}
 
 	layout, err := paths.Default()
 	if err != nil {
-		return nil, err
+		closeHeld()
+		return nil, nil, err
 	}
 	mode := knownhosts.ModePrompt
 	if opts.TrustUnknownHost {
@@ -438,7 +465,7 @@ func sshClientConfig(user string, opts DialOptions, offered *offeredKeys) (*ssh.
 		Auth:            methods,
 		HostKeyCallback: knownhosts.Callback(layout, mode, nil, nil),
 		Timeout:         10 * time.Second,
-	}, nil
+	}, closeHeld, nil
 }
 
 // sshSessionConn wraps an SSH session's stdin/stdout as a net.Conn-like
@@ -490,7 +517,10 @@ func (c *sshWrappedConn) Close() error {
 //
 // If identity is set but unreadable or has weak permissions, that is a
 // hard error — callers expect the cluster's configured key to be used.
-func sshAuthMethodsFor(identity string, offered *offeredKeys) ([]ssh.AuthMethod, error) {
+//
+// The agent socket, when one is dialed, is handed to hold so the caller can
+// close it; a silent agent would otherwise block auth past the exchange timer.
+func sshAuthMethodsFor(identity string, offered *offeredKeys, hold func(io.Closer)) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
 	if identity != "" {
@@ -519,6 +549,9 @@ func sshAuthMethodsFor(identity string, offered *offeredKeys) ([]ssh.AuthMethod,
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		conn, err := net.Dial("unix", sock)
 		if err == nil {
+			if hold != nil {
+				hold(conn)
+			}
 			methods = append(methods, offered.record(agent.NewClient(conn).Signers))
 		}
 	}

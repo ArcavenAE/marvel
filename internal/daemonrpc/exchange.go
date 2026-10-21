@@ -54,7 +54,8 @@ type exchange struct {
 	mu     sync.Mutex
 	phase  string
 	closer io.Closer
-	fired  string // the phase the timer fired in; empty until it fires
+	held   []io.Closer // other connections the call holds, such as an SSH agent socket
+	fired  string      // the phase the timer fired in; empty until it fires
 }
 
 // startExchange arms the timer, or returns nil when d is not positive.
@@ -70,9 +71,27 @@ func startExchange(d time.Duration) *exchange {
 func (ex *exchange) fire() {
 	ex.mu.Lock()
 	ex.fired = ex.phase
-	c := ex.closer
+	cs := append([]io.Closer{ex.closer}, ex.held...)
 	ex.mu.Unlock()
-	if c != nil {
+	for _, c := range cs {
+		if c != nil {
+			_ = c.Close()
+		}
+	}
+}
+
+// hold records a connection besides the main one that the timer also
+// closes if it fires, such as the socket of an SSH agent that may never
+// answer. If the timer has already fired, c is closed at once.
+func (ex *exchange) hold(c io.Closer) {
+	if ex == nil || c == nil {
+		return
+	}
+	ex.mu.Lock()
+	ex.held = append(ex.held, c)
+	fired := ex.fired != ""
+	ex.mu.Unlock()
+	if fired {
 		_ = c.Close()
 	}
 }
@@ -146,6 +165,7 @@ type boundedReader struct {
 	r     io.Reader
 	left  int64
 	limit int64
+	read  int64 // bytes read from r so far
 }
 
 func newBoundedReader(r io.Reader, limit int64) *boundedReader {
@@ -161,5 +181,14 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 	}
 	n, err := b.r.Read(p)
 	b.left -= int64(n)
+	b.read += int64(n)
 	return n, err
+}
+
+// next starts the budget of the next message on a stream. offset is how
+// much of the stream the decoder has consumed (json.Decoder.InputOffset);
+// whatever it has read past that already belongs to the next message, so
+// it counts against the new budget.
+func (b *boundedReader) next(offset int64) {
+	b.left = b.limit - (b.read - offset)
 }
