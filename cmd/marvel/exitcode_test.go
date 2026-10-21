@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/knownhosts"
 )
@@ -26,7 +28,6 @@ func TestConnectErrorPrintsNoUsage(t *testing.T) {
 	root := newRootCmd()
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
-	root.SetErr(&errOut)
 	root.SetArgs([]string{"get", "sessions", "--socket", dead})
 	code := execute(root, &errOut)
 
@@ -108,5 +109,34 @@ func TestWaitCodesUnchanged(t *testing.T) {
 		if got := exitCodeFor(fmt.Errorf("wrapped: %w", &exitError{Code: c, Msg: "m"})); got != c {
 			t.Errorf("exitCodeFor(exitError{%d}) = %d", c, got)
 		}
+	}
+}
+
+// TestSilenceUsageOnlyForConnectErrors: the RunE wrapper drops the usage
+// block for a typed connection error and keeps it for any other error.
+func TestSilenceUsageOnlyForConnectErrors(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		err       error
+		wantUsage bool
+	}{
+		{"plain error", errors.New("bad input"), true},
+		{"wrapped unreachable", fmt.Errorf("get: %w", &daemonrpc.UnreachableError{Addr: "a", Err: errors.New("refused")}), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := &cobra.Command{Use: "r"}
+			root.AddCommand(&cobra.Command{Use: "leaf", RunE: func(*cobra.Command, []string) error { return c.err }})
+			silenceUsageOnConnectErrors(root)
+			var out, errOut bytes.Buffer
+			root.SetOut(&out)
+			root.SetArgs([]string{"leaf"})
+			execute(root, &errOut)
+			if got := strings.Contains(out.String()+errOut.String(), "Usage:"); got != c.wantUsage {
+				t.Errorf("usage printed = %v, want %v:\n%s%s", got, c.wantUsage, out.String(), errOut.String())
+			}
+			if !strings.Contains(errOut.String(), c.err.Error()) {
+				t.Errorf("stderr does not hold the error:\n%s", errOut.String())
+			}
+		})
 	}
 }
