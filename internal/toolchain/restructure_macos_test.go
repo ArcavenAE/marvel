@@ -458,15 +458,15 @@ func TestShippedCIRefusesUnreadKeys(t *testing.T) {
 	}
 }
 
-// The job and step keys the guards accept: the ones ci.yml uses on the two
-// gate jobs today (name, runs-on and steps; name, uses, with, env and run),
-// and the ones the guards read and judge themselves. Any other key, such as
-// container:, services:, working-directory: or timeout-minutes:, is a gap,
-// since a key the guard does not read may change what the step runs. A new key
-// has to be added here, which puts it in front of a reviewer.
+// The job and step keys the guards accept: only the ones ci.yml uses on the
+// two gate jobs and their steps today. Every other key fails closed, even one
+// the guards also judge (if, continue-on-error, defaults, shell), since a key
+// the guard does not expect may change what the step runs: container: sets
+// its environment and tools, working-directory: where it runs. A new key has
+// to be added here, which puts it in front of a reviewer.
 var (
-	allowedJobKeys  = []string{"continue-on-error", "defaults", "env", "if", "name", "runs-on", "steps"}
-	allowedStepKeys = []string{"continue-on-error", "env", "if", "name", "run", "shell", "uses", "with"}
+	allowedJobKeys  = []string{"name", "runs-on", "steps"}
+	allowedStepKeys = []string{"env", "name", "run", "uses", "with"}
 )
 
 // extraKeys returns m's keys that are not in allowed, sorted.
