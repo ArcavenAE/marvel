@@ -49,6 +49,37 @@ func TestConnectErrorPrintsNoUsage(t *testing.T) {
 	}
 }
 
+// TestWaitConnectErrorPrintsNoUsage: wait against a socket nothing listens
+// on keeps its exit 5, prints "unavailable" and one error line, and no
+// usage block, like every other verb.
+func TestWaitConnectErrorPrintsNoUsage(t *testing.T) {
+	dir, err := os.MkdirTemp("", "cw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dead := filepath.Join(dir, "dead.sock")
+
+	root := newRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"wait", "--experimental", "--socket", dead, "x/y"})
+	code := execute(root, &errOut)
+
+	if code != waitDaemonError {
+		t.Errorf("exit = %d, want %d", code, waitDaemonError)
+	}
+	if strings.Contains(out.String()+errOut.String(), "Usage:") {
+		t.Errorf("a usage block was printed:\nstdout:\n%s\nstderr:\n%s", out.String(), errOut.String())
+	}
+	if lines := strings.Split(strings.TrimRight(errOut.String(), "\n"), "\n"); len(lines) != 1 || !strings.Contains(lines[0], dead) {
+		t.Errorf("stderr = %d lines, want one naming %s:\n%s", len(lines), dead, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "unavailable" {
+		t.Errorf("stdout = %q, want \"unavailable\"", got)
+	}
+}
+
 // TestUsageErrorStillPrintsUsage is the control for the test above: an
 // error in how the command was typed keeps its usage block and exit 1.
 func TestUsageErrorStillPrintsUsage(t *testing.T) {

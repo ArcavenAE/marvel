@@ -216,6 +216,8 @@ tick while new-generation sessions are already running.
 
 Roles can configure healthchecks. Currently supported: `heartbeat` (agent must
 send periodic heartbeats to the daemon) and `process-alive` (tmux pane exists).
+A passed heartbeat reads `healthy` in `marvel get sessions`; a `process-alive`
+role reads `alive`, because nothing beyond the pane was checked.
 
 ```toml
 [team.role.healthcheck]
