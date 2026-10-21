@@ -454,6 +454,49 @@ func TestShippedCIRefusesUnreadKeys(t *testing.T) {
 	}
 }
 
+// The job and step keys the guards accept: the ones ci.yml uses on the two
+// gate jobs today (name, runs-on and steps; name, uses, with, env and run),
+// and the ones the guards read and judge themselves. Any other key, such as
+// container:, services:, working-directory: or timeout-minutes:, is a gap,
+// since a key the guard does not read may change what the step runs. A new key
+// has to be added here, which puts it in front of a reviewer.
+var (
+	allowedJobKeys  = []string{"continue-on-error", "defaults", "env", "if", "name", "runs-on", "steps"}
+	allowedStepKeys = []string{"continue-on-error", "env", "if", "name", "run", "shell", "uses", "with"}
+)
+
+// extraKeys returns m's keys that are not in allowed, sorted.
+func extraKeys(m map[string]any, allowed []string) []string {
+	var out []string
+	for k := range m {
+		if !slices.Contains(allowed, k) {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// defaultsExtra returns every key of a defaults: block other than run.shell,
+// named by its path, such as defaults.run.working-directory.
+func defaultsExtra(d map[string]any) []string {
+	var out []string
+	for k, v := range d {
+		if k != "run" {
+			out = append(out, "defaults."+k)
+			continue
+		}
+		run, _ := v.(map[string]any)
+		for rk := range run {
+			if rk != "shell" {
+				out = append(out, "defaults.run."+rk)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 func ciJobs(path string) (map[string]ciJob, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -467,7 +510,29 @@ func ciJobs(path string) (map[string]ciJob, error) {
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	var raw struct {
+		Defaults map[string]any            `yaml:"defaults"`
+		Jobs     map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	var wfExtra []string
+	for _, k := range defaultsExtra(raw.Defaults) {
+		wfExtra = append(wfExtra, "workflow "+k)
+	}
 	for name, job := range wf.Jobs {
+		job.ExtraKeys = append(extraKeys(raw.Jobs[name], allowedJobKeys), wfExtra...)
+		if d, ok := raw.Jobs[name]["defaults"].(map[string]any); ok {
+			job.ExtraKeys = append(job.ExtraKeys, defaultsExtra(d)...)
+		}
+		slices.Sort(job.ExtraKeys)
+		steps, _ := raw.Jobs[name]["steps"].([]any)
+		for i, st := range steps {
+			if m, ok := st.(map[string]any); ok && i < len(job.Steps) {
+				job.Steps[i].ExtraKeys = extraKeys(m, allowedStepKeys)
+			}
+		}
 		if job.Defaults.Run.Shell == "" {
 			job.Defaults.Run.Shell = wf.Defaults.Run.Shell
 		}
@@ -493,7 +558,8 @@ func ciJobs(path string) (map[string]ciJob, error) {
 //
 // Only what can fail the job counts. A job that sets if, or a continue-on-error
 // that is not false, is a gap, since it may never run or never go red. A step
-// that sets either, runs under a shell bashShell does not accept (its own or
+// that sets either, sets a key outside allowedStepKeys (or a job outside
+// allowedJobKeys), runs under a shell bashShell does not accept (its own or
 // the job's default), or sets an env name shellEnv reports, is reported and read
 // as absent, and an install line with || on it counts for nothing, since it
 // can swallow the failure.
@@ -501,6 +567,9 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
 		gaps = append(gaps, "the job sets "+why)
+	}
+	if len(job.ExtraKeys) > 0 {
+		gaps = append(gaps, "the job sets "+strings.Join(job.ExtraKeys, " and ")+", which the guard does not read")
 	}
 	var lines []string
 	gated := map[string]bool{}
@@ -511,6 +580,10 @@ func macOSGaps(job ciJob, pkgs []string) []string {
 		}
 		if sh := stepShell(job, step); !bashShell(sh) {
 			gaps = append(gaps, fmt.Sprintf("step %d (%s) runs under shell %q, which may not run the script, so it is not counted", i, step.Name, sh))
+			continue
+		}
+		if len(step.ExtraKeys) > 0 {
+			gaps = append(gaps, fmt.Sprintf("step %d (%s) sets %s, which the guard does not read, so it is not counted", i, step.Name, strings.Join(step.ExtraKeys, " and ")))
 			continue
 		}
 		if names := shellEnv(job, step); len(names) > 0 {

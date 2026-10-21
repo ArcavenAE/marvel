@@ -189,11 +189,15 @@ func TestLinuxJobGatesBusSkips(t *testing.T) {
 // step, a gate before the nats-server install, an if or a continue-on-error
 // that is not false on the job or the gate step, which would let it skip or
 // stay green, or a gate step whose shell bashShell does not accept or whose
-// env, its job's or the workflow's sets a name shellEnv reports.
+// env, its job's or the workflow's sets a name shellEnv reports, or a job or
+// gate step that sets a key the guard does not read (ExtraKeys).
 func busGateGaps(job ciJob) []string {
 	var gaps []string
 	for _, why := range mayNotFail(job.If, job.ContinueOnError) {
 		gaps = append(gaps, "the job sets "+why)
+	}
+	if len(job.ExtraKeys) > 0 {
+		gaps = append(gaps, "the job sets "+strings.Join(job.ExtraKeys, " and ")+", which the guard does not read")
 	}
 	nats, gated := -1, -1
 	for i, step := range job.Steps {
@@ -215,6 +219,9 @@ func busGateGaps(job ciJob) []string {
 	}
 	if sh := stepShell(job, job.Steps[gated]); !bashShell(sh) {
 		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) runs under shell %q, which may not run the script", gated, sh))
+	}
+	if keys := job.Steps[gated].ExtraKeys; len(keys) > 0 {
+		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s, which the guard does not read", gated, strings.Join(keys, " and ")))
 	}
 	if names := shellEnv(job, job.Steps[gated]); len(names) > 0 {
 		gaps = append(gaps, fmt.Sprintf("the bus skip gate step (step %d) sets %s in its env, its job's or the workflow's, outside the allowed names %v", gated, strings.Join(names, " and "), allowedEnv))
