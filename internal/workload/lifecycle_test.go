@@ -623,7 +623,9 @@ func TestTerminateEndsAChildAndKillsOneThatIgnoresTerm(t *testing.T) {
 			}
 			reaped := make(chan struct{})
 			go func() { _ = cmd.Wait(); close(reaped) }()
-			t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); <-reaped })
+			// Through Terminate, which re-proves the leader first: once it
+			// is reaped its pid and group may name another process.
+			t.Cleanup(func() { _ = Terminate(prober, child, 50*time.Millisecond); <-reaped })
 
 			began := time.Now()
 			if err := Terminate(prober, child, grace); err != nil {
