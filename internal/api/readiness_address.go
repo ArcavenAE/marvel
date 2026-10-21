@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
+	"regexp/syntax"
 
 	"github.com/arcavenae/marvel/contracts/go/envelopeschema"
 )
@@ -32,12 +32,46 @@ func mustAgentAddress() *regexp.Regexp {
 	if err := json.Unmarshal(envelopeschema.JSON, &doc); err != nil {
 		panic(fmt.Sprintf("api: the envelope schema is not JSON: %v", err))
 	}
-	seg, ok := strings.CutPrefix(doc.Properties.Sender.Properties.AgentID.Pattern, "^")
-	if ok {
-		seg, ok = strings.CutSuffix(seg, "$")
+	re, err := agentAddressFrom(doc.Properties.Sender.Properties.AgentID.Pattern)
+	if err != nil {
+		panic(fmt.Sprintf("api: the envelope schema's agent_id pattern: %v", err))
 	}
-	if !ok || seg == "" {
-		panic("api: the envelope schema's agent_id pattern is not an anchored class")
+	return re
+}
+
+// agentAddressFrom builds the agent://{team}/{id} matcher from the agent_id
+// pattern, using the pattern between its anchors as each part. The pattern is
+// parsed, not cut as text, and must be ^, one expression with no anchor of
+// its own, then $; the part is grouped before it is spliced. Anything else
+// (an alternation of anchored branches, an inner anchor) would splice into an
+// expression that matches other addresses, so it is refused.
+func agentAddressFrom(pattern string) (*regexp.Regexp, error) {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return nil, err
 	}
-	return regexp.MustCompile("^agent://" + seg + "/" + seg + "$")
+	n := len(re.Sub)
+	if re.Op != syntax.OpConcat || n < 3 || re.Sub[0].Op != syntax.OpBeginText || re.Sub[n-1].Op != syntax.OpEndText {
+		return nil, fmt.Errorf("%q is not ^, one expression, then $", pattern)
+	}
+	part := &syntax.Regexp{Op: syntax.OpConcat, Flags: re.Flags, Sub: re.Sub[1 : n-1]}
+	if hasAnchor(part) {
+		return nil, fmt.Errorf("%q has an anchor between its outer ^ and $", pattern)
+	}
+	seg := "(?:" + part.String() + ")"
+	return regexp.Compile("^agent://" + seg + "/" + seg + "$")
+}
+
+// hasAnchor reports whether re holds a line or text anchor anywhere.
+func hasAnchor(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpBeginLine, syntax.OpEndLine, syntax.OpBeginText, syntax.OpEndText:
+		return true
+	}
+	for _, sub := range re.Sub {
+		if hasAnchor(sub) {
+			return true
+		}
+	}
+	return false
 }
