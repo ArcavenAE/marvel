@@ -54,6 +54,14 @@ func guardDial(raw string) error {
 	return fmt.Errorf("dial %q: %w (marvel#998)", raw, errNotStarted)
 }
 
+// noBroker stands in for the verify dial of a test that does not start a
+// broker: it refuses every user, as a host with no broker would, without a
+// dial. A manager with no URL would otherwise dial the client's default,
+// nats://127.0.0.1:4222.
+func noBroker(context.Context, string, string, string) error { return errNoBroker }
+
+var errNoBroker = errors.New("no broker: the test stubs the verify dial")
+
 // listenLoopback listens on a free loopback port and marks it started, for a
 // test that stands in for a broker with its own listener.
 func listenLoopback(t *testing.T) net.Listener {
