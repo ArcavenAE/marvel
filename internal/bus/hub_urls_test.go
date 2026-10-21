@@ -45,7 +45,6 @@ func TestManagerRendersTheWholeHubList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.verify = noBroker
 	m.Reloader = &countingReloader{}
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)

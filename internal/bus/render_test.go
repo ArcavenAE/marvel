@@ -307,7 +307,6 @@ func TestManagerSetLeafAttachedTogglesBlockPersistsAndReloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.verify = noBroker
 	rl := &countingReloader{}
 	m.Reloader = rl
 

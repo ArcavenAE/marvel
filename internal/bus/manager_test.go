@@ -33,7 +33,6 @@ func TestSetLeafAttachedRollsBackOnRegenerateFailure(t *testing.T) {
 	if !m.LeafAttached() {
 		t.Fatal("default should be attached")
 	}
-	m.verify = noBroker
 	m.Reloader = failingReloader{}
 
 	// Disconnect: the leaf block changes, the reload fails, the op rolls back.
