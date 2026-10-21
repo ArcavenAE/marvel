@@ -322,6 +322,10 @@ func TestMarryReachFollowsEachRoute(t *testing.T) {
 		"initfunc":   "os/exec", // a function value an init assigns
 		"declimport": "log",     // a reached declaration's own use, not its file's
 		"method":     "os/exec", // a method of a reached type, called from outside
+		"field":      "os/exec", // an init sets a field of a reached variable
+		"mapelem":    "os/exec", // an init sets an element of a reached map
+		"pointer":    "os/exec", // an init writes a reached variable through a pointer
+		"alias":      "os/exec", // an init writes a reached map through a copy of it
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
