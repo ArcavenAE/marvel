@@ -232,6 +232,10 @@ func TestBusSkipsGated(t *testing.T) {
 		{"the gate reads another file", test + "\n" + strings.Replace(gate, "bus.json", "old.json", 1), false},
 		{"the test writes no file", strings.Replace(test, ` > "${RUNNER_TEMP}/bus.json"`, "", 1) + "\n" + gate, false},
 		{"set +e before the test", "set +e\n" + test + "\n" + gate, true},
+		// The gate takes only import paths of this module: a shell operator glued
+		// to the last one, or a word that is not one, is not read as the gate.
+		{"; true glued to the gate's last path", test + "\n" + gate + ";true", false},
+		{"a word that is not an import path after the gate's path", test + "\n" + gate + " extra", false},
 	} {
 		if got := busSkipsGated(tc.run); got != tc.want {
 			t.Errorf("%s: busSkipsGated = %v, want %v", tc.name, got, tc.want)
