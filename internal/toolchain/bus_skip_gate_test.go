@@ -239,6 +239,19 @@ func TestBusGateGaps(t *testing.T) {
 		{"the gate step has an if", job(install, withStep(gate, func(st *ciJobStep) { st.If = "github.event_name == 'push'" })), 1},
 		{"the gate step continues on error", job(install, withStep(gate, func(st *ciJobStep) { st.ContinueOnError = true })), 1},
 		{"the gate step continues on an expression", job(install, withStep(gate, func(st *ciJobStep) { st.ContinueOnError = "${{ inputs.soft }}" })), 1},
+		// The step's shell runs the script. Anything but bash, such as
+		// shell: true {0}, runs none of it and exits 0.
+		{"the gate step's shell is true {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "true {0}" })), 1},
+		{"the gate step's shell is sh", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "sh" })), 1},
+		{"the gate step's shell is bash -n {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash -n {0}" })), 1},
+		{"the gate step's shell is bash -c true {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash -c true {0}" })), 1},
+		{"the gate step's shell is bash -e with no {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash -e" })), 1},
+		{"the job's default shell is true {0}", withJob(good, func(j *ciJob) { j.Defaults.Run.Shell = "true {0}" }), 1},
+		{"the gate step's shell is bash", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash" })), 0},
+		{"the gate step's shell is bash {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash {0}" })), 0},
+		{"the gate step's shell is bash -e {0}", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash -e {0}" })), 0},
+		{"the gate step's shell is GitHub's bash default", job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash --noprofile --norc -eo pipefail {0}" })), 0},
+		{"a bash step under a true {0} job default", withJob(job(install, withStep(gate, func(st *ciJobStep) { st.Shell = "bash" })), func(j *ciJob) { j.Defaults.Run.Shell = "true {0}" }), 0},
 	} {
 		if got := busGateGaps(tc.job); len(got) != tc.gaps {
 			t.Errorf("%s: gaps = %q, want %d", tc.name, got, tc.gaps)
@@ -286,6 +299,19 @@ func TestBusSkipsGated(t *testing.T) {
 		{"a go command other than go test, with the stream redirect", `go env -w GOFLAGS=-skip=TestA > "${RUNNER_TEMP}/bus.json"` + "\n" + test + "\n" + gate, false},
 		{"the test line goes on past its redirect", strings.Replace(test, `"${RUNNER_TEMP}/bus.json"`, `"${RUNNER_TEMP}/bus.json" -count=2`, 1) + "\n" + gate, false},
 		{"set -o pipefail before the test", "set -e -o pipefail\n" + test + "\n" + gate, true},
+		// set may only turn on or off errexit, nounset, pipefail and xtrace:
+		// -n or -o noexec before the test line runs nothing, and the step exits 0.
+		{"set -n before the test", "set -n\n" + test + "\n" + gate, false},
+		{"set -o noexec before the test", "set -o noexec\n" + test + "\n" + gate, false},
+		{"-n inside a cluster", "set -eun\n" + test + "\n" + gate, false},
+		{"an unknown letter", "set -eq\n" + test + "\n" + gate, false},
+		{"an unknown long name", "set -o posix\n" + test + "\n" + gate, false},
+		{"-o with no name", "set -o\n" + test + "\n" + gate, false},
+		{"o before another letter in a cluster", "set -oe pipefail\n" + test + "\n" + gate, false},
+		{"a long name with no -o", "set pipefail\n" + test + "\n" + gate, false},
+		// The gate is the last command: set +e after it ends the script with
+		// status 0 whatever the gate found.
+		{"set +e after the gate", test + "\n" + gate + "\nset +e", false},
 	} {
 		if got := busSkipsGated(tc.run); got != tc.want {
 			t.Errorf("%s: busSkipsGated = %v, want %v", tc.name, got, tc.want)

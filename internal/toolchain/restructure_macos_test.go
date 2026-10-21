@@ -140,6 +140,10 @@ func TestMacOSGaps(t *testing.T) {
 		{"the test step has an if", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.If = "github.event_name == 'push'" })), 3},
 		{"the test step continues on error", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.ContinueOnError = true })), 3},
 		{"the install step continues on error", job(withStep(installStep, func(st *ciJobStep) { st.ContinueOnError = true }), run(gated)), 3},
+		{"the test step's shell is true {0}", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Shell = "true {0}" })), 3},
+		{"the test step's shell is bash {0}", job(installStep, withStep(run(gated), func(st *ciJobStep) { st.Shell = "bash {0}" })), 0},
+		{"the install step's shell is true {0}", job(withStep(installStep, func(st *ciJobStep) { st.Shell = "true {0}" }), run(gated)), 3},
+		{"the job's default shell is true {0}", withJob(good, func(j *ciJob) { j.Defaults.Run.Shell = "true {0}" }), 6},
 		{"nothing", ciJob{}, 4},
 	} {
 		if got := macOSGaps(tc.job, pkgs); len(got) != tc.gaps {
@@ -150,6 +154,7 @@ func TestMacOSGaps(t *testing.T) {
 
 type ciJobStep struct {
 	Name            string            `yaml:"name"`
+	Shell           string            `yaml:"shell"`
 	If              string            `yaml:"if"`
 	ContinueOnError any               `yaml:"continue-on-error"`
 	Env             map[string]string `yaml:"env"`
@@ -160,7 +165,36 @@ type ciJob struct {
 	RunsOn          string      `yaml:"runs-on"`
 	If              string      `yaml:"if"`
 	ContinueOnError any         `yaml:"continue-on-error"`
+	Defaults        ciDefaults  `yaml:"defaults"`
 	Steps           []ciJobStep `yaml:"steps"`
+}
+
+// ciDefaults is a workflow's or a job's defaults: block.
+type ciDefaults struct {
+	Run struct {
+		Shell string `yaml:"shell"`
+	} `yaml:"run"`
+}
+
+// A job without its own default shell takes the workflow's, so a workflow-level
+// shell: true {0} reaches every step that names none.
+func TestCIJobsTakesTheWorkflowDefaultShell(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ci.yml")
+	wf := "defaults:\n  run:\n    shell: true {0}\njobs:\n  a:\n    steps: []\n  b:\n    defaults:\n      run:\n        shell: bash\n    steps: []\n"
+	if err := os.WriteFile(path, []byte(wf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := ciJobs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jobs["a"].Defaults.Run.Shell; got != "true {0}" {
+		t.Errorf("job a default shell = %q, want the workflow's %q", got, "true {0}")
+	}
+	if got := jobs["b"].Defaults.Run.Shell; got != "bash" {
+		t.Errorf("job b default shell = %q, want its own %q", got, "bash")
+	}
 }
 
 func ciJobs(path string) (map[string]ciJob, error) {
