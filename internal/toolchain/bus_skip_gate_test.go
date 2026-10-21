@@ -235,6 +235,7 @@ func TestBusSkipsGated(t *testing.T) {
 		// The gate takes only import paths of this module: a shell operator glued
 		// to the last one, or a word that is not one, is not read as the gate.
 		{"; true glued to the gate's last path", test + "\n" + gate + ";true", false},
+		{"; true glued to an extra module path", test + "\n" + gate + " " + modulePath + "/internal/daemon;true", false},
 		{"a word that is not an import path after the gate's path", test + "\n" + gate + " extra", false},
 	} {
 		if got := busSkipsGated(tc.run); got != tc.want {
