@@ -57,6 +57,7 @@ func TestNoSkipsGate(t *testing.T) {
 		{"every bus test passed", ran, 0, ""},
 		{"a bus test skipped", ran + ev("skip", busPkg, "TestB"), 1, "TestB"},
 		{"a bus subtest skipped", ran + ev("skip", busPkg, "TestA/sub"), 1, "TestA/sub"},
+		{"each of two skips on its own indented line", ran + ev("skip", busPkg, "TestB") + ev("skip", busPkg, "TestC"), 1, "\n  " + busPkg + " TestC"},
 		{"a test under internal/bus skipped", ran + ev("skip", busPkg+"/inner", "TestC"), 1, "TestC"},
 		{"a skip in another package", ran + ev("skip", other, "TestD"), 0, ""},
 		{"a skip in a package that only shares the prefix", ran + ev("skip", sibling, "TestE"), 0, ""},
