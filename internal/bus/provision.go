@@ -138,6 +138,11 @@ func join(names []string) string {
 	return s
 }
 
+// dialGuard, when set, is asked about every URL before connectAdmin dials it,
+// and its error is returned without a dial. Only the package's tests set it,
+// to refuse a broker the test did not start (marvel#998); it is nil otherwise.
+var dialGuard func(url string) error
+
 // connectAdmin dials as the admin identity. An authorization refusal is
 // retried briefly: the daemon has usually just rewritten authorization.conf
 // and asked the broker to reload it, and the reload is asynchronous, so the
@@ -148,6 +153,11 @@ func join(names []string) string {
 // mismatch reads as an early EOF, so it now waits out the window before it
 // fails.
 func connectAdmin(ctx context.Context, url, user, password string) (*nats.Conn, error) {
+	if dialGuard != nil {
+		if err := dialGuard(url); err != nil {
+			return nil, err
+		}
+	}
 	deadline := time.Now().Add(authRetryWindow)
 	for {
 		nc, err := nats.Connect(url,

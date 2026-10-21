@@ -42,8 +42,10 @@ func (e *BadReplyError) Error() string { return e.Err.Error() }
 func (e *BadReplyError) Unwrap() error { return e.Err }
 
 // AuthRefusedError is an SSH server that accepted none of the keys offered.
-// Offered holds each offered key's SHA256 fingerprint, in
-// ssh.FingerprintSHA256 form; Allowed is the methods the server named.
+// Offered holds the SHA256 fingerprint, in ssh.FingerprintSHA256 form, of
+// each key marvel handed to x/crypto to offer; x/crypto may skip one whose
+// algorithm the server does not accept, so it is not a list of keys the
+// server saw. Allowed is the methods the server named.
 type AuthRefusedError struct {
 	User    string
 	Addr    string

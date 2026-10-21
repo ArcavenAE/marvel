@@ -367,8 +367,8 @@ func sshDial(user, host, port string, opts DialOptions) (*ssh.Client, error) {
 	return client, nil
 }
 
-// offeredKeys records the fingerprint of each key handed to the server
-// during one handshake. A handshake is sequential, so it needs no lock.
+// offeredKeys records the fingerprint of each key handed to x/crypto to
+// offer during one handshake (see AuthRefusedError.Offered). A handshake is sequential, so it needs no lock.
 type offeredKeys struct {
 	fingerprints []string
 }

@@ -123,7 +123,7 @@ func Callback(layout paths.Layout, mode Mode, prompt io.Writer, answer io.Reader
 				Host:        hostname,
 				Fingerprint: ssh.FingerprintSHA256(key),
 				msg: fmt.Sprintf(
-					"host key for %s changed; offered %s (%s), expected %s — "+
+					"host key for %s changed; offered %s (%s), expected %s; "+
 						"possible MITM attack, investigate before continuing; "+
 						"to accept the new key (only if you are certain), remove "+
 						"the matching line from %s and reconnect",
