@@ -68,14 +68,16 @@ func TestNoSkipsGate(t *testing.T) {
 		{"a package-level pass with no test events (-run NoSuch)", ev("start", busPkg, "") + ev("output", busPkg, "") + ev("pass", busPkg, ""), 1, busPkg},
 		{"only a sibling package's tests passed", ev("pass", sibling, "TestG"), 1, busPkg},
 		{"the stream is not go test -json", "ok  \t" + busPkg + "\t1.0s\n", 2, ""},
-		{"an empty stream", "", 2, ""},
-		// A failing test must fail the gate even when another test passed: under
-		// set +e or shell: bash {0}, go test's own exit status no longer ends the
-		// step, so the gate is all that stands between the failure and a green job.
-		{"a bus test failed while another passed", ran + ev("run", busPkg, "TestB") + ev("output", busPkg, "TestB") + ev("fail", busPkg, "TestB") + ev("fail", busPkg, ""), 1, "TestB"},
+		// One bus test passed and another failed. Under set +e or shell: bash {0},
+		// go test's own exit status would no longer end the step, so the gate must
+		// fail on the failure itself.
+		{"one bus test passed and another failed", ran + ev("run", busPkg, "TestB") + ev("fail", busPkg, "TestB") + ev("fail", busPkg, ""), 1, "TestB"},
 		{"a bus subtest failed", ran + ev("fail", busPkg, "TestA/sub"), 1, "TestA/sub"},
-		{"a package under internal/bus failed", ran + ev("fail", busPkg+"/inner", ""), 1, busPkg + "/inner"},
+		{"a test under internal/bus failed", ran + ev("fail", busPkg+"/inner", "TestC"), 1, "TestC"},
 		{"a failure in another package", ran + ev("fail", other, "TestD"), 0, ""},
+		{"a failure in a package that only shares the prefix", ran + ev("fail", sibling, "TestE"), 0, ""},
+		{"an empty stream", "", 2, ""},
+		{"a package under internal/bus failed", ran + ev("fail", busPkg+"/inner", ""), 1, busPkg + "/inner"},
 		// Measured on go1.27.0: the build events name the package in ImportPath and
 		// carry no Package, then the package fails with FailedBuild set.
 		{"the package failed to build, with its build events", `{"ImportPath":"` + busPkg + ` [` + busPkg + `.test]","Action":"build-output","Output":"bus.go:3:12: syntax error\n"}` + "\n" +
