@@ -127,11 +127,48 @@ func procSpec(t *testing.T) ProcessSpec {
 
 // newProc returns a Process over spec with a recording driver, the real
 // prober and an injected clock, and stops it when the test ends.
+//
+// It also records every child the Process starts, proven from the handle in
+// BeforePidFile. After Stop, a recorded child that is still the same process
+// was lost by the code under test: Stop ends only the child Process watches,
+// and a lost child leads its own group, so it would outlive the test. The
+// cleanup fails the test and Terminates it, re-proving it first so it never
+// reaches a reused pid.
 func newProc(t *testing.T, spec ProcessSpec) (*Process, *recDriver, *clock) {
 	t.Helper()
+	prober := childproof.New()
+	var mu sync.Mutex
+	var started []childproof.Child
+	before := spec.BeforePidFile
+	spec.BeforePidFile = func(cmd *exec.Cmd) error {
+		if child, err := prober.Spawned(cmd); err == nil {
+			mu.Lock()
+			started = append(started, child)
+			mu.Unlock()
+		}
+		if before != nil {
+			return before(cmd)
+		}
+		return nil
+	}
+	// Registered before the Stop below, so it runs after it.
+	t.Cleanup(func() {
+		mu.Lock()
+		children := slices.Clone(started)
+		mu.Unlock()
+		for _, child := range children {
+			if !prober.Same(child) {
+				continue
+			}
+			t.Errorf("child pid %d outlived its Process; ending it", child.Pid())
+			if err := Terminate(prober, child, spec.Grace); err != nil {
+				t.Errorf("end the lost child pid %d: %v", child.Pid(), err)
+			}
+		}
+	})
 	d := &recDriver{}
 	c := newClock()
-	p := New(spec, d, childproof.New(), testSchedule)
+	p := New(spec, d, prober, testSchedule)
 	p.now = func() time.Time { return c.at }
 	p.after = c.after
 	t.Cleanup(func() { p.Stop(false) })
