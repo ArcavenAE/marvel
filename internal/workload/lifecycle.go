@@ -46,12 +46,13 @@ type ChildInfo struct {
 type StartKind int
 
 const (
-	// Spawned is a child Spawn started.
-	Spawned StartKind = iota
-	// Adopted is a proven child a driver handed to Adopt.
-	Adopted
-	// Restarted is a child started after a crash or by Restart.
-	Restarted
+	// StartSpawned is a child Spawn started. The Start prefix keeps the name
+	// apart from childproof's Prober.Spawned, which a source gate counts.
+	StartSpawned StartKind = iota
+	// StartAdopted is a proven child a driver handed to Adopt.
+	StartAdopted
+	// StartRestarted is a child started after a crash or by Restart.
+	StartRestarted
 )
 
 // StartInfo is what Started reports. (The plan names it Start, which is
@@ -277,7 +278,7 @@ func (p *Process) loop(parent context.Context) {
 		cur = c
 		p.mu.Lock()
 		p.st.Pid, p.st.Child, p.st.Gen = c.info.Child.Pid(), c.info.Child, c.info.Gen
-		p.st.Adopted = s.How == Adopted
+		p.st.Adopted = s.How == StartAdopted
 		p.st.Ready = false
 		p.st.PidState = PidStateProven
 		p.st.BackoffUntil = time.Time{}
@@ -364,9 +365,9 @@ func (p *Process) loop(parent context.Context) {
 				// A start during the wait after a crash replaces the respawn.
 				retry = nil
 				var c *running
-				how := Spawned
+				how := StartSpawned
 				if r.kind == reqAdopt {
-					c, how = adopt(r.child), Adopted
+					c, how = adopt(r.child), StartAdopted
 				} else {
 					var err error
 					if c, err = spawn(); err != nil {
@@ -383,7 +384,7 @@ func (p *Process) loop(parent context.Context) {
 					r.reply <- err
 					continue
 				}
-				r.reply <- begin(c, StartInfo{How: Restarted, Reason: r.reason, Child: c.info})
+				r.reply <- begin(c, StartInfo{How: StartRestarted, Reason: r.reason, Child: c.info})
 			case reqStop:
 				retry = nil
 				end(r.keep)
@@ -405,7 +406,7 @@ func (p *Process) loop(parent context.Context) {
 				crashed(err)
 				continue
 			}
-			if rerr := begin(c, StartInfo{How: Restarted, Child: c.info}); rerr != nil {
+			if rerr := begin(c, StartInfo{How: StartRestarted, Child: c.info}); rerr != nil {
 				log.Printf("%s: %v", p.spec.Name, rerr)
 			}
 

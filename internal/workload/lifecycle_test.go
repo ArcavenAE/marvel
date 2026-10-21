@@ -178,7 +178,7 @@ func TestSpawnRunsReadyThenStarted(t *testing.T) {
 		t.Error("the snapshot's child is not the proven running child")
 	}
 	starts := d.startsCopy()
-	if len(starts) != 1 || starts[0].How != Spawned || starts[0].Child.Gen != 1 || starts[0].Child.Env == nil {
+	if len(starts) != 1 || starts[0].How != StartSpawned || starts[0].Child.Gen != 1 || starts[0].Child.Env == nil {
 		t.Errorf("starts = %+v, want one Spawned start of gen 1 with its environment", starts)
 	}
 	if want := []string{"Ready", "Started"}; !slices.Equal(d.calls, want) {
@@ -214,7 +214,7 @@ func TestCrashRespawnsOnTheScheduleWithTheGenerationBumped(t *testing.T) {
 	c.fire <- c.at
 	until(t, "the respawn", func() bool { return len(d.startsCopy()) == 2 })
 	s := d.startsCopy()[1]
-	if s.How != Restarted || s.Restarts != 1 || s.Reason != "" || s.Child.Gen != 2 || s.Child.Child.Pid() == first {
+	if s.How != StartRestarted || s.Restarts != 1 || s.Reason != "" || s.Child.Gen != 2 || s.Child.Child.Pid() == first {
 		t.Errorf("respawn = %+v, want Restarted, restart 1, no reason, gen 2, a new pid", s)
 	}
 	if st := p.Snapshot(); !st.Ready || st.Gen != 2 || !st.BackoffUntil.IsZero() {
@@ -298,7 +298,7 @@ func TestAdoptAProvenChildAndSeeItExit(t *testing.T) {
 	if st := p.Snapshot(); !st.Adopted || !st.Ready || st.Pid != cmd.Process.Pid {
 		t.Errorf("snapshot = %+v, want adopted, ready, pid %d", st, cmd.Process.Pid)
 	}
-	if s := d.startsCopy(); len(s) != 1 || s[0].How != Adopted || s[0].Child.Env != nil {
+	if s := d.startsCopy(); len(s) != 1 || s[0].How != StartAdopted || s[0].Child.Env != nil {
 		t.Errorf("starts = %+v, want one Adopted start with no environment", s)
 	}
 
@@ -362,7 +362,7 @@ func TestRestartIsRequestedAndNotCountedAsACrash(t *testing.T) {
 		t.Errorf("exits = %+v, want one requested exit with restarts 0", e)
 	}
 	s := d.startsCopy()
-	if len(s) != 2 || s[1].How != Restarted || s[1].Reason != "new seed" || s[1].Restarts != 0 || s[1].Child.Gen != 2 {
+	if len(s) != 2 || s[1].How != StartRestarted || s[1].Reason != "new seed" || s[1].Restarts != 0 || s[1].Child.Gen != 2 {
 		t.Errorf("starts = %+v, want a Restarted start with the reason, restarts 0, gen 2", s)
 	}
 	if st := p.Snapshot(); st.Restarts != 0 || !st.Ready {
