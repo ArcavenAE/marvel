@@ -24,8 +24,18 @@ const (
 // not taken: a cap only on the timer and fan-out path, which leaves a
 // single-cluster read unbounded; and a cap per verb, sized to what each
 // one returns (a full-scrollback capture is far larger than an events
-// batch). The value is provisional until it is set from a measurement.
-const defaultMaxReplyBytes int64 = 64 << 20
+// batch).
+//
+// The value is 32 MiB. The largest reply measured on the live daemons was
+// a 5,024,543 byte capture with escapes (2026-10-21, read only, taken by
+// the review router, not here). A full-scrollback capture of a session
+// that is not on the alternate screen reaches 100,000 lines; at 200
+// columns and the 1.16 escapes ratio seen in that measurement, that is
+// about 23 MB. 32 MiB is 1.4 times that worst case and 6.7 times the
+// measured maximum. A pane wider than about 280 columns with full
+// scrollback can exceed it and become a bad reply: the known risk of the
+// trial.
+const defaultMaxReplyBytes int64 = 32 << 20
 
 // maxReplyBytes is the bound in force; tests lower it.
 var maxReplyBytes = defaultMaxReplyBytes
