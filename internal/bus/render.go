@@ -46,7 +46,10 @@ type Spec struct {
 	Domain   string // the cluster name; becomes the JetStream domain
 	Listen   string // explicit host:port
 	StoreDir string // JetStream store root; the store itself is StoreDir/store
-	HubURL   string // empty for a local-only cluster
+	// MaxFileStore and MaxMemoryStore cap the JetStream stores in bytes; zero
+	// renders no cap.
+	MaxFileStore, MaxMemoryStore int64
+	HubURL                       string // empty for a local-only cluster
 	// HubURLs is every hub address the leaf remote lists; empty means just HubURL.
 	HubURLs   []string
 	HubCAFile string // trusts a TLS hub from the leaf remote; empty for plaintext

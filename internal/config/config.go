@@ -456,6 +456,12 @@ type Bus struct {
 	URL string `yaml:"url,omitempty"`
 	// StoreDir is the JetStream store root. Defaults to <StateDir>/nats.
 	StoreDir string `yaml:"store_dir,omitempty"`
+	// MaxFileStore and MaxMemoryStore cap the broker's JetStream file and
+	// memory stores, as a whole number of bytes or a count with a binary
+	// unit (KiB, MiB, GiB, TiB). Empty renders no cap, which leaves the
+	// broker's own default, so a cluster that sets neither is unchanged.
+	MaxFileStore   string `yaml:"max_file_store,omitempty"`
+	MaxMemoryStore string `yaml:"max_memory_store,omitempty"`
 	// Seat is the human director seat's home subtree. The seat is not a
 	// marvel session, so marvel cannot know it; declaring it renders a
 	// broker user named director confined to that subtree (the R-95 seat
@@ -606,6 +612,9 @@ func (b *Bus) lift() (Service, error) {
 // parsed config so tolerant callers can proceed.
 var ErrInvalidBus = errors.New("invalid bus section")
 
+// ParseStoreSize is the red commit's stub.
+func ParseStoreSize(s string) (int64, error) { return 0, nil }
+
 // ValidateBus checks a bus section. A managed broker needs an explicit
 // listen host:port; a url or hub url must parse with a nats scheme.
 func ValidateBus(cluster string, b *Bus) error {
@@ -723,7 +732,11 @@ type ResolvedBus struct {
 	Listen   string
 	URL      string
 	StoreDir string
-	HubURL   string
+	// MaxFileStore and MaxMemoryStore are the parsed caps in bytes; zero is
+	// no cap rendered.
+	MaxFileStore   int64
+	MaxMemoryStore int64
+	HubURL         string
 	// HubURLs is every hub address, in order; HubURL is its first entry.
 	HubURLs []string
 	// HubCAFile is ~-expanded, since the broker process reads it.
