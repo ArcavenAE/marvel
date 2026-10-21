@@ -16,12 +16,15 @@ const (
 	phaseReply     = "reply"
 )
 
-// defaultMaxReplyBytes bounds one daemon reply. Over it, the reply is a
+// defaultMaxReplyBytes bounds every daemon reply. Over it, the reply is a
 // BadReplyError that names the limit, so a daemon cannot make the client
 // read without end.
 //
-// The value is a placeholder until the operator sets it from the largest
-// real reply (#761).
+// One cap on every reply is a trial, to be revisited (#761). The options
+// not taken: a cap only on the timer and fan-out path, which leaves a
+// single-cluster read unbounded; and a cap per verb, sized to what each
+// one returns (a full-scrollback capture is far larger than an events
+// batch). The value is provisional until it is set from a measurement.
 const defaultMaxReplyBytes int64 = 64 << 20
 
 // maxReplyBytes is the bound in force; tests lower it.
