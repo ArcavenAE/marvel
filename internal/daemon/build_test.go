@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func testBuild() Build {
@@ -33,7 +35,7 @@ func TestVersionReportsTheRunningBuild(t *testing.T) {
 	before := time.Now().Add(-time.Second)
 	d := newBuildDaemon(t, want)
 
-	resp := d.dispatch(Request{Method: MethodVersion})
+	resp := d.dispatch(daemonrpc.Request{Method: MethodVersion})
 	if resp.Error != "" {
 		t.Fatalf("version: %s", resp.Error)
 	}
@@ -55,7 +57,7 @@ func TestVersionReportsTheRunningBuild(t *testing.T) {
 func TestVersionResponseCarriesTheDaemonHome(t *testing.T) {
 	d := newBuildDaemon(t, testBuild())
 
-	resp := d.stamp(d.dispatch(Request{Method: MethodVersion}))
+	resp := d.stamp(d.dispatch(daemonrpc.Request{Method: MethodVersion}))
 	if resp.DaemonHome == "" {
 		t.Error("the version reply is not stamped with the daemon home like every other reply")
 	}
@@ -252,10 +254,10 @@ func TestEveryResponseCarriesTheBuild(t *testing.T) {
 	want := testBuild()
 	d := newBuildDaemon(t, want)
 
-	for name, resp := range map[string]Response{
-		"version":        d.stamp(d.dispatch(Request{Method: MethodVersion})),
-		"unknown method": d.stamp(d.dispatch(Request{Method: "no-such-method"})),
-		"bare reply":     d.stamp(Response{}),
+	for name, resp := range map[string]daemonrpc.Response{
+		"version":        d.stamp(d.dispatch(daemonrpc.Request{Method: MethodVersion})),
+		"unknown method": d.stamp(d.dispatch(daemonrpc.Request{Method: "no-such-method"})),
+		"bare reply":     d.stamp(daemonrpc.Response{}),
 	} {
 		var got Build
 		if err := json.Unmarshal(resp.DaemonBuild, &got); err != nil {

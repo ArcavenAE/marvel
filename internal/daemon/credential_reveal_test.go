@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -21,7 +22,7 @@ const (
 func seedLeaf(t *testing.T) *Daemon {
 	t.Helper()
 	d := newHandlerDaemon(t)
-	if resp := d.dispatchAs(Request{Method: "credential.put", Params: putParams(t, revealName, revealSecret)}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: putParams(t, revealName, revealSecret)}, localCaller()); resp.Error != "" {
 		t.Fatalf("seed put: %s", resp.Error)
 	}
 	return d
@@ -30,7 +31,7 @@ func seedLeaf(t *testing.T) *Daemon {
 func TestCredentialRevealOnLocalSocketReturnsValue(t *testing.T) {
 	d := seedLeaf(t)
 
-	resp := d.dispatchAs(Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("reveal on local socket: %s", resp.Error)
 	}
@@ -63,7 +64,7 @@ func TestCredentialRevealRefusedOverTunnel(t *testing.T) {
 	// An admin key arriving over mrvl:// (local=false) is refused: reveal is
 	// local-socket only, whatever authority the key holds.
 	tunnelAdmin := caller{scope: ScopeAdmin, fingerprint: "SHA256:adminkey"}
-	resp := d.dispatchAs(Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, tunnelAdmin)
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, tunnelAdmin)
 	if !strings.Contains(resp.Error, "only available on the local unix socket") {
 		t.Errorf("tunnelled admin reveal: error = %q, want a local-socket refusal", resp.Error)
 	}
@@ -82,7 +83,7 @@ func TestCredentialRevealRefusedForPushKey(t *testing.T) {
 	// A credential-push key is stopped at the scope gate, before the local
 	// gate: reveal is not in its method set.
 	pushKey := caller{scope: ScopeCredentialPush, fingerprint: testFP}
-	resp := d.dispatchAs(Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, pushKey)
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, pushKey)
 	if !strings.Contains(resp.Error, "is not permitted for a") {
 		t.Errorf("credential-push reveal: error = %q, want a scope refusal", resp.Error)
 	}

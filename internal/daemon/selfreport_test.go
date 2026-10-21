@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // pipeRWC feeds handleRWC a fixed request and captures what it writes.
@@ -27,13 +29,13 @@ var _ io.ReadWriteCloser = (*pipeRWC)(nil)
 // reply the way a client would. A bare &Daemon is enough: the methods
 // exercised here answer before touching the store or the tmux driver, so
 // the test does not need a real daemon or a tmux binary.
-func serve(t *testing.T, home, request string) Response {
+func serve(t *testing.T, home, request string) daemonrpc.Response {
 	t.Helper()
 	rwc := newPipeRWC(request)
 	d := &Daemon{home: home}
 	d.handleRWC(rwc)
 
-	var resp Response
+	var resp daemonrpc.Response
 	if err := json.Unmarshal(rwc.out.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response %q: %v", rwc.out.String(), err)
 	}
@@ -110,7 +112,7 @@ func TestEnvelopeWireCompatibility(t *testing.T) {
 			Result json.RawMessage `json:"result,omitempty"`
 			Error  string          `json:"error,omitempty"`
 		}
-		wire, err := json.Marshal(Response{
+		wire, err := json.Marshal(daemonrpc.Response{
 			Result:     json.RawMessage(`{"status":"ok"}`),
 			DaemonHome: "/Users/op/.marvel",
 		})
@@ -128,7 +130,7 @@ func TestEnvelopeWireCompatibility(t *testing.T) {
 
 	t.Run("new client tolerates a daemon without the field", func(t *testing.T) {
 		t.Parallel()
-		var resp Response
+		var resp daemonrpc.Response
 		if err := json.Unmarshal([]byte(`{"result":{"status":"ok"}}`), &resp); err != nil {
 			t.Fatalf("parse old daemon reply: %v", err)
 		}

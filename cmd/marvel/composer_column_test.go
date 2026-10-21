@@ -1,0 +1,75 @@
+package main
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
+)
+
+// COMPOSER is registered, opt-in, and in no named set: reading it captures
+// every seat's pane, so it appears only when the operator names it.
+func TestComposerColumnIsOptIn(t *testing.T) {
+	c, ok := lookupSessionColumn("composer")
+	if !ok {
+		t.Fatal("composer is not a registered column")
+	}
+	if c.header != "COMPOSER" {
+		t.Errorf("header = %q, want COMPOSER", c.header)
+	}
+	if !optInColumns["composer"] {
+		t.Error("composer is not opt-in, so the default table would read every pane")
+	}
+	if slices.Contains(wideSessionColumns, "composer") {
+		t.Error("composer is in the wide set, so a wide terminal would read every pane")
+	}
+	if wantsComposer(defaultSessionColumns()) {
+		t.Error("the default columns ask the daemon to read panes")
+	}
+	if !wantsComposer([]sessionColumn{c}) {
+		t.Error("selecting composer does not ask the daemon for it")
+	}
+}
+
+// The request asks for the column only when it is selected.
+func TestGetRequestAsksForComposerOnlyWhenSelected(t *testing.T) {
+	if _, ok := getRequest("sessions", false)["composer"]; ok {
+		t.Error("a listing without the column asks the daemon to read panes")
+	}
+	if v, ok := getRequest("sessions", true)["composer"]; !ok || v != true {
+		t.Errorf("composer = %v, %v; want true", v, ok)
+	}
+}
+
+// The cell is the daemon's word, or "-" where no pane was read.
+func TestComposerCell(t *testing.T) {
+	for word, want := range map[string]string{"": "-", "mid_turn": "mid_turn", "unknown": "unknown", "holds_text": "holds_text"} {
+		if got := newSessionRow(api.Session{Composer: word}).composer; got != want {
+			t.Errorf("cell for %q = %q, want %q", word, got, want)
+		}
+	}
+}
+
+// With the column selected, each seat whose cell is unknown for a known
+// reason gets one GAP line after the table; without it, none.
+func TestComposerGapLinesFollowTheTable(t *testing.T) {
+	sessions := []api.Session{
+		{Workspace: "ws", Name: "a", Composer: "mid_turn"},
+		{Workspace: "ws", Name: "b", Composer: "unknown", ComposerGap: "client workspace, not read"},
+		{Workspace: "ws2", Name: "c", Composer: "unknown", ComposerGap: "workspace manifest not read"},
+	}
+	c, _ := lookupSessionColumn("composer")
+	n, _ := lookupSessionColumn("name")
+	out := renderSessionsView(sessions, []sessionColumn{n, c}, "", fitOptions{})
+	want := "GAP pane ws/b: client workspace, not read\nGAP pane ws2/c: workspace manifest not read\n"
+	if !strings.HasSuffix(out, want) {
+		t.Fatalf("view does not end with the GAP lines:\n%s", out)
+	}
+	if strings.Count(out, "GAP pane") != 2 {
+		t.Fatalf("want two GAP lines:\n%s", out)
+	}
+	if out := renderSessionsView(sessions, []sessionColumn{n}, "", fitOptions{}); strings.Contains(out, "GAP") {
+		t.Fatalf("GAP lines without the column:\n%s", out)
+	}
+}

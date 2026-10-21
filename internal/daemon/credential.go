@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -34,16 +35,16 @@ type credentialNameParams struct {
 // handleCredentialPut stores a pushed credential and records who pushed it. The
 // caller's key fingerprint becomes the credential's IssuedBy and rides the
 // event; the value never leaves this method except into the store.
-func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) daemonrpc.Response {
 	var p credentialPutParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	if p.Name == "" {
-		return Response{Error: "credential.put: name is required"}
+		return daemonrpc.Response{Error: "credential.put: name is required"}
 	}
 	if len(p.Value) == 0 {
-		return Response{Error: "credential.put: value is required"}
+		return daemonrpc.Response{Error: "credential.put: value is required"}
 	}
 	cred := &api.Credential{
 		Name:     p.Name,
@@ -55,7 +56,7 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response 
 		Value:    p.Value,
 	}
 	if err := d.store.CreateCredential(cred); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	// The store cloned the value; clear this request's copy so the secret does
 	// not linger in the decoded params.
@@ -75,7 +76,7 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response 
 
 	meta, err := d.store.GetCredential(cred.Name) // metadata only (value stripped)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	return respond(meta)
 }
@@ -83,14 +84,14 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) Response 
 // handleCredentialGet returns a credential's metadata. It never returns the
 // value: reveal is a separate local-socket-only seam (S3). Admin only, since
 // get is outside the credential-push scope set.
-func (d *Daemon) handleCredentialGet(params json.RawMessage) Response {
+func (d *Daemon) handleCredentialGet(params json.RawMessage) daemonrpc.Response {
 	var p credentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	cred, err := d.store.GetCredential(p.Name)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	return respond(cred)
 }
@@ -107,33 +108,33 @@ type credentialRevealResult struct {
 // caller (dispatchAs gates credential.reveal to the local socket; brief 9 S3).
 // The reveal is recorded on the event ring and the log, naming the credential
 // and never the value.
-func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) daemonrpc.Response {
 	var p credentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	value, err := d.store.RevealCredentialValue(p.Name)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitCredentialEvent(events.KindCredentialRevealed, p.Name, "", c)
 	return respond(credentialRevealResult{Value: value})
 }
 
 // handleCredentialList returns metadata for every credential.
-func (d *Daemon) handleCredentialList() Response {
+func (d *Daemon) handleCredentialList() daemonrpc.Response {
 	return respond(d.store.ListCredentials())
 }
 
 // handleCredentialDelete removes a credential (its value is zeroed by the
 // store) and records who removed it.
-func (d *Daemon) handleCredentialDelete(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleCredentialDelete(params json.RawMessage, c caller) daemonrpc.Response {
 	var p credentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	if err := d.store.DeleteCredential(p.Name); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitCredentialEvent(events.KindCredentialDeleted, p.Name, "", c)
 	if p.Name == busLeafCredential {

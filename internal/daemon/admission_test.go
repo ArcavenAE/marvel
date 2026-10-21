@@ -9,6 +9,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -30,7 +31,7 @@ func newHandlerDaemon(t *testing.T) *Daemon {
 	return d
 }
 
-func applyManifest(t *testing.T, d *Daemon, manifest string) Response {
+func applyManifest(t *testing.T, d *Daemon, manifest string) daemonrpc.Response {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"manifest_data": []byte(manifest)})
 	if err != nil {

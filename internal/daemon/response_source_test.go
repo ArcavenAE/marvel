@@ -17,7 +17,7 @@ import (
 
 // Redaction cannot be skipped if only respond builds a response body. This test
 // reads every non-test package of the module and fails on anything else that
-// sets daemon.Response's Result: a composite literal that sets it (keyed or
+// sets daemonrpc.Response's Result: a composite literal that sets it (keyed or
 // positional), or an assignment to it (or taking its address). Matching is on
 // the Response type, so the unrelated Result fields in other packages do not
 // trip it. A structural check, so it may gate (diagnostic-not-gate.md).
@@ -25,8 +25,9 @@ import (
 const (
 	modulePath = "github.com/arcavenae/marvel"
 	daemonPath = modulePath + "/internal/daemon"
-	// Response is defined in daemonrpc and aliased here, so the type this guard
-	// matches is daemonrpc's; daemon.Response resolves to it through Unalias.
+	// Response is defined in daemonrpc, so the type this guard matches is
+	// daemonrpc's; an alias of it declared elsewhere resolves to it through
+	// Unalias.
 	daemonrpcPath = modulePath + "/internal/daemonrpc"
 	allowedWrite  = "respond"
 )
@@ -49,8 +50,8 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// isResponse reports whether t is the Response type (daemonrpc.Response, which
-// daemon.Response aliases) or a pointer to it.
+// isResponse reports whether t is the Response type (daemonrpc.Response) or a
+// pointer to it.
 func isResponse(t types.Type) bool {
 	if t == nil {
 		return false
@@ -271,11 +272,13 @@ func TestResponseSourceCheckCatchesPlantedWrites(t *testing.T) {
 	t.Run("inside package daemon", func(t *testing.T) {
 		files := append(packageFiles(t, fset, filepath.Join(root, "internal", "daemon")), planted("scratch_daemon.go", `package daemon
 
-func plantedKeyed() Response { return Response{Result: nil} }
-func plantedPositional() Response { return Response{nil} }
-func plantedAssign(r Response) Response { r.Result = nil; return r }
-func plantedPointerAssign(r *Response) { r.Result = nil }
-func plantedAddress(r *Response) *[]byte { return (*[]byte)(&r.Result) }
+import "github.com/arcavenae/marvel/internal/daemonrpc"
+
+func plantedKeyed() daemonrpc.Response { return daemonrpc.Response{Result: nil} }
+func plantedPositional() daemonrpc.Response { return daemonrpc.Response{nil} }
+func plantedAssign(r daemonrpc.Response) daemonrpc.Response { r.Result = nil; return r }
+func plantedPointerAssign(r *daemonrpc.Response) { r.Result = nil }
+func plantedAddress(r *daemonrpc.Response) *[]byte { return (*[]byte)(&r.Result) }
 `))
 		bad, err := responseWrites(fset, daemonPath, files, imp, true)
 		if err != nil {
@@ -302,11 +305,11 @@ func plantedAddress(r *Response) *[]byte { return (*[]byte)(&r.Result) }
 	t.Run("from another package", func(t *testing.T) {
 		files := []*ast.File{planted("scratch_other.go", `package other
 
-import "github.com/arcavenae/marvel/internal/daemon"
+import "github.com/arcavenae/marvel/internal/daemonrpc"
 
-func keyed() daemon.Response { return daemon.Response{Result: nil} }
-func positional() daemon.Response { return daemon.Response{nil} }
-func assign(r *daemon.Response) { r.Result = nil }
+func keyed() daemonrpc.Response { return daemonrpc.Response{Result: nil} }
+func positional() daemonrpc.Response { return daemonrpc.Response{nil} }
+func assign(r *daemonrpc.Response) { r.Result = nil }
 `)}
 		bad, err := responseWrites(fset, modulePath+"/scratch/other", files, imp, true)
 		if err != nil {
@@ -343,46 +346,46 @@ func assign(r *daemonrpc.Response) { r.Result = nil }
 	for name, src := range map[string]string{
 		"a type alias": `package other
 
-import "github.com/arcavenae/marvel/internal/daemon"
+import "github.com/arcavenae/marvel/internal/daemonrpc"
 
-type Reply = daemon.Response
+type Reply = daemonrpc.Response
 
 func viaAlias() Reply { return Reply{Result: nil} }
 `,
 		"an embedded promoted field": `package other
 
-import "github.com/arcavenae/marvel/internal/daemon"
+import "github.com/arcavenae/marvel/internal/daemonrpc"
 
-type Wrapped struct{ daemon.Response }
+type Wrapped struct{ daemonrpc.Response }
 
 func viaEmbed(w *Wrapped) { w.Result = nil }
 `,
 		"a pointer embedded promoted field": `package other
 
-import "github.com/arcavenae/marvel/internal/daemon"
+import "github.com/arcavenae/marvel/internal/daemonrpc"
 
-type Wrapped struct{ *daemon.Response }
+type Wrapped struct{ *daemonrpc.Response }
 
 func viaEmbed(w Wrapped) { w.Result = nil }
 `,
 		"a conversion from a defined type": `package other
 
-import "github.com/arcavenae/marvel/internal/daemon"
+import "github.com/arcavenae/marvel/internal/daemonrpc"
 
-type Shadow daemon.Response
+type Shadow daemonrpc.Response
 
-func viaConvert() daemon.Response { return daemon.Response(Shadow{}) }
+func viaConvert() daemonrpc.Response { return daemonrpc.Response(Shadow{}) }
 `,
 		"a conversion from an anonymous struct": `package other
 
 import (
 	"encoding/json"
 
-	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
-func viaAnon(raw json.RawMessage) daemon.Response {
-	return daemon.Response(struct {
+func viaAnon(raw json.RawMessage) daemonrpc.Response {
+	return daemonrpc.Response(struct {
 		Result json.RawMessage
 	}{raw})
 }
