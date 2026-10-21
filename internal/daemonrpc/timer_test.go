@@ -90,7 +90,7 @@ func TestTimerBoundsSilentBanner(t *testing.T) {
 func TestTimerBoundsSilentSession(t *testing.T) {
 	resetKnownHosts(t)
 	client, pemBytes := newSigner(t)
-	rig := startSSHRigWith(t, client.PublicKey(), true)
+	rig := startSSHRigWith(t, client.PublicKey(), rigSilentReply)
 	trustRigHost(t, rig, rig.hostKey)
 	opts := DialOptions{Identity: writeIdentity(t, pemBytes), StrictHostKey: true, Timeout: testTimer}
 	err := callWithin(t, func() error {
@@ -148,11 +148,12 @@ func settle(want int) int {
 func TestTimerFreesEverything(t *testing.T) {
 	resetKnownHosts(t)
 	client, pemBytes := newSigner(t)
-	rig := startSSHRigWith(t, client.PublicKey(), true)
+	rig := startSSHRigWith(t, client.PublicKey(), rigSilentReply)
 	trustRigHost(t, rig, rig.hostKey)
 	opts := DialOptions{Identity: writeIdentity(t, pemBytes), StrictHostKey: true, Timeout: testTimer}
 
-	g0, fd0 := settle(0), openFDs(t)
+	runtime.GC()
+	g0, fd0 := runtime.NumGoroutine(), openFDs(t)
 	err := callWithin(t, func() error {
 		_, err := SendRequestWith(rig.addr, Request{Method: "ping"}, opts)
 		return err
@@ -202,5 +203,91 @@ func TestOversizedReplyIsBadReply(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), strconv.Itoa(1024)) {
 		t.Errorf("err = %v, want it to name the 1024-byte limit", err)
+	}
+}
+
+// TestTimerBoundsStalledAuth: a server that accepts the host key exchange
+// and never decides on the offered key is bounded in the auth phase.
+func TestTimerBoundsStalledAuth(t *testing.T) {
+	resetKnownHosts(t)
+	client, pemBytes := newSigner(t)
+	rig := startSSHRigWith(t, client.PublicKey(), rigStallAuth)
+	trustRigHost(t, rig, rig.hostKey)
+	opts := DialOptions{Identity: writeIdentity(t, pemBytes), StrictHostKey: true, Timeout: testTimer}
+	err := callWithin(t, func() error {
+		_, err := SendRequestWith(rig.addr, Request{Method: "ping"}, opts)
+		return err
+	})
+	wantTimeout(t, err, "auth")
+}
+
+// TestTimerBoundsStalledShell: a server that authenticates and never
+// answers the shell request is bounded too; the session setup comes before
+// the request is written.
+func TestTimerBoundsStalledShell(t *testing.T) {
+	resetKnownHosts(t)
+	client, pemBytes := newSigner(t)
+	rig := startSSHRigWith(t, client.PublicKey(), rigStallShell)
+	trustRigHost(t, rig, rig.hostKey)
+	opts := DialOptions{Identity: writeIdentity(t, pemBytes), StrictHostKey: true, Timeout: testTimer}
+	err := callWithin(t, func() error {
+		_, err := SendRequestWith(rig.addr, Request{Method: "ping"}, opts)
+		return err
+	})
+	wantTimeout(t, err, "reply")
+}
+
+type closeCounter struct{ n chan struct{} }
+
+func (c closeCounter) Close() error { c.n <- struct{}{}; return nil }
+
+// TestEnterAfterFireClosesAtOnce: a connection registered after the timer
+// has fired is closed at once, so a dial that finishes late cannot outlive
+// the timer.
+func TestEnterAfterFireClosesAtOnce(t *testing.T) {
+	ex := startExchange(time.Nanosecond)
+	defer ex.stop()
+	for i := 0; ; i++ {
+		ex.mu.Lock()
+		fired := ex.fired != ""
+		ex.mu.Unlock()
+		if fired {
+			break
+		}
+		if i > 1000 {
+			t.Fatal("a 1ns timer had not fired")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c := closeCounter{n: make(chan struct{}, 1)}
+	ex.enter(phaseReply, c)
+	select {
+	case <-c.n:
+	default:
+		t.Fatal("a connection registered after the timer fired was not closed")
+	}
+}
+
+// TestConnectTimeoutIsTimeLeft: the connect gets the time left on the
+// timer, capped at its own limit; with no timer, its own limit.
+func TestConnectTimeoutIsTimeLeft(t *testing.T) {
+	var none *exchange
+	if got := none.connectTimeout(7 * time.Second); got != 7*time.Second {
+		t.Errorf("no timer: %s, want the limit 7s", got)
+	}
+	ex := &exchange{deadline: time.Now().Add(time.Hour)}
+	if got := ex.connectTimeout(7 * time.Second); got != 7*time.Second {
+		t.Errorf("an hour left, limit 7s: %s, want 7s", got)
+	}
+	ex = &exchange{deadline: time.Now().Add(2 * time.Second)}
+	if got := ex.connectTimeout(7 * time.Second); got > 2*time.Second || got <= 0 {
+		t.Errorf("2s left, limit 7s: %s, want at most 2s", got)
+	}
+	if got := ex.connectTimeout(0); got > 2*time.Second || got <= 0 {
+		t.Errorf("2s left, no limit: %s, want at most 2s", got)
+	}
+	ex = &exchange{deadline: time.Now().Add(-time.Second)}
+	if got := ex.connectTimeout(0); got <= 0 {
+		t.Errorf("past the deadline: %s, want a positive duration so the dial fails at once", got)
 	}
 }
