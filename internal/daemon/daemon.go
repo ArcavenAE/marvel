@@ -844,6 +844,10 @@ func (d *Daemon) shutdown(teardown bool) {
 	// With a suspend record the seats stay frozen, the record stays, and the
 	// next daemon serves it: a teardown would call tmux against a stopped
 	// server, so it becomes a detach (design section 3, Shutdown).
+	if teardown && d.suspendRec.Load() != nil {
+		log.Printf("suspend record set: teardown skipped; the seats stay frozen for the next daemon")
+		teardown = false
+	}
 
 	if d.cancel != nil {
 		d.cancel()
@@ -1132,6 +1136,9 @@ func startingAllows(req Request) bool {
 func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
+	}
+	if d.suspendHeld.Load() && !startingAllows(req) {
+		return Response{Error: ErrClusterSuspended.Error()}
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
 		if req.Method == "heartbeat" || req.Method == "account.limits" {

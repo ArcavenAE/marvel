@@ -104,7 +104,43 @@ func (d *Daemon) handleSuspendStatus() Response {
 // Whenever the record cannot be settled it stays, and the daemon serves held:
 // adopting under a stopped tmux would block the whole start.
 func (d *Daemon) resolveSuspendAtStart() bool {
-	return false
+	rec := d.suspendRec.Load()
+	if rec == nil {
+		return false
+	}
+	f := d.freezer
+	if f == nil {
+		f = suspend.New()
+	}
+	switch rec.State {
+	case suspend.StateSuspended:
+		gone, err := f.ServerGone(*rec)
+		if err != nil {
+			log.Printf("suspend: cannot tell whether the recorded tmux server %d is alive (%v); serving suspended", rec.Server.Pid, err)
+			return true
+		}
+		if !gone {
+			log.Printf("suspend: cluster suspended since %s by %s; serving without adopting", rec.Since.UTC().Format("2006-01-02T15:04:05Z"), rec.Actor)
+			return true
+		}
+		if err := (suspendStore{d}).Clear(); err != nil {
+			log.Printf("suspend: the recorded tmux server %d is gone, but the record could not be cleared (%v); serving suspended", rec.Server.Pid, err)
+			return true
+		}
+		msg := fmt.Sprintf("the recorded tmux server %d is gone (a reboot, or a server killed by hand); suspend record cleared", rec.Server.Pid)
+		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendCleared, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindClusterSuspendCleared, msg)
+		return false
+	case suspend.StateSuspending, suspend.StateResuming:
+		res, err := f.Thaw(*rec, suspendStore{d})
+		msg := fmt.Sprintf("a daemon stopped with the cluster %s; resumed the recorded processes (gone %v, still stopped %v)", rec.State, res.Gone, res.StillStopped)
+		if err != nil {
+			msg += fmt.Sprintf("; %v", err)
+		}
+		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendInterrupted, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindClusterSuspendInterrupted, msg)
+		return d.suspendRec.Load() != nil
+	}
+	log.Printf("suspend: the record is in an unknown state %q; serving suspended", rec.State)
+	return true
 }
-
-var _ = events.Emit

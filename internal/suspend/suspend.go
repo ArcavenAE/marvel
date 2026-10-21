@@ -118,7 +118,15 @@ func NewForTest(prober *childproof.Prober, stopped func(pid int) (bool, error)) 
 // failure to prove the server is returned as an error, and the caller keeps
 // the record.
 func (f *Freezer) ServerGone(rec Record) (bool, error) {
-	return false, nil
+	_, err := f.prober.Prove(rec.Server.Pid, rec.Server.Identity)
+	var mm *childproof.MismatchError
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.As(err, &mm):
+		return true, nil
+	}
+	return false, err
 }
 
 // ErrState is returned when a record is in a state the operation cannot start
@@ -259,7 +267,7 @@ func (f *Freezer) rollback(store Store, server childproof.Child, seats []childpr
 // Nothing here restarts a seat.
 func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
 	var res Result
-	if rec.State != StateSuspended && rec.State != StateSuspending {
+	if rec.State != StateSuspended && rec.State != StateSuspending && rec.State != StateResuming {
 		return res, fmt.Errorf("%w: thaw needs a suspended, suspending or resuming record, this one is %q", ErrState, rec.State)
 	}
 	if err := checkPids(rec); err != nil {
