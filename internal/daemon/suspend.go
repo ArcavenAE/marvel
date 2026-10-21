@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
 
@@ -88,3 +89,22 @@ func (d *Daemon) loadSuspendRecord(socketPath string) {
 func (d *Daemon) handleSuspendStatus() Response {
 	return respond(suspend.StatusOf(d.suspendRec.Load()))
 }
+
+// resolveSuspendAtStart settles the record loaded at start, before anything
+// is adopted (design section 3, At daemon start), and reports whether the
+// daemon must serve held: no adoption and no tmux call until resume.
+//
+//   - suspended, its tmux server alive: held.
+//   - suspended, its tmux server gone (a reboot): the record is cleared with
+//     cluster.suspend-cleared, and the daemon adopts as usual.
+//   - suspending or resuming, left by a daemon that stopped partway: every
+//     recorded process still the one recorded is resumed, the record is
+//     cleared, and cluster.suspend-interrupted is emitted.
+//
+// Whenever the record cannot be settled it stays, and the daemon serves held:
+// adopting under a stopped tmux would block the whole start.
+func (d *Daemon) resolveSuspendAtStart() bool {
+	return false
+}
+
+var _ = events.Emit

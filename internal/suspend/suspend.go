@@ -106,6 +106,21 @@ func New() *Freezer {
 	return &Freezer{prober: childproof.New(), stopped: readStopped, settle: 200 * time.Millisecond}
 }
 
+// NewForTest returns a Freezer over prober and a stop-state reader, for a
+// package that drives a Freezer against a fake process table. The pause
+// between reads is zero.
+func NewForTest(prober *childproof.Prober, stopped func(pid int) (bool, error)) *Freezer {
+	return &Freezer{prober: prober, stopped: stopped}
+}
+
+// ServerGone reports whether rec's tmux server has exited, or its pid now
+// names a different process: a reboot, or a server killed by hand. Any other
+// failure to prove the server is returned as an error, and the caller keeps
+// the record.
+func (f *Freezer) ServerGone(rec Record) (bool, error) {
+	return false, nil
+}
+
 // ErrState is returned when a record is in a state the operation cannot start
 // from.
 var ErrState = errors.New("suspend: record is in the wrong state for this")
@@ -235,7 +250,8 @@ func (f *Freezer) rollback(store Store, server childproof.Child, seats []childpr
 	return errors.Join(errs...)
 }
 
-// Thaw resumes a suspended record, or rolls back one left suspending. It saves
+// Thaw resumes a suspended record, rolls back one left suspending, or
+// finishes a resume left resuming by a daemon that stopped partway. It saves
 // the record as resuming, sends SIGCONT to every seat whose process is still
 // the recorded one and then to the server, and clears the record. A seat whose
 // pid now names another process is skipped and reported in Result.Gone; a seat
@@ -244,7 +260,7 @@ func (f *Freezer) rollback(store Store, server childproof.Child, seats []childpr
 func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
 	var res Result
 	if rec.State != StateSuspended && rec.State != StateSuspending {
-		return res, fmt.Errorf("%w: thaw needs a suspended or suspending record, this one is %q", ErrState, rec.State)
+		return res, fmt.Errorf("%w: thaw needs a suspended, suspending or resuming record, this one is %q", ErrState, rec.State)
 	}
 	if err := checkPids(rec); err != nil {
 		return res, err

@@ -275,9 +275,10 @@ func TestFreezeNeedsANewRecord(t *testing.T) {
 }
 
 // Resume saves resuming first, resumes the seats and then the server, and
-// clears the record.
+// clears the record. A record left resuming by a daemon that stopped partway
+// is resumed the same way.
 func TestThawResumesSeatsThenServerAndClears(t *testing.T) {
-	for _, from := range []State{StateSuspended, StateSuspending} {
+	for _, from := range []State{StateSuspended, StateSuspending, StateResuming} {
 		t.Run(string(from), func(t *testing.T) {
 			o := newFakeOS(100, 200, 201)
 			for _, p := range o.procs {
@@ -342,9 +343,33 @@ func TestThawReportsASeatStillStopped(t *testing.T) {
 	}
 }
 
+// ServerGone is true only when the recorded server exited or its pid names
+// another process; a pid childproof refuses is an error, not a reboot.
+func TestServerGone(t *testing.T) {
+	o := newFakeOS(100)
+	f := o.freezer(t)
+	if gone, err := f.ServerGone(record(100)); gone || err != nil {
+		t.Errorf("live server: gone %v err %v, want false, nil", gone, err)
+	}
+	o.procs[100].id.Start = "test:reused"
+	if gone, err := f.ServerGone(record(100)); !gone || err != nil {
+		t.Errorf("reused pid: gone %v err %v, want true, nil", gone, err)
+	}
+	if gone, err := f.ServerGone(record(300)); !gone || err != nil {
+		t.Errorf("exited server: gone %v err %v, want true, nil", gone, err)
+	}
+	o.procs[big] = &fakeProc{id: ident(big)}
+	if gone, err := f.ServerGone(record(big)); gone || err == nil {
+		t.Errorf("pid past 32 bits: gone %v err %v, want false and an error", gone, err)
+	}
+	if len(o.log) != 0 {
+		t.Errorf("signals = %v, want none", o.log)
+	}
+}
+
 func TestThawNeedsASuspendedRecord(t *testing.T) {
 	o := newFakeOS(100)
-	for _, s := range []State{"", StateResuming} {
+	for _, s := range []State{"", "frozen"} {
 		rec := record(100)
 		rec.State = s
 		if _, err := o.freezer(t).Thaw(rec, &memStore{os: o}); !errors.Is(err, ErrState) {
