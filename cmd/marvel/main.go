@@ -3433,7 +3433,13 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 // composerGapLines names each seat whose COMPOSER cell is unknown for a reason
 // marvel knows, one GAP line each, in the listing's order.
 func composerGapLines(sessions []api.Session) string {
-	return "" // red: not built
+	var b strings.Builder
+	for _, s := range sessions {
+		if s.ComposerGap != "" {
+			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", s.Workspace, s.Name, s.ComposerGap)
+		}
+	}
+	return b.String()
 }
 
 func printTeams(data json.RawMessage) error {

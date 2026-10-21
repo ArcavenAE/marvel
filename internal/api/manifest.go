@@ -397,6 +397,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	if err := Placement(m.Workspace.Placement).check("parse manifest: workspace.placement"); err != nil {
 		return nil, err
 	}
+	if sc := m.Workspace.Scope; sc != "" && sc != WorkspaceScopeClient {
+		return nil, fmt.Errorf("parse manifest: workspace.scope %q: the one scope is %q", sc, WorkspaceScopeClient)
+	}
 	policyNames := make(map[string]bool, len(m.Policies))
 	for i, p := range m.Policies {
 		if p.Name == "" {
@@ -886,7 +889,7 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), CreatedAt: now}
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), Scope: m.Workspace.Scope, CreatedAt: now}
 	if m.Workspace.TrustedFolders != nil {
 		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
 	}
@@ -896,7 +899,7 @@ func (m *Manifest) Apply(store *Store) error {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil || m.Workspace.Placement != "" {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil || m.Workspace.Placement != "" || m.Workspace.Scope != "" {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
 				if m.Workspace.Root != "" {
 					live.Root = m.Workspace.Root
@@ -910,6 +913,11 @@ func (m *Manifest) Apply(store *Store) error {
 				// leaves it alone.
 				if m.Workspace.Placement != "" {
 					live.Placement = Placement(m.Workspace.Placement)
+				}
+				// A named scope replaces the stored one; an absent key
+				// leaves it alone.
+				if m.Workspace.Scope != "" {
+					live.Scope = m.Workspace.Scope
 				}
 				return nil
 			}); err != nil {

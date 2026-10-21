@@ -451,6 +451,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		teamCtrl.SealViewTrees = d.views.Seal
 		sessMgr.Views = d.views
 	}
+	d.composerClient = d.workspaceIsClient
 	return d, nil
 }
 

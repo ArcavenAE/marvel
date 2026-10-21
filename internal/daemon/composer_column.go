@@ -43,16 +43,19 @@ func composerWord(pane composerPane, s api.Session, client bool, clientErr error
 	if s.PaneID == "" || s.State != api.SessionRunning {
 		return "", ""
 	}
+	if clientErr != nil {
+		return unknown, gapManifest
+	}
 	if client {
-		return unknown, "" // red
+		return unknown, gapClient
 	}
 	reader := composer.ReaderFor(s.Runtime.Name)
 	if reader.Name() == "unknown" {
-		return unknown, "" // red
+		return unknown, gapNoReader + s.Runtime.Name
 	}
 	cmd, _, err := pane.PaneForeground(s.PaneID)
 	if err != nil {
-		return unknown, "" // red
+		return unknown, gapCapture
 	}
 	if composer.ShellTarget(cmd) {
 		return string(composer.Shell), ""
@@ -63,9 +66,12 @@ func composerWord(pane composerPane, s api.Session, client bool, clientErr error
 	}
 	content, err := capture(s.PaneID)
 	if err != nil {
-		return unknown, "" // red
+		return unknown, gapCapture
 	}
-	return string(reader.Read(content)), "" // red
+	if st := reader.Read(content); st != composer.Unknown {
+		return string(st), ""
+	}
+	return unknown, gapReaderUnsure
 }
 
 // stampComposer puts the verdict word, and the reason for an unknown, on
@@ -92,5 +98,9 @@ func (d *Daemon) composerClientWorkspace(workspace string) (bool, error) {
 // workspace manifest's scope. A workspace the store cannot read is an error,
 // so the column refuses to capture it.
 func (d *Daemon) workspaceIsClient(workspace string) (bool, error) {
-	return false, nil // red: not built
+	ws, err := d.store.GetWorkspace(workspace)
+	if err != nil {
+		return false, err
+	}
+	return ws.Scope == api.WorkspaceScopeClient, nil
 }
