@@ -1,0 +1,3380 @@
+{
+  "version": 1,
+  "design": "idle-scheduler design v2 section 3.2 (one vector per row) and 3.1; aae-orc-oprad",
+  "note": "Shared by marvel and director. Each step's op is marry (Marry(input) == want, or the error when the step names one), take (AnswerTake), recheck (RecheckBeforeSend), address (MarryAddress: ok or the error), or grep (a source check of the named file, marvel only). want is compared after decoding, never as bytes, since empty fields are omitted. Decode strictly: an unknown field is an error. Cells use the asof.Cell JSON shape.",
+  "rows": [
+    "one item, one holder",
+    "holder mismatch shows",
+    "no fan-out",
+    "strict free",
+    "scope is a filter",
+    "re-read before send",
+    "stop word",
+    "one lapse time",
+    "trigger",
+    "client isolation"
+  ],
+  "vectors": [
+    {
+      "name": "two runs give one lease, and a TAKE after valid-until is LAPSED",
+      "row": "one item, one holder",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r1",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "lease": "r1/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r1/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 2,
+              "would_pair": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r2",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30,
+            "ledger": [
+              {
+                "id": "r1/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ]
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "held": 1,
+              "free": 2
+            }
+          }
+        },
+        {
+          "op": "take",
+          "lease": {
+            "id": "r1/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "now": "2026-10-21T12:10:00Z",
+          "want": "GO"
+        },
+        {
+          "op": "take",
+          "lease": {
+            "id": "r1/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "now": "2026-10-21T12:30:00Z",
+          "want": "LAPSED"
+        },
+        {
+          "op": "take",
+          "lease": {
+            "id": "r1/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "now": "2026-10-21T12:31:00Z",
+          "want": "LAPSED"
+        },
+        {
+          "op": "take",
+          "lease": {
+            "id": "r1/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "taken"
+          },
+          "now": "2026-10-21T12:10:00Z",
+          "want": "NOT-CURRENT"
+        }
+      ]
+    },
+    {
+      "name": "a hand claim outside the ledger prints DUPLICATE",
+      "row": "holder mismatch shows",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r2a",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "assignee": "agent://t1/rev-b"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "duplicates": [
+              {
+                "item": "item-1",
+                "assignee": "agent://t1/rev-b"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "free": 1,
+              "duplicate": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r2b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "assignee": "agent://t1/rev-b"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30,
+            "ledger": [
+              {
+                "id": "r1/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ]
+          },
+          "want": {
+            "duplicates": [
+              {
+                "item": "item-1",
+                "assignee": "agent://t1/rev-b",
+                "holder": "agent://t1/rev-a"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "held": 1,
+              "free": 1,
+              "duplicate": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a role address is refused",
+      "row": "no fan-out",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r3",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "role://t1/reviewer",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "unmatched": [
+              {
+                "item": "item-1",
+                "kind": "no-eligible-seat"
+              }
+            ],
+            "refused": [
+              {
+                "seat": "role://t1/reviewer",
+                "reason": "role:// is not a seat address"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "unmatched": 1,
+              "no_eligible_seat": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "address",
+          "address": "agent://t1/rev-a",
+          "want": "ok"
+        },
+        {
+          "op": "address",
+          "address": "role://t1/reviewer",
+          "want": "role:// is not a seat address"
+        },
+        {
+          "op": "address",
+          "address": "broadcast://ws/t1",
+          "want": "broadcast:// is not a seat address"
+        },
+        {
+          "op": "address",
+          "address": "global://c1/supervisor",
+          "want": "global:// is not a seat address"
+        },
+        {
+          "op": "address",
+          "address": "agent://",
+          "want": "agent:// names no seat"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/*",
+          "want": "agent://ops/* is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/>",
+          "want": "agent://ops/> is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://*",
+          "want": "agent://* is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://>",
+          "want": "agent://> is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops",
+          "want": "agent://ops is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/a/b",
+          "want": "agent://ops/a/b is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://Ops/Rev-A",
+          "want": "agent://Ops/Rev-A is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/rev.a",
+          "want": "agent://ops/rev.a is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "want": "agent://ops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is not agent://{team}/{id}"
+        },
+        {
+          "op": "address",
+          "address": "agent://ops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "want": "ok"
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r3b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/*",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "lease": "r3b/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r3b/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "refused": [
+              {
+                "seat": "agent://t1/*",
+                "reason": "agent://t1/* is not agent://{team}/{id}"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 2,
+              "would_pair": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a seat with one GAP input never pairs, and unknown is never free",
+      "row": "strict free",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r4",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                },
+                "gaps": [
+                  "durable-consumer"
+                ]
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "unknown",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "unknown": 2
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r4b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                },
+                "gaps": [
+                  "wake-path"
+                ]
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "unknown": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "R-116: an idle out-of-scope seat never pairs, and scope orders before freshness",
+      "row": "scope is a filter",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r5",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-x",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T08:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "kos"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-y",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "director",
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-z",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:50:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-z",
+                "lease": "r5/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r5/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-z",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 3,
+              "would_pair": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r5b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-x",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T08:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "kos"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "unmatched": [
+              {
+                "item": "item-1",
+                "kind": "no-eligible-seat"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "unmatched": 1,
+              "no_eligible_seat": 1,
+              "free": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a flip between pairing and send refuses the send",
+      "row": "re-read before send",
+      "steps": [
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {}
+          },
+          "want": {
+            "send": true
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "working",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {}
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: seat not free"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              },
+              "gaps": [
+                "wake-path"
+              ]
+            },
+            "item_status": "open",
+            "stop": {}
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: seat not free"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-b",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {}
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: seat row does not match the lease"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "closed",
+            "stop": {}
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: item not open"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {},
+            "item_assignee": "agent://t1/rev-b"
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: item assigned"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {},
+            "overlap_pr": true
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: an open PR names the item"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:30:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {}
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: lease not current"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r6/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {},
+            "item_scope": "client"
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: item is client scope"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a running pass stops at its next send",
+      "row": "stop word",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r7",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {
+              "stop": true
+            },
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "stopped": true,
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r7b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {
+              "not_matchable": [
+                "agent://t1/rev-a"
+              ]
+            },
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r7c",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {
+              "paused_teams": [
+                "t1"
+              ]
+            },
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r7/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {
+              "stop": true
+            }
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: stop"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r7/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {
+              "not_matchable": [
+                "agent://t1/rev-a"
+              ]
+            }
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: not matchable"
+          }
+        },
+        {
+          "op": "recheck",
+          "lease": {
+            "id": "r7/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T12:30:00Z",
+            "state": "open"
+          },
+          "reread": {
+            "now": "2026-10-21T12:05:00Z",
+            "seat": {
+              "address": "agent://t1/rev-a",
+              "team": "t1",
+              "cluster": "c1",
+              "availability": "free",
+              "free_since": "2026-10-21T11:00:00Z",
+              "classes": [
+                "review"
+              ],
+              "scopes": [
+                "marvel"
+              ],
+              "cells": {
+                "duty.first-turn": {
+                  "value": "proven",
+                  "observed_at": "2026-10-21T11:50:00Z",
+                  "valid_until": "2026-10-21T12:30:00Z",
+                  "source": "pane:turn"
+                }
+              }
+            },
+            "item_status": "open",
+            "stop": {
+              "paused_teams": [
+                "t1"
+              ]
+            }
+          },
+          "want": {
+            "send": false,
+            "reason": "refused at send: team paused"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a lease lapses at its valid-until and the item re-pairs only when bd reads open and unassigned",
+      "row": "one lapse time",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r8",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30,
+            "ledger": [
+              {
+                "id": "r0/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T11:30:00Z",
+                "state": "open"
+              }
+            ]
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "lease": "r8/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r8/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1,
+              "would_pair": 1,
+              "lapsed": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r8b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "assignee": "agent://t1/rev-a"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30,
+            "ledger": [
+              {
+                "id": "r0/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T11:30:00Z",
+                "state": "open"
+              }
+            ]
+          },
+          "want": {
+            "duplicates": [
+              {
+                "item": "item-1",
+                "assignee": "agent://t1/rev-a"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "free": 1,
+              "lapsed": 1,
+              "duplicate": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r8c",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "in_progress"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30,
+            "ledger": [
+              {
+                "id": "r0/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T11:30:00Z",
+                "state": "open"
+              }
+            ]
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "free": 1,
+              "lapsed": 1
+            }
+          }
+        },
+        {
+          "op": "take",
+          "lease": {
+            "id": "r0/item-1",
+            "item": "item-1",
+            "seat": "agent://t1/rev-a",
+            "valid_until": "2026-10-21T11:30:00Z",
+            "state": "open"
+          },
+          "now": "2026-10-21T12:00:00Z",
+          "want": "LAPSED"
+        }
+      ]
+    },
+    {
+      "name": "the marry source has no send path",
+      "row": "trigger",
+      "steps": [
+        {
+          "op": "grep",
+          "file": "internal/api/readiness_marry.go",
+          "allowed_imports": [
+            "errors",
+            "fmt",
+            "slices",
+            "strings",
+            "time",
+            "github.com/arcavenae/marvel/internal/asof"
+          ],
+          "forbid_literals": [
+            "role://",
+            "broadcast://",
+            "global://"
+          ],
+          "forbid_calls": [
+            "Send",
+            "SendMessage",
+            "Publish",
+            "Request",
+            "Write",
+            "Exec",
+            "Run",
+            "Command",
+            "Dial"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a scope:client item never pairs and prints as one count",
+      "row": "client isolation",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r10",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "client-item-7",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "scope": "client"
+              },
+              {
+                "id": "client-item-8",
+                "priority": 0,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "scope": "client"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "client": 2,
+              "free": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "priority then age, longest free, and the lease cap",
+      "row": "3.1 order and caps",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r11",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-2",
+                "priority": 1,
+                "ready_at": "2026-10-21T11:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-3",
+                "priority": 1,
+                "ready_at": "2026-10-21T09:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-c",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:40:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-3",
+                "seat": "agent://t1/rev-a",
+                "lease": "r11/item-3"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r11/item-3",
+                "item": "item-3",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 3,
+              "eligible": 3,
+              "free": 3,
+              "would_pair": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r11b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-2",
+                "priority": 1,
+                "ready_at": "2026-10-21T11:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-3",
+                "priority": 1,
+                "ready_at": "2026-10-21T09:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-c",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:40:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 3,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-3",
+                "seat": "agent://t1/rev-a",
+                "lease": "r11b/item-3"
+              },
+              {
+                "item": "item-2",
+                "seat": "agent://t1/rev-b",
+                "lease": "r11b/item-2"
+              },
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-c",
+                "lease": "r11b/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r11b/item-3",
+                "item": "item-3",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              },
+              {
+                "id": "r11b/item-2",
+                "item": "item-2",
+                "seat": "agent://t1/rev-b",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              },
+              {
+                "id": "r11b/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-c",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 3,
+              "eligible": 3,
+              "free": 3,
+              "would_pair": 3
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r11c",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-2",
+                "priority": 1,
+                "ready_at": "2026-10-21T11:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-3",
+                "priority": 1,
+                "ready_at": "2026-10-21T09:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-c",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:40:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 3,
+            "lease_minutes": 30,
+            "ledger": [
+              {
+                "id": "r0/item-9",
+                "item": "item-9",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ]
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-3",
+                "seat": "agent://t1/rev-b",
+                "lease": "r11c/item-3"
+              },
+              {
+                "item": "item-2",
+                "seat": "agent://t1/rev-c",
+                "lease": "r11c/item-2"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r11c/item-3",
+                "item": "item-3",
+                "seat": "agent://t1/rev-b",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              },
+              {
+                "id": "r11c/item-2",
+                "item": "item-2",
+                "seat": "agent://t1/rev-c",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 3,
+              "eligible": 3,
+              "free": 3,
+              "would_pair": 2
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r11e",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-z",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-b",
+                "lease": "r11e/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r11e/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-b",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 2,
+              "would_pair": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r11d",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 0,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a seat no ruled sender reaches prints unplaced",
+      "row": "3.1 placement",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r12",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c2",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "unplaced": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "reason": "no sender ruled"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r12b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c2",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1",
+              "ruled_clusters": [
+                "c2"
+              ]
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "lease": "r12b/item-1"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r12b/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "eligible": 1,
+              "free": 1,
+              "would_pair": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repeated item or seat is an input error",
+      "row": "3.1 input",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r14",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-b",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 3,
+            "lease_minutes": 30
+          },
+          "error": "item item-1 is listed twice"
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r14b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "error": "seat agent://t1/rev-a is listed twice"
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r14c",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "client-item-7",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "scope": "client"
+              },
+              {
+                "id": "client-item-7",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "scope": "client"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "count": {
+              "client": 2,
+              "free": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unmatched items are listed by kind, and an unruled class source matches no class",
+      "row": "3.1 unmatched",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r13",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-op",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open",
+                "operator_only": true
+              },
+              {
+                "id": "item-nc",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {},
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-nm",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "unmatched": [
+              {
+                "item": "item-nc",
+                "kind": "no-class"
+              },
+              {
+                "item": "item-nm",
+                "kind": "no-component"
+              },
+              {
+                "item": "item-op",
+                "kind": "operator-only"
+              }
+            ],
+            "count": {
+              "ready": 3,
+              "unmatched": 3,
+              "no_class": 1,
+              "no_component": 1,
+              "operator_only": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r13b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {},
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "unmatched": [
+              {
+                "item": "item-1",
+                "kind": "no-class"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "unmatched": 1,
+              "no_class": 1,
+              "free": 1
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r13c",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {}
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 1,
+            "lease_minutes": 30
+          },
+          "want": {
+            "unmatched": [
+              {
+                "item": "item-1",
+                "kind": "no-eligible-seat"
+              }
+            ],
+            "count": {
+              "ready": 1,
+              "unmatched": 1,
+              "no_eligible_seat": 1,
+              "free": 1
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

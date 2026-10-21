@@ -39,6 +39,14 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
   seat's duty and withdrawn cells, the job's duties, an optional supervisor
   override and the decision; marvel's `api.RouteSeat` and director must both
   return it at the file's `now`. Cells use the `asof.Cell` JSON shape.
+- `readiness/marry-vectors.json`: golden vectors for the idle scheduler's
+  marrying step (idle-scheduler design v2, section 3.2, one vector per row,
+  plus section 3.1). Each vector is a list of steps: `marry` (marvel's
+  `api.Marry`), `take`, `recheck`, `address`, and the trigger row's `grep` of
+  the marry source. The step is shadow only, so no vector sends. Decode the
+  file strictly (an unknown field is an error) and compare each `want` after
+  decoding it, never as bytes: empty fields are omitted. The `grep` step reads
+  marvel's Go source, so it runs in marvel only.
 - `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
   validator only for the event twin, whose Go source of truth is `events.go`).
 
