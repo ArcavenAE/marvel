@@ -25,6 +25,10 @@ import (
 type procTable struct {
 	live map[int]childproof.Identity
 	log  []string
+	// readErr makes a live pid's identity read fail, as a transient failure
+	// does; contFail makes a SIGCONT to a pid fail.
+	readErr  map[int]error
+	contFail map[int]error
 }
 
 func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
@@ -35,11 +39,20 @@ func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
 			if !ok {
 				return childproof.Identity{}, errors.New("no such process")
 			}
+			if err := p.readErr[pid]; err != nil {
+				return childproof.Identity{}, err
+			}
 			return id, nil
 		},
 		func(pid int, sig syscall.Signal) error {
 			if _, ok := p.live[pid]; !ok {
 				return syscall.ESRCH
+			}
+			if sig == 0 {
+				return nil
+			}
+			if err := p.contFail[pid]; err != nil && sig == syscall.SIGCONT {
+				return err
 			}
 			name := "CONT"
 			if sig == syscall.SIGSTOP {
@@ -314,5 +327,61 @@ func TestStartWithASuspendedRecordServesWithoutTmux(t *testing.T) {
 	case <-stopped:
 	case <-time.After(bound / 2):
 		t.Fatal("Stop waited on the stopped tmux server")
+	}
+}
+
+// A pid whose identity cannot be read right now is not a server that is gone: a
+// transient read failure on a live, stopped server must not read as a reboot,
+// or the daemon would clear the record and adopt under it (#716).
+func TestSuspendAtStartHoldsWhenTheServerCannotBeRead(t *testing.T) {
+	d, p, _ := startDaemon(t, suspendedRecord())
+	p.readErr = map[int]error{100: errors.New("procargs: resource temporarily unavailable")}
+	if !d.resolveSuspendAtStart() {
+		t.Fatal("not held although the live server could not be read")
+	}
+	if d.suspendRec.Load() == nil {
+		t.Error("the record was cleared")
+	}
+	if n := kindCount(d, events.KindClusterSuspendCleared); n != 0 {
+		t.Errorf("%d %s events, want none", n, events.KindClusterSuspendCleared)
+	}
+	if len(p.log) != 0 {
+		t.Errorf("signals = %v, want none", p.log)
+	}
+}
+
+// A start-time resume that fails a SIGCONT leaves a seat stopped, so the daemon
+// holds and the record stays for a retry.
+func TestSuspendAtStartHoldsWhenAResumeFails(t *testing.T) {
+	rec := suspendedRecord()
+	rec.State = suspend.StateSuspending
+	d, p, _ := startDaemon(t, rec)
+	p.contFail = map[int]error{200: syscall.EPERM}
+	if !d.resolveSuspendAtStart() {
+		t.Fatal("not held although a SIGCONT failed")
+	}
+	if got := d.suspendRec.Load(); got == nil || got.State != suspend.StateResuming {
+		t.Errorf("record = %+v, want it kept as resuming", got)
+	}
+}
+
+// A record that cannot be parsed never reaches the settle code as "no record":
+// the daemon holds, and the mirror stays.
+func TestSuspendAtStartHoldsWhenTheRecordCannotBeParsed(t *testing.T) {
+	d, sock := suspendDaemon(t)
+	d.events = events.NewRing(0)
+	mirror := suspend.MirrorPath(sock)
+	if err := suspend.WriteMirror(mirror, suspendedRecord()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.store.PersistSuspendRecord(json.RawMessage(`{"state":5}`)); err != nil {
+		t.Fatal(err)
+	}
+	d.loadSuspendRecord(sock)
+	if !d.resolveSuspendAtStart() {
+		t.Fatal("not held with a record that could not be parsed")
+	}
+	if _, found, err := suspend.ReadMirror(mirror); err != nil || !found {
+		t.Errorf("mirror found %v err %v, want it kept", found, err)
 	}
 }

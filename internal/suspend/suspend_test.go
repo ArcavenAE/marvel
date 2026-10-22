@@ -18,6 +18,8 @@ type fakeProc struct {
 	// reads scripts what the stop-state reader answers, one entry per read;
 	// once used up it answers the live stopped field.
 	reads []bool
+	// readErr makes the identity read fail while the process is alive.
+	readErr error
 }
 
 // fakeOS is a process table the Freezer reaches only through childproof's
@@ -49,6 +51,9 @@ func (o *fakeOS) read(pid int) (childproof.Identity, error) {
 	p, ok := o.procs[pid]
 	if !ok || p.dead {
 		return childproof.Identity{}, errors.New("no such process")
+	}
+	if p.readErr != nil {
+		return childproof.Identity{}, p.readErr
 	}
 	return p.id, nil
 }
@@ -446,5 +451,21 @@ func TestFreezeRollsBackWhenTheServerPidIsReusedBetweenReads(t *testing.T) {
 	}
 	if slices.Contains(o.log, "CONT 100") {
 		t.Errorf("signals = %v: the reused pid was signalled", o.log)
+	}
+}
+
+// A live server whose identity cannot be read is not gone: only a pid that no
+// longer exists is. The caller keeps the record on the error.
+func TestServerGoneIsAnErrorWhenALiveServerCannotBeRead(t *testing.T) {
+	o := newFakeOS(100)
+	o.procs[100].readErr = errors.New("procargs: resource temporarily unavailable")
+	gone, err := o.freezer(t).ServerGone(record(100))
+	if gone || err == nil {
+		t.Errorf("live unreadable server: gone %v err %v, want false and an error", gone, err)
+	}
+	o.procs[100].dead = true
+	gone, err = o.freezer(t).ServerGone(record(100))
+	if !gone || err != nil {
+		t.Errorf("dead server: gone %v err %v, want true and nil", gone, err)
 	}
 }
