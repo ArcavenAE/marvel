@@ -15,9 +15,11 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -663,6 +665,7 @@ func TestColonKeyRefusedUntil829(t *testing.T) {
 		{"inject", "a:w/seat-1", "hello", "--cluster", "a"},
 		{"capture", "w:seat-1", "--cluster", "a"},
 		{"describe", "session", "w:seat-1", "--cluster", "a"},
+		{"view", "refresh", "w:seat-1", "--cluster", "a"},
 	} {
 		code, _, stderr := runFanGet(t, args...)
 		if code != 1 {
@@ -686,5 +689,79 @@ func TestColonKeyRefusedUntil829(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "bad:name") || !strings.Contains(stdout, "w:x") {
 		t.Errorf("a daemon row holding ':' was left out:\n%s", stdout)
+	}
+}
+
+// keyPlaceholders are the words in a command's Use line that mean the
+// argument is a session or team key.
+var keyPlaceholders = []string{"<session-key>", "<session>", "<workspace/team>", "[workspace/team]", "[workspace/session]"}
+
+// Every command that takes a session or team key must be covered by the
+// refusal of a key holding ':', so a command added later cannot slip past it.
+func TestEveryKeyTakingCommandRefusesAColonKey(t *testing.T) {
+	root := newRootCmd()
+	checked := 0
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, ph := range keyPlaceholders {
+			if strings.Contains(c.Use, ph) {
+				checked++
+				if _, ok := typedKey(c, []string{"w:key"}); !ok {
+					t.Errorf("%q takes a key (%s) but typedKey does not cover it", c.CommandPath(), ph)
+				}
+				break
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	if checked < 8 {
+		t.Errorf("the walker found only %d key-taking commands; the placeholder list may have drifted", checked)
+	}
+}
+
+// A cluster with no loadable key is refused before any dial, and its status
+// line says that, not that a daemon refused a key.
+func TestNoIdentityHintSaysNoDialWasMade(t *testing.T) {
+	good := startFake(t, fakeAnswers, nil)
+	var dialed atomic.Int32
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			dialed.Add(1)
+			_ = c.Close()
+		}
+	}()
+	clusterConfig(t,
+		config.Cluster{Name: "a", Socket: good.sock},
+		config.Cluster{Name: "n", Server: "mrvl://rig@" + ln.Addr().String()})
+	_, _, stderr := runFanGet(t, "get", "sessions", "--cluster", "a,n")
+	var line string
+	for _, l := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(l, "marvel: cluster n: auth_refused") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no auth_refused line for n:\n%s", stderr)
+	}
+	if strings.Contains(line, "accepted none") {
+		t.Errorf("the line says a daemon refused keys, but no dial was made: %s", line)
+	}
+	if !strings.Contains(line, "no dial was made") {
+		t.Errorf("the line does not say no dial was made: %s", line)
+	}
+	if n := dialed.Load(); n != 0 {
+		t.Errorf("the listener saw %d connections, want 0", n)
 	}
 }
