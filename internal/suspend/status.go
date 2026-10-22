@@ -14,6 +14,10 @@ import (
 // StateRunning is what status reports when there is no record.
 const StateRunning = "running"
 
+// StateUnknown is what status reports when the stored record could not be read
+// or parsed, so whether the cluster is suspended is not known.
+const StateUnknown = "unknown"
+
 // Status is the answer to suspend.status, and what a client reads from the
 // mirror when the daemon does not answer (design section 4). It is built from
 // the record alone: no lock, no tmux.
@@ -22,6 +26,9 @@ type Status struct {
 	State string `json:"state"`
 	// Record is nil when the cluster is running.
 	Record *Record `json:"record,omitempty"`
+	// Unsettled is why State is unknown: the stored record's read or parse
+	// error. Empty otherwise.
+	Unsettled string `json:"unsettled,omitempty"`
 }
 
 // StatusOf is the status a record gives. A nil record is a running cluster.

@@ -103,6 +103,10 @@ type Daemon struct {
 	// TCP listener.
 	suspendRec    atomic.Pointer[suspend.Record]
 	suspendMirror string
+	// suspendUnsettled is why the stored record could not be read or parsed at
+	// start, nil when it could. While set, the record is neither running nor
+	// suspended: the mirror stays and a start that adopts must hold.
+	suspendUnsettled atomic.Pointer[string]
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until

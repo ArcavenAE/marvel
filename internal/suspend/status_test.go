@@ -108,3 +108,18 @@ func TestMirrorRoundTrip(t *testing.T) {
 		t.Error("mirror still there after remove")
 	}
 }
+
+// A record that could not be read is neither running nor suspended: status says
+// unknown with the reason, and points at the mirror the recipe lives in.
+func TestRenderUnknownNamesTheReasonAndTheMirror(t *testing.T) {
+	st := Status{State: StateUnknown, Unsettled: "parse the stored record: bad json"}
+	if st.ExitCode() != 3 {
+		t.Errorf("exit = %d, want 3", st.ExitCode())
+	}
+	got := Render(st, time.Now(), false)
+	for _, want := range []string{"cluster: unknown", "parse the stored record: bad json", "mirror"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("render missing %q:\n%s", want, got)
+		}
+	}
+}

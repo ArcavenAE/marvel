@@ -141,3 +141,83 @@ func TestSuspendStoreOnTCPHasNoMirror(t *testing.T) {
 		t.Error("no live copy after Save on a TCP listener")
 	}
 }
+
+// A stored record that cannot be parsed is not "running": the mirror, which
+// holds the manual recipe, stays, the start is marked unsettled, and status
+// says unknown with the reason.
+func TestLoadSuspendRecordKeepsTheMirrorWhenTheRecordCannotBeParsed(t *testing.T) {
+	d, sock := suspendDaemon(t)
+	mirror := suspend.MirrorPath(sock)
+	if err := suspend.WriteMirror(mirror, suspendedRecord()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Valid JSON that is not a record: State is a string.
+	if err := d.store.PersistSuspendRecord(json.RawMessage(`{"state":5}`)); err != nil {
+		t.Fatal(err)
+	}
+	d.loadSuspendRecord(sock)
+	after, err := os.ReadFile(mirror)
+	if err != nil || string(after) != string(before) {
+		t.Errorf("mirror after load: %q, err %v; want it kept as it was", after, err)
+	}
+	why := d.suspendUnsettled.Load()
+	if why == nil || *why == "" {
+		t.Fatal("the start is not marked unsettled")
+	}
+	st := statusOf(t, d.dispatchAs(daemonrpc.Request{Method: "suspend.status"}, localCaller()))
+	if st.State != suspend.StateUnknown || st.Unsettled != *why {
+		t.Errorf("status = %+v, want unknown with the reason %q", st, *why)
+	}
+}
+
+// Status follows the durable copy: the live copy is set straight after bolt, so
+// a mirror failure leaves status agreeing with bolt.
+func TestSuspendStoreSetsTheLiveCopyBeforeTheMirror(t *testing.T) {
+	d, sock := suspendDaemon(t)
+	d.loadSuspendRecord(sock)
+	d.suspendMirror = filepath.Join(t.TempDir(), "no-such-dir", "m.json")
+	if err := (suspendStore{d}).Save(suspendedRecord()); err == nil {
+		t.Fatal("Save succeeded although the mirror could not be written")
+	}
+	if raw, _ := d.store.SuspendRecord(); raw == nil {
+		t.Fatal("bolt has no record after Save")
+	}
+	if d.suspendRec.Load() == nil {
+		t.Error("bolt holds the record but the live copy does not")
+	}
+
+	// A mirror that cannot be removed: a directory with a file in it.
+	blocked := filepath.Join(t.TempDir(), "m.json")
+	if err := os.MkdirAll(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "x"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.suspendMirror = blocked
+	if err := (suspendStore{d}).Clear(); err == nil {
+		t.Fatal("Clear succeeded although the mirror could not be removed")
+	}
+	if raw, _ := d.store.SuspendRecord(); raw != nil {
+		t.Fatalf("bolt after Clear: %s", raw)
+	}
+	if d.suspendRec.Load() != nil {
+		t.Error("bolt holds no record but the live copy still does")
+	}
+}
+
+// With no bolt open the record would not survive a restart, so Save refuses
+// and Freeze cannot proceed without its record.
+func TestSuspendStoreRefusesToSaveWithoutBolt(t *testing.T) {
+	d := &Daemon{store: api.NewStore()}
+	if err := (suspendStore{d}).Save(suspendedRecord()); err == nil {
+		t.Error("Save succeeded with no bolt open")
+	}
+	if d.suspendRec.Load() != nil {
+		t.Error("the live copy was set although nothing was saved")
+	}
+}
