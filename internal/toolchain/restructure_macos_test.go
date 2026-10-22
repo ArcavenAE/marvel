@@ -237,6 +237,8 @@ func TestMacOSGaps(t *testing.T) {
 
 type ciJobStep struct {
 	Name            string            `yaml:"name"`
+	Uses            string            `yaml:"uses"`
+	With            map[string]any    `yaml:"with"`
 	Shell           string            `yaml:"shell"`
 	If              string            `yaml:"if"`
 	ContinueOnError any               `yaml:"continue-on-error"`

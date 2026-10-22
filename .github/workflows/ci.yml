@@ -479,6 +479,7 @@ jobs:
             --title "Alpha ${TAG}" \
             --notes "$BODY" \
             --prerelease \
+            --target "$COMMIT" \
             "${ASSETS[@]}"
 
       - name: Update Homebrew formula
