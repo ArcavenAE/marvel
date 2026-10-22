@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -29,6 +30,8 @@ type procTable struct {
 	// does; contFail makes a SIGCONT to a pid fail.
 	readErr  map[int]error
 	contFail map[int]error
+	// afterCont runs after a SIGCONT to pid is logged.
+	afterCont func(pid int)
 }
 
 func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
@@ -59,6 +62,9 @@ func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
 				name = "STOP"
 			}
 			p.log = append(p.log, fmt.Sprintf("%s %d", name, pid))
+			if name == "CONT" && p.afterCont != nil {
+				p.afterCont(pid)
+			}
 			return nil
 		})
 	if err != nil {
@@ -406,5 +412,40 @@ func TestSuspendAtStartWithNoBoltKeepsTheMirror(t *testing.T) {
 	}
 	if !d.resolveSuspendAtStart() {
 		t.Error("not held with no state bolt")
+	}
+}
+
+// A resume that finished every SIGCONT and cleared the record is done even when
+// the mirror cannot be removed: the cluster runs, so the daemon adopts. Holding
+// here would leave a fully resumed cluster with no record and nothing to act on.
+func TestSuspendAtStartAdoptsWhenOnlyTheMirrorRemovalFails(t *testing.T) {
+	rec := suspendedRecord()
+	rec.State = suspend.StateSuspending
+	d, p, sock := startDaemon(t, rec)
+	mirror := suspend.MirrorPath(sock)
+	// Once the last process is resumed, the mirror becomes a directory: the
+	// removal that follows the clear fails, and nothing before it does.
+	p.afterCont = func(pid int) {
+		if pid != 200 {
+			return
+		}
+		if err := os.Remove(mirror); err != nil {
+			t.Error(err)
+		}
+		if err := os.MkdirAll(filepath.Join(mirror, "keep"), 0o755); err != nil {
+			t.Error(err)
+		}
+	}
+	if d.resolveSuspendAtStart() {
+		t.Error("held although every process was resumed and the record is cleared")
+	}
+	if d.suspendRec.Load() != nil {
+		t.Error("the live record is still set")
+	}
+	if raw, err := d.store.SuspendRecord(); err != nil || raw != nil {
+		t.Errorf("stored record = %s err %v, want none", raw, err)
+	}
+	if !slices.Contains(p.log, "CONT 100") || !slices.Contains(p.log, "CONT 200") {
+		t.Errorf("signals = %v, want CONT to the server and the seat", p.log)
 	}
 }
