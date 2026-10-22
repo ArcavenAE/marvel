@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
 
@@ -108,4 +109,65 @@ func (d *Daemon) handleSuspendStatus() daemonrpc.Response {
 		return respond(suspend.Status{State: suspend.StateUnknown, Unsettled: *why})
 	}
 	return respond(suspend.StatusOf(nil))
+}
+
+// resolveSuspendAtStart settles the record loaded at start, before anything
+// is adopted (design section 3, At daemon start), and reports whether the
+// daemon must serve held: no adoption and no tmux call until resume.
+//
+//   - suspended, its tmux server alive: held.
+//   - suspended, its tmux server gone (a reboot): the record is cleared with
+//     cluster.suspend-cleared, and the daemon adopts as usual.
+//   - suspending or resuming, left by a daemon that stopped partway: every
+//     recorded process still the one recorded is resumed, the record is
+//     cleared, and cluster.suspend-interrupted is emitted.
+//
+// Whenever the record cannot be settled it stays, and the daemon serves held:
+// adopting under a stopped tmux would block the whole start. That covers a
+// stored record that could not be read or parsed, a server that cannot be
+// read, and a resume that returned any error.
+func (d *Daemon) resolveSuspendAtStart() bool {
+	rec := d.suspendRec.Load()
+	if rec == nil {
+		if why := d.suspendUnsettled.Load(); why != nil {
+			log.Printf("suspend: the stored record could not be settled (%s); serving held, the mirror is kept", *why)
+			return true
+		}
+		return false
+	}
+	f := d.freezer
+	if f == nil {
+		f = suspend.New()
+	}
+	switch rec.State {
+	case suspend.StateSuspended:
+		gone, err := f.ServerGone(*rec)
+		if err != nil {
+			log.Printf("suspend: cannot tell whether the recorded tmux server %d is alive (%v); serving suspended", rec.Server.Pid, err)
+			return true
+		}
+		if !gone {
+			log.Printf("suspend: cluster suspended since %s by %s; serving without adopting", rec.Since.UTC().Format("2006-01-02T15:04:05Z"), rec.Actor)
+			return true
+		}
+		if err := (suspendStore{d}).Clear(); err != nil {
+			log.Printf("suspend: the recorded tmux server %d is gone, but the record could not be cleared (%v); serving suspended", rec.Server.Pid, err)
+			return true
+		}
+		msg := fmt.Sprintf("the recorded tmux server %d is gone (a reboot, or a server killed by hand); suspend record cleared", rec.Server.Pid)
+		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendCleared, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindClusterSuspendCleared, msg)
+		return false
+	case suspend.StateSuspending, suspend.StateResuming:
+		res, err := f.Thaw(*rec, suspendStore{d})
+		msg := fmt.Sprintf("a daemon stopped with the cluster %s; resumed the recorded processes (gone %v, still stopped %v)", rec.State, res.Gone, res.StillStopped)
+		if err != nil {
+			msg += fmt.Sprintf("; %v", err)
+		}
+		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendInterrupted, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindClusterSuspendInterrupted, msg)
+		return err != nil || d.suspendRec.Load() != nil
+	}
+	log.Printf("suspend: the record is in an unknown state %q; serving suspended", rec.State)
+	return true
 }

@@ -251,6 +251,15 @@ const (
 	// and the reconciler backstop. Edge-triggered on the verdict in the
 	// reconciler, one per operator action at a verb. See aae-orc-qiay.
 	KindAdmissionRefused Kind = "admission.refused"
+	// KindClusterSuspendInterrupted records that a daemon started with a
+	// suspend record left suspending or resuming by a daemon that stopped
+	// partway, and resumed every recorded process that is still the one
+	// recorded (docs/design/fleet-suspend-resume.md section 3).
+	KindClusterSuspendInterrupted Kind = "cluster.suspend-interrupted"
+	// KindClusterSuspendCleared records that a daemon started with a
+	// suspended record whose tmux server is gone (a reboot, or a server
+	// killed by hand), cleared the record and adopted as usual.
+	KindClusterSuspendCleared Kind = "cluster.suspend-cleared"
 	// KindAdmissionCleared records that a standing admission refusal stopped
 	// applying, so a role held back by a budget may grow again.
 	KindAdmissionCleared Kind = "admission.cleared"
@@ -490,6 +499,8 @@ var allKinds = []Kind{
 	KindRunCancelled,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
+	KindClusterSuspendInterrupted,
+	KindClusterSuspendCleared,
 	KindAdmissionCleared,
 	KindAdmissionUnmeasured,
 	KindReconcileAdopted,
