@@ -24,8 +24,9 @@
 # checksum, so the broker-backed bus tests run there, and pin_test.go
 # asserts the two match; the pin exists so every host runs the same broker
 # the fleet was verified against. mise's registry has no nats-server
-# entry, hence the explicit github backend. Bump deliberately, with the
-# hub (roadmap M2, ticket aae-orc-k28s for the version story).
+# entry, hence the explicit github backend. Bump deliberately and on its
+# own, not with the hub and not through Renovate (renovate.json skips this
+# entry); ticket aae-orc-k28s holds the version story.
 [tools]
 golangci-lint = "2.14.0"
 gofumpt = "0.12.0"
