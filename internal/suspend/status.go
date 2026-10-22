@@ -14,6 +14,10 @@ import (
 // StateRunning is what status reports when there is no record.
 const StateRunning = "running"
 
+// StateUnknown is what status reports when the stored record could not be read
+// or parsed, so whether the cluster is suspended is not known.
+const StateUnknown = "unknown"
+
 // Status is the answer to suspend.status, and what a client reads from the
 // mirror when the daemon does not answer (design section 4). It is built from
 // the record alone: no lock, no tmux.
@@ -22,6 +26,9 @@ type Status struct {
 	State string `json:"state"`
 	// Record is nil when the cluster is running.
 	Record *Record `json:"record,omitempty"`
+	// Unsettled is why State is unknown: the stored record's read or parse
+	// error. Empty otherwise.
+	Unsettled string `json:"unsettled,omitempty"`
 }
 
 // StatusOf is the status a record gives. A nil record is a running cluster.
@@ -32,8 +39,8 @@ func StatusOf(rec *Record) Status {
 	return Status{State: string(rec.State), Record: rec}
 }
 
-// ExitCode is marvel status's exit code for a status: 0 running, 3 suspended
-// or partway (suspending, resuming).
+// ExitCode is marvel status's exit code for a status: 0 running, 3 suspended,
+// partway (suspending, resuming) or unknown.
 func (s Status) ExitCode() int {
 	if s.State == StateRunning {
 		return 0
@@ -63,6 +70,11 @@ func Render(st Status, now time.Time, fromMirror bool) string {
 	var b strings.Builder
 	if fromMirror {
 		fmt.Fprintf(&b, "daemon not answering; read from the suspend mirror beside its socket\n")
+	}
+	if st.State == StateUnknown {
+		fmt.Fprintf(&b, "cluster: unknown; the stored suspend record could not be settled: %s\n", st.Unsettled)
+		fmt.Fprintf(&b, "the suspend mirror beside the socket was left in place; if the fleet is frozen, resume by hand from it\n")
+		return b.String()
 	}
 	if st.Record == nil {
 		fmt.Fprintf(&b, "cluster: %s\n", st.State)

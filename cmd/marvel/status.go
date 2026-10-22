@@ -34,7 +34,8 @@ and says so. A TCP or mrvl:// address has no mirror on this host.
 A suspended cluster lists the manual kill -CONT recipe: for the operator to
 run by hand only if marvel cannot.
 
-Exit codes: 0 running, 3 suspended or partway through a suspend or resume,
+Exit codes: 0 running, 3 suspended, partway through a suspend or resume, or
+unknown (the stored record could not be read; the mirror is left in place),
 1 error.`,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,

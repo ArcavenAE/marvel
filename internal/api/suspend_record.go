@@ -20,13 +20,17 @@ const suspendKey = "cluster"
 // through to. The record is kept as the JSON the suspend package encodes, so
 // this package does not depend on that one, and rehydrate leaves it alone.
 
-// PersistSuspendRecord writes the record. No-op when bolt is not open.
+// PersistSuspendRecord writes the record. It refuses when bolt is not open: a
+// record that a restart will not find is not saved.
 func (s *Store) PersistSuspendRecord(raw json.RawMessage) error {
 	if !json.Valid(raw) {
 		return fmt.Errorf("persist suspend record: not valid JSON")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.bolt == nil {
+		return fmt.Errorf("persist suspend record: bolt is not open")
+	}
 	return s.persistPut(bucketSuspend, suspendKey, raw)
 }
 

@@ -54,6 +54,7 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
   - `suspended`: skip adopt, `RefreshLiveness` and posture, and serve. MEASURED: an adopt under a frozen tmux blocks the whole start (#716).
   - The recorded server pid and start time are dead: treat it as a reboot. Clear the record with an event, then adopt.
   - `suspending`, meaning a crash mid-suspend: roll back by `SIGCONT` to everything recorded, clear the record, and emit `cluster.suspend-interrupted`.
+  - `resuming`, meaning a crash mid-resume or a `SIGCONT` that failed: send `SIGCONT` again to everything recorded, as for `suspending`. A resume is safe to repeat, and the record is cleared only once every recorded process was resumed or proven gone.
 - **Shutdown.** MEASURED: a daemon sent `SIGTERM` under a frozen tmux waits for tmux. With the record set, shutdown makes no tmux call. The seats stay frozen, the record stays, and the next daemon serves.
 - **Timers at resume.**
   - Shift every last-seen stamp and absolute deadline by the pause: heartbeat, `ContextAt`, activity rings, `BackoffUntil` and `HealthySince`. Do it in one transaction, or idempotently with the record cleared last.

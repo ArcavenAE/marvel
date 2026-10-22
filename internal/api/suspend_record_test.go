@@ -39,13 +39,15 @@ func TestSuspendRecordPersistsAndClears(t *testing.T) {
 	}
 }
 
-func TestSuspendRecordRefusesInvalidJSONAndWorksWithoutBolt(t *testing.T) {
+// With no bolt open a save is refused, since a restart would not find the
+// record; a read and a clear still answer with nothing.
+func TestSuspendRecordRefusesInvalidJSONAndASaveWithoutBolt(t *testing.T) {
 	s := NewStore()
 	if err := s.PersistSuspendRecord(json.RawMessage(`{not json`)); err == nil {
 		t.Error("invalid JSON was accepted")
 	}
-	if err := s.PersistSuspendRecord(json.RawMessage(`{}`)); err != nil {
-		t.Errorf("no bolt: %v", err)
+	if err := s.PersistSuspendRecord(json.RawMessage(`{}`)); err == nil {
+		t.Error("no bolt: the save was accepted")
 	}
 	if raw, err := s.SuspendRecord(); raw != nil || err != nil {
 		t.Errorf("no bolt read: %s, %v", raw, err)
