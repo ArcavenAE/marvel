@@ -80,7 +80,7 @@ func TestReportStatusFromAnOlderDaemon(t *testing.T) {
 // The daemon's reason for an unsettled record is text from a stored record, so
 // it is drawn through the same filter as every other daemon string.
 func TestReportStatusFiltersTheUnsettledReason(t *testing.T) {
-	st := suspend.Status{State: suspend.StateUnknown, Unsettled: "parse the stored record: \x1b[31mbad‮"}
+	st := suspend.Status{State: suspend.StateUnknown, Unsettled: "parse the stored record: \x1b[31mbad\u202E"}
 	var out bytes.Buffer
 	if _, err := reportStatus(&out, "/run/marvel.sock", statusAnswer(t, st), nil, time.Now().UTC()); err != nil {
 		t.Fatal(err)
