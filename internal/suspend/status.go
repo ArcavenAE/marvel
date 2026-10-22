@@ -39,8 +39,8 @@ func StatusOf(rec *Record) Status {
 	return Status{State: string(rec.State), Record: rec}
 }
 
-// ExitCode is marvel status's exit code for a status: 0 running, 3 suspended
-// or partway (suspending, resuming).
+// ExitCode is marvel status's exit code for a status: 0 running, 3 suspended,
+// partway (suspending, resuming) or unknown.
 func (s Status) ExitCode() int {
 	if s.State == StateRunning {
 		return 0
@@ -70,6 +70,11 @@ func Render(st Status, now time.Time, fromMirror bool) string {
 	var b strings.Builder
 	if fromMirror {
 		fmt.Fprintf(&b, "daemon not answering; read from the suspend mirror beside its socket\n")
+	}
+	if st.State == StateUnknown {
+		fmt.Fprintf(&b, "cluster: unknown; the stored suspend record could not be settled: %s\n", st.Unsettled)
+		fmt.Fprintf(&b, "the suspend mirror beside the socket was left in place; if the fleet is frozen, resume by hand from it\n")
+		return b.String()
 	}
 	if st.Record == nil {
 		fmt.Fprintf(&b, "cluster: %s\n", st.State)
