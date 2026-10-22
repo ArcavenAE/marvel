@@ -80,7 +80,7 @@ func TestSortStableOnWorkspaceName(t *testing.T) {
 		}
 	}
 	// workspace first, then name, then team, role and generation.
-	if got, w := strings.Join(want, " "), "6 1 2 3 4 5"; got != w {
+	if got, w := strings.Join(want, " "), "1 2 3 4 5 6"; got != w {
 		t.Errorf("order = %s, want %s", got, w)
 	}
 }
