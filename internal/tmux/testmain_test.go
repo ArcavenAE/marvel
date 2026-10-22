@@ -29,6 +29,8 @@ func TestMain(m *testing.M) {
 	}
 	// A binary that panicked, timed out or was killed never reached
 	// killTestServer; stop the servers it left behind.
+	// Keep the servers and the sweep out of the operator's own /tmp/tmux-<uid>.
+	tmuxtest.UseScratchTmuxTmpDir()
 	tmuxtest.SweepDead()
 	socket := fmt.Sprintf("marvel-test-tmux-%d", os.Getpid())
 	code := homeguard.RunWith(m, func() error { return os.Setenv("MARVEL_TMUX_SOCKET", socket) })

@@ -92,8 +92,12 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
-	listener           net.Listener
-	sshServer          atomic.Pointer[SSHServer]
+	// composerClient reports whether a workspace is a client one, whose
+	// panes the COMPOSER column never reads, or an error when its manifest
+	// cannot be read. New sets the workspace scope; nil captures nothing.
+	composerClient func(workspace string) (bool, error)
+	listener       net.Listener
+	sshServer      atomic.Pointer[SSHServer]
 	// suspendRec is the live fleet-suspend record, nil when running; see
 	// suspend.go. suspendMirror is its file beside the socket, "" for a
 	// TCP listener.
@@ -128,6 +132,10 @@ type Daemon struct {
 	// in the layout works either; the field is then simply absent from
 	// the wire and the client has nothing to compare.
 	home string
+
+	// buildStamp is build encoded once as JSON, stamped onto every response
+	// beside home so the client can warn on any verb when the builds differ.
+	buildStamp json.RawMessage
 	// cluster is the name the daemon's config gives the cluster it serves,
 	// set at start by identifyCluster. Empty when the config names none.
 	cluster string
@@ -423,6 +431,14 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 
 		leafLossCause: leafLossCause,
 	}
+	// The build is fixed for this process image, so its stamp is encoded once.
+	// A Build is plain strings and a bool, so this cannot fail in practice; if
+	// it did, replies would go out unstamped, as from an older daemon.
+	if raw, err := json.Marshal(opts.Build); err != nil {
+		log.Printf("warning: encode build stamp: %v", err)
+	} else {
+		d.buildStamp = raw
+	}
 	// The controller evaluates count-shaped admission clauses on its own
 	// (store counts, no meter). This seam is what lets InitiateShift also
 	// evaluate a cumulative clause without internal/team importing
@@ -441,6 +457,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		teamCtrl.SealViewTrees = d.views.Seal
 		sessMgr.Views = d.views
 	}
+	d.composerClient = d.workspaceIsClient
 	return d, nil
 }
 
@@ -505,7 +522,7 @@ func (d *Daemon) Start(socketPath string) error {
 		}
 	}
 
-	network := listenNetwork(socketPath)
+	network := daemonrpc.ListenNetwork(socketPath)
 
 	if network == "unix" {
 		if err := paths.CheckSocketPath(socketPath); err != nil {
@@ -864,7 +881,7 @@ func (d *Daemon) shutdown(teardown bool) {
 	// Only remove socket file for Unix sockets. Unlink before releasing
 	// the lock, so no other daemon can bind the path in between and have
 	// this one delete its socket.
-	if addr != "" && listenNetwork(addr) == "unix" {
+	if addr != "" && daemonrpc.ListenNetwork(addr) == "unix" {
 		_ = os.Remove(addr)
 	}
 	d.socketLock.release()
@@ -941,9 +958,9 @@ func (d *Daemon) handleRWC(rwc io.ReadWriteCloser) {
 func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 	defer func() { _ = rwc.Close() }()
 
-	var req Request
+	var req daemonrpc.Request
 	if err := json.NewDecoder(rwc).Decode(&req); err != nil {
-		resp := Response{Error: fmt.Sprintf("decode request: %v", err)}
+		resp := daemonrpc.Response{Error: fmt.Sprintf("decode request: %v", err)}
 		_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 		return
 	}
@@ -952,7 +969,7 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 	// on the same connection, so it is routed here, where the handler
 	// can keep rwc, instead of through dispatchAs, which returns one
 	// Response. Scope is enforced the same way first.
-	if req.Method == MethodEventsWatch {
+	if req.Method == daemonrpc.MethodEventsWatch {
 		if resp, refused := d.scopeRefusal(req, c); refused {
 			_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 			return
@@ -961,7 +978,7 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 		return
 	}
 
-	resp := d.recoverRequest(req.Method, func() Response { return d.dispatchAs(req, c) })
+	resp := d.recoverRequest(req.Method, func() daemonrpc.Response { return d.dispatchAs(req, c) })
 	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 }
 
@@ -973,11 +990,11 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 // It is scoped to the request boundary on purpose. The reconcile ticker is
 // not wrapped: a panic there is a bug to fix where it happens, and a recover
 // in the loop would hide the next one.
-func (d *Daemon) recoverRequest(method string, handle func() Response) (resp Response) {
+func (d *Daemon) recoverRequest(method string, handle func() daemonrpc.Response) (resp daemonrpc.Response) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("request %s panicked: %v\n%s", method, r, debug.Stack())
-			resp = Response{Error: fmt.Sprintf("internal error handling %s: %v", method, r)}
+			resp = daemonrpc.Response{Error: fmt.Sprintf("internal error handling %s: %v", method, r)}
 		}
 	}()
 	return handle()
@@ -1008,12 +1025,13 @@ func reportInvalidReplicas(store *api.Store, sink events.Emitter) {
 	}
 }
 
-// stamp records which daemon answered. It sits on the write path rather
-// than in the 14 handlers so no method can be added without it, and it
-// covers the decode-error reply too: a malformed request answered by the
-// wrong daemon is worth attributing as much as a successful one.
-func (d *Daemon) stamp(resp Response) Response {
+// stamp records which daemon answered and which build it is. It sits on the
+// write path rather than in the 14 handlers so no method can be added without
+// it, and it covers the decode-error reply too: a malformed request answered by
+// the wrong daemon is worth attributing as much as a successful one.
+func (d *Daemon) stamp(resp daemonrpc.Response) daemonrpc.Response {
 	resp.DaemonHome = d.home
+	resp.DaemonBuild = d.buildStamp
 	resp.Starting = d.adoptingSince.Load() != 0
 	return resp
 }
@@ -1021,7 +1039,7 @@ func (d *Daemon) stamp(resp Response) Response {
 // dispatch routes a request as the local admin caller. The local socket path
 // and the daemon's own tests use it; the SSH transport uses dispatchAs with
 // the authenticated key's scope.
-func (d *Daemon) dispatch(req Request) Response {
+func (d *Daemon) dispatch(req daemonrpc.Request) daemonrpc.Response {
 	return d.dispatchAs(req, localCaller())
 }
 
@@ -1029,20 +1047,20 @@ func (d *Daemon) dispatch(req Request) Response {
 // Response is the refusal to send when refused is true. Shared by
 // dispatchAs and the streaming path so no method can reach a handler
 // without passing it.
-func (d *Daemon) scopeRefusal(req Request, c caller) (Response, bool) {
+func (d *Daemon) scopeRefusal(req daemonrpc.Request, c caller) (daemonrpc.Response, bool) {
 	if !methodAllowedForScope(req.Method, c.scope) {
 		who := c.fingerprint
 		if who == "" {
 			who = "local"
 		}
 		log.Printf("scope refused: method %q not permitted for %s key %s", req.Method, c.scope, who)
-		return Response{Error: fmt.Sprintf("method %q is not permitted for a %s key", req.Method, c.scope)}, true
+		return daemonrpc.Response{Error: fmt.Sprintf("method %q is not permitted for a %s key", req.Method, c.scope)}, true
 	}
 	if methodRequiresLocal(req.Method) && !c.local {
 		log.Printf("local-only refused: method %q attempted over mrvl:// by key %s", req.Method, c.fingerprint)
-		return Response{Error: fmt.Sprintf("method %q is only available on the local unix socket", req.Method)}, true
+		return daemonrpc.Response{Error: fmt.Sprintf("method %q is only available on the local unix socket", req.Method)}, true
 	}
-	return Response{}, false
+	return daemonrpc.Response{}, false
 }
 
 // ErrDaemonStarting is the refusal a method gets while the daemon is still
@@ -1089,7 +1107,7 @@ var startingMethods = map[string]bool{
 }
 
 // startingAllows reports whether req may run while the daemon is adopting.
-func startingAllows(req Request) bool {
+func startingAllows(req daemonrpc.Request) bool {
 	if req.Method == "stop" {
 		teardown, _, err := stopMode(req.Params)
 		// A malformed stop reaches the handler, which refuses it; it cannot
@@ -1101,15 +1119,15 @@ func startingAllows(req Request) bool {
 
 // dispatchAs enforces the caller's scope, then routes the request. A method
 // the scope does not permit is refused before any handler runs.
-func (d *Daemon) dispatchAs(req Request, c caller) Response {
+func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
 		if req.Method == "heartbeat" || req.Method == "account.limits" {
-			return Response{Error: ErrReportDeferred.Error(), Starting: true}
+			return daemonrpc.Response{Error: ErrReportDeferred.Error(), Starting: true}
 		}
-		return Response{Error: ErrDaemonStarting.Error(), Starting: true}
+		return daemonrpc.Response{Error: ErrDaemonStarting.Error(), Starting: true}
 	}
 	switch req.Method {
 	case "apply":
@@ -1180,11 +1198,11 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 		return d.handleLogs(req.Params)
 	case "events":
 		return d.handleEvents(req.Params)
-	case MethodEventsWatch:
+	case daemonrpc.MethodEventsWatch:
 		// Reachable only through dispatch(), which tests and the SSH
 		// path do not use for this method; handleRWCAs routes it to the
 		// streaming handler before dispatch.
-		return Response{Error: fmt.Sprintf("%s streams many responses on one connection; use daemonrpc.WatchEventsWith", MethodEventsWatch)}
+		return daemonrpc.Response{Error: fmt.Sprintf("%s streams many responses on one connection; use daemonrpc.WatchEventsWith", daemonrpc.MethodEventsWatch)}
 	case MethodVersion:
 		return d.handleVersion()
 	case "orphans":
@@ -1192,7 +1210,7 @@ func (d *Daemon) dispatchAs(req Request, c caller) Response {
 	case "plan":
 		return d.handlePlan()
 	default:
-		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
+		return daemonrpc.Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
 }
 
@@ -1205,11 +1223,11 @@ type logsResult struct {
 	Lines []string `json:"lines"`
 }
 
-func (d *Daemon) handleLogs(params json.RawMessage) Response {
+func (d *Daemon) handleLogs(params json.RawMessage) daemonrpc.Response {
 	var p logsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
 	if p.N <= 0 {
@@ -1245,15 +1263,15 @@ func (p eventsParams) filter() events.Filter {
 	}
 }
 
-func (d *Daemon) handleEvents(params json.RawMessage) Response {
+func (d *Daemon) handleEvents(params json.RawMessage) daemonrpc.Response {
 	var p eventsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
 	snap := d.events.Snapshot(p.filter(), p.N)
-	return respond(EventsBatch{Events: snap})
+	return respond(daemonrpc.EventsBatch{Events: snap})
 }
 
 // eventsWatchKeepalive bounds how long a dead peer holds a watch open
@@ -1286,7 +1304,7 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 	var p eventsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			_ = enc.Encode(d.stamp(Response{Error: fmt.Sprintf("bad params: %v", err)}))
+			_ = enc.Encode(d.stamp(daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}))
 			return
 		}
 	}
@@ -1294,7 +1312,7 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 	w := d.events.Watch(f, 0)
 	defer w.Close()
 
-	send := func(b EventsBatch) bool {
+	send := func(b daemonrpc.EventsBatch) bool {
 		return enc.Encode(d.stamp(respond(b))) == nil
 	}
 
@@ -1303,7 +1321,7 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 	if n := len(backlog); n > 0 {
 		last = backlog[n-1].Seq
 	}
-	if !send(EventsBatch{Events: backlog}) {
+	if !send(daemonrpc.EventsBatch{Events: backlog}) {
 		return
 	}
 
@@ -1338,7 +1356,7 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 				}
 			}
 		}
-		out := EventsBatch{}
+		out := daemonrpc.EventsBatch{}
 		for _, ev := range batch {
 			if ev.Seq <= last {
 				continue
@@ -1364,10 +1382,10 @@ type applyParams struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
-func (d *Daemon) handleApply(params json.RawMessage) Response {
+func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	var p applyParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	m, err := api.ParseManifestBytes(p.ManifestData)
@@ -1377,10 +1395,10 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 		// one), so return it as-is. Re-wrapping with "parse manifest: %v"
 		// doubled the prefix. Matches the ValidateRuntimes/ValidateBudgets
 		// pre-flight siblings below, which also surface err.Error() directly.
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	if err := api.ScheduleHistoryCap(m, d.scheduleHistoryMax); err != nil {
-		return Response{Error: "parse manifest: " + err.Error()}
+		return daemonrpc.Response{Error: "parse manifest: " + err.Error()}
 	}
 
 	if p.WorkspaceRoot != "" {
@@ -1390,10 +1408,10 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// anything is stored; a missing root warns and places nothing.
 	workDirAdvisories, err := m.ValidateWorkDirs()
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	if err := m.ValidateTrustedFolders(); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	workDirAdvisories = append(workDirAdvisories, m.LegacyPlacementNotes(d.store)...)
 	workDirAdvisories = append(workDirAdvisories, m.TrustedFolderNotes(d.store)...)
@@ -1404,7 +1422,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// immediately and entered the restart loop.
 	runtimeAdvisories, err := m.ValidateRuntimes()
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	workDirAdvisories = append(workDirAdvisories, runtimeAdvisories...)
 
@@ -1414,26 +1432,26 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	// registry: mode alone does not answer it, since a generic role can
 	// declare headless and still have no stream path.
 	if err := m.ValidateBudgets(d.sessMgr.CanStreamRole); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// Pre-flight: a writer role whose slot has read its function is refused
 	// here, before anything is stored, by the same gate every spawn path asks
 	// (marvel#945).
 	if err := m.CheckExposure(d.store); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// Pre-flight: a global role declaration the cluster does not admit is
 	// refused before anything is stored (global-role-declaration.md section 6).
 	if err := refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
 	if err := m.ValidateTeamNames(d.store.ListTeams()); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// Admission, before Apply commits anything. Refusing the declaration is
@@ -1467,7 +1485,7 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 	headroomAdvisories := m.ShiftHeadroomAdvisories()
 
 	if err := m.Apply(d.store); err != nil {
-		return Response{Error: fmt.Sprintf("apply manifest: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
 	for _, a := range workDirAdvisories {
 		log.Printf("apply: %s", a)
@@ -1546,12 +1564,14 @@ func (d *Daemon) handleApply(params json.RawMessage) Response {
 // Get params
 type getParams struct {
 	ResourceType string `json:"resource_type"`
+	// Composer asks for the COMPOSER column, which reads each seat's pane.
+	Composer bool `json:"composer,omitempty"`
 }
 
-func (d *Daemon) handleGet(params json.RawMessage) Response {
+func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 	var p getParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	var result any
@@ -1582,6 +1602,9 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
 		d.stampSpec(live)
+		if p.Composer {
+			stampComposer(d.driver, live, d.composerClientWorkspace)
+		}
 		result = append(live, held...)
 	case "teams", "team":
 		result = d.store.ListTeams()
@@ -1599,7 +1622,7 @@ func (d *Daemon) handleGet(params json.RawMessage) Response {
 	case "budgets", "budget":
 		result = d.budgetRows()
 	default:
-		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
+		return daemonrpc.Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}
 
 	return respond(result)
@@ -1620,7 +1643,7 @@ type planResult struct {
 // or deleted and no store record is written, so this RPC never changes
 // cluster state. Teams mid-shift are omitted by PlanConvergence; see its doc
 // comment for the two fidelity limits a consumer must account for.
-func (d *Daemon) handlePlan() Response {
+func (d *Daemon) handlePlan() daemonrpc.Response {
 	return respond(planResult{Plans: d.teamCtrl.PlanConvergence()})
 }
 
@@ -1630,10 +1653,10 @@ type describeParams struct {
 	Name         string `json:"name"`
 }
 
-func (d *Daemon) handleDescribe(params json.RawMessage) Response {
+func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 	var p describeParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	var result any
@@ -1667,11 +1690,11 @@ func (d *Daemon) handleDescribe(params json.RawMessage) Response {
 		// never crosses the wire. Reveal is a separate local-socket path (S3).
 		result, err = d.store.GetCredential(p.Name)
 	default:
-		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
+		return daemonrpc.Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}
 
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	return respond(result)
@@ -1683,10 +1706,10 @@ type deleteParams struct {
 	Name         string `json:"name"`
 }
 
-func (d *Daemon) handleDelete(params json.RawMessage) Response {
+func (d *Daemon) handleDelete(params json.RawMessage) daemonrpc.Response {
 	var p deleteParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	var err error
@@ -1697,7 +1720,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 		// Delete team and its sessions.
 		t, getErr := d.store.GetTeam(p.Name)
 		if getErr != nil {
-			return Response{Error: getErr.Error()}
+			return daemonrpc.Response{Error: getErr.Error()}
 		}
 		sessions := d.store.ListSessionsByTeam(t.Workspace, t.Name)
 		for _, s := range sessions {
@@ -1712,7 +1735,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 	case "workspace":
 		ws, getErr := d.store.GetWorkspace(p.Name)
 		if getErr != nil {
-			return Response{Error: getErr.Error()}
+			return daemonrpc.Response{Error: getErr.Error()}
 		}
 		// Cascade: delete teams in this workspace (and their sessions) so the
 		// reconciler doesn't respawn sessions against orphaned team records.
@@ -1733,11 +1756,11 @@ func (d *Daemon) handleDelete(params json.RawMessage) Response {
 		// team in this workspace. See ArcavenAE/marvel#29.
 		d.teamCtrl.ClearRoleHealthForWorkspace(ws.Name)
 	default:
-		return Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
+		return daemonrpc.Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}
 
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	return respond(map[string]string{"status": "deleted"})
@@ -1750,19 +1773,19 @@ type scaleParams struct {
 	Replicas int    `json:"replicas"`
 }
 
-func (d *Daemon) handleScale(params json.RawMessage) Response {
+func (d *Daemon) handleScale(params json.RawMessage) daemonrpc.Response {
 	var p scaleParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	t, err := d.store.GetTeam(p.TeamKey)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	if t.Shift.Phase != "" {
-		return Response{Error: fmt.Sprintf("team %s: shift in progress, cannot scale", p.TeamKey)}
+		return daemonrpc.Response{Error: fmt.Sprintf("team %s: shift in progress, cannot scale", p.TeamKey)}
 	}
 
 	if p.Role == "" {
@@ -1770,7 +1793,7 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		for _, r := range t.Roles {
 			names = append(names, r.Name)
 		}
-		return Response{Error: fmt.Sprintf("role is required; available roles: %v", names)}
+		return daemonrpc.Response{Error: fmt.Sprintf("role is required; available roles: %v", names)}
 	}
 
 	// Role existence is checked BEFORE the budget gate and before the
@@ -1791,21 +1814,21 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		}
 	}
 	if old < 0 {
-		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+		return daemonrpc.Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
 	}
 
 	// Apply refuses max-age on a role with several replicas; scale is the
 	// second door to the same drain, so it refuses the same thing (marvel#452).
 	// Scaling to zero or one stays allowed.
 	if maxAge && p.Replicas > 1 {
-		return Response{Error: api.MaxAgeReplicasError(fmt.Sprintf("team %s role %s shift", p.TeamKey, p.Role)).Error()}
+		return daemonrpc.Response{Error: api.MaxAgeReplicasError(fmt.Sprintf("team %s role %s shift", p.TeamKey, p.Role)).Error()}
 	}
 
 	// Structural validity first, before admission and before anything
 	// reaches the store: a stored negative count panicked the reconciler
 	// and then every restarted daemon (marvel#365).
 	if err := api.ValidateReplicas(p.TeamKey, p.Role, p.Replicas); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// A scale-down adds nothing and is never refused: shedding sessions is
@@ -1837,7 +1860,7 @@ func (d *Daemon) handleScale(params json.RawMessage) Response {
 		}
 		return nil
 	}); err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	d.teamCtrl.ReconcileOnce()
@@ -1881,11 +1904,11 @@ type convergeResult struct {
 // lives in the team controller (SetConvergencePosture), not here, so the same
 // control-plane lever is available to a future in-process majordomo; the CLI
 // `marvel converge` is one client of this RPC.
-func (d *Daemon) handleConverge(params json.RawMessage) Response {
+func (d *Daemon) handleConverge(params json.RawMessage) daemonrpc.Response {
 	var p convergeParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
 
@@ -1896,7 +1919,7 @@ func (d *Daemon) handleConverge(params json.RawMessage) Response {
 
 	plans, err := d.teamCtrl.SetConvergencePosture(p.TeamKey, posture)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// Enact the new posture. On a converge this spawns toward desired; on a
@@ -1960,10 +1983,10 @@ func (d *Daemon) logConvergencePosture() {
 // See api.HeartbeatRequest and finding-023.
 type heartbeatParams = api.HeartbeatRequest
 
-func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
+func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 	var p heartbeatParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	auth, err := d.store.UpdateSessionHeartbeat(p)
@@ -1991,7 +2014,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) Response {
 			}
 			d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, p.SessionKey, msg)
 		}
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	if auth == api.HeartbeatAuthUnbound {
 		d.emitHeartbeatAuth(events.KindHeartbeatUnbound, p.SessionKey,
@@ -2100,10 +2123,10 @@ type runParams struct {
 // read as a flag, so the key stays workspace/name.
 var runNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-func (d *Daemon) handleRun(params json.RawMessage) Response {
+func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 	var p runParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	if p.Workspace == "" {
@@ -2122,20 +2145,20 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 	case string(api.RuntimeModeHeadless):
 		mode = api.RuntimeModeHeadless
 		if p.Prompt == "" {
-			return Response{Error: "headless run needs a prompt"}
+			return daemonrpc.Response{Error: "headless run needs a prompt"}
 		}
 	default:
-		return Response{Error: fmt.Sprintf("unknown run mode %q (want headless)", p.Mode)}
+		return daemonrpc.Response{Error: fmt.Sprintf("unknown run mode %q (want headless)", p.Mode)}
 	}
 	if p.Name != "" && !runNamePattern.MatchString(p.Name) {
-		return Response{Error: fmt.Sprintf("invalid session name %q (letters, digits, dot, dash and underscore; no leading dash)", p.Name)}
+		return daemonrpc.Response{Error: fmt.Sprintf("invalid session name %q (letters, digits, dot, dash and underscore; no leading dash)", p.Name)}
 	}
 
 	// Placement is checked before anything is created, so a refused run leaves no
 	// workspace or session behind.
 	workDir, warning, werr := resolveRunWorkDir(p.WorkDir, p.WorkDirDefault)
 	if werr != nil {
-		return Response{Error: werr.Error()}
+		return daemonrpc.Response{Error: werr.Error()}
 	}
 
 	// Ensure workspace exists.
@@ -2186,7 +2209,7 @@ func (d *Daemon) handleRun(params json.RawMessage) Response {
 				Message:   err.Error(),
 			})
 		}
-		return Response{Error: fmt.Sprintf("create session: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("create session: %v", err)}
 	}
 
 	out := map[string]string{
@@ -2205,14 +2228,14 @@ type shiftParams struct {
 	Role    string `json:"role,omitempty"`
 }
 
-func (d *Daemon) handleShift(params json.RawMessage) Response {
+func (d *Daemon) handleShift(params json.RawMessage) daemonrpc.Response {
 	var p shiftParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	if err := d.teamCtrl.InitiateShift(p.TeamKey, p.Role); err != nil {
-		return Response{Error: fmt.Sprintf("initiate shift: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("initiate shift: %v", err)}
 	}
 
 	// Trigger immediate reconciliation to start the shift.
@@ -2237,17 +2260,17 @@ type resetHealthParams struct {
 // the team. It resolves the team so it can validate the role and derive the
 // canonical workspace/team, then reconciles so a role no longer held back can
 // spawn its replacement immediately.
-func (d *Daemon) handleResetHealth(params json.RawMessage) Response {
+func (d *Daemon) handleResetHealth(params json.RawMessage) daemonrpc.Response {
 	var p resetHealthParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	if p.Role == "" {
-		return Response{Error: "reset-health requires --role"}
+		return daemonrpc.Response{Error: "reset-health requires --role"}
 	}
 	t, err := d.store.GetTeam(p.TeamKey)
 	if err != nil {
-		return Response{Error: fmt.Sprintf("team %s: %v", p.TeamKey, err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("team %s: %v", p.TeamKey, err)}
 	}
 	found := false
 	for i := range t.Roles {
@@ -2257,7 +2280,7 @@ func (d *Daemon) handleResetHealth(params json.RawMessage) Response {
 		}
 	}
 	if !found {
-		return Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
+		return daemonrpc.Response{Error: fmt.Sprintf("role %s not found in team %s", p.Role, p.TeamKey)}
 	}
 
 	cleared := d.teamCtrl.ClearRoleHealthForRole(t.Workspace, t.Name, p.Role)
@@ -2305,19 +2328,19 @@ type Injector struct {
 	User    string `json:"user,omitempty"`
 }
 
-func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) daemonrpc.Response {
 	var p injectParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	sess, err := d.store.GetSession(p.SessionKey)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	if sess.PaneID == "" {
-		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
+		return daemonrpc.Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
 	origin := injectOrigin(c, p.Injector)
@@ -2357,7 +2380,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) Response {
 	}
 
 	if err := sendInject(d.driver, d.events, sess, p, clearKey, origin); err != nil {
-		return Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
 	}
 
 	out := map[string]string{
@@ -2434,9 +2457,9 @@ func emitInjectRefused(ring *events.Ring, sess api.Session, why, origin string) 
 }
 
 // refuseInject records the refusal and returns the error.
-func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) Response {
+func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) daemonrpc.Response {
 	emitInjectRefused(d.events, sess, why, origin)
-	return Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
+	return daemonrpc.Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
 }
 
 // repaintSettled nudges a pane so its program redraws, holds for settle, and
@@ -2577,19 +2600,19 @@ func captureBounds(p captureParams) (start, end int, ranged bool) {
 	return start, end, true
 }
 
-func (d *Daemon) handleCapture(params json.RawMessage) Response {
+func (d *Daemon) handleCapture(params json.RawMessage) daemonrpc.Response {
 	var p captureParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
 	sess, err := d.store.GetSession(p.SessionKey)
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	if sess.PaneID == "" {
-		return Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
+		return daemonrpc.Response{Error: fmt.Sprintf("session %s has no pane", p.SessionKey)}
 	}
 
 	// A repaint is a request, not a promise: a failure to signal is reported
@@ -2615,7 +2638,7 @@ func (d *Daemon) handleCapture(params json.RawMessage) Response {
 		content, err = d.driver.CapturePane(sess.PaneID)
 	}
 	if err != nil {
-		return Response{Error: fmt.Sprintf("capture %s: %v", p.SessionKey, err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("capture %s: %v", p.SessionKey, err)}
 	}
 
 	out := map[string]string{
@@ -2729,23 +2752,23 @@ func (d *Daemon) orphanRecords() []OrphanRecord {
 // process heartbeating with a token minted for an earlier incarnation of
 // the key. Read-only: marvel reports orphans and never kills them
 // (aae-orc-m4of; the never-destroy rule from PRs #123, #132 stands).
-func (d *Daemon) handleOrphans() Response {
+func (d *Daemon) handleOrphans() daemonrpc.Response {
 	return respond(orphansResult{Orphans: d.orphanRecords()})
 }
 
-func (d *Daemon) handleReap(params json.RawMessage) Response {
+func (d *Daemon) handleReap(params json.RawMessage) daemonrpc.Response {
 	var p struct {
 		Confirm bool `json:"confirm"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
 
 	found, err := d.sessMgr.UnrecordedTmuxState()
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 
 	// Orphans ride along as evidence, not as reap targets: a stale-token
@@ -2764,7 +2787,7 @@ func (d *Daemon) handleReap(params json.RawMessage) Response {
 
 	_, killed, err := d.sessMgr.AdoptOrKill()
 	if err != nil {
-		return Response{Error: err.Error()}
+		return daemonrpc.Response{Error: err.Error()}
 	}
 	return respond(map[string]any{
 		"reaped":     true,
@@ -2804,7 +2827,7 @@ type StopResult struct {
 // before shutdown and carried nothing about it. Surveying here, on the
 // request goroutine, is what makes the answer reachable at all: the
 // shutdown goroutine ends the process. See ArcavenAE/marvel#92.
-func (d *Daemon) stopReport(teardown bool, mode string) Response {
+func (d *Daemon) stopReport(teardown bool, mode string) daemonrpc.Response {
 	res := StopResult{Status: "stopping", Mode: mode}
 	held := len(d.store.ListCredentials())
 	res.TransientCredentials = &held
@@ -2830,10 +2853,10 @@ func (d *Daemon) exitProcess(code int) {
 	os.Exit(code)
 }
 
-func (d *Daemon) handleStop(params json.RawMessage) Response {
+func (d *Daemon) handleStop(params json.RawMessage) daemonrpc.Response {
 	teardown, mode, err := stopMode(params)
 	if err != nil {
-		return Response{Error: fmt.Sprintf("bad params: %v", err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	if len(params) > 0 {
 		var p stopParams
@@ -2881,11 +2904,11 @@ func revisionLabel(t reexecTarget) string {
 // its own path, so an install that keeps each version in its own directory
 // adopts the new build. exec_path is refused from any caller that is not on the
 // local unix socket, admin keys included.
-func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
+func (d *Daemon) handleReexec(params json.RawMessage, c caller) daemonrpc.Response {
 	var p reexecParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
 	// Resolve the binary here so an unresolvable path is reported to the
@@ -2895,18 +2918,18 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) Response {
 	if p.ExecPath == "" {
 		self, err := selfExecPath()
 		if err != nil {
-			return Response{Error: err.Error()}
+			return daemonrpc.Response{Error: err.Error()}
 		}
 		exe = self
 	} else {
 		if !c.local {
 			log.Printf("reexec refused: exec_path over mrvl:// by key %s", c.fingerprint)
-			return Response{Error: errNotLocal.Error()}
+			return daemonrpc.Response{Error: errNotLocal.Error()}
 		}
 		target, err := validateReexecTarget(p.ExecPath, d.build.Version)
 		if err != nil {
 			log.Printf("reexec refused: %v", err)
-			return Response{Error: err.Error()}
+			return daemonrpc.Response{Error: err.Error()}
 		}
 		exe = target.Path
 		who := c.fingerprint
@@ -3141,10 +3164,10 @@ func (d *Daemon) lifecycleStatus() bus.Status {
 // handleBusStatus serves `marvel bus status`: the supervised broker when
 // there is one, the adopted URL when the cluster only points at a bus, and
 // a plain "no bus" otherwise.
-func (d *Daemon) handleBusStatus() Response {
+func (d *Daemon) handleBusStatus() daemonrpc.Response {
 	st, ok := d.busStatus()
 	if !ok {
-		return Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
+		return daemonrpc.Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
 	}
 	return respond(st)
 }
@@ -3159,11 +3182,11 @@ type backendVerifyParams struct {
 // whether the layers agree (BT7). It runs here rather than in the CLI because
 // the overlay directory is the session manager's own state; see
 // session.Manager.VerifyBackend.
-func (d *Daemon) handleBackendVerify(params json.RawMessage) Response {
+func (d *Daemon) handleBackendVerify(params json.RawMessage) daemonrpc.Response {
 	var p backendVerifyParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return Response{Error: fmt.Sprintf("bad params: %v", err)}
+			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
 	sessions := d.store.ListSessions()
@@ -3175,7 +3198,7 @@ func (d *Daemon) handleBackendVerify(params json.RawMessage) Response {
 		out = append(out, d.sessMgr.VerifyBackend(sess))
 	}
 	if p.Session != "" && len(out) == 0 {
-		return Response{Error: fmt.Sprintf("no session %s", p.Session)}
+		return daemonrpc.Response{Error: fmt.Sprintf("no session %s", p.Session)}
 	}
 	return respond(out)
 }
@@ -3306,26 +3329,26 @@ func (d *Daemon) leafSeedNeedsRestart() bool {
 // and reload (SIGHUP), leaving the seed enrolled and every local session
 // connected. They never restart; the one enrollment restart lives in
 // enrollLeafSeed (aae-orc-ct0l4).
-func (d *Daemon) handleBusLeafConnect() Response {
+func (d *Daemon) handleBusLeafConnect() daemonrpc.Response {
 	return d.setLeafAttached(true, "bus.leaf.connect")
 }
 
-func (d *Daemon) handleBusLeafDisconnect() Response {
+func (d *Daemon) handleBusLeafDisconnect() daemonrpc.Response {
 	return d.setLeafAttached(false, "bus.leaf.disconnect")
 }
 
-func (d *Daemon) setLeafAttached(attached bool, reason string) Response {
+func (d *Daemon) setLeafAttached(attached bool, reason string) daemonrpc.Response {
 	if d.bus == nil || d.lifecycle == nil {
-		return Response{Error: "no managed bus is configured for this cluster; connect and disconnect apply to a marvel-supervised broker"}
+		return daemonrpc.Response{Error: "no managed bus is configured for this cluster; connect and disconnect apply to a marvel-supervised broker"}
 	}
 	if d.bus.Bus().HubURL == "" {
-		return Response{Error: "this daemon's config, read once at start, declares no hub (bus.hub.url), so there is no leaf to connect or disconnect; " +
+		return daemonrpc.Response{Error: "this daemon's config, read once at start, declares no hub (bus.hub.url), so there is no leaf to connect or disconnect; " +
 			"if the file declares one now, run `marvel daemon reexec` to re-read it, then push the leaf credential again with `marvel credential put bus/leaf --value-file <seed-file>` (a reexec drops it, marvel#339); " +
 			"run both with the same --cluster or --socket you used to reach this daemon, since a bare marvel may resolve to a different one"}
 	}
 	changed, err := d.bus.SetLeafAttached(attached)
 	if err != nil {
-		return Response{Error: fmt.Sprintf("%s: %v", reason, err)}
+		return daemonrpc.Response{Error: fmt.Sprintf("%s: %v", reason, err)}
 	}
 	verb := "disconnected"
 	if attached {

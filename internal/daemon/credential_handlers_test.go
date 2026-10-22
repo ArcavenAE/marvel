@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -39,7 +40,7 @@ func TestCredentialPutStoresAndEmitsFingerprintNotValue(t *testing.T) {
 	d := newHandlerDaemon(t)
 	pushKey := caller{scope: ScopeCredentialPush, fingerprint: testFP}
 
-	resp := d.dispatchAs(Request{Method: "credential.put", Params: putParams(t, "bus", testSecret)}, pushKey)
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: putParams(t, "bus", testSecret)}, pushKey)
 	if resp.Error != "" {
 		t.Fatalf("credential.put by a credential-push key: %s", resp.Error)
 	}
@@ -79,18 +80,18 @@ func TestCredentialPutStoresAndEmitsFingerprintNotValue(t *testing.T) {
 func TestCredentialGetIsAdminOnly(t *testing.T) {
 	d := newHandlerDaemon(t)
 	// Seed one credential (as the local admin).
-	if resp := d.dispatchAs(Request{Method: "credential.put", Params: putParams(t, "bus", testSecret)}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: putParams(t, "bus", testSecret)}, localCaller()); resp.Error != "" {
 		t.Fatalf("seed put: %s", resp.Error)
 	}
 
 	// A credential-push key may not read.
-	resp := d.dispatchAs(Request{Method: "credential.get", Params: nameParams(t, "bus")}, caller{scope: ScopeCredentialPush, fingerprint: testFP})
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.get", Params: nameParams(t, "bus")}, caller{scope: ScopeCredentialPush, fingerprint: testFP})
 	if !strings.Contains(resp.Error, "is not permitted for a") {
 		t.Errorf("credential.get by a credential-push key: error = %q, want a scope refusal", resp.Error)
 	}
 
 	// The local admin may, and gets metadata only.
-	resp = d.dispatchAs(Request{Method: "credential.get", Params: nameParams(t, "bus")}, localCaller())
+	resp = d.dispatchAs(daemonrpc.Request{Method: "credential.get", Params: nameParams(t, "bus")}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("credential.get by admin: %s", resp.Error)
 	}
@@ -106,12 +107,12 @@ func TestCredentialGetIsAdminOnly(t *testing.T) {
 func TestCredentialListAndDelete(t *testing.T) {
 	d := newHandlerDaemon(t)
 	pushKey := caller{scope: ScopeCredentialPush, fingerprint: testFP}
-	if resp := d.dispatchAs(Request{Method: "credential.put", Params: putParams(t, "bus", testSecret)}, pushKey); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: putParams(t, "bus", testSecret)}, pushKey); resp.Error != "" {
 		t.Fatalf("put: %s", resp.Error)
 	}
 
 	// list is reachable by a credential-push key and returns metadata only.
-	resp := d.dispatchAs(Request{Method: "credential.list"}, pushKey)
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.list"}, pushKey)
 	if resp.Error != "" {
 		t.Fatalf("list: %s", resp.Error)
 	}
@@ -125,7 +126,7 @@ func TestCredentialListAndDelete(t *testing.T) {
 
 	// delete is reachable by a credential-push key, removes the credential, and
 	// emits an event naming the fingerprint.
-	resp = d.dispatchAs(Request{Method: "credential.delete", Params: nameParams(t, "bus")}, pushKey)
+	resp = d.dispatchAs(daemonrpc.Request{Method: "credential.delete", Params: nameParams(t, "bus")}, pushKey)
 	if resp.Error != "" {
 		t.Fatalf("delete: %s", resp.Error)
 	}
@@ -144,7 +145,7 @@ func TestCredentialListAndDelete(t *testing.T) {
 func TestCredentialPutRejectsEmptyValue(t *testing.T) {
 	d := newHandlerDaemon(t)
 	p, _ := json.Marshal(map[string]any{"name": "bus", "kind": string(api.CredentialNATSNKeySeed)})
-	resp := d.dispatchAs(Request{Method: "credential.put", Params: p}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: p}, localCaller())
 	if resp.Error == "" {
 		t.Fatal("credential.put with no value: want an error, got success")
 	}

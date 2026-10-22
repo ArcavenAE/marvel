@@ -80,6 +80,9 @@ type ManifestWorkspace struct {
 	// "container". Absent or empty means the manifest names none, so the
 	// harness's recommendation and then localhost decide (ResolvePlacement).
 	Placement string `toml:"placement,omitempty" yaml:"placement,omitempty"`
+	// Scope is "client" for a client workspace. Absent leaves a stored scope
+	// alone, so a later apply cannot quietly open a client's panes.
+	Scope string `toml:"scope,omitempty" yaml:"scope,omitempty"`
 }
 
 // ManifestTeam is a team section of a manifest.
@@ -136,7 +139,11 @@ type ManifestRole struct {
 	SettingsSources []string `toml:"settings_sources,omitempty" yaml:"settings_sources,omitempty"`
 	// Writes names the functions the role writes. A role that names one is not
 	// started while its slot has an exposure record for it (marvel#945).
-	Writes   []string `toml:"writes,omitempty" yaml:"writes,omitempty"`
+	Writes []string `toml:"writes,omitempty" yaml:"writes,omitempty"`
+	// Duties names the readiness checks the role must pass, each from the
+	// fixed library (docs/design/seat-readiness.md section 3). Parsed into
+	// Role.Duties.
+	Duties   []string `toml:"duties,omitempty" yaml:"duties,omitempty"`
 	Name     string   `toml:"name"                          yaml:"name"`
 	Replicas int      `toml:"replicas"                      yaml:"replicas"`
 	// WorkDir is where this role's sessions run. Relative values resolve
@@ -390,6 +397,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	if err := Placement(m.Workspace.Placement).check("parse manifest: workspace.placement"); err != nil {
 		return nil, err
 	}
+	if sc := m.Workspace.Scope; sc != "" && sc != WorkspaceScopeClient {
+		return nil, fmt.Errorf("parse manifest: workspace.scope %q: the one scope is %q", sc, WorkspaceScopeClient)
+	}
 	policyNames := make(map[string]bool, len(m.Policies))
 	for i, p := range m.Policies {
 		if p.Name == "" {
@@ -466,6 +476,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if err := validateWrites(fmt.Sprintf("team[%d].role[%d]", i, j), r.Writes); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			if err := validateDuties(fmt.Sprintf("team[%d].role[%d]", i, j), r.Duties); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			if r.Schedule != nil {
@@ -876,7 +889,7 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()
 
-	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), CreatedAt: now}
+	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), Scope: m.Workspace.Scope, CreatedAt: now}
 	if m.Workspace.TrustedFolders != nil {
 		ws.TrustedFolders = slices.Clone(*m.Workspace.TrustedFolders)
 	}
@@ -886,7 +899,7 @@ func (m *Manifest) Apply(store *Store) error {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("apply workspace: %w", err)
 		}
-		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil || m.Workspace.Placement != "" {
+		if m.Workspace.Root != "" || m.Workspace.TrustedFolders != nil || m.Workspace.Placement != "" || m.Workspace.Scope != "" {
 			if err := store.UpdateWorkspace(ws.Name, func(live *Workspace) error {
 				if m.Workspace.Root != "" {
 					live.Root = m.Workspace.Root
@@ -900,6 +913,11 @@ func (m *Manifest) Apply(store *Store) error {
 				// leaves it alone.
 				if m.Workspace.Placement != "" {
 					live.Placement = Placement(m.Workspace.Placement)
+				}
+				// A named scope replaces the stored one; an absent key
+				// leaves it alone.
+				if m.Workspace.Scope != "" {
+					live.Scope = m.Workspace.Scope
 				}
 				return nil
 			}); err != nil {
@@ -960,6 +978,7 @@ func (m *Manifest) Apply(store *Store) error {
 				DangerousPermissions: mr.DangerousPermissions,
 				Persona:              mr.Persona,
 				GlobalRole:           mr.GlobalRole,
+				Duties:               slices.Clone(mr.Duties),
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),

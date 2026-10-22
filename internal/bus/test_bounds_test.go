@@ -17,7 +17,8 @@ const loadedBrokerWait = 30 * time.Second
 // run a real broker behind the rest of the suite.
 func TestMain(m *testing.M) {
 	provisionRPC, structureRPC = loadedBrokerWait, loadedBrokerWait
-	os.Exit(homeguard.Run(m))
+	dialGuard = guardDial
+	os.Exit(failOnRefusedDials(homeguard.Run(m)))
 }
 
 // A test that starts a real broker waits long enough for it on a loaded host.
