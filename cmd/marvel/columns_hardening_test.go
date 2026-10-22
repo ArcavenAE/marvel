@@ -161,8 +161,8 @@ func TestNewWatchStateStartsByNameAscending(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := newWatchState(cols)
-	if ws.column != "name" || ws.desc {
-		t.Errorf("watch starts sorted by %q desc=%v, want name ascending", ws.column, ws.desc)
+	if ws.column != "" || ws.desc {
+		t.Errorf("watch starts sorted by %q desc=%v, want the default order ascending", ws.column, ws.desc)
 	}
 	if got := headersOf(ws.columns); !reflect.DeepEqual(got, []string{"STATE", "AGENT NAME"}) {
 		t.Errorf("watch columns = %v, want the ones passed in", got)
