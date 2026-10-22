@@ -9,6 +9,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/childproof"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
 
@@ -33,7 +34,7 @@ func suspendedRecord() suspend.Record {
 	}
 }
 
-func statusOf(t *testing.T, resp Response) suspend.Status {
+func statusOf(t *testing.T, resp daemonrpc.Response) suspend.Status {
 	t.Helper()
 	if resp.Error != "" {
 		t.Fatalf("suspend.status error: %s", resp.Error)
@@ -52,13 +53,13 @@ func TestSuspendStatusAnswersWithoutControllerOrTmux(t *testing.T) {
 	d, sock := suspendDaemon(t)
 	d.loadSuspendRecord(sock)
 	d.adoptingSince.Store(time.Now().UnixNano())
-	if st := statusOf(t, d.dispatchAs(Request{Method: "suspend.status"}, localCaller())); st.State != suspend.StateRunning {
+	if st := statusOf(t, d.dispatchAs(daemonrpc.Request{Method: "suspend.status"}, localCaller())); st.State != suspend.StateRunning {
 		t.Errorf("state = %q with no record, want running", st.State)
 	}
 	if err := (suspendStore{d}).Save(suspendedRecord()); err != nil {
 		t.Fatal(err)
 	}
-	st := statusOf(t, d.dispatchAs(Request{Method: "suspend.status"}, localCaller()))
+	st := statusOf(t, d.dispatchAs(daemonrpc.Request{Method: "suspend.status"}, localCaller()))
 	if st.State != string(suspend.StateSuspended) || st.Record == nil || st.Record.Server.Pid != 100 {
 		t.Errorf("status = %+v, want the suspended record", st)
 	}
