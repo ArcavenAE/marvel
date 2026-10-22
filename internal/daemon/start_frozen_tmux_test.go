@@ -94,7 +94,9 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 	t.Cleanup(func() {
-		<-started
+		if err := <-started; err != nil {
+			t.Logf("start: %v", err)
+		}
 		d.Stop()
 		_ = os.Remove(sock)
 	})
