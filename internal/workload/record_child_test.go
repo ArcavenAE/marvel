@@ -90,7 +90,10 @@ func TestTerminateErrorNamesTheStep(t *testing.T) {
 				t.Skip("no sleep binary")
 			}
 			// A child that ignores SIGTERM outlives the grace, so the SIGKILL is sent.
-			cmd := exec.Command("/bin/sh", "-c", "trap '' TERM; echo ready; exec "+bin+" 60")
+			// The shell stays the process: an exec after "ready" would change the
+			// executable and arguments the proof recorded, and Terminate would then
+			// find a process that is no longer the one it was given.
+			cmd := exec.Command("/bin/sh", "-c", "trap '' TERM; echo ready; while :; do "+bin+" 1; done")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			out, err := cmd.StdoutPipe()
 			if err != nil {
