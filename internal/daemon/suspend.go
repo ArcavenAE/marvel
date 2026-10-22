@@ -174,7 +174,10 @@ func (d *Daemon) resolveSuspendAtStart() bool {
 		}
 		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendInterrupted, Severity: events.SeverityWarning, Message: msg})
 		log.Printf("%s: %s", events.KindClusterSuspendInterrupted, msg)
-		return err != nil || d.suspendRec.Load() != nil
+		// Hold while a record remains. Clear nils the live copy before it removes
+		// the mirror, so an error with no record left is a mirror that would not
+		// go, on a cluster that is fully resumed.
+		return d.suspendRec.Load() != nil
 	}
 	log.Printf("suspend: the record is in an unknown state %q; serving suspended", rec.State)
 	return true
