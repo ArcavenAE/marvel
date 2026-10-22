@@ -63,9 +63,16 @@ func (e *AuthRefusedError) Error() string {
 }
 
 // NoIdentityError is a dial with no key to offer.
-type NoIdentityError struct{}
+type NoIdentityError struct {
+	// Reason says why no key is offered, when the dial was restricted to one
+	// key (DialOptions.OfferOneKey). Empty for the default search.
+	Reason string
+}
 
 func (e *NoIdentityError) Error() string {
+	if e.Reason != "" {
+		return "no SSH key to offer: " + e.Reason
+	}
 	return "no SSH auth available: generate a key with 'marvel keys generate' or start ssh-agent"
 }
 

@@ -28,9 +28,12 @@ func otherKeys(t *testing.T) (agentConns *atomic.Int32, fingerprints []string) {
 		t.Fatal(err)
 	}
 	fileSigner, filePEM := newSigner(t)
-	if err := os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), filePEM, 0o600); err != nil {
+	sshKey := filepath.Join(home, ".ssh", "id_ed25519")
+	if err := os.WriteFile(sshKey, filePEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The home is shared by the package's tests; later ones expect no key.
+	t.Cleanup(func() { _ = os.Remove(sshKey) })
 	agentSigner, agentPEM := newSigner(t)
 	raw, err := ssh.ParseRawPrivateKey(agentPEM)
 	if err != nil {
@@ -105,6 +108,7 @@ func TestFanOutEntryWithoutIdentityOffersOnlyClientKey(t *testing.T) {
 	if err := os.WriteFile(layout.DefaultClientKey(), clientPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Remove(layout.DefaultClientKey()) })
 	rig := oneKeyRig(t, client.PublicKey())
 	opts := DialOptions{StrictHostKey: true, OfferOneKey: true}
 	if _, err := SendRequestWith(rig.addr, Request{Method: "ping"}, opts); err != nil {
@@ -124,9 +128,14 @@ func TestFanOutEntryWithoutIdentityOffersOnlyClientKey(t *testing.T) {
 func TestFanOutNoIdentityIsAuthRefused(t *testing.T) {
 	resetKnownHosts(t)
 	agentConns, _ := otherKeys(t)
+	layout, err := paths.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(layout.DefaultClientKey())
 	rig := oneKeyRig(t, mustPublic(t))
 	opts := DialOptions{StrictHostKey: true, OfferOneKey: true}
-	_, err := SendRequestWith(rig.addr, Request{Method: "ping"}, opts)
+	_, err = SendRequestWith(rig.addr, Request{Method: "ping"}, opts)
 	var noID *NoIdentityError
 	if !errors.As(err, &noID) {
 		t.Fatalf("err = %v, want a NoIdentityError", err)
