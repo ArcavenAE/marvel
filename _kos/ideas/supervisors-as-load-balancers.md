@@ -18,7 +18,7 @@ Each pointer was found in the tree or its history at `origin/main` 740115f.
 - Admission check: `internal/admission` and `internal/daemon/admission.go`; `_kos/findings/finding-009-admission-declared-budget.md` (refuse the declaration, not the spawn).
 - Idle scheduler and marry: `internal/api/readiness_marry.go` (the marrying step pairs ready items with free seats; shadow only, sends nothing) and `cmd/marvel/marry.go`, with golden vectors in `contracts/readiness/marry-vectors.json`. The idle-scheduler design v2 itself is not found in marvel.
 - Freebusy: `_kos/ideas/agent-duty-cycle-as-a-busy-measure.md` and `docs/design/team-load-rollup.md` (which teams are free, busy, blocked or overloaded).
-- Idle-shadow: not found in marvel under that name; the closest is the shadow-only note on the marrying step above.
+- Idle-shadow: lives in the public director repo, `skills/director/scripts/idle-shadow` (director#379, director#381); marvel holds no copy. See also the shadow-only marrying step above.
 - Declared cadence: `docs/design/declared-cadence.md`.
 - Scheduled runs: `docs/design/scheduled-runs.md`.
 - Usage limits: `docs/design/usage-limit-pause.md` and `_kos/findings/finding-050-backend-usage-limit-observability.md`.
