@@ -687,9 +687,6 @@ func TestColonKeyRefusedUntil829(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit = %d, want 0 for a set whose rows hold ':':\n%s", code, stderr)
 	}
-	for _, want := range []string{"a:w/bad�", "b:w�"} {
-		_ = want
-	}
 	if !strings.Contains(stdout, "bad:name") || !strings.Contains(stdout, "w:x") {
 		t.Errorf("a daemon row holding ':' was left out:\n%s", stdout)
 	}
