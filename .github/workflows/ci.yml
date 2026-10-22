@@ -482,6 +482,13 @@ jobs:
             --target "$COMMIT" \
             "${ASSETS[@]}"
 
+      - name: Check the tag points at the built commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-binaries.outputs.tag }}
+          COMMIT: ${{ github.sha }}
+        run: scripts/check-release-tag.sh "$TAG" "$COMMIT"
+
       - name: Update Homebrew formula
         if: vars.ALPHA_TAP_ENABLED == 'true'
         env:
