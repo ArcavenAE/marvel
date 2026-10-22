@@ -2257,7 +2257,10 @@ Examples:
 For remote (mrvl:// or ssh://) clusters without an --identity flag,
 marvel defaults to ~/.marvel/keys/client_ed25519 when that key exists.
 Use --no-default-identity to opt out and fall back to SSH_AUTH_SOCK
-or ~/.ssh/ keys.`,
+or ~/.ssh/ keys.
+
+Use a DNS name for a remote host. An IPv4 literal is written, with a
+warning, because a literal keeps dialing the old address after the host moves.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -2275,6 +2278,9 @@ or ~/.ssh/ keys.`,
 			}
 			if err := cfg.AddCluster(args[0], args[1], identity); err != nil {
 				return err
+			}
+			if w := config.DialLiteralWarning(args[1]); w != "" {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), w)
 			}
 			if err := config.Save(cfg); err != nil {
 				return err

@@ -275,6 +275,11 @@ marvel config add-cluster staging mrvl://deploy@staging.example.com:7000
 marvel config add-cluster dev /tmp/marvel-dev.sock
 ```
 
+Use a DNS name for a remote host, not an IPv4 literal. A name lets the dial recover on
+its own when the host moves; a literal keeps dialing the old address until a person
+edits the config. `add-cluster` warns on a literal (for example `mrvl://192.0.2.7:6785`)
+and still writes it.
+
 ### List clusters
 
 ```bash
