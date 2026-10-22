@@ -145,7 +145,7 @@ func nextStep(o outcome) string {
 	case outcomeNoAnswer:
 		return "try again; the host may be busy or asleep"
 	case outcomeAuthRefused:
-		return "the daemon accepted none of this entry's keys; check the identity and 'marvel keys authorize'"
+		return "the daemon accepted none of the key offered; check the entry's identity and 'marvel keys authorize'"
 	case outcomeHostKeyUnknown:
 		return "verify the fingerprint, then run 'marvel keys trust'"
 	case outcomeHostKeyChanged:
@@ -163,7 +163,7 @@ func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.
 	rec := clusterRecord{Cluster: t.Name}
 	finish := func() (clusterRecord, []api.Session) {
 		rec.AsOf = time.Now().UTC().Format(time.RFC3339)
-		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting {
+		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting && rec.Next == "" {
 			rec.Next = nextStep(rec.Outcome)
 		}
 		return rec, nil
@@ -175,6 +175,10 @@ func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.
 	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: fanOutMethods[0], Params: params}, opts)
 	if err != nil {
 		rec.Outcome, rec.Phase, rec.Fingerprint, rec.Cause = classifyDialError(err)
+		var noID *daemonrpc.NoIdentityError
+		if errors.As(err, &noID) {
+			rec.Next = "no key could be loaded, so no dial was made; give the entry an identity or run 'marvel keys generate'"
+		}
 		return finish()
 	}
 	if resp.Error != "" {
@@ -385,12 +389,24 @@ func typedKey(cmd *cobra.Command, args []string) (string, bool) {
 	if len(args) == 0 {
 		return "", false
 	}
-	switch cmd.CommandPath() {
-	case "marvel kill", "marvel inject", "marvel capture", "marvel wait",
-		"marvel scale", "marvel shift", "marvel reset-health":
-		return args[0], true
-	case "marvel describe", "marvel delete":
-		return args[len(args)-1], true
+	i, ok := keyArgCommands[cmd.CommandPath()]
+	if !ok {
+		return "", false
 	}
-	return "", false
+	if i < 0 {
+		i = len(args) - 1
+	}
+	return args[i], true
+}
+
+// keyArgCommands maps each command that takes a session or team key to the
+// position of that argument; -1 is the last one. A test walks the command
+// tree and fails for a command whose Use line takes a key and is missing here.
+var keyArgCommands = map[string]int{
+	"marvel kill": 0, "marvel inject": 0, "marvel capture": 0, "marvel wait": 0,
+	"marvel scale": 0, "marvel shift": 0, "marvel reset-health": 0,
+	"marvel plan": 0, "marvel converge": 0, "marvel backend verify": 0,
+	"marvel exposure add": 0, "marvel exposure end": 0, "marvel exposure void": 0,
+	"marvel view refresh": 0,
+	"marvel describe":     -1, "marvel delete": -1,
 }
