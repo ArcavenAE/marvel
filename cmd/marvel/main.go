@@ -203,6 +203,8 @@ func send(req daemonrpc.Request) (*daemonrpc.Response, error) {
 		fmt.Fprintln(os.Stderr, w)
 	}
 	noteBuildMismatch(os.Stderr, req.Method, resp.DaemonBuild)
+	// The error text is the daemon's, and it is printed to a terminal.
+	resp.Error = drawn(resp.Error)
 	return resp, nil
 }
 
@@ -781,7 +783,7 @@ func printEventBatch(w io.Writer, evs []events.Event, header bool) {
 			msg = fmt.Sprintf("%s [by %s]", msg, ev.Actor)
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			ev.Timestamp.Format("15:04:05"), sev, ev.Kind, sessRef, msg)
+			ev.Timestamp.Format("15:04:05"), drawn(sev), drawn(string(ev.Kind)), drawn(sessRef), drawn(msg))
 	}
 	_ = tw.Flush()
 }
@@ -3441,7 +3443,7 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 // prints into a pipe. When a source mark is on screen, one legend line joins
 // the header on a terminal; piped output keeps the mark and drops the legend.
 func renderSessionsView(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
-	res := fitSessionTable(sessions, cols, fit)
+	res := fitSessionTable(sessions, drawableColumns(cols), fit)
 	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
 		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
 	}
@@ -3457,6 +3459,7 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	if wantsComposer(cols) {
 		b.WriteString(composerGapLines(sessions))
 	}
+	b.WriteString(undrawableNote(sessions, shownColumns(cols, res.cols)))
 	return b.String()
 }
 
@@ -3466,7 +3469,9 @@ func composerGapLines(sessions []api.Session) string {
 	var b strings.Builder
 	for _, s := range sessions {
 		if s.ComposerGap != "" {
-			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", s.Workspace, s.Name, s.ComposerGap)
+			ws, _ := filterKeyPart(s.Workspace)
+			name, _ := filterKeyPart(s.Name)
+			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", ws, name, drawn(s.ComposerGap))
 		}
 	}
 	return b.String()

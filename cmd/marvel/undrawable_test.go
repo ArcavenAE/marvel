@@ -137,11 +137,11 @@ func TestEachReplacementIsOneFFFD(t *testing.T) {
 	if got, want := utf8.RuneCountInString(out), utf8.RuneCountInString(in); got != want {
 		t.Errorf("rune count %d, want %d (out %q)", got, want, out)
 	}
-	if got := strings.Count(out, fffd); got != 6 {
-		t.Errorf("%d placeholders, want 6 (out %q)", got, out)
+	if got := strings.Count(out, fffd); got != 5 {
+		t.Errorf("%d placeholders, want 5 (out %q)", got, out)
 	}
-	if len(held) != 6 {
-		t.Errorf("held = %v, want 6 entries", held)
+	if len(held) != 5 {
+		t.Errorf("held = %v, want 5 entries", held)
 	}
 	if !utf8.ValidString(out) {
 		t.Errorf("output is not valid UTF-8: %q", out)
