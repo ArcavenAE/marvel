@@ -38,6 +38,7 @@ import (
 	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/suspend"
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
@@ -97,6 +98,15 @@ type Daemon struct {
 	composerClient func(workspace string) (bool, error)
 	listener       net.Listener
 	sshServer      atomic.Pointer[SSHServer]
+	// suspendRec is the live fleet-suspend record, nil when running; see
+	// suspend.go. suspendMirror is its file beside the socket, "" for a
+	// TCP listener.
+	suspendRec    atomic.Pointer[suspend.Record]
+	suspendMirror string
+	// suspendUnsettled is why the stored record could not be read or parsed at
+	// start, nil when it could. While set, the record is neither running nor
+	// suspended: the mirror stays and a start that adopts must hold.
+	suspendUnsettled atomic.Pointer[string]
 	// ctx is the run context set by Start; cancel ends it. Long-lived
 	// connection handlers (events.watch) select on ctx.Done so a
 	// shutdown does not wait on a client that never hangs up. Nil until
@@ -556,6 +566,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
 	d.identifyCluster(socketPath)
+	d.loadSuspendRecord(socketPath)
 	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()
 		if d.pidFile != "" {
@@ -1088,6 +1099,7 @@ var errStoppedWhileStarting = errors.New("daemon stopped while starting")
 // against an unreconciled store, and inject and capture because they drive tmux.
 var startingMethods = map[string]bool{
 	"daemon.status":   true,
+	"suspend.status":  true,
 	"get":             true,
 	"describe":        true,
 	"logs":            true,
@@ -1164,6 +1176,8 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleBusStatus()
 	case "daemon.status":
 		return d.handleDaemonStatus()
+	case "suspend.status":
+		return d.handleSuspendStatus()
 	case "view.refresh":
 		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":
