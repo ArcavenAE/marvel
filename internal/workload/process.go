@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/childproof"
 )
 
 // ProcessSpec describes one managed child.
@@ -48,6 +50,11 @@ type ProcessSpec struct {
 	// here, so an identity record never trails the pidfile that names it. An
 	// error stops the child and fails Start. Nil does nothing.
 	BeforePidFile func(cmd *exec.Cmd) error
+	// RecordChild is BeforePidFile with the proven child: a Process proves
+	// the child from the handle first, then runs it, before the pidfile is
+	// written. Start does not run it, because only a Process proves a child.
+	// An error stops the child and fails the start.
+	RecordChild func(cmd *exec.Cmd, c childproof.Child) error
 	// PidFile, when set, records the child pid for adoption by a
 	// successor daemon. Written 0644 on a best-effort basis.
 	PidFile string
