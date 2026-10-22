@@ -180,6 +180,9 @@ func (f *Freezer) Freeze(rec Record, store Store) (Record, Result, error) {
 	// for a moment first.
 	for read := 0; read < 2; read++ {
 		time.Sleep(f.settle)
+		if !f.prober.Same(server) {
+			return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: server.Pid(), Reason: "its pid no longer names the recorded process"})
+		}
 		if ok, why := f.isStopped(server); !ok {
 			return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: server.Pid(), Reason: why})
 		}
@@ -235,16 +238,19 @@ func (f *Freezer) rollback(store Store, server childproof.Child, seats []childpr
 	return errors.Join(errs...)
 }
 
-// Thaw resumes a suspended record, or rolls back one left suspending. It saves
+// Thaw resumes a suspended record, rolls back one left suspending, or
+// finishes a resume left resuming by a daemon that stopped partway. It saves
 // the record as resuming, sends SIGCONT to every seat whose process is still
 // the recorded one and then to the server, and clears the record. A seat whose
 // pid now names another process is skipped and reported in Result.Gone; a seat
 // that still reads stopped afterwards is reported in Result.StillStopped.
-// Nothing here restarts a seat.
+// Nothing here restarts a seat. When a SIGCONT fails for a reason other than a
+// changed process, the record stays, as resuming, and the error is returned, so
+// a second Thaw can retry: a resume is safe to repeat.
 func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
 	var res Result
-	if rec.State != StateSuspended && rec.State != StateSuspending {
-		return res, fmt.Errorf("%w: thaw needs a suspended or suspending record, this one is %q", ErrState, rec.State)
+	if rec.State != StateSuspended && rec.State != StateSuspending && rec.State != StateResuming {
+		return res, fmt.Errorf("%w: thaw needs a suspended, suspending or resuming record, this one is %q", ErrState, rec.State)
 	}
 	if err := checkPids(rec); err != nil {
 		return res, err
@@ -290,10 +296,13 @@ func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
 			res.StillStopped = append(res.StillStopped, c.Pid())
 		}
 	}
-	if err := store.Clear(); err != nil {
-		errs = append(errs, fmt.Errorf("suspend: clear the record after resuming: %w", err))
+	if len(errs) > 0 {
+		return res, errors.Join(errs...)
 	}
-	return res, errors.Join(errs...)
+	if err := store.Clear(); err != nil {
+		return res, fmt.Errorf("suspend: clear the record after resuming: %w", err)
+	}
+	return res, nil
 }
 
 // keepOnly returns the procs whose pid is among the children, in record order.

@@ -402,7 +402,8 @@ func TestThawKeepsTheRecordWhenAResumeFails(t *testing.T) {
 }
 
 // The server is proven again between its two stop reads, as the seats are: a
-// pid reused by another stopped process must not read as a frozen server.
+// pid reused by another stopped process after the first read must not read as
+// a frozen server on the second.
 func TestFreezeRollsBackWhenTheServerPidIsReusedBetweenReads(t *testing.T) {
 	o := newFakeOS(100, 200)
 	reads := 0
@@ -410,14 +411,14 @@ func TestFreezeRollsBackWhenTheServerPidIsReusedBetweenReads(t *testing.T) {
 		if pid != 100 {
 			return
 		}
-		if reads++; reads == 2 {
+		if reads++; reads == 1 {
 			o.procs[100].id.Start = "test:reused"
 		}
 	}
 	st := &memStore{os: o}
 	_, _, err := o.freezer(t).Freeze(record(100, 200), st)
 	if err == nil {
-		t.Fatal("Freeze succeeded although the server pid named another process on the second read")
+		t.Fatal("Freeze succeeded although the server pid named another process after the first read")
 	}
 	if slices.Contains(o.log, "CONT 100") {
 		t.Errorf("signals = %v: the reused pid was signalled", o.log)
