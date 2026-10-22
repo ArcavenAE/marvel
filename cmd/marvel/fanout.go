@@ -145,7 +145,7 @@ func nextStep(o outcome) string {
 	case outcomeNoAnswer:
 		return "try again; the host may be busy or asleep"
 	case outcomeAuthRefused:
-		return "the daemon accepted none of the key offered; check the entry's identity and 'marvel keys authorize'"
+		return "the daemon refused the key offered; check the entry's identity and 'marvel keys authorize'"
 	case outcomeHostKeyUnknown:
 		return "verify the fingerprint, then run 'marvel keys trust'"
 	case outcomeHostKeyChanged:

@@ -264,6 +264,9 @@ func TestAllFailSameCauseExitsThatCode(t *testing.T) {
 				t.Errorf("%T -> %s (exit %d), want auth_refused (8)", err, out, outcomeExit[out])
 			}
 		}
+		if hint := nextStep(outcomeAuthRefused); !strings.Contains(hint, "the daemon refused the key offered") {
+			t.Errorf("auth_refused hint = %q, want it to say the daemon refused the key offered", hint)
+		}
 	})
 	t.Run("9 host_key", func(t *testing.T) {
 		out, _, fp, _ := classifyDialError(&knownhosts.HostKeyUnknownError{Fingerprint: "SHA256:abc"})
@@ -755,7 +758,7 @@ func TestNoIdentityHintSaysNoDialWasMade(t *testing.T) {
 	if line == "" {
 		t.Fatalf("no auth_refused line for n:\n%s", stderr)
 	}
-	if strings.Contains(line, "accepted none") {
+	if strings.Contains(line, "refused the key") {
 		t.Errorf("the line says a daemon refused keys, but no dial was made: %s", line)
 	}
 	if !strings.Contains(line, "no dial was made") {
