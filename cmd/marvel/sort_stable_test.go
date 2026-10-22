@@ -105,3 +105,24 @@ func TestWatchSortTieIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// The watch screen starts in the order plain get sessions prints, whatever
+// order the daemon answers in: workspace first, not name first.
+func TestWatchDefaultOrderMatchesGetSessions(t *testing.T) {
+	rng := rand.New(rand.NewSource(17))
+	cols := []sessionColumn{mustColumn(t, "desk")}
+	for i := 0; i < 20; i++ {
+		rows := shuffled(rng, tiedRows())
+		plain := printedPanes(t, rows)
+
+		watch := append([]api.Session(nil), rows...)
+		sortSessions(watch, newWatchState(cols))
+		var got []string
+		for _, r := range watch {
+			got = append(got, strings.TrimPrefix(r.PaneID, "%"))
+		}
+		if !reflect.DeepEqual(got, plain) {
+			t.Fatalf("shuffle %d: watch default order %v, plain get sessions %v", i, got, plain)
+		}
+	}
+}

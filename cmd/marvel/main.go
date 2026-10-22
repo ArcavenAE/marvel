@@ -2981,6 +2981,8 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 	primary := func(i, j int) bool {
 		var less bool
 		switch ws.column {
+		case "":
+			// No chosen column: every pair ties, and the tiebreak orders.
 		case "rate":
 			ki, kj := rateSortKey(sessions[i], now), rateSortKey(sessions[j], now)
 			if ki != kj {
@@ -3343,6 +3345,9 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 	}
 
 	sortLabel := ws.column
+	if sortLabel == "" {
+		sortLabel = "workspace, name"
+	}
 	if ws.desc {
 		sortLabel += " desc"
 	} else {
@@ -3388,10 +3393,11 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 	return buf.String()
 }
 
-// newWatchState is the watch screen's starting state: sorted by name,
-// ascending, in the selected columns.
+// newWatchState is the watch screen's starting state: in the order plain get
+// sessions prints (no chosen column, so the full tiebreak alone decides), in
+// the selected columns.
 func newWatchState(cols []sessionColumn) *watchSort {
-	return &watchSort{column: "name", desc: false, columns: cols}
+	return &watchSort{column: "", desc: false, columns: cols}
 }
 
 // newWatchScreen is the watch state for the live screen: the same view plain
@@ -3454,7 +3460,7 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
 	}
-	// Default sort: name ascending
+	// Default sort: workspace, name, then the full tiebreak.
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessionTieLess(sessions[i], sessions[j])
 	})
