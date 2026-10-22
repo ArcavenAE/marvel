@@ -252,9 +252,13 @@ type Session struct {
 	// WorkDir is the directory the session was placed in, copied from the
 	// role at spawn (marvel#255 build item 2). Empty on a session spawned
 	// before placement existed.
-	WorkDir       string       `toml:"workdir,omitempty"`
-	Name          string       `toml:"name"`
-	Workspace     string       `toml:"workspace"`
+	WorkDir   string `toml:"workdir,omitempty"`
+	Name      string `toml:"name"`
+	Workspace string `toml:"workspace"`
+	// Cluster names the cluster a row was read from. The client sets it when
+	// one view reads several clusters; it is not on the wire, so a daemon
+	// cannot name its own cluster or another's.
+	Cluster       string       `json:"-" toml:"-"`
 	Team          string       `toml:"team"`
 	Role          string       `toml:"role"`
 	Generation    int64        `toml:"-"`
