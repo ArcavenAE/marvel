@@ -2,5 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>ArcavenAE/renovate-config"
+  ],
+  "packageRules": [
+    {
+      "description": "nats-server is a runtime pin that CI and pin_test.go must match, so a version change needs its own deliberate commit. Operator ruling relayed by director 01M5JDV2P5, 2026-10-22: bump deliberately, on its own, not with Renovate and not tied to another change.",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["github:nats-io/nats-server"],
+      "enabled": false
+    }
   ]
 }
