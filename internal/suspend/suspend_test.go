@@ -18,6 +18,8 @@ type fakeProc struct {
 	// reads scripts what the stop-state reader answers, one entry per read;
 	// once used up it answers the live stopped field.
 	reads []bool
+	// readErr makes the identity read fail while the process is alive.
+	readErr error
 }
 
 // fakeOS is a process table the Freezer reaches only through childproof's
@@ -49,6 +51,9 @@ func (o *fakeOS) read(pid int) (childproof.Identity, error) {
 	p, ok := o.procs[pid]
 	if !ok || p.dead {
 		return childproof.Identity{}, errors.New("no such process")
+	}
+	if p.readErr != nil {
+		return childproof.Identity{}, p.readErr
 	}
 	return p.id, nil
 }
@@ -355,6 +360,30 @@ func TestThawReportsASeatStillStopped(t *testing.T) {
 	}
 }
 
+// ServerGone is true only when the recorded server exited or its pid names
+// another process; a pid childproof refuses is an error, not a reboot.
+func TestServerGone(t *testing.T) {
+	o := newFakeOS(100)
+	f := o.freezer(t)
+	if gone, err := f.ServerGone(record(100)); gone || err != nil {
+		t.Errorf("live server: gone %v err %v, want false, nil", gone, err)
+	}
+	o.procs[100].id.Start = "test:reused"
+	if gone, err := f.ServerGone(record(100)); !gone || err != nil {
+		t.Errorf("reused pid: gone %v err %v, want true, nil", gone, err)
+	}
+	if gone, err := f.ServerGone(record(300)); !gone || err != nil {
+		t.Errorf("exited server: gone %v err %v, want true, nil", gone, err)
+	}
+	o.procs[big] = &fakeProc{id: ident(big)}
+	if gone, err := f.ServerGone(record(big)); gone || err == nil {
+		t.Errorf("pid past 32 bits: gone %v err %v, want false and an error", gone, err)
+	}
+	if len(o.log) != 0 {
+		t.Errorf("signals = %v, want none", o.log)
+	}
+}
+
 func TestThawNeedsASuspendedRecord(t *testing.T) {
 	o := newFakeOS(100)
 	for _, s := range []State{"", "frozen"} {
@@ -422,5 +451,21 @@ func TestFreezeRollsBackWhenTheServerPidIsReusedBetweenReads(t *testing.T) {
 	}
 	if slices.Contains(o.log, "CONT 100") {
 		t.Errorf("signals = %v: the reused pid was signalled", o.log)
+	}
+}
+
+// A live server whose identity cannot be read is not gone: only a pid that no
+// longer exists is. The caller keeps the record on the error.
+func TestServerGoneIsAnErrorWhenALiveServerCannotBeRead(t *testing.T) {
+	o := newFakeOS(100)
+	o.procs[100].readErr = errors.New("procargs: resource temporarily unavailable")
+	gone, err := o.freezer(t).ServerGone(record(100))
+	if gone || err == nil {
+		t.Errorf("live unreadable server: gone %v err %v, want false and an error", gone, err)
+	}
+	o.procs[100].dead = true
+	gone, err = o.freezer(t).ServerGone(record(100))
+	if !gone || err != nil {
+		t.Errorf("dead server: gone %v err %v, want true and nil", gone, err)
 	}
 }

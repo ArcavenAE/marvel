@@ -238,6 +238,28 @@ func (p *Prober) Signal(c Child, sig syscall.Signal, group bool) error {
 	return nil
 }
 
+// Exists reports whether a process with this pid exists, by kill(pid, 0): only
+// ESRCH means it does not, and EPERM means it does but is not ours to signal.
+// Any other failure is returned and says nothing about the process. It reads
+// no identity, so a true answer is not a proof of which process it is. It
+// refuses pid 1 or below and a pid past 32 bits, as Signal does.
+func (p *Prober) Exists(pid int) (bool, error) {
+	if !p.wired() {
+		return false, errNoSeams
+	}
+	if err := CheckPid(pid); err != nil {
+		return false, err
+	}
+	switch err := p.kill(pid, 0); {
+	case err == nil, errors.Is(err, syscall.EPERM):
+		return true, nil
+	case errors.Is(err, syscall.ESRCH):
+		return false, nil
+	default:
+		return false, fmt.Errorf("childproof: probe pid %d: %w", pid, err)
+	}
+}
+
 func reasonOf(live, want Identity) string {
 	switch {
 	case live.Start != want.Start:

@@ -103,6 +103,12 @@ type Daemon struct {
 	// TCP listener.
 	suspendRec    atomic.Pointer[suspend.Record]
 	suspendMirror string
+	// suspendHeld is set when Start found a suspended record and served
+	// without adopting: every tmux call waits for resume, and only the
+	// methods that answer while starting are served (SR-E).
+	suspendHeld atomic.Bool
+	// freezer stops and resumes recorded processes; nil means suspend.New().
+	freezer *suspend.Freezer
 	// suspendUnsettled is why the stored record could not be read or parsed at
 	// start, nil when it could. While set, the record is neither running nor
 	// suspended: the mirror stays and a start that adopts must hold.
@@ -567,6 +573,7 @@ func (d *Daemon) Start(socketPath string) error {
 	d.loadScheduleHistoryMax(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
+	held := d.resolveSuspendAtStart()
 	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()
 		if d.pidFile != "" {
@@ -582,7 +589,11 @@ func (d *Daemon) Start(socketPath string) error {
 	// so nothing spawns against a store that has not been reconciled.
 	ctx, cancel := context.WithCancel(context.Background())
 	d.ctx, d.cancel = ctx, cancel
-	d.adoptingSince.Store(time.Now().UnixNano())
+	if held {
+		d.suspendHeld.Store(true)
+	} else {
+		d.adoptingSince.Store(time.Now().UnixNano())
+	}
 
 	// Accept connections.
 	d.wg.Add(1)
@@ -602,6 +613,14 @@ func (d *Daemon) Start(socketPath string) error {
 			go d.handleConn(conn)
 		}
 	}()
+
+	// A suspended cluster's tmux server is stopped, so adoption, the
+	// liveness pass and every loop below would wait on it (marvel#716). The
+	// daemon serves and does nothing else until resume (SR-E).
+	if held {
+		log.Printf("marvel daemon listening on %s (%s); cluster suspended: no adoption and no tmux call until resume", socketPath, network)
+		return nil
+	}
 
 	// Reconcile marvel-* tmux state against recorded intent. Panes that
 	// match the rehydrated intent are adopted; anything else is LEFT
@@ -843,6 +862,14 @@ func (d *Daemon) shutdown(teardown bool) {
 		log.Printf("%s: %s", events.KindCredentialTransientDropped, msg)
 	}
 
+	// With a suspend record the seats stay frozen, the record stays, and the
+	// next daemon serves it: a teardown would call tmux against a stopped
+	// server, so it becomes a detach (design section 3, Shutdown).
+	if teardown && d.suspendRec.Load() != nil {
+		log.Printf("suspend record set: teardown skipped; the seats stay frozen for the next daemon")
+		teardown = false
+	}
+
 	if d.cancel != nil {
 		d.cancel()
 	}
@@ -1081,6 +1108,11 @@ var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, ret
 // the token-mismatch refusal.
 var ErrReportDeferred = fmt.Errorf("report deferred: %w", ErrDaemonStarting)
 
+// ErrClusterSuspended is the refusal every method outside startingMethods
+// gets from a daemon that started with a suspended record and is serving
+// without adopting.
+var ErrClusterSuspended = errors.New("cluster suspended; run marvel resume")
+
 // errStoppedWhileStarting is what Start returns when a stop arrived during
 // adoption and shutdown has already run.
 var errStoppedWhileStarting = errors.New("daemon stopped while starting")
@@ -1126,6 +1158,9 @@ func startingAllows(req daemonrpc.Request) bool {
 func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
+	}
+	if d.suspendHeld.Load() && !startingAllows(req) {
+		return daemonrpc.Response{Error: ErrClusterSuspended.Error()}
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
 		if req.Method == "heartbeat" || req.Method == "account.limits" {

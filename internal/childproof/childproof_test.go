@@ -582,3 +582,47 @@ func TestProveAndSpawnedRefuseAPidPast32Bits(t *testing.T) {
 		t.Errorf("Prove refused the largest 32-bit pid: %v", err)
 	}
 }
+
+// Exists says a process is gone only for ESRCH. EPERM means it exists, any
+// other error says nothing, and a pid that would signal a group is refused.
+func TestExistsOnlyESRCHMeansGone(t *testing.T) {
+	var sent []syscall.Signal
+	var answer error
+	p, err := NewForTest(
+		func(int) (Identity, error) { return Identity{}, errors.New("unused") },
+		func(_ int, sig syscall.Signal) error { sent = append(sent, sig); return answer })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		answer  error
+		want    bool
+		wantErr bool
+	}{
+		{"alive", nil, true, false},
+		{"alive, not ours", syscall.EPERM, true, false},
+		{"gone", syscall.ESRCH, false, false},
+		{"unknown failure", syscall.EINVAL, false, true},
+	} {
+		answer = tc.answer
+		got, err := p.Exists(4242)
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Errorf("%s: Exists = %v, %v; want %v, err %v", tc.name, got, err, tc.want, tc.wantErr)
+		}
+	}
+	for _, sig := range sent {
+		if sig != 0 {
+			t.Errorf("Exists sent signal %d, want only 0", sig)
+		}
+	}
+	sent = nil
+	for _, pid := range []int{0, 1, -1, 1 << 32} {
+		if _, err := p.Exists(pid); err == nil {
+			t.Errorf("Exists(%d) was not refused", pid)
+		}
+	}
+	if len(sent) != 0 {
+		t.Errorf("a refused pid sent %v", sent)
+	}
+}

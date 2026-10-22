@@ -106,6 +106,40 @@ func New() *Freezer {
 	return &Freezer{prober: childproof.New(), stopped: readStopped, settle: 200 * time.Millisecond}
 }
 
+// NewForTest returns a Freezer over prober and a stop-state reader, for a
+// package that drives a Freezer against a fake process table. The pause
+// between reads is zero.
+func NewForTest(prober *childproof.Prober, stopped func(pid int) (bool, error)) *Freezer {
+	return &Freezer{prober: prober, stopped: stopped}
+}
+
+// ServerGone reports whether rec's tmux server has exited, or its pid now
+// names a different process: a reboot, or a server killed by hand. A pid whose
+// identity cannot be read counts as gone only when the pid no longer exists;
+// a live server that cannot be read right now is an error, as is any other
+// failure to prove the server, and the caller keeps the record.
+func (f *Freezer) ServerGone(rec Record) (bool, error) {
+	_, err := f.prober.Prove(rec.Server.Pid, rec.Server.Identity)
+	var mm *childproof.MismatchError
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.As(err, &mm):
+		if mm.Reason != "dead" {
+			return true, nil
+		}
+		alive, perr := f.prober.Exists(rec.Server.Pid)
+		if perr != nil {
+			return false, perr
+		}
+		if alive {
+			return false, fmt.Errorf("suspend: the tmux server %d exists but its identity cannot be read", rec.Server.Pid)
+		}
+		return true, nil
+	}
+	return false, err
+}
+
 // ErrState is returned when a record is in a state the operation cannot start
 // from.
 var ErrState = errors.New("suspend: record is in the wrong state for this")
