@@ -53,7 +53,9 @@ func (o *fakeOS) read(pid int) (childproof.Identity, error) {
 		return childproof.Identity{}, errors.New("no such process")
 	}
 	if p.readErr != nil {
-		return childproof.Identity{}, p.readErr
+		// The start time is read first and an unreadable argv fails after it,
+		// so the failed read still carries it.
+		return childproof.Identity{Start: p.id.Start}, p.readErr
 	}
 	return p.id, nil
 }
@@ -467,5 +469,18 @@ func TestServerGoneIsAnErrorWhenALiveServerCannotBeRead(t *testing.T) {
 	gone, err = o.freezer(t).ServerGone(record(100))
 	if !gone || err != nil {
 		t.Errorf("dead server: gone %v err %v, want true and nil", gone, err)
+	}
+}
+
+// After a reboot the recorded pid can belong to another user's process, whose
+// executable and arguments the kernel refuses to show (EPERM). Its start time
+// still reads, and a different one proves it is not the recorded server.
+func TestServerGoneWhenAReusedPidCannotBeReadButItsStartDiffers(t *testing.T) {
+	o := newFakeOS(100)
+	o.procs[100].readErr = errors.New("procargs: operation not permitted")
+	o.procs[100].id.Start = "test:reused"
+	gone, err := o.freezer(t).ServerGone(record(100))
+	if !gone || err != nil {
+		t.Errorf("reused unreadable pid: gone %v err %v, want true and nil", gone, err)
 	}
 }
