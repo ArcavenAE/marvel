@@ -13,9 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -695,15 +695,29 @@ func TestColonKeyRefusedUntil829(t *testing.T) {
 	}
 }
 
-// keyPlaceholders are the words in a command's Use line that mean the
-// argument is a session or team key.
-var keyPlaceholders = []string{"<session-key>", "<session>", "<workspace/team>", "[workspace/team]", "[workspace/session]"}
+// keyWords are the words that mark a Use-line placeholder as a session or
+// team key: <session-key>, <workspace/team>, [workspace/session], <key>.
+var keyWords = map[string]bool{"key": true, "session": true, "team": true, "workspace": true, "seat": true}
 
-// takesKey reports whether a command's Use line names a key argument.
+// notKeyCommands are commands whose placeholder carries a key word but names
+// something else. Each entry says what.
+var notKeyCommands = map[string]string{
+	"marvel keys authorize": "<public-key-file> is a file of an SSH public key, not a session key",
+}
+
+var placeholderRe = regexp.MustCompile(`[<\[]([^>\]]*)[>\]]`)
+
+// takesKey reports whether a command's Use line has a placeholder made of
+// key words.
 func takesKey(c *cobra.Command) bool {
-	for _, ph := range keyPlaceholders {
-		if strings.Contains(c.Use, ph) {
-			return true
+	if _, skip := notKeyCommands[c.CommandPath()]; skip {
+		return false
+	}
+	for _, m := range placeholderRe.FindAllStringSubmatch(c.Use, -1) {
+		for _, w := range strings.FieldsFunc(m[1], func(r rune) bool { return r == '/' || r == '-' || r == ' ' || r == '|' }) {
+			if keyWords[w] {
+				return true
+			}
 		}
 	}
 	return false
@@ -776,7 +790,8 @@ func TestKeyTableNamesOnlyRealCommands(t *testing.T) {
 // line says that, not that a daemon refused a key.
 func TestNoIdentityHintSaysNoDialWasMade(t *testing.T) {
 	good := startFake(t, fakeAnswers, nil)
-	var dialed atomic.Int32
+	var mu sync.Mutex
+	var peers []string
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -788,7 +803,9 @@ func TestNoIdentityHintSaysNoDialWasMade(t *testing.T) {
 			if err != nil {
 				return
 			}
-			dialed.Add(1)
+			mu.Lock()
+			peers = append(peers, c.RemoteAddr().String())
+			mu.Unlock()
 			_ = c.Close()
 		}
 	}()
@@ -811,7 +828,31 @@ func TestNoIdentityHintSaysNoDialWasMade(t *testing.T) {
 	if !strings.Contains(line, "no dial was made") {
 		t.Errorf("the line does not say no dial was made: %s", line)
 	}
-	if n := dialed.Load(); n != 0 {
-		t.Errorf("the listener saw %d connections, want 0", n)
+	// The peers list is filled by the accept goroutine, which can trail the
+	// run. A probe dial is accepted after every earlier dial, so once it shows
+	// in the list every connection the run made does too.
+	probe, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("probe dial: %v", err)
+	}
+	defer func() { _ = probe.Close() }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		n, seen := len(peers), false
+		for _, p := range peers {
+			seen = seen || p == probe.LocalAddr().String()
+		}
+		mu.Unlock()
+		if seen {
+			if n-1 != 0 {
+				t.Errorf("the listener saw %d connections before the probe, want 0", n-1)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the accept loop never saw the probe connection")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

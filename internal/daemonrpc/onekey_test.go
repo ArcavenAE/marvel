@@ -140,7 +140,7 @@ func TestFanOutNoIdentityIsAuthRefused(t *testing.T) {
 	if !errors.As(err, &noID) {
 		t.Fatalf("err = %v, want a NoIdentityError", err)
 	}
-	if conns, _ := rig.log.seen(); conns != 0 {
+	if conns := rig.connsBeforeProbe(t); conns != 0 {
 		t.Errorf("the listener accepted %d connections, want 0 (no dial)", conns)
 	}
 	if n := agentConns.Load(); n != 0 {
