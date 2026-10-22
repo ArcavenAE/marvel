@@ -124,7 +124,7 @@ func noteBuildMismatch(w io.Writer, method string, stamp json.RawMessage) {
 	if warning == "" || !buildWarned.CompareAndSwap(false, true) {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "warning: %s\n", warning)
+	_, _ = fmt.Fprintf(w, "warning: %s\n", drawn(warning))
 }
 
 // thisBuild is the build of the running binary: its stamped version and channel

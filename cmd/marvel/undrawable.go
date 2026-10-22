@@ -1,13 +1,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // placeholder stands for every character the filter replaces. It is never a
@@ -107,30 +112,59 @@ func shownColumns(all, shown []sessionColumn) []sessionColumn {
 	return out
 }
 
-// undrawableNote counts the cells drawn in cols that held a replaced
-// character and names the characters, so the operator learns which were there.
-// It returns "" when every cell was clean.
-func undrawableNote(sessions []api.Session, cols []sessionColumn) string {
-	fields := 0
-	seen := map[string]bool{}
+// undrawTally counts the fields that held a replaced character and names the
+// characters, so the operator learns which were there.
+type undrawTally struct {
+	fields int
+	seen   map[string]bool
+}
+
+func (t *undrawTally) add(held []string) {
+	if len(held) == 0 {
+		return
+	}
+	t.fields++
+	if t.seen == nil {
+		t.seen = map[string]bool{}
+	}
+	for _, h := range held {
+		t.seen[h] = true
+	}
+}
+
+// draw filters one field and counts it.
+func (t *undrawTally) draw(s string) string {
+	out, held := filterDrawn(s)
+	t.add(held)
+	return out
+}
+
+// key filters one workspace or name part and counts it.
+func (t *undrawTally) key(s string) string {
+	out, held := filterKeyPart(s)
+	t.add(held)
+	return out
+}
+
+// cells counts the cells drawn in cols that held a replaced character.
+func (t *undrawTally) cells(sessions []api.Session, cols []sessionColumn) {
 	for _, s := range sessions {
 		row := newSessionRow(s)
 		for _, c := range cols {
 			_, held := filterForColumn(c.name)(c.pick(row))
-			if len(held) == 0 {
-				continue
-			}
-			fields++
-			for _, h := range held {
-				seen[h] = true
-			}
+			t.add(held)
 		}
 	}
-	if fields == 0 {
+}
+
+// line is the one line that follows the output, or "" when nothing was
+// replaced.
+func (t *undrawTally) line() string {
+	if t.fields == 0 {
 		return ""
 	}
-	names := make([]string, 0, len(seen))
-	for h := range seen {
+	names := make([]string, 0, len(t.seen))
+	for h := range t.seen {
 		names = append(names, h)
 	}
 	sort.Slice(names, func(i, j int) bool {
@@ -140,9 +174,42 @@ func undrawableNote(sessions []api.Session, cols []sessionColumn) string {
 		return names[i] < names[j]
 	})
 	noun := "fields"
-	if fields == 1 {
+	if t.fields == 1 {
 		noun = "field"
 	}
 	return fmt.Sprintf("%d %s held undrawable characters (%s); -o json shows them\n",
-		fields, noun, strings.Join(names, ", "))
+		t.fields, noun, strings.Join(names, ", "))
+}
+
+// drawnError is an error whose text is filtered and whose cause is kept, so
+// errors.As still finds a typed connection error under it.
+type drawnError struct{ err error }
+
+func (e drawnError) Error() string { return drawn(e.err.Error()) }
+func (e drawnError) Unwrap() error { return e.err }
+
+// drawnErr filters an error that carries daemon text. A nil error and the
+// watch-unsupported sentinel pass through untouched.
+func drawnErr(err error) error {
+	if err == nil || errors.Is(err, daemonrpc.ErrWatchUnsupported) {
+		return err
+	}
+	return drawnError{err}
+}
+
+// noteDaemonHome prints the home-mismatch warning for a daemon that reported
+// a different home, with the daemon's text filtered.
+func noteDaemonHome(w io.Writer, addr, daemonHome, clientHome string) {
+	if m := config.DaemonHomeWarning(addr, daemonHome, clientHome); m != "" {
+		_, _ = fmt.Fprintln(w, drawn(m))
+	}
+}
+
+// flushWithNote flushes a table and follows it with the tally's note line.
+func flushWithNote(tw *tabwriter.Writer, out io.Writer, tally *undrawTally) error {
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err := io.WriteString(out, tally.line())
+	return err
 }

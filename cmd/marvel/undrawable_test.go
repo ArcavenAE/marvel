@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
-	"math/rand"
 	"strings"
 	"testing"
 	"time"

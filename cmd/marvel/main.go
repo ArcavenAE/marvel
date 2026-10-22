@@ -199,9 +199,7 @@ func send(req daemonrpc.Request) (*daemonrpc.Response, error) {
 	// Prevention would put the expectation on the request and have the
 	// daemon reject it, which is authorization-shaped (aae-orc-sqh0).
 	// See docs/design/daemon-isolation.md decision 8.
-	if w := config.DaemonHomeWarning(addr, resp.DaemonHome, config.ClientHome()); w != "" {
-		fmt.Fprintln(os.Stderr, w)
-	}
+	noteDaemonHome(os.Stderr, addr, resp.DaemonHome, config.ClientHome())
 	noteBuildMismatch(os.Stderr, req.Method, resp.DaemonBuild)
 	// The error text is the daemon's, and it is printed to a terminal.
 	resp.Error = drawn(resp.Error)
@@ -800,13 +798,11 @@ func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, print
 		return err
 	}
 	first := true
-	return daemonrpc.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemonrpc.Response, b daemonrpc.EventsBatch) error {
+	return drawnErr(daemonrpc.WatchEventsWith(addr, buildParams(cursor), opts, func(resp *daemonrpc.Response, b daemonrpc.EventsBatch) error {
 		if first {
 			first = false
 			// Same diagnostic send() prints for a request-response call.
-			if w := config.DaemonHomeWarning(addr, resp.DaemonHome, config.ClientHome()); w != "" {
-				fmt.Fprintln(os.Stderr, w)
-			}
+			noteDaemonHome(os.Stderr, addr, resp.DaemonHome, config.ClientHome())
 			noteBuildMismatch(os.Stderr, daemonrpc.MethodEventsWatch, resp.DaemonBuild)
 		}
 		if b.Dropped > 0 {
@@ -816,7 +812,7 @@ func followStream(cursor uint64, buildParams func(uint64) json.RawMessage, print
 			printBatch(b.Events, false)
 		}
 		return nil
-	})
+	}))
 }
 
 // printKindCatalog renders the event-kind catalog in two groups, because
@@ -1340,6 +1336,7 @@ func renderPlanTable(plans []team.RolePlan) string {
 	})
 
 	var spawn, scaleDown, hold, steady int
+	var tally undrawTally
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tGEN\tDESIRED\tACTUAL\tACTION\tSPAWN\tSCALE-DOWN\tHOLD\n")
@@ -1349,8 +1346,8 @@ func renderPlanTable(plans []team.RolePlan) string {
 			holdCell = "-"
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%s\n",
-			p.Workspace, p.Team, p.Role, p.Generation, p.Desired, p.Actual,
-			p.Action, p.Spawn, len(p.Delete), holdCell)
+			tally.key(p.Workspace), tally.key(p.Team), tally.draw(p.Role), p.Generation, p.Desired, p.Actual,
+			p.Action, p.Spawn, len(p.Delete), tally.draw(holdCell))
 		switch p.Action {
 		case team.RoleSpawn:
 			spawn++
@@ -1365,7 +1362,7 @@ func renderPlanTable(plans []team.RolePlan) string {
 	_ = w.Flush()
 	_, _ = fmt.Fprintf(&buf, "\n%d role(s): %d spawn, %d scale-down, %d hold, %d steady\n",
 		len(sorted), spawn, scaleDown, hold, steady)
-	return buf.String()
+	return buf.String() + tally.line()
 }
 
 func describeCmd() *cobra.Command {
@@ -3447,6 +3444,8 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
 		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
 	}
+	var tally undrawTally
+	tally.cells(sessions, shownColumns(cols, res.cols))
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString(res.table)
@@ -3457,21 +3456,19 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 		fmt.Fprintf(&b, "%d columns hidden at this width\n", res.hidden)
 	}
 	if wantsComposer(cols) {
-		b.WriteString(composerGapLines(sessions))
+		b.WriteString(composerGapLines(sessions, &tally))
 	}
-	b.WriteString(undrawableNote(sessions, shownColumns(cols, res.cols)))
+	b.WriteString(tally.line())
 	return b.String()
 }
 
 // composerGapLines names each seat whose COMPOSER cell is unknown for a reason
 // marvel knows, one GAP line each, in the listing's order.
-func composerGapLines(sessions []api.Session) string {
+func composerGapLines(sessions []api.Session, tally *undrawTally) string {
 	var b strings.Builder
 	for _, s := range sessions {
 		if s.ComposerGap != "" {
-			ws, _ := filterKeyPart(s.Workspace)
-			name, _ := filterKeyPart(s.Name)
-			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", ws, name, drawn(s.ComposerGap))
+			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", tally.key(s.Workspace), tally.key(s.Name), tally.draw(s.ComposerGap))
 		}
 	}
 	return b.String()
@@ -3482,6 +3479,7 @@ func printTeams(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &teams); err != nil {
 		return err
 	}
+	var tally undrawTally
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tROLE\tREPLICAS\tRUNTIME\n")
 	for _, t := range teams {
@@ -3490,10 +3488,10 @@ func printTeams(data json.RawMessage) error {
 			if rt == "" {
 				rt = r.Runtime.Command
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", t.Workspace, t.Name, r.Name, r.Replicas, rt)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", tally.key(t.Workspace), tally.key(t.Name), tally.draw(r.Name), r.Replicas, tally.draw(rt))
 		}
 	}
-	return w.Flush()
+	return flushWithNote(w, os.Stdout, &tally)
 }
 
 func printWorkspaces(data json.RawMessage) error {
@@ -3501,6 +3499,7 @@ func printWorkspaces(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &workspaces); err != nil {
 		return err
 	}
+	var tally undrawTally
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "NAME\tAGE\n")
 	for _, ws := range workspaces {
@@ -3508,9 +3507,9 @@ func printWorkspaces(data json.RawMessage) error {
 		if !ws.CreatedAt.IsZero() {
 			age = strings.TrimSuffix(fmt.Sprintf("%v", ws.CreatedAt.Format("2006-01-02 15:04")), " ")
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\n", ws.Name, age)
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", tally.key(ws.Name), age)
 	}
-	return w.Flush()
+	return flushWithNote(w, os.Stdout, &tally)
 }
 
 func printEndpoints(data json.RawMessage) error {
@@ -3518,12 +3517,13 @@ func printEndpoints(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &endpoints); err != nil {
 		return err
 	}
+	var tally undrawTally
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tNAME\tTEAM\n")
 	for _, e := range endpoints {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", e.Workspace, e.Name, e.Team)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", tally.key(e.Workspace), tally.key(e.Name), tally.draw(e.Team))
 	}
-	return w.Flush()
+	return flushWithNote(w, os.Stdout, &tally)
 }
 
 func printPolicies(data json.RawMessage) error {
@@ -3531,6 +3531,7 @@ func printPolicies(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &policies); err != nil {
 		return err
 	}
+	var tally undrawTally
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tNAME\tVERSION\tKEYS\n")
 	for _, p := range policies {
@@ -3538,9 +3539,9 @@ func printPolicies(data json.RawMessage) error {
 		if version == "" {
 			version = "-"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Workspace, p.Name, version, len(p.Settings))
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", tally.key(p.Workspace), tally.key(p.Name), tally.draw(version), len(p.Settings))
 	}
-	return w.Flush()
+	return flushWithNote(w, os.Stdout, &tally)
 }
 
 // printBudgets renders `marvel get budgets`: one row per declared budget
@@ -3557,6 +3558,7 @@ func printCredentials(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return err
 	}
+	var tally undrawTally
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "NAME\tKIND\tAUDIENCE\tISSUED\tISSUED-BY\tBINDING\n")
 	for _, c := range creds {
@@ -3565,9 +3567,9 @@ func printCredentials(data json.RawMessage) error {
 			issued = c.IssuedAt.UTC().Format(time.RFC3339)
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			c.Name, c.Kind, dashIfEmpty(c.Audience), issued, dashIfEmpty(c.IssuedBy), dashIfEmpty(c.Binding))
+			tally.draw(c.Name), tally.draw(string(c.Kind)), tally.draw(dashIfEmpty(c.Audience)), issued, tally.draw(dashIfEmpty(c.IssuedBy)), tally.draw(dashIfEmpty(c.Binding)))
 	}
-	if err := w.Flush(); err != nil {
+	if err := flushWithNote(w, os.Stdout, &tally); err != nil {
 		return err
 	}
 	// The note goes to stderr so stdout stays parseable. Transient credentials
@@ -3617,12 +3619,13 @@ func renderBudgetTable(rows []admission.Row) string {
 		}
 		return rows[i].AccountWindow < rows[j].AccountWindow
 	})
+	var tally undrawTally
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tDIMENSION\tLIMIT\tOBSERVED\tHEADROOM\tSTATE\tWINDOW\tNOTE\n")
 	for _, r := range rows {
 		if r.Reading != "" {
-			writeAccountRow(w, r)
+			writeAccountRow(w, r, &tally)
 			continue
 		}
 		note := r.Note
@@ -3630,18 +3633,18 @@ func renderBudgetTable(rows []admission.Row) string {
 			note = "-"
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
-			r.Workspace, r.Team, r.Dimension, r.Limit, r.Observed, r.Headroom,
-			r.State, formatWindow(r.Window), note)
+			tally.key(r.Workspace), tally.key(r.Team), r.Dimension, r.Limit, r.Observed, r.Headroom,
+			tally.draw(r.State), formatWindow(r.Window), tally.draw(note))
 	}
 	_ = w.Flush()
-	return buf.String()
+	return buf.String() + tally.line()
 }
 
 // writeAccountRow renders an account_window row into the budget table. The
 // cells that mean nothing for an account (limit, headroom, state) are dashes.
 // OBSERVED is the percentage only for a fresh reading; a stale or absent
 // reading reads as that word, never as a number and never as ok.
-func writeAccountRow(w io.Writer, r admission.Row) {
+func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
 	if r.Reading == "fresh" {
 		observed = fmt.Sprintf("%d%%", r.Observed)
@@ -3651,7 +3654,7 @@ func writeAccountRow(w io.Writer, r admission.Row) {
 		resets = formatUntil(time.Until(*r.ResetsAt))
 	}
 	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t-\t%s\t%s %s; %s\n",
-		r.Workspace, r.Team, r.Dimension, observed, resets, r.Account, r.AccountWindow, r.Note)
+		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
 }
 
 // formatUntil renders a time to go as days and hours, hours and minutes, or

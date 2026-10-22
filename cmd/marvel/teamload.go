@@ -44,6 +44,7 @@ func renderTeamLoad(data json.RawMessage, now time.Time) (string, error) {
 	if len(rows) == 0 {
 		return "no teams\n", nil
 	}
+	var tally undrawTally
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tSEATS\tACTIVE%%\tLIMITED\n")
@@ -57,10 +58,10 @@ func renderTeamLoad(data json.RawMessage, now time.Time) (string, error) {
 			return fmt.Sprintf("%.0f%% (%d of %d)", r.ActiveMeanPct, r.ActiveMeasured, r.Running)
 		})
 		limited := cell.Render(now, func(r api.TeamLoad) string { return fmt.Sprintf("%d", r.Limited) })
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Workspace, r.Team, seats, active, limited)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", tally.key(r.Workspace), tally.key(r.Team), seats, active, limited)
 	}
 	if err := w.Flush(); err != nil {
 		return "", err
 	}
-	return b.String(), nil
+	return b.String() + tally.line(), nil
 }
