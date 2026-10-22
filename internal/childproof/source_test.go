@@ -33,9 +33,10 @@ func moduleRoot(t *testing.T) string {
 }
 
 // testOnlyNames are the exported names that exist for tests: one builds a
-// Prober from the caller's seams, the other reads real processes for a test
-// that fakes only the pids it plants.
-var testOnlyNames = map[string]bool{"NewForTest": true, "ReadIdentityForTest": true}
+// Prober from the caller's seams, one reads real processes for a test that
+// fakes only the pids it plants, and one stages the state a workload.Process
+// holds.
+var testOnlyNames = map[string]bool{"NewForTest": true, "ReadIdentityForTest": true, "SeedStateForTest": true}
 
 // newForTestRefs returns the position of every identifier named in
 // testOnlyNames in a parsed non-test file, except the declaration of the
@@ -143,11 +144,10 @@ func TestNewForTestCheckSeesEachWayToReachIt(t *testing.T) {
 // one constructor that proves a process without a record, and it trusts the
 // *exec.Cmd it is given, so its call sites are listed, as NewForTest's are.
 // workload.Process proves every child it spawns (restructure plan, Move 2,
-// PR 2b); the bus supervisor's own call goes when it becomes a driver (2c).
+// PR 2b), and the bus supervisor, now a driver, has no call of its own.
 // Each file is allowed exactly the references it has, so a second call in an
 // allowed file fails as a call in any other file does.
 var spawnedAllowed = map[string]int{
-	"internal/bus/supervisor.go":     1,
 	"internal/workload/lifecycle.go": 1,
 }
 

@@ -11,15 +11,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/childproof"
 )
 
 // The supervised lifecycle of a managed child (docs/design/code-restructure-plan.md,
 // Move 2). The driver decides how a child enters (a fresh spawn, or an adopt of
 // a child it has already proven), and Process runs it from there: the watch,
-// crash detection, the restart wait, a requested restart and the stop. Nothing
-// calls this yet; bus.Supervisor becomes its first driver in PR 2c.
+// crash detection, the restart wait, a requested restart and the stop.
+// bus.Supervisor is its first driver.
 
 // Driver is what a managed child's driver supplies to the generic loop.
 // Ready, Started, Tick and Exited run on the Process loop goroutine, one at
@@ -95,6 +94,12 @@ type State struct {
 	BackoffUntil time.Time
 }
 
+// Schedule is the wait before restart n after a crash. backoff.Schedule
+// satisfies it, and so does a driver's own func in a test that shortens it.
+type Schedule interface {
+	Wait(n int) time.Duration
+}
+
 // DefaultGrace is the wait between SIGTERM and SIGKILL when a spec names none.
 const DefaultGrace = 5 * time.Second
 
@@ -113,7 +118,7 @@ type Process struct {
 	spec   ProcessSpec
 	driver Driver
 	prober *childproof.Prober
-	sched  backoff.Schedule
+	sched  Schedule
 
 	// now and after are the clock; tests replace them.
 	now   func() time.Time
@@ -148,7 +153,7 @@ type request struct {
 // New returns a Process for spec, driven by d. p is the prober every signal
 // goes through; sched is the restart schedule after a crash. Nothing runs
 // until Spawn or Adopt.
-func New(spec ProcessSpec, d Driver, p *childproof.Prober, sched backoff.Schedule) *Process {
+func New(spec ProcessSpec, d Driver, p *childproof.Prober, sched Schedule) *Process {
 	return &Process{
 		spec:   spec,
 		driver: d,
@@ -160,6 +165,16 @@ func New(spec ProcessSpec, d Driver, p *childproof.Prober, sched backoff.Schedul
 		reqs:   make(chan request),
 		done:   make(chan struct{}),
 	}
+}
+
+// SeedStateForTest runs f on p's state under the lock, so a test can stage
+// what a Process holds without running a child. Nothing outside a test file
+// refers to it: internal/childproof's source test lists it with the other
+// test-only names.
+func SeedStateForTest(p *Process, f func(*State)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f(&p.st)
 }
 
 // Snapshot returns a copy of the state, taken under one lock.
@@ -429,6 +444,7 @@ func (p *Process) spawn() (*Child, childproof.Child, error) {
 	spec := p.spec
 	var proven childproof.Child
 	before := spec.BeforePidFile
+	record := spec.RecordChild
 	spec.BeforePidFile = func(cmd *exec.Cmd) error {
 		c, err := p.prober.Spawned(cmd)
 		if err != nil {
@@ -436,7 +452,12 @@ func (p *Process) spawn() (*Child, childproof.Child, error) {
 		}
 		proven = c
 		if before != nil {
-			return before(cmd)
+			if err := before(cmd); err != nil {
+				return err
+			}
+		}
+		if record != nil {
+			return record(cmd, c)
 		}
 		return nil
 	}
@@ -470,6 +491,21 @@ func (p *Process) pollAdopted(ctx context.Context, c childproof.Child, exit chan
 	}
 }
 
+// TerminateError is a Terminate that stopped short of ending the child. Step
+// is "stopping" for the SIGTERM and "killing" for the SIGKILL, so a driver can
+// word the log line with its own noun.
+type TerminateError struct {
+	Step string
+	Pid  int
+	Err  error
+}
+
+func (e *TerminateError) Error() string {
+	return fmt.Sprintf("not %s pid %d: %v", e.Step, e.Pid, e.Err)
+}
+
+func (e *TerminateError) Unwrap() error { return e.Err }
+
 // Terminate ends a proven child: SIGTERM to its group, a grace period polled
 // by identity so a pid handed to another process counts as exited, then
 // SIGKILL. Every signal re-proves the child first (Prober.Signal), so a change
@@ -478,7 +514,7 @@ func (p *Process) pollAdopted(ctx context.Context, c childproof.Child, exit chan
 // driver ending a child before any child reaches Process uses it too.
 func Terminate(p *childproof.Prober, c childproof.Child, grace time.Duration) error {
 	if err := p.Signal(c, syscall.SIGTERM, true); err != nil {
-		return fmt.Errorf("not stopping pid %d: %w", c.Pid(), err)
+		return &TerminateError{Step: "stopping", Pid: c.Pid(), Err: err}
 	}
 	if grace <= 0 {
 		grace = DefaultGrace
@@ -490,7 +526,7 @@ func Terminate(p *childproof.Prober, c childproof.Child, grace time.Duration) er
 	}
 	if p.Same(c) {
 		if err := p.Signal(c, syscall.SIGKILL, true); err != nil {
-			return fmt.Errorf("not killing pid %d: %w", c.Pid(), err)
+			return &TerminateError{Step: "killing", Pid: c.Pid(), Err: err}
 		}
 	}
 	return nil

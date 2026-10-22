@@ -295,8 +295,8 @@ func TestAdoptionSignalsOnceAndEverySignalReProves(t *testing.T) {
 	if got := pt.signals(); !slices.Equal(got, []sentSignal{{pid, syscall.SIGHUP}}) {
 		t.Fatalf("signals = %v, want exactly one SIGHUP to %d", got, pid)
 	}
-	if s.child.Pid() != pid || !s.prober.Same(s.child) {
-		t.Errorf("the adopted child = pid %d, want the proven pid %d", s.child.Pid(), pid)
+	if child := s.snapshot().Child; child.Pid() != pid || !s.prober.Same(child) {
+		t.Errorf("the adopted child = pid %d, want the proven pid %d", child.Pid(), pid)
 	}
 	// The process stops being the one proven. Reload and the structural
 	// SIGHUP each read it again first and send nothing.
