@@ -2,17 +2,23 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"math/rand"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 const fffd = "\uFFFD"
@@ -74,22 +80,32 @@ func mustColumn(t *testing.T, name string) sessionColumn {
 // The placeholder is never a separator: whatever goes in, the output holds no
 // more ':', '/' or '?' than the input did.
 func TestPlaceholderAddsNoSeparator(t *testing.T) {
-	alphabet := []rune("ab:/?\x00\x1b\x7f\u0085\u202E\u200B\uFF1A\u2215 \xff")
+	// Built as strings, so an invalid byte stays an invalid byte; a []rune
+	// conversion would turn "\xff" into U+FFFD before the filter saw it.
+	alphabet := []string{"a", "b", ":", "/", "?", "\x00", "\x1b", "\x7f", "\u0085", "\u202E", "\u200B", "\uFF1A", "\u2215", " ", "\xff", "\xc3"}
 	rng := rand.New(rand.NewSource(7))
+	sawInvalid := false
 	for i := 0; i < 500; i++ {
 		var b strings.Builder
 		for n := rng.Intn(24); n > 0; n-- {
-			b.WriteRune(alphabet[rng.Intn(len(alphabet))])
+			b.WriteString(alphabet[rng.Intn(len(alphabet))])
 		}
 		in := b.String()
+		sawInvalid = sawInvalid || !utf8.ValidString(in)
 		for _, f := range []func(string) (string, []string){filterDrawn, filterKeyPart} {
 			out, _ := f(in)
+			if !utf8.ValidString(out) {
+				t.Fatalf("%q -> %q is not valid UTF-8", in, out)
+			}
 			for _, sep := range []string{":", "/", "?"} {
 				if strings.Count(out, sep) > strings.Count(in, sep) {
 					t.Fatalf("%q -> %q gained a %q", in, out, sep)
 				}
 			}
 		}
+	}
+	if !sawInvalid {
+		t.Fatal("no generated input held an invalid byte")
 	}
 }
 
@@ -180,5 +196,132 @@ func TestEventTextFiltered(t *testing.T) {
 	}
 	if strings.ContainsAny(out, "\x1b\u202E") {
 		t.Errorf("event row still holds ESC or a bidi control: %q", out)
+	}
+}
+
+// plainText reports whether out holds no raw control or bidi character and
+// does hold the placeholder.
+func drawnClean(t *testing.T, what, out string) {
+	t.Helper()
+	if strings.ContainsAny(out, "\x1b\u202E") {
+		t.Errorf("%s still holds ESC or a bidi control: %q", what, out)
+	}
+	if !strings.Contains(out, fffd) {
+		t.Errorf("%s holds no placeholder: %q", what, out)
+	}
+}
+
+// An error on the live event stream comes from the daemon and does not pass
+// through send(); followStream filters it.
+func TestEventStreamErrorFiltered(t *testing.T) {
+	resolveFixture(t, false)
+	dir, err := os.MkdirTemp("", "ev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		var req daemonrpc.Request
+		if json.NewDecoder(c).Decode(&req) == nil {
+			_ = json.NewEncoder(c).Encode(daemonrpc.Response{Error: "stream broke \x1b[2J\u202E"})
+		}
+	}()
+	t.Setenv(config.SocketEnv, sock)
+	err = followStream(0, func(uint64) json.RawMessage { return json.RawMessage(`{}`) }, func([]events.Event, bool) {})
+	if err == nil {
+		t.Fatal("followStream returned no error")
+	}
+	drawnClean(t, "the stream error", err.Error())
+}
+
+// The home warning and the build warning are built from fields the daemon
+// reported, and are filtered before they print.
+func TestDaemonNotesFiltered(t *testing.T) {
+	var home bytes.Buffer
+	noteDaemonHome(&home, "/tmp/x.sock", "/h\x1b[2J\u202E", "/c")
+	if home.Len() == 0 {
+		t.Fatal("no home warning for a different home")
+	}
+	drawnClean(t, "the home warning", home.String())
+
+	buildWarned.Store(false)
+	t.Cleanup(func() { buildWarned.Store(false) })
+	var build bytes.Buffer
+	stamp := stampOf(t, daemon.Build{Version: "9.9.9\x1b[2J\u202E", Channel: "stable", Commit: "abcdef0"})
+	noteBuildMismatch(&build, "get", stamp)
+	if build.Len() == 0 {
+		t.Fatal("no build warning for a different build")
+	}
+	drawnClean(t, "the build warning", build.String())
+}
+
+// Every table that prints daemon fields filters them, and names what it
+// replaced in a note line.
+func TestOtherTablesFiltered(t *testing.T) {
+	esc := "x\x1b[2J\u202E"
+	teams, _ := json.Marshal([]api.Team{{Workspace: esc, Name: esc, Roles: []api.Role{{Name: esc, Replicas: 1}}}})
+	workspaces, _ := json.Marshal([]api.Workspace{{Name: esc}})
+	endpoints, _ := json.Marshal([]api.Endpoint{{Workspace: esc, Name: esc, Team: esc}})
+	policies, _ := json.Marshal([]api.Policy{{Workspace: esc, Name: esc, Version: esc}})
+	creds, _ := json.Marshal([]api.Credential{{Name: esc, Audience: esc, IssuedBy: esc, Binding: esc}})
+	load, _ := json.Marshal([]api.TeamLoad{{Workspace: esc, Team: esc}})
+	cases := []struct {
+		name string
+		out  func() string
+	}{
+		{"teams", func() string { return captureStdout(t, func() { _ = printTeams(teams) }) }},
+		{"workspaces", func() string { return captureStdout(t, func() { _ = printWorkspaces(workspaces) }) }},
+		{"endpoints", func() string { return captureStdout(t, func() { _ = printEndpoints(endpoints) }) }},
+		{"policies", func() string { return captureStdout(t, func() { _ = printPolicies(policies) }) }},
+		{"credentials", func() string { return captureStdout(t, func() { _ = printCredentials(creds) }) }},
+		{"plan", func() string {
+			return renderPlanTable([]team.RolePlan{{Workspace: esc, Team: esc, Role: esc, HoldDetail: esc}})
+		}},
+		{"budgets", func() string {
+			return renderBudgetTable([]admission.Row{{Workspace: esc, Team: esc, Note: esc}})
+		}},
+		{"team load", func() string {
+			out, err := renderTeamLoad(load, time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out
+		}},
+	}
+	for _, c := range cases {
+		out := c.out()
+		drawnClean(t, c.name, out)
+		if !strings.Contains(out, "held undrawable characters (U+001B, U+202E)") {
+			t.Errorf("%s names no replaced characters:\n%s", c.name, out)
+		}
+	}
+}
+
+// A GAP line is drawn in the sessions view, so what it replaces is counted in
+// the view's one note line.
+func TestGapLineReplacementCounted(t *testing.T) {
+	cols := []sessionColumn{mustColumn(t, "name"), mustColumn(t, "composer")}
+	clean := []api.Session{{Workspace: "ws", Name: "n", ComposerGap: "no pane"}}
+	if out := renderSessionsView(clean, cols, "", fitOptions{}); strings.Contains(out, "undrawable") {
+		t.Fatalf("a clean GAP line drew a note:\n%s", out)
+	}
+	dirty := []api.Session{{Workspace: "ws", Name: "n", ComposerGap: "no pane\x1b[2J"}}
+	out := renderSessionsView(dirty, cols, "", fitOptions{})
+	if got := strings.Count(out, "held undrawable characters (U+001B); -o json shows them"); got != 1 {
+		t.Errorf("note appears %d times, want 1:\n%s", got, out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("the GAP line still holds ESC:\n%s", out)
 	}
 }
