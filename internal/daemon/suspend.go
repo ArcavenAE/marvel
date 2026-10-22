@@ -63,6 +63,14 @@ func (s suspendStore) Clear() error {
 func (d *Daemon) loadSuspendRecord(socketPath string) {
 	d.suspendMirror = suspend.MirrorPath(socketPath)
 	d.suspendUnsettled.Store(nil)
+	if d.store.BoltPath() == "" && d.suspendMirror != "" {
+		// SuspendRecord answers nil with no bolt, which is not "no record": a
+		// mirror left by an earlier run may be the only copy of the recipe.
+		if _, found, err := suspend.ReadMirror(d.suspendMirror); err != nil || found {
+			d.unsettleSuspend("no state bolt is open, so the stored record cannot be read")
+			return
+		}
+	}
 	raw, err := d.store.SuspendRecord()
 	if err != nil {
 		d.unsettleSuspend(fmt.Sprintf("read the stored record: %v", err))
