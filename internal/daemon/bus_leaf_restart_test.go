@@ -17,6 +17,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // startTestLeafBroker wires a managed broker the way attachBus does and starts
@@ -121,7 +122,7 @@ func TestLeafCredentialPutRestartsOnFirstEnrollmentThenReloads(t *testing.T) {
 	kp, _ := nkeys.CreateUser()
 	seed, _ := kp.Seed()
 	params, _ := json.Marshal(map[string]any{"name": busLeafCredential, "kind": "nats-nkey-seed", "value": seed})
-	resp := d.dispatchAs(Request{Method: "credential.put", Params: params}, localCaller())
+	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: params}, localCaller())
 	if resp.Error != "" {
 		t.Fatalf("credential.put: %s", resp.Error)
 	}
@@ -138,13 +139,13 @@ func TestLeafCredentialPutRestartsOnFirstEnrollmentThenReloads(t *testing.T) {
 	// side owns. The seed stays in the broker's environment (delete does not
 	// change the running process), so a second put is reload-only.
 	del, _ := json.Marshal(map[string]string{"name": busLeafCredential})
-	if resp := d.dispatchAs(Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
 		t.Fatalf("credential.delete: %s", resp.Error)
 	}
 	if st := sup.Status(); st.PID != after.PID || !st.Ready || st.Leaf != "unenrolled" {
 		t.Errorf("after delete: %+v, want same pid, ready, unenrolled", st)
 	}
-	if resp := d.dispatchAs(Request{Method: "credential.put", Params: params}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: params}, localCaller()); resp.Error != "" {
 		t.Fatalf("second put: %s", resp.Error)
 	}
 	// The environment already carried the seed (the first put restarted for
@@ -170,13 +171,13 @@ func TestLeafCredentialRotationRestartsForNewSeed(t *testing.T) {
 	// Rotation is delete + put of a NEW seed value (the store rejects a
 	// duplicate name, so a real rotation deletes first).
 	del, _ := json.Marshal(map[string]string{"name": busLeafCredential})
-	if resp := d.dispatchAs(Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
 		t.Fatalf("credential.delete: %s", resp.Error)
 	}
 	kp, _ := nkeys.CreateUser()
 	seedB, _ := kp.Seed()
 	put, _ := json.Marshal(map[string]any{"name": busLeafCredential, "kind": "nats-nkey-seed", "value": seedB})
-	if resp := d.dispatchAs(Request{Method: "credential.put", Params: put}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: put}, localCaller()); resp.Error != "" {
 		t.Fatalf("credential.put (rotated seed): %s", resp.Error)
 	}
 	after := sup.Status()
@@ -206,7 +207,7 @@ func TestBusLeafConnectDisconnectIsReloadOnly(t *testing.T) {
 	pid := start.PID
 
 	// Disconnect: reload-only, the broker never bounces, the block is gone.
-	if resp := d.dispatchAs(Request{Method: "bus.leaf.disconnect"}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "bus.leaf.disconnect"}, localCaller()); resp.Error != "" {
 		t.Fatalf("disconnect: %s", resp.Error)
 	}
 	off := sup.Status()
@@ -221,7 +222,7 @@ func TestBusLeafConnectDisconnectIsReloadOnly(t *testing.T) {
 	}
 
 	// Reconnect: reload-only, same broker, the block is back, no re-enrollment.
-	if resp := d.dispatchAs(Request{Method: "bus.leaf.connect"}, localCaller()); resp.Error != "" {
+	if resp := d.dispatchAs(daemonrpc.Request{Method: "bus.leaf.connect"}, localCaller()); resp.Error != "" {
 		t.Fatalf("connect: %s", resp.Error)
 	}
 	on := sup.Status()

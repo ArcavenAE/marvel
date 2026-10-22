@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
@@ -86,7 +87,7 @@ func (d *Daemon) loadSuspendRecord(socketPath string) {
 }
 
 // handleSuspendStatus answers suspend.status from the live copy alone.
-func (d *Daemon) handleSuspendStatus() Response {
+func (d *Daemon) handleSuspendStatus() daemonrpc.Response {
 	return respond(suspend.StatusOf(d.suspendRec.Load()))
 }
 

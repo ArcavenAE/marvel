@@ -58,17 +58,17 @@ func startFrozen(t *testing.T, name string, bound time.Duration) (*Daemon, strin
 	return d, sock, started
 }
 
-func send(t *testing.T, sock, method string, params any) *Response {
+func send(t *testing.T, sock, method string, params any) *daemonrpc.Response {
 	t.Helper()
-	req := Request{Method: method}
+	req := daemonrpc.Request{Method: method}
 	if params != nil {
 		req.Params = mustMarshal(t, params)
 	}
-	var resp *Response
+	var resp *daemonrpc.Response
 	var err error
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		resp, err = daemonrpc.SendRequestWith(sock, req, DialOptions{Timeout: time.Second})
+		resp, err = daemonrpc.SendRequestWith(sock, req, daemonrpc.DialOptions{Timeout: time.Second})
 		if err == nil || time.Now().After(deadline) {
 			break
 		}

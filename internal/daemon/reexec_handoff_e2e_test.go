@@ -15,6 +15,7 @@ import (
 	"github.com/nats-io/nkeys"
 
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -137,11 +138,11 @@ func TestACarriedLeafSeedSurvivesAReexecWithTheBrokerUntouched(t *testing.T) {
 	// A later put of the same seed reloads in place: the adopt restored what the
 	// broker was spawned with, so the daemon does not bounce it.
 	del, _ := json.Marshal(map[string]string{"name": busLeafCredential})
-	if resp := d2.dispatchAs(Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
+	if resp := d2.dispatchAs(daemonrpc.Request{Method: "credential.delete", Params: del}, localCaller()); resp.Error != "" {
 		t.Fatalf("credential.delete: %s", resp.Error)
 	}
 	put, _ := json.Marshal(map[string]any{"name": busLeafCredential, "kind": "nats-nkey-seed", "value": seedBytes})
-	if resp := d2.dispatchAs(Request{Method: "credential.put", Params: put}, localCaller()); resp.Error != "" {
+	if resp := d2.dispatchAs(daemonrpc.Request{Method: "credential.put", Params: put}, localCaller()); resp.Error != "" {
 		t.Fatalf("credential.put: %s", resp.Error)
 	}
 	if again := sup2.Status(); again.PID != pid || !again.Ready {
@@ -164,14 +165,14 @@ func TestACarriedLeafSeedSurvivesAReexecWithTheBrokerUntouched(t *testing.T) {
 		"the files under the layout": readAllFiles(t, root),
 	}
 	for _, method := range []string{"bus.status", "credential.list"} {
-		resp := d2.dispatchAs(Request{Method: method}, localCaller())
+		resp := d2.dispatchAs(daemonrpc.Request{Method: method}, localCaller())
 		if resp.Error != "" || len(resp.Result) == 0 {
 			t.Errorf("%s gave no answer to search (%q), so its check would be empty", method, resp.Error)
 		}
 		surfaces[method] = string(resp.Result) + resp.Error
 	}
 	get, _ := json.Marshal(map[string]string{"name": busLeafCredential})
-	resp := d2.dispatchAs(Request{Method: "credential.get", Params: get}, localCaller())
+	resp := d2.dispatchAs(daemonrpc.Request{Method: "credential.get", Params: get}, localCaller())
 	if resp.Error != "" || len(resp.Result) == 0 {
 		t.Errorf("credential.get gave no answer to search (%q), so its check would be empty", resp.Error)
 	}
@@ -214,7 +215,7 @@ func TestAnUnawareSuccessorFiresTheDroppedSignalAndStatusSaysSo(t *testing.T) {
 	if len(evs) != 1 || evs[0].Severity != events.SeverityError {
 		t.Fatalf("bus.leaf.dropped events = %+v, want one at error severity", evs)
 	}
-	resp := d2.dispatchAs(Request{Method: "bus.status"}, localCaller())
+	resp := d2.dispatchAs(daemonrpc.Request{Method: "bus.status"}, localCaller())
 	var st bus.Status
 	if err := json.Unmarshal(resp.Result, &st); err != nil {
 		t.Fatal(err)

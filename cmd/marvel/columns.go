@@ -30,6 +30,7 @@ var sessionColumnRegistry = []sessionColumn{
 	{"name", "AGENT NAME", func(r sessionRow) string { return r.name }},
 	{"state", "STATE", func(r sessionRow) string { return r.state }},
 	{"health", "HEALTH", func(r sessionRow) string { return r.health }},
+	{"composer", "COMPOSER", func(r sessionRow) string { return r.composer }},
 	{"context", "CTX%", func(r sessionRow) string { return r.context }},
 	{"cpu", "CPU%", func(r sessionRow) string { return r.cpu }},
 	{"rss", "RSS", func(r sessionRow) string { return r.rss }},
@@ -40,6 +41,7 @@ var sessionColumnRegistry = []sessionColumn{
 	{"tout", "TOUT", func(r sessionRow) string { return r.tout }},
 	{"rate", "RATE", func(r sessionRow) string { return r.rate }},
 	{"last-active", "LAST-ACTIVE", func(r sessionRow) string { return r.lastActive }},
+	{"last-turn", "LAST-TURN", func(r sessionRow) string { return r.lastTurn }},
 	{"age", "AGE", func(r sessionRow) string { return r.age }},
 	{"active", "ACTIVE%", func(r sessionRow) string { return r.active }},
 	{"prompt", "PROMPT", func(r sessionRow) string { return r.prompt }},
@@ -50,7 +52,19 @@ var sessionColumnRegistry = []sessionColumn{
 // optInColumns are registered and selectable but not in the full default
 // table, so a pipe prints what it always printed. The width fit's wide tier
 // is where they show by default.
-var optInColumns = map[string]bool{"workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "age": true, "active": true, "spec": true, "acct": true}
+var optInColumns = map[string]bool{"composer": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "last-turn": true, "age": true, "active": true, "spec": true, "acct": true}
+
+// wantsComposer reports whether the COMPOSER column is selected. Only then does
+// the listing ask the daemon to read each seat's pane; it is opt-in and in no
+// named set, so no default view captures a pane.
+func wantsComposer(cols []sessionColumn) bool {
+	for _, c := range cols {
+		if c.name == "composer" {
+			return true
+		}
+	}
+	return false
+}
 
 // columnSetWide is the one named set. A set expands in place wherever its
 // name appears, because no `-o wide` exists (`-w` is --watch). It starts
@@ -60,7 +74,7 @@ const columnSetWide = "wide"
 
 var wideSessionColumns = []string{
 	"workspace", "team", "role", "generation", "name", "state", "health",
-	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "age", "active",
+	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "last-turn", "age", "active",
 }
 
 // defaultSessionColumns is today's table, in today's order.

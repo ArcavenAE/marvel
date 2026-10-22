@@ -84,7 +84,7 @@ func TestHeadlessCompletionHoldsSlotAndIsNotRefilled(t *testing.T) {
 			t.Fatalf("broken role has a succeeded row %+v; a non-zero exit must never read as completion", s)
 		}
 	}
-	rh, _ := ctrl.RoleHealthSnapshot("test-headless-done", "jobs", "broken")
+	rh := mustRoleHealth(t, ctrl, "test-headless-done", "jobs", "broken")
 	if rh.RestartCount < 2 {
 		t.Fatalf("broken RestartCount = %d after three backoff-clearing ticks, want respawns to continue", rh.RestartCount)
 	}
