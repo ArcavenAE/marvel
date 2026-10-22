@@ -33,8 +33,8 @@ The idea is that a seat's mode is a choice made from signals, not a fixed proper
 Each is a candidate, not a chosen rule.
 
 - **Queue depth.** Items waiting for the role. A run of items favors standby or standing; an empty queue favors headless.
-- **Freebusy.** Whether the team's seats are free, busy, blocked or overloaded (`docs/design/team-load-rollup.md`).
-- **last_turn.** How long since the seat last took a turn. A long gap says a standing seat is wasting its context.
+- **Freebusy.** Whether a seat is free, busy, waiting or unknown. The director repo's `skills/director/scripts/freebusy` builds that table read-only from `marvel get sessions` and `marvel get teams` on each cluster.
+- **last_turn.** How long since the seat last took a turn: the LAST-TURN column of `marvel get sessions`, which the same freebusy script carries into its seat rows. A long gap says a standing seat is wasting its context.
 - **Quota.** What a standing or standby seat spends while it waits, against usage limits and declared budgets (`docs/design/usage-limit-pause.md`).
 - **Arrival pattern.** Bursts against a steady trickle, which none of the signals above state on their own.
 
@@ -44,7 +44,7 @@ The operator also asks whether a reviewer and a builder could be paired on a sin
 
 ## Open risks
 
-- **Who gates ready and merge.** Seats never merge. Director merges, and the repository owner marks a PR ready. A fast builder-reviewer loop must stop at those gates and must not become a way around them.
+- **Who gates ready and merge.** Seats never merge. Director merges, and a PR goes ready only after a non-author review approves it. A fast builder-reviewer loop must stop at those gates and must not become a way around them.
 - **Quota spend.** Standby and standing seats spend while idle. A mode change that saves cold starts can cost more overall.
 - **Run conditions.** A seat that moves between modes keeps its run conditions: scratch home, no live socket, localhost only. A longer-lived seat has more time to drift from them.
 - **Who decides.** A supervisor may propose a mode change; who confirms it is the automation-boundary question of ADR-007.
