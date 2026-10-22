@@ -91,6 +91,11 @@ func resolveDaemonAddr() (string, daemonrpc.DialOptions, error) {
 // resolveDaemonRung resolves the daemon address and reports the rung that
 // chose it: flag, env, cluster or default.
 func resolveDaemonRung() (string, daemonrpc.DialOptions, resolveRung, error) {
+	// A list of clusters is a read across clusters, which only get sessions
+	// does. Every other command names one cluster.
+	if strings.Contains(clusterName, ",") {
+		return "", daemonrpc.DialOptions{}, rungDefault, errors.New("--cluster takes one cluster here; a comma list works only for get sessions")
+	}
 	if socketPath != "" {
 		return socketPath, daemonrpc.DialOptions{Identity: identityPath}, rungFlag, nil
 	}
@@ -220,8 +225,13 @@ func bindRootFlags(root *cobra.Command) {
 	// built; the flag is declared here so cobra accepts and documents it.
 	root.PersistentFlags().String("marvel-home", "",
 		"marvel's state root, an absolute path (default ~/.marvel); sets $"+paths.HomeEnv+", and the flag wins over the variable")
-	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		clusterFlagGiven = cmd.Flags().Changed("cluster")
+		if key, ok := typedKey(cmd, args); ok && strings.Contains(key, ":") {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("the key %q holds ':', which reads as a qualified key; qualified keys are not supported yet (#829), so name the cluster with --cluster", drawn(key))
+		}
+		return nil
 	}
 }
 
@@ -1074,7 +1084,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns, output string
-	var noTrunc, header, load bool
+	var noTrunc, header, load, allClusters bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
 		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
@@ -1142,6 +1152,13 @@ show as (redacted) in both.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
+			names, fan, err := clusterSet(args[0], allClusters)
+			if err != nil {
+				return err
+			}
+			if fan {
+				return runFanOutGet(cmd, names, columns, noTrunc, watching, cmd.Flags().Changed("output"), load)
+			}
 			if load {
 				switch {
 				case args[0] != "teams" && args[0] != "team":
@@ -1189,6 +1206,7 @@ show as (redacted) in both.`,
 			return getResources(args[0], cols, headerText, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
+	cmd.Flags().BoolVar(&allClusters, "all-clusters", false, "with get sessions: read every cluster in the client config, in parallel, each under its own 10 s timer")
 	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
@@ -3065,6 +3083,7 @@ func sessionTieLess(a, b api.Session) bool {
 
 func sessionTieCompare(a, b api.Session) int {
 	return cmp.Or(
+		cmp.Compare(a.Cluster, b.Cluster),
 		cmp.Compare(a.Workspace, b.Workspace),
 		cmp.Compare(a.Name, b.Name),
 		cmp.Compare(a.Team, b.Team),
@@ -3131,6 +3150,7 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
+	key                                                                                  string
 	workspace, team, role, generation, name                                              string
 	state, health, context, cpu, rss                                                     string
 	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
@@ -3260,7 +3280,12 @@ func newSessionRow(s api.Session) sessionRow {
 	if v, ok := costRate(s, rateClock()); ok {
 		rate = v
 	}
+	key := "-"
+	if s.Cluster != "" {
+		key = s.Cluster + ":" + s.Workspace + "/" + s.Name
+	}
 	return sessionRow{
+		key:        key,
 		workdir:    workdir,
 		tout:       tout,
 		rate:       rate,
@@ -3482,12 +3507,14 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 // prints into a pipe. When a source mark is on screen, one legend line joins
 // the header on a terminal; piped output keeps the mark and drops the legend.
 func renderSessionsView(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
+	allCols := append(append([]sessionColumn(nil), fit.lead...), cols...)
+	fit.lead = drawableColumns(fit.lead)
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
 	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
 		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
 	}
 	var tally undrawTally
-	tally.cells(sessions, shownColumns(cols, res.cols))
+	tally.cells(sessions, shownColumns(allCols, res.cols))
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString(res.table)

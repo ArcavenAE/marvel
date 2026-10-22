@@ -50,6 +50,9 @@ type fitOptions struct {
 	width    int  // terminal width in columns, 0 off a terminal
 	explicit bool // the operator named the columns (--columns or the config)
 	noTrunc  bool // --no-trunc: print RUNTIME and WORKDIR in full
+	// lead columns print first and are never cut by the fit: the KEY column
+	// of a view that reads several clusters.
+	lead []sessionColumn
 }
 
 type fitResult struct {
@@ -169,9 +172,11 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 	if o.width <= 0 {
 		// Not a terminal: byte for byte what get sessions printed before the
 		// fit, nothing cut, whatever the columns hold.
+		cols = append(append([]sessionColumn(nil), o.lead...), cols...)
 		return fitResult{table: renderSessionTableCols(sessions, cols), cols: cols}
 	}
 	if o.explicit {
+		cols = append(append([]sessionColumn(nil), o.lead...), cols...)
 		table := renderTrimmed(sessions, cols, o)
 		var warn string
 		if w := tableWidth(table); w > o.width {
@@ -180,9 +185,9 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 		return fitResult{table: table, warn: warn, cols: cols}
 	}
 
-	fitted := tierColumns(o.width)
+	fitted := append(append([]sessionColumn(nil), o.lead...), tierColumns(o.width)...)
 	table := renderTrimmed(sessions, fitted, o)
-	for len(fitted) > 1 && tableWidth(table) > o.width {
+	for len(fitted) > len(o.lead)+1 && tableWidth(table) > o.width {
 		fitted = fitted[:len(fitted)-1]
 		table = renderTrimmed(sessions, fitted, o)
 	}

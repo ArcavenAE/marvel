@@ -11,7 +11,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -25,6 +28,72 @@ import (
 type sshRig struct {
 	addr    string        // mrvl:// address of the listener
 	hostKey ssh.PublicKey // the key the server presents
+	log     *rigLog       // what clients did to the listener
+}
+
+// rigLog records what reached the listener: the connections accepted and the
+// SHA256 fingerprint of each client key offered, in order.
+type rigLog struct {
+	mu    sync.Mutex
+	conns int
+	peers []string // remote address of each accepted connection, in order
+	keys  []string
+}
+
+func (l *rigLog) conn(peer string) {
+	l.mu.Lock()
+	l.conns++
+	l.peers = append(l.peers, peer)
+	l.mu.Unlock()
+}
+
+func (l *rigLog) accepted(peer string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, p := range l.peers {
+		if p == peer {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *rigLog) key(k ssh.PublicKey) {
+	l.mu.Lock()
+	l.keys = append(l.keys, ssh.FingerprintSHA256(k))
+	l.mu.Unlock()
+}
+
+// seen returns the connections accepted and the key fingerprints offered.
+func (l *rigLog) seen() (int, []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.conns, append([]string(nil), l.keys...)
+}
+
+// connsBeforeProbe returns how many connections the listener had accepted
+// before the call, once its accept loop has caught up. The counter is bumped
+// inside the accept goroutine, so a read right after a call returns can miss a
+// connection the call made. A probe dial is accepted after every earlier
+// dial (the kernel queues them in order), so once the probe shows in the log
+// every earlier connection does too.
+func (r sshRig) connsBeforeProbe(t *testing.T) int {
+	t.Helper()
+	hostport := strings.TrimPrefix(r.addr, "mrvl://rig@")
+	c, err := net.DialTimeout("tcp", hostport, 5*time.Second)
+	if err != nil {
+		t.Fatalf("probe dial: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	deadline := time.Now().Add(5 * time.Second)
+	for !r.log.accepted(c.LocalAddr().String()) {
+		if time.Now().After(deadline) {
+			t.Fatal("the accept loop never saw the probe connection")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	n, _ := r.log.seen()
+	return n - 1
 }
 
 // newSigner returns a fresh ed25519 signer and its private key in OpenSSH
@@ -79,8 +148,10 @@ func startSSHRigWith(t *testing.T, allowed ssh.PublicKey, mode rigMode) sshRig {
 	stall := make(chan struct{})
 	t.Cleanup(func() { close(stall) })
 	hostSigner, _ := newSigner(t)
+	rlog := &rigLog{}
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			rlog.key(key)
 			if mode == rigStallAuth {
 				<-stall
 			}
@@ -102,10 +173,11 @@ func startSSHRigWith(t *testing.T, allowed ssh.PublicKey, mode rigMode) sshRig {
 			if err != nil {
 				return
 			}
+			rlog.conn(c.RemoteAddr().String())
 			go serveSSHRig(c, cfg, mode)
 		}
 	}()
-	return sshRig{addr: "mrvl://rig@" + ln.Addr().String(), hostKey: hostSigner.PublicKey()}
+	return sshRig{addr: "mrvl://rig@" + ln.Addr().String(), hostKey: hostSigner.PublicKey(), log: rlog}
 }
 
 func serveSSHRig(c net.Conn, cfg *ssh.ServerConfig, mode rigMode) {

@@ -60,6 +60,12 @@ type DialOptions struct {
 	// is on a TTY, marvel prompts; when false and off-TTY, marvel
 	// refuses with a pointer to `marvel keys trust --yes`.
 	StrictHostKey bool
+	// OfferOneKey, when true, offers exactly one key: the Identity file, or
+	// marvel's own client key when Identity is empty. The SSH agent and the
+	// keys under ~/.ssh are never read, so a fan-out cannot offer one
+	// cluster's credentials to another. With no loadable key the dial fails
+	// with a NoIdentityError before any connection.
+	OfferOneKey bool
 	// Timeout bounds the whole exchange when positive: one timer, armed
 	// before the dial, over connect, handshake, auth, request and reply,
 	// which closes the connection when it fires (see exchange). Zero keeps
@@ -439,7 +445,13 @@ func sshClientConfig(user string, opts DialOptions, offered *offeredKeys) (*ssh.
 			_ = c.Close()
 		}
 	}
-	methods, err := sshAuthMethodsFor(opts.Identity, offered, hold)
+	var methods []ssh.AuthMethod
+	var err error
+	if opts.OfferOneKey {
+		methods, err = oneKeyAuthMethods(opts.Identity, offered)
+	} else {
+		methods, err = sshAuthMethodsFor(opts.Identity, offered, hold)
+	}
 	if err != nil {
 		closeHeld()
 		return nil, nil, err
@@ -505,6 +517,28 @@ func (c *sshWrappedConn) Close() error {
 	err := c.Conn.Close()
 	_ = c.sshClient.Close()
 	return err
+}
+
+// oneKeyAuthMethods is the auth for a dial that offers one key: the cluster's
+// identity file, or marvel's client key when it names none. It reads neither
+// the agent nor ~/.ssh, and a key that cannot be loaded is a NoIdentityError.
+func oneKeyAuthMethods(identity string, offered *offeredKeys) ([]ssh.AuthMethod, error) {
+	path := identity
+	if path == "" {
+		layout, err := paths.Default()
+		if err != nil {
+			return nil, err
+		}
+		path = layout.DefaultClientKey()
+		if _, err := os.Stat(path); err != nil {
+			return nil, &NoIdentityError{Reason: "the cluster names no identity and marvel has no client key"}
+		}
+	}
+	signer, err := loadKeyFile(path, true)
+	if err != nil {
+		return nil, &NoIdentityError{Reason: fmt.Sprintf("the key %s cannot be loaded: %v", path, err)}
+	}
+	return []ssh.AuthMethod{offered.record(staticSigners(signer))}, nil
 }
 
 // sshAuthMethodsFor returns SSH auth methods for a cluster.
