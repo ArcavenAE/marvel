@@ -5,9 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+// notFound is what gh api prints for a 404: the response body on stdout, the
+// error on stderr, and exit status 1.
+const notFound = `echo '{"message":"Not Found","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1`
 
 const (
 	checkScript = "check-release-tag.sh"
@@ -19,20 +24,38 @@ const (
 	repoSlug    = "example/repo"
 )
 
+// Answers that make the stub fail instead of reading. failStderr exits 1 with
+// a message on stderr only; failStatus exits 1 with a body on stdout and the
+// message on stderr, as gh does for a 404; failEmpty exits 0 with no output.
+const (
+	failStderr = "!stderr"
+	failStatus = "!status"
+	failEmpty  = "!empty"
+)
+
 // stubGH is a gh that answers api calls from a table keyed by the request
 // path, in the "<type> <sha>" form the script asks for with --jq, and logs
-// every call. A path with no answer exits 1, as gh does for a 404.
+// every call. A path with no answer fails like a 404 (failStatus).
 func stubGH(t *testing.T, answers map[string]string) (bin, calls string) {
 	t.Helper()
 	dir := t.TempDir()
 	calls = filepath.Join(dir, "calls")
 	var cases strings.Builder
 	for path, answer := range answers {
-		cases.WriteString("  " + path + ") echo '" + answer + "' ;;\n")
+		body := "echo '" + answer + "'"
+		switch answer {
+		case failStderr:
+			body = "echo 'gh: connection reset' >&2; exit 1"
+		case failStatus:
+			body = notFound
+		case failEmpty:
+			body = "exit 0"
+		}
+		cases.WriteString("  " + path + ") " + body + " ;;\n")
 	}
 	script := "#!/bin/bash\necho \"$*\" >> '" + calls + "'\n" +
 		"[[ \"$1\" == api ]] || exit 3\n" +
-		"case \"$2\" in\n" + cases.String() + "  *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;\nesac\n"
+		"case \"$2\" in\n" + cases.String() + "  *) " + notFound + " ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -101,12 +124,65 @@ func TestCheckReleaseTag(t *testing.T) {
 			0, nil,
 		},
 		{"tag that points at a tree", map[string]string{ref: "tree " + otherSHA}, []string{releaseTag, builtSHA}, 1, []string{releaseTag, builtSHA}},
-		{"tag that does not exist", map[string]string{}, []string{releaseTag, builtSHA}, 1, nil},
+		{"tag that does not exist", map[string]string{}, []string{releaseTag, builtSHA}, 1, []string{"could not read", releaseTag, builtSHA}},
+		{
+			"ref read fails: stderr only",
+			map[string]string{ref: failStderr},
+			[]string{releaseTag, builtSHA},
+			1,
+			[]string{"could not read", releaseTag, builtSHA},
+		},
+		{
+			"ref read fails: nonzero status with a body",
+			map[string]string{ref: failStatus},
+			[]string{releaseTag, builtSHA},
+			1,
+			[]string{"could not read", releaseTag, builtSHA},
+		},
+		{
+			"ref read fails: empty output",
+			map[string]string{ref: failEmpty},
+			[]string{releaseTag, builtSHA},
+			1,
+			[]string{"could not read", releaseTag, builtSHA},
+		},
+		{
+			"tag object read fails: stderr only",
+			map[string]string{ref: "tag " + tagObjSHA, tagObj: failStderr},
+			[]string{releaseTag, builtSHA},
+			1,
+			[]string{"could not read", releaseTag, builtSHA},
+		},
+		{
+			"tag object read fails: nonzero status with a body",
+			map[string]string{ref: "tag " + tagObjSHA, tagObj: failStatus},
+			[]string{releaseTag, builtSHA},
+			1,
+			[]string{"could not read", releaseTag, builtSHA},
+		},
+		{
+			"tag object read fails: empty output",
+			map[string]string{ref: "tag " + tagObjSHA, tagObj: failEmpty},
+			[]string{releaseTag, builtSHA},
+			1,
+			[]string{"could not read", releaseTag, builtSHA},
+		},
 		{"no arguments", map[string]string{ref: "commit " + builtSHA}, nil, 2, nil},
 	} {
 		exit, out, calls := runCheckScript(t, tc.answers, tc.args...)
 		if exit != tc.exit {
 			t.Errorf("%s: exit %d, want %d; output:\n%s", tc.name, exit, tc.exit, out)
+		}
+		if slices.Contains(tc.out, "could not read") {
+			named := 0
+			for _, line := range strings.Split(out, "\n") {
+				if strings.Contains(line, releaseTag) && strings.Contains(line, builtSHA) {
+					named++
+				}
+			}
+			if named != 1 {
+				t.Errorf("%s: %d output lines name the tag and the built commit, want 1:\n%s", tc.name, named, out)
+			}
 		}
 		for _, want := range tc.out {
 			if !strings.Contains(out, want) {
