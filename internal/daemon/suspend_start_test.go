@@ -385,3 +385,26 @@ func TestSuspendAtStartHoldsWhenTheRecordCannotBeParsed(t *testing.T) {
 		t.Errorf("mirror found %v err %v, want it kept", found, err)
 	}
 }
+
+// With no state bolt the store cannot say whether a record exists, so "nothing
+// stored" is not an answer: the mirror holds the manual resume recipe and must
+// survive, the status says unknown, and the daemon holds.
+func TestSuspendAtStartWithNoBoltKeepsTheMirror(t *testing.T) {
+	dir := t.TempDir()
+	d := &Daemon{home: "/h", store: api.NewStore(), events: events.NewRing(0)}
+	sock := filepath.Join(dir, "marvel.sock")
+	mirror := suspend.MirrorPath(sock)
+	if err := suspend.WriteMirror(mirror, suspendedRecord()); err != nil {
+		t.Fatal(err)
+	}
+	d.loadSuspendRecord(sock)
+	if _, found, err := suspend.ReadMirror(mirror); err != nil || !found {
+		t.Errorf("mirror found %v err %v, want it kept", found, err)
+	}
+	if st := statusOf(t, d.handleSuspendStatus()); st.State != suspend.StateUnknown {
+		t.Errorf("status = %q, want %q", st.State, suspend.StateUnknown)
+	}
+	if !d.resolveSuspendAtStart() {
+		t.Error("not held with no state bolt")
+	}
+}
