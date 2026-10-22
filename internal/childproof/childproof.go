@@ -179,6 +179,12 @@ func (p *Prober) Prove(pid int, want Identity) (Child, error) {
 	}
 	live, err := p.read(pid)
 	if err != nil {
+		// A process of another user shows no executable or arguments (EPERM)
+		// but still shows its start time. A start that differs proves it is
+		// not the one recorded, whatever else cannot be read.
+		if live.Start != "" && live.Start != want.Start {
+			return Child{}, &MismatchError{Pid: pid, Reason: "start"}
+		}
 		return Child{}, &MismatchError{Pid: pid, Reason: "dead"}
 	}
 	switch {
