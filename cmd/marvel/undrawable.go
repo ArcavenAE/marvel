@@ -73,7 +73,7 @@ func drawn(s string) string {
 }
 
 // keyPartColumns are the columns that print a part of a session key.
-var keyPartColumns = map[string]bool{"workspace": true, "name": true}
+var keyPartColumns = map[string]bool{"workspace": true, "name": true, "key": true}
 
 func filterForColumn(name string) func(string) (string, []string) {
 	if keyPartColumns[name] {
