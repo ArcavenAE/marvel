@@ -199,6 +199,8 @@ func TestSuspendStoreSetsTheLiveCopyBeforeTheMirror(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.suspendMirror = blocked
+	live := suspendedRecord()
+	d.suspendRec.Store(&live)
 	if err := (suspendStore{d}).Clear(); err == nil {
 		t.Fatal("Clear succeeded although the mirror could not be removed")
 	}
