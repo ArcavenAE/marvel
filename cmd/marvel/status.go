@@ -90,6 +90,7 @@ func reportStatus(w io.Writer, addr string, resp *daemonrpc.Response, sendErr er
 	if err := json.Unmarshal(resp.Result, &st); err != nil {
 		return 1, fmt.Errorf("decode suspend status: %w", err)
 	}
+	st.Unsettled = drawn(st.Unsettled)
 	if _, err := fmt.Fprint(w, suspend.Render(st, now, false)); err != nil {
 		return 1, fmt.Errorf("write status: %w", err)
 	}

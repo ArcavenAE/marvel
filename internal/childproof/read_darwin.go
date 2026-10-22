@@ -11,7 +11,9 @@ import (
 )
 
 // readIdentity reads what the kernel says about pid now. Any error, including
-// "no such process", is returned; the caller treats an error as unproven.
+// "no such process", is returned; the caller treats an error as unproven. When
+// the start time was read before the error, the returned Identity holds it
+// alone, which is all a caller may trust from a failed read.
 // kern.proc.pid gives p_starttime and the process group; kern.procargs2 gives
 // the executable path and the arguments. No cgo.
 func readIdentity(pid int) (Identity, error) {
@@ -19,17 +21,18 @@ func readIdentity(pid int) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
+	t := ki.Proc.P_starttime
+	start := fmt.Sprintf("darwin:%d.%06d", t.Sec, t.Usec)
 	exe, err := procargs.ExecPath(pid)
 	if err != nil {
-		return Identity{}, err
+		return Identity{Start: start}, err
 	}
 	argv, err := procargs.Read(pid)
 	if err != nil {
-		return Identity{}, err
+		return Identity{Start: start}, err
 	}
-	t := ki.Proc.P_starttime
 	return Identity{
-		Start: fmt.Sprintf("darwin:%d.%06d", t.Sec, t.Usec),
+		Start: start,
 		Exe:   exe,
 		Argv:  argv,
 		Pgid:  int(ki.Eproc.Pgid),

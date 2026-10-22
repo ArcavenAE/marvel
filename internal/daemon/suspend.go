@@ -63,6 +63,14 @@ func (s suspendStore) Clear() error {
 func (d *Daemon) loadSuspendRecord(socketPath string) {
 	d.suspendMirror = suspend.MirrorPath(socketPath)
 	d.suspendUnsettled.Store(nil)
+	if d.store.BoltPath() == "" && d.suspendMirror != "" {
+		// SuspendRecord answers nil with no bolt, which is not "no record": a
+		// mirror left by an earlier run may be the only copy of the recipe.
+		if _, found, err := suspend.ReadMirror(d.suspendMirror); err != nil || found {
+			d.unsettleSuspend("no state bolt is open, so the stored record cannot be read")
+			return
+		}
+	}
 	raw, err := d.store.SuspendRecord()
 	if err != nil {
 		d.unsettleSuspend(fmt.Sprintf("read the stored record: %v", err))
@@ -166,7 +174,10 @@ func (d *Daemon) resolveSuspendAtStart() bool {
 		}
 		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendInterrupted, Severity: events.SeverityWarning, Message: msg})
 		log.Printf("%s: %s", events.KindClusterSuspendInterrupted, msg)
-		return err != nil || d.suspendRec.Load() != nil
+		// Hold while a record remains. Clear nils the live copy before it removes
+		// the mirror, so an error with no record left is a mirror that would not
+		// go, on a cluster that is fully resumed.
+		return d.suspendRec.Load() != nil
 	}
 	log.Printf("suspend: the record is in an unknown state %q; serving suspended", rec.State)
 	return true
