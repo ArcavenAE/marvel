@@ -15,6 +15,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/childproof"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
@@ -183,7 +184,7 @@ func TestSuspendAtStartHoldsWhenItCannotSettle(t *testing.T) {
 func TestHeldDaemonServesOnlyTheStartingMethods(t *testing.T) {
 	d, _, _ := startDaemon(t, suspendedRecord())
 	d.suspendHeld.Store(true)
-	if st := statusOf(t, d.dispatchAs(Request{Method: "suspend.status"}, localCaller())); st.State != string(suspend.StateSuspended) {
+	if st := statusOf(t, d.dispatchAs(daemonrpc.Request{Method: "suspend.status"}, localCaller())); st.State != string(suspend.StateSuspended) {
 		t.Errorf("suspend.status state = %q, want suspended", st.State)
 	}
 	// The test daemon has no controller or session manager, so a handler that
@@ -195,7 +196,7 @@ func TestHeldDaemonServesOnlyTheStartingMethods(t *testing.T) {
 				t.Errorf("%s %s: its handler ran (%v), want it refused first", method, params, r)
 			}
 		}()
-		resp := d.dispatchAs(Request{Method: method, Params: json.RawMessage(params)}, localCaller())
+		resp := d.dispatchAs(daemonrpc.Request{Method: method, Params: json.RawMessage(params)}, localCaller())
 		if resp.Error != ErrClusterSuspended.Error() {
 			t.Errorf("%s %s: error %q, want %q", method, params, resp.Error, ErrClusterSuspended)
 		}

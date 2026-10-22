@@ -1156,7 +1156,7 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return resp
 	}
 	if d.suspendHeld.Load() && !startingAllows(req) {
-		return Response{Error: ErrClusterSuspended.Error()}
+		return daemonrpc.Response{Error: ErrClusterSuspended.Error()}
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
 		if req.Method == "heartbeat" || req.Method == "account.limits" {
