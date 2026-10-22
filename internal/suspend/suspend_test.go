@@ -27,6 +27,10 @@ type fakeOS struct {
 	log   []string
 	// onSignal, when set, runs after each signal is applied.
 	onSignal func(pid int, sig syscall.Signal)
+	// killErr, when set, can refuse a signal before it is applied.
+	killErr func(pid int, sig syscall.Signal) error
+	// onRead, when set, runs before each stop-state read.
+	onRead func(pid int)
 }
 
 func ident(pid int) childproof.Identity {
@@ -54,6 +58,11 @@ func (o *fakeOS) kill(pid int, sig syscall.Signal) error {
 	if !ok || p.dead {
 		return syscall.ESRCH
 	}
+	if o.killErr != nil {
+		if err := o.killErr(pid, sig); err != nil {
+			return err
+		}
+	}
 	switch sig {
 	case syscall.SIGSTOP:
 		o.log = append(o.log, fmt.Sprintf("STOP %d", pid))
@@ -69,6 +78,9 @@ func (o *fakeOS) kill(pid int, sig syscall.Signal) error {
 }
 
 func (o *fakeOS) stoppedRead(pid int) (bool, error) {
+	if o.onRead != nil {
+		o.onRead(pid)
+	}
 	p, ok := o.procs[pid]
 	if !ok || p.dead {
 		return false, errors.New("no such process")
@@ -275,9 +287,10 @@ func TestFreezeNeedsANewRecord(t *testing.T) {
 }
 
 // Resume saves resuming first, resumes the seats and then the server, and
-// clears the record.
+// clears the record. A record left resuming by a daemon that stopped partway
+// is resumed the same way.
 func TestThawResumesSeatsThenServerAndClears(t *testing.T) {
-	for _, from := range []State{StateSuspended, StateSuspending} {
+	for _, from := range []State{StateSuspended, StateSuspending, StateResuming} {
 		t.Run(string(from), func(t *testing.T) {
 			o := newFakeOS(100, 200, 201)
 			for _, p := range o.procs {
@@ -344,7 +357,7 @@ func TestThawReportsASeatStillStopped(t *testing.T) {
 
 func TestThawNeedsASuspendedRecord(t *testing.T) {
 	o := newFakeOS(100)
-	for _, s := range []State{"", StateResuming} {
+	for _, s := range []State{"", "frozen"} {
 		rec := record(100)
 		rec.State = s
 		if _, err := o.freezer(t).Thaw(rec, &memStore{os: o}); !errors.Is(err, ErrState) {
@@ -353,5 +366,60 @@ func TestThawNeedsASuspendedRecord(t *testing.T) {
 	}
 	if len(o.log) != 0 {
 		t.Errorf("signals = %v, want none", o.log)
+	}
+}
+
+// A SIGCONT that fails leaves a process stopped, so the record that can retry
+// it stays, as resuming, and a second Thaw finishes once the signal works.
+func TestThawKeepsTheRecordWhenAResumeFails(t *testing.T) {
+	o := newFakeOS(100, 200, 201)
+	for _, p := range o.procs {
+		p.stopped = true
+	}
+	refuse := true
+	o.killErr = func(pid int, sig syscall.Signal) error {
+		if refuse && pid == 200 && sig == syscall.SIGCONT {
+			return errors.New("operation not permitted")
+		}
+		return nil
+	}
+	rec := record(100, 200, 201)
+	rec.State = StateSuspended
+	st := &memStore{os: o}
+	if _, err := o.freezer(t).Thaw(rec, st); err == nil {
+		t.Fatal("Thaw succeeded although a SIGCONT failed")
+	}
+	if st.cleared || st.rec == nil || st.rec.State != StateResuming {
+		t.Fatalf("cleared %v, record %+v; want the record kept as resuming", st.cleared, st.rec)
+	}
+	refuse = false
+	if _, err := o.freezer(t).Thaw(*st.rec, st); err != nil {
+		t.Fatalf("second Thaw: %v", err)
+	}
+	if !st.cleared || o.procs[200].stopped {
+		t.Errorf("cleared %v, seat 200 stopped %v; want the retry to resume it and clear", st.cleared, o.procs[200].stopped)
+	}
+}
+
+// The server is proven again between its two stop reads, as the seats are: a
+// pid reused by another stopped process must not read as a frozen server.
+func TestFreezeRollsBackWhenTheServerPidIsReusedBetweenReads(t *testing.T) {
+	o := newFakeOS(100, 200)
+	reads := 0
+	o.onRead = func(pid int) {
+		if pid != 100 {
+			return
+		}
+		if reads++; reads == 2 {
+			o.procs[100].id.Start = "test:reused"
+		}
+	}
+	st := &memStore{os: o}
+	_, _, err := o.freezer(t).Freeze(record(100, 200), st)
+	if err == nil {
+		t.Fatal("Freeze succeeded although the server pid named another process on the second read")
+	}
+	if slices.Contains(o.log, "CONT 100") {
+		t.Errorf("signals = %v: the reused pid was signalled", o.log)
 	}
 }
