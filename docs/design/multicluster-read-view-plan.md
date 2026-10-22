@@ -114,6 +114,11 @@ The JSON field `outcome` is a closed set, pinned by a test:
 | `daemon_error` | the daemon answered with `Response.Error`; `cause` holds its filtered text |
 | `bad_reply` | the reply did not parse, or passed the byte bound |
 
+An error of no known type is classed `unreachable`, with its text as the
+`cause` (operator ruling 2026-10-22, relayed by director). The set above stays
+closed; a handshake failure or a local I/O error shows as `unreachable` until a
+ruling adds an outcome for it.
+
 Every record also carries `cluster`, `cause`, `next`, `as_of`, and
 `sessions` (a count, on `answered` and `starting`). A daemon that does not
 report its build is `build: null` on an `answered` record, not an outcome.
