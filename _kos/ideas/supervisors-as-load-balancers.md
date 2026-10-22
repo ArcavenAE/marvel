@@ -31,3 +31,7 @@ Each pointer was found in the tree or its history at `origin/main` 740115f.
 - Who confirms a scale-up, a scale-down and a retirement: the supervisor, the operator, or marvel?
 - What about quota and cost: how does a fan-out meet usage limits and declared budgets?
 - How does this differ from marvel's own reconciler, which already drives replicas toward a declared count?
+
+## See also
+
+- [seat-modes-headless-standby-standing.md](seat-modes-headless-standby-standing.md): what kind of seat each worker is (headless, hot standby, standing), once the count is set.
