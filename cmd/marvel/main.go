@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2983,9 +2984,11 @@ func toggleSort(ws *watchSort, col string, descFirst bool) {
 
 func sortSessions(sessions []api.Session, ws *watchSort) {
 	now := rateClock()
-	sort.Slice(sessions, func(i, j int) bool {
+	primary := func(i, j int) bool {
 		var less bool
 		switch ws.column {
+		case "":
+			// No chosen column: every pair ties, and the tiebreak orders.
 		case "rate":
 			ki, kj := rateSortKey(sessions[i], now), rateSortKey(sessions[j], now)
 			if ki != kj {
@@ -3036,11 +3039,39 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 		default:
 			less = sessions[i].Name < sessions[j].Name
 		}
-		if ws.desc {
-			return !less
-		}
 		return less
+	}
+	// A tie on the chosen column falls to the full order in both directions,
+	// so the comparator is a strict weak order and tied rows keep one place.
+	sort.SliceStable(sessions, func(i, j int) bool {
+		forward, backward := primary(i, j), primary(j, i)
+		if forward != backward {
+			if ws.desc {
+				return backward
+			}
+			return forward
+		}
+		return sessionTieLess(sessions[i], sessions[j])
 	})
+}
+
+// sessionTieLess is the order rows take when nothing else separates them:
+// workspace, then name, then the rest of what tells two sessions apart. Two
+// daemons answering in different orders still draw the same table.
+func sessionTieLess(a, b api.Session) bool {
+	return sessionTieCompare(a, b) < 0
+}
+
+func sessionTieCompare(a, b api.Session) int {
+	return cmp.Or(
+		cmp.Compare(a.Workspace, b.Workspace),
+		cmp.Compare(a.Name, b.Name),
+		cmp.Compare(a.Team, b.Team),
+		cmp.Compare(a.Role, b.Role),
+		cmp.Compare(a.Generation, b.Generation),
+		cmp.Compare(a.PaneID, b.PaneID),
+		a.CreatedAt.Compare(b.CreatedAt),
+	)
 }
 
 func fetchSessions() ([]api.Session, error) { return fetchSessionsWith(false) }
@@ -3320,6 +3351,9 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 	}
 
 	sortLabel := ws.column
+	if sortLabel == "" {
+		sortLabel = "workspace, name"
+	}
 	if ws.desc {
 		sortLabel += " desc"
 	} else {
@@ -3365,10 +3399,11 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 	return buf.String()
 }
 
-// newWatchState is the watch screen's starting state: sorted by name,
-// ascending, in the selected columns.
+// newWatchState is the watch screen's starting state: in the order plain get
+// sessions prints (no chosen column, so the full tiebreak alone decides), in
+// the selected columns.
 func newWatchState(cols []sessionColumn) *watchSort {
-	return &watchSort{column: "name", desc: false, columns: cols}
+	return &watchSort{column: "", desc: false, columns: cols}
 }
 
 // newWatchScreen is the watch state for the live screen: the same view plain
@@ -3431,9 +3466,9 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return err
 	}
-	// Default sort: name ascending
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Name < sessions[j].Name
+	// Default sort: workspace, name, then the full tiebreak.
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessionTieLess(sessions[i], sessions[j])
 	})
 	fmt.Print(renderSessionsView(sessions, cols, header, fit))
 	return nil
