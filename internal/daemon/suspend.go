@@ -123,10 +123,16 @@ func (d *Daemon) handleSuspendStatus() daemonrpc.Response {
 //     cleared, and cluster.suspend-interrupted is emitted.
 //
 // Whenever the record cannot be settled it stays, and the daemon serves held:
-// adopting under a stopped tmux would block the whole start.
+// adopting under a stopped tmux would block the whole start. That covers a
+// stored record that could not be read or parsed, a server that cannot be
+// read, and a resume that returned any error.
 func (d *Daemon) resolveSuspendAtStart() bool {
 	rec := d.suspendRec.Load()
 	if rec == nil {
+		if why := d.suspendUnsettled.Load(); why != nil {
+			log.Printf("suspend: the stored record could not be settled (%s); serving held, the mirror is kept", *why)
+			return true
+		}
 		return false
 	}
 	f := d.freezer
@@ -160,7 +166,7 @@ func (d *Daemon) resolveSuspendAtStart() bool {
 		}
 		events.Emit(d.events, events.Event{Kind: events.KindClusterSuspendInterrupted, Severity: events.SeverityWarning, Message: msg})
 		log.Printf("%s: %s", events.KindClusterSuspendInterrupted, msg)
-		return d.suspendRec.Load() != nil
+		return err != nil || d.suspendRec.Load() != nil
 	}
 	log.Printf("suspend: the record is in an unknown state %q; serving suspended", rec.State)
 	return true
