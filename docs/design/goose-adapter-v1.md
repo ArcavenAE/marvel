@@ -154,7 +154,7 @@ goose v1.54.0 at cd643d2, released 2026-10-08. Never `stable` (G13). This recomm
 
 HELD. It needs the harness plan's D1 (sandbox) and D3 (trial credentials, a spend cap, a host). It is written so that it can run unchanged once those are ruled.
 
-- **Command:** `goose run --output-format stream-json`, with a fixed one-line instruction. The provider is API-key or Bedrock, not ACP: goose's ACP providers do not support resume or fork (goose docs, per the research survey, read 2026-10-22; the ACP spec itself has had stable resume since 2026-04-22) and sign in through the vendor CLI. It runs in a throwaway workdir inside the D1 sandbox, at the pin, with `GOOSE_MODE` set explicitly and a scoped, revocable key and spend cap per D3.
+- **Command:** `goose run --output-format stream-json`, with a fixed one-line instruction. The provider is API-key or Bedrock, not ACP: goose's ACP providers do not support resume or fork (goose ACP providers guide, https://goose-docs.ai/docs/guides/acp-providers, read 2026-10-22; the ACP spec itself has had stable resume since 2026-04-22, https://agentclientprotocol.com/announcements/session-resume-stabilized) and sign in through the vendor CLI. It runs in a throwaway workdir inside the D1 sandbox, at the pin, with `GOOSE_MODE` set explicitly and a scoped, revocable key and spend cap per D3.
 - **P1.** `approve` meets an unlisted tool: the exit code, the stderr text, and whether any `error` or `complete` line is written. Decides the stub-versus-degrade premise and the reason store.
 - **P2.** A forced provider error: the `error` line, the exit code and stderr.
 - **P3.** `approve` meets a `never_allow` tool: what the model is told, whether the run continues, the exit code, and any line countable as a denial.
