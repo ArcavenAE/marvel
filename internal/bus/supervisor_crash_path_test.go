@@ -379,21 +379,17 @@ func TestTerminateReportsAKillItCouldNotSend(t *testing.T) {
 	}
 }
 
-// The wait ends and the stop flag is already set, but the context is not
-// cancelled: the second guard is what keeps the respawn from happening. The
-// test holds the supervisor lock across the end of the wait, so the flag is set
-// before onCrash can take the lock.
+// A stop that lands in the wait ends the wait: the Process is stopped while the
+// broker waits to be respawned, and the test sleeps past the end of the wait.
+// Nothing may be spawned.
 func TestWaitThatEndsWithStopSetSpawnsNothing(t *testing.T) {
 	s, _, ring := newTestSupervisor(t, "")
 	s.backoff = func(int) time.Duration { return 400 * time.Millisecond }
 	startedCrash(t, s)
 	waitUntil(t, "bus.crashed", func() bool { return slices.Contains(lifecycleKinds(ring), events.KindBusCrashed) })
 
-	s.mu.Lock()
-	s.stopping = true
-	time.Sleep(700 * time.Millisecond) // the wait ends while onCrash cannot take the lock
-	s.mu.Unlock()
-	time.Sleep(700 * time.Millisecond)
+	s.process().Stop(false)
+	time.Sleep(1400 * time.Millisecond) // past the end of the wait
 
 	if st := s.Status(); st.Ready {
 		t.Errorf("status = %+v, want a broker that was not respawned", st)

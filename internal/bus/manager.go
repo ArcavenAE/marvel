@@ -64,8 +64,13 @@ type Manager struct {
 	// leafAttached is the operator's connect/disconnect decision, persisted
 	// beside the conf and defaulting to attached. It is an atomic rather than
 	// mu-guarded state because Supervisor.Status reads it while holding the
-	// supervisor lock, and Regenerate takes m.mu then the supervisor lock via
-	// Reload: guarding it with m.mu would invert that order (aae-orc-ct0l4).
+	// supervisor lock (aae-orc-ct0l4).
+	//
+	// Lock order: the supervisor lock, then m.mu, as when Status and Started
+	// call a Manager method that takes m.mu. Regenerate calls Reload only after
+	// Render has returned, so nothing holds m.mu across Reload. A Process
+	// Snapshot is taken before the supervisor lock and never under it
+	// (docs/design/code-restructure-plan.md, section 3).
 	leafAttached atomic.Bool
 
 	// Reloader is set by supervision once a broker process exists.

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -82,27 +83,45 @@ type Supervisor struct {
 	prober *childproof.Prober
 	// grace is how long terminate waits between TERM and KILL; tests shorten it.
 	grace time.Duration
-	// adoptPoll is how often the watcher re-reads an adopted broker's identity;
-	// tests shorten it.
+	// adoptPoll is how often an adopted broker's identity is re-read; tests
+	// shorten it.
 	adoptPoll time.Duration
 	// onSpawn, when set, sees the pid of every broker this supervisor starts,
 	// before anything is signalled. It is the registration point a test
 	// kill seam reads, so a test signals only brokers it started.
 	onSpawn func(pid int)
+	// envAllow is the message-bus class's child environment allowlist.
+	envAllow []string
 
-	mu          sync.Mutex
-	parent      context.Context
-	cmd         *exec.Cmd
-	pid         int
-	child       childproof.Child // the proven broker; zero when none runs
-	pidState    string           // proven, stale, legacy or none, for bus status
-	version     string           // what `nats-server --version` on the resolved binary reports
-	adopted     bool
-	ready       bool
-	stopping    bool
-	restarts    int
-	backoffTill time.Time
-	leafUp      *bool
+	// proc runs the child: the spawn, the watch, the crash respawn, the
+	// requested restart and the stop (internal/workload). Start builds a fresh
+	// one from the fields above, so a test sets them first. Snapshot is the
+	// one reading of what it holds; the supervisor keeps no copy of the pid,
+	// the proven child, ready, adopted, the restart count or the backoff.
+	//
+	// Lock order: a Snapshot is taken before s.mu, never under it, and
+	// s.mu is never held across a Process call.
+	proc atomic.Pointer[workload.Process]
+
+	mu       sync.Mutex
+	parent   context.Context
+	pidState string // proven, stale, legacy or none, for bus status
+	version  string // what `nats-server --version` on the resolved binary reports
+	// lastPid is the pid of the broker the driver last saw, kept for the
+	// crash message: Process has cleared its own copy by the time Exited runs.
+	lastPid  int
+	stopping bool
+	// readyGen is the generation of the child whose first structural reading
+	// Started has finished; structureGen is the generation the last reading was
+	// taken from. Ready reads both against one Snapshot.
+	readyGen     uint64
+	structureGen uint64
+	// readSeq numbers each structural read when it starts, and appliedSeq is
+	// the newest one applied: two reads overlap (the ticker's and Reload's
+	// delayed one), and the one that started first must not overwrite the
+	// one that started later when it lands second.
+	readSeq, appliedSeq uint64
+	leafUp              *bool
 	// leafSince is when the current leaf state was entered, and
 	// leafReportedAt when a down event was last emitted for it.
 	leafSince      time.Time
@@ -131,8 +150,6 @@ type Supervisor struct {
 	// leaf credential the broker holds (see SetLeafLossCause). Empty reads as
 	// "unknown".
 	leafLossCause string
-	cancel        context.CancelFunc
-	watchDone     chan struct{}
 
 	// Structural health (aae-orc-vy6k7). structure is the last definite
 	// reading; structureKnown says one exists; problems is the last
@@ -254,9 +271,14 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 	if err != nil {
 		return nil, fmt.Errorf("nats-server not found on PATH; cluster %s declares a managed bus, install it (mise or brew) or set bus.managed: false: %w", mgr.Domain(), err)
 	}
+	class, err := service.Class(service.ClassMessageBus)
+	if err != nil {
+		return nil, fmt.Errorf("bus: %w", err)
+	}
 	return &Supervisor{
 		mgr:             mgr,
 		binary:          bin,
+		envAllow:        class.ChildEnvAllow,
 		version:         binaryVersion(bin),
 		pidFile:         filepath.Join(runDir, "nats-server.pid"),
 		logPath:         filepath.Join(logDir, "nats-server.log"),
@@ -293,24 +315,31 @@ func (s *Supervisor) SetDialTimeout(d time.Duration) {
 // fresh one, then waits for the listener and marks the bus ready. A port
 // answered by a process marvel did not record refuses loudly, the same
 // posture as the daemon pidfile guard: marvel never adopts a stranger.
+// It holds no lock across the Process call, which runs the driver's Ready
+// and Started (supervisor_driver.go).
 func (s *Supervisor) Start(ctx context.Context) error {
+	proc := s.newProcess()
+	s.proc.Store(proc)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.parent = ctx
-	ctx, s.cancel = context.WithCancel(ctx)
+	s.stopping = false
+	s.mu.Unlock()
 
 	v := s.classifyPidfile()
+	s.mu.Lock()
 	s.pidState = v.kind
+	s.mu.Unlock()
 	switch v.kind {
 	case pidStateProven:
 		if s.listenerAnswers(time.Second) {
-			s.pid, s.adopted, s.child = v.pid, true, v.child
 			// What the broker was spawned with, from the sidecar the spawning
 			// daemon wrote: not from this daemon's store, which a reexec or a
 			// restart leaves empty, and not by a re-write of the sidecar.
+			s.mu.Lock()
 			s.leafStateKnown = v.rec.leafStateKnown()
 			s.leafSeedFP = v.rec.LeafSeedFP
 			s.leafSeedInEnv = v.rec.LeafSeedFP != ""
+			s.mu.Unlock()
 			log.Printf("bus: adopted running nats-server pid %d on %s", v.pid, s.mgr.bus.Listen)
 			// The broker still holds the passwords the previous daemon minted;
 			// this daemon has just rendered fresh ones. Reload before anything
@@ -319,7 +348,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 			if err := s.prober.Signal(v.child, syscall.SIGHUP, false); err != nil {
 				log.Printf("bus: reload adopted nats-server pid %d: %v", v.pid, err)
 			}
-			return s.becomeReady(ctx, "adopted")
+			return proc.Adopt(ctx, v.child)
 		}
 		// Proven and not listening: it is ours and wedged.
 		log.Printf("bus: pidfile names our nats-server pid %d, which is not listening on %s; stopping it", v.pid, s.mgr.bus.Listen)
@@ -339,10 +368,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	if s.listenerAnswers(500 * time.Millisecond) {
 		return errors.New(strangerRefusal(s.mgr.bus.Listen))
 	}
-	if err := s.spawnLocked(); err != nil {
-		return err
-	}
-	return s.becomeReady(ctx, "started")
+	return proc.Spawn(ctx)
 }
 
 // strangerRefusal is the refusal for a port answered by a process no pidfile
@@ -353,7 +379,7 @@ func strangerRefusal(listen string) string {
 
 // refuseUnproven reports a port held by a child the pidfile does not prove
 // ours, once, and leaves the bus down with nothing signalled (design section
-// 4.2). Caller holds s.mu.
+// 4.2).
 func (s *Supervisor) refuseUnproven(pid int, why string) error {
 	remedy := "stop it by hand, or set bus.managed: false and bus.url to adopt it explicitly"
 	s.emit(events.KindBusPidfileUnproven, events.SeverityWarning, fmt.Sprintf("port held, child unproven: %s is held by pid %d, %s; the bus stays down and nothing was signalled; %s", s.mgr.bus.Listen, pid, why, remedy))
@@ -372,7 +398,7 @@ func (s *Supervisor) removeIdentityFiles() {
 // it: V11 was ruled (b) by the operator, so a process that looks like this
 // daemon's broker is no more proven than any other, and the start refuses with
 // "port held, child unproven". Better handling of this case is left to a
-// separate design. done is true when Start is over. Caller holds s.mu.
+// separate design. done is true when Start is over.
 func (s *Supervisor) startLegacy(v pidVerdict) (done bool, err error) {
 	if !s.listenerAnswers(time.Second) {
 		log.Printf("bus: pidfile names pid %d with no identity record and nothing is listening on %s; removing it", v.pid, s.mgr.bus.Listen)
@@ -410,121 +436,6 @@ func (s *Supervisor) classifyPidfile() pidVerdict {
 		return pidVerdict{pid: pid, kind: pidStateStale, reason: reason}
 	}
 	return pidVerdict{pid: pid, kind: pidStateProven, child: c, rec: rec}
-}
-
-// becomeReady waits for the listener, runs AfterReady, marks ready, and
-// starts the watch loop. Caller holds s.mu.
-func (s *Supervisor) becomeReady(ctx context.Context, how string) error {
-	if !s.waitListener(ctx) {
-		return fmt.Errorf("bus: nats-server pid %d did not answer on %s within %s (see %s)", s.pid, s.mgr.bus.Listen, s.dialTimeout, s.logPath)
-	}
-	if s.AfterReady != nil {
-		if err := s.AfterReady(); err != nil {
-			return fmt.Errorf("bus: listener up but provisioning failed: %w", err)
-		}
-	}
-	s.ready = true
-	// The broker now has the file it started or reloaded with: ask whether it
-	// accepts the per-role users, off this path.
-	s.mgr.confirmAsync()
-	// First structural reading, under the lock the caller holds, so ready
-	// means listener, pid, provisioned, and authorized from the first
-	// moment anything asks.
-	s.checkStructureLocked(ctx)
-	s.emit(events.KindBusStarted, events.SeverityInfo, fmt.Sprintf("nats-server %s: pid %d on %s, domain %s", how, s.pid, s.mgr.bus.Listen, s.mgr.Domain()))
-	if s.mgr.bus.HubURL != "" && !s.mgr.leafEnrolled() {
-		s.emit(events.KindBusLeafUnenrolled, events.SeverityWarning, fmt.Sprintf("hub %s is configured but no %s credential is in the store; running local-only until one is pushed", s.mgr.bus.HubURL, "bus/leaf"))
-	}
-	if how == "adopted" {
-		s.reportLeafOnAdopt()
-	}
-	// Hand the child to the watcher here, under the lock the caller holds,
-	// rather than letting it read s.cmd later: a Stop that lands first would
-	// have zeroed the handle and the child would never be reaped.
-	s.watchDone = make(chan struct{})
-	go s.watch(ctx, s.watchDone, s.cmd, s.child)
-	return nil
-}
-
-// spawnLocked starts the broker through workload.Start, the one spawn path
-// for a managed child: its environment is the message-bus class allowlist
-// plus the minted leaf seed, never the daemon's own (aae-orc-oo62t).
-// Caller holds s.mu.
-func (s *Supervisor) spawnLocked() error {
-	conf := s.mgr.ConfPath()
-	body, err := os.ReadFile(conf)
-	if err != nil {
-		return fmt.Errorf("bus: read %s: %w", conf, err)
-	}
-	class, err := service.Class(service.ClassMessageBus)
-	if err != nil {
-		return fmt.Errorf("bus: %w", err)
-	}
-	// The identity record is written before the pidfile that names it, from
-	// what the kernel says about the child now (design section 3.1). Without
-	// an identity the child is stopped: a broker marvel cannot prove later is
-	// one it could never stop. The child is proven from the handle that
-	// started it, never from a pid.
-	var spawned childproof.Child
-	child, err := workload.Start(workload.ProcessSpec{
-		Name:      "bus",
-		Binary:    s.binary,
-		Args:      []string{"-c", conf},
-		EnvAllow:  class.ChildEnvAllow,
-		MintedEnv: s.Env,
-		Check: func(env []string) error {
-			if strings.Contains(string(body), "$"+LeafSeedEnv) && !hasEnv(env, LeafSeedEnv) {
-				return fmt.Errorf("bus: %s references $%s but no %s credential is in the store; the broker would refuse to start", conf, LeafSeedEnv, "bus/leaf")
-			}
-			return nil
-		},
-		LogPath: s.logPath,
-		PidFile: s.pidFile,
-		BeforePidFile: func(cmd *exec.Cmd) error {
-			if s.onSpawn != nil {
-				s.onSpawn(cmd.Process.Pid)
-			}
-			c, err := s.prober.Spawned(cmd)
-			if err != nil {
-				return fmt.Errorf("read the identity of the new broker (pid %d): %w", cmd.Process.Pid, err)
-			}
-			spawned = c
-			err = os.MkdirAll(filepath.Dir(s.pidFile), 0o700)
-			if err == nil {
-				// The leaf seed's fingerprint is read from the environment
-				// this child was given, never from the store (aae-orc-4h9xp).
-				fp := ""
-				if v, ok := envValue(cmd.Env, LeafSeedEnv); ok {
-					fp = SeedFingerprint([]byte(v))
-				}
-				err = writeIdentityLeaf(sidecarPath(s.pidFile), c.Pid(), c.Identity(), s.now(), fp)
-			}
-			if err != nil {
-				_ = os.Remove(sidecarPath(s.pidFile))
-				s.emit(events.KindBusIdentityUnrecorded, events.SeverityWarning, fmt.Sprintf("nats-server pid %d started, but its identity record could not be written (%v); the next start reads its pidfile as legacy", c.Pid(), err))
-			}
-			return nil
-		},
-	})
-	if err != nil {
-		return err
-	}
-	// Record whether this process can resolve a leaf remote's seed on a later
-	// reload. A broker spawned with the seed already present picks up a
-	// connect on SIGHUP; one spawned without it needs a fresh process when a
-	// seed is enrolled (aae-orc-ct0l4). Also fingerprint the spawned seed so a
-	// later rotation (a different seed value) is distinguished from an
-	// identical re-put.
-	s.leafSeedInEnv = hasEnv(child.Env, LeafSeedEnv)
-	s.leafStateKnown = true
-	if v, ok := envValue(child.Env, LeafSeedEnv); ok {
-		s.leafSeedFP = SeedFingerprint([]byte(v))
-	} else {
-		s.leafSeedFP = ""
-	}
-	s.cmd, s.pid, s.adopted, s.child, s.pidState = child.Cmd, child.Pid, false, spawned, pidStateProven
-	log.Printf("bus: started nats-server %s pid %d (%s -c %s), log %s", s.version, s.pid, s.binary, conf, s.logPath)
-	return nil
 }
 
 // binaryVersion runs `<bin> --version` and returns the version token
@@ -580,94 +491,6 @@ func SeedFingerprint(seed []byte) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// watch follows the child: a pid exit marvel did not ask for is
-// bus.crashed and a restart under backoff; the hub leaf link is polled
-// on the 30s cadence and reported on transition. Sessions are never
-// restarted for either: their shims reconnect.
-func (s *Supervisor) watch(ctx context.Context, done chan struct{}, cmd *exec.Cmd, c childproof.Child) {
-	defer close(done)
-	exit := make(chan error, 1)
-	go func() {
-		if cmd != nil {
-			exit <- cmd.Wait()
-			return
-		}
-		// Adopted: not our child, so poll its identity.
-		every := s.adoptPoll
-		if every <= 0 {
-			every = 2 * time.Second
-		}
-		t := time.NewTicker(every)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				exit <- ctx.Err()
-				return
-			case <-t.C:
-				// Same is an identity read: a pid handed to another process
-				// reads as the broker having exited.
-				if !s.prober.Same(c) {
-					exit <- errors.New("adopted nats-server exited")
-					return
-				}
-			}
-		}
-	}()
-	leaf := time.NewTicker(s.leafPoll)
-	defer leaf.Stop()
-	s.pollLeaf()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-leaf.C:
-			s.pollLeaf()
-			s.checkStructure(ctx)
-		case err := <-exit:
-			s.mu.Lock()
-			stopping := s.stopping
-			s.ready = false
-			s.mu.Unlock()
-			if stopping || ctx.Err() != nil {
-				return
-			}
-			s.onCrash(ctx, err)
-			return
-		}
-	}
-}
-
-// onCrash records the exit, waits out the backoff, and restarts. The hold
-// (bus.unavailable per role) is the controller's; this only flips ready.
-func (s *Supervisor) onCrash(ctx context.Context, err error) {
-	s.mu.Lock()
-	s.restarts++
-	wait := s.backoff(s.restarts)
-	s.backoffTill = time.Now().UTC().Add(wait)
-	pid := s.pid
-	s.mu.Unlock()
-	s.emit(events.KindBusCrashed, events.SeverityWarning, fmt.Sprintf("nats-server pid %d exited (%v); restart #%d in %s, sessions hold until it is back", pid, err, s.restarts, wait))
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(wait):
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.stopping {
-		return
-	}
-	if serr := s.spawnLocked(); serr != nil {
-		log.Printf("bus: restart failed: %v", serr)
-		go func() { s.onCrash(ctx, serr) }()
-		return
-	}
-	if rerr := s.becomeReady(ctx, fmt.Sprintf("restarted (#%d)", s.restarts)); rerr != nil {
-		log.Printf("bus: %v", rerr)
-	}
-}
-
 // Restart ends the running broker and starts a fresh one from the current
 // conf and environment. Reload cannot do this: the leaf seed rides in the
 // child's environment, which the server reads once at start, so a later
@@ -675,79 +498,46 @@ func (s *Supervisor) onCrash(ctx context.Context, err error) {
 // reconnect; the restart is counted separately from crashes and is not
 // subject to backoff. Safe while the broker is down: it becomes the start.
 func (s *Supervisor) Restart(reason string) error {
-	s.mu.Lock()
-	if s.parent == nil {
-		s.mu.Unlock()
+	proc := s.proc.Load()
+	if proc == nil {
 		return errors.New("bus: restart before start")
 	}
-	s.stopping = true // the watcher must not read this exit as a crash
-	if s.cancel != nil {
-		s.cancel()
+	if pid := proc.Snapshot().Pid; pid != 0 {
+		log.Printf("bus: stopping nats-server pid %d to restart (%s)", pid, reason)
 	}
-	pid, child, done := s.pid, s.child, s.watchDone
-	s.ready, s.pid, s.cmd, s.child, s.watchDone = false, 0, nil, childproof.Child{}, nil
-	s.mu.Unlock()
-	if done != nil {
-		<-done
-	}
-	if pid != 0 {
-		s.terminate(child)
-		log.Printf("bus: nats-server pid %d stopped to restart (%s)", pid, reason)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopping = false
-	var ctx context.Context
-	ctx, s.cancel = context.WithCancel(s.parent)
-	if err := s.spawnLocked(); err != nil {
-		return err
-	}
-	return s.becomeReady(ctx, "restarted ("+reason+")")
+	return proc.Restart(reason)
 }
 
-// terminate ends a proven broker: TERM to its group, a grace period polled
-// by identity so a pid handed to another process counts as exited, then KILL.
-// Every signal re-proves the child first (Prober.Signal), so a change at any
-// point stops the rest. A broker that is gone or no longer the one proven is
+// terminate ends a proven broker through workload.Terminate, the one
+// TERM, wait and KILL. A broker that is gone or no longer the one proven is
 // left alone.
 func (s *Supervisor) terminate(c childproof.Child) {
-	if err := s.prober.Signal(c, syscall.SIGTERM, true); err != nil {
-		log.Printf("bus: not stopping nats-server pid %d: %v", c.Pid(), err)
-		return
-	}
-	grace := s.grace
-	if grace <= 0 {
-		grace = stopGrace
-	}
-	step := min(100*time.Millisecond, grace/4)
-	deadline := time.Now().Add(grace)
-	for time.Now().Before(deadline) && s.prober.Same(c) {
-		time.Sleep(step)
-	}
-	if s.prober.Same(c) {
-		if err := s.prober.Signal(c, syscall.SIGKILL, true); err != nil {
-			log.Printf("bus: not killing nats-server pid %d: %v", c.Pid(), err)
+	if err := workload.Terminate(s.prober, c, s.grace); err != nil {
+		var te *workload.TerminateError
+		if errors.As(err, &te) {
+			log.Printf("bus: not %s nats-server pid %d: %v", te.Step, te.Pid, te.Err)
+			return
 		}
+		log.Printf("bus: %v", err)
 	}
 }
 
 // Reload sends SIGHUP so the broker re-reads authorization without dropping
 // unaffected clients. The Manager calls it after a rewrite. With no broker
 // running (not started yet, or down in backoff) there is nothing to signal
-// and nothing lost: the next start reads the rewritten files.
+// and nothing lost: the next start reads the rewritten files. It reads the
+// child from Snapshot and signals it; Process has no Reload, so the Manager's
+// reload never re-enters the driver through Process.
 func (s *Supervisor) Reload() error {
-	s.mu.Lock()
-	pid, child, ready := s.pid, s.child, s.ready
-	s.mu.Unlock()
-	if pid == 0 || !ready {
+	snap := s.snapshot()
+	if snap.Pid == 0 || !snap.Ready {
 		log.Printf("bus: conf rewritten while no broker is running; the next start reads it")
 		return nil
 	}
-	if err := s.prober.Signal(child, syscall.SIGHUP, false); err != nil {
-		return fmt.Errorf("bus: SIGHUP pid %d: %w", pid, err)
+	if err := s.prober.Signal(snap.Child, syscall.SIGHUP, false); err != nil {
+		return fmt.Errorf("bus: SIGHUP pid %d: %w", snap.Pid, err)
 	}
-	s.emit(events.KindBusReloaded, events.SeverityInfo, fmt.Sprintf("nats-server pid %d reloaded authorization", pid))
+	s.emit(events.KindBusReloaded, events.SeverityInfo, fmt.Sprintf("nats-server pid %d reloaded authorization", snap.Pid))
 	// A reload is asynchronous in the broker; read the structure once it
 	// has had the auth retry window to land, off the caller's path (the
 	// caller is the apply RPC under the manager lock).
@@ -775,41 +565,60 @@ func (s *Supervisor) Reload() error {
 func (s *Supervisor) Stop(keep bool) {
 	s.mu.Lock()
 	s.stopping = true
-	if s.cancel != nil {
-		s.cancel()
-	}
-	pid, child, done := s.pid, s.child, s.watchDone
-	s.ready = false
-	s.pid, s.cmd, s.child, s.watchDone = 0, nil, childproof.Child{}, nil // a second Stop is a no-op
 	s.mu.Unlock()
-	if done != nil {
-		<-done
+	proc := s.proc.Load()
+	if proc == nil {
+		return
 	}
-	if pid == 0 {
+	pid := proc.Snapshot().Pid
+	proc.Stop(keep)
+	if pid == 0 { // a second Stop, or none to stop
 		return
 	}
 	if keep {
 		log.Printf("bus: leaving nats-server pid %d running for the next daemon to adopt", pid)
 		return
 	}
-	// Our own child was already reaped by cmd.Wait inside watch; an adopted
-	// process is not ours to wait on, so both are given the grace by polling.
-	s.terminate(child)
 	s.removeIdentityFiles()
 	s.emit(events.KindBusStopped, events.SeverityInfo, fmt.Sprintf("nats-server pid %d stopped with the daemon", pid))
 }
 
-// Ready reports whether sessions may spawn against the bus.
-func (s *Supervisor) Ready() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.readyLocked()
+// snapshot is one reading of what Process holds, the first step of every
+// method that also takes s.mu. A Process nobody has started reads as zero.
+func (s *Supervisor) snapshot() workload.State {
+	if p := s.proc.Load(); p != nil {
+		return p.Snapshot()
+	}
+	return workload.State{PidState: workload.PidStateNone}
 }
 
-// readyLocked is the ready predicate: listener and pid (ready), and the
-// last structural reading healthy when one exists. Caller holds s.mu.
-func (s *Supervisor) readyLocked() bool {
-	return s.ready && (!s.structureKnown || s.structure.Healthy())
+// process is the Process, built from the current fields on first use. A test
+// that stages state before Start reaches it here; Start builds a fresh one.
+func (s *Supervisor) process() *workload.Process {
+	if p := s.proc.Load(); p != nil {
+		return p
+	}
+	s.proc.CompareAndSwap(nil, s.newProcess())
+	return s.proc.Load()
+}
+
+// Ready reports whether sessions may spawn against the bus.
+func (s *Supervisor) Ready() bool {
+	snap := s.snapshot()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readyLocked(snap)
+}
+
+// readyLocked is the ready predicate: the child is ready and Started has
+// finished its first structural reading (readyGen), and the last reading, when
+// one exists, is this child's and healthy. A reading taken from another child
+// does not count, so a restarted broker is not ready on its dead
+// predecessor's reading. Caller holds s.mu and passes a Snapshot taken before
+// it.
+func (s *Supervisor) readyLocked(snap workload.State) bool {
+	return snap.Ready && snap.Gen == s.readyGen &&
+		(!s.structureKnown || (s.structureGen == snap.Gen && s.structure.Healthy()))
 }
 
 // checkStructure takes one structural reading and acts on it: a miss
@@ -820,25 +629,32 @@ func (s *Supervisor) readyLocked() bool {
 // restarted here: a missing stream is metadata, and a restart would drop
 // every live connection to fix a lookup.
 func (s *Supervisor) checkStructure(ctx context.Context) {
+	snap := s.snapshot()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.checkStructureLocked(ctx)
+	s.checkStructureLocked(ctx, snap)
 	// The structural tick also retries a per-role user the broker had not yet
 	// accepted, so a confirmation that missed its window heals on its own.
 	s.mgr.confirmAsync()
 }
 
-// checkStructureLocked is checkStructure with s.mu held. It releases the
-// lock around the broker reads so a slow broker cannot hold Status.
-func (s *Supervisor) checkStructureLocked(ctx context.Context) {
-	if !s.ready || s.stopping {
+// checkStructureLocked is checkStructure with s.mu held and a Snapshot taken
+// before it. It releases the lock around the broker reads so a slow broker
+// cannot hold Status. The reading is tagged with the snapshot's generation,
+// and one that lands after a respawn (Started has moved structureGen on) is
+// dropped, so no child's reading is read as another's. A reading that started
+// before one already applied is dropped too (readSeq).
+func (s *Supervisor) checkStructureLocked(ctx context.Context, snap workload.State) {
+	if !snap.Ready || s.stopping {
 		return
 	}
 	read := s.checkStructureFn
 	if read == nil {
 		read = s.readStructure
 	}
-	child := s.child
+	child := snap.Child
+	s.readSeq++
+	seq := s.readSeq
 	s.mu.Unlock()
 	st, err := read(ctx)
 	if err == nil && !st.Provisioned() && s.AfterReady != nil {
@@ -855,6 +671,15 @@ func (s *Supervisor) checkStructureLocked(ctx context.Context) {
 		log.Printf("bus: structural check: no reading (%v); keeping the last one", err)
 		return
 	}
+	if snap.Gen != s.structureGen {
+		log.Printf("bus: structural reading from child generation %d dropped: generation %d is current", snap.Gen, s.structureGen)
+		return
+	}
+	if seq < s.appliedSeq {
+		log.Printf("bus: structural reading %d dropped: reading %d, which started later, is already in effect", seq, s.appliedSeq)
+		return
+	}
+	s.appliedSeq = seq
 	if !st.Authorized && !s.authReloaded && child.Pid() != 0 {
 		// One reload per authorized miss; then hold. Never a restart.
 		s.authReloaded = true
@@ -1006,11 +831,11 @@ func (s *Supervisor) SetLeafLossCause(cause string) {
 }
 
 // leafSourceLocked is Status.LeafSource. Caller holds s.mu.
-func (s *Supervisor) leafSourceLocked() string {
+func (s *Supervisor) leafSourceLocked(snap workload.State) string {
 	switch {
 	case s.mgr.bus.HubURL == "":
 		return ""
-	case s.adopted && !s.leafStateKnown:
+	case snap.Adopted && !s.leafStateKnown:
 		return "unknown"
 	case s.mgr.leafEnrolled():
 		return "store"
@@ -1025,7 +850,7 @@ func (s *Supervisor) leafSourceLocked() string {
 // one. The adopt's SIGHUP has already re-read the conf, and a conf rendered
 // from an empty store carries no leafnodes block, so the hub link is gone. It
 // names the cause and the command, never the seed. Caller holds s.mu.
-func (s *Supervisor) reportLeafOnAdopt() {
+func (s *Supervisor) reportLeafOnAdopt(pid int) {
 	if s.mgr.bus.HubURL == "" || !s.leafStateKnown || s.leafSeedFP == "" {
 		return
 	}
@@ -1046,19 +871,24 @@ func (s *Supervisor) reportLeafOnAdopt() {
 	}
 	s.emit(events.KindBusLeafDropped, events.SeverityError, fmt.Sprintf(
 		"the hub leaf credential is not carried over: the adopted broker pid %d was started with a leaf seed and this daemon's store does not hold that one (cause: %s); the link to %s is not up until the seed is pushed again: marvel credential put bus/leaf --value-file <seed-file>",
-		s.pid, cause, s.mgr.bus.HubURL))
+		pid, cause, s.mgr.bus.HubURL))
 }
 
 // Status snapshots the broker for `marvel bus status`.
 func (s *Supervisor) Status() Status {
+	snap := s.snapshot()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	pidState := s.pidState
+	if snap.PidState == workload.PidStateProven {
+		pidState = pidStateProven
+	}
 	st := Status{
 		Managed: true, Listen: s.mgr.bus.Listen, URL: s.mgr.bus.URL, Domain: s.mgr.Domain(),
 		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
 		Version:  s.version,
-		ConfPath: s.mgr.ConfPath(), PID: s.pid, Adopted: s.adopted, Ready: s.readyLocked(), Restarts: s.restarts,
-		Pidfile: s.pidState, WriteFailed: s.writeFailed, WriteSkipped: s.writeSkipped, HeadroomLow: s.headroomLow,
+		ConfPath: s.mgr.ConfPath(), PID: snap.Pid, Adopted: snap.Adopted, Ready: s.readyLocked(snap), Restarts: snap.Restarts,
+		Pidfile: pidState, WriteFailed: s.writeFailed, WriteSkipped: s.writeSkipped, HeadroomLow: s.headroomLow,
 	}
 	if s.structureKnown {
 		st.Structure = &StructureStatus{
@@ -1084,7 +914,7 @@ func (s *Supervisor) Status() Status {
 	default:
 		st.Leaf = "down"
 	}
-	st.LeafSource = s.leafSourceLocked()
+	st.LeafSource = s.leafSourceLocked(snap)
 	if (st.Leaf == "up" || st.Leaf == "down") && !s.leafSince.IsZero() {
 		st.LeafSince = s.leafSince.Format(time.RFC3339)
 		st.LeafFor = leafDuration(s.now().Sub(s.leafSince))
@@ -1093,8 +923,8 @@ func (s *Supervisor) Status() Status {
 		st.LeafObservedAt = s.leafObservedAt.Format(time.RFC3339)
 		st.LeafValidUntil = s.leafObservedAt.Add(leafValidPolls * s.leafPoll).Format(time.RFC3339)
 	}
-	if !s.ready && s.backoffTill.After(time.Now()) {
-		st.BackoffUntil = s.backoffTill.Format(time.RFC3339)
+	if !snap.Ready && snap.BackoffUntil.After(time.Now()) {
+		st.BackoffUntil = snap.BackoffUntil.Format(time.RFC3339)
 	}
 	return st
 }
@@ -1181,8 +1011,8 @@ func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
 	return true
 }
 
-func (s *Supervisor) waitListener(ctx context.Context) bool {
-	deadline := time.Now().Add(s.dialTimeout)
+func (s *Supervisor) waitListener(ctx context.Context, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return false

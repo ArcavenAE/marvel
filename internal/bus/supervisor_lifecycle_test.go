@@ -10,6 +10,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/service"
+	"github.com/arcavenae/marvel/internal/workload"
 )
 
 // An unstarted supervisor reads as down, with an observation time, and the
@@ -115,10 +116,10 @@ func TestLifecycleStopWithKeepLeavesTheChildRunning(t *testing.T) {
 // A broker waiting out a restart delay reads as backoff, not up.
 func TestLifecycleStatusReadsBackoff(t *testing.T) {
 	s, _, _ := newTestSupervisor(t, "")
-	s.mu.Lock()
-	s.pid = 4242
-	s.backoffTill = time.Now().Add(time.Minute)
-	s.mu.Unlock()
+	workload.SeedStateForTest(s.process(), func(st *workload.State) {
+		st.Pid = 4242
+		st.BackoffUntil = time.Now().Add(time.Minute)
+	})
 	if got := NewLifecycle(s).Status().State; got != service.StateBackoff {
 		t.Errorf("State = %q, want backoff", got)
 	}
@@ -168,9 +169,7 @@ func TestLifecycleRestartCarriesItsReason(t *testing.T) {
 // The restart count is the supervisor's, not a zero.
 func TestLifecycleStatusCarriesTheRestartCount(t *testing.T) {
 	s, _, _ := newTestSupervisor(t, "")
-	s.mu.Lock()
-	s.restarts = 3
-	s.mu.Unlock()
+	workload.SeedStateForTest(s.process(), func(st *workload.State) { st.Restarts = 3 })
 	if got := NewLifecycle(s).Status().Restarts; got != 3 {
 		t.Errorf("Restarts = %d, want 3", got)
 	}
