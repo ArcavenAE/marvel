@@ -1,0 +1,68 @@
+# Measurement for the fleet-suspend gate (docs/design/fleet-suspend-resume.md
+# section 1, "Linux stop state under tmux"; aae-orc-ct0ff). It reruns the
+# Darwin arms of finding-marvel-1kg8 section 1 on GitHub-hosted Ubuntu runners
+# and prints the result with the kernel, tmux and runner image versions, for a
+# person to read. It is not a required check and never fails on a result; a
+# red run means the rig broke. Read-only token, no secrets, no environment.
+#
+# Start it by hand (Actions, "Probe Linux stop state", Run workflow), or it
+# runs when this file or the probe script changes in a pull request.
+name: Probe Linux stop state
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/probe-linux-stop-state.yml
+      - scripts/probes/linux-stop-state.sh
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Linux stop state (${{ matrix.os }}, hosted runner)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install tmux if the image lacks it
+        run: |
+          set -euo pipefail
+          if command -v tmux >/dev/null; then
+            echo "tmux preinstalled: $(tmux -V)"
+          else
+            echo "tmux not preinstalled; installing from the image's apt sources"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq tmux
+          fi
+
+      - name: Run the probe
+        run: |
+          set -euo pipefail
+          scripts/probes/linux-stop-state.sh "hosted runner" | tee probe.txt
+          {
+            echo '```'
+            cat probe.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Reports, never fails: any probe sleep still alive after the script's
+      # cleanup is an orphan the cleanup missed.
+      - name: List probe sleeps left after the run
+        if: always()
+        run: |
+          left=$(pgrep -af '^sleep 600$' || true)
+          echo "probe sleeps left: ${left:-none}"
