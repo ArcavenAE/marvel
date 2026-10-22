@@ -699,20 +699,26 @@ func TestColonKeyRefusedUntil829(t *testing.T) {
 // argument is a session or team key.
 var keyPlaceholders = []string{"<session-key>", "<session>", "<workspace/team>", "[workspace/team]", "[workspace/session]"}
 
-// Every command that takes a session or team key must be covered by the
-// refusal of a key holding ':', so a command added later cannot slip past it.
-func TestEveryKeyTakingCommandRefusesAColonKey(t *testing.T) {
-	root := newRootCmd()
-	checked := 0
+// takesKey reports whether a command's Use line names a key argument.
+func takesKey(c *cobra.Command) bool {
+	for _, ph := range keyPlaceholders {
+		if strings.Contains(c.Use, ph) {
+			return true
+		}
+	}
+	return false
+}
+
+// uncoveredKeyCommands walks a command tree and returns the commands that
+// take a key and are not covered by the refusal of a key holding ':', and how
+// many key-taking commands it found.
+func uncoveredKeyCommands(root *cobra.Command) (uncovered []string, found int) {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		for _, ph := range keyPlaceholders {
-			if strings.Contains(c.Use, ph) {
-				checked++
-				if _, ok := typedKey(c, []string{"w:key"}); !ok {
-					t.Errorf("%q takes a key (%s) but typedKey does not cover it", c.CommandPath(), ph)
-				}
-				break
+		if takesKey(c) {
+			found++
+			if _, ok := typedKey(c, []string{"w:key"}); !ok {
+				uncovered = append(uncovered, c.CommandPath())
 			}
 		}
 		for _, sub := range c.Commands() {
@@ -720,8 +726,49 @@ func TestEveryKeyTakingCommandRefusesAColonKey(t *testing.T) {
 		}
 	}
 	walk(root)
-	if checked < 8 {
-		t.Errorf("the walker found only %d key-taking commands; the placeholder list may have drifted", checked)
+	return uncovered, found
+}
+
+// Every command that takes a session or team key must be covered by the
+// refusal of a key holding ':', so a command added later cannot slip past it.
+func TestEveryKeyTakingCommandRefusesAColonKey(t *testing.T) {
+	uncovered, found := uncoveredKeyCommands(newRootCmd())
+	for _, c := range uncovered {
+		t.Errorf("%q takes a key but typedKey does not cover it", c)
+	}
+	if found < 8 {
+		t.Errorf("the walker found only %d key-taking commands; the matcher may have drifted", found)
+	}
+}
+
+// The walker must see a new command that names its key in a way nobody
+// listed: a `poke <key>` command added to the tree is reported.
+func TestKeyWalkerSeesANewCommand(t *testing.T) {
+	root := newRootCmd()
+	root.AddCommand(&cobra.Command{Use: "poke <key>"})
+	uncovered, _ := uncoveredKeyCommands(root)
+	if !reflect.DeepEqual(uncovered, []string{"marvel poke"}) {
+		t.Errorf("uncovered = %v, want [marvel poke]", uncovered)
+	}
+}
+
+// The table and the tree do not drift the other way either: every command
+// the table names exists.
+func TestKeyTableNamesOnlyRealCommands(t *testing.T) {
+	root := newRootCmd()
+	real := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		real[c.CommandPath()] = true
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	for path := range keyArgCommands {
+		if !real[path] {
+			t.Errorf("keyArgCommands names %q, which is not a command", path)
+		}
 	}
 }
 
