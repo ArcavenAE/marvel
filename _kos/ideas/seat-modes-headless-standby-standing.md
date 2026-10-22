@@ -40,7 +40,7 @@ Each is a candidate, not a chosen rule.
 
 ## Pairing a reviewer and a builder on one PR
 
-The operator also asks whether a reviewer and a builder could be paired on a single PR to loop fast, and talk over NATS directly. The aim is to cut the round trip through a human or a supervisor for each review comment. A sibling note in the director repo, about a reviewer-builder pair over NATS on one PR, is being written; it will be linked here when it exists.
+The operator also asks whether a reviewer and a builder could be paired on a single PR to loop fast, and talk over NATS directly. The aim is to cut the round trip through a human or a supervisor for each review comment. The director repo has a sibling note on that pairing, in ArcavenAE/director#395 (`_kos/ideas/paired-reviewer-builder-over-nats.md`, not merged yet).
 
 ## Open risks
 
