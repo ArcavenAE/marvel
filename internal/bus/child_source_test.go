@@ -26,6 +26,9 @@ var childStartFuncs = map[string]bool{
 	"syscall.ForkExec":               true,
 	"syscall.StartProcess":           true,
 	"golang.org/x/sys/unix.ForkExec": true,
+	// The one-shot spawn the old broker lifecycle used; Process.Spawn is the
+	// managed path and is not a start by itself.
+	"github.com/arcavenae/marvel/internal/workload.Start": true,
 }
 
 // allowedChildStarts are the child starts a non-test file in this package may
@@ -146,6 +149,7 @@ func TestChildStartCheckSeesEachWayToStartAChild(t *testing.T) {
 		"Cmd.CombinedOutput":     {"package p\nimport \"os/exec\"\nfunc f(c *exec.Cmd) { _, _ = c.CombinedOutput() }\n", 1},
 		"os.StartProcess":        {"package p\nimport \"os\"\nfunc f() { _, _ = os.StartProcess(\"x\", nil, nil) }\n", 1},
 		"syscall.ForkExec":       {"package p\nimport \"syscall\"\nfunc f() { _, _ = syscall.ForkExec(\"x\", nil, nil) }\n", 1},
+		"workload.Start":         {"package p\nimport \"github.com/arcavenae/marvel/internal/workload\"\nfunc f() { _, _ = workload.Start(workload.ProcessSpec{}) }\n", 1},
 		"LookPath is no start":   {"package p\nimport \"os/exec\"\nfunc f() { _, _ = exec.LookPath(\"x\") }\n", 0},
 		"a type named Cmd":       {"package p\nimport \"os/exec\"\nfunc f(c *exec.Cmd) { _ = c.Env }\n", 0},
 		"a method named Start":   {"package p\ntype P struct{}\nfunc (P) Start() {}\nfunc f(p P) { p.Start() }\n", 0},
