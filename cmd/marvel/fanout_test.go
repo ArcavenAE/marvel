@@ -136,6 +136,9 @@ func fastTimer(t *testing.T, d time.Duration) {
 // stderr.
 func runFanGet(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
+	// The flags bind package variables that outlive the command; put them
+	// back so a later test starts clean.
+	t.Cleanup(func() { clusterName, socketPath, identityPath, clusterFlagGiven = "", "", "", false })
 	root := newRootCmd()
 	var errOut bytes.Buffer
 	root.SetArgs(args)
@@ -494,8 +497,8 @@ func TestClusterSetFlagRules(t *testing.T) {
 // --- the SSH-facing rows -------------------------------------------------
 
 // hostKeyServer listens on 127.0.0.1:0 and presents a host key, which is all
-// a client that refuses the key needs. It returns the host:port and the key.
-func hostKeyServer(t *testing.T) (string, ssh.PublicKey) {
+// a client that refuses the key needs. It returns the host:port.
+func hostKeyServer(t *testing.T) string {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -526,7 +529,7 @@ func hostKeyServer(t *testing.T) (string, ssh.PublicKey) {
 			}()
 		}
 	}()
-	return ln.Addr().String(), signer.PublicKey()
+	return ln.Addr().String()
 }
 
 // identityFile writes a fresh private key and returns its path.
@@ -550,7 +553,7 @@ func identityFile(t *testing.T) string {
 // An unknown host key is refused without a prompt: stdin is never read and
 // known_hosts is untouched.
 func TestFanOutNeverReadsStdin(t *testing.T) {
-	addr, _ := hostKeyServer(t)
+	addr := hostKeyServer(t)
 	good := startFake(t, fakeAnswers, []api.Session{row("w", "s1")})
 	clusterConfig(t,
 		config.Cluster{Name: "a", Socket: good.sock},
@@ -596,7 +599,7 @@ func TestFanOutNeverReadsStdin(t *testing.T) {
 // A changed host key reads differently from an unknown one, every time, even
 // when the set exits 11.
 func TestFanOutChangedKeyDistinct(t *testing.T) {
-	addr, _ := hostKeyServer(t)
+	addr := hostKeyServer(t)
 	clusterConfig(t, config.Cluster{Name: "u", Server: "mrvl://rig@" + addr, Identity: identityFile(t)},
 		config.Cluster{Name: "b", Socket: filepath.Join(t.TempDir(), "absent.sock")})
 	layout, err := paths.Default()
