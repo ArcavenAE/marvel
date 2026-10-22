@@ -304,7 +304,9 @@ In `internal/workload`, a `ProcessSpec` whose binary is `/usr/bin/env` (or
    with `ps -E -o command= -p <pid>`, the pattern
    `TestRestartCarriesTheSeedIntoTheChildEnvironment` uses at
    `supervisor_test.go:323`.
-3. In `internal/bus`, the ten existing supervisor tests pass unedited; the
+3. In `internal/bus`, the ten existing supervisor tests pass, with the
+   reaches into live lifecycle state re-pointed at `workload.Process` and no
+   assertion changed (decision D1, `code-restructure-plan.md` section 5); the
    seed test also asserts `BEADS_DOLT_PASSWORD` and `MARVEL_HEARTBEAT_TOKEN`
    are absent from the broker's environment when set in the test process.
 
@@ -417,7 +419,7 @@ Labels `aae-orc, marvel, source:session`.
 
 | # | Proposed title | Priority | New or update | Depends on | Acceptance |
 |---|---|---|---|---|---|
-| 1 | marvel: extract `bus.Supervisor` into `workload.Process` with an allowlisted child environment (gating precondition for any second managed service) | P1 | NEW | none | `os.Environ()` has no call in `internal/bus`; the env-printing child test shows a set canary absent and the minted key present; the ten existing supervisor tests pass unedited; `bus.*` events and `Status` unchanged |
+| 1 | marvel: extract `bus.Supervisor` into `workload.Process` with an allowlisted child environment (gating precondition for any second managed service) | P1 | NEW | none | `os.Environ()` has no call in `internal/bus`; the env-printing child test shows a set canary absent and the minted key present; the ten existing supervisor tests pass with their live-state reaches re-pointed at `workload.Process` and no assertion changed (D1); `bus.*` events and `Status` unchanged |
 | 2 | marvel: cluster-level Services list (`class`, `provider`, `mode`, `caller_identity`) with class-contract and provider registries; `bus:` lifted as the entry named `bus` | P1 | NEW | none (see 3.5) | `bus:` and `services:[class: message-bus]` parse to one record (golden test); unregistered class, provider, or mode is `ErrInvalidService`; both spellings and a bus block are refused together; `attachBus` becomes a loop over entries |
 | 3 | `aae-orc-wzexa`: scope widens to "Cluster.Bus becomes entry one of the Services list"; declared set, hub `ca_file`, director seat user unchanged. Also resolves the `bus-as-service.md` 8.2 password residual inside the ticket, by the builder: `NewManager` mints fresh at start (`manager.go:52`) and never reads back the `authorization.conf` it wrote at `0o600` (`render.go:232`); recovering admin, seat, and team passwords from that file keeps running shims valid across restart and reexec, makes the adopted-broker SIGHUP at `supervisor.go:139` a no-op when nothing changed, and adds no material at rest beyond what ADR-009 already covers. Not a new ticket | P1 | UPDATE | #2 | `marvel bus status` prints class, provider, mode, caller_identity, version; `wzexa`'s golden tests extended, not rewritten; a restart test shows a pre-restart team password still authenticates; `aae-orc-vy6k7` and `aae-orc-bxg5f` still hang off it |
 | 4 | marvel: `caller_identity` on the class contract: `message-bus` defines `{api-key, session-cert}`, nats-server driver `Delivers` `[api-key]`, structural refusal on mismatch, single-value defaulting | P2 | NEW | #2 | Table-driven tests: `none` refused for `message-bus`; `session-cert` refused with a message naming `aae-orc-5yqw3` until that driver capability lands; omitted field defaults and prints |
