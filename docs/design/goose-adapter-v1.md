@@ -83,7 +83,7 @@ No provider key is placed in env, args, seeded files or fixtures (section 6).
 
 **Seeded files** (`SessionHomeSpec.Seed`): `config/config.yaml` with mode, provider, model and extensions; and `config/permission.yaml`, which puts the role's tools under `always_allow` and the deny list plus `manage_extensions` under `never_allow`. Extensions are narrowed with `--no-profile --with-builtin <role list>`.
 
-**Parser** (`goose/stream-json`, `internal/runtime/goose/` with `mapping.md` and live fixtures). `message` and `notification` map to the turn and tool kinds. `error` maps to `KindError`. `complete` maps to `session.ended` with exit code 0 and cumulative usage. That is a vendor terminal line, as claude's result line is, and it stays out of the level fold.
+**Parser** (`goose/stream-json`, `internal/runtime/goose/` with `mapping.md` and live fixtures). `message` and `notification` map to the turn and tool kinds. `error` maps to `KindError`. `complete` maps to `session.ended` with exit code 0 and cumulative usage. That is the harness's own terminal line, as claude's result line is, and it stays out of the level fold.
 
 **The three outcomes of a headless run.** `complete` means success. An `error` line means failure, and its text is the reason. Neither line with exit 1 means a refusal before or at the first tool (G4); the reason is in the per-launch stderr file. Exit 0 without `complete` is never clean.
 
@@ -154,7 +154,7 @@ goose v1.54.0 at cd643d2, released 2026-10-08. Never `stable` (G13). This recomm
 
 HELD. It needs the harness plan's D1 (sandbox) and D3 (trial credentials, a spend cap, a host). It is written so that it can run unchanged once those are ruled.
 
-- **Command:** `goose run --output-format stream-json`, with a fixed one-line instruction. The provider is API-key or Bedrock, not ACP: ACP has no resume or fork and signs in through the vendor CLI. It runs in a throwaway workdir inside the D1 sandbox, at the pin, with `GOOSE_MODE` set explicitly and a scoped, revocable key and spend cap per D3.
+- **Command:** `goose run --output-format stream-json`, with a fixed one-line instruction. The provider is API-key or Bedrock, not ACP: goose's ACP providers do not support resume or fork (goose docs, per the research survey, read 2026-10-22; the ACP spec itself has had stable resume since 2026-04-22) and sign in through the vendor CLI. It runs in a throwaway workdir inside the D1 sandbox, at the pin, with `GOOSE_MODE` set explicitly and a scoped, revocable key and spend cap per D3.
 - **P1.** `approve` meets an unlisted tool: the exit code, the stderr text, and whether any `error` or `complete` line is written. Decides the stub-versus-degrade premise and the reason store.
 - **P2.** A forced provider error: the `error` line, the exit code and stderr.
 - **P3.** `approve` meets a `never_allow` tool: what the model is told, whether the run continues, the exit code, and any line countable as a denial.
