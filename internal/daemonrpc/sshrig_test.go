@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -25,6 +26,30 @@ import (
 type sshRig struct {
 	addr    string        // mrvl:// address of the listener
 	hostKey ssh.PublicKey // the key the server presents
+	log     *rigLog       // what clients did to the listener
+}
+
+// rigLog records what reached the listener: the connections accepted and the
+// SHA256 fingerprint of each client key offered, in order.
+type rigLog struct {
+	mu    sync.Mutex
+	conns int
+	keys  []string
+}
+
+func (l *rigLog) conn() { l.mu.Lock(); l.conns++; l.mu.Unlock() }
+
+func (l *rigLog) key(k ssh.PublicKey) {
+	l.mu.Lock()
+	l.keys = append(l.keys, ssh.FingerprintSHA256(k))
+	l.mu.Unlock()
+}
+
+// seen returns the connections accepted and the key fingerprints offered.
+func (l *rigLog) seen() (int, []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.conns, append([]string(nil), l.keys...)
 }
 
 // newSigner returns a fresh ed25519 signer and its private key in OpenSSH
@@ -79,8 +104,10 @@ func startSSHRigWith(t *testing.T, allowed ssh.PublicKey, mode rigMode) sshRig {
 	stall := make(chan struct{})
 	t.Cleanup(func() { close(stall) })
 	hostSigner, _ := newSigner(t)
+	rlog := &rigLog{}
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			rlog.key(key)
 			if mode == rigStallAuth {
 				<-stall
 			}
@@ -102,10 +129,11 @@ func startSSHRigWith(t *testing.T, allowed ssh.PublicKey, mode rigMode) sshRig {
 			if err != nil {
 				return
 			}
+			rlog.conn()
 			go serveSSHRig(c, cfg, mode)
 		}
 	}()
-	return sshRig{addr: "mrvl://rig@" + ln.Addr().String(), hostKey: hostSigner.PublicKey()}
+	return sshRig{addr: "mrvl://rig@" + ln.Addr().String(), hostKey: hostSigner.PublicKey(), log: rlog}
 }
 
 func serveSSHRig(c net.Conn, cfg *ssh.ServerConfig, mode rigMode) {
