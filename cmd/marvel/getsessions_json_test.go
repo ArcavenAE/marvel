@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
@@ -9,8 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/knownhosts"
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 // setDoc is the document `get sessions -o json` prints for a cluster set.
@@ -135,6 +141,7 @@ func TestGetSessionsOutputJSONOneRecordPerClusterAcrossTheOutcomes(t *testing.T)
 	bad := startFake(t, fakeBadReply, nil)
 	hung := startFake(t, fakeHung, nil)
 	addr := hostKeyServer(t)
+	changed := hostKeyServer(t)
 	clusterConfig(t,
 		config.Cluster{Name: "a", Socket: ans.sock},
 		config.Cluster{Name: "s", Socket: start.sock},
@@ -143,8 +150,25 @@ func TestGetSessionsOutputJSONOneRecordPerClusterAcrossTheOutcomes(t *testing.T)
 		config.Cluster{Name: "h", Socket: hung.sock},
 		config.Cluster{Name: "x", Socket: filepath.Join(t.TempDir(), "absent.sock")},
 		config.Cluster{Name: "u", Server: "mrvl://rig@" + addr, Identity: identityFile(t)},
+		config.Cluster{Name: "k", Server: "mrvl://rig@" + changed, Identity: identityFile(t)},
+		config.Cluster{Name: "n", Server: "mrvl://rig@" + addr},
 	)
-	names := "a,s,d,b,h,x,u"
+	layout, err := paths.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.EnsureHome(); err != nil {
+		t.Fatal(err)
+	}
+	_, otherPriv, _ := ed25519.GenerateKey(rand.Reader)
+	other, err := ssh.NewSignerFromKey(otherPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := knownhosts.Trust(layout, changed, other.PublicKey()); err != nil {
+		t.Fatal(err)
+	}
+	names := "a,s,d,b,h,x,u,k,n"
 	code, out, _ := runFanGet(t, "get", "sessions", "--cluster", names, "-o", "json")
 	if code != 10 {
 		t.Errorf("exit = %d, want 10", code)
@@ -157,6 +181,7 @@ func TestGetSessionsOutputJSONOneRecordPerClusterAcrossTheOutcomes(t *testing.T)
 	want := []string{
 		"a=answered", "s=starting", "d=daemon_error", "b=bad_reply",
 		"h=no_answer_in_time", "x=unreachable", "u=host_key_unknown",
+		"k=host_key_changed", "n=auth_refused",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("records = %v, want %v", got, want)
@@ -173,8 +198,10 @@ func TestGetSessionsOutputJSONOneRecordPerClusterAcrossTheOutcomes(t *testing.T)
 			t.Errorf("record %v has no as_of", r)
 		}
 	}
-	if fp, _ := doc.Clusters[6]["fingerprint"].(string); fp == "" {
-		t.Errorf("the host_key_unknown record has no fingerprint: %v", doc.Clusters[6])
+	for _, i := range []int{6, 7} {
+		if fp, _ := doc.Clusters[i]["fingerprint"].(string); fp == "" {
+			t.Errorf("the %v record has no fingerprint: %v", doc.Clusters[i]["outcome"], doc.Clusters[i])
+		}
 	}
 	if n, _ := doc.Clusters[0]["sessions"].(float64); n != 1 {
 		t.Errorf("the answered record counts %v sessions, want 1", doc.Clusters[0]["sessions"])
@@ -208,14 +235,14 @@ func TestGetSessionsOutputJSONNoneAnsweredStillPrintsTheRecords(t *testing.T) {
 // says -o json shows them; -o json shows them. The JSON decodes to the
 // daemon's bytes, in a single-cluster list and in a set.
 func TestGetSessionsOutputJSONShowsWhatTheTableReplaces(t *testing.T) {
-	const raw = "a\x1bb‮c"
+	const raw = "a\x1bb\u202ec"
 	bad := row("w", raw)
 	a := startFake(t, fakeAnswers, []api.Session{bad})
 	b := startFake(t, fakeAnswers, nil)
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
 
 	_, table, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b")
-	if strings.ContainsAny(table, "\x1b‮") || !strings.Contains(table, fffd) {
+	if strings.ContainsAny(table, "\x1b\u202e") || !strings.Contains(table, fffd) {
 		t.Fatalf("the table is not the control: want U+FFFD and no raw characters:\n%q", table)
 	}
 

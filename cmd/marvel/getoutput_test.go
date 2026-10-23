@@ -248,10 +248,10 @@ func TestGetTeamOutputEndToEnd(t *testing.T) {
 	}
 }
 
-func TestGetOutputIsForTeamsAndWorkspacesAndTwoFormats(t *testing.T) {
+func TestGetOutputIsForTeamsWorkspacesAndSessionsAndTwoFormats(t *testing.T) {
 	cannedDaemon(t, map[string]any{"team": []api.Team{outputTeam()}, "session": outputSessions()})
-	if _, err := runGet(t, "sessions", "-o", "json"); err == nil || !strings.Contains(err.Error(), "team and workspace") {
-		t.Errorf("get sessions -o json error = %v, want one saying -o applies to team and workspace", err)
+	if _, err := runGet(t, "pods", "-o", "json"); err == nil || !strings.Contains(err.Error(), "team, workspace and sessions") {
+		t.Errorf("get pods -o json error = %v, want one saying -o applies to team, workspace and sessions", err)
 	}
 	if _, err := runGet(t, "team", "-o", "xml"); err == nil || !strings.Contains(err.Error(), "json or yaml") {
 		t.Errorf("get team -o xml error = %v, want one naming json or yaml", err)
@@ -311,7 +311,7 @@ func TestGetOutputRefusalsSendNoRequest(t *testing.T) {
 		}
 	})
 	for name, args := range map[string][]string{
-		"other resource": {"sessions", "-o", "json"},
+		"other resource": {"pods", "-o", "json"},
 		"bad format":     {"team", "-o", "xml"},
 		"empty format":   {"team", "-o", ""},
 		"with watch":     {"team", "-o", "json", "--watch=2"},

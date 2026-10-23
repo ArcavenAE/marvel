@@ -342,18 +342,60 @@ func fanOutRefusals() error {
 	return nil
 }
 
-// runFanOutGet is `get sessions` across a cluster set.
-func runFanOutGet(cmd *cobra.Command, names []string, columns string, noTrunc, watching, hasOutput, load bool) error {
+// fanOutRow is a session row of the -o document: the row as the daemon sent
+// it, with the cluster it was read from. The embedded Session keeps its own
+// cluster out of the encoding (it is not on the wire), so this field is the
+// only one.
+type fanOutRow struct {
+	Cluster string `json:"cluster"`
+	api.Session
+}
+
+// fanOutDocument is what `get sessions -o` prints for a cluster set: one
+// outcome record per cluster, in the order named, and the rows of the
+// clusters that gave rows, sorted as the table sorts them. Nothing is
+// replaced for display.
+type fanOutDocument struct {
+	Clusters []clusterRecord `json:"clusters"`
+	Sessions []fanOutRow     `json:"sessions"`
+}
+
+func buildFanOutDocument(records []clusterRecord, rows []api.Session) fanOutDocument {
+	sort.SliceStable(rows, func(i, j int) bool { return sessionTieLess(rows[i], rows[j]) })
+	doc := fanOutDocument{Clusters: records, Sessions: make([]fanOutRow, 0, len(rows))}
+	for _, r := range rows {
+		doc.Sessions = append(doc.Sessions, fanOutRow{Cluster: r.Cluster, Session: r})
+	}
+	return doc
+}
+
+// runFanOutGet is `get sessions` across a cluster set. With -o it prints the
+// document instead of the table and the status lines, and exits as the table
+// does.
+func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, noTrunc, watching, hasOutput, load bool) error {
 	if err := fanOutRefusals(); err != nil {
 		return err
 	}
 	switch {
 	case watching:
 		return errors.New("--watch across clusters is not available yet")
-	case hasOutput:
-		return errors.New("-o across clusters is not available yet")
 	case load:
 		return errors.New("--load applies to get teams only")
+	}
+	if hasOutput {
+		if err := checkGetOutput(fanOutResource, format); err != nil {
+			return err
+		}
+		records, rows, err := collectFanOut(names, false)
+		if err != nil {
+			return err
+		}
+		out, err := renderGetOutput(buildFanOutDocument(records, rows), format)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return fanOutExitError(cmd, records)
 	}
 	cols, explicit, err := loadSessionColumnsSel(columns)
 	if err != nil {
@@ -374,6 +416,12 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns string, noTrunc, w
 		lead:     []sessionColumn{fanOutKeyColumn()},
 	}
 	fmt.Print(renderSessionsView(rows, cols, "", fit))
+	return fanOutExitError(cmd, records)
+}
+
+// fanOutExitError is nil when every cluster answered, and otherwise the exit
+// error that carries the set's code (plan section 3.2).
+func fanOutExitError(cmd *cobra.Command, records []clusterRecord) error {
 	if code := fanOutExit(records); code != 0 {
 		cmd.SilenceErrors, cmd.SilenceUsage = true, true
 		return &exitError{Code: code, Msg: "not every cluster answered"}

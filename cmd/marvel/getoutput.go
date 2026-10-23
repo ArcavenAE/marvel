@@ -108,7 +108,7 @@ func observedWorkspaces(workspaces []api.Workspace, teams []api.Team, sessions [
 
 // renderGetOutput encodes the document as json or yaml. Both carry the same
 // keys: the yaml is the json document read back and re-encoded.
-func renderGetOutput(doc map[string]any, format string) (string, error) {
+func renderGetOutput(doc any, format string) (string, error) {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return "", err
@@ -135,9 +135,9 @@ func renderGetOutput(doc map[string]any, format string) (string, error) {
 // request reaches the daemon. buildGetOutput and renderGetOutput trust it.
 func checkGetOutput(resource, format string) error {
 	switch strings.TrimSuffix(resource, "s") {
-	case "team", "workspace":
+	case "team", "workspace", "session":
 	default:
-		return fmt.Errorf("-o applies to team and workspace only, not %q", resource)
+		return fmt.Errorf("-o applies to team, workspace and sessions only, not %q", resource)
 	}
 	if format != "json" && format != "yaml" {
 		return fmt.Errorf("unknown output format %q: use json or yaml", format)
@@ -158,10 +158,27 @@ func fetchGet(resourceType string, out any) error {
 	return json.Unmarshal(resp.Result, out)
 }
 
-// getWithOutput prints `get team|workspace -o json|yaml`.
+// getWithOutput prints `get team|workspace|sessions -o json|yaml`. For
+// sessions it is the daemon's list as it sent it, empty as [], with nothing
+// replaced for display.
 func getWithOutput(resource, format string) error {
 	if err := checkGetOutput(resource, format); err != nil {
 		return err
+	}
+	if strings.TrimSuffix(resource, "s") == "session" {
+		sessions := []api.Session{}
+		if err := fetchGet("sessions", &sessions); err != nil {
+			return err
+		}
+		if sessions == nil {
+			sessions = []api.Session{}
+		}
+		out, err := renderGetOutput(sessions, format)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
 	}
 	var teams []api.Team
 	var workspaces []api.Workspace
