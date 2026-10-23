@@ -1144,11 +1144,21 @@ A row follows the sessions cells' three states: a value while fresh, ? once the
 daemon stopped computing it, - when it never did. A team with no seat that has a
 reading prints - for ACTIVE%, never 0%. Diagnostic only: nothing gates on it.
 
--o json|yaml (get team and get workspace only) prints two labelled sections.
+-o json|yaml (get team, get workspace and get sessions) prints a document instead of
+the table. For get team and get workspace it is two labelled sections.
 desired is the store's record after scale and similar edits; it is not the file
 that was applied, and no round trip to that file is promised. observed is the
 live sessions at read time and is not for re-apply. Secret-looking Env values
-show as (redacted) in both.`,
+show as (redacted) in both.
+
+For get sessions, -o json prints the sessions as a list. With --cluster a,b or
+--all-clusters it prints one object, {"clusters": [...], "sessions": [...]}: one
+record per cluster with its outcome (the names the status lines use), and the
+rows of the clusters that gave rows, each with a cluster field. The exit code is
+the table's. Nothing is replaced for display: a name holding control or bidi
+characters, which the table draws as U+FFFD, appears as the daemon sent it, so -o output is raw: a
+terminal may act on such characters, and piping it through cat -v shows them.
+Secret-looking Env values show as (redacted), as in the team document.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")
@@ -1157,7 +1167,7 @@ show as (redacted) in both.`,
 				return err
 			}
 			if fan {
-				return runFanOutGet(cmd, names, columns, noTrunc, watching, cmd.Flags().Changed("output"), load)
+				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, cmd.Flags().Changed("output"), load)
 			}
 			if load {
 				switch {
@@ -1215,7 +1225,7 @@ show as (redacted) in both.`,
 		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
 	cmd.Flags().BoolVar(&header, "header", false,
 		"print the daemon header above the sessions table even when stdout is not a terminal")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "print get team or get workspace as json or yaml: desired and observed sections")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "print get team or get workspace as json or yaml (desired and observed sections), or get sessions as json or yaml (a list; with a cluster set, {clusters, sessions})")
 	return cmd
 }
 
