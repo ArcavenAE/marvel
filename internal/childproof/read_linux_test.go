@@ -15,6 +15,11 @@ func TestReadIdentityKeepsTheStartWhenTheExecutableIsRefused(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can read /proc/1/exe")
 	}
+	// With /proc mounted hidepid, the stat of another user's process is refused
+	// too, so there is no start time to keep and nothing here to check.
+	if _, err := os.ReadFile("/proc/1/stat"); err != nil {
+		t.Skipf("/proc/1/stat is not readable here (hidepid on /proc?): %v", err)
+	}
 	id, err := ReadIdentityForTest(1)
 	if err == nil {
 		t.Skip("pid 1 is readable here, so there is no failed read to check")

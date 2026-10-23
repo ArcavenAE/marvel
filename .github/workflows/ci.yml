@@ -88,6 +88,17 @@ jobs:
           go test -json -count=1 ./internal/bus/... > "${RUNNER_TEMP}/bus-tests.json"
           scripts/no-skips.sh "${RUNNER_TEMP}/bus-tests.json" github.com/arcavenae/marvel/internal/bus
 
+      - name: Fail if an internal/childproof test skipped
+        # The Linux twin in read_linux_test.go skips when /proc/1/stat is
+        # unreadable (hidepid) or the runner is root. The GitHub ubuntu runner
+        # is neither, so a skip here means the twin did not run and the proof
+        # is gone. The package runs once more with -json and without -race,
+        # which the step above covers.
+        run: |
+          set -euo pipefail
+          go test -json -count=1 ./internal/childproof/... > "${RUNNER_TEMP}/childproof-tests.json"
+          scripts/no-skips.sh "${RUNNER_TEMP}/childproof-tests.json" github.com/arcavenae/marvel/internal/childproof
+
       - name: Display coverage summary
         run: go tool cover -func=coverage.out
 
