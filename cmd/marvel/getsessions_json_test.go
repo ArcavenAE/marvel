@@ -169,9 +169,12 @@ func TestGetSessionsOutputJSONOneRecordPerClusterAcrossTheOutcomes(t *testing.T)
 		t.Fatal(err)
 	}
 	names := "a,s,d,b,h,x,u,k,n"
-	code, out, _ := runFanGet(t, "get", "sessions", "--cluster", names, "-o", "json")
+	code, out, stderr := runFanGet(t, "get", "sessions", "--cluster", names, "-o", "json")
 	if code != 10 {
 		t.Errorf("exit = %d, want 10", code)
+	}
+	if stderr != "" {
+		t.Errorf("stderr under -o = %q, want empty: the records carry the status", stderr)
 	}
 	doc := decodeSet(t, out)
 	var got []string
@@ -292,5 +295,48 @@ func TestGetSessionsWatchStillRefusedAcrossClusters(t *testing.T) {
 	code, _, stderr := runFanGet(t, "get", "sessions", "--cluster", "a,b", "-o", "json", "--watch=2")
 	if code == 0 || !strings.Contains(stderr, "--watch across clusters is not available yet") {
 		t.Errorf("exit = %d, stderr %q, want the --watch refusal", code, stderr)
+	}
+}
+
+// withSecret is a session whose Env holds a secret-looking value and an
+// ordinary one, as a daemon that does not redact would send it.
+func withSecret(ws, name string) api.Session {
+	r := row(ws, name)
+	r.Runtime = api.Runtime{Name: "claude", Command: "claude", Env: map[string]string{
+		"API_KEY": "sk-test-9f8e7d6c", "REGION": "eu-west",
+	}}
+	return r
+}
+
+// A secret-looking Env value never reaches -o output, even when the daemon
+// sent it unredacted (an older daemon), for one cluster and for a set, in
+// both formats; an ordinary value stays.
+func TestGetSessionsOutputRedactsSecretEnv(t *testing.T) {
+	const secret = "sk-test-9f8e7d6c"
+	check := func(t *testing.T, what, out string) {
+		t.Helper()
+		if strings.Contains(out, secret) {
+			t.Errorf("%s output carries the secret value:\n%s", what, out)
+		}
+		if !strings.Contains(out, api.Redacted) || !strings.Contains(out, "eu-west") {
+			t.Errorf("%s output lacks %q for the secret or the kept eu-west:\n%s", what, api.Redacted, out)
+		}
+	}
+	for _, format := range []string{"json", "yaml"} {
+		cannedDaemon(t, map[string]any{"session": []api.Session{withSecret("w", "s1")}})
+		out, err := runGet(t, "sessions", "-o", format)
+		if err != nil {
+			t.Fatalf("single cluster -o %s: %v", format, err)
+		}
+		check(t, "single-cluster "+format, out)
+
+		a := startFake(t, fakeAnswers, []api.Session{withSecret("w", "s1")})
+		b := startFake(t, fakeAnswers, []api.Session{withSecret("w", "s2")})
+		clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
+		code, set, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "-o", format)
+		if code != 0 {
+			t.Fatalf("set -o %s: exit %d", format, code)
+		}
+		check(t, "set "+format, set)
 	}
 }
