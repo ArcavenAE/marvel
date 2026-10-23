@@ -142,7 +142,9 @@ jobs:
     # tested on macOS as well as Linux, so a move that behaves differently on
     # darwin fails here instead of on an operator's machine (aae-orc-xe1pw).
     # internal/toolchain/restructure_macos_test.go keeps this list and the
-    # plan's packages in step.
+    # plan's packages in step. It also runs internal/childproof, whose
+    # darwin reader has a test of its own that no other job builds; the
+    # job name stays so the check name does not change.
     name: Restructure tests (macOS)
     runs-on: macos-latest
     steps:
@@ -198,13 +200,15 @@ jobs:
             ./internal/bus/... \
             ./internal/workload/... \
             ./internal/backoff/... \
+            ./internal/childproof/... \
             > "${RUNNER_TEMP}/restructure-tests.json"
           scripts/no-skips.sh "${RUNNER_TEMP}/restructure-tests.json" \
             github.com/arcavenae/marvel/internal/daemon \
             github.com/arcavenae/marvel/internal/daemonrpc \
             github.com/arcavenae/marvel/internal/bus \
             github.com/arcavenae/marvel/internal/workload \
-            github.com/arcavenae/marvel/internal/backoff
+            github.com/arcavenae/marvel/internal/backoff \
+            github.com/arcavenae/marvel/internal/childproof
 
   build-binaries:
     name: Build Binaries

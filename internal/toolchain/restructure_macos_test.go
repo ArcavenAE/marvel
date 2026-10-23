@@ -28,33 +28,43 @@ var restructurePackages = []string{
 	"internal/backoff",
 }
 
+// extraMacOSPackages are packages outside the restructure plan that the same
+// macOS job runs because they carry darwin-only code and tests that no other
+// job builds: internal/childproof reads a process's identity through
+// sysctl on darwin, and its read_darwin_test.go runs nowhere else. They are
+// held to the same gate as restructurePackages, but do not widen the plan's
+// list, which stays the packages the plan moves code between.
+var extraMacOSPackages = []string{
+	"internal/childproof",
+}
+
 // modulePath prefixes a package directory to give the import path the skip
 // gate names.
 const modulePath = "github.com/arcavenae/marvel"
 
 // TestRestructurePackagesRunOnMacOS requires one macOS job to run every
-// restructure package, and to install the two tools whose absence
-// makes those tests skip rather than run: tmux (internal/daemon) and
-// nats-server (internal/bus). The nats-server version is the job's
+// restructure package and every extraMacOSPackages entry, and to install the
+// two tools whose absence makes those tests skip rather than run: tmux
+// (internal/daemon) and nats-server (internal/bus). The nats-server version is the job's
 // NATS_SERVER_VERSION, which TestNatsServerPinMatchesCI holds to the mise pin
 // in every job.
 func TestRestructurePackagesRunOnMacOS(t *testing.T) {
 	t.Parallel()
 
 	repo := filepath.Join("..", "..")
-	for _, pkg := range restructurePackages {
+	want := slices.Concat(restructurePackages, extraMacOSPackages)
+	for _, pkg := range want {
 		if !hasTests(t, filepath.Join(repo, pkg)) {
 			t.Fatalf("%s has no test files; the list is stale or the repo root is wrong", pkg)
 		}
 	}
-	want := restructurePackages
 
 	jobs, err := ciJobs(filepath.Join(repo, ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reasons := macOSGateReasons(jobs, want); len(reasons) > 0 {
-		t.Errorf("no macOS job runs the restructure packages %v with tmux and nats-server installed:\n  %s",
+		t.Errorf("no macOS job runs the packages %v with tmux and nats-server installed:\n  %s",
 			want, strings.Join(reasons, "\n  "))
 	}
 }
