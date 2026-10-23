@@ -423,8 +423,9 @@ func TestSuspendAtStartAdoptsWhenOnlyTheMirrorRemovalFails(t *testing.T) {
 	rec.State = suspend.StateSuspending
 	d, p, sock := startDaemon(t, rec)
 	mirror := suspend.MirrorPath(sock)
-	// Once the last process is resumed, the mirror becomes a directory: the
-	// removal that follows the clear fails, and nothing before it does.
+	// Once the seat is resumed, the mirror becomes a directory. The server is
+	// resumed after the seat and the clear after both, so the removal that
+	// follows the clear fails and nothing before it does.
 	p.afterCont = func(pid int) {
 		if pid != 200 {
 			return
