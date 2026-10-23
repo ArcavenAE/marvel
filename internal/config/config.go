@@ -256,6 +256,8 @@ type Config struct {
 type Display struct {
 	// SessionColumns names the `marvel get sessions` columns, in order.
 	// The --columns flag overrides it; empty means the default columns.
+	// The name `rest` stands for every column not named elsewhere in the
+	// list, and `wide` for the wide set.
 	SessionColumns []string `yaml:"session_columns,omitempty"`
 }
 

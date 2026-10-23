@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -12,41 +13,44 @@ import (
 
 // sessionColumn is one selectable `get sessions` column. name is the long
 // name the --columns flag and display.session_columns use; header is what
-// the table prints; pick reads the cell from a derived row.
+// the table prints; pick reads the cell from a derived row. fromRest marks a
+// column the `rest` token added, which is the only kind the width fit cuts
+// from a list the operator named.
 type sessionColumn struct {
-	name   string
-	header string
-	pick   func(sessionRow) string
+	name     string
+	header   string
+	pick     func(sessionRow) string
+	fromRest bool
 }
 
 // sessionColumnRegistry is every selectable column, in the order the
 // default table prints them. A new column is one entry here; the
 // selector, the error text and the renderer all read this list.
 var sessionColumnRegistry = []sessionColumn{
-	{"workspace", "WORKSPACE", func(r sessionRow) string { return r.workspace }},
-	{"team", "TEAM", func(r sessionRow) string { return r.team }},
-	{"role", "ROLE", func(r sessionRow) string { return r.role }},
-	{"generation", "GEN", func(r sessionRow) string { return r.generation }},
-	{"name", "AGENT NAME", func(r sessionRow) string { return r.name }},
-	{"state", "STATE", func(r sessionRow) string { return r.state }},
-	{"health", "HEALTH", func(r sessionRow) string { return r.health }},
-	{"composer", "COMPOSER", func(r sessionRow) string { return r.composer }},
-	{"context", "CTX%", func(r sessionRow) string { return r.context }},
-	{"cpu", "CPU%", func(r sessionRow) string { return r.cpu }},
-	{"rss", "RSS", func(r sessionRow) string { return r.rss }},
-	{"desk", "DESK", func(r sessionRow) string { return r.desk }},
-	{"runtime", "RUNTIME", func(r sessionRow) string { return r.runtime }},
-	{"llm", "LLM", func(r sessionRow) string { return r.llm }},
-	{"workdir", "WORKDIR", func(r sessionRow) string { return r.workdir }},
-	{"tout", "TOUT", func(r sessionRow) string { return r.tout }},
-	{"rate", "RATE", func(r sessionRow) string { return r.rate }},
-	{"last-active", "LAST-ACTIVE", func(r sessionRow) string { return r.lastActive }},
-	{"last-turn", "LAST-TURN", func(r sessionRow) string { return r.lastTurn }},
-	{"age", "AGE", func(r sessionRow) string { return r.age }},
-	{"active", "ACTIVE%", func(r sessionRow) string { return r.active }},
-	{"prompt", "PROMPT", func(r sessionRow) string { return r.prompt }},
-	{"spec", "SPEC", func(r sessionRow) string { return r.spec }},
-	{"acct", "ACCT", func(r sessionRow) string { return r.acct }},
+	{name: "workspace", header: "WORKSPACE", pick: func(r sessionRow) string { return r.workspace }},
+	{name: "team", header: "TEAM", pick: func(r sessionRow) string { return r.team }},
+	{name: "role", header: "ROLE", pick: func(r sessionRow) string { return r.role }},
+	{name: "generation", header: "GEN", pick: func(r sessionRow) string { return r.generation }},
+	{name: "name", header: "AGENT NAME", pick: func(r sessionRow) string { return r.name }},
+	{name: "state", header: "STATE", pick: func(r sessionRow) string { return r.state }},
+	{name: "health", header: "HEALTH", pick: func(r sessionRow) string { return r.health }},
+	{name: "composer", header: "COMPOSER", pick: func(r sessionRow) string { return r.composer }},
+	{name: "context", header: "CTX%", pick: func(r sessionRow) string { return r.context }},
+	{name: "cpu", header: "CPU%", pick: func(r sessionRow) string { return r.cpu }},
+	{name: "rss", header: "RSS", pick: func(r sessionRow) string { return r.rss }},
+	{name: "desk", header: "DESK", pick: func(r sessionRow) string { return r.desk }},
+	{name: "runtime", header: "RUNTIME", pick: func(r sessionRow) string { return r.runtime }},
+	{name: "llm", header: "LLM", pick: func(r sessionRow) string { return r.llm }},
+	{name: "workdir", header: "WORKDIR", pick: func(r sessionRow) string { return r.workdir }},
+	{name: "tout", header: "TOUT", pick: func(r sessionRow) string { return r.tout }},
+	{name: "rate", header: "RATE", pick: func(r sessionRow) string { return r.rate }},
+	{name: "last-active", header: "LAST-ACTIVE", pick: func(r sessionRow) string { return r.lastActive }},
+	{name: "last-turn", header: "LAST-TURN", pick: func(r sessionRow) string { return r.lastTurn }},
+	{name: "age", header: "AGE", pick: func(r sessionRow) string { return r.age }},
+	{name: "active", header: "ACTIVE%", pick: func(r sessionRow) string { return r.active }},
+	{name: "prompt", header: "PROMPT", pick: func(r sessionRow) string { return r.prompt }},
+	{name: "spec", header: "SPEC", pick: func(r sessionRow) string { return r.spec }},
+	{name: "acct", header: "ACCT", pick: func(r sessionRow) string { return r.acct }},
 }
 
 // optInColumns are registered and selectable but not in the full default
@@ -77,6 +81,15 @@ var wideSessionColumns = []string{
 	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "last-turn", "age", "active",
 }
 
+// columnRest is a reserved name that expands in place to every registered
+// column the list does not name elsewhere. No registry entry may take it.
+const columnRest = "rest"
+
+// restReserved are the registered columns `rest` never holds, because
+// reading them costs something the operator should ask for by name:
+// composer captures every seat's pane.
+var restReserved = map[string]bool{"composer": true}
+
 // defaultSessionColumns is today's table, in today's order.
 func defaultSessionColumns() []sessionColumn {
 	out := make([]sessionColumn, 0, len(sessionColumnRegistry))
@@ -94,7 +107,7 @@ func validColumnNames() string {
 	for _, c := range sessionColumnRegistry {
 		names = append(names, c.name)
 	}
-	names = append(names, columnSetWide)
+	names = append(names, columnSetWide, columnRest)
 	return strings.Join(names, ", ")
 }
 
@@ -111,12 +124,25 @@ func lookupSessionColumn(name string) (sessionColumn, bool) {
 // expandColumnNames turns names into columns, in the order given, with a
 // set name expanding in place. source names where the list came from, so
 // an error says which setting to fix.
+//
+// `rest` is filled in a second pass, once every other name is known, so it
+// takes what is left wherever it is written: `rest,wide` and `wide,rest`
+// both give it only the columns wide does not hold. It adds no duplicate;
+// duplicates the operator wrote outside it stay as written.
 func expandColumnNames(names []string, source string) ([]sessionColumn, error) {
 	var out []sessionColumn
+	restAt := -1
 	for _, raw := range names {
 		name := strings.TrimSpace(raw)
 		if name == "" {
 			return nil, fmt.Errorf("%s: empty column name (valid: %s)", source, validColumnNames())
+		}
+		if name == columnRest {
+			if restAt >= 0 {
+				return nil, fmt.Errorf("%s: %q appears more than once; it expands to every column not named elsewhere, so it is allowed once", source, columnRest)
+			}
+			restAt = len(out)
+			continue
 		}
 		if name == columnSetWide {
 			cols, err := expandColumnNames(wideSessionColumns, source)
@@ -132,7 +158,22 @@ func expandColumnNames(names []string, source string) ([]sessionColumn, error) {
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	if restAt < 0 {
+		return out, nil
+	}
+	named := make(map[string]bool, len(out))
+	for _, c := range out {
+		named[c.name] = true
+	}
+	var rest []sessionColumn
+	for _, c := range sessionColumnRegistry {
+		if named[c.name] || restReserved[c.name] {
+			continue
+		}
+		c.fromRest = true
+		rest = append(rest, c)
+	}
+	return slices.Concat(out[:restAt], rest, out[restAt:]), nil
 }
 
 // selectSessionColumns resolves the columns to print: the flag over the

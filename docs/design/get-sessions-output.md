@@ -108,6 +108,19 @@ The selector ruled on aae-orc-f08m0 (2026-09-25):
 
 One addition: a named set `wide`, because no `-o wide` exists.
 
+A second reserved name, `rest` (#1040), stands for every registered column the
+list does not name, so a column marvel adds later still shows for someone who
+pinned the ones they care about:
+
+- it expands in place, in registry order, and appears at most once;
+- it leaves out every column named elsewhere in the list, directly or through
+  `wide`, so `rest,wide` and `wide,rest` both work;
+- it leaves out `composer`, which reads every seat's pane and so comes only by
+  name;
+- on a narrow terminal only its columns are cut, the ones outside
+  `fitPriority` first and then the others from the tail of `fitPriority`; named
+  columns are never cut, and the hidden-columns line counts the cut ones.
+
 ### 4.2 Width
 
 A fit drops columns by a fixed priority. It never reflows. On a TTY it

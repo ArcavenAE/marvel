@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -177,12 +178,13 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 	}
 	if o.explicit {
 		cols = append(append([]sessionColumn(nil), o.lead...), cols...)
+		cols, cut := fitRestColumns(sessions, cols, o)
 		table := renderTrimmed(sessions, cols, o)
 		var warn string
 		if w := tableWidth(table); w > o.width {
 			warn = fmt.Sprintf("note: the selected columns are %d wide, wider than the terminal (%d); printing them all", w, o.width)
 		}
-		return fitResult{table: table, warn: warn, cols: cols}
+		return fitResult{table: table, warn: warn, cols: cols, hidden: cut}
 	}
 
 	fitted := append(append([]sessionColumn(nil), o.lead...), tierColumns(o.width)...)
@@ -202,6 +204,46 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 		}
 	}
 	return fitResult{table: table, hidden: hidden, cols: fitted}
+}
+
+// restCutSequence is the order the columns a `rest` token added are cut in:
+// first the ones outside fitPriority, in reverse registry order, then the
+// others in reverse fitPriority order.
+func restCutSequence(cols []sessionColumn) []string {
+	inRest := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		if c.fromRest {
+			inRest[c.name] = true
+		}
+	}
+	var order []string
+	for i := len(sessionColumnRegistry) - 1; i >= 0; i-- {
+		if n := sessionColumnRegistry[i].name; inRest[n] && !slices.Contains(fitPriority, n) {
+			order = append(order, n)
+		}
+	}
+	for i := len(fitPriority) - 1; i >= 0; i-- {
+		if n := fitPriority[i]; inRest[n] {
+			order = append(order, n)
+		}
+	}
+	return order
+}
+
+// fitRestColumns cuts the columns a `rest` token added until the table fits
+// the width, and returns the list in its printed order with the number cut.
+// Columns the operator named, and lead columns, are never cut, so a list that
+// is too wide with every `rest` column gone is returned as it is, for the
+// caller to note. A list with no `rest` comes back unchanged.
+func fitRestColumns(sessions []api.Session, cols []sessionColumn, o fitOptions) ([]sessionColumn, int) {
+	order := restCutSequence(cols)
+	cut := 0
+	for cut < len(order) && tableWidth(renderTrimmed(sessions, cols, o)) > o.width {
+		name := order[cut]
+		cols = slices.DeleteFunc(slices.Clone(cols), func(c sessionColumn) bool { return c.fromRest && c.name == name })
+		cut++
+	}
+	return cols, cut
 }
 
 // renderTrimmed renders cols, cutting RUNTIME and WORKDIR unless --no-trunc.
