@@ -163,6 +163,20 @@ func TestColumnsRestIsTheOnlyThingCutAtANarrowWidth(t *testing.T) {
 			t.Errorf("%s was cut after %v, out of order; shown %v", h, restCutOrder[:cut], shown)
 		}
 	}
+	// Nothing more is cut than the width needs: the last column cut would not
+	// have fit back in.
+	if cut > 0 {
+		back := restCutOrder[cut-1]
+		var again []sessionColumn
+		for _, c := range cols {
+			if slices.Contains(shown, c.header) || c.header == back {
+				again = append(again, c)
+			}
+		}
+		if w := widest(renderSessionTableCols([]api.Session{s}, again)); w <= 80 {
+			t.Errorf("%s fits back in at %d wide, so it should not have been cut", back, w)
+		}
+	}
 	if got.hidden != cut || got.hidden == 0 {
 		t.Errorf("hidden = %d, want %d (the rest columns cut)", got.hidden, cut)
 	}
