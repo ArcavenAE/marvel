@@ -1156,7 +1156,9 @@ For get sessions, -o json prints the sessions as a list. With --cluster a,b or
 record per cluster with its outcome (the names the status lines use), and the
 rows of the clusters that gave rows, each with a cluster field. The exit code is
 the table's. Nothing is replaced for display: a name holding control or bidi
-characters, which the table draws as U+FFFD, appears as the daemon sent it.`,
+characters, which the table draws as U+FFFD, appears as the daemon sent it, so -o output is raw: a
+terminal may act on such characters, and piping it through cat -v shows them.
+Secret-looking Env values show as (redacted), as in the team document.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			watching := cmd.Flags().Changed("watch")

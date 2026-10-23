@@ -361,6 +361,9 @@ type fanOutDocument struct {
 }
 
 func buildFanOutDocument(records []clusterRecord, rows []api.Session) fanOutDocument {
+	// An older daemon sends Env values unredacted, and a cluster set is where
+	// one is most likely, so every row goes through api.Redact.
+	rows = api.Redact(rows)
 	sort.SliceStable(rows, func(i, j int) bool { return sessionTieLess(rows[i], rows[j]) })
 	doc := fanOutDocument{Clusters: records, Sessions: make([]fanOutRow, 0, len(rows))}
 	for _, r := range rows {

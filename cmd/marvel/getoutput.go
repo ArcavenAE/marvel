@@ -173,7 +173,9 @@ func getWithOutput(resource, format string) error {
 		if sessions == nil {
 			sessions = []api.Session{}
 		}
-		out, err := renderGetOutput(sessions, format)
+		// Redact for the same reason the team document does: an older daemon
+		// sends Env values unredacted.
+		out, err := renderGetOutput(api.Redact(sessions), format)
 		if err != nil {
 			return err
 		}
