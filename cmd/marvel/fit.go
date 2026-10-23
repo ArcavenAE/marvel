@@ -234,11 +234,13 @@ func restCutSequence(cols []sessionColumn) []string {
 // the width, and returns the list in its printed order with the number cut.
 // Columns the operator named, and lead columns, are never cut, so a list that
 // is too wide with every `rest` column gone is returned as it is, for the
-// caller to note. A list with no `rest` comes back unchanged.
+// caller to note. Like the default fit, it stops at one column after the lead
+// ones, so a list of `rest` alone never prints a blank table. A list with no
+// `rest` comes back unchanged.
 func fitRestColumns(sessions []api.Session, cols []sessionColumn, o fitOptions) ([]sessionColumn, int) {
 	order := restCutSequence(cols)
 	cut := 0
-	for cut < len(order) && tableWidth(renderTrimmed(sessions, cols, o)) > o.width {
+	for cut < len(order) && len(cols) > len(o.lead)+1 && tableWidth(renderTrimmed(sessions, cols, o)) > o.width {
 		name := order[cut]
 		cols = slices.DeleteFunc(slices.Clone(cols), func(c sessionColumn) bool { return c.fromRest && c.name == name })
 		cut++

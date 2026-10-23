@@ -164,7 +164,7 @@ func TestColumnsRestIsTheOnlyThingCutAtANarrowWidth(t *testing.T) {
 		}
 	}
 	// Nothing more is cut than the width needs: the last column cut would not
-	// have fit back in.
+	// have fit back in, measured the way the fit measures (cells trimmed).
 	if cut > 0 {
 		back := restCutOrder[cut-1]
 		var again []sessionColumn
@@ -173,7 +173,7 @@ func TestColumnsRestIsTheOnlyThingCutAtANarrowWidth(t *testing.T) {
 				again = append(again, c)
 			}
 		}
-		if w := widest(renderSessionTableCols([]api.Session{s}, again)); w <= 80 {
+		if w := widest(renderTrimmed([]api.Session{s}, again, fitOptions{})); w <= 80 {
 			t.Errorf("%s fits back in at %d wide, so it should not have been cut", back, w)
 		}
 	}
@@ -230,5 +230,43 @@ func TestColumnsRestIsReserved(t *testing.T) {
 	}
 	if !strings.Contains(validColumnNames(), "rest") {
 		t.Errorf("validColumnNames() = %q, want it to list rest", validColumnNames())
+	}
+}
+
+// A list of `rest` alone is cut to one column at the narrowest, never to a
+// blank table.
+func TestColumnsRestAloneStopsAtOneColumn(t *testing.T) {
+	s := fitSession("agent-0")
+	cols := columnsOrFatal(t, "rest", nil)
+	got := fitSessionTable([]api.Session{s}, cols, fitOptions{width: 3, explicit: true})
+	if n := len(fitHeaders(got.table)); n != 1 {
+		t.Errorf("%d columns at width 3, want 1:\n%s", n, got.table)
+	}
+	if got.hidden != len(cols)-1 {
+		t.Errorf("hidden = %d, want %d", got.hidden, len(cols)-1)
+	}
+	if got.warn == "" {
+		t.Error("the one column is wider than the terminal and no note printed")
+	}
+}
+
+// The screen get sessions prints cuts `rest` columns too, so the mark the fit
+// reads survives the step before it, and the hidden line counts them.
+func TestColumnsRestIsCutOnTheSessionsScreen(t *testing.T) {
+	s := fitSession("agent-0")
+	out := renderSessionsView([]api.Session{s}, columnsOrFatal(t, "name,llm,rest", nil), "", fitOptions{width: 80, explicit: true})
+	if w := widest(out); w > 80 {
+		t.Errorf("screen is %d wide, want at most 80:\n%s", w, out)
+	}
+	for _, kept := range []string{"AGENT NAME", "LLM"} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("%s missing from the screen:\n%s", kept, out)
+		}
+	}
+	if strings.Contains(out, "ACCT") {
+		t.Errorf("ACCT printed at 80, so no rest column was cut:\n%s", out)
+	}
+	if !strings.Contains(out, " columns hidden at this width\n") {
+		t.Errorf("no hidden-columns line:\n%s", out)
 	}
 }

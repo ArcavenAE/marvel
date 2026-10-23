@@ -119,7 +119,9 @@ pinned the ones they care about:
   name;
 - on a narrow terminal only its columns are cut, the ones outside
   `fitPriority` first and then the others from the tail of `fitPriority`; named
-  columns are never cut, and the hidden-columns line counts the cut ones.
+  columns are never cut, nor are the lead columns a view adds (the fan-out KEY
+  column), and the hidden-columns line counts the cut ones. A list of `rest`
+  alone is cut to one column at the narrowest.
 
 ### 4.2 Width
 
