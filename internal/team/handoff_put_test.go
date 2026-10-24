@@ -525,11 +525,17 @@ func TestPutHandoffRemovesItsFileWhenTheRequestChangesDuringTheWrite(t *testing.
 }
 
 // The removal is of the file the put placed and no other: if the path now holds
-// a different file, it stays.
+// a different file, it stays. The put's file is kept alive under a second name
+// while the path is replaced, so its inode stays allocated and the foreign file
+// gets a different one: on ext4 and overlayfs a freed inode number is handed to
+// the next file created, and the identity check could not tell the two apart.
 func TestPutHandoffLeavesAForeignFileAtThePathAlone(t *testing.T) {
 	f := newPutFixture(t, true)
 	f.ctrl.afterHandoffWrite = func() {
 		f.dropRequest()
+		if err := os.Link(f.path(), f.path()+".kept"); err != nil {
+			t.Error(err)
+		}
 		if err := os.Remove(f.path()); err != nil {
 			t.Error(err)
 		}
