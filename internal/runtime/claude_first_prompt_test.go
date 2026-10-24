@@ -12,8 +12,6 @@ import (
 // the trailing positional argument. A wrapper owns its own command line, so it
 // gets no positional and gets the same text in MARVEL_FIRST_PROMPT.
 
-const firstPromptEnv = "MARVEL_FIRST_PROMPT"
-
 func claudePromptCtx(command string, mode api.RuntimeMode, prompt string, args []string) *LaunchContext {
 	ctx := claudeCtx(command)
 	ctx.Session.Runtime.Mode = mode

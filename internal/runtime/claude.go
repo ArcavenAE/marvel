@@ -201,9 +201,23 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		}
 	}
 
-	// The request goes last, as the positional argument.
-	if headless {
+	// The request goes last, as the positional argument. An interactive seat
+	// takes the same positional as its first message (marvel#391, design
+	// docs/design/interactive-first-prompt.md D1, D4): claude starts the
+	// session and runs it as the first turn, and a resume flag earlier in the
+	// args still applies. Only the bare harness gets it on its command line.
+	// A wrapper owns its command line, and so does a command whose words cannot
+	// be read, so the text goes in MARVEL_FIRST_PROMPT for the wrapper to pass on.
+	firstPrompt := ""
+	switch {
+	case headless:
 		args = append(args, ctx.Session.Runtime.Prompt)
+	case ctx.Session.Runtime.Prompt == "":
+	case isBareClaude(binary) && readable:
+		args = append(args, ctx.Session.Runtime.Prompt)
+	default:
+		firstPrompt = ctx.Session.Runtime.Prompt
+		logLaunch("role %s: command is a wrapper or shell text; the first prompt is in %s, not on the command line", ctx.Role.Name, firstPromptEnv)
 	}
 
 	result := &LaunchResult{
@@ -211,6 +225,9 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		Env:                    baseEnv(ctx),
 		SettingSources:         settingSources,
 		SettingSourcesDelivery: delivery,
+	}
+	if firstPrompt != "" {
+		result.Env[firstPromptEnv] = firstPrompt
 	}
 	if headless && ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)
@@ -221,6 +238,11 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	}
 	return result, nil
 }
+
+// firstPromptEnv carries an interactive seat's first prompt to a wrapper that
+// owns its command line (design D4). The text is on the environment of the
+// seat's own user, as it is on argv, so it must never carry a secret.
+const firstPromptEnv = "MARVEL_FIRST_PROMPT"
 
 // isBareClaude reports whether a resolved runtime command launches the
 // Claude Code binary directly, by bare name or by path. Anything else
