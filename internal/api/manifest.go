@@ -187,6 +187,12 @@ type ManifestRole struct {
 	// per repository (docs/design/readonly-view.md section 2). Parsed into
 	// Role.Views.
 	Views []ManifestView `toml:"view,omitempty"                yaml:"views,omitempty"`
+	// Cadence declares periodic prompts for an interactive role
+	// (docs/design/declared-cadence.md V1). Parsed into Role.Cadence.
+	Cadence []ManifestCadence `toml:"cadence,omitempty"             yaml:"cadences,omitempty"`
+	// cadence is Cadence as validated at parse, so apply does not walk the
+	// year's slots a second time.
+	cadence []Cadence
 }
 
 // ManifestView is one [[team.role.view]] entry. The durations are strings
@@ -486,6 +492,11 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 					return nil, fmt.Errorf("parse manifest: %w", err)
 				}
 			}
+			cadences, err := validateCadences(t.Name, r, time.Now().UTC())
+			if err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
+			m.Teams[i].Roles[j].cadence = cadences
 			// Permissions maps verbatim to --permission-mode; an empty
 			// value means "unset" and is allowed, but a non-empty typo
 			// silently breaks the session, so reject it here. Orthogonal
@@ -1025,6 +1036,15 @@ func (m *Manifest) Apply(store *Store) error {
 				return fmt.Errorf("apply manifest: %w", err)
 			}
 			role.Views = views
+			cadences := mr.cadence
+			if cadences == nil {
+				// A manifest built in code and not parsed has not been validated.
+				cadences, err = validateCadences(mt.Name, mr, time.Now().UTC())
+				if err != nil {
+					return fmt.Errorf("apply manifest: %w", err)
+				}
+			}
+			role.Cadence = cadences
 			if mr.Schedule != nil {
 				sched, err := mr.Schedule.policy()
 				if err != nil {

@@ -166,6 +166,7 @@ func cloneRole(r Role) Role {
 		out.Shift = &sp
 	}
 	out.Views = slices.Clone(r.Views)
+	out.Cadence = slices.Clone(r.Cadence)
 	if r.Schedule != nil {
 		sc := *r.Schedule
 		if r.Schedule.History != nil {

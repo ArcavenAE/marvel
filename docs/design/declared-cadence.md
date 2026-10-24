@@ -59,12 +59,14 @@ seat, and be visible when a slot is missed. That is what this design does.
 ## 3. Design (voted 5 of 5 on every item)
 
 - **V1. Declaration.** A role carries `[[team.role.cadence]]` with `name`,
-  `schedule` (5-field cron), `timezone` (IANA, required), `prompt`,
+  `schedule` (5-field cron), `timezone` (an IANA zone or a fixed offset such
+  as `-06:00`, required; `Local` is refused, as for `schedule`), `prompt`,
   `starting_deadline` and `grace`. It is set, changed and cancelled only by
   applying a manifest; no seat can. Apply refuses a cadence unless
   1m <= starting_deadline <= grace < period, where period is the shortest gap
   between two consecutive slots over the next 366 days in the declared
-  timezone. marvel serves the cadence it applied, never a file on disk.
+  timezone. A schedule with fewer than two slots in that window has no period
+  and is refused. marvel serves the cadence it applied, never a file on disk.
 - **V2. marvel owns the slot.** The schedule clock, extended to interactive
   roles, opens one slot record per cadence per due time, and only marvel
   writes slot records. A slot missed while the daemon was down fires at most
