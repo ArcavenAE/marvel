@@ -96,6 +96,7 @@ func lastWorked(s api.Session) time.Time {
 func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, age time.Duration, stage string, now time.Time) {
 	text := handoffNotice
 	dirError := ""
+	var dirDev, dirIno uint64
 	if role.Shift.Handoff != "" {
 		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
 			text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault())
@@ -106,6 +107,11 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 			// the missing reason.
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				dirError = fmt.Sprintf("create handoff directory: %v", err)
+			} else if dev, ino, err := dirIdentity(filepath.Dir(path)); err == nil {
+				// Recorded for handoff.put, which writes only into this same
+				// directory. Not a refusal here: a seat that writes its own
+				// file is unaffected by what the path resolves through.
+				dirDev, dirIno = dev, ino
 			}
 		}
 	}
@@ -119,7 +125,7 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		delivery = fmt.Sprintf("not delivered (%s)", undelivered)
 	}
 
-	req := api.ShiftRequest{Session: sess.Key(), Cause: cond.On, RequestedAt: now, NoticeUndelivered: undelivered, DirError: dirError}
+	req := api.ShiftRequest{Session: sess.Key(), Cause: cond.On, RequestedAt: now, NoticeUndelivered: undelivered, DirError: dirError, DirDev: dirDev, DirIno: dirIno}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		if live.ShiftRequests == nil {
 			live.ShiftRequests = make(map[string]api.ShiftRequest)

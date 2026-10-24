@@ -72,7 +72,7 @@ func handoffDaemon(t *testing.T) (*Daemon, string, string, string) {
 	if err := store.UpdateTeam("ws/squad", func(live *api.Team) error {
 		live.ShiftRequests = map[string]api.ShiftRequest{"worker": {
 			Session: sess.Key(), Cause: api.ShiftTriggerMaxAge, RequestedAt: time.Now().UTC(),
-			DirDev: uint64(st.Dev), DirIno: uint64(st.Ino),
+			DirDev: uint64(st.Dev), DirIno: st.Ino, //nolint:unconvert // Dev is int32 on darwin
 		}}
 		return nil
 	}); err != nil {

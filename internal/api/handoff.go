@@ -1,5 +1,10 @@
 package api
 
+// MaxHandoffPutBytes caps the text one handoff.put may carry. The tail read
+// that finds the marker holds 4 KiB, so 64 KiB is several times what a handoff
+// needs; a larger put is refused, never truncated.
+const MaxHandoffPutBytes = 64 << 10
+
 // HandoffPutRequest is the handoff.put RPC's wire shape, shared by the CLI
 // that sends it and the daemon that consumes it. It names no session: the
 // token is the identity, so a caller cannot write a handoff for another seat

@@ -126,7 +126,7 @@ func TestRequestHandoffRecordsTheDirectoryIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := f.req()
-	if req.DirIno == 0 || req.DirIno != uint64(st.Ino) || req.DirDev != uint64(st.Dev) {
+	if req.DirIno == 0 || req.DirIno != st.Ino || req.DirDev != uint64(st.Dev) { //nolint:unconvert // Dev is int32 on darwin
 		t.Fatalf("request identity = (dev %d, ino %d), want (dev %d, ino %d)", req.DirDev, req.DirIno, st.Dev, st.Ino)
 	}
 }

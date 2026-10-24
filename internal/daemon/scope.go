@@ -123,6 +123,11 @@ var localOnlyMethods = map[string]bool{
 	// broker.token returns a bearer token, so like a revealed credential it
 	// never leaves through the mrvl:// tunnel.
 	"broker.token": true,
+	// handoff.put writes a file on the daemon host on a seat's behalf. The
+	// heartbeat token alone decides whose handoff it is, and every seat holds
+	// the local socket, so this is the narrowest grant: not the tunnel, and not
+	// a credential-push key (docs/design/read-only-seat-handoff.md, section 2).
+	"handoff.put": true,
 }
 
 // methodRequiresLocal reports whether method may be called only from the local

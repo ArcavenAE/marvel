@@ -483,6 +483,8 @@ var allKinds = []Kind{
 	KindShiftAutoTriggered,
 	KindShiftHandoffRequested,
 	KindShiftHandoffMissing,
+	KindHandoffPut,
+	KindHandoffPutRefused,
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
 	KindRoleSaturated,
