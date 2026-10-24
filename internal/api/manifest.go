@@ -689,6 +689,12 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 	return out
 }
 
+// FirstPromptAdvisories lists the interactive roles whose first prompt will not
+// happen as declared (marvel#391, docs/design/interactive-first-prompt.md D6).
+func (m *Manifest) FirstPromptAdvisories() []string {
+	return nil
+}
+
 // ValidateRuntimes checks that each role's runtime command (and script,
 // if set) actually resolves on the daemon's host before the manifest
 // is applied. Returns an aggregated error listing every missing binary
