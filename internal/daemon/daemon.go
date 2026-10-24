@@ -1137,6 +1137,7 @@ var startingMethods = map[string]bool{
 	"logs":            true,
 	"events":          true,
 	"bus.status":      true,
+	"bus.audit":       true,
 	"orphans":         true,
 	"credential.list": true,
 	MethodVersion:     true,
@@ -1211,6 +1212,8 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleBackendVerify(req.Params)
 	case "bus.status":
 		return d.handleBusStatus()
+	case "bus.audit":
+		return d.handleBusAudit(req.Params)
 	case "daemon.status":
 		return d.handleDaemonStatus()
 	case "suspend.status":

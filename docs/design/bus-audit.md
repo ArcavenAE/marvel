@@ -1,7 +1,7 @@
 # marvel bus audit: read one audit record, on any cluster
 
-Status: design for review, 2026-10-20. Owner: the architect role. Docs only;
-nothing is built by this document.
+Status: design for review, 2026-10-20. Owner: the architect role. Built in
+#1051 (operator go, 2026-10-24); this document itself changes nothing.
 
 A send that is refused or fails on a cluster's bus leaves a numbered record
 in that broker's `AGENT_AUDIT` stream, and the sender is told the number. On
@@ -126,10 +126,13 @@ envelope:
     bytes.
   - `-o json` is `encoding/json` output, then the same `escapeInStrings`
     pass.
-  - The daemon's error text, printed on stderr, is plain text, not JSON, so
-    it goes through `escapeAll`, which rewrites every rejected rune in the
-    text, a newline included, as `\uXXXX`; the CLI then ends the line with
-    its own newline. A broker message cannot carry a raw control either.
+  - The daemon's error text, printed on stderr, is plain text, not JSON.
+    `send` already passes every daemon error through `drawn`, for every
+    command, which replaces each control and format character, a newline
+    included, with U+FFFD. The command then passes it through `escapeAll`,
+    which writes any other rune `strconv.IsPrint` rejects as `\uXXXX`, and
+    the CLI ends the line with its own newline. A broker message cannot
+    carry a raw control either.
 - Exit 0 on a record, 1 on any refusal or miss, with the daemon's text on
   stderr.
 
@@ -206,8 +209,13 @@ harness, under the `TestMain` home guard, a scratch `TMPDIR` and no
    the error must be the argument text, not a dial error).
 8. CLI: for each of U+001B, U+0085, U+009B, U+202A, U+202B, U+202C, U+202D,
    U+202E, U+2066, U+2067, U+2068, U+2069, U+200E, U+200F and U+061C, a body
-   carrying it, a non-JSON body carrying it, a header carrying it and a
-   daemon error carrying it each print with the rune written as `\uXXXX`.
+   carrying it, a non-JSON body carrying it and a header carrying it each
+   print with the rune written as `\uXXXX`, and a daemon error carrying it
+   prints with the rune replaced by U+FFFD and no raw byte of the rune left.
+   The daemon error reaches the command already filtered: `send` replaces
+   every control and format character in a daemon error with U+FFFD for
+   every command (`drawn`, `cmd/marvel/undrawable.go`), and `escapeAll` then
+   writes any other rune `strconv.IsPrint` rejects as `\uXXXX`.
    The check reads the printed bytes and fails on the rune's raw UTF-8 bytes,
    in both the line output and `-o json`. A rune above U+FFFF that IsPrint
    rejects (U+E0001) prints as a surrogate pair. For every rune case, in a
