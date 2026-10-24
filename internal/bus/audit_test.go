@@ -131,34 +131,37 @@ func TestReadAuditRecordNamesEachMiss(t *testing.T) {
 	_, err := h.read(1)
 	wantMiss(t, err, AuditEmpty, 1, 0, 0)
 
+	// The provisioning write probe may have used the first numbers, so the
+	// test works from the numbers the broker hands back.
+	var s []uint64
 	for i := 0; i < 5; i++ {
-		h.publish(t, nil, "r")
+		s = append(s, h.publish(t, nil, "r"))
 	}
 	st := h.stream(t)
 	// A number past the last record.
-	_, err = h.read(6)
-	wantMiss(t, err, AuditPastEnd, 6, 1, 5)
+	_, err = h.read(s[4] + 1)
+	wantMiss(t, err, AuditPastEnd, s[4]+1, s[0], s[4])
 
 	// A number inside the range with no message: deleted, never aged out and
 	// never past the end.
-	if err := st.DeleteMsg(context.Background(), 3); err != nil {
+	if err := st.DeleteMsg(context.Background(), s[2]); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.read(3)
-	wantMiss(t, err, AuditGap, 3, 1, 5)
+	_, err = h.read(s[2])
+	wantMiss(t, err, AuditGap, s[2], s[0], s[4])
 
 	// Deleting from the front moves the first sequence.
-	for _, n := range []uint64{1, 2} {
+	for _, n := range s[:2] {
 		if err := st.DeleteMsg(context.Background(), n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, err = h.read(2)
-	wantMiss(t, err, AuditAgedOut, 2, 4, 5)
+	_, err = h.read(s[1])
+	wantMiss(t, err, AuditAgedOut, s[1], s[3], s[4])
 
 	// The records that remain still read.
-	if _, err := h.read(4); err != nil {
-		t.Errorf("seq 4: %v", err)
+	if _, err := h.read(s[3]); err != nil {
+		t.Errorf("seq %d: %v", s[3], err)
 	}
 }
 

@@ -223,6 +223,9 @@ func TestBusAuditDaemonErrorExitsOneOnOneLine(t *testing.T) {
 
 func TestBusAuditClusterFlagGoesThroughSend(t *testing.T) {
 	resolveFixture(t, false)
+	// The root command records that --cluster was given in a package variable.
+	oldGiven := clusterFlagGiven
+	t.Cleanup(func() { clusterFlagGiven = oldGiven })
 	code, _, stderr := runBusAudit(t, "1", "--cluster", "")
 	if code != 1 || !strings.Contains(stderr, "--cluster needs a cluster name") {
 		t.Errorf("exit = %d, stderr = %q, want the shared --cluster refusal", code, stderr)

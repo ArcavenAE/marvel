@@ -106,7 +106,7 @@ func TestEscapedJSONBodyKeepsStructureInKeyValueAndNested(t *testing.T) {
 		var generic any
 		_ = json.Unmarshal(js.Bytes(), &generic)
 		re, _ := json.MarshalIndent(generic, "", "  ")
-		if a, b := bytes.Count(js.Bytes(), []byte("\n")), bytes.Count(re, []byte("\n")); a != b {
+		if a, b := bytes.Count(bytes.TrimRight(js.Bytes(), "\n"), []byte("\n")), bytes.Count(re, []byte("\n")); a != b {
 			t.Errorf("U+%04X: -o json has %d newlines, the indented form has %d", r, a, b)
 		}
 	}
@@ -173,8 +173,10 @@ func TestEscapedHeadersPrintOnOneLine(t *testing.T) {
 			t.Errorf("%s printed on %d lines", key, lines)
 		}
 	}
-	if strings.Contains(out.String(), "second\n") || strings.Contains(out.String(), "b\n") {
-		t.Errorf("a header newline reached the output raw:\n%q", out.String())
+	// seq, time, subject, outcome, stage, refusal, msg_id, envelope:, then the
+	// three lines of the indented body: a raw header newline would add one.
+	if n := strings.Count(out.String(), "\n"); n != 11 {
+		t.Errorf("output has %d lines, want 11:\n%q", n, out.String())
 	}
 }
 

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -105,25 +106,32 @@ func TestBusAuditMissesEachSayTheirOwnThing(t *testing.T) {
 	if resp := auditCall(d, 1); resp.Error != "AGENT_AUDIT holds no records" {
 		t.Errorf("empty stream: %q", resp.Error)
 	}
+	// The provisioning write probe may have used the first numbers, so the
+	// test works from the numbers the broker hands back.
+	var q []uint64
 	for i := 0; i < 5; i++ {
-		publishAudit(t, js, nil, "r")
+		q = append(q, publishAudit(t, js, nil, "r"))
 	}
-	if resp := auditCall(d, 6); resp.Error != "seq 6 is past the last record, 5; check the number came from this cluster's audit line" {
-		t.Errorf("past the end: %q", resp.Error)
+	first, last := q[0], q[4]
+	want := fmt.Sprintf("seq %d is past the last record, %d; check the number came from this cluster's audit line", last+1, last)
+	if resp := auditCall(d, last+1); resp.Error != want {
+		t.Errorf("past the end: %q, want %q", resp.Error, want)
 	}
-	if err := st.DeleteMsg(context.Background(), 3); err != nil {
+	if err := st.DeleteMsg(context.Background(), q[2]); err != nil {
 		t.Fatal(err)
 	}
-	if resp := auditCall(d, 3); resp.Error != "seq 3 was deleted or purged; AGENT_AUDIT holds 1 to 5 with gaps" {
-		t.Errorf("inside the range: %q", resp.Error)
+	want = fmt.Sprintf("seq %d was deleted or purged; AGENT_AUDIT holds %d to %d with gaps", q[2], first, last)
+	if resp := auditCall(d, q[2]); resp.Error != want {
+		t.Errorf("inside the range: %q, want %q", resp.Error, want)
 	}
-	for _, n := range []uint64{1, 2} {
+	for _, n := range q[:2] {
 		if err := st.DeleteMsg(context.Background(), n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if resp := auditCall(d, 2); resp.Error != "seq 2 has aged out; AGENT_AUDIT holds 4 to 5" {
-		t.Errorf("below the first: %q", resp.Error)
+	want = fmt.Sprintf("seq %d has aged out; AGENT_AUDIT holds %d to %d", q[1], q[3], last)
+	if resp := auditCall(d, q[1]); resp.Error != want {
+		t.Errorf("below the first: %q, want %q", resp.Error, want)
 	}
 	if resp := auditCall(d, 0); resp.Error == "" || strings.Contains(resp.Error, "AGENT_AUDIT") {
 		t.Errorf("seq 0: %q, want a refusal of the number", resp.Error)
