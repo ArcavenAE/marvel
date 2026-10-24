@@ -145,6 +145,9 @@ func TestCadenceRefusals(t *testing.T) {
 		{name: "no timezone", over: map[string]string{"timezone": ""}, want: "timezone is required"},
 		{name: "an unknown zone", over: map[string]string{"timezone": `"Mars/Olympus"`}, want: "timezone"},
 		{name: "no name", over: map[string]string{"name": ""}, want: "name is required"},
+		{name: "a name with a space", over: map[string]string{"name": `"morning sweep"`}, want: "letters, digits"},
+		{name: "a name with a slash", over: map[string]string{"name": `"a/b"`}, want: "letters, digits"},
+		{name: "a name with a non-ASCII letter", over: map[string]string{"name": `"s\u00fcp"`}, want: "letters, digits"},
 		{name: "no prompt", over: map[string]string{"prompt": ""}, want: "prompt is required"},
 		{name: "a bad cron", over: map[string]string{"schedule": `"every day"`}, want: "five fields"},
 		{name: "no schedule", over: map[string]string{"schedule": ""}, want: "schedule is required"},
@@ -190,6 +193,7 @@ func TestCadenceAcceptsTheEdges(t *testing.T) {
 		name string
 		over map[string]string
 	}{
+		{name: "a name of letters, digits, dash and underscore", over: map[string]string{"name": `"Sweep-2_a"`}},
 		{name: "starting_deadline of exactly one minute", over: map[string]string{"starting_deadline": `"1m"`}},
 		{name: "starting_deadline equal to grace", over: map[string]string{"starting_deadline": `"30m"`}},
 		{name: "grace just under the period", over: map[string]string{"grace": `"119m"`}},
