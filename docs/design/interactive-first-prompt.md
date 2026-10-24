@@ -171,15 +171,53 @@ Probes, each recording the harness version it ran against:
 
 ## 7. Rulings needed (the operator's)
 
-1. Adopt D1 to D8 and the plan. Recommended: adopt.
-2. The successor prompt is on by default, with an opt-out (D2, D3), rather than
-   off by default with an opt-in. Recommended: on by default, because the
-   failure it fixes is silent and fleet-wide.
-3. Apply warns rather than refuses (D6, and D5's skipped resume forms).
-   Recommended: warn now. A later refusal would be a new gate and needs its
-   own ratified decision; revisit it once every live manifest is clean.
+**Re-checked 2026-10-24**, after the 2026-10-21 expiry passed with no
+re-check. The checks were read only: each harness's version and `--help` on
+the host where the re-check ran, plus marvel main and #1046. No harness was
+launched, so none of P1 to P4 has run.
 
-Each recommendation is valid until 2026-10-21, or a Claude Code, codex or
-opencode release that changes how a first message is taken at launch,
-whichever comes first; the architect seat that wrote this re-checks it then.
-Nothing here executes on silence.
+| harness | pinned in this design | on the re-check host | launch surface, by its help |
+|---|---|---|---|
+| claude | 2.1.292 | 2.1.310 | unchanged: `claude [options] [command] [prompt]`, `-c`/`--continue`, `-r`/`--resume [value]` |
+| codex | 0.160.1 | 0.154.0 (older) | unchanged: `codex [OPTIONS] [PROMPT]`; `codex resume [OPTIONS] [SESSION_ID] [PROMPT]` with `--last` |
+| opencode | 1.18.15 | 1.18.31 | unchanged: TUI `--prompt`, `-s`/`--session`, `-c`/`--continue` |
+
+So no release seen here changes the command-line form that section 2 and D5
+rest on. Help text cannot show whether a first message is submitted, or
+whether it survives a dialog; that is still P1 to P3. One pin no longer holds
+everywhere: D5's codex `resume --last <prompt>` reading came from the
+`rust-v0.160.1` source, and a host on codex 0.154.0 is not covered by it.
+
+The operator's go to build this design (2026-10-24, relayed by director) is
+read here as answering ruling 1 only. Rulings 2 and 3 are still the operator's
+and are restated below.
+
+1. **Adopt D1 to D8 and the plan.** Renewed, revised. Recommended: adopt,
+   with two revisions to the plan's order:
+   - T1 is in review ahead of P1 (#1046). It may merge on the claim it makes,
+     that marvel puts the role's prompt on the claude command line; it may not
+     be read as "the seat takes a turn" until P1 runs on claude 2.1.310 or
+     later.
+   - P2 records the codex version of the seats it covers, and runs on each
+     codex version the fleet's interactive seats use. Until P2 covers a
+     version, T7's codex `resume --last` case for that version is unmeasured.
+
+2. **The successor prompt is on by default, with an opt-out (D2, D3).**
+   Renewed, unchanged. Recommended: on by default. The failure it fixes, a
+   successor idling until a person types, is silent and fleet-wide, and
+   nothing in the re-check changes that. Needed before T4 merges.
+
+3. **Apply warns rather than refuses (D6, and D5's skipped resume forms).**
+   Renewed, unchanged. Recommended: warn now. A refusal would be a new gate
+   and needs its own ratified decision; revisit it once every live manifest
+   is clean. Needed before T5 merges.
+
+Each recommendation is valid until 2026-11-07, or until one of these,
+whichever comes first:
+
+- P1, P2 or P3 reports;
+- a claude, codex or opencode release on a fleet host whose `--help` changes
+  the launch forms in the table above.
+
+The architect seat of the team building this design re-checks them then, and
+renews, revises or withdraws each. Nothing here executes on silence.
