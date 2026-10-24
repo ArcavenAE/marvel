@@ -104,6 +104,35 @@ func (f *putFixture) count(kind events.Kind) int {
 	return len(f.ring.Snapshot(events.Filter{Kind: kind}, 0))
 }
 
+// setState changes the fixture session's state and ending mark in place.
+func (f *putFixture) setState(state api.SessionState, ending bool) {
+	f.t.Helper()
+	if err := f.store.UpdateSession(f.sess.Key(), func(s *api.Session) error {
+		s.State, s.Ending = state, ending
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// replaceSession puts a new running session under the fixture session's key,
+// as a health restart does, created at createdAt and holding a new token, and
+// returns that token.
+func (f *putFixture) replaceSession(createdAt time.Time) string {
+	f.t.Helper()
+	if err := f.store.DeleteSession(f.sess.Key()); err != nil {
+		f.t.Fatal(err)
+	}
+	tok, hash, err := api.NewHeartbeatToken()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	repl := f.sess
+	repl.CreatedAt, repl.HeartbeatToken, repl.HeartbeatTokenHash = createdAt, tok, hash
+	seedSession(f.t, f.store, repl)
+	return tok
+}
+
 // entries lists the handoff directory, so a test can see that a refusal left
 // nothing behind, a temporary file included.
 func entries(t *testing.T, dir string) []string {
@@ -227,6 +256,24 @@ func TestPutHandoffRefusals(t *testing.T) {
 				f.t.Fatal(err)
 			}
 			return f.token, "x"
+		}, ErrHandoffNotRequested},
+		{"a session that is pending, not running", func(f *putFixture) (string, string) {
+			f.setState(api.SessionPending, false)
+			return f.token, "x"
+		}, ErrHandoffNotRequested},
+		{"a session in crashloop backoff, not running", func(f *putFixture) (string, string) {
+			f.setState(api.SessionCrashLoopBackOff, false)
+			return f.token, "x"
+		}, ErrHandoffNotRequested},
+		{"a session marked ending", func(f *putFixture) (string, string) {
+			f.setState(api.SessionRunning, true)
+			return f.token, "x"
+		}, ErrHandoffNotRequested},
+		{"a replacement created after the request, under the same key", func(f *putFixture) (string, string) {
+			return f.replaceSession(listEpoch.Add(time.Minute)), "x"
+		}, ErrHandoffNotRequested},
+		{"a replacement created at the instant of the request", func(f *putFixture) (string, string) {
+			return f.replaceSession(listEpoch), "x"
 		}, ErrHandoffNotRequested},
 		{"a request recorded with no directory identity", func(f *putFixture) (string, string) {
 			if err := f.store.UpdateTeam(f.team, func(live *api.Team) error {
@@ -395,5 +442,105 @@ func TestPutHandoffRefusesATargetThatIsADirectory(t *testing.T) {
 	}
 	if _, err := f.ctrl.PutHandoff(f.token, "x"); !errors.Is(err, ErrHandoffDir) {
 		t.Fatalf("err = %v, want ErrHandoffDir", err)
+	}
+}
+
+// The file is written off the controller lock (marvel#444). The hook runs
+// between the write and the re-check, where the lock must be free.
+func TestPutHandoffWritesWithoutHoldingTheControllerLock(t *testing.T) {
+	f := newPutFixture(t, true)
+	held := false
+	f.ctrl.afterHandoffWrite = func() {
+		if !f.ctrl.mu.TryLock() {
+			held = true
+			return
+		}
+		f.ctrl.mu.Unlock()
+	}
+	if _, err := f.ctrl.PutHandoff(f.token, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if held {
+		t.Fatal("the controller lock was held across the file write")
+	}
+}
+
+func (f *putFixture) dropRequest() {
+	f.t.Helper()
+	if err := f.store.UpdateTeam(f.team, func(live *api.Team) error {
+		delete(live.ShiftRequests, testShiftRole)
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// A request dropped, replaced or escalated while the file was being written
+// has its file removed again, so a put that is refused leaves no marker.
+func TestPutHandoffRemovesItsFileWhenTheRequestChangesDuringTheWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(f *putFixture)
+		want   error
+	}{
+		{"dropped", func(f *putFixture) { f.dropRequest() }, ErrHandoffNotRequested},
+		{"escalated", func(f *putFixture) {
+			if err := f.store.UpdateTeam(f.team, func(live *api.Team) error {
+				r := live.ShiftRequests[testShiftRole]
+				r.Escalated = true
+				live.ShiftRequests[testShiftRole] = r
+				return nil
+			}); err != nil {
+				f.t.Fatal(err)
+			}
+		}, ErrHandoffNotRequested},
+		{"asked again at another time", func(f *putFixture) {
+			if err := f.store.UpdateTeam(f.team, func(live *api.Team) error {
+				r := live.ShiftRequests[testShiftRole]
+				r.RequestedAt = r.RequestedAt.Add(time.Minute)
+				live.ShiftRequests[testShiftRole] = r
+				return nil
+			}); err != nil {
+				f.t.Fatal(err)
+			}
+		}, ErrHandoffNotRequested},
+		// The old token no longer identifies any session, so this is refused as
+		// unauthorized: the replacement holds a new token.
+		{"seat replaced", func(f *putFixture) { f.replaceSession(listEpoch.Add(time.Minute)) }, ErrHandoffUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPutFixture(t, true)
+			f.ctrl.afterHandoffWrite = func() { tc.change(f) }
+			if _, err := f.ctrl.PutHandoff(f.token, "x"); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if left := entries(t, f.dir); len(left) != 0 {
+				t.Fatalf("a refused put left %v behind", left)
+			}
+			if f.count(events.KindHandoffPutRefused) != 1 || f.count(events.KindHandoffPut) != 0 {
+				t.Fatalf("events: refused %d, put %d, want 1 and 0", f.count(events.KindHandoffPutRefused), f.count(events.KindHandoffPut))
+			}
+		})
+	}
+}
+
+// The removal is of the file the put placed and no other: if the path now holds
+// a different file, it stays.
+func TestPutHandoffLeavesAForeignFileAtThePathAlone(t *testing.T) {
+	f := newPutFixture(t, true)
+	f.ctrl.afterHandoffWrite = func() {
+		f.dropRequest()
+		if err := os.Remove(f.path()); err != nil {
+			t.Error(err)
+		}
+		if err := os.WriteFile(f.path(), []byte("not marvel's"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := f.ctrl.PutHandoff(f.token, "x"); !errors.Is(err, ErrHandoffNotRequested) {
+		t.Fatalf("err = %v, want ErrHandoffNotRequested", err)
+	}
+	if b, _ := os.ReadFile(f.path()); string(b) != "not marvel's" {
+		t.Fatalf("the file at the path = %q, want it left alone", b)
 	}
 }

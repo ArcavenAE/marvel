@@ -66,7 +66,10 @@ func dirIdentity(dir string) (dev, ino uint64, err error) {
 // other. The write gate has four parts, and a put is refused, with an event
 // naming the reason, unless all hold:
 //
-//  1. The token is bound and matches a session. The request names no session.
+//  1. The token is bound and matches a session that is running, not ending,
+//     and was created before the request it holds (the rule the shift path and
+//     the store's write-authority lookup already use). The request names no
+//     session.
 //  2. That session holds the role's pending request (one per role), not
 //     escalated.
 //  3. The path comes from the role's declared template and the stored session,
@@ -75,35 +78,108 @@ func dirIdentity(dir string) (dev, ino uint64, err error) {
 //     the one recorded when marvel asked: checked on the opened handle, so a
 //     swap after the check cannot redirect the write.
 //
-// Same-uid seats are not isolated from each other by marvel; the residuals are
-// stated in the design (section 2). The text is capped, never truncated.
+// The file is written off the controller lock (marvel#444: a slow filesystem
+// must not stall every team). The request is checked under the lock before the
+// write and again after it; a request that was dropped, replaced or escalated
+// in between has its file removed again and the put is refused. Same-uid seats
+// are not isolated from each other by marvel; the residuals are stated in the
+// design (section 2). The text is capped, never truncated.
 func (c *Controller) PutHandoff(token, text string) (HandoffPut, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	sess, got, err := c.putHandoffLocked(token, text)
+	plan, err := c.planHandoffPutLocked(token, text)
+	c.mu.Unlock()
 	if err != nil {
-		c.emitPutRefused(sess, err)
+		c.emitPutRefused(plan.sess, err)
 		return HandoffPut{}, err
 	}
-	return got, nil
+
+	ident, err := writeHandoffFile(plan.path, plan.req, plan.body)
+	if err != nil {
+		c.emitPutRefused(plan.sess, err)
+		return HandoffPut{}, err
+	}
+	if c.afterHandoffWrite != nil {
+		c.afterHandoffWrite()
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.recheckHandoffPutLocked(token, plan); err != nil {
+		removeHandoffFile(plan.path, ident)
+		c.emitPutRefused(plan.sess, err)
+		return HandoffPut{}, err
+	}
+	now := c.nowUTC()
+	if err := c.store.UpdateTeam(plan.teamKey, func(live *api.Team) error {
+		if r, ok := live.ShiftRequests[plan.role]; ok && r.Session == plan.sess.Key() {
+			r.PutAt = now
+			live.ShiftRequests[plan.role] = r
+		}
+		return nil
+	}); err != nil {
+		// The file is written and is what the shift reads; only the receipt
+		// stamp is lost.
+		log.Printf("handoff.put: %s: record receipt: %v", plan.sess.Key(), err)
+	}
+	events.Emit(c.Events, events.Event{
+		Kind:       events.KindHandoffPut,
+		Severity:   events.SeverityInfo,
+		Workspace:  plan.sess.Workspace,
+		Team:       plan.sess.Team,
+		Role:       plan.role,
+		Session:    plan.sess.Key(),
+		Generation: plan.generation,
+		Message:    fmt.Sprintf("session %s handed off through the daemon: %d bytes to %s, requested %s", plan.sess.Key(), len(plan.body), plan.path, plan.req.RequestedAt.Format("2006-01-02T15:04:05Z07:00")),
+	})
+	return HandoffPut{Path: plan.path, Bytes: len(plan.body)}, nil
 }
 
-func (c *Controller) putHandoffLocked(token, text string) (api.Session, HandoffPut, error) {
+// handoffPutPlan is what the checks under the lock decide: whose handoff, for
+// which request, where it goes and what it holds.
+type handoffPutPlan struct {
+	sess       api.Session
+	teamKey    string
+	role       string
+	generation int64
+	req        api.ShiftRequest
+	path, body string
+}
+
+// liveSessionForPut is the gate's liveness rule: the session the token was
+// minted for is running, not ending, and was created before the request, so a
+// health restart that replaced the seat asked (same key, new token) cannot
+// write the handoff of the one that was. It is the rule the store applies to
+// write authority (AuthenticateLiveSession) and shift_handoff.go applies to a
+// pending request.
+func (c *Controller) liveSessionForPut(token string, req *api.ShiftRequest) (api.Session, error) {
 	sess, err := c.store.SessionByHeartbeatToken(token)
 	if err != nil {
-		return api.Session{}, HandoffPut{}, ErrHandoffUnauthorized
+		return api.Session{}, ErrHandoffUnauthorized
 	}
-	if !sess.State.CountsAsAlive() {
-		return sess, HandoffPut{}, fmt.Errorf("%w: session %s is %s", ErrHandoffNotRequested, sess.Key(), sess.State)
+	live, err := c.store.AuthenticateLiveSession(sess.Key(), token)
+	if err != nil {
+		return sess, fmt.Errorf("%w: session %s is %s and not running", ErrHandoffNotRequested, sess.Key(), sess.State)
 	}
+	if req != nil && !live.CreatedAt.Before(req.RequestedAt) {
+		return live, fmt.Errorf("%w: session %s was created at or after the request, so it is not the seat asked", ErrHandoffNotRequested, live.Key())
+	}
+	return live, nil
+}
+
+func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, error) {
+	sess, err := c.liveSessionForPut(token, nil)
+	if err != nil {
+		return handoffPutPlan{sess: sess}, err
+	}
+	plan := handoffPutPlan{sess: sess}
 	if strings.TrimSpace(text) == "" || len(text) > MaxHandoffPutBytes {
-		return sess, HandoffPut{}, fmt.Errorf("%w: %d bytes, limit %d", ErrHandoffTooLarge, len(text), MaxHandoffPutBytes)
+		return plan, fmt.Errorf("%w: %d bytes, limit %d", ErrHandoffTooLarge, len(text), MaxHandoffPutBytes)
 	}
 
 	teamKey := sess.Workspace + "/" + sess.Team
 	t, err := c.store.GetTeam(teamKey)
 	if err != nil {
-		return sess, HandoffPut{}, fmt.Errorf("%w: team %s: %v", ErrHandoffNotRequested, teamKey, err)
+		return plan, fmt.Errorf("%w: team %s: %v", ErrHandoffNotRequested, teamKey, err)
 	}
 	var role *api.Role
 	for i := range t.Roles {
@@ -113,48 +189,43 @@ func (c *Controller) putHandoffLocked(token, text string) (api.Session, HandoffP
 		}
 	}
 	if role == nil {
-		return sess, HandoffPut{}, fmt.Errorf("%w: role %s is not in team %s", ErrHandoffNotRequested, sess.Role, teamKey)
+		return plan, fmt.Errorf("%w: role %s is not in team %s", ErrHandoffNotRequested, sess.Role, teamKey)
 	}
 	req, ok := t.ShiftRequests[role.Name]
 	if !ok || req.Session != sess.Key() || req.Escalated {
-		return sess, HandoffPut{}, fmt.Errorf("%w: role %s", ErrHandoffNotRequested, role.Name)
+		return plan, fmt.Errorf("%w: role %s", ErrHandoffNotRequested, role.Name)
+	}
+	if _, err := c.liveSessionForPut(token, &req); err != nil {
+		return plan, err
 	}
 	if role.Shift == nil || role.Shift.Handoff == "" || role.Shift.HandoffMarker == "" {
-		return sess, HandoffPut{}, fmt.Errorf("%w: role %s", ErrHandoffNoPath, role.Name)
+		return plan, fmt.Errorf("%w: role %s", ErrHandoffNoPath, role.Name)
 	}
 	path, err := handoffPath(role.Shift.Handoff, sess)
 	if err != nil {
-		return sess, HandoffPut{}, fmt.Errorf("%w: %v", ErrHandoffNoPath, err)
+		return plan, fmt.Errorf("%w: %v", ErrHandoffNoPath, err)
 	}
+	plan.teamKey, plan.role, plan.generation, plan.req = teamKey, role.Name, t.Generation, req
+	plan.path, plan.body = path, handoffBody(text, role.Shift.HandoffMarker)
+	return plan, nil
+}
 
-	body := handoffBody(text, role.Shift.HandoffMarker)
-	if err := writeHandoffFile(path, req, body); err != nil {
-		return sess, HandoffPut{}, err
+// recheckHandoffPutLocked confirms, after the write, that the request the file
+// was written for still stands: the same request is pending and not escalated,
+// and the same session still holds it and is live.
+func (c *Controller) recheckHandoffPutLocked(token string, plan handoffPutPlan) error {
+	t, err := c.store.GetTeam(plan.teamKey)
+	if err != nil {
+		return fmt.Errorf("%w: team %s: %v", ErrHandoffNotRequested, plan.teamKey, err)
 	}
-
-	now := c.nowUTC()
-	if err := c.store.UpdateTeam(teamKey, func(live *api.Team) error {
-		if r, ok := live.ShiftRequests[role.Name]; ok && r.Session == sess.Key() {
-			r.PutAt = now
-			live.ShiftRequests[role.Name] = r
-		}
-		return nil
-	}); err != nil {
-		// The file is written and is what the shift reads; only the receipt
-		// stamp is lost.
-		log.Printf("handoff.put: %s: record receipt: %v", sess.Key(), err)
+	req, ok := t.ShiftRequests[plan.role]
+	if !ok || req.Session != plan.sess.Key() || !req.RequestedAt.Equal(plan.req.RequestedAt) || req.Escalated {
+		return fmt.Errorf("%w: role %s changed while the handoff was written", ErrHandoffNotRequested, plan.role)
 	}
-	events.Emit(c.Events, events.Event{
-		Kind:       events.KindHandoffPut,
-		Severity:   events.SeverityInfo,
-		Workspace:  t.Workspace,
-		Team:       t.Name,
-		Role:       role.Name,
-		Session:    sess.Key(),
-		Generation: t.Generation,
-		Message:    fmt.Sprintf("session %s handed off through the daemon: %d bytes to %s, requested %s", sess.Key(), len(body), path, req.RequestedAt.Format("2006-01-02T15:04:05Z07:00")),
-	})
-	return sess, HandoffPut{Path: path, Bytes: len(body)}, nil
+	if _, err := c.liveSessionForPut(token, &req); err != nil {
+		return err
+	}
+	return nil
 }
 
 // handoffBody is the text, trimmed of trailing space, ending with the marker as
@@ -174,28 +245,28 @@ func handoffBody(text, marker string) string {
 // writes a temporary file there with O_EXCL and O_NOFOLLOW, checks the target
 // is absent or a regular file, and renames the temporary file over it. A
 // refusal leaves nothing behind.
-func writeHandoffFile(path string, req api.ShiftRequest, body string) error {
+func writeHandoffFile(path string, req api.ShiftRequest, body string) (writtenFile, error) {
 	dir, base := filepath.Split(path)
 	dir = filepath.Clean(dir)
 	if base == "" || base == "." || base == ".." || strings.ContainsRune(base, filepath.Separator) {
-		return fmt.Errorf("%w: %q is not a file name", ErrHandoffDir, base)
+		return writtenFile{}, fmt.Errorf("%w: %q is not a file name", ErrHandoffDir, base)
 	}
 	if req.DirIno == 0 {
-		return fmt.Errorf("%w: no directory identity was recorded when the handoff was requested", ErrHandoffDir)
+		return writtenFile{}, fmt.Errorf("%w: no directory identity was recorded when the handoff was requested", ErrHandoffDir)
 	}
 	// The directory and every ancestor must be real directories, not links. The
 	// Lstat refuses a link in the last element; EvalSymlinks refuses one
 	// anywhere above it.
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() {
-		return fmt.Errorf("%w: %s is not a directory", ErrHandoffDir, dir)
+		return writtenFile{}, fmt.Errorf("%w: %s is not a directory", ErrHandoffDir, dir)
 	}
 	if resolved, err := filepath.EvalSymlinks(dir); err != nil || resolved != dir {
-		return fmt.Errorf("%w: %s resolves through a link", ErrHandoffDir, dir)
+		return writtenFile{}, fmt.Errorf("%w: %s resolves through a link", ErrHandoffDir, dir)
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("%w: open %s: %v", ErrHandoffDir, dir, err)
+		return writtenFile{}, fmt.Errorf("%w: open %s: %v", ErrHandoffDir, dir, err)
 	}
 	defer func() { _ = root.Close() }()
 
@@ -204,56 +275,93 @@ func writeHandoffFile(path string, req api.ShiftRequest, body string) error {
 	// check cannot redirect the write: root holds the directory it opened.
 	dh, err := root.Open(".")
 	if err != nil {
-		return fmt.Errorf("%w: open %s: %v", ErrHandoffDir, dir, err)
+		return writtenFile{}, fmt.Errorf("%w: open %s: %v", ErrHandoffDir, dir, err)
 	}
 	info, err := dh.Stat()
 	_ = dh.Close()
 	if err != nil {
-		return fmt.Errorf("%w: stat %s: %v", ErrHandoffDir, dir, err)
+		return writtenFile{}, fmt.Errorf("%w: stat %s: %v", ErrHandoffDir, dir, err)
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || uint64(st.Dev) != req.DirDev || uint64(st.Ino) != req.DirIno { //nolint:unconvert // Dev is int32 on darwin
-		return fmt.Errorf("%w: %s is not the directory marvel recorded when it asked", ErrHandoffDir, dir)
+		return writtenFile{}, fmt.Errorf("%w: %s is not the directory marvel recorded when it asked", ErrHandoffDir, dir)
 	}
 
 	var rnd [8]byte
 	if _, err := rand.Read(rnd[:]); err != nil {
-		return fmt.Errorf("handoff.put: temporary name: %w", err)
+		return writtenFile{}, fmt.Errorf("handoff.put: temporary name: %w", err)
 	}
 	tmp := ".marvel-handoff-" + hex.EncodeToString(rnd[:]) + ".tmp"
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
-		return fmt.Errorf("handoff.put: create temporary file in %s: %w", dir, err)
+		return writtenFile{}, fmt.Errorf("handoff.put: create temporary file in %s: %w", dir, err)
 	}
 	cleanup := func() { _ = root.Remove(tmp) }
 	if _, err := f.WriteString(body); err != nil {
 		_ = f.Close()
 		cleanup()
-		return fmt.Errorf("handoff.put: write: %w", err)
+		return writtenFile{}, fmt.Errorf("handoff.put: write: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		cleanup()
-		return fmt.Errorf("handoff.put: sync: %w", err)
+		return writtenFile{}, fmt.Errorf("handoff.put: sync: %w", err)
+	}
+	var ident writtenFile
+	if fi, err := f.Stat(); err == nil {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			ident = writtenFile{dev: uint64(st.Dev), ino: st.Ino} //nolint:unconvert // Dev is int32 on darwin
+		}
 	}
 	if err := f.Close(); err != nil {
 		cleanup()
-		return fmt.Errorf("handoff.put: close: %w", err)
+		return writtenFile{}, fmt.Errorf("handoff.put: close: %w", err)
 	}
 
 	switch target, err := root.Lstat(base); {
 	case err == nil && !target.Mode().IsRegular():
 		cleanup()
-		return fmt.Errorf("%w: %s exists and is not a regular file", ErrHandoffDir, path)
+		return writtenFile{}, fmt.Errorf("%w: %s exists and is not a regular file", ErrHandoffDir, path)
 	case err != nil && !errors.Is(err, os.ErrNotExist):
 		cleanup()
-		return fmt.Errorf("handoff.put: inspect %s: %w", path, err)
+		return writtenFile{}, fmt.Errorf("handoff.put: inspect %s: %w", path, err)
 	}
 	if err := root.Rename(tmp, base); err != nil {
 		cleanup()
-		return fmt.Errorf("handoff.put: place %s: %w", path, err)
+		return writtenFile{}, fmt.Errorf("handoff.put: place %s: %w", path, err)
 	}
-	return nil
+	return ident, nil
+}
+
+// writtenFile is the identity of the file a put placed, read from the open
+// descriptor before the rename (which keeps the inode), so a put that is
+// refused after its write can remove that file and no other.
+type writtenFile struct{ dev, ino uint64 }
+
+// removeHandoffFile removes the file at path if it is still the one a put
+// placed. Best effort: a failure is logged, and a file that changed is left.
+func removeHandoffFile(path string, ident writtenFile) {
+	if ident.ino == 0 {
+		return
+	}
+	dir, base := filepath.Split(path)
+	root, err := os.OpenRoot(filepath.Clean(dir))
+	if err != nil {
+		log.Printf("handoff.put: remove %s after a refused put: %v", path, err)
+		return
+	}
+	defer func() { _ = root.Close() }()
+	fi, err := root.Lstat(base)
+	if err != nil {
+		return
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || !fi.Mode().IsRegular() || uint64(st.Dev) != ident.dev || st.Ino != ident.ino { //nolint:unconvert // Dev is int32 on darwin
+		return
+	}
+	if err := root.Remove(base); err != nil {
+		log.Printf("handoff.put: remove %s after a refused put: %v", path, err)
+	}
 }
 
 // emitPutRefused names a refused put. The session is empty when the token

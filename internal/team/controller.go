@@ -52,6 +52,10 @@ type Controller struct {
 	// handoffProbes runs the max-age handoff marker reads (shift_handoff.go).
 	handoffProbes handoffProbes
 
+	// afterHandoffWrite, when set, runs between a handoff.put's write and its
+	// re-check. A test uses it to change the request mid-put; nil in production.
+	afterHandoffWrite func()
+
 	// missingEmitted is when each escalated session's handoff-missing event
 	// was last emitted, so it repeats once per window (shift_handoff.go).
 	// In memory, deliberately: a restart repeats it at once. Guarded by mu.
