@@ -126,7 +126,7 @@ seat, and be visible when a slot is missed. That is what this design does.
 | id | change | red test | after |
 |---|---|---|---|
 | T1 | declaration and apply validation (V1) | a cadence with grace >= period, or with no timezone, is refused at apply | |
-| T2 | spawn tokens (V6) | a marvel-spawned seat's env carries `DIRECTOR_CLUSTER` and `DIRECTOR_ROLE` | |
+| T2 | spawn token (V6) | a marvel-spawned seat's env carries `DIRECTOR_CLUSTER` when the daemon has an entry name, and no `DIRECTOR_ROLE` unless its role's `runtime.env` declares one | |
 | T3 | slot clock for interactive roles (V2) | a due slot opens one record; a slot missed while the daemon was down fires once within `starting_deadline` and is `skipped` past it | T1, the schedule clock (S-3) |
 | T4 | claim lease and swept (V3, V5) | two seats claim one slot and one gets "claimed"; a holder's repeat claim returns the same slot; a claiming seat deleted, or shifted out, reopens the slot; a token of another role is refused; no `swept` by grace yields one `overdue` | T3, P2 |
 | T5 | the cadence wake (V4) | a pane showing a draft, a dim suggestion, the consent prompt or a permission prompt is not typed into and the refusal is recorded once; a pane in copy mode (emacs and vi mode-keys) is refused and retried; a draft that appears between the first read and Enter gets no Enter, only the typed line is cleared, and a refusal is recorded; an `Empty` composer that still holds exactly the fixed line on the second read gets Enter and a `woken` record | T3, P1 |
@@ -151,6 +151,23 @@ The earlier tickets for the NATS path are re-scoped, not dropped: the
 subscription tools lose `set_timer`, the grant rows lose the timer grant,
 and the streams and the broker authorization block stay for the event
 senses. Their edits are the operator's ruling 3.
+
+**Open item for T6 (2026-10-24, not ruled).** V5's overdue mail goes to the
+team's supervisor. It must be addressed to the supervisor's seat
+(`agent://<team>/<agent id>`), resolved by marvel at send time from its own
+record of the live supervisor session, and not to `role://<team>/supervisor`.
+A role send is refused while no session holds the role, and with the role half
+of V6 withdrawn (ruling 4), a marvel seat holds a role only when its role
+declares `DIRECTOR_ROLE`. The address uses the values director's shim takes
+for that seat: `DIRECTOR_AGENT_ID`, `DIRECTOR_TEAM` and `DIRECTOR_WORKSPACE`
+where the supervisor role's env sets them, and otherwise the session name,
+team and workspace marvel exported at spawn (director
+`cmd/director-mcp/seatenv.go`, `resolveSeatEnv`). A supervisor that shifts
+gets a new session name, so the address is resolved for each mail, never
+stored. If the role does hold `DIRECTOR_ROLE`, the role address works too,
+but it fans out to every holder; T6 uses the seat address either way. T6's
+red test adds: with no session holding the supervisor role, the overdue mail
+is sent to the live supervisor's seat address and is not refused.
 
 ## 5. Security notes
 
