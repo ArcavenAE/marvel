@@ -34,27 +34,31 @@ const minCadenceDeadline = time.Minute
 // cadenceHorizon is how far ahead the period is measured (V1).
 const cadenceHorizon = 366 * 24 * time.Hour
 
-// validateCadences checks one role's cadence entries (V1). now anchors the
-// period scan.
-func validateCadences(team string, r ManifestRole, now time.Time) error {
+// validateCadences checks one role's cadence entries (V1) and returns them
+// with their durations parsed, so apply reuses the values and the year is
+// walked once. now anchors the period scan.
+func validateCadences(team string, r ManifestRole, now time.Time) ([]Cadence, error) {
 	if len(r.Cadence) == 0 {
-		return nil
+		return nil, nil
 	}
 	where := fmt.Sprintf("team %s role %s", team, r.Name)
 	if r.Runtime.Mode != RuntimeModeInteractive {
-		return fmt.Errorf("%s: cadence is only valid on an interactive role; a headless role takes a schedule", where)
+		return nil, fmt.Errorf("%s: cadence is only valid on an interactive role; a headless role takes a schedule", where)
 	}
 	seen := make(map[string]bool, len(r.Cadence))
+	out := make([]Cadence, 0, len(r.Cadence))
 	for _, c := range r.Cadence {
-		if _, err := c.cadence(where, now); err != nil {
-			return err
+		parsed, err := c.cadence(where, now)
+		if err != nil {
+			return nil, err
 		}
 		if seen[c.Name] {
-			return fmt.Errorf("%s: cadence name %q is a duplicate", where, c.Name)
+			return nil, fmt.Errorf("%s: cadence name %q is a duplicate", where, c.Name)
 		}
 		seen[c.Name] = true
+		out = append(out, parsed)
 	}
-	return nil
+	return out, nil
 }
 
 // cadence validates one entry and returns it with its durations parsed.
@@ -113,30 +117,38 @@ func (c ManifestCadence) cadence(where string, now time.Time) (Cadence, error) {
 // shortestSlotGap walks the schedule's slots over the next 366 days and
 // returns the shortest gap between two consecutive ones, and how many slots
 // it saw. It stops at the first gap no longer than floor, because the caller
-// refuses on that gap whatever a later one is; that keeps a per-minute
-// schedule from being walked for a year before it is refused.
+// refuses on that gap whatever a later one is. The zone and the cron are read
+// once and the days are walked in order, so the cost is one pass over the
+// year's slots.
 func shortestSlotGap(schedule, timezone string, now time.Time, floor time.Duration) (gap time.Duration, slots int, err error) {
-	p := SchedulePolicy{Cron: schedule, Timezone: timezone}
+	loc, err := loadScheduleZone(timezone)
+	if err != nil {
+		return 0, 0, err
+	}
+	spec, err := compileCron(schedule)
+	if err != nil {
+		return 0, 0, err
+	}
 	end := now.Add(cadenceHorizon)
 	var prev time.Time
-	at := now
-	for {
-		next, err := p.NextFiring(at)
-		if err != nil {
-			return 0, slots, err
-		}
-		if next.After(end) {
-			return gap, slots, nil
-		}
-		slots++
-		if slots > 1 {
-			if g := next.Sub(prev); gap == 0 || g < gap {
-				gap = g
-				if gap <= floor {
-					return gap, slots, nil
+	for d, last := localDate(now.In(loc)), localDate(end.In(loc)); !d.After(last); d = d.AddDate(0, 0, 1) {
+		for _, at := range spec.firingsOn(d, loc) {
+			if !at.After(now) || at.After(end) {
+				continue
+			}
+			slots++
+			if slots > 1 {
+				// A slot that does not come after the last one (a firing the zone
+				// repeats or moves at a clock change) is not a gap.
+				if g := at.Sub(prev); g > 0 && (gap == 0 || g < gap) {
+					gap = g
+					if gap <= floor {
+						return gap, slots, nil
+					}
 				}
 			}
+			prev = at
 		}
-		prev, at = next, next
 	}
+	return gap, slots, nil
 }

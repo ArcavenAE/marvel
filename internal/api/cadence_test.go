@@ -8,9 +8,11 @@ import (
 )
 
 // cadenceScanBound is a guard on parse and apply of the most frequent cadence V1
-// allows. Measured at 648d7b7 under the run conditions: it did not finish inside
-// the default 10m go test timeout, so any bound is red there.
-const cadenceScanBound = 5 * time.Second
+// allows. Measured under the run conditions: 648d7b7 did not finish inside the
+// default 10m go test timeout, and the one-pass scan takes about 0.6s, so the
+// bound leaves room for a slow or race-instrumented run and still fails the
+// per-slot reload by a wide margin.
+const cadenceScanBound = 10 * time.Second
 
 // docs/design/declared-cadence.md V1 (ticket T1): a role carries cadence
 // entries, set only by applying a manifest. Apply refuses a cadence unless
