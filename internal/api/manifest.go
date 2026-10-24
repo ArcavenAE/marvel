@@ -690,9 +690,47 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 }
 
 // FirstPromptAdvisories lists the interactive roles whose first prompt will not
-// happen as declared (marvel#391, docs/design/interactive-first-prompt.md D6).
+// happen as declared (marvel#391, docs/design/interactive-first-prompt.md D6):
+// a role that declares runtime.prompt on a runtime that cannot take it as a
+// first message, and a role that declares neither runtime.prompt nor a
+// shift.handoff, so a fresh seat of it starts at an empty prompt. It is
+// advisory, not a refusal, because existing manifests carry runtime.prompt on
+// interactive roles today and a refusal would fail their next re-apply. Only
+// claude takes the prompt for now (T1); the runtime test narrows as codex and
+// opencode support lands (T2, T3). Headless roles are never reported.
 func (m *Manifest) FirstPromptAdvisories() []string {
-	return nil
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.Mode != RuntimeModeInteractive {
+				continue
+			}
+			switch name := firstPromptRuntimeName(r.Runtime); {
+			case r.Runtime.Prompt != "":
+				if name != "claude" {
+					out = append(out, fmt.Sprintf("team %s role %s: interactive runtime %q cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)",
+						t.Name, r.Name, name))
+				}
+			case r.Shift == nil || r.Shift.Handoff == "":
+				out = append(out, fmt.Sprintf("team %s role %s: interactive role declares neither runtime.prompt nor shift.handoff, so a fresh seat of this role starts idle at an empty prompt (marvel#391)",
+					t.Name, r.Name))
+			}
+		}
+	}
+	return out
+}
+
+// firstPromptRuntimeName names a role's harness the way the adapter registry
+// is asked for it: the image, else the program in the command.
+func firstPromptRuntimeName(rt ManifestRuntime) string {
+	if rt.Image != "" {
+		return rt.Image
+	}
+	fields := strings.Fields(rt.Command)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
 }
 
 // ValidateRuntimes checks that each role's runtime command (and script,
