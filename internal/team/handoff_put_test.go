@@ -525,17 +525,14 @@ func TestPutHandoffRemovesItsFileWhenTheRequestChangesDuringTheWrite(t *testing.
 }
 
 // The removal is of the file the put placed and no other: if the path now holds
-// a different file, it stays. The put's file is kept alive under a second name
-// while the path is replaced, so its inode stays allocated and the foreign file
-// gets a different one: on ext4 and overlayfs a freed inode number is handed to
-// the next file created, and the identity check could not tell the two apart.
+// a different file, it stays. Nothing keeps the put's inode allocated while the
+// path is replaced, as in production: on ext4 and overlayfs the freed inode
+// number is handed to the next file created, so a check on device and inode
+// alone cannot tell the two files apart.
 func TestPutHandoffLeavesAForeignFileAtThePathAlone(t *testing.T) {
 	f := newPutFixture(t, true)
 	f.ctrl.afterHandoffWrite = func() {
 		f.dropRequest()
-		if err := os.Link(f.path(), f.path()+".kept"); err != nil {
-			t.Error(err)
-		}
 		if err := os.Remove(f.path()); err != nil {
 			t.Error(err)
 		}
@@ -547,6 +544,25 @@ func TestPutHandoffLeavesAForeignFileAtThePathAlone(t *testing.T) {
 		t.Fatalf("err = %v, want ErrHandoffNotRequested", err)
 	}
 	if b, _ := os.ReadFile(f.path()); string(b) != "not marvel's" {
+		t.Fatalf("the file at the path = %q, want it left alone", b)
+	}
+}
+
+// An identity that matches a file by device and inode alone, with no file of the
+// put's held open, removes nothing: the number may belong to a later file that
+// took it when the put's inode was freed. Deterministic on every filesystem.
+func TestRemoveHandoffFileLeavesAFileThatOnlyMatchesByInode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handoff.md")
+	if err := os.WriteFile(path, []byte("not marvel's"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	removeHandoffFile(path, writtenFile{dev: uint64(st.Dev), ino: st.Ino}) //nolint:unconvert // Dev is int32 on darwin
+	if b, _ := os.ReadFile(path); string(b) != "not marvel's" {
 		t.Fatalf("the file at the path = %q, want it left alone", b)
 	}
 }
