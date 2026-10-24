@@ -25,6 +25,12 @@ func newAuditHarness(t *testing.T) *auditHarness {
 	t.Helper()
 	s, m, _ := newTestSupervisor(t, "")
 	hold := &atomic.Bool{}
+	// The supervisor's structural tick runs the write probe, which publishes a
+	// canary to AGENT_AUDIT and removes it again. In a test the tick is 200ms,
+	// so a canary lands between a test's publishes and deletes and moves the
+	// stream's last sequence under the numbers the test counts. Nothing here
+	// tests the probe, so it reads nothing, as the other supervisor tests do.
+	s.writeProbeFn = func(context.Context) (WriteReading, error) { return WriteReading{}, nil }
 	s.AfterReady = func() error {
 		if hold.Load() {
 			return errors.New("provisioning held by the test")
