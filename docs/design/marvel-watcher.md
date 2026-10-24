@@ -4,7 +4,7 @@ Proposal, 2026-10-09. Code read at marvel `ff9d210`.
 
 - **Author:** the architect seat, team arcaven, from a six-round design panel. The seats were messaging, observability, runtime and harness; the panel's record is kept outside this repository.
 - **The operator's ask:** "marvel builtin watcher, bearing in mind that while marvel bus is native, nats is not, and other agent message queues may be swapped in".
-- **Status:** decisions 2 to 4 were ruled on 2026-10-10 (section 8, "Operator rulings"). On the same day the operator ordered the report-only build ("kick off 2"), which is read as settling decision 1, pending the operator's confirmation (section 8). The section 7 plan is filed as flat tickets, with the ring rows held. Builders work red tests first.
+- **Status:** decisions 2 to 4 were ruled on 2026-10-10 (section 8, "Operator rulings"). On the same day the operator ordered the report-only build ("kick off 2"), which is read as settling decision 1, pending the operator's confirmation (section 8). The section 7 plan is filed as flat tickets, with the ring rows held. Builders work red tests first. Revised 2026-10-24 (section 11): the watcher becomes the fleet's one watchdog for unread mail, and section 11 holds the re-check, one definition each of unread, age and ringer, and the mail reader's spec.
 
 ## 0. Why
 
@@ -59,7 +59,7 @@ The adapter is constructed only in the daemon's start-up wiring (`internal/daemo
 // unsupported (the queue cannot answer). Never a zero by default.
 type MailState struct {
 	Depth      Count    // shown; never triggers (redelivery inflates it)
-	OldestAge  Duration // the trigger, measured on the broker's clock
+	OldestAge  Duration // the trigger, on the broker's clock (section 11.2)
 	LastAckAt  Time     // a value, never, unknown or unsupported
 	ObservedAt time.Time
 	Source     string   // the adapter
@@ -126,7 +126,7 @@ Two limits follow from the code as it stands:
 - claude is the only harness that can be rung, until codex's composer reader can return `Empty` (aae-orc-g88i1).
 - The window between the capture and the Enter is accepted and named. It is not called safe.
 
-**Ringers.** One ringer per seat, through the shared claim: director's doorbell reads it and does not ring inside the window. The claim is per daemon; a seat watched from two daemons is out of scope.
+**Ringers.** One ringer per seat, through the shared claim, which every ring writes through `marvel inject --ring` (section 11.2): director's doorbell and team supervisors do not ring inside the window. The claim is per daemon; a seat watched from two daemons is out of scope.
 
 ## 6. Measuring claude before trusting it
 
@@ -207,7 +207,7 @@ The first PRs open the same day, with C1 merged first, because it feeds the long
 
 Every number here is unmeasured. Report mode measures the interval and the threshold, and C2 measures the confirm window: `max(60 s, 3 x p95 ring-to-submit latency)`, and 120 s until then.
 
-The recommendations in this section are valid until 2026-10-23 or the operator's ruling, whichever comes first; the architect re-checks them then.
+The recommendations in this section were valid until 2026-10-23 or the operator's ruling, whichever came first. They were re-checked on 2026-10-24, in section 11.1.
 
 ### Operator rulings (2026-10-10)
 
@@ -250,3 +250,120 @@ Each carries `observed_at`.
 - `docs/design/capture-escapes-composer-state.md`: the composer reader.
 - marvel#341 (a bare Enter sent as literal text), #343 (inject truncation), #371 (trust dialog), #580 (a leaf link down tells no supervisor), #581 (supervisors with no marvel CLI).
 - director: `sim/design/unread-slice-m.md`, `probe/nats-phase-0/director-mcp/unread.go`.
+
+## 11. Revision of 2026-10-24: one fleet watchdog for unread mail
+
+Code re-read at marvel `7c4a3d3e` and director `1b31eba`; director#399 read at `b7f8a187`. The operator, relayed by director on 2026-10-24: the watcher becomes the one fleet watchdog for unread mail, and the architect owns the design. The 10-10 rulings stand: a 60 s pass, a 10 min threshold, the statusline as claude's turn source, report-only, ring held.
+
+### 11.1 Re-check of the recommendations
+
+The section 8 recommendations were valid until 2026-10-23. Each is re-checked against what changed since 10-09.
+
+| recommendation | condition then | condition now (checked) | action |
+|---|---|---|---|
+| Decision 1: report-only first build, ring held until C2 passes and aae-orc-g88i1 lands | C2 not run; codex reader cannot return `Empty` | C2 (aae-orc-f8nut) still open, never run; aae-orc-g88i1 still open (updated 10-20); C1 is done, marvel#844 and #849 (aae-orc-2f0c8 closed today with that evidence) | **renew** |
+| Decision 2: decide claude's fallback after C2 | no statusline turn stamp existed | ruled "statusline" on 10-10; built as `TotalsChangedAt`, the stamp LAST-TURN reads (`cmd/marvel/lastturn.go`, #979), which a heartbeat or a context reading never moves | **superseded by the ruling**. B1 and C5 read `TotalsChangedAt` as the report-mode claude source, `turn.source = statusline`; the hook source stays gated on C2 |
+| Confirm window 120 s until C2 measures it | no measurement | no measurement | **renew** |
+| Section 5, "Ringers": director's doorbell reads the claim | one other ringer, director | three ringers: director's doorbell (R-194, R-200), each team supervisor ringing its own team (the 2026-10-24 multi-cluster outcome), and the held watcher ring | **revise**, as 11.2 |
+| Section 5, "the claim is per daemon" | one daemon per seat | unchanged: a seat runs under one daemon, and a ringer on another cluster reaches it through that daemon | **renew** |
+| H1 (#801), `ContextAt` re-stamped while idle | open | open | **renew**, still a separate issue |
+| A claude seat can be read by the composer reader | labelled rule not matched (finding of 2026-10-24) | `ruleLine` now accepts one label in the rule (`internal/composer/claude.go`) | **no longer a limit** for the claude reader; verify the kinu panes after the next deploy |
+
+Still true at `7c4a3d3e`: marvel reads no mail (no `NumPending` or ack floor read in non-test Go), only `internal/bus` imports `github.com/nats-io/`, interactive seats have no stream (`SupportsStream`), the statusline refreshes every 15 s (`internal/runtime/claude.go:64`), and inject verifies after the send (`internal/daemon/daemon.go:2571`). No ring claim exists in the inject path (`injectParams`, `daemon.go:2345`).
+
+These recommendations are valid until 2026-11-07, or until C2 runs, whichever comes first. The arcaven architect re-checks them then.
+
+### 11.2 One definition each
+
+The fleet has three readings of "unread" and three ringers today. Each gets one definition.
+
+- **Unread** is mail not acked. A seat's ack floor is the highest `AckFloor.Stream` over the seat's durables with the same filter subjects, live or departed, because that is where a successor resumes (director `bus.go`, `seatAckFloor`). Unread mail is every message on the seat's filter subjects above that floor. Depth is `NumPending + NumAckPending`. A message read in handled mode and not yet acked is unread. `LastAckAt` is the latest `AckFloor.Last` over those durables.
+- **Age** is on the broker's clock: the consumer info's `TimeStamp`, which the server stamps when it answers, minus the stored time of the oldest unread message. Both times come from the server, so no host clock enters. A server that leaves `TimeStamp` zero gives an age on the reader's clock, and the state's `Note` says so.
+- **The ringer** is marvel's ring claim, one per seat. Anyone may ring, but every ring goes through `marvel inject --ring`, which writes the claim before the send and refuses a second ring inside the window with the claim's holder and time. The watcher's own ring stays held. Building the claim rings nothing new; it makes the existing rings visible to each other.
+
+What changes for each source today:
+
+| source | reads today | change |
+|---|---|---|
+| marvel watcher (A1 to A3) | nothing | built to 11.2 from the start (11.3) |
+| `director-mcp unread` (`cmd/director-mcp/unread.go`) | ack floor and `NumPending + NumAckPending` (matches), age as reader-host `now` minus stored time | age from the consumer info's `TimeStamp`; until then the parity fixture compares ages within a tolerance |
+| director#399, presence `oldest_pending_s` and `stalled` | `NumPending` only, aged by samples on the shim's clock | the count follows the ack floor; the clock may stay the shim's (11.5) |
+| director's doorbell (R-194, R-200) | its own captures, then inject | rings through `marvel inject --ring`; R-194's checks and R-200's follow-up are unchanged |
+| team supervisors ringing their own team | `marvel inject` with no claim | ring through `marvel inject --ring`; a refusal inside the window means the seat was just rung, and the supervisor does not retry |
+| lane-ledger's unread column | nothing; always GAP | reads 11.4's file |
+
+### 11.3 The mail reader (A1 to A3)
+
+All three are built on the mokuzai marvel lane, because marvel is not pushed from kinu. Broker tests run against a scratch loopback `nats-server` only, never a fleet broker.
+
+**A1, `internal/mail`.**
+- `Count`, `Duration`, `Time` and `Seq` each carry a value or a state: `unknown` (tried and failed), `unsupported` (the queue cannot answer), and, for `Time` only, `never`. The zero value of each is `unknown`, so an unset field never reads as zero.
+- `MailState` holds the section 3 fields, plus `AckPending Count`, `AckFloor Seq` and `OldestSeq Seq`, so the parity fixture can compare them.
+- `MailReader` is as in section 3.
+- The spool double in `internal/mail/mailtest` keeps one directory per address, with one file per message (sequence and stored time), a floor file and an ack-time file. It can inject an error per call or `unknown` and `unsupported` per field.
+- The import-boundary test is as in section 3, with its planted-import control.
+- Red tests first:
+  - the zero `MailState` reads `unknown` in every field;
+  - the spool reports depth, oldest age and last ack;
+  - an injected error returns an error and the state reads `unknown`;
+  - the boundary test flags the planted package.
+
+**A2, seat addresses and `SeatMail`.**
+- **The local tier.** The seat's durables on `AGENT_INBOX` are the ones named `mcp_<agent id>_<instance>`. The agent id is split from the instance at the last `_`, as director does (`unread.go`). Their filter subjects are `agent.<workspace>.<team>.<id>.inbox`, plus `agent.<workspace>.<team>.role.<role>.inbox` when a role is held.
+- **The global tier.** It exists only for a seat with a global address. That is a cluster supervisor (`global.<cluster>.supervisor.inbox` on `GLOBAL_TO_<cluster>`) or director (`GLOBAL_TO_DIRECTOR`), with durables named `mcp_global_<agent id>_<instance>`. Any other seat's global tier reads `unsupported`, with the note "no global address", and is not counted.
+- **The aggregate.** The floor is 11.2's maximum over the seat's durables. Depth is the sum over tiers. The oldest age is the maximum. `LastAckAt` is the latest. Any `unknown` tier makes the whole `unknown`.
+- **A durable with a different filter set** belongs to another seat sharing the id prefix and is skipped, as `seatAckFloor` skips it.
+- **A seat with no live durable.** Its unread mail is still counted from its floor, because that is what a successor inherits (the 83-message case in section 0). The note says "no live durable".
+- Red tests (on the spool):
+  - a successor whose departed predecessor acked further reads from the predecessor's floor;
+  - role mail on the same durable is counted once;
+  - a durable with other filters is skipped;
+  - one unknown tier makes the seat unknown;
+  - a seat with no global address reads that tier `unsupported` and still reports the local tier.
+
+**A3, `internal/mail/jetstream`.**
+- **Reads.** Each tier is read with `ListConsumers` info on the stream, filtered to the seat's durables. The oldest unread message is read with `GetMsg(start, WithGetMsgSubject(subj))` per filter subject. `start` is the floor plus one, and never before a resumed durable's `OptStartSeq`: the same reads `unread.go` makes. Age is 11.2's broker-clock age.
+- **Bounds.** Each tier's reads are bounded (500 ms, as director#399 bounds its own). A denied or timed-out read makes that tier `unknown`, with the error in `Note`, and never zero.
+- **The credential this needs** has not been checked here. On each inbox stream it needs `STREAM.INFO`, `CONSUMER.LIST` and `CONSUMER.INFO`, plus `STREAM.MSG.GET` or `DIRECT.GET`. Director#399 records that the hub template grants a leaf `STREAM.MSG.GET` only on the presence bucket. So the global tier's oldest message may need a grant. The builder lists the subjects the daemon's credential is denied in its scratch broker, and the PR names any grant the fleet needs. Until it is granted, the global tier reads `unknown`, never a guess.
+- **The parity fixture.** One script builds a scratch broker state, and the same state is read twice:
+  - once by `director-mcp unread --json` (and `--global`), which writes a golden kept in marvel `testdata` with the director commit it came from;
+  - once by the adapter.
+
+  The cases:
+  - one live durable;
+  - a successor resumed past a departed durable;
+  - a seat with no live durable;
+  - role mail;
+  - an ack-pending message (handled mode);
+  - a Nak'd redelivery;
+  - the global tier;
+  - nothing unread.
+
+  For a seat with one live durable, these fields compare exactly: pending, ack pending, ack floor, oldest sequence and oldest stored time. Age compares within 2 s until the director ticket in 11.6 moves `unread.go` to the broker clock, then exactly. Director's per-durable states (`reading`, `behind`, `durable-idle`, `reads-outside-durable`) are not compared; the watcher has no such classes.
+
+### 11.4 lane-ledger's unread column (S11)
+
+`skills/director/scripts/lane-ledger:55` prints GAP with "marvel exposes consumer pending per seat (S11)". No surviving record defines S11. The label appears only there and in the test that pins it. By its words, it names a per-seat count of JetStream consumer pending, with its age. That is 11.2's unread.
+
+Director's reader already ships (`director-mcp unread --json`, slice M), so it is the reader that ships first. The spec:
+- freebusy, on its sweep, writes `$DIRECTOR_STATE/freebusy/unread.jsonl` from `director-mcp unread --json` and `--global`, one row per seat. A row carries `seat`, `tier`, `pending`, `oldest_unread_age_s`, `ack_floor`, `source` (`director-mcp unread <rev>`) and `observed_at`.
+- lane-ledger reads that file, as it reads `seats.jsonl`. A lane's cell is the sum of pending and the oldest age over the lane's seats, with the file's `observed_at` as its as-of.
+- A missing or unreadable file prints GAP with a new fix text naming the file, never 0. A seat row with an unknown read prints `?`.
+- When the watcher's pull file (E1) ships, freebusy writes the same rows from it, with `source = marvel watcher`. lane-ledger does not change.
+- `verify-lane-ledger.sh` gets a fixture with the file present, one with it absent, and one row unknown.
+
+### 11.5 director#399 against 11.2
+
+#399 counts `NumPending` only, so a message read in handled mode and held does not age toward `stalled`. Its body calls that deliberate: "Stalled means not drained." Under 11.2, that held message is unread. Two numbers named for the oldest pending mail of one seat would then disagree exactly for handled-mode seats. And `oldest_pending_s` is the number the multi-cluster outcome tells senders and supervisors to read.
+
+- **The count should align before merge.** The tracker reconciles to `NumPending + NumAckPending`. Both are in the consumer info #399 already reads, so no new grant is needed. The bus test that an ack-pending and a Nak'd message are not counted flips, and the reason text says "unacked" where the oldest message is ack-pending.
+- **The clock need not align.** #399's age is inferred from its own samples on the shim's clock. It never compares two hosts' clocks, and it errs high by at most one sample. Reading the broker's stamp of the oldest message would need `STREAM.MSG.GET` on the inbox streams, which the hub template does not grant a leaf (#399's own round 2). The doc comment says the age is sample-inferred, and the watcher's broker-clock age is the reference.
+
+### 11.6 Tickets
+
+- **A1 to A3** (aae-orc-f3usp, aae-orc-dehyh, aae-orc-i9tw9) carry 11.3 as their spec.
+- **G1a (aae-orc-svz6j), the ring claim in the inject path.** `marvel inject --ring` writes `last_ring_at`, the ringer and `ring_result = pending` before the send. Inside the window it refuses, with the holder and time. The claim reads in `describe session`. G1 (aae-orc-2y4mi) now depends on it and becomes the watcher's use of it. Building G1a turns on no watcher ring, so it sits outside the ring hold, pending director's confirmation of 11.2.
+- **Director: `unread.go` ages on the broker clock** (aae-orc-f7fq8, 11.2).
+- **Director: lane-ledger's unread column** (aae-orc-p9vdn, 11.4).
+- **Director: the doorbell and supervisor rings use `marvel inject --ring`** (aae-orc-a2pk9), blocked by G1a.
+- **The #399 count change** is not filed. It goes on #399 as a review note, if director takes 11.5.
