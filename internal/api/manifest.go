@@ -489,6 +489,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 					return nil, fmt.Errorf("parse manifest: %w", err)
 				}
 			}
+			if err := validateCadences(t.Name, r, time.Now().UTC()); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
 			// Permissions maps verbatim to --permission-mode; an empty
 			// value means "unset" and is allowed, but a non-empty typo
 			// silently breaks the session, so reject it here. Orthogonal
@@ -1028,6 +1031,13 @@ func (m *Manifest) Apply(store *Store) error {
 				return fmt.Errorf("apply manifest: %w", err)
 			}
 			role.Views = views
+			for _, mc := range mr.Cadence {
+				c, err := mc.cadence("team "+mt.Name+" role "+mr.Name, time.Now().UTC())
+				if err != nil {
+					return fmt.Errorf("apply manifest: %w", err)
+				}
+				role.Cadence = append(role.Cadence, c)
+			}
 			if mr.Schedule != nil {
 				sched, err := mr.Schedule.policy()
 				if err != nil {
