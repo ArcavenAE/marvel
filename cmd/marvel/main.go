@@ -2853,6 +2853,7 @@ with no seed records the intent and the link comes up when a seed is pushed.`,
 		RunE:  leafToggle("bus.leaf.disconnect"),
 	})
 	cmd.AddCommand(leaf)
+	cmd.AddCommand(busAuditCmd())
 	return cmd
 }
 
