@@ -7,7 +7,8 @@ after the vote (a second read before Enter, and copy mode); the panel voted
 the single-read form.
 
 Build status: T2 (the V6 spawn token, `DIRECTOR_CLUSTER`) is merged in #1049;
-the role half of V6 is withdrawn there pending ruling 4 in section 7. T1 (the
+the role half of V6 is withdrawn there by operator ruling, 2026-10-24
+(option 1, ruling 4 in section 7). T1 (the
 declaration and its apply validation) is merged in #1052. T3 onward is not
 started. Both build under the operator go, 2026-10-24.
 
@@ -107,7 +108,8 @@ seat, and be visible when a slot is missed. That is what this design does.
   out to each holder (director `docs/shim-reference.md`, "Role mail"). Nothing
   in V2 to V5 needs the shim to hold a role. A role that wants role mail
   declares `DIRECTOR_ROLE` in its own `runtime.env`. As voted, V6 also set
-  the role; that half is withdrawn pending ruling 4 in section 7.
+  the role; that half is withdrawn by operator ruling, 2026-10-24, option 1
+  (ruling 4 in section 7).
 - **V7. The bridge, until V2 to V5 ship.** The seat's process text re-arms
   its session cron at bootstrap from the role library's text, types the same
   fixed line as V4, deletes the cron when it writes its handoff, never reads
@@ -223,7 +225,9 @@ that wrote this re-checks it then. Nothing here executes on silence.
    holds it, fanned out to each replica. The vote did not weigh that.
    Recommended: withdraw the role half. marvel sets `DIRECTOR_CLUSTER` only,
    and a role that wants role mail declares `DIRECTOR_ROLE` in its own
-   `runtime.env`. This recommendation is valid until 2026-11-07, or until
-   director changes what `DIRECTOR_ROLE` means, whichever comes first; the
-   architect seat of the team building this design re-checks it then.
-   Nothing here executes on silence.
+   `runtime.env`.
+
+   **RULED 2026-10-24:** "1 as recommended", option 1. The role half of V6 is
+   withdrawn. marvel sets only `DIRECTOR_CLUSTER` at spawn, as merged in #1049,
+   and a role that wants role mail declares `DIRECTOR_ROLE` in its own
+   `runtime.env`.
