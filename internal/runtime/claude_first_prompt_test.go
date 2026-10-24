@@ -129,8 +129,10 @@ func TestClaudeFirstPromptComposesWithResume(t *testing.T) {
 	}
 }
 
-// The prompt is one shell word: a quote or a leading dash in it neither ends
-// the word nor reads as a flag to claude.
+// The prompt is one shell word: a quote, a semicolon, a newline or a leading
+// dash in it stays inside the quoted word. This checks shell quoting only; how
+// claude's own parser reads a positional that starts with a dash is not tested
+// here and is part of what P1 would measure.
 func TestClaudeFirstPromptIsOneQuotedWord(t *testing.T) {
 	t.Parallel()
 	for _, prompt := range []string{"it's the handoff", "--print the handoff", "a; rm -rf /", "line one\nline two"} {
