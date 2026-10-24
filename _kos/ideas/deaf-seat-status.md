@@ -11,6 +11,12 @@
   `question-session-state-observation`; director finding-007 (a deaf session
   reports silence as normal) and director#66; the loss-reduction build brief
   LR-3 (an unread-age reader from consumer ack floors).
+- **Became:** `_kos/probes/brief-deaf-seat-signal.md` (2026-10-24). Since
+  this idea was written, the director shim rebuilds a lost durable on both
+  tiers (director #82, 2026-09-25; #328, 2026-10-19), and the watcher design
+  (`docs/design/marvel-watcher.md`) plans the consumer-state read. The brief
+  tests which deaf cases survive the repair and whether that read tells each
+  from a quiet seat.
 
 ## The gap, in one sentence
 
