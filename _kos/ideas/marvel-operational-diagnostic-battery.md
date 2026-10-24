@@ -98,3 +98,15 @@ Marvel's areas, each with the anchor a check would cite:
   bus checks as not applicable, never as passed.
 - **Who may call what.** A seat can read results; running a disruptive check
   is a different permission.
+
+## Became (2026-10-24)
+
+- Probe: `_kos/probes/brief-operational-diagnostic-battery.md`, which maps
+  each area here to the tests and callable commands on main and asks what a
+  battery adds. Sibling probe:
+  `director/_kos/probes/brief-operational-diagnostic-battery.yaml`.
+- The runner is designed in director's `sim/design/ops-diagnostics-battery.md`
+  (U3), ticket aae-orc-kdin1; its gates A1, A2, C3 and D1 are marvel
+  behaviors.
+- Premise note: seat panes get a denylist scrub, not an allowlist; the
+  allowlist holds for workload children (marvel#351). See the probe.
