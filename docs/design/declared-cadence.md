@@ -6,6 +6,10 @@ marvel `409593c` and director `813c595`. V4's gate was tightened in review
 after the vote (a second read before Enter, and copy mode); the panel voted
 the single-read form.
 
+Build status: T2 (the V6 spawn tokens, `DIRECTOR_CLUSTER` and `DIRECTOR_ROLE`) is in
+#1049. T1 (the declaration and its apply validation) follows once #1047 has
+merged. Both build under the operator go of 2026-10-24 (director 01M5QNH421).
+
 ## 1. Why
 
 Some interactive seats need a prompt on a schedule: an envoy sweeps the
