@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"maps"
 	"slices"
@@ -360,6 +361,35 @@ func (s *Store) GetSession(key string) (Session, error) {
 		return Session{}, fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
 	return cloneSession(sess), nil
+}
+
+// SessionByHeartbeatToken returns the session a bound heartbeat token was
+// minted for. It is the authority for a call that names no session of its own
+// (handoff.put): the token is the identity, so a caller cannot write for
+// another seat. Only a record with a token hash can be found, and the empty
+// token matches nothing, so the heartbeat path's admission of unbound records
+// does not carry over to a write. Every bound record is compared, with no
+// early exit.
+func (s *Store) SessionByHeartbeatToken(token string) (Session, error) {
+	presented := HashHeartbeatToken(token)
+	if presented == "" {
+		return Session{}, ErrHeartbeatUnauthorized
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var found *Session
+	for _, sess := range s.sessions {
+		if sess.HeartbeatTokenHash == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(sess.HeartbeatTokenHash)) == 1 {
+			found = sess
+		}
+	}
+	if found == nil {
+		return Session{}, ErrHeartbeatUnauthorized
+	}
+	return cloneSession(found), nil
 }
 
 // ListSessions returns snapshots of all sessions.

@@ -1,9 +1,24 @@
 # A handoff a read-only seat can write
 
-**Status:** design for review, 2026-10-08. Nothing is built. Refs #604,
+**Status:** design for review, 2026-10-08. Slice 1 is built (see Build
+status below); the rest is not. Refs #604,
 #459, finding-067. Revised the same day to reconcile with a measured
 per-harness read of each harness's effective config, taken from disk by
 another agent; section 1 records what changed and why.
+
+**Build status.** Slice 1 is the daemon's `handoff.put` call with the section 2
+write gate, and the `marvel handoff put` command as the seat's carrier (the
+section 4 shell verb). It is served only on the daemon's local socket. One
+difference from section 2: the link check on the handoff directory is made at
+put time, on the opened directory, and not refused at request time. Marvel
+records the directory's identity when it asks, so a seat that writes its own
+file is unaffected by what its path resolves through. Not built yet: the
+`submit_handoff` MCP server and crush seeding (the section 5 checks have not
+run), retention and expiry with the nonce line (7.1), `handoff get` (7.2),
+`handoff_via` validation at apply (RH-A), and the notice text for a seat that
+hands off by tool. A seat can run the verb only if its allowlist admits that
+one command; that grant is role configuration outside marvel. The pull request
+for slice 1 is #1050.
 
 **Why.** The operator ruled to keep the 72h max-age arm on every role. Today
 that arm can end in a shift only when the seat writes a file on the daemon
