@@ -187,6 +187,9 @@ type ManifestRole struct {
 	// per repository (docs/design/readonly-view.md section 2). Parsed into
 	// Role.Views.
 	Views []ManifestView `toml:"view,omitempty"                yaml:"views,omitempty"`
+	// Cadence declares periodic prompts for an interactive role
+	// (docs/design/declared-cadence.md V1). Parsed into Role.Cadence.
+	Cadence []ManifestCadence `toml:"cadence,omitempty"             yaml:"cadences,omitempty"`
 }
 
 // ManifestView is one [[team.role.view]] entry. The durations are strings

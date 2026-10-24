@@ -752,6 +752,9 @@ type Role struct {
 	ActivityTimeout time.Duration `toml:"-"`
 	// Views are the read-only views each seat of this role declares.
 	Views []View `toml:"-"`
+	// Cadence is the periodic prompts this interactive role declares
+	// (docs/design/declared-cadence.md V1). Set only by applying a manifest.
+	Cadence []Cadence `toml:"-"`
 }
 
 // ShiftTriggerContextPressure shifts a role before its context occupancy
