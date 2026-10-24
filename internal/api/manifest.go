@@ -705,7 +705,7 @@ func (m *Manifest) FirstPromptAdvisories() []string {
 			if r.Runtime.Mode != RuntimeModeInteractive {
 				continue
 			}
-			switch name := firstPromptRuntimeName(r.Runtime); {
+			switch name := r.Runtime.AdapterName(); {
 			case r.Runtime.Prompt != "":
 				if name != "claude" {
 					out = append(out, fmt.Sprintf("team %s role %s: interactive runtime %q cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)",
@@ -720,17 +720,15 @@ func (m *Manifest) FirstPromptAdvisories() []string {
 	return out
 }
 
-// firstPromptRuntimeName names a role's harness the way the adapter registry
-// is asked for it: the image, else the program in the command.
-func firstPromptRuntimeName(rt ManifestRuntime) string {
-	if rt.Image != "" {
-		return rt.Image
+// AdapterName is the name the adapter registry is asked for: the image, else
+// the whole command string. Registry.Resolve is an exact lookup that falls back
+// to the generic adapter, so a command path or a command with arguments is not
+// the harness it starts with.
+func (r ManifestRuntime) AdapterName() string {
+	if r.Image != "" {
+		return r.Image
 	}
-	fields := strings.Fields(rt.Command)
-	if len(fields) == 0 {
-		return ""
-	}
-	return filepath.Base(fields[0])
+	return r.Command
 }
 
 // ValidateRuntimes checks that each role's runtime command (and script,
@@ -1009,9 +1007,7 @@ func (m *Manifest) Apply(store *Store) error {
 				Env:           mr.Runtime.Env,
 				Backend:       mr.Runtime.Backend,
 			}
-			if rt.Name == "" {
-				rt.Name = rt.Command
-			}
+			rt.Name = mr.Runtime.AdapterName()
 			role := Role{
 				Name:                 mr.Name,
 				Replicas:             mr.Replicas,
