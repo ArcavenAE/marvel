@@ -533,6 +533,13 @@ func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
 	if haveURI {
 		env[seatURIEnv] = uri
 	}
+	// The cluster and role half of the bus address (declared-cadence V6), so a
+	// marvel-native launch names them without a cast script. The cluster is the
+	// daemon's entry name and is left unset when there is none, as the seat URI is.
+	env["DIRECTOR_ROLE"] = ctx.Role.Name
+	if ctx.Cluster != "" {
+		env["DIRECTOR_CLUSTER"] = ctx.Cluster
+	}
 	if ctx.Session.Predecessor != "" {
 		env[api.PredecessorEnv] = ctx.Session.Predecessor
 	}
