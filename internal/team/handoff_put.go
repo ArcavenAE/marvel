@@ -98,6 +98,9 @@ func (c *Controller) PutHandoff(token, text string) (HandoffPut, error) {
 		c.emitPutRefused(plan.sess, err)
 		return HandoffPut{}, err
 	}
+	// The put's file stays open until the decision below, so its inode cannot
+	// be freed and reused while removeHandoffFile compares against it.
+	defer ident.close()
 	if c.afterHandoffWrite != nil {
 		c.afterHandoffWrite()
 	}
@@ -307,41 +310,47 @@ func writeHandoffFile(path string, req api.ShiftRequest, body string) (writtenFi
 		cleanup()
 		return writtenFile{}, fmt.Errorf("handoff.put: sync: %w", err)
 	}
-	var ident writtenFile
-	if fi, err := f.Stat(); err == nil {
-		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-			ident = writtenFile{dev: uint64(st.Dev), ino: st.Ino} //nolint:unconvert // Dev is int32 on darwin
-		}
-	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return writtenFile{}, fmt.Errorf("handoff.put: close: %w", err)
-	}
 
 	switch target, err := root.Lstat(base); {
 	case err == nil && !target.Mode().IsRegular():
+		_ = f.Close()
 		cleanup()
 		return writtenFile{}, fmt.Errorf("%w: %s exists and is not a regular file", ErrHandoffDir, path)
 	case err != nil && !errors.Is(err, os.ErrNotExist):
+		_ = f.Close()
 		cleanup()
 		return writtenFile{}, fmt.Errorf("handoff.put: inspect %s: %w", path, err)
 	}
 	if err := root.Rename(tmp, base); err != nil {
+		_ = f.Close()
 		cleanup()
 		return writtenFile{}, fmt.Errorf("handoff.put: place %s: %w", path, err)
 	}
-	return ident, nil
+	return writtenFile{f: f}, nil
 }
 
-// writtenFile is the identity of the file a put placed, read from the open
-// descriptor before the rename (which keeps the inode), so a put that is
-// refused after its write can remove that file and no other.
-type writtenFile struct{ dev, ino uint64 }
+// writtenFile is the file a put placed, held open from its creation (the
+// rename keeps the inode). While it is open the inode cannot be freed, so no
+// later file can take its number: a refused put compares the path against this
+// handle, and a device and inode read earlier could not promise that. The zero
+// value holds nothing and identifies nothing.
+type writtenFile struct{ f *os.File }
 
-// removeHandoffFile removes the file at path if it is still the one a put
-// placed. Best effort: a failure is logged, and a file that changed is left.
-func removeHandoffFile(path string, ident writtenFile) {
-	if ident.ino == 0 {
+func (w writtenFile) close() {
+	if w.f != nil {
+		_ = w.f.Close()
+	}
+}
+
+// removeHandoffFile removes the file at path if it is the one the put placed
+// and held. With no held file it removes nothing. Best effort: a failure is
+// logged, and a file that changed is left.
+func removeHandoffFile(path string, held writtenFile) {
+	if held.f == nil {
+		return
+	}
+	heldInfo, err := held.f.Stat()
+	if err != nil {
 		return
 	}
 	dir, base := filepath.Split(path)
@@ -352,11 +361,7 @@ func removeHandoffFile(path string, ident writtenFile) {
 	}
 	defer func() { _ = root.Close() }()
 	fi, err := root.Lstat(base)
-	if err != nil {
-		return
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok || !fi.Mode().IsRegular() || uint64(st.Dev) != ident.dev || st.Ino != ident.ino { //nolint:unconvert // Dev is int32 on darwin
+	if err != nil || !fi.Mode().IsRegular() || !os.SameFile(fi, heldInfo) {
 		return
 	}
 	if err := root.Remove(base); err != nil {

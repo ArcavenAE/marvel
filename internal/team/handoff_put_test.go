@@ -548,21 +548,44 @@ func TestPutHandoffLeavesAForeignFileAtThePathAlone(t *testing.T) {
 	}
 }
 
-// An identity that matches a file by device and inode alone, with no file of the
-// put's held open, removes nothing: the number may belong to a later file that
-// took it when the put's inode was freed. Deterministic on every filesystem.
-func TestRemoveHandoffFileLeavesAFileThatOnlyMatchesByInode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "handoff.md")
-	if err := os.WriteFile(path, []byte("not marvel's"), 0o600); err != nil {
-		t.Fatal(err)
+// With no file of the put's held open, nothing is removed, and a held file that
+// is not the one at the path removes nothing either. Deterministic on every
+// filesystem: the held file keeps its inode allocated, so a later file cannot
+// share its number.
+func TestRemoveHandoffFileRemovesOnlyTheHeldFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "handoff.md")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	fi, err := os.Lstat(path)
+	write("not marvel's")
+	removeHandoffFile(path, writtenFile{})
+	if b, _ := os.ReadFile(path); string(b) != "not marvel's" {
+		t.Fatalf("no held file: the file at the path = %q, want it left alone", b)
+	}
+
+	held, err := os.Create(filepath.Join(dir, "held"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := fi.Sys().(*syscall.Stat_t)
-	removeHandoffFile(path, writtenFile{dev: uint64(st.Dev), ino: st.Ino}) //nolint:unconvert // Dev is int32 on darwin
+	defer func() { _ = held.Close() }()
+	removeHandoffFile(path, writtenFile{f: held})
 	if b, _ := os.ReadFile(path); string(b) != "not marvel's" {
-		t.Fatalf("the file at the path = %q, want it left alone", b)
+		t.Fatalf("another file held: the file at the path = %q, want it left alone", b)
+	}
+
+	// Positive control: the held file at the path is removed.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(held.Name(), path); err != nil {
+		t.Fatal(err)
+	}
+	removeHandoffFile(path, writtenFile{f: held})
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the held file at the path: Lstat err = %v, want it removed", err)
 	}
 }
