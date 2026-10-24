@@ -70,8 +70,11 @@ there is something to read.
   stream, or to a subject any member may subscribe to. The bus designs
   already cover addressing and replay, so this idea should reuse them
   rather than invent a channel. See `docs/design/internal-bus.md` for the
-  ring and its watch seam, and `docs/design/wake-service.md` for how marvel
-  already publishes states it tracks.
+  ring and its watch seam, and `docs/design/wake-service.md` for the
+  direction of publishing the states marvel tracks. That direction is not
+  built: at main 9672ca5 the design says "No code" (line 3) and that marvel
+  "publishes nothing" today (line 12), notes that no Go code publishes to
+  NATS (line 55), and calls the ring-to-bus tap planned and gated (line 56).
 - **The first publisher.** GitHub is the example because the cost is
   visible. A bd watcher, a CI watcher, a disk or quota watcher and a clock
   that publishes "the hour" are the same shape and may be better first
@@ -142,9 +145,11 @@ out to be mostly a name for connecting them:
 - `docs/design/bus-as-service.md` defines a structural-health contract for
   the bus. A watcher's heartbeat is the same idea one level up: structure
   of the member, not content of its work.
-- `docs/design/wake-service.md` already publishes states marvel observes
-  and says who may act on them. The watchdog's alert is a consumer of that
-  surface, or a second kind of wake.
+- `docs/design/wake-service.md` is the design direction for publishing the
+  states marvel observes and for who may act on them. It is not built (see
+  the Delivery note above for the lines that say so). The watchdog's alert
+  would be a consumer of that surface once the tap exists, or a second kind
+  of wake.
 
 ## Open questions
 
