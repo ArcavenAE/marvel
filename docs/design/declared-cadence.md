@@ -8,7 +8,7 @@ the single-read form.
 
 Build status: T2 (the V6 spawn tokens, `DIRECTOR_CLUSTER` and `DIRECTOR_ROLE`) is in
 #1049. T1 (the declaration and its apply validation) follows once #1047 has
-merged. Both build under the operator go of 2026-10-24 (director 01M5QNH421).
+merged. Both build under the operator go, 2026-10-24.
 
 ## 1. Why
 
