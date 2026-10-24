@@ -3,6 +3,11 @@
 Status: design proposal, 2026-10-07, for #391. Proposal only; the rulings in
 section 7 are the operator's. Code references are pinned to marvel `5a972a4`.
 
+Implementation: T1 (the claude interactive positional, D1 and D4) is in
+marvel#1046, a draft. P1 is not measured, which the plan puts before T1, so
+that PR claims the prompt is on the command line and not that the seat gets a
+turn. T2 to T7 and probes P1 to P4 are not started.
+
 ## 1. Why
 
 An interactive seat marvel spawns starts at an empty prompt and waits for a
